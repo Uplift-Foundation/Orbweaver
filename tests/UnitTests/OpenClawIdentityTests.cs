@@ -371,6 +371,34 @@ public class OpenClawIdentityTests
         });
     }
 
+    // CB-278: every connect hands the device its token again, and nearly always
+    // the same one, so setting an unchanged value must not rewrite the file.
+    // Shown by planting a marker in the file after the first write: a rewrite
+    // would serialise the in-memory table, which has never seen the marker, so
+    // the marker surviving is the file not having been written at all. The
+    // second half is the paired control: a changed value does rewrite, and
+    // the marker goes.
+    [Fact]
+    public void SettingAnUnchangedDeviceTokenDoesNotRewriteTheStore()
+    {
+        InIsolation(dir =>
+        {
+            OpenClawIdentity.SetTokenFor("gw.local", "dev-one");
+
+            const string planted = """{"gw.local":"dev-one","marker":"untouched"}""";
+            File.WriteAllText(DeviceFile(dir), planted);
+
+            OpenClawIdentity.SetTokenFor("gw.local", "dev-one");
+            Assert.Equal(planted, File.ReadAllText(DeviceFile(dir)));
+
+            // Ordinal, not case-insensitive: a token differing only in case is
+            // a different token, and is written.
+            OpenClawIdentity.SetTokenFor("gw.local", "DEV-ONE");
+            Assert.DoesNotContain("marker", File.ReadAllText(DeviceFile(dir)));
+            Assert.Equal("DEV-ONE", OpenClawIdentity.TokenFor("gw.local"));
+        });
+    }
+
     // Hosts are matched case-insensitively, because a hostname is.
     [Fact]
     public void HostsAreMatchedWithoutRegardToCase()

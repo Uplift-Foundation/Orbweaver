@@ -80,6 +80,12 @@ namespace Orbweaver
         // fail in a way that looks like a gateway problem. Keyed by host
         // because one machine can face more than one gateway, and a token from
         // one is meaningless to another.
+        //
+        // Until CB-278 nothing wrote a device token here, so the table only
+        // ever held the `gateway:` entry below. OpenClawGateway.ConnectAsync
+        // now stores the one hello-ok issues, and the HTTP media fetches
+        // present it (see OpenClawMediaCredential) instead of the shared
+        // secret, which the gateway scores as admin.
         private static readonly Dictionary<string, string> Tokens = new(StringComparer.OrdinalIgnoreCase);
         private static bool _tokensLoaded;
 
@@ -120,11 +126,20 @@ namespace Orbweaver
             }
         }
 
+        // Called from every successful connect (CB-278), because hello-ok hands
+        // the device its token every time and the gateway's ensureDeviceToken
+        // reuses the same one while the approved scopes hold. So nearly every
+        // call is a no-op, and it is kept one: rewriting a 0600 credential file
+        // on each reconnect would put a write, and a window in which the file
+        // is half-written, on a path that has nothing new to say.
         public static void SetTokenFor(string host, string token)
         {
             lock (Gate)
             {
                 LoadTokens();
+                if (Tokens.TryGetValue(host, out var held) && string.Equals(held, token, StringComparison.Ordinal))
+                    return;
+
                 Tokens[host] = token;
                 SaveTokens();
             }

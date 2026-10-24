@@ -415,6 +415,30 @@ namespace Orbweaver
                     .ToArray();
             }
 
+            // CB-278: the device's own operator token, which hello-ok has always
+            // carried and this method used to read past. Kept because the HTTP
+            // media fetches need a credential, and the only one they had was
+            // the gateway's shared secret, which the gateway scores as the
+            // CLI's default scopes, admin included. A device token is scored as
+            // exactly this device's approved scopes. Measured on 2026.10.5:
+            // pictures and clips fetch identically under it, and two admin
+            // gates that pass the shared secret refuse it.
+            //
+            // Stored but never cleared on absence. A gateway that stops
+            // issuing one, or rotates it, leaves the old one here; a media
+            // fetch with a stale token is a 401, so the picture does not load,
+            // and the next connect that carries a token replaces it. Clearing
+            // on absence would instead quietly put the admin-scored secret
+            // back on every fetch, which is the thing this exists to stop.
+            //
+            // Sending it back as `auth.deviceToken` on the next connect, which
+            // the code above already does whenever one is held, was measured
+            // as harmless: the connect result was byte-identical, and so was
+            // the result with a deliberately wrong one, because the shared
+            // secret is what that gateway authenticates the connect by.
+            var issued = DeviceTokenIn(response);
+            if (issued is not null) OpenClawIdentity.SetTokenFor(_host, issued);
+
             Methods = ParseFeatures(response);
 
             if (response.TryGetProperty("policy", out var policy))
@@ -437,6 +461,21 @@ namespace Orbweaver
 
             return new ConnectResult(Outcome.Connected);
         }
+
+        // `auth.deviceToken` out of a hello-ok, or null when there is no usable
+        // one. Pure, so each way a gateway can leave it out is a case of its own
+        // rather than a fake handshake per arm. Whitespace counts as absent,
+        // the same rule OpenClawMediaCredential applies, so nothing stored here
+        // is something the fetch would then refuse to send.
+        internal static string? DeviceTokenIn(JsonElement response) =>
+            response.ValueKind == JsonValueKind.Object
+            && response.TryGetProperty("auth", out var auth)
+            && auth.ValueKind == JsonValueKind.Object
+            && auth.TryGetProperty("deviceToken", out var token)
+            && token.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(token.GetString())
+                ? token.GetString()
+                : null;
 
         internal static ConnectResult Classify(OpenClawRequestException ex)
         {
