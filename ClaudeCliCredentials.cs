@@ -129,6 +129,28 @@ namespace Orbweaver
         // (the file answered "expired" before the Keychain failed to answer).
         string? Lead = null);
 
+    // How long a credential read is given, and the clock that decides it has
+    // run out (CB-269).
+    //
+    // **The clock is a value carried by the caller, not a static.** The budget
+    // race used to be `Task.Delay(budget)` against a real thread-pool read, so a
+    // test that handed it five seconds and an instant fake was racing a real
+    // clock against a real scheduler: when another test class pinned the pool,
+    // the delay won and a correct send reported NotSent after exactly the budget.
+    // A process-wide hook would be the same shared-state trap one level up, so
+    // each session, sender and arm carries its own.
+    //
+    // Production never builds one by hand: `Of` wraps Task.Delay, which is the
+    // behaviour this replaced, and `Unmeasured` is the 45 s placeholder.
+    internal sealed record CredentialBudget(
+        TimeSpan Length, Func<TimeSpan, CancellationToken, Task> Expiry)
+    {
+        internal static CredentialBudget Of(TimeSpan length) => new(length, Task.Delay);
+
+        internal static readonly CredentialBudget Unmeasured =
+            Of(ClaudeCliCredentials.UnmeasuredReadBudget);
+    }
+
     // Where a credential comes from, as an interface, for the same reason
     // IUsageSource and IRemoteChatSession exist: the real one is an OS prompt or
     // a file in someone's home directory, and a surface that cannot be faked
@@ -506,7 +528,7 @@ namespace Orbweaver
         // before the gate is released, which is what makes a NoAnswer latch by the
         // time the next reader gets in.
         internal static async Task<CredentialRead> ReadWithinAsync(
-            ICloudCredentialSource source, TimeSpan budget, CancellationToken ct)
+            ICloudCredentialSource source, CredentialBudget budget, CancellationToken ct)
         {
             if (source is not IGatedCredentialSource gated)
             {
@@ -526,8 +548,13 @@ namespace Orbweaver
             }
         }
 
+        // The wall-clock form, for callers that have no reason to inject one.
+        internal static Task<CredentialRead> ReadWithinAsync(
+            ICloudCredentialSource source, TimeSpan budget, CancellationToken ct) =>
+            ReadWithinAsync(source, CredentialBudget.Of(budget), ct);
+
         private static async Task<CredentialRead> ReadBudgetedAsync(
-            ICloudCredentialSource source, TimeSpan budget, CancellationToken ct)
+            ICloudCredentialSource source, CredentialBudget budget, CancellationToken ct)
         {
             // Not cancelled by ct: cancelling the wait is the point, and handing ct
             // to the work as well would only mean the abandoned thread carried a
@@ -535,7 +562,7 @@ namespace Orbweaver
             var read = Task.Run(source.Read, CancellationToken.None);
 
             using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var finished = await Task.WhenAny(read, Task.Delay(budget, timer.Token))
+            var finished = await Task.WhenAny(read, budget.Expiry(budget.Length, timer.Token))
                 .ConfigureAwait(false);
 
             if (!ReferenceEquals(finished, read))

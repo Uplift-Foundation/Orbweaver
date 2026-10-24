@@ -850,6 +850,11 @@ public class ClaudeDesktopManagerTests
         {
             Thread.Sleep(10);
         }
+
+        // Fails by name instead of returning and letting the assertion after it
+        // report a symptom (CB-269).
+        Assert.True((int)refreshing.GetValue(null)! == 0,
+            "the background refresh never cleared its in-flight flag.");
     }
 
     // ---- ReadThemeMode ------------------------------------------------

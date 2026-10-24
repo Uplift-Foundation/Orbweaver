@@ -122,7 +122,8 @@ public class LocalCliChatSessionDesktopTests : IDisposable
     }
 
     private Rig Build(SessionStatus status, Func<CloudRequestContext, CloudOutcome>? answer = null,
-        bool wired = true, Func<CloudRequestContext, Task<CloudOutcome>>? answerLater = null)
+        bool wired = true, Func<CloudRequestContext, Task<CloudOutcome>>? answerLater = null,
+        CredentialBudget? budget = null)
     {
         var api = answerLater is not null ? new FakeApi(answerLater) : new FakeApi(answer ?? Ok);
         var credentials = new FakeCredentials();
@@ -148,6 +149,7 @@ public class LocalCliChatSessionDesktopTests : IDisposable
             },
             focusTerminal: (s, id) => rig.TerminalFocused.Add((s, id)))
         {
+            ReadBudget = budget ?? TestBudgets.AlwaysAnswers,
             Delay = (span, _) =>
             {
                 rig.Waits.Add(span);
@@ -279,6 +281,21 @@ public class LocalCliChatSessionDesktopTests : IDisposable
     }
 
     // --- sending --------------------------------------------------------------
+
+    // The bridge send races its credential read against the budget the session was
+    // given, not a default one (CB-269).
+    [AvaloniaFact]
+    public async Task ABridgedSendReadsThroughTheSessionsOwnBudget()
+    {
+        var (budget, calls) = TestBudgets.Spy();
+        var rig = Build(Status(Transcript()), budget: budget);
+        var session = Started(rig);
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.SendAsync("hello"));
+
+        Assert.Equal(1, calls());
+        Assert.Single(rig.Api.Requests);
+    }
 
     [AvaloniaFact]
     public async Task ABridgedSendGoesToTheBridgeWithTheAccountsLoginAndDrawsOneBubble()

@@ -12,6 +12,13 @@ namespace Orbweaver.UnitTests;
 // leaves the failure invisible, which is where it started. Neither is
 // observable without constructing processes, so the decision lives in a
 // function that takes the three facts it needs and nothing else.
+
+// Settings, because AnOrphanAppearingChangesTheDigest drives
+// ClaudeDesktopManager.Adopt, which publishes the same process-wide snapshot
+// ClaudeDesktopManagerTests asserts on. Unserialised, an Adopt landing between
+// that class's Publish(pid: 9) and its read of it turned "Expected 9" into
+// "Actual 0" (CB-269).
+[Xunit.Collection("Settings")]
 public class OrphanedInstanceTests
 {
     private const string Root = "/Users/x/Library/Application Support/Orbweaver/bundles";

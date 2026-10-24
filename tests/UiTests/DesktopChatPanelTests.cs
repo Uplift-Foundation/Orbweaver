@@ -71,7 +71,7 @@ public class DesktopChatPanelTests : IDisposable
     {
         var id = "desktop-" + Guid.NewGuid();
         _toClean.Add(id);
-        var session = new LocalCliChatSession(id, status);
+        var session = new LocalCliChatSession(id, status) { ReadBudget = TestBudgets.AlwaysAnswers };
         session.Start();
 
         for (var i = 0; i < 400 && session.History.Count == 0; i++)
@@ -79,6 +79,10 @@ public class DesktopChatPanelTests : IDisposable
             Dispatcher.UIThread.RunJobs();
             Thread.Sleep(5);
         }
+
+        // Fails here, by name, rather than carrying on into a panel with nothing in
+        // it and failing three assertions later about something else (CB-269).
+        Assert.True(session.History.Count > 0, "the session never loaded its transcript.");
 
         ChatPanel.OpenFor(NewOrb(), session);
         Dispatcher.UIThread.RunJobs();
@@ -95,7 +99,7 @@ public class DesktopChatPanelTests : IDisposable
     [AvaloniaFact]
     public void ADesktopSessionIsReadOnlyWithNowhereToLinkTo()
     {
-        var session = new LocalCliChatSession("s1", DesktopStatus(Transcript()));
+        var session = new LocalCliChatSession("s1", DesktopStatus(Transcript())) { ReadBudget = TestBudgets.AlwaysAnswers };
 
         Assert.True(session.IsReadOnly);
         Assert.Null(session.ReplyUrl);
@@ -116,7 +120,7 @@ public class DesktopChatPanelTests : IDisposable
     [InlineData("")]
     public void TheSameSessionUnderAnyOtherEntrypointIsNotReadOnly(string entrypoint)
     {
-        var session = new LocalCliChatSession("s1", DesktopStatus(Transcript(), entrypoint));
+        var session = new LocalCliChatSession("s1", DesktopStatus(Transcript(), entrypoint)) { ReadBudget = TestBudgets.AlwaysAnswers };
 
         Assert.False(session.IsReadOnly);
         Assert.NotEqual(LocalCliChatSession.DesktopNoBridgeHint, session.ComposerHint);
@@ -197,6 +201,7 @@ public class DesktopChatPanelTests : IDisposable
             credentialsFor: _ => new FakeCredentials(),
             cloudEnabled: cloudOn)
         {
+            ReadBudget = TestBudgets.AlwaysAnswers,
             Delay = (_, _) => Task.CompletedTask,
         };
         session.Start();
@@ -206,6 +211,8 @@ public class DesktopChatPanelTests : IDisposable
             Dispatcher.UIThread.RunJobs();
             Thread.Sleep(5);
         }
+
+        Assert.True(session.History.Count > 0, "the session never loaded its transcript.");
 
         ChatPanel.OpenFor(NewOrb(), session);
         Redraw();
@@ -219,7 +226,8 @@ public class DesktopChatPanelTests : IDisposable
         Dispatcher.UIThread.RunJobs();
     }
 
-    private static void WaitFor(Func<bool> done)
+    private static void WaitFor(Func<bool> done,
+        [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(done))] string what = "")
     {
         for (var i = 0; i < 600 && !done(); i++)
         {
@@ -228,6 +236,10 @@ public class DesktopChatPanelTests : IDisposable
         }
 
         Redraw();
+
+        // Names the condition that never came true. It used to fall through and
+        // let the next assertion fail instead, about whatever that happened to be.
+        Assert.True(done(), $"timed out waiting for {what}");
     }
 
     private static void TypeAndEnter(string text)

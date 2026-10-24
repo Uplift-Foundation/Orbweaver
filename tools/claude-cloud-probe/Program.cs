@@ -389,7 +389,7 @@ internal static class Program
             var api = new CountingApi(http);
             var step = await ClaudeCloudSessions.StepAsync(
                 api, new CloudAccountSource(account, coordinator), ClaudeCloudSessions.ArmState.Initial,
-                DateTime.UtcNow, CancellationToken.None, UnmeasuredProbeReadBudget);
+                DateTime.UtcNow, CancellationToken.None, CredentialBudget.Of(UnmeasuredProbeReadBudget));
             board.Apply(account.Root, step, DateTime.UtcNow);
 
             Console.WriteLine($"account   {account.Label}");
