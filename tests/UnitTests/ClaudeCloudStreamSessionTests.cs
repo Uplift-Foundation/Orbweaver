@@ -82,9 +82,16 @@ public partial class ClaudeCloudEventsTests
         // minutes on CI's slowest leg.
         internal TimeSpan Backstop { get; init; } = TimeSpan.FromMinutes(2);
 
-        internal async Task<ChannelWriter<CloudStreamEvent>> NextOpenAsync()
+        internal Task<ChannelWriter<CloudStreamEvent>> NextOpenAsync() => NextOpenAsync(Backstop);
+
+        // The same wait with its own bound, for the one test whose point is the
+        // bound itself. Kept apart from `Backstop` so a short bound can cover the
+        // park it is asserting and not the setup before it: the first open needs a
+        // pool read, and a 200 ms bound over that failed 30 of 30 on a slow runner
+        // while asserting nothing about parking (CB-269).
+        internal async Task<ChannelWriter<CloudStreamEvent>> NextOpenAsync(TimeSpan bound)
         {
-            var backstop = Task.Delay(Backstop);
+            var backstop = Task.Delay(bound);
 
             while (true)
             {
@@ -110,7 +117,7 @@ public partial class ClaudeCloudEventsTests
                 if (backstop.IsCompleted && _opened.Reader.Count == 0 && !run.IsCompleted)
                 {
                     throw new Xunit.Sdk.XunitException(
-                        $"the stream run is still alive after {Backstop} with no new open and no ending " +
+                        $"the stream run is still alive after {bound} with no new open and no ending " +
                         $"(opens so far: {OpenCount}, run status: {run.Status}) — the session has parked");
                 }
             }
@@ -580,14 +587,18 @@ public partial class ClaudeCloudEventsTests
     public async Task AParkedRunFailsByNameRatherThanHanging()
     {
         var api = new RoutingApi(Answer(200, Receipt));
-        var stream = new FakeStream { Backstop = TimeSpan.FromMilliseconds(200) };
+        var stream = new FakeStream();
         var clock = new FakeClock { Hold = true };
         var chat = Sender(api, clock, stream: stream);
         chat.PanelOpened();
 
+        // The first open gets the long backstop: it needs a credential read on the
+        // pool, which this test says nothing about. Only the wait for a *second*
+        // open, which the held clock must prevent, is bounded short.
         (await stream.NextOpenAsync()).TryWrite(EndedWith(503));
 
-        var parked = await Assert.ThrowsAsync<Xunit.Sdk.XunitException>(stream.NextOpenAsync);
+        var parked = await Assert.ThrowsAsync<Xunit.Sdk.XunitException>(
+            () => stream.NextOpenAsync(TimeSpan.FromMilliseconds(200)));
         Assert.Contains("has parked", parked.Message);
         Assert.Contains("opens so far: 1", parked.Message);
         Assert.False(chat.StreamTask!.IsCompleted);
