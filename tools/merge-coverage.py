@@ -26,7 +26,9 @@ unless the checkout it is merging against is the one they were measured in.
 --allow-source-mismatch overrides that, for a deliberate cross-checkout merge.
 
 With --base, also reports coverage restricted to the lines added since that ref
-— which is usually the number you actually want when reviewing a change, since
+(measured from the merge-base with HEAD to the working tree, so staged, unstaged and
+untracked .cs changes are included and tagged, and a --base that is not a commit is
+refused up front) — which is usually the number you actually want when reviewing a change, since
 a file-level percentage is dominated by whatever was already there.
 
 It also reports what has been held *out* of the number by
@@ -37,6 +39,7 @@ excluding whatever refuses to be covered. The exclusions are read back out of
 the sources and printed next to the number, so the number always ships with the
 size of its own blind spot.
 """
+import collections
 import glob
 import hashlib
 import io
@@ -116,9 +119,14 @@ STAMP_NAME = "source-stamp"
 def source_stamp(root):
     """What the working tree is, as coverage.sh stamps it beside its reports.
 
-    HEAD plus a digest of everything uncommitted (tracked changes by content,
-    untracked files by name). coverage.sh writes exactly this with the same git
-    commands piped through shasum/sha1sum, so the two agree byte for byte. CB-244:
+    HEAD plus a digest of everything uncommitted: tracked changes by content,
+    untracked files by name, and untracked .cs files by content too (CB-251 --
+    --base now reads added lines out of those files, so an edit to one while the
+    suites run must change the stamp). The contents go through `git hash-object`
+    on both sides rather than being re-read here, so git's own clean filters
+    apply to both and there is no second implementation to drift. coverage.sh
+    writes exactly this with the same git commands piped through
+    shasum/sha1sum, so the two agree byte for byte. CB-244:
     reports produced at one sha and merged against another checkout's sources
     attribute their lines to the wrong code, and `merged 4` plus fresh timestamps
     cannot see it -- it happened to a real review.
@@ -127,7 +135,13 @@ def source_stamp(root):
         return subprocess.run(["git", "-C", root, *args], capture_output=True, check=True).stdout
 
     head = git("rev-parse", "HEAD").decode().strip()
-    digest = hashlib.sha1(git("diff", "HEAD") + git("ls-files", "--others", "--exclude-standard")).hexdigest()[:16]
+    untracked_cs = subprocess.run(
+        ["git", "-C", root, "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "--", "*.cs"],
+        capture_output=True, check=True).stdout
+    contents = subprocess.run(["git", "-C", root, "hash-object", "--stdin-paths"],
+                              input=untracked_cs, capture_output=True, check=True).stdout
+    digest = hashlib.sha1(git("diff", "HEAD") + git("ls-files", "--others", "--exclude-standard")
+                          + contents).hexdigest()[:16]
     return f"{head}\n{digest}\n"
 
 
@@ -399,14 +413,36 @@ def totals(paths, lines, branches):
     return hit, total, taken, arcs
 
 
-def added_lines(base):
-    diff = subprocess.run(["git", "diff", "-U0", f"{base}...HEAD", "--", "*.cs"],
-                          capture_output=True, text=True, check=True).stdout
+AddedLines = collections.namedtuple("AddedLines", "lines merge_base head uncommitted untracked")
+
+
+def resolve_merge_base(base, root):
+    """The commit --base is measured from, or exit with a reason.
+
+    Refused up front, before anything is printed: a bad --base used to print the
+    whole-app figure and then die with a traceback, which reads as a half-finished
+    run rather than as a refusal.
+    """
+    def git(*args):
+        return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+
+    if git("rev-parse", "--verify", "--quiet", f"{base}^{{commit}}").returncode != 0:
+        sys.exit(f"REFUSING to measure added lines: --base {base} is not a commit in this checkout")
+    found = git("merge-base", base, "HEAD")
+    if found.returncode != 0 or not found.stdout.strip():
+        sys.exit(f"REFUSING to measure added lines: --base {base} has no merge-base with HEAD")
+    return found.stdout.strip()
+
+
+def parse_added(diff_text):
+    """path -> {added line numbers} out of a `git diff -U0` (pure)."""
     added = defaultdict(set)
     current = None
-    for row in diff.splitlines():
-        if row.startswith("+++ b/"):
-            current = row[6:]
+    for row in diff_text.splitlines():
+        if row.startswith("+++ /dev/null"):
+            current = None        # a deleted file's hunks belong to nobody
+        elif row.startswith("+++ b/"):
+            current = row[6:].rstrip("\t")   # git appends a tab when the path has a space
         elif row.startswith("@@") and current:
             match = re.search(r"\+(\d+)(?:,(\d+))?", row)
             if match:
@@ -414,6 +450,47 @@ def added_lines(base):
                 for n in range(start, start + int(match.group(2) or "1")):
                     added[current].add(n)
     return added
+
+
+def count_lines(data):
+    """Lines in a file as git counts them: a last line with no newline still counts."""
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
+def added_lines(base, root):
+    """Lines added between merge-base(base, HEAD) and the WORKING TREE.
+
+    CB-251: this used to diff `base...HEAD`, commits only, so uncommitted work
+    measured as 0/0 = n/a with no warning. The reports are built from the working
+    tree (source_mismatch() refuses any other), so the working tree is what their
+    line numbers belong to; on a clean tree it equals HEAD and the answer is the
+    committed range exactly. Untracked .cs files count wholly, and respect
+    .gitignore. The explicit prefixes keep diff.mnemonicPrefix / diff.noprefix from
+    changing the `+++` lines, --ignore-cr-at-eol keeps a CRLF checkout of an LF blob
+    from counting every line as added, and quotePath=false keeps non-ASCII names
+    readable.
+    """
+    def git(*args):
+        return subprocess.run(["git", "-C", root, "-c", "core.quotePath=false", *args],
+                              capture_output=True, check=True).stdout.decode("utf-8", errors="replace")
+
+    merge_base = resolve_merge_base(base, root)
+    diff = git("diff", "-U0", "--no-color", "--no-ext-diff", "--ignore-cr-at-eol",
+               "--src-prefix=a/", "--dst-prefix=b/", merge_base, "--", "*.cs")
+    added = parse_added(diff)
+    untracked = [p for p in git("ls-files", "--others", "--exclude-standard", "--", "*.cs").splitlines() if p]
+    counted = []
+    for path in untracked:
+        try:
+            with open(os.path.join(root, path), "rb") as f:
+                size = count_lines(f.read())
+        except OSError:
+            continue
+        counted.append(path)
+        added[path] = set(range(1, size + 1))
+    uncommitted = [p for p in git("diff", "--name-only", "HEAD", "--", "*.cs").splitlines() if p]
+    head = git("rev-parse", "HEAD").strip()
+    return AddedLines(added, merge_base, head, uncommitted, counted)
 
 
 def main():
@@ -429,6 +506,8 @@ def main():
         problem = source_mismatch(reports, root)
         if problem:
             sys.exit(problem)
+    if base:
+        resolve_merge_base(base, root)
 
     # The two engines do not agree about [ExcludeFromCodeCoverage] on a *method*,
     # and the disagreement is silent. coverlet honours it — an excluded method's
@@ -523,8 +602,14 @@ def main():
     if not base:
         return
 
-    print(f"\nRESTRICTED TO LINES ADDED SINCE {base}")
-    added = added_lines(base)
+    result = added_lines(base, root)
+    added = result.lines
+    dirty = bool(result.uncommitted or result.untracked)
+    print(f"\nRESTRICTED TO LINES ADDED SINCE {base}" + (", INCLUDING UNCOMMITTED CHANGES" if dirty else ""))
+    if dirty:
+        print(f"  measured: merge-base {result.merge_base[:12]} to the working tree "
+              f"(HEAD {result.head[:12]} plus {len(result.uncommitted)} file(s) with uncommitted .cs changes, "
+              f"{len(result.untracked)} untracked .cs file(s))")
     new_hit = new_total = new_taken = new_arcs = 0
     uncovered = []
     for path in sorted(added):
@@ -542,15 +627,42 @@ def main():
                 got, want = branches[path][number]
                 new_taken += got
                 new_arcs += want
+        tag = "  [untracked]" if path in result.untracked else "  [uncommitted]" if path in result.uncommitted else ""
         print(f"  {path}: {len(added[path])} added, {len(instrumented)} instrumented,"
-              f" {len(covered)} covered ({rate(len(covered), len(instrumented))})")
+              f" {len(covered)} covered ({rate(len(covered), len(instrumented))}){tag}")
         if missed:
             uncovered.append((path, missed))
 
     print(f"\n  NEW CODE  lines {new_hit}/{new_total} = {rate(new_hit, new_total)}"
           f"   branches {new_taken}/{new_arcs} = {rate(new_taken, new_arcs)}")
+    if not new_total:
+        print("  " + why_not_applicable(added, lines, result.merge_base, base))
     for path, missed in uncovered:
         print(f"  UNCOVERED {path}: {missed}")
+
+
+def why_not_applicable(added, lines, merge_base, base):
+    """The one line that says why a lines total of 0 is not an unmeasured run."""
+    everything = {p: n for p, n in added.items() if n}
+    if not everything:
+        return (f"WHY n/a: no .cs line was added between {base} (merge-base {merge_base[:12]}) and the "
+                "working tree, committed, staged, unstaged or untracked. Nothing to measure; "
+                "this is not an unmeasured run.")
+    count = sum(len(n) for n in everything.values())
+    in_app = {p: n for p, n in everything.items() if is_app_file(p)}
+    if not in_app:
+        shown = ", ".join(sorted(everything)[:5])
+        return (f"WHY n/a: {count} .cs line(s) were added, none in app sources "
+                f"(tests/ and obj/ are not part of this number): {shown}")
+    count = sum(len(n) for n in in_app.values())
+    reason = (f"WHY n/a: {count} line(s) were added to app sources and the reports instrument none of them. "
+              "Comments, blank lines, usings and declarations carry no sequence point, and "
+              "[ExcludeFromCodeCoverage] removes code from the reports.")
+    unreported = sorted(p for p in in_app if p not in lines)
+    if unreported:
+        reason += (f" {len(unreported)} file(s) appear in no report at all (see WARNING above): "
+                   f"{', '.join(unreported)}")
+    return reason
 
 
 if __name__ == "__main__":

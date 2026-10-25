@@ -938,8 +938,36 @@ So there is no supported way to fetch such a clip under the asking session and a
 
 **This reverses CB-274's decision not to try another agent's session.** That plan called it "guessing an identity", which was right when the only candidate was a probe. With `workspace` read from `agents.list` the identity is read, not guessed, and the measurement above is what that plan did not have. The app asks about exactly one file, under exactly one session, and never iterates sessions looking for one that says yes.
 
-What the HTTP fetch is authorised as: the app's HTTP media fetches send the gateway's shared-secret bearer, which the gateway scores as `authMethod: token` and grants the CLI-default operator scopes (including admin) — the gateway's rule for that credential, not something the app requests. The one admin-only switch on this route is `explicitAllow` (a POST with `allow=1`), which this app never uses. The folder policy that decides a video does not depend on scope.
+What the HTTP fetch is authorised as: since CB-278, the app's HTTP media fetches send this device's own operator token, which the gateway scores as `authMethod: device-token` with exactly the device's approved scopes. They fall back to the gateway's shared-secret bearer, which the gateway scores as `authMethod: token` with the CLI-default operator scopes (including admin), only while no device token is held. The one admin-only switch on this route is `explicitAllow` (a POST with `allow=1`), which this app never uses. The folder policy that decides a video does not depend on scope, and the clip above fetched identically under both credentials (see the CB-278 section below).
 
 Risk, stated plainly: this rests on `resolveAssistantMediaPolicy` building roots from the named session's agent. A later gateway release could narrow it; the failure mode is the note CB-274 draws today, not a wrong clip, and the tooltip on that note now says which session was asked. Re-measure before trusting this on a newer release.
 
 A clip whose directory survives nowhere on its own conversation page or in its cron run record is recovered from a sibling conversation's history (one bounded `chat.history` page per sibling, a basename seen under two directories refused) — see `RecoverFromSiblingHistoryAsync`.
+
+## The media fetches present the device's own token, not the shared secret (CB-278)
+
+Until CB-278 the HTTP media fetches (`FetchMediaAsync`, `FetchLocalMediaMetaAsync`, the only two callers of `OpenClawSocket.GetAsync`) sent the gateway's shared secret. Over HTTP the gateway scores a shared-secret bearer as the CLI's default operator scopes, which include admin: `http-auth-utils` returns `[...CLI_DEFAULT_OPERATOR_SCOPES]` for it (admin, read, write, approvals, questions, pairing, talk.secrets). So whatever the WebSocket pairing said, the HTTP path held admin, and a read-scope measurement taken over it could not tell read scope from admin. That is the "I happen to be over-privileged" trap.
+
+Measured by the CB-278 architect against openclaw 2026.10.5 on the Mac mini (`curl -sk` on its own loopback, every credential held in a shell variable and never printed). The credentials were the shared secret (48 characters), the mini's Orbweaver device token (43 characters, approved `operator.read`), and the MacBook's (43 characters, `operator.read, operator.write`). The fixture was a 1.4 MB PNG under `agent:main:main`:
+
+| Request | Shared secret | Device token, read-only | Device token, read+write |
+| --- | --- | --- | --- |
+| assistant-media `&meta=1`, then the bytes | 200 `available:true`, then 200 and the whole file | identical | identical |
+| `GET /__openclaw__/workspace-icon/main` (admin-gated) | **404**: through the auth gate, no icon exists | **403** `owner access required` | **403** `owner access required` |
+| `POST …&meta=1&allow=1` (the route's own admin switch) | **200** `available:true` | **403** `Allowing an outside image requires operator.admin` | — |
+| reader scopes in the `mediaTicket` the meta answer mints | `authMethod=token`, the CLI-default set above | `authMethod=device-token`, `[operator.read]` | `[operator.read, operator.write]` |
+| CB-277's clip under its owner's session | `available:true video/mp4`, then the whole file | identical | — |
+
+The controls: no `Authorization` header gets a 401 on both meta and bytes. A bogus bearer gets a 401. A made-up session key gets a 404 under both credentials. The clip under the asking, non-owner session is refused `Not an image` under both, which is CB-277's refusal and is independent of scope. Twelve back-to-back device-token requests all returned 200, and six wrong bearers from the same IP did not lock the device token out afterwards.
+
+**The admin-gate rows are the paired negative control.** The credential the app sent passes two different admin gates. A device token is refused at both, with the right reason, and fetches a picture and a clip identically.
+
+The device token was always available. hello-ok carries `auth.deviceToken` on every connect of an approved device, and the gateway's `ensureDeviceToken` reuses the same token while the approved scopes hold. `ConnectAsync` read `auth.scopes` and dropped it, and `OpenClawIdentity.SetTokenFor` had no caller, so `TokenFor(host)` was always null in production. It now stores the token, rewriting the 0600 file only when the value changed, and both fetches pick it through `OpenClawMediaCredential.Pick`. The shared secret remains the fallback while no device token is held, which is the old behaviour. It is never a retry after the device token is refused, because a 401 falling through to an admin credential would undo the change. A held token is never cleared when a hello-ok omits one. A stale one fails as a 401, the picture does not load, and the next connect that carries a token replaces it.
+
+The `auth` block of a real hello-ok from 2026.10.5, captured over the app's own transport on 2026-10-23 as a device approved for `operator.read`, has seven fields: `method` (`token`), `role` (`operator`), `scopes`, `deviceToken` (43 characters), `recoveryScope` (also 43 characters, credential-shaped and not the device token), `recoveryMigrationAllowed` and `issuedAtMs`. The app reads `scopes` and `deviceToken` and nothing else from it. The integration test's fixture is that capture, scrubbed: both 43-character values are same-length placeholders, and the snapshot's presence and health, which name other machines and the Discord bot, are emptied.
+
+Once a token is stored, the next connect sends it back as `auth.deviceToken`, which the code always did whenever one was held. Over the app's own transport that was measured as harmless: the connect result was byte-identical, and so was the result with a deliberately wrong device token, because the shared secret is what this gateway authenticates a connect by.
+
+Two alternatives were rejected. A gateway-minted media ticket is derived from the meta call's bearer and carries its scopes, so with the shared secret it is an admin-scoped capability that only takes the bearer off the byte fetch. It would also add a meta round trip to every picture and a five-minute expiry to cached urls. Documenting the shared secret as acceptable cost more to justify than the fix.
+
+Not measured: whether a connect would fall back to the device token if the shared secret were rotated, and any gateway other than 2026.10.5.

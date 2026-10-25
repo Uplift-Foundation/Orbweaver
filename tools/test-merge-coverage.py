@@ -451,5 +451,336 @@ class SourceStamp(unittest.TestCase):
         self.assertLess(src.index('> "$OUT/source-stamp"'), src.index('echo "==> tests/UnitTests"'))
 
 
+class AddedLinesWorkingTree(unittest.TestCase):
+    """CB-251: --base measures the working tree, not just commits.
+
+    Every case has a control that would fail if the fixture were wrong. Each repo
+    ignores the developer's and the runner's git config (windows-latest sets
+    autocrlf=true system-wide), and files are written as bytes so Windows adds no CRs.
+    """
+
+    def setUp(self):
+        import subprocess, tempfile
+        from unittest import mock
+        self.tmp = tempfile.mkdtemp(prefix="cb251-")
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        patcher = mock.patch.dict(os.environ, {
+            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        self.g("init", "-q")
+        self.g("symbolic-ref", "HEAD", "refs/heads/main")
+        self.g("config", "core.autocrlf", "false")
+        self.w("A.cs", "a1\na2\na3\n")
+        self.g("add", "-A")
+        self.g("commit", "-q", "-m", "one")
+        self.g("branch", "base")
+
+    def g(self, *a, check=True):
+        import subprocess
+        return subprocess.run(["git", "-C", self.repo, *a], check=check, capture_output=True).stdout.decode()
+
+    def w(self, name, text):
+        path = os.path.join(self.repo, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(text if isinstance(text, bytes) else text.encode("utf-8"))
+
+    def commit_all(self):
+        self.g("add", "-A")
+        self.g("commit", "-q", "-m", "more")
+
+    def measured(self):
+        return merge_coverage.added_lines("base", self.repo)
+
+    def as_dict(self, result):
+        return {p: set(n) for p, n in result.lines.items() if n}
+
+    # 1
+    def test_an_unstaged_edit_is_measured_and_labelled_uncommitted(self):
+        self.w("A.cs", "a1\nNEW\na2\na3\n")
+        got = self.measured()
+        self.assertEqual({"A.cs": {2}}, self.as_dict(got))
+        self.assertEqual(["A.cs"], got.uncommitted)
+        self.commit_all()                                   # control: committed, same lines, no label
+        again = self.measured()
+        self.assertEqual({"A.cs": {2}}, self.as_dict(again))
+        self.assertEqual([], again.uncommitted)
+
+    # 2
+    def test_a_staged_edit_is_measured(self):
+        self.w("A.cs", "a1\na2\na3\nNEW\n")
+        self.g("add", "A.cs")
+        staged = self.as_dict(self.measured())
+        self.assertEqual({"A.cs": {4}}, staged)
+        self.commit_all()
+        self.assertEqual(staged, self.as_dict(self.measured()))
+
+    # 3
+    def test_staged_and_unstaged_edits_to_one_file_combine(self):
+        self.w("A.cs", "a1\na2\na3\nS\n")
+        self.g("add", "A.cs")
+        self.w("A.cs", "U\na1\na2\na3\nS\n")
+        combined = self.as_dict(self.measured())
+        self.assertEqual({"A.cs": {1, 5}}, combined)
+        self.commit_all()
+        self.assertEqual(combined, self.as_dict(self.measured()))
+
+    # 4
+    def test_an_untracked_file_counts_wholly_with_or_without_a_final_newline(self):
+        self.w("U.cs", "x\ny\nz")
+        got = self.measured()
+        self.assertEqual({1, 2, 3}, got.lines["U.cs"])
+        self.assertEqual(["U.cs"], got.untracked)
+        self.w("U.cs", "x\ny\nz\n")
+        self.assertEqual({1, 2, 3}, self.measured().lines["U.cs"])      # not 4
+        self.commit_all()                                               # control: committed, same set
+        self.assertEqual({1, 2, 3}, self.measured().lines["U.cs"])
+        self.assertEqual([], self.measured().untracked)
+
+    def test_count_lines_is_gits_rule(self):
+        self.assertEqual(0, merge_coverage.count_lines(b""))
+        self.assertEqual(3, merge_coverage.count_lines(b"a\nb\nc"))
+        self.assertEqual(3, merge_coverage.count_lines(b"a\nb\nc\n"))
+
+    # 5
+    def test_an_ignored_untracked_file_is_not_counted(self):
+        self.w(".gitignore", "obj/\n")
+        self.g("add", ".gitignore")
+        self.g("commit", "-q", "-m", "ignore")
+        self.w("obj/G.cs", "g\n")
+        self.assertNotIn("obj/G.cs", self.measured().lines)
+        self.w("other/G.cs", "g\n")                         # control: same file, not ignored
+        self.assertEqual({1}, self.measured().lines["other/G.cs"])
+
+    # 6
+    def test_an_intent_to_add_file_is_counted_once_and_is_not_untracked(self):
+        self.w("N.cs", "n1\nn2\n")
+        self.g("add", "-N", "N.cs")
+        got = self.measured()
+        self.assertEqual({1, 2}, got.lines["N.cs"])
+        self.assertEqual([], got.untracked)
+        self.assertEqual(["N.cs"], got.uncommitted)
+
+    # 7
+    def test_a_clean_tree_is_todays_committed_range(self):
+        import subprocess
+        self.w("A.cs", "a1\nNEW\na2\na3\n")
+        self.w("B.cs", "b\n")
+        self.commit_all()
+        today = subprocess.run(["git", "-C", self.repo, "diff", "-U0", "base...HEAD", "--", "*.cs"],
+                               capture_output=True, text=True, check=True).stdout
+        self.assertEqual({p: set(n) for p, n in merge_coverage.parse_added(today).items()},
+                         self.as_dict(self.measured()))
+        self.w("A.cs", "a1\nNEW\nMORE\na2\na3\n")           # control: one uncommitted edit makes them differ
+        self.assertNotEqual({p: set(n) for p, n in merge_coverage.parse_added(today).items()},
+                            self.as_dict(self.measured()))
+
+    # 8
+    def test_it_measures_from_the_merge_base_not_the_base_tip(self):
+        self.w("A.cs", "a1\na2\n")                          # base drops a3; we keep it
+        self.g("checkout", "-q", "base")
+        self.g("add", "-A")
+        self.g("commit", "-q", "-m", "base drops a line")
+        self.g("checkout", "-q", "main")
+        self.assertEqual({}, self.as_dict(self.measured()))
+        raw = merge_coverage.parse_added(self.g("diff", "-U0", "base", "--", "*.cs"))
+        self.assertEqual({"A.cs": {3}}, {p: set(n) for p, n in raw.items()})   # control: two-dot sees it
+
+    # 9
+    def test_diff_prefix_config_does_not_change_the_answer(self):
+        self.w("A.cs", "a1\nNEW\na2\na3\n")
+        plain = self.as_dict(self.measured())
+        merge_base = self.g("merge-base", "base", "HEAD").strip()
+        self.g("config", "diff.mnemonicPrefix", "true")
+        self.assertIn("+++ w/A.cs", self.g("diff", "-U0", merge_base))            # control: config is live
+        self.assertEqual(plain, self.as_dict(self.measured()))
+        self.g("config", "--unset", "diff.mnemonicPrefix")
+        self.g("config", "diff.noprefix", "true")
+        self.assertIn("+++ A.cs", self.g("diff", "-U0", merge_base))
+        self.assertEqual(plain, self.as_dict(self.measured()))
+
+    # 10
+    def test_a_crlf_working_copy_of_an_lf_blob_counts_only_the_new_line(self):
+        self.w("A.cs", b"a1\r\nNEW\r\na2\r\na3\r\n")
+        self.assertEqual({"A.cs": {2}}, self.as_dict(self.measured()))
+        raw = merge_coverage.parse_added(self.g("diff", "-U0", "base", "--", "*.cs"))
+        self.assertEqual({1, 2, 3, 4}, set(raw["A.cs"]))   # control: without the flag every line is "added"
+
+    # 11
+    def test_parse_added_pure_cases(self):
+        spaced = "+++ b/Sp ace.cs\t\n@@ -1,0 +2 @@\n+x\n"
+        self.assertTrue(spaced.splitlines()[0].endswith("\t"))                    # control: the tab is real
+        self.assertEqual({"Sp ace.cs": {2}}, dict(merge_coverage.parse_added(spaced)))
+        deleted = "+++ b/Keep.cs\n@@ -0,0 +1 @@\n+k\n--- a/Gone.cs\n+++ /dev/null\n@@ -1,2 +0,0 @@\n"
+        self.assertEqual({"Keep.cs": {1}}, {p: set(n) for p, n in merge_coverage.parse_added(deleted).items()})
+        misattributed = "+++ b/Keep.cs\n@@ -0,0 +1 @@\n+k\n+++ b/Keep.cs\n@@ -1,2 +9,0 @@\n"
+        self.assertEqual({1}, set(merge_coverage.parse_added(misattributed)["Keep.cs"]))
+        self.assertEqual({}, {p: n for p, n in merge_coverage.parse_added("+++ b/F.cs\n@@ -3,2 +2,0 @@\n").items() if n})
+        self.assertEqual({5}, set(merge_coverage.parse_added("+++ b/F.cs\n@@ -0,0 +5 @@\n")["F.cs"]))
+
+    def test_a_non_ascii_path_round_trips(self):
+        self.w("é.cs", "e\n")
+        self.assertEqual({1}, self.measured().lines["é.cs"])
+        self.commit_all()
+        self.assertEqual({1}, self.measured().lines["é.cs"])
+
+    def test_a_deleted_file_adds_nothing_and_never_leaks_into_its_neighbour(self):
+        self.w("B.cs", "b\n")
+        self.commit_all()
+        self.g("branch", "-f", "base", "HEAD~1")
+        self.g("rm", "-q", "A.cs")
+        self.assertEqual({"B.cs": {1}}, self.as_dict(self.measured()))
+
+    # 12
+    def test_a_bad_base_is_refused_before_anything_is_printed(self):
+        import contextlib, io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as raised:
+            merge_coverage.resolve_merge_base("nosuchref", self.repo)
+        self.assertIn("nosuchref", str(raised.exception.code))
+        self.assertEqual("", out.getvalue())
+        self.assertEqual(self.g("rev-parse", "base").strip(), merge_coverage.resolve_merge_base("base", self.repo))
+
+    def test_an_orphan_base_with_no_merge_base_is_refused(self):
+        self.g("checkout", "-q", "--orphan", "island")
+        self.g("rm", "-rfq", ".")
+        self.w("Z.cs", "z\n")
+        self.g("add", "-A")
+        self.g("commit", "-q", "-m", "island")
+        self.g("checkout", "-q", "main")
+        with self.assertRaises(SystemExit) as raised:
+            merge_coverage.resolve_merge_base("island", self.repo)
+        self.assertIn("no merge-base", str(raised.exception.code))
+
+    def test_main_refuses_a_bad_base_with_empty_stdout(self):
+        import contextlib, io
+        report = self.report({"A.cs": {1: 1}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            self.run_main("nosuchref", report)
+        self.assertEqual("", out.getvalue())
+        self.assertIn("WHOLE APP", self.run_main("base", report))      # control: a good base gets through
+
+    # 13
+    def report(self, lines_by_file, name="report"):
+        """A one-file cobertura report for this repo: {file: {line: hits}}."""
+        rows = "".join(
+            f'<class filename="{f}"><lines>' + "".join(f'<line number="{n}" hits="{h}"/>' for n, h in ls.items())
+            + "</lines></class>" for f, ls in lines_by_file.items())
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "coverage.cobertura.xml")
+        with open(path, "w") as f:
+            f.write(f'<coverage><sources><source>{os.path.realpath(self.repo)}</source></sources><packages><package><classes>'
+                    f'{rows}</classes></package></packages></coverage>')
+        return path
+
+    def run_main(self, base, report):
+        import contextlib, io
+        out, old_argv, old_cwd = io.StringIO(), sys.argv, os.getcwd()
+        os.chdir(self.repo)
+        sys.argv = ["merge-coverage.py", "--base", base, "--expect", "1", report]
+        try:
+            with contextlib.redirect_stdout(out):
+                merge_coverage.main()
+        finally:
+            sys.argv = old_argv
+            os.chdir(old_cwd)
+        return out.getvalue()
+
+    def test_main_end_to_end_on_a_dirty_tree_then_the_same_work_committed(self):
+        self.w("A.cs", "a1\nNEW\na2\na3\n")                 # uncommitted: line 2 added, covered
+        self.w("U.cs", "u1\nu2\n")                          # untracked: line 1 covered, line 2 missed
+        report = self.report({"A.cs": {1: 1, 2: 1, 3: 1, 4: 1}, "U.cs": {1: 1, 2: 0}})
+        dirty = self.run_main("base", report)
+        self.assertIn("RESTRICTED TO LINES ADDED SINCE base, INCLUDING UNCOMMITTED CHANGES\n", dirty)
+        self.assertRegex(dirty, r"measured: merge-base [0-9a-f]{12} to the working tree \(HEAD [0-9a-f]{12} "
+                                r"plus 1 file\(s\) with uncommitted \.cs changes, 1 untracked \.cs file\(s\)\)")
+        self.assertIn("A.cs: 1 added, 1 instrumented, 1 covered (100.0%)  [uncommitted]", dirty)
+        self.assertIn("U.cs: 2 added, 2 instrumented, 1 covered (50.0%)  [untracked]", dirty)
+        self.assertIn("NEW CODE  lines 2/3 = 66.7%", dirty)
+        self.commit_all()
+        clean = self.run_main("base", report)
+        self.assertIn("\nRESTRICTED TO LINES ADDED SINCE base\n", clean)
+        self.assertNotIn("measured:", clean)
+        self.assertNotIn("[uncommitted]", clean)
+        self.assertNotIn("[untracked]", clean)
+        self.assertEqual([l for l in dirty.splitlines() if "NEW CODE" in l],
+                         [l for l in clean.splitlines() if "NEW CODE" in l])
+
+    def test_each_why_na_reason_appears_and_goes_away_when_a_line_is_instrumented(self):
+        # (a) nothing added at all
+        report = self.report({"A.cs": {1: 1}})
+        out = self.run_main("base", report)
+        self.assertIn("lines 0/0 = n/a", out)
+        self.assertIn("WHY n/a: no .cs line was added between base", out)
+        # (b) added, but outside the app
+        self.w("tests/T.cs", "t\n")
+        out = self.run_main("base", report)
+        self.assertIn("WHY n/a: 1 .cs line(s) were added, none in app sources", out)
+        self.assertIn("tests/T.cs", out)
+        # (c) added to the app, nothing instrumented, and one file in no report
+        self.w("A.cs", "a1\na2\na3\n// comment\n")
+        self.w("Q.cs", "q\n")
+        out = self.run_main("base", report)
+        self.assertIn("WHY n/a: 2 line(s) were added to app sources and the reports instrument none of them", out)
+        self.assertIn("1 file(s) appear in no report at all (see WARNING above): Q.cs", out)
+        # controls: an instrumented added line removes the WHY and the n/a
+        out = self.run_main("base", self.report({"A.cs": {1: 1, 4: 1}}, name="r2"))
+        self.assertNotIn("WHY n/a", out)
+        self.assertIn("NEW CODE  lines 1/1 = 100.0%", out)
+
+    def test_a_bare_zero_over_zero_lines_figure_never_prints_without_a_why(self):
+        report = self.report({"A.cs": {1: 1}})
+        outputs = [self.run_main("base", report)]
+        self.w("tests/T.cs", "t\n")
+        outputs.append(self.run_main("base", report))
+        self.w("A.cs", "a1\na2\na3\n// c\n")
+        outputs.append(self.run_main("base", report))
+        for out in outputs:
+            rows = out.splitlines()
+            at = [i for i, r in enumerate(rows) if "NEW CODE  lines 0/0 = n/a" in r]
+            self.assertEqual(1, len(at))
+            self.assertTrue(rows[at[0] + 1].lstrip().startswith("WHY n/a:"), out)
+        self.assertEqual(0, sum("WHY n/a" in r for r in self.run_main("base", self.report({"A.cs": {1: 1, 4: 1}}, name="r3")).splitlines()))
+
+    # 14
+    def test_editing_an_untracked_cs_file_changes_the_stamp(self):
+        self.w("U.cs", "u\n")
+        before = merge_coverage.source_stamp(self.repo)
+        self.w("U.cs", "u\n")                               # control: same bytes, same stamp
+        self.assertEqual(before, merge_coverage.source_stamp(self.repo))
+        self.w("U.cs", "edited\n")
+        self.assertNotEqual(before, merge_coverage.source_stamp(self.repo))
+
+    def test_the_shell_stamp_agrees_with_python_when_an_untracked_file_was_edited(self):
+        import re, shutil, subprocess
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash")
+        with open(os.path.join(_HERE, "coverage.sh")) as f:
+            src = f.read()
+        block = re.search(r"^# --- source-stamp begin\n(.*?)^# --- source-stamp end$", src, re.M | re.S).group(1)
+        pick = re.search(r"^if command -v shasum .*; fi$", src, re.M).group(0)
+        os.makedirs(os.path.join(self.tmp, "o"))
+        out_dir = os.path.join(self.tmp, "o").replace("\\", "/")
+        repo = self.repo.replace("\\", "/")
+        digests = []
+        for content in ("u1\n", "u2 edited\n"):
+            self.w("U.cs", content)
+            subprocess.run([bash, "-c", f'set -euo pipefail; cd "{repo}"; OUT="{out_dir}"; {pick}\n{block}'],
+                           check=True, capture_output=True)
+            with open(os.path.join(self.tmp, "o", "source-stamp")) as f:
+                shell = f.read()
+            self.assertEqual(merge_coverage.source_stamp(self.repo), shell)
+            digests.append(shell)
+        self.assertNotEqual(digests[0], digests[1])
+
+
 if __name__ == "__main__":
     unittest.main()

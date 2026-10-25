@@ -3809,8 +3809,9 @@ namespace Orbweaver
         }
 
         // Pictures sent in a conversation. The gateway serves them from its own
-        // HTTP endpoint, authorised with the same gateway token the socket
-        // uses, and they arrive as ordinary bytes.
+        // HTTP endpoint, authorised with this device's own token since CB-278
+        // (the shared gateway token the socket uses only while none is held),
+        // and they arrive as ordinary bytes.
         //
         // Cached by url: a transcript is re-read every time its panel opens, and
         // refetching a megabyte per image per open would be wasteful and slow
@@ -3839,8 +3840,13 @@ namespace Orbweaver
             }
 
             var host = OrbweaverSettings.OpenClawHost;
-            var token = OpenClawIdentity.GatewayTokenFor(host);
-            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrEmpty(token)) return null;
+
+            // CB-278: this device's own token over the shared secret, falling
+            // back to the shared secret only while no device token is held —
+            // see OpenClawMediaCredential for why, and what the fallback costs.
+            // Nothing else here chooses a credential; a source test pins that.
+            var (token, _) = OpenClawMediaCredential.For(host);
+            if (token is null) return null;
 
             byte[]? bytes = null;
 
@@ -3934,8 +3940,13 @@ namespace Orbweaver
             }
 
             var host = OrbweaverSettings.OpenClawHost;
-            var token = OpenClawIdentity.GatewayTokenFor(host);
-            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrEmpty(token)) return null;
+
+            // CB-278: this device's own token over the shared secret, falling
+            // back to the shared secret only while no device token is held —
+            // see OpenClawMediaCredential for why, and what the fallback costs.
+            // Nothing else here chooses a credential; a source test pins that.
+            var (token, _) = OpenClawMediaCredential.For(host);
+            if (token is null) return null;
 
             string? json = null;
 

@@ -18,8 +18,8 @@
 
 #define AppName "Orbweaver"
 ; The name every install before the rename used. Only the upgrade cleanup below
-; refers to it: the Start Menu group, Startup shortcut, firewall rule and
-; keep-alive task that an old install left behind are all keyed on it.
+; refers to it: the Start Menu group, Startup shortcut and keep-alive task
+; that an old install left behind are all keyed on it.
 #define LegacyAppName "Claude Buddy"
 #define AppPublisher "Kawika Miller and Repo Owner"
 #define AppUrl "https://github.com/Uplift-Foundation/Orbweaver"
@@ -174,59 +174,31 @@ Name: "{group}\Wire up agent hooks"; \
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: startup
 
 [Run]
-; Let the peer link listen without the first experience being a silent block.
+; This installer adds no firewall rule, on purpose (CB-261).
 ;
-; Orbweaver connects directly to your other machines running it, which means
-; listening on a port — the first time this app has ever done so. Windows
-; Firewall would otherwise either drop the packets with no visible reason or
-; raise a prompt behind a menu-bar-only app that has no window to attach it to.
-; Neither reads as "the firewall did this"; both read as "the other machine
-; isn't there", which is the same class of confusion NSLocalNetworkUsageDescription
-; heads off on macOS.
+; The peer link listens on a port, and a per-user install (PrivilegesRequired=lowest,
+; with no override, so never an administrative install) cannot add a rule without
+; elevation. It does not need to: the peer link is opt-in (PeerLinkEnabled defaults
+; to off), so Windows Firewall's own first-listen prompt arrives exactly when a user
+; turns it on, which is the right moment to ask. Pre-opening a port for a feature
+; that is off would be the wrong default even where it could be done.
 ;
-; Private profile only: a home or work network, never a public one. runhidden so
-; an install does not flash a console. Failure is deliberately not fatal — the
-; app still runs, and a user who declines or lacks the rights gets a link that
-; cannot reach out rather than an install that stops.
+; History, because it explains debris that may still exist. Releases up to
+; v0.5.8-beta ran netsh here ungated. From a desktop launch it exited 1 and changed
+; nothing, but a Setup that inherited an elevated token (an administrator SSH
+; session, say) succeeded, and the add-only entry stacked one legacy-named rule per
+; upgrade. CB-213 then gated the entries on IsAdminInstallMode, which this installer
+; can never be in, so they were dead code; CB-261 removed them.
 ;
-; Only in an administrative install. Adding a firewall rule needs elevation, and
-; this installer defaults to PrivilegesRequired=lowest, a per-user install, where
-; the step could only fail: netsh exited 1 on every per-user install measured on
-; the Windows box. That exit code in the install log was also misread as Setup
-; itself failing (CB-213). Skipping it there changes nothing about what the
-; install achieves, since the rule could not be added either way; a per-user
-; install is left to Windows Firewall's own first-listen prompt.
-;
-; Delete, delete, add. The first drops the rule an install from before the
-; rename added under the old name, which would otherwise sit beside the new one
-; naming the same exe. The second is what makes a re-run idempotent: netsh
-; happily adds a second rule with the same name, so without it every upgrade
-; stacks another copy. A delete of a rule that is not there exits 1, which is
-; the expected outcome and, like the add, never fails the install.
-Filename: "{sys}\netsh.exe"; \
-  Parameters: "advfirewall firewall delete rule name=""{#LegacyAppName} peer link"""; \
-  Flags: runhidden skipifdoesntexist; Check: IsAdminInstallMode
-Filename: "{sys}\netsh.exe"; \
-  Parameters: "advfirewall firewall delete rule name=""{#AppName} peer link"""; \
-  Flags: runhidden skipifdoesntexist; Check: IsAdminInstallMode
-Filename: "{sys}\netsh.exe"; \
-  Parameters: "advfirewall firewall add rule name=""{#AppName} peer link"" dir=in action=allow program=""{app}\{#AppExe}"" enable=yes profile=private"; \
-  Flags: runhidden skipifdoesntexist; Check: IsAdminInstallMode; StatusMsg: "Allowing {#AppName} through the firewall..."
+; Leftover legacy-named rules are not removed by the installer, also on purpose: an
+; ungated delete would bring back CB-213's exit-1-in-the-log problem and would only
+; work by the accident of an elevated parent. They are inert (they name an exe that
+; no longer exists) and are cleared once by hand, from an administrator prompt:
+; netsh advfirewall firewall delete rule name="<the pre-rename name> peer link"
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-; The firewall rule goes when the app does. Leaving it behind would name a
-; program that is no longer installed, which is exactly the kind of debris a
-; user cannot interpret later. Only where an administrative install could have
-; added it; see the add rule above. Both names, forever: an install upgraded
-; from Claude Buddy on which the install-time delete above did not run (or
-; failed) still holds the old one.
-Filename: "{sys}\netsh.exe"; \
-  Parameters: "advfirewall firewall delete rule name=""{#AppName} peer link"""; \
-  Flags: runhidden skipifdoesntexist; RunOnceId: "removefirewallrule"; Check: IsAdminInstallMode
-Filename: "{sys}\netsh.exe"; \
-  Parameters: "advfirewall firewall delete rule name=""{#LegacyAppName} peer link"""; \
-  Flags: runhidden skipifdoesntexist; RunOnceId: "removelegacyfirewallrule"; Check: IsAdminInstallMode
+; No firewall step here either: the installer never adds a rule (see [Run]).
 ; Take the hook entries back out of every CLI they were wired into, or the CLI
 ; keeps invoking a script that is about to be deleted and logs a hook error on
 ; every event. runhidden because an uninstall should not flash a console window.
@@ -234,8 +206,8 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\install-hooks.ps1"" -Uninstall"; \
   Flags: runhidden; RunOnceId: "unwirehooks"
 ; CB-49: the crash keep-alive task, if one was ever registered, goes with the
-; app -- left behind it would name an exe that no longer exists, which is the
-; same kind of debris the firewall rule above is removed to avoid. Unlike
+; app -- left behind it would name an exe that no longer exists, which is debris
+; a user cannot interpret later. Unlike
 ; install time, uninstall doesn't need to check the setting first: the app is
 ; leaving either way, so the task comes out unconditionally -- under both its
 ; names, since the pre-rename one may survive an upgrade whose reconcile could

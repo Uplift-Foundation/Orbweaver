@@ -74,7 +74,18 @@ namespace Orbweaver
             //
             // Null keeps the old prefix test, so nothing that has not been moved
             // across yet changes behaviour.
-            Func<string, bool>? PeerAllowed = null);
+            Func<string, bool>? PeerAllowed = null,
+
+            // CB-252: the user-level config dirs (the ones holding a persona's
+            // CLAUDE.md) a roster is resolved against. Null means what the app
+            // has always done, ask the machine via LocalPersona.UserConfigDirs.
+            // A seam because that call reads CLAUDE_CONFIG_DIR and the real
+            // home, so a test that did not pass one resolved against whatever
+            // persona the developer running it had, and went red on exactly
+            // the machines that have one. SessionManager's userConfigDirs seam
+            // (CB-143) is the precedent. Read once per roster build, never per
+            // entry.
+            Func<IReadOnlyList<string>>? UserConfigDirs = null);
 
         private readonly string _account;
         private readonly Seams _seams;
@@ -390,6 +401,10 @@ namespace Orbweaver
                 ? agents.Select(a => a.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
                 : asked!;
 
+            // CB-252: once per roster, so every entry in it is resolved against
+            // the same answer.
+            var userConfigDirs = (_seams.UserConfigDirs ?? (() => LocalPersona.UserConfigDirs()))();
+
             var entries = new List<MirrorProtocol.MirrorRosterEntry>();
 
             MirrorLog.Say("hello",
@@ -451,7 +466,7 @@ namespace Orbweaver
                     status.State,
                     _seams.CanDeliver?.Invoke(status),
                     RouteFor(resolved.Value.SessionId),
-                    ResolvePeerPersona(status, picturesById)));
+                    ResolvePeerPersona(status, userConfigDirs, picturesById)));
             }
 
             // AgentRoster is Claude Code's authority, not a universal session
@@ -474,7 +489,7 @@ namespace Orbweaver
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         Commands(status), status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
-                        ResolvePeerPersona(status, picturesById)));
+                        ResolvePeerPersona(status, userConfigDirs, picturesById)));
                 }
             }
 
@@ -501,7 +516,7 @@ namespace Orbweaver
                         HasTranscript(status), _seams.CanType(status),
                         string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         Commands(status), status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
-                        ResolvePeerPersona(status, picturesById)));
+                        ResolvePeerPersona(status, userConfigDirs, picturesById)));
                 }
             }
 
@@ -546,12 +561,12 @@ namespace Orbweaver
         // only when the file changes, and is sent as its id to an asker that can
         // fetch by id (picturesById) and as bytes to one that cannot.
         internal static MirrorProtocol.PeerPersona? ResolvePeerPersona(
-            SessionStatus status, bool picturesById = false)
+            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById = false)
         {
             if (!status.IsLocalCli || string.IsNullOrWhiteSpace(status.Cwd)) return null;
 
             var candidates = LocalPersona.Candidates(
-                status.Cwd, LocalPersona.UserConfigDirs(), status.Source, status.Agent);
+                status.Cwd, userConfigDirs, status.Source, status.Agent);
             var local = LocalPersona.ResolveFrom(candidates, status.Cwd);
             var picture = local.AvatarPath is null ? null : PeerAvatarStore.Shared.At(local.AvatarPath);
             var peer = picture is not { } found
