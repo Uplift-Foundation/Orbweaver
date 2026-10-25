@@ -63,5 +63,6 @@
          be a second source of truth for the thing this file exists to keep
          single. -->
     <Compile Include="..\ArrangementTests\ArrangementSweep.cs" />
+    <Compile Include="..\UnitTests\TestBudgets.cs" Link="TestBudgets.cs" />
   </ItemGroup>
 </Project>

@@ -46,7 +46,7 @@ namespace Orbweaver
         // source it was handed: a second source would be a second Keychain
         // consent surface, and would not know whose login this session needs.
         internal static async Task<CloudSendAttempt> SendUserTurnAsync(
-            ICloudApi api, ICloudCredentialSource credentials, TimeSpan readBudget,
+            ICloudApi api, ICloudCredentialSource credentials, CredentialBudget readBudget,
             string sessionId, string text, Func<TimeSpan, CancellationToken, Task> delay,
             CancellationToken ct)
         {

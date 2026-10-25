@@ -57,8 +57,23 @@ public class CloudTurnSenderTests
     private static Task<CloudSendAttempt> Send(
         ICloudApi api, ICloudCredentialSource credentials, string id = SessionId,
         Func<TimeSpan, CancellationToken, Task>? delay = null) =>
-        CloudTurnSender.SendUserTurnAsync(api, credentials, TimeSpan.FromSeconds(5), id, "hello there",
+        CloudTurnSender.SendUserTurnAsync(api, credentials, TestBudgets.AlwaysAnswers, id, "hello there",
             delay ?? NoWait, CancellationToken.None);
+
+    // The sender races the read against the budget it was handed and no other.
+    [Fact]
+    public async Task TheSendReadsThroughTheBudgetItWasHanded()
+    {
+        var (budget, calls) = TestBudgets.Spy();
+        var credentials = new FakeCredentials();
+
+        var attempt = await CloudTurnSender.SendUserTurnAsync(new ScriptedApi(Ok), credentials, budget,
+            SessionId, "hello there", NoWait, CancellationToken.None);
+
+        Assert.Equal(CloudSendResult.Sent, attempt.Result);
+        Assert.Equal(1, credentials.Reads);
+        Assert.Equal(1, calls());
+    }
 
     [Fact]
     public async Task ATwoHundredIsSentAndCarriesTheUuidTheEventWentOutWith()

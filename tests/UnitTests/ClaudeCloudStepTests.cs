@@ -64,9 +64,16 @@ public class ClaudeCloudStepTests
             return "stamp-1";
         }
 
+        // Completed once the abandoned read is actually running. With a budget that
+        // has already expired the arm can return before the pool has started it,
+        // so a test that counts reads waits for this rather than assuming.
+        internal TaskCompletionSource Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public CredentialRead Read()
         {
             Interlocked.Increment(ref Reads);
+            Entered.TrySetResult();
             _gate.Wait();
             return new CredentialRead(CredentialOutcome.Found, Token, null, "too late");
         }
@@ -786,9 +793,15 @@ public class ClaudeCloudStepTests
         // removed, this test hung rather than failing, which is precisely the
         // failure shape it was written to rule out. Verified afterwards by
         // removing the budget again and watching it fail in ten seconds.
+        var (budget, expire) = TestBudgets.Manual();
         var step = Task.Run(() => ClaudeCloudSessions.StepAsync(api, credentials,
             ClaudeCloudSessions.ArmState.Initial, Now, CancellationToken.None,
-            readBudget: TimeSpan.FromMilliseconds(50)));
+            readBudget: budget));
+
+        // Expired by hand once the read is actually running: an expiry that beat
+        // the pool to it would leave Reads at 0 for the assertion below (CB-269).
+        await credentials.Entered.Task;
+        expire.SetResult();
 
         var finished = await Task.WhenAny(step, Task.Delay(TimeSpan.FromSeconds(10)));
 
@@ -811,7 +824,7 @@ public class ClaudeCloudStepTests
 
         var step = await ClaudeCloudSessions.StepAsync(api, credentials,
             ClaudeCloudSessions.ArmState.Initial, Now, CancellationToken.None,
-            readBudget: TimeSpan.FromMilliseconds(50));
+            readBudget: TestBudgets.ExpiresAtOnce);
 
         Assert.Equal(ClaudeCliCredentials.Describe(CredentialOutcome.NoAnswer), step.Status);
         Assert.Contains("did not answer", step.Status, StringComparison.Ordinal);
@@ -831,7 +844,7 @@ public class ClaudeCloudStepTests
 
         var step = await ClaudeCloudSessions.StepAsync(api, credentials,
             ClaudeCloudSessions.ArmState.Initial, Now, CancellationToken.None,
-            readBudget: TimeSpan.FromMilliseconds(50));
+            readBudget: TestBudgets.ExpiresAtOnce);
 
         Assert.True(step.Next.Halted);
         Assert.Null(step.Next.Backoff);
@@ -850,12 +863,19 @@ public class ClaudeCloudStepTests
         var api = new FakeApi(_ => throw new InvalidOperationException("must not be called"));
         using var credentials = new HangingCredentials();
 
-        var first = await ClaudeCloudSessions.StepAsync(api, credentials,
+        var (budget, expire) = TestBudgets.Manual();
+        var firstStep = ClaudeCloudSessions.StepAsync(api, credentials,
             ClaudeCloudSessions.ArmState.Initial, Now, CancellationToken.None,
-            readBudget: TimeSpan.FromMilliseconds(50));
+            readBudget: budget);
+
+        // The budget runs out only once the read has started, so "one read" is a
+        // count and not a race with the pool.
+        await credentials.Entered.Task;
+        expire.SetResult();
+        var first = await firstStep;
 
         var second = await ClaudeCloudSessions.StepAsync(api, credentials, first.Next, Now,
-            CancellationToken.None, readBudget: TimeSpan.FromMilliseconds(50));
+            CancellationToken.None, readBudget: TestBudgets.ExpiresAtOnce);
 
         Assert.Equal(1, credentials.Reads);
         Assert.Equal(2, credentials.Stamps);
@@ -880,6 +900,20 @@ public class ClaudeCloudStepTests
         Assert.True(ClaudeCliCredentials.UnmeasuredReadBudget >= TimeSpan.FromSeconds(30));
     }
 
+    // The arm races its read against the budget it was handed and no other.
+    [Fact]
+    public async Task TheStepReadsThroughTheBudgetItWasHanded()
+    {
+        var (budget, calls) = TestBudgets.Spy();
+        var credentials = new FakeCredentials();
+        var api = new FakeApi(_ => Ok(Envelope(new[] { Row("session_a") })));
+
+        await ClaudeCloudSessions.StepAsync(api, credentials, ClaudeCloudSessions.ArmState.Initial,
+            Now, CancellationToken.None, readBudget: budget);
+
+        Assert.Equal(1, calls());
+    }
+
     // A read that returns inside its budget is completely unaffected — the
     // negative control, without which every test above is equally consistent with
     // the budget having broken the ordinary path.
@@ -890,7 +924,7 @@ public class ClaudeCloudStepTests
 
         var step = await ClaudeCloudSessions.StepAsync(api, new FakeCredentials(),
             ClaudeCloudSessions.ArmState.Initial, Now, CancellationToken.None,
-            readBudget: TimeSpan.FromSeconds(30));
+            readBudget: TestBudgets.AlwaysAnswers);
 
         Assert.False(step.Next.Halted);
         Assert.Single(step.Snapshot!);
@@ -906,7 +940,7 @@ public class ClaudeCloudStepTests
 
         var step = await ClaudeCloudSessions.StepAsync(api, new ThrowingCredentials(),
             ClaudeCloudSessions.ArmState.Initial, Now, CancellationToken.None,
-            readBudget: TimeSpan.FromSeconds(5));
+            readBudget: TestBudgets.AlwaysAnswers);
 
         Assert.Empty(api.Paths);
         Assert.DoesNotContain("SENSITIVE-EXCEPTION-TEXT", step.Status, StringComparison.Ordinal);

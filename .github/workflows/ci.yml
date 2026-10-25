@@ -28,6 +28,14 @@ jobs:
             rid: win-x64
     runs-on: ${{ matrix.os }}
 
+    # CB-269: a backstop above every step's own limit, so a hang the step
+    # timeouts somehow miss still ends in about an hour rather than at GitHub's
+    # six. The step limits below are what normally fire; sized from run
+    # 39505745439's green attempt (step times, build included): Unit 132/134 s,
+    # Integration 62/54 s, UI 128/68 s per attempt with up to three attempts,
+    # Screenshots 518/495 s.
+    timeout-minutes: 75
+
     steps:
       - uses: actions/checkout@v7
 
@@ -109,11 +117,22 @@ jobs:
       # needs bash (this leg, on macOS) and HookScriptPs1Tests needs pwsh
       # (the Windows leg) — the other half reports as Skipped rather than
       # silently not existing.
+      #
+      # CB-269: a silent hang here once printed nothing after "A total of 1 test
+      # files matched" for six hours, until GitHub cancelled the job. Two limits
+      # now, in order. `--blame-hang-timeout 5m` fires first and kills the test
+      # host, printing "The test running when the crash occurred" with the names
+      # in flight and leaving a Sequence_*.xml that the upload step below keeps;
+      # `--blame-hang-dump-type none` because a dump needs createdump, which is
+      # not verified on the macOS arm64 runner. `timeout-minutes` is the backstop
+      # for a hang before the first test starts, which blame cannot see.
       - name: Unit tests (xUnit)
-        run: dotnet test tests/UnitTests -c Release --logger "trx;LogFileName=unit-tests.trx" --results-directory TestResults
+        timeout-minutes: 15
+        run: dotnet test tests/UnitTests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none --logger "trx;LogFileName=unit-tests.trx" --results-directory TestResults
 
       - name: Integration tests (xUnit)
-        run: dotnet test tests/IntegrationTests -c Release --logger "trx;LogFileName=integration-tests.trx" --results-directory TestResults
+        timeout-minutes: 10
+        run: dotnet test tests/IntegrationTests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none --logger "trx;LogFileName=integration-tests.trx" --results-directory TestResults
 
       # xUnit v3 now (see tests/UiTests/Orbweaver.UiTests.csproj's own
       # comment for why), which drops the old VSTest-hosted `dotnet test`
@@ -212,7 +231,11 @@ jobs:
       # form (confirmed locally — each works alone with `=`, combining two
       # does not), so `=` is avoided here entirely rather than relied on for
       # some flags and not others.
+      # `timeout-minutes` only: Microsoft.Testing.Platform's hang dump needs a
+      # separate extension package, and the mtp-v1 pin on these projects makes
+      # adding one its own change (CB-269's follow-up).
       - name: UI tests (xUnit, headless)
+        timeout-minutes: 20
         shell: pwsh
         run: |
           # Real total measured on CB-134's branch is 1081 — set below
@@ -268,6 +291,7 @@ jobs:
       # the full explanation of why `dotnet test`'s own exit code can't be
       # trusted alone and why the filename options are space-separated.
       - name: UI screenshots
+        timeout-minutes: 30
         shell: pwsh
         run: |
           # Real total on CB-134's branch is 111 — set below that so the
@@ -328,7 +352,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.rid }}
-          path: TestResults/*.trx
+          path: |
+            TestResults/*.trx
+            TestResults/**/Sequence_*.xml
           if-no-files-found: error
           retention-days: 14
 

@@ -341,7 +341,7 @@ namespace Orbweaver
             ArmState state,
             DateTime now,
             CancellationToken ct,
-            TimeSpan? readBudget = null)
+            CredentialBudget? readBudget = null)
         {
             var stamp = credentials.Stamp();
 
@@ -364,7 +364,7 @@ namespace Orbweaver
             // at a time across the whole process, and chooses what to read only
             // once it holds the gate. That happens inside ReadWithinAsync.
             var read = await ClaudeCliCredentials.ReadWithinAsync(
-                credentials, readBudget ?? ClaudeCliCredentials.UnmeasuredReadBudget, ct)
+                credentials, readBudget ?? CredentialBudget.Unmeasured, ct)
                 .ConfigureAwait(false);
 
             if (read.Outcome != CredentialOutcome.Found || read.AccessToken is not { } token)

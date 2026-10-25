@@ -391,12 +391,16 @@ public partial class ClaudeCloudEventsTests
     public async Task AStoreThatNeverAnswersLeavesThePanelInErrorRatherThanLoadingForever()
     {
         var api = new FakeApi(_ => throw new InvalidOperationException("must not be called"));
-        using var gate = new ManualResetEventSlim(false);
+
+        // Disposed at the end, which is what lets the abandoned read's pool thread
+        // go. It used to park for the rest of the process, and a pool with enough
+        // of those left in it has nobody to fire a timer (CB-269).
+        using var credentials = new HangingCredentials();
 
         var chat = new ClaudeCloudChatSession(Session(), api,
-            new HangingCredentials(gate), action => action())
+            credentials, action => action())
         {
-            ReadBudget = TimeSpan.FromMilliseconds(50),
+            ReadBudget = TestBudgets.ExpiresAtOnce,
         };
 
         // Task.Run for the reason the arm's equivalent test spells out: an async
@@ -417,11 +421,14 @@ public partial class ClaudeCloudEventsTests
     // Blocks in Read and answers instantly in Stamp, which is the measured
     // asymmetry — the data query hangs with no window server session and the
     // attributes-only query does not.
-    private sealed class HangingCredentials : ICloudCredentialSource
+    private sealed class HangingCredentials : ICloudCredentialSource, IDisposable
     {
-        private readonly ManualResetEventSlim _gate;
+        private readonly ManualResetEventSlim _gate = new(false);
 
-        internal HangingCredentials(ManualResetEventSlim gate) => _gate = gate;
+        // Releases the parked read. The gate itself is deliberately not disposed:
+        // the thread being freed may still be inside Wait, and disposing under it
+        // would turn a clean exit into an ObjectDisposedException nobody reads.
+        public void Dispose() => _gate.Set();
 
         public string? Stamp() => "stamp-1";
 
@@ -602,12 +609,13 @@ public partial class ClaudeCloudEventsTests
 
     private static ClaudeCloudChatSession Sender(ICloudApi api, FakeClock? clock = null,
         ICloudCredentialSource? creds = null, ClaudeCloudSessions.Session? session = null,
-        bool enabled = true, ICloudEventStream? stream = null)
+        bool enabled = true, ICloudEventStream? stream = null, CredentialBudget? budget = null)
     {
         var tick = clock ?? new FakeClock();
         var chat = new ClaudeCloudChatSession(session ?? Row(), api, creds ?? new CountingCredentials(),
             action => action())
         {
+            ReadBudget = budget ?? TestBudgets.AlwaysAnswers,
             Delay = tick.Delay,
             Enabled = () => enabled,
             Stream = stream,
