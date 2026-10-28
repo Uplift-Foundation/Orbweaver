@@ -20,6 +20,7 @@ public class GroupBackdropsMotionTests : IDisposable
     {
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
+        GroupBackdrops.ResetHitTestState();
         GroupBackdrops.SetNamesVisible(false);
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.SetArranged(true);
@@ -37,6 +38,7 @@ public class GroupBackdropsMotionTests : IDisposable
     {
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
+        GroupBackdrops.ResetHitTestState();
         GroupBackdrops.SetNamesVisible(false);
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.PreviewPair(null);

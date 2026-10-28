@@ -100,6 +100,10 @@ namespace Orbweaver
         private static readonly List<OrbWindow> Loose = new();
         private static string? _highlight;
         private static Point? _lastCursor;
+
+        // Forgets where the cursor last was, so the next poll classifies afresh. For tests,
+        // which share these statics between cases.
+        internal static void ResetHitTestState() => _lastCursor = null;
         private static DispatcherTimer? _timer;
 
         // Raised on a left-button press inside a silhouette (never in the corners
