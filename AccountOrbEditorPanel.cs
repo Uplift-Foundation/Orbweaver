@@ -33,6 +33,10 @@ namespace Orbweaver
         // preview shows what the orb will show rather than a bigger flattering one.
         internal const double PreviewSize = 28;
 
+        // A name goes into settings.json, a tooltip and the usage card; nothing
+        // there is meant for a paragraph.
+        internal const int MaxNameLength = 64;
+
         private readonly AccountOrbIdentity _account;
 
         internal TextBox InitialsBox { get; }
@@ -54,7 +58,7 @@ namespace Orbweaver
             Spacing = 8;
 
             InitialsBox = new TextBox { Width = 72, MaxLength = 16, PlaceholderText = "Initials" };
-            NameBox = new TextBox { MinWidth = 160, PlaceholderText = account.DerivedLabel };
+            NameBox = new TextBox { MinWidth = 160, MaxLength = MaxNameLength, PlaceholderText = account.DerivedLabel };
 
             PreviewGlyph = new TextBlock
             {
@@ -148,14 +152,16 @@ namespace Orbweaver
 
         internal void CommitInitials()
         {
-            if (_refreshing || InitialsBox.Text == _committedInitials) return;
+            if (_refreshing || (InitialsBox.Text ?? "") == _committedInitials) return;
+            _committedInitials = InitialsBox.Text ?? "";
             AccountOrbCustomization.SetInitials(_account.PositionKey, InitialsBox.Text);
             Refresh();
         }
 
         internal void CommitName()
         {
-            if (_refreshing || NameBox.Text == _committedName) return;
+            if (_refreshing || (NameBox.Text ?? "") == _committedName) return;
+            _committedName = NameBox.Text ?? "";
             AccountOrbCustomization.SetName(_account.PositionKey, NameBox.Text);
             Refresh();
         }
@@ -182,6 +188,9 @@ namespace Orbweaver
 
         internal void Reset()
         {
+            // Reset is the user saying "start over", so drafts go too.
+            _committedInitials = InitialsBox.Text ?? "";
+            _committedName = NameBox.Text ?? "";
             AccountOrbCustomization.Reset(_account.PositionKey);
             Refresh();
         }
@@ -192,7 +201,8 @@ namespace Orbweaver
             IconImportError.Empty => "That file is empty.",
             IconImportError.TooLarge => "That image is too large — pick one under 16 MB.",
             IconImportError.NotAnImage => "That file isn't an image.",
-            _ => "Use a PNG, JPG or SVG file."
+            IconImportError.UnsupportedFormat => "Use a PNG, JPG or SVG file.",
+            _ => throw new ArgumentOutOfRangeException(nameof(error), error, "No message for this import error")
         };
 
         // Re-reads everything from the stored override rather than trusting what
@@ -204,10 +214,23 @@ namespace Orbweaver
             try
             {
                 var over = AccountOrbCustomization.Current(_account.PositionKey);
-                _committedInitials = over?.Initials ?? "";
-                _committedName = over?.Name ?? "";
-                InitialsBox.Text = _committedInitials;
-                NameBox.Text = _committedName;
+
+                // A box holding text that was never committed is a half-typed
+                // draft, and another surface committing a different field (the
+                // Customize window and a Settings row can be open together)
+                // must not wipe it. Boxes whose text matches what was last
+                // committed are clean and take the stored value.
+                if ((InitialsBox.Text ?? "") == _committedInitials)
+                {
+                    _committedInitials = over?.Initials ?? "";
+                    InitialsBox.Text = _committedInitials;
+                }
+
+                if ((NameBox.Text ?? "") == _committedName)
+                {
+                    _committedName = over?.Name ?? "";
+                    NameBox.Text = _committedName;
+                }
 
                 var look = AccountOrbCustomization.Preview(_account);
                 PreviewGlyph.Text = look.Glyph;

@@ -263,10 +263,92 @@ public class AccountOrbEditorPanelTests : IDisposable
         Assert.Equal("XY", panel.InitialsBox.Text);
     }
 
-    [Fact]
-    public void EveryImportErrorHasAMessage()
+    [AvaloniaFact]
+    public void NameBox_IsCapped()
     {
-        foreach (var error in Enum.GetValues<IconImportError>())
-            Assert.False(string.IsNullOrWhiteSpace(AccountOrbEditorPanel.MessageFor(error)), error.ToString());
+        var panel = new AccountOrbEditorPanel(_account);
+
+        Assert.Equal(AccountOrbEditorPanel.MaxNameLength, panel.NameBox.MaxLength);
     }
+
+    // Two surfaces on one account: committing initials in the second must not
+    // wipe a name still being typed in the first.
+    [AvaloniaFact]
+    public void OtherSurfaceCommit_KeepsAHalfTypedDraft()
+    {
+        var first = new AccountOrbEditorPanel(_account);
+        var second = new AccountOrbEditorPanel(_account);
+        var window = new Avalonia.Controls.Window
+        {
+            Content = new Avalonia.Controls.StackPanel { Children = { first, second } }
+        };
+        window.Show();
+        try
+        {
+            first.NameBox.Text = "half-typed draft";
+            second.InitialsBox.Text = "AC";
+            PressEnter(second.InitialsBox);
+
+            Assert.Equal("AC", first.InitialsBox.Text);
+            Assert.Equal("half-typed draft", first.NameBox.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    // Negative control: a clean box does take the other surface's value, so the
+    // draft rule above is not "never refresh".
+    [AvaloniaFact]
+    public void OtherSurfaceCommit_UpdatesACleanBox()
+    {
+        var first = new AccountOrbEditorPanel(_account);
+        var second = new AccountOrbEditorPanel(_account);
+        var window = new Avalonia.Controls.Window
+        {
+            Content = new Avalonia.Controls.StackPanel { Children = { first, second } }
+        };
+        window.Show();
+        try
+        {
+            second.NameBox.Text = "Acme";
+            PressEnter(second.NameBox);
+
+            Assert.Equal("Acme", first.NameBox.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Reset_DiscardsDrafts()
+    {
+        var panel = new AccountOrbEditorPanel(_account);
+        panel.NameBox.Text = "never committed";
+
+        panel.Reset();
+
+        Assert.Equal("", panel.NameBox.Text);
+    }
+
+    // Every failure has its own words; none falls through to a generic line.
+    [Fact]
+    public void EveryImportErrorHasItsOwnMessage()
+    {
+        var messages = Enum.GetValues<IconImportError>()
+            .Select(e => AccountOrbEditorPanel.MessageFor(e))
+            .ToList();
+
+        Assert.All(messages, m => Assert.False(string.IsNullOrWhiteSpace(m)));
+        Assert.Equal(messages.Count, messages.Distinct().Count());
+    }
+
+    // A value added to the enum without words fails loudly here rather than
+    // quietly showing a generic line.
+    [Fact]
+    public void UnknownImportError_Throws() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => AccountOrbEditorPanel.MessageFor((IconImportError)999));
 }
