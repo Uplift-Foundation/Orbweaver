@@ -185,6 +185,99 @@ public class LocalPersonaScanTests : IDisposable
         }
     }
 
+    // CB-291, the scan's half of the persona pool: a team member named for a
+    // persona kept in the user's shared pool — outside the project, named by
+    // ORBWEAVER_PERSONAS the way a user would name it — gets that persona
+    // instead of the project's, and the lead beside it is untouched. The
+    // environment variable is set rather than a seam handed over because the
+    // variable is what the user types, and the whole chain from it to the
+    // registry is the claim.
+    [Fact]
+    public void ATeamMemberIsGivenItsPersonaFromTheSharedPoolTheEnvironmentNames()
+    {
+        WriteMarkdown("CLAUDE.md", "Her name is Leota.\n");
+        var pool = Path.Combine(Path.GetTempPath(), "cb-persona-pool-scan-" + Guid.NewGuid());
+        var profile = Path.Combine(pool, "profiles", "atlas");
+        Directory.CreateDirectory(profile);
+        var file = Path.Combine(profile, "atlas.md");
+        File.WriteAllText(file, "---\nname: \"Atlas\"\nslug: \"atlas\"\n---\n");
+
+        var was = Environment.GetEnvironmentVariable(PersonaPool.EnvironmentVariable);
+        var manager = Manager();
+        var leadId = _sessionId + "-lead";
+        var memberId = _sessionId + "-pool-member";
+
+        try
+        {
+            Environment.SetEnvironmentVariable(PersonaPool.EnvironmentVariable, pool);
+
+            manager.ApplyPersona(leadId, Status(), Pass());
+            manager.ApplyPersona(memberId, Status(agent: "atlas"), Pass());
+
+            Assert.Equal("Leota", LocalPersonas.For(leadId)!.Name);
+            var member = LocalPersonas.For(memberId)!;
+            Assert.Equal("Atlas", member.Name);
+            Assert.Contains(file, member.Files.Select(Path.GetFullPath));
+
+            // Edited in place — a longer name, so the size moves even on a
+            // filesystem with coarse timestamps — and noticed on the next pass,
+            // because the pool's file is one the scan's signature watches.
+            File.WriteAllText(file, "---\nname: \"Atlas Prime\"\nslug: \"atlas\"\n---\n");
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddMinutes(1));
+            manager.ApplyPersona(memberId, Status(agent: "atlas"), Pass());
+
+            Assert.Equal("Atlas Prime", LocalPersonas.For(memberId)!.Name);
+
+            // A second instance of the same persona wears the same persona.
+            var secondId = _sessionId + "-pool-second";
+            try
+            {
+                manager.ApplyPersona(secondId, Status(agent: "atlas_2"), Pass());
+                Assert.Equal("Atlas Prime", LocalPersonas.For(secondId)!.Name);
+            }
+            finally
+            {
+                LocalPersonas.Forget(secondId);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(PersonaPool.EnvironmentVariable, was);
+            LocalPersonas.Forget(leadId);
+            LocalPersonas.Forget(memberId);
+            try { Directory.Delete(pool, recursive: true); } catch { }
+        }
+    }
+
+    // The same session with nothing in the pool is exactly what it was: the
+    // fallback to the project's persona that a member with no file of its own
+    // has always had.
+    [Fact]
+    public void ATeamMemberThePoolDoesNotNameStillFallsBackToTheProjectsPersona()
+    {
+        WriteMarkdown("CLAUDE.md", "Her name is Leota.\n");
+        var pool = Path.Combine(Path.GetTempPath(), "cb-persona-pool-empty-" + Guid.NewGuid());
+        Directory.CreateDirectory(pool);
+
+        var was = Environment.GetEnvironmentVariable(PersonaPool.EnvironmentVariable);
+        var memberId = _sessionId + "-pool-nobody";
+
+        try
+        {
+            Environment.SetEnvironmentVariable(PersonaPool.EnvironmentVariable, pool);
+
+            Manager().ApplyPersona(memberId, Status(agent: "nobody-in-the-pool"), Pass());
+
+            Assert.Equal("Leota", LocalPersonas.For(memberId)!.Name);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(PersonaPool.EnvironmentVariable, was);
+            LocalPersonas.Forget(memberId);
+            try { Directory.Delete(pool, recursive: true); } catch { }
+        }
+    }
+
     // The cache, stated as the thing it actually promises. Not "it is fast" —
     // that is unassertable — but "the second pass did not resolve again", which
     // is visible as the very same Persona object still being in the registry.

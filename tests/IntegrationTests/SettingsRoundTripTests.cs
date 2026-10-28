@@ -886,4 +886,57 @@ public class SettingsRoundTripTests
         Assert.Equal("Ctrl+Shift+U", OrbweaverSettings.ToggleUsageOrbsHotkey);
         Assert.False(OrbweaverSettings.ShowUsageOrbs);
     }
+
+    // --- the shared persona pool (CB-291) ------------------------------------
+
+    [Fact]
+    public void PersonaPoolDir_SurvivesARestartAndIsNullUntilChosen()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        // Null rather than a copy of the default, so PersonaPool owns what "not
+        // chosen" means (the environment, then the home directory).
+        Assert.Null(OrbweaverSettings.PersonaPoolDir);
+
+        OrbweaverSettings.PersonaPoolDir = "  /shared/personas  ";
+
+        // Back from disk, trimmed, not from the in-memory model the setter wrote.
+        PointSettingsAt(dir);
+        Assert.Equal("/shared/personas", OrbweaverSettings.PersonaPoolDir);
+
+        var saved = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json")))!.AsObject();
+        Assert.Equal("/shared/personas", saved["personaPoolDir"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void PersonaPoolDir_ABlankValueClearsIt()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        OrbweaverSettings.PersonaPoolDir = "/shared/personas";
+        OrbweaverSettings.PersonaPoolDir = "   ";
+
+        PointSettingsAt(dir);
+        Assert.Null(OrbweaverSettings.PersonaPoolDir);
+    }
+
+    [Fact]
+    public void PersonaPoolDir_IsKnownSoItDoesNotAlsoRoundTripAsAnUnknownKey()
+    {
+        // Save rejects a key that is both written and carried through
+        // _unknownKeys as a duplicate, so a setting missing from KnownKeys
+        // throws on the first save after it is read back.
+        var dir = NewSettingsDir();
+        File.WriteAllText(Path.Combine(dir, "settings.json"), "{ \"personaPoolDir\": \"/from/disk\" }");
+        PointSettingsAt(dir);
+
+        Assert.Equal("/from/disk", OrbweaverSettings.PersonaPoolDir);
+
+        OrbweaverSettings.ShowOrbs = !OrbweaverSettings.ShowOrbs;   // any save at all
+
+        var saved = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json")))!.AsObject();
+        Assert.Equal("/from/disk", saved["personaPoolDir"]!.GetValue<string>());
+    }
 }

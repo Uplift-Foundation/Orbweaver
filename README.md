@@ -1382,6 +1382,111 @@ picture decodes to, not by how many bytes it arrived as, which is what makes
 raising the file-size cap to 16 MiB cost nothing extra on a machine running
 twenty or thirty agents out of one repository.
 
+## Personas, roles and teams
+
+**Keep a pool of personas, give them jobs, group them into teams, and put a team
+on a task.** A *persona* is an individual: a name, a picture, a voice and a
+personality (the files profile-gen writes, or anything in
+the grammar above). A *role* is a job: `pm`, `architect`, `engineer`, `qa`, or any
+you add. A *team* says which personas fill which roles. Say "put Alpha on this" in
+Claude Code and each member starts as its own teammate, wearing its own orb.
+
+Nothing here is on until you make a file. A project with no pool behaves exactly as
+it did, and a team member whose name matches no persona keeps the main session's
+persona, as it always has.
+
+**Where the files live.** Three kinds of file, in the same layout at every level:
+
+```
+profiles/<name>/<name>.md     a persona
+roles/<role>.md               a role
+teams/<team>.md               a team
+```
+
+Looked up nearest first, and **a nearer file of the same name replaces a farther
+one completely** — fields are never merged between two files, so a file says what
+applies and nothing else does:
+
+| Level | Where |
+|---|---|
+| project | `.orbweaver/` in the nearest ancestor directory that has one (and `profiles/<name>/` in any ancestor, as profile-gen writes it) |
+| account | the Claude account's config directory: `~/.claude`, or whatever `CLAUDE_CONFIG_DIR` names |
+| pool | the folder named by **`ORBWEAVER_PERSONAS`**, else `personaPoolDir` in `settings.json`, else `~/.orbweaver` |
+| built-in | the four default roles that ship with Orbweaver (roles only) |
+
+The pool is one folder for every project and every account, so your personas follow
+you rather than a login. Use the environment variable for anything started from a
+shell and the setting for the tray app, which is launched by launchd or the Start
+menu and never sees a shell's environment; the variable wins when both are set. `~`
+works in either; a relative path is refused rather than guessed at. Under WSL the
+skill's resolver also looks in each Windows user's `.orbweaver` when nothing is named,
+and it reads the same `personaPoolDir` the app does (from `settings.json`, wherever the
+app keeps it on that platform), so a pool named only in the setting is the same pool to
+the orb and to the resolver.
+profile-gen's single-persona `persona/persona.md` is recognised in the account and
+the pool as the persona named by its own `slug:`, so an existing setup needs nothing
+moved.
+
+**Roles** are Markdown with a few lines of front matter and the job in prose:
+
+```markdown
+---
+role: qa
+title: QA Engineer
+model: sonnet        # optional
+---
+You are QA on this team. Start from the acceptance criteria...
+```
+
+Add a role by writing a file (`roles/writer.md`), change one by writing a file with
+the same name nearer, and remove one with `disabled: true`.
+
+**Teams** map roles to personas. A slot is one persona or several, and several can
+either share the work (`collaborate`, the default) or have one lead:
+
+```markdown
+---
+team: alpha
+title: Alpha Team
+pm: atlas
+architect: vector
+engineer: vector, echo
+qa: sentry
+engineer.lead: vector        # naming a lead makes the slot `lead`
+qa.model: haiku              # optional: this slot's model
+---
+```
+
+A team can `extends` another and swap whole slots. For a mix you do not want to
+keep, say it as words when you ask, and the resolver builds it:
+
+| You say | You get |
+|---|---|
+| `alpha` | the saved team |
+| `alpha+bravo` | both teams. A slot both fill with different people needs its mode stated: `pm.mode=lead pm.lead=atlas`, or `pm.mode=collaborate` |
+| `alpha qa=bravo-qa` | Alpha with one slot swapped |
+| `pm=atlas engineer=vector,echo` | no saved team at all |
+
+**Putting a team on a task** is the `orbweaver-team` skill, which the hook installers
+copy into every Claude Code account's `skills/` folder (the default and each saved
+profile; `--uninstall` removes only that folder). It runs a bundled resolver that
+turns the spec into a manifest, or refuses with every problem named — an unknown
+persona, a disabled role, a union with no mode — before anything starts, so you never
+get half a team. Then it spawns each member as a named teammate whose prompt says
+who it is, what its job is, and that any other persona a `CLAUDE.md` describes does
+not apply to it.
+
+**The same persona twice.** A persona that would run twice at once — in two slots of
+one team, or on two teams running together — becomes `vector`, then `vector_2`, then
+`vector_3`, because two live sessions with one name cannot be told apart. The orb is
+still the persona's: the lookup tries the full name and then the persona it is an
+instance of.
+
+**What the orbs do.** Each member's orb wears its persona's name, picture and voice
+instead of the main session's, found through the same lookup — project, then each
+account, then the pool. The first place that has the persona decides all of it, so a
+teammate is never one persona's name with another's face.
+
 ## OpenClaw agents (experimental, off by default)
 
 Orbweaver can also show an orb for each recently active session on an
@@ -2060,6 +2165,12 @@ setup — or picks up the second CLI after you install it. Pass `--uninstall` /
 & "$env:LOCALAPPDATA\Programs\ClaudeBuddy\tools\install-hooks.ps1"
 ```
 
+For Claude Code it also copies the `orbweaver-team` skill into each account it wires
+(`<config dir>/skills/orbweaver-team`; see *Personas, roles and teams*), through
+`install-skill.sh` on a Mac and the same script on Windows, WSL distros included.
+Re-running it refreshes that folder, which is shipped code and not yours: your
+personas, roles and teams live in your pool or your project, never in there.
+
 A CLI you don't have is skipped and said so, not treated as an error. Underneath
 it are one installer per CLI — `install-macos-hooks.sh` /
 `install-windows-hooks.ps1` for Claude Code, `install-codex-hooks.sh` /
@@ -2542,6 +2653,66 @@ outside the app (a launchd agent, an installer replacing the bundle) stopped it.
   (`SessionManager.MembersOf`, captured on press in `OrbWindow`); their new spots
   are only *remembered* when their `PositionKey` differs from the lead's, since
   a team usually shares one directory and positions are keyed by directory.
+- **Personas, roles and teams (CB-291)**: two halves that share nothing but a file
+  layout (`profiles/`, `roles/`, `teams/` under a level), because one runs in the app
+  and one runs in a Claude Code session.
+
+  *The app's half* is `PersonaPool.cs` and `LocalPersona.CandidatesBelow`. A team
+  member is found by `--agent-name`, and until this its persona was only looked up in
+  the working directory and its ancestors, so a pool anywhere else drew every
+  teammate in the main session's face. The candidate list is now the walk (each
+  directory's `profiles/`, `.profiles-assets/` and `.orbweaver/`, unchanged and in the
+  order they always were), then **each config dir's pool immediately before that
+  dir's own `CLAUDE.md`**, then the shared pool. That placement is deliberate: a
+  member-profile candidate is exclusive once it states any field (`ResolveFrom`,
+  CB-191), and the `CLAUDE.md` that follows each account's pool is a non-member
+  candidate that ends the run of member candidates, so two accounts' pools are two
+  personas and the nearer replaces the farther instead of being blended field by
+  field. profile-gen's fixed `persona/persona.md` is offered with a `SlugFilter` and
+  only read when its front matter's `slug:` names this agent, because the same path
+  is whoever's persona it happens to hold. An instance (`vector_2`) is looked up
+  under its own name and then `vector` (`PersonaPool.NamesFor`). Only Claude Code
+  members read the pool: agent teams are a Claude Code idea, and a gateway session's
+  working directory is somebody else's disk (CB-140). The pool's root is
+  `ORBWEAVER_PERSONAS`, then `personaPoolDir`, then `~/.orbweaver`
+  (`PersonaPool.SharedRoot`), and the persona signature watches its files, so editing
+  a pool persona reaches the orb.
+
+  *The session's half* is `skills/orbweaver-team/`: a skill (`SKILL.md`,
+  `FORMATS.md`), the four built-in roles, and `orbweaver-team.sh`, which resolves a
+  spec to a manifest. It is a script because the rules (nearest file wins entirely,
+  `extends`, unions, instance names) have to come out the same every run, and bash
+  because Claude Code already needs one on every platform (Git Bash on Windows).
+  That choice has costs worth knowing. macOS ships bash 3.2, so it uses no
+  associative arrays; and on Windows a process costs about 0.1 s, so the first
+  version, which used awk and sed freely, took 14 s to resolve four slots. It is
+  all builtins now (a resolve is about 0.2 s under Git Bash), values come back in
+  variables rather than through `$(...)` because each of those is a fork, and the
+  one remaining trap is that **every path join strips a trailing slash first**: the
+  walk up from `$PWD` reaches `/`, and `/` joined to `/profiles/x` is `//profiles/x`,
+  which Git Bash reads as a UNC path to a host called `profiles`, so each `[ -f ]` on
+  one waited about 2.7 s for it. Tests are `tools/test-orbweaver-team.py` (the
+  resolver, under Git Bash on Windows with Windows-style paths) and
+  `tools/test-install-skill.py`, both CI steps.
+
+  *Installing it* is `tools/install-skill.sh` on macOS, called by
+  `install-macos-hooks.sh` once per settings file it wires (so each saved profile
+  gets its copy by the same path as the default account), and `Set-OrbweaverSkill` in
+  `install-windows-hooks.ps1` at each of its four sites (native, a second native
+  account, a WSL distro, a distro's second account). The copy is its own script on
+  the Mac because `install-macos-hooks.sh` needs osascript and can only run there.
+  An install replaces `skills/orbweaver-team` outright and `--uninstall` removes that
+  one folder; the app bundle's `Resources/skills` and the Inno Setup `{app}\skills`
+  carry the source.
+
+  Findings that shaped it, from spawning real teammates (2026-10-28): a named spawn
+  with no `isolation` and no `run_in_background` is a team member process; a
+  teammate does not know its own name when it starts, so its prompt must say; a
+  `subagent_type` naming a persona the session cannot see **falls back to a generic
+  agent without an error**, so the skill never relies on one; and a teammate inherits
+  the project's main-session persona from `CLAUDE.md` unless told otherwise. The
+  spawn's `model` passes through (`--model haiku` was observed); `effort` produced no
+  flag, so it is not offered.
 - **Color palette**: `AgentColors` at the top of `OrbWindow.axaml.cs` maps
   `/color` names to hex. Claude Code renders its accents as xterm-256 indices,
   so these are the matching cube values — but only `green` (index 35) and the

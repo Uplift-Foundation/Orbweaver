@@ -29,9 +29,9 @@ namespace Orbweaver.Tests
         // (NO_RELAY, RC_BRIDGE_TAG), which were deleted rather than renamed,
         // plus LIVE_DAEMON_TESTS, the opt-in gate on DaemonStopLiveTests (CB-264).
         [Fact]
-        public void TheListHoldsFifteenDistinctVariables()
+        public void TheListHoldsNineteenDistinctVariables()
         {
-            Assert.Equal(15, BrandEnv.All.Count);
+            Assert.Equal(19, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

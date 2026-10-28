@@ -163,7 +163,17 @@ public class LocalPersonaTests : IDisposable
 
         Assert.Equal(Path.Combine(full, "profiles", "helena-marsh", "helena-marsh.md"), files[0]);
         Assert.Equal(Path.Combine(full, ".profiles-assets", "helena-marsh", "helena-marsh.md"), files[1]);
-        Assert.Equal(Path.Combine(full, "CLAUDE.md"), files[2]);
+
+        // The project's own `.orbweaver` folder is one more place the same agent
+        // can be kept at this level (the pool's project layer), so it is offered
+        // here too. What this pins is unchanged: every one of an agent's own
+        // files comes before the project's shared ones.
+        Assert.Equal(Path.Combine(full, ".orbweaver", "profiles", "helena-marsh", "helena-marsh.md"), files[2]);
+
+        var shared = files.ToList().IndexOf(Path.Combine(full, "CLAUDE.md"));
+        Assert.True(shared > 2, "the project's CLAUDE.md should come after the agent's own files");
+        Assert.All(files.Take(shared), file => Assert.StartsWith(full + Path.DirectorySeparatorChar, file));
+        Assert.DoesNotContain(files.Take(shared), file => file.EndsWith("CLAUDE.md", StringComparison.Ordinal));
     }
 
     // Repeated at every ancestor directory, same as the four shared names —

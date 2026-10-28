@@ -147,7 +147,24 @@ namespace Orbweaver
         // comment for what that flag buys (CB-191). Defaulted so every
         // existing two-argument `new Candidate(path, level)` call, including
         // OwnLevels' own, keeps meaning "not a member file" unchanged.
-        internal readonly record struct Candidate(string Path, string Level, bool IsMemberProfile = false);
+        // SlugFilter is for the one file whose path does not say whose it is:
+        // profile-gen's private-persona layout writes `persona/persona.md` for
+        // whoever the persona is, so the name it answers to is inside it. It is
+        // `|`-separated alternatives (an agent and the persona it is an
+        // instance of), and a candidate carrying one is only read when its
+        // front matter's `slug:` is one of them.
+        //
+        // Place is which persona a member candidate belongs to, for ResolveFrom's
+        // run of consecutive member candidates. profile-gen writes one persona in
+        // two layouts (profiles/ and .profiles-assets/), and those two are one
+        // persona whose fields are folded together; but the project's own
+        // .orbweaver folder, an account's pool, the shared pool, and an instance's
+        // own file against its persona's are different places holding different
+        // personas, and folding those together gave one persona's name a
+        // different file's voice. Candidates in the same place share a number; a
+        // hand-built list leaves them all at 0, which is the old behaviour.
+        internal readonly record struct Candidate(
+            string Path, string Level, bool IsMemberProfile = false, string? SlugFilter = null, int Place = 0);
 
         internal static IReadOnlyList<string> CandidateFiles(
             string? cwd, IEnumerable<string> userConfigDirs, SessionSource source, string agentName = "") =>
@@ -157,14 +174,14 @@ namespace Orbweaver
         // environment (see WalkCeilingVariable).
         internal static IReadOnlyList<Candidate> Candidates(
             string? cwd, IEnumerable<string> userConfigDirs, SessionSource source, string agentName = "") =>
-            CandidatesBelow(cwd, userConfigDirs, source, agentName, WalkCeiling());
+            CandidatesBelow(cwd, userConfigDirs, source, agentName, WalkCeiling(), PersonaPool.SharedRoot());
 
         // The same walk with the ceiling given outright, so the rule itself
         // can be tested without the process-wide variable: null climbs to the
         // filesystem root.
         internal static IReadOnlyList<Candidate> CandidatesBelow(
             string? cwd, IEnumerable<string> userConfigDirs, SessionSource source, string agentName,
-            string? ceiling)
+            string? ceiling, string? poolRoot = null)
         {
             var files = new List<Candidate>();
             // ClaudeCloud joins these two for the same reason, and the reason is
@@ -183,20 +200,65 @@ namespace Orbweaver
             // anything the first did not.
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            void Add(string path, string level, bool isMemberProfile = false)
+            var place = 0;
+
+            void Add(string path, string level, bool isMemberProfile = false, string? slugFilter = null)
             {
-                if (seen.Add(path)) files.Add(new Candidate(path, level, isMemberProfile));
+                if (seen.Add(path)) files.Add(new Candidate(path, level, isMemberProfile, slugFilter, place));
             }
 
             var hasAgentName = agentName is not ("" or "." or "..");
+
+            // The names a team member answers to: its own, then the persona it
+            // is an instance of (`vector_2` is Vector's second instance).
+            var names = hasAgentName ? PersonaPool.NamesFor(agentName) : Array.Empty<string>();
+
+            // One place a persona can be kept, in the three layouts profile-gen
+            // and the pool use: the tracked and the gitignored per-persona
+            // folders, and the fixed private file that is recognised by the
+            // slug it carries. Every one is a member profile, so a persona found
+            // here is exclusively the answer (see ResolveFrom) rather than being
+            // blended with the main session's.
+            //
+            // The picture a persona names is relative to `root`, which is also
+            // its level, exactly as profile-gen writes it relative to the
+            // directory it was run against.
+            //
+            // Each name in each place is its own persona (`place++`): an
+            // instance's own file replaces its persona's outright instead of
+            // lending it a name and borrowing a voice, and so does one place
+            // against the next. Only the two layouts of one name share a place.
+            void AddMemberProfiles(string root)
+            {
+                foreach (var name in names)
+                {
+                    place++;
+                    Add(Path.Combine(root, "profiles", name, name + ".md"), root, isMemberProfile: true);
+                    Add(Path.Combine(root, ".profiles-assets", name, name + ".md"), root, isMemberProfile: true);
+                }
+
+                place++;
+                Add(Path.Combine(root, "persona", "persona.md"), root, isMemberProfile: true,
+                    slugFilter: string.Join('|', names));
+            }
 
             var directory = FullPathOrNull(cwd);
             for (var depth = 0; directory is not null && depth < MaxDepth; depth++)
             {
                 if (hasAgentName)
                 {
-                    Add(Path.Combine(directory, "profiles", agentName, agentName + ".md"), directory, isMemberProfile: true);
-                    Add(Path.Combine(directory, ".profiles-assets", agentName, agentName + ".md"), directory, isMemberProfile: true);
+                    // The layouts profile-gen has always written straight into a
+                    // project come first, so a list built before the pool existed
+                    // keeps its order; the project's `.orbweaver` folder follows
+                    // at the same level.
+                    foreach (var name in names)
+                    {
+                        place++;
+                        Add(Path.Combine(directory, "profiles", name, name + ".md"), directory, isMemberProfile: true);
+                        Add(Path.Combine(directory, ".profiles-assets", name, name + ".md"), directory, isMemberProfile: true);
+                    }
+
+                    AddMemberProfiles(Path.Combine(directory, PersonaPool.FolderName));
                 }
 
                 Add(Path.Combine(directory, "CLAUDE.md"), directory);
@@ -212,8 +274,19 @@ namespace Orbweaver
             foreach (var configDir in userConfigDirs)
             {
                 if (string.IsNullOrWhiteSpace(configDir)) continue;
+
+                // An account's own pool comes before its CLAUDE.md, which is the
+                // main session's persona. The CLAUDE.md is also what ends the run
+                // of member candidates, so two accounts' pools are two personas
+                // and the nearer one replaces the farther rather than being
+                // merged field by field with it.
+                if (hasAgentName) AddMemberProfiles(configDir.Trim());
                 Add(Path.Combine(configDir.Trim(), "CLAUDE.md"), configDir.Trim());
             }
+
+            // The shared pool last: the user's own personas, for every project,
+            // consulted only when nothing nearer names this one.
+            if (hasAgentName && !string.IsNullOrWhiteSpace(poolRoot)) AddMemberProfiles(poolRoot);
 
             return files;
         }
@@ -308,8 +381,46 @@ namespace Orbweaver
             foreach (var candidate in candidates)
             {
                 if (read.Count >= MaxFiles) break;
+                if (candidate.SlugFilter is not null && !NamesOneOf(candidate.Path, candidate.SlugFilter)) continue;
                 ReadInto(candidate.Path, 0, PersonaFiles.CanonicalDirectory(candidate.Level), read, visited);
             }
+        }
+
+        // Whether the file at `path` says, in its front matter, that it is one
+        // of the personas in `alternatives` (`|`-separated). Used for the fixed
+        // `persona/persona.md` path, which is the same file name for whoever the
+        // persona is: reading it for every agent would hand one persona's face to
+        // every teammate, which is the bug this lookup exists to end.
+        private static bool NamesOneOf(string path, string alternatives)
+        {
+            var canonical = PersonaFiles.CanonicalFile(path);
+            if (canonical is null) return false;
+
+            var lines = PersonaFiles.ReadMarkdown(canonical);
+            if (lines is null) return false;
+
+            var slug = SlugIn(lines);
+            return slug is not null
+                && alternatives.Split('|').Any(alternative => slug.Equals(alternative, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // The `slug:` of a file's front matter, or null. Front matter only — a
+        // `slug:` further down is prose about something else.
+        internal static string? SlugIn(IReadOnlyList<string> lines)
+        {
+            if (lines.Count == 0 || lines[0].Trim() != "---") return null;
+
+            for (var i = 1; i < lines.Count; i++)
+            {
+                var line = lines[i].Trim();
+                if (line == "---") return null;
+                if (!line.StartsWith("slug:", StringComparison.Ordinal)) continue;
+
+                var value = line["slug:".Length..].Trim().Trim('"', '\'');
+                return value.Length == 0 ? null : value;
+            }
+
+            return null;
         }
 
         // A bare list of paths, each its own level: what every caller before
@@ -513,8 +624,14 @@ namespace Orbweaver
                 // are the same persona, not two competing ones — unlike a
                 // member file against the project's, which is the mixing
                 // this ticket exists to stop.
+                //
+                // One run is one *place* (Candidate.Place): the two layouts of
+                // one persona, not two different personas that happen to be
+                // listed next to each other.
                 var runStart = read.Count;
-                while (index < candidates.Count && candidates[index].IsMemberProfile && read.Count < MaxFiles)
+                var runPlace = candidate.Place;
+                while (index < candidates.Count && candidates[index].IsMemberProfile
+                       && candidates[index].Place == runPlace && read.Count < MaxFiles)
                 {
                     ReadCandidates(new[] { candidates[index] }, read, visited);
                     index++;
