@@ -5018,9 +5018,13 @@ namespace Orbweaver
                 var finishedAll = true;
                 foreach (var (id, (glide, delay)) in springs)
                 {
-                    if (elapsed < delay || !_windows.TryGetValue(id, out var window))
+                    // An orb whose window has gone (its session ended mid-glide)
+                    // has nothing left to land. Waiting on its glide would never
+                    // end: it is never stepped, so it is never Done.
+                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    if (elapsed < delay)
                     {
-                        finishedAll &= glide.Done;
+                        finishedAll = false;
                         continue;
                     }
 

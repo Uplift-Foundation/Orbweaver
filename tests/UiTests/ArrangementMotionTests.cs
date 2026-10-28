@@ -179,6 +179,25 @@ public class ArrangementMotionTests : IDisposable
         Assert.Equal(settled["c"], Windows(manager)["c"].Position);
     }
 
+    // Found while testing M2: a glide whose orb's window went mid-flight was
+    // never stepped, so never Done, and the animation never ended, which left
+    // every later re-layout deferred behind it for good. A scan removes the
+    // window of a session that ends (CB-161), so this is the app's own path.
+    [AvaloniaFact]
+    public void ASpringWhoseOrbLeavesMidFlightStillLetsTheAnimationEnd()
+    {
+        var (manager, settled) = FreeGroup();
+        Windows(manager)["b"].Position = new PixelPoint(settled["b"].X + 90, settled["b"].Y);
+        Windows(manager)["c"].Position = new PixelPoint(settled["c"].X - 60, settled["c"].Y);
+        ((IOrbDragHost)manager).SettleAfterDrop(Array.Empty<string>());
+        Assert.Equal(2, Targets(manager)!.Count);
+        Tick(manager, 16);
+
+        Windows(manager).Remove("b");
+        RunToEnd(manager);
+        Assert.Equal(settled["c"], Windows(manager)["c"].Position);
+    }
+
     [AvaloniaFact]
     public void ADropThatMovesNobodyStartsNoGlide()
     {
