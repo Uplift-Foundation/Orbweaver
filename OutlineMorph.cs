@@ -121,7 +121,7 @@ namespace Orbweaver
         // overshoots and wobbles (a leave); near 1 it swells and settles (a join). Once
         // within its rest thresholds the spring reports exactly 1.
         internal static double SpringProgress(double elapsed, double omega, double damping) =>
-            Spring.Step(default, 1, elapsed, Params(omega, damping)).Value;
+            Spring.Evaluate(elapsed, Params(omega, damping));
 
         // Whether that spring has landed exactly on 1 and stopped.
         internal static bool AtRest(double elapsed, double omega, double damping) =>
