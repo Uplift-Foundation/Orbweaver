@@ -212,6 +212,17 @@
             </ContextMenu>
         </Grid.ContextMenu>
 
+        <!-- CB-268 M4: the orb's visible disc — glow, context ring, picture and
+             circle — in one 56x56 cell exactly where it was in Root, so a drag
+             can squash it along its direction of travel with one render
+             transform. A render transform moves pixels only: nothing here
+             changes the window's size, Root's 56x56, or where the circle's
+             centre sits, and the badges, which sit outside this cell, do not
+             squash with it. At rest the transform is the identity. -->
+        <Grid x:Name="Disc" Width="56" Height="56"
+              HorizontalAlignment="Left" VerticalAlignment="Top"
+              RenderTransformOrigin="50%,50%">
+
         <!-- Soft glow behind the orb (fill assigned in code-behind, shared
              with the orb so color fades hit both) -->
         <!-- Soft glow behind the orb. A RadialGradientBrush, not a BlurEffect:
@@ -276,6 +287,7 @@
                  Width="36" Height="36"
                  Stroke="#22FFFFFF"
                  StrokeThickness="1"/>
+        </Grid>
 
         <!-- What kind of conversation this is, for gateway sessions: a
              scheduled job, a private message, or a room with other people in
