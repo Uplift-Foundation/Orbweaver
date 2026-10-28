@@ -99,6 +99,19 @@ public class AccountOrbIconsTests : IDisposable
         Assert.Equal(255, bmp.GetPixel(245, 128).Blue);
     }
 
+    // The reader does hand the loop non-element nodes (comments, processing
+    // instructions, whitespace), which it skips; a document made of them still
+    // passes, and a hostile reference after them is still caught.
+    [Fact]
+    public void IsSelfContained_SkipsNonElementNodes_ButStillCatchesWhatFollows()
+    {
+        const string ns = "xmlns=\"http://www.w3.org/2000/svg\"";
+        Assert.True(AccountOrbIcons.IsSelfContained(
+            $"<!-- hi --><?pi x?><svg {ns}> <!-- c --> <rect width=\"1\" height=\"1\"/> </svg>"));
+        Assert.False(AccountOrbIcons.IsSelfContained(
+            $"<!-- hi --><svg {ns}><!-- c --><image href=\"http://example.invalid/x.png\"/></svg>"));
+    }
+
     [Fact]
     public void Import_Svg_Rasterises()
     {

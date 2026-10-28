@@ -297,6 +297,30 @@ public class AccountOrbOverrideTests : IDisposable
         }
     }
 
+    // A write from a pool thread is posted to the UI thread rather than
+    // redrawing windows from where it stands; the on-thread write is the
+    // control that the same redraw happens inline.
+    [AvaloniaFact]
+    public void ChangeFromAnotherThread_IsPostedToTheUiThread_AndRedraws()
+    {
+        var orbs = Make(new NoSource());
+        orbs.Apply(new[] { Usage(null, "wt") }, Now);
+        var orb = orbs.Orbs[string.Empty];
+
+        try
+        {
+            AccountOrbCustomization.SetInitials("account:~", "Aa");
+            Assert.Equal("Aa", orb.GlyphText); // on-thread control: inline
+
+            System.Threading.Tasks.Task.Run(() => AccountOrbCustomization.SetInitials("account:~", "Bb")).GetAwaiter().GetResult();
+            Assert.Equal("Aa", orb.GlyphText); // not redrawn from the pool thread
+
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.Equal("Bb", orb.GlyphText);
+        }
+        finally { AccountOrbCustomization.Reset("account:~"); }
+    }
+
     [AvaloniaFact]
     public void AfterTheLastOrbCloses_ChangesNoLongerReachThisInstance()
     {
