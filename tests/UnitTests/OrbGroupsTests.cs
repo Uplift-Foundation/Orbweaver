@@ -864,4 +864,33 @@ public class OrbGroupsTests
         Assert.False(table.EnsureTeamMembership(null, new string?[] { "late" }));
         Assert.Empty(table.Members);
     }
+
+    // Each field alone is enough for a style to be kept — the four arms of the
+    // "nothing left to override" test in CleanStyle.
+    [Theory]
+    [InlineData("#112233", null, null, null)]
+    [InlineData(null, 0.5, null, null)]
+    [InlineData(null, null, "#112233", null)]
+    [InlineData(null, null, null, 0.5)]
+    public void AStyleWithAnySingleFieldSetIsKept(string? stroke, double? strokeOpacity, string? fill, double? fillOpacity)
+    {
+        Assert.NotNull(OrbGroups.CleanStyle(new GroupStyle(stroke, strokeOpacity, fill, fillOpacity)));
+    }
+
+    [Fact]
+    public void GetAnswersNullForANullIdAndDeleteLeavesOtherGroupsMembersAlone()
+    {
+        var table = new OrbGroupTable();
+        var one = table.Create(idSource: Ids("g-00000001"));
+        var two = table.Create(idSource: Ids("g-00000002"));
+        table.Move("a", one.Id);
+        table.Move("b", two.Id);
+
+        Assert.Null(table.Get(null));
+
+        table.Delete(one.Id);
+
+        Assert.Null(table.MembershipFor("a"));
+        Assert.Equal(two.Id, table.MembershipFor("b"));
+    }
 }
