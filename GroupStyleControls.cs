@@ -17,11 +17,12 @@ namespace Orbweaver
         internal static string Percent(double opacity) =>
             $"{Math.Round(opacity * 100).ToString(System.Globalization.CultureInfo.InvariantCulture)}%";
 
-        // A stored colour that does not parse reads as white rather than
+        // A stored colour that does not normalise reads as white rather than
         // throwing — the setter normalises on the way in, so this only fires for
         // a hand-edited file that got past Load, and it costs that one swatch.
+        // NormalizeColor only ever returns #RRGGBB, so Parse cannot throw.
         internal static Color ColorOf(string? hex) =>
-            Color.TryParse(OrbGroups.NormalizeColor(hex) ?? "#FFFFFF", out var color) ? color : Colors.White;
+            Color.Parse(OrbGroups.NormalizeColor(hex) ?? "#FFFFFF");
 
         // The slider and its percentage, right-aligned in the settings row's
         // control column. `write` receives 0..1.

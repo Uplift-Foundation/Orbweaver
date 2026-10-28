@@ -239,4 +239,15 @@ public class OrbGroupSubmenuTests : IDisposable
 
         Assert.Null(OrbweaverSettings.OrbGroupFor(group.Id));
     }
+
+    [AvaloniaFact]
+    public void AGroupMissingFromTheTableIsShownUnderItsDefaultName()
+    {
+        var orb = NewOrb();
+        orb.GroupContextOverride = () => new GroupMenuContext("g-deadbeef", null, Array.Empty<string>());
+
+        orb.RebuildGroupSubmenu();
+
+        Assert.StartsWith("In: ", (string)Items(Submenu(orb))[0].Header!);
+    }
 }

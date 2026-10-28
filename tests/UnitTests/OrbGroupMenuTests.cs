@@ -104,6 +104,25 @@ public class OrbGroupMenuTests : IDisposable
     }
 
     [Fact]
+    public void KeylessAndDuplicateKeyedMembersAreNotListedTwiceOrAtAll()
+    {
+        // m1 shares the lead's directory and title, so its key is the lead's;
+        // m2 and m3 share one key between them; m4 has no directory and so no
+        // key. Only m2's key is written, once.
+        var lead = Status("same");
+        var statuses = Of(
+            ("lead", lead),
+            ("m1", Status("same", "lead")),
+            ("m2", Status("dup", "lead")),
+            ("m3", Status("dup", "lead")),
+            ("m4", new SessionStatus { Cwd = "", Title = "", Lead = "lead" }));
+
+        var context = Resolve(statuses, "lead");
+
+        Assert.Equal(new[] { SessionManager.PositionKeyFor(statuses["m2"], "m2") }, context.MemberKeys);
+    }
+
+    [Fact]
     public void AnOrbPointingAtItselfIsItsOwnRoot()
     {
         var statuses = Of(("a", Status("a", "a")));

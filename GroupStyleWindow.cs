@@ -155,10 +155,6 @@ namespace Orbweaver
 
         private OrbGroup? Group => OrbweaverSettings.OrbGroupFor(GroupId);
 
-        // Guards the handlers against the writes Body() itself causes by
-        // seeding the controls from the store.
-        private bool _building;
-
         // The style the controls show: the group's override where it has one,
         // the global default where it inherits, field by field.
         private GroupStyle Effective()
@@ -174,8 +170,6 @@ namespace Orbweaver
 
         private Control Body()
         {
-            _building = true;
-
             var group = Group;
             var usingDefault = group?.Style is null;
             var effective = Effective();
@@ -216,7 +210,6 @@ namespace Orbweaver
             root.Children.Add(Line("Fill colour", FillPicker));
             root.Children.Add(Line("Fill opacity", fillOpacity));
 
-            _building = false;
             return root;
         }
 
@@ -237,7 +230,7 @@ namespace Orbweaver
 
         private void OnNameBoxChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
         {
-            if (_building || e.Property != TextBox.TextProperty) return;
+            if (e.Property != TextBox.TextProperty) return;
 
             OrbweaverSettings.RenameOrbGroup(GroupId, NameBox.Text);
             SessionManager.Instance?.ReapplyGroupStyles();
@@ -249,8 +242,6 @@ namespace Orbweaver
         // group follows the global card again.
         private void OnUseDefaultChanged(object? sender, EventArgs e)
         {
-            if (_building) return;
-
             if (UseDefaultBox.IsChecked == true)
             {
                 OrbweaverSettings.SetOrbGroupStyle(GroupId, null);
@@ -266,8 +257,6 @@ namespace Orbweaver
 
         private void Write(Func<GroupStyle, GroupStyle> change)
         {
-            if (_building) return;
-
             OrbweaverSettings.SetOrbGroupStyle(GroupId, change(Effective()));
             SessionManager.Instance?.ReapplyGroupStyles();
         }
