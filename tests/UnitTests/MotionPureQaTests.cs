@@ -200,4 +200,54 @@ public class MotionPureQaTests
         Assert.True(r.MaxExcursion <= 400, $"release velocity {speed} px/s: orb flew {r.MaxExcursion}px past its slot");
         Assert.Equal(new PixelPoint(520, 500), r.End);
     }
+
+    [Theory]
+    [InlineData(90, 1500.0, 1.0)]
+    [InlineData(90, 40000.0, 1.0)]
+    [InlineData(0, 1500.0, 1.0)]
+    [InlineData(5, 900.0, 2.0)]
+    [InlineData(400, 8000.0, 2.0)]
+    [InlineData(90, -1500.0, 1.0)]
+    public void AFlungOvershootIsInTheThrowDirectionWithinTheCapAndEndsExactlyOnTheSlot(int distance, double vDip, double units)
+    {
+        // The slot is `distance` px ahead along +x; a negative velocity is a throw away from it.
+        var from = new PixelPoint(1000 - distance, 400); var to = new PixelPoint(1000, 400);
+        var vUnits = vDip * units;                       // SessionManager seeds the glide in screen units
+        var g = new SpringGlide(from, to, (vUnits, 0), 0, false);
+        double maxPast = 0, minBehind = 0; var lateral = 0;
+        PixelPoint last = from;
+        for (long t = 4; t < 5000 && !g.Done; t += 4)
+        {
+            last = g.Step(t);
+            maxPast = Math.Max(maxPast, last.X - to.X);
+            minBehind = Math.Min(minBehind, last.X - to.X);
+            lateral = Math.Max(lateral, Math.Abs(last.Y - to.Y));
+        }
+        var cap = Math.Max(0.08 * distance, 12) * units;   // 8% of the distance or 12 DIP, in screen units
+        _out.WriteLine($"d={distance} v={vDip} u={units}: past {maxPast}, behind {minBehind}, cap {cap:F1}");
+        Assert.True(g.Done);
+        Assert.Equal(to, last);                            // exactly on the slot
+        Assert.Equal(0, lateral);                          // a throw along x never leaves the axis
+        Assert.True(maxPast <= cap + 1.5, $"overshot {maxPast}px past the slot, cap {cap:F1}");
+        // A throw away from the slot carries the orb back by at most the same cap before the spring pulls it home.
+        Assert.True(minBehind >= -(distance * units + cap + 1.5), $"carried {minBehind}px behind where it started");
+    }
+
+    [Theory]
+    [InlineData(1500.0)]
+    [InlineData(-1500.0)]
+    [InlineData(40000.0)]
+    public void UnderReduceMotionAFlingChangesNothing(double v)
+    {
+        var from = new PixelPoint(910, 400); var to = new PixelPoint(1000, 400);
+        var flung = new SpringGlide(from, to, (v, 0), 0, true);
+        var still = new SpringGlide(from, to, (0, 0), 0, true);
+        for (long t = 8; t < 400; t += 8)
+        {
+            var a = flung.Step(t); var b = still.Step(t);
+            Assert.Equal(b, a);
+            Assert.True(a.X <= to.X, $"reduce motion went past the slot at {t} ms");
+        }
+        Assert.True(flung.Done && still.Done);
+    }
 }
