@@ -825,6 +825,15 @@ public class OrbGroupsTests
         Assert.Equal(1, OrbGroups.RootOf(1, Array.Empty<int>(), 2));
     }
 
+    // A chain that walks off the end of a short leadOf: the orb past the end
+    // has no lead, so it is the root. ASelfLeadIsItsOwnRoot's empty array
+    // returns before the walk (Resolves says no first); this one walks.
+    [Fact]
+    public void AChainThatWalksPastAShortLeadArrayEndsThere()
+    {
+        Assert.Equal(1, OrbGroups.RootOf(0, new[] { 1 }, 2));
+    }
+
     // ---- teams: a late member (T3) ---------------------------------------------
 
     [Fact]

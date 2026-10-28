@@ -30,6 +30,19 @@ namespace Orbweaver.Tests
 
         // --- routes ---
 
+        // leadOf shorter than the orb count reads as "no lead" for the orbs it
+        // does not cover — the same rule Compute has — on the anchored path too.
+        [Fact]
+        public void AShortLeadArrayReadsAsNoLeadForTheOrbsItMisses()
+        {
+            var table = Table(("circle", new PixelPoint(900, 500)));
+
+            var (shortLeads, _) = ComputeGroups(3, new[] { -1 }, new int[3], table, LayoutAt());
+            var (noLeads, _) = ComputeGroups(3, NoLeads(3), new int[3], table, LayoutAt());
+
+            Assert.Equal(noLeads, shortLeads);
+        }
+
         [Fact]
         public void NoOrbsIsNoPositionsAndNoGroups()
         {

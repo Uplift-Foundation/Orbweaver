@@ -173,6 +173,20 @@ public class GroupStyleWindowTests : IDisposable
     public void EscapeAndCmdWCloseIt(Key key, KeyModifiers modifiers, bool closes) =>
         Assert.Equal(closes, GroupStyleWindow.ShouldClose(key, modifiers));
 
+    // EscapeAndCmdWCloseIt pins the rule; this is the handler acting on it.
+    [AvaloniaFact]
+    public void EscapeThroughTheKeyHandlerClosesTheWindow()
+    {
+        var window = new GroupStyleWindow(NewGroup().Id, false);
+        window.Show();
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+
+        window.OnWindowKeyDown(null, new KeyEventArgs { Key = Key.Escape });
+
+        Assert.True(closed);
+    }
+
     [AvaloniaFact]
     public void ANonClosingKeyLeavesItOpen()
     {

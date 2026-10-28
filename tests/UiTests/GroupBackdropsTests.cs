@@ -533,6 +533,23 @@ public class GroupBackdropsTests : IDisposable
         finally { GroupBackdrops.BackdropPressed -= handler; }
     }
 
+    // Nobody listening is not an error: a press inside the silhouette with no
+    // subscriber (tests, or before SessionManager.Start wires the drag) does
+    // nothing at all. And a group with no backdrop has no window.
+    [AvaloniaFact]
+    public void APressWithNobodyListeningIsHarmlessAndAnUnknownGroupHasNoWindow()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.Update(new[] { Spec("g-a", "circle", a) });
+
+        var s = GroupBackdrops.StateOf("g-a")!.Value;
+        OnlyBackdrop().MouseDown(new Point(s.Width / 2, s.Height / 2), MouseButton.Left, RawInputModifiers.None);
+        OnlyBackdrop().MouseUp(new Point(s.Width / 2, s.Height / 2), MouseButton.Left, RawInputModifiers.None);
+
+        Assert.NotNull(GroupBackdrops.WindowOf("g-a"));
+        Assert.Null(GroupBackdrops.WindowOf("g-nobody"));
+    }
+
     [AvaloniaFact]
     public void APressStillReachesAnInvisibleBackdrop()
     {
