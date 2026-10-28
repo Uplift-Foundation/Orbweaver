@@ -57,6 +57,8 @@ namespace Orbweaver
         private static readonly Stack<BackdropWindow> Parked = new();
 
         private static bool _outlines = true;
+        private static bool _arranged = true;
+        private static readonly List<OrbWindow> Loose = new();
         private static string? _highlight;
         private static Point? _lastCursor;
         private static DispatcherTimer? _timer;
@@ -74,6 +76,26 @@ namespace Orbweaver
 
         internal static BackdropState? StateOf(string groupId) =>
             Active.TryGetValue(groupId, out var w) ? w.State : null;
+
+        // Arrange mode, as SessionManager knows it. User groups have a backdrop in
+        // both modes; main, heartbeats and crons only while arranged (see
+        // BackdropVisibility). Call before Update. Defaults to arranged.
+        internal static void SetArranged(bool arranged)
+        {
+            if (_arranged == arranged) return;
+            _arranged = arranged;
+            Refresh();
+        }
+
+        // Orbs that are not in any backdropped group — the loose stack, in free mode.
+        // A backdrop never takes a click over one of them: their circles are cut out
+        // of its hit area exactly as its own orbs' are, even if one sits inside the
+        // silhouette or the corners of its bounding box.
+        internal static void SetLooseOrbs(IEnumerable<OrbWindow> orbs)
+        {
+            Loose.Clear();
+            Loose.AddRange(orbs);
+        }
 
         // Replaces the set. Callers rebuild it on every scan rather than diffing.
         internal static void Update(IEnumerable<BackdropSpec> groups)
@@ -93,8 +115,11 @@ namespace Orbweaver
             var wanted = new HashSet<string>();
             var added = false;
 
+            MeasureDiscs(Loose, out var looseDiscs, out _);
+
             foreach (var spec in Specs)
             {
+                if (!BackdropVisibility.Shows(spec.GroupId, _arranged)) continue;
                 if (!MeasureDiscs(spec.Orbs, out var discs, out var scale)) continue;
 
                 wanted.Add(spec.GroupId);
@@ -108,6 +133,7 @@ namespace Orbweaver
                 }
 
                 window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve);
+                window.SyncHoles(looseDiscs);
                 window.Restyle(StyleFor(spec), spec.GroupId == _highlight, _outlines);
                 window.EnsureShown();
             }
@@ -311,7 +337,8 @@ namespace Orbweaver
             private string _groupId = "";
             private List<(double X, double Y, double R)>? _discs;
             private Point[] _local = Array.Empty<Point>();
-            private (double X, double Y, double R)[] _localDiscs = Array.Empty<(double, double, double)>();
+            private (double X, double Y, double R)[] _localDiscs = Array.Empty<(double, double, double)>();   // the group's own
+            private (double X, double Y, double R)[] _holes = Array.Empty<(double, double, double)>();       // plus other orbs reaching in
             private double _scale = 1;
             private bool _shown;
             private string _drawnShape = "";
@@ -385,6 +412,7 @@ namespace Orbweaver
                 for (var i = 0; i < outline.Length; i++)
                     _local[i] = new Point(outline[i].X - _origin.X, outline[i].Y - _origin.Y);
                 _localDiscs = BackdropGeometry.LocalDiscs(discs, _origin);
+                _holes = _localDiscs;
 
                 Position = new PixelPoint((int)_origin.X, (int)_origin.Y);
                 Width = Math.Ceiling(box.Right - _origin.X) / scale;
@@ -433,6 +461,18 @@ namespace Orbweaver
             // Where the cursor (screen units) is relative to this backdrop, decided
             // by BackdropHitTest. Returns the new catching state, or null for no
             // change.
+            // Re-reads which other orbs reach into this window. Done on every Refresh,
+            // because a loose orb can move without the group moving; the Windows
+            // region is only rebuilt when the set of holes actually changed.
+            internal void SyncHoles(IReadOnlyList<(double X, double Y, double R)> otherOrbs)
+            {
+                var holes = BackdropGeometry.HolesFor(_localDiscs, otherOrbs, _origin, Width * _scale, Height * _scale);
+                if (holes.SequenceEqual(_holes)) return;
+
+                _holes = holes;
+                ApplyRegion();
+            }
+
             internal Point[] Outline()
             {
                 var abs = new Point[_local.Length];
@@ -445,7 +485,7 @@ namespace Orbweaver
                 var local = new Point(cursor.X - _origin.X, cursor.Y - _origin.Y);
                 var bounds = new Rect(0, 0, Width * _scale, Height * _scale);
 
-                if (BackdropHitTest.ShouldCatch(local, bounds, _local, _localDiscs, false, Catching) is not { } now) return null;
+                if (BackdropHitTest.ShouldCatch(local, bounds, _local, _holes, false, Catching) is not { } now) return null;
                 Catching = now;
                 return now;
             }
@@ -475,7 +515,7 @@ namespace Orbweaver
             [ExcludeFromCodeCoverage]
             private void ApplyRegion() =>
                 BackdropNative.SetPolygonRegion(
-                    this, BackdropGeometry.RegionPoints(_local, default, 1), BackdropGeometry.RegionHoles(_localDiscs, 1));
+                    this, BackdropGeometry.RegionPoints(_local, default, 1), BackdropGeometry.RegionHoles(_holes, 1));
         }
     }
 }

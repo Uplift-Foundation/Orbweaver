@@ -182,6 +182,60 @@ public class BackdropLogicTests
         Assert.False(BackdropGeometry.CurveFollows(null, a, 3, 4));
     }
 
+    // --- which groups get a backdrop ----------------------------------------------
+
+    [Theory]
+    [InlineData("g-1a2b3c4d", true, true)]
+    [InlineData("g-1a2b3c4d", false, true)]    // user groups are live in free mode
+    [InlineData("main", true, true)]
+    [InlineData("main", false, false)]         // the predefined ones follow Arrange
+    [InlineData("heartbeats", false, false)]
+    [InlineData("crons", false, false)]
+    [InlineData("heartbeats", true, true)]
+    public void UserGroupsAlwaysHaveABackdropAndThePredefinedOnesOnlyWhileArranged(string id, bool arranged, bool shows)
+    {
+        Assert.Equal(shows, BackdropVisibility.Shows(id, arranged));
+    }
+
+    [Fact]
+    public void OnlyTheGPrefixMakesAUserGroup()
+    {
+        Assert.True(BackdropVisibility.IsUserGroup("g-abcdef12"));
+        Assert.False(BackdropVisibility.IsUserGroup("main"));
+        Assert.False(BackdropVisibility.IsUserGroup("G-abcdef12"));
+        Assert.False(BackdropVisibility.IsUserGroup(""));
+    }
+
+    // --- holes: the group's own orbs and any other orb reaching in -----------------
+
+    [Fact]
+    public void HolesAreTheGroupsOwnDiscsPlusEveryOtherOrbThatReachesIntoTheWindow()
+    {
+        var own = new (double X, double Y, double R)[] { (30, 30, 18) };
+        var extra = new (double X, double Y, double R)[]
+        {
+            (500, 300, 18),    // window origin (400,200): local (100,100) — inside a 200x200 window
+            (590, 300, 18),    // local (190,100): reaches in by its radius at the right edge
+            (630, 300, 18),    // local (230,100): 230-18 = 212 > 200, clear of it
+            (500, 150, 18),    // local (100,-50): wholly above the top edge
+            (500, 175, 18),    // local (100,-25): -25 + 18 < 0, still wholly above it
+            (380, 300, 18),    // local (-20,100): its right edge at -2, clear of the left edge
+            (390, 300, 18),    // local (-10,100): its right edge at 8, reaches in
+            (500, 430, 18),    // local (100,230): clear below
+        };
+
+        var holes = BackdropGeometry.HolesFor(own, extra, new Point(400, 200), 200, 200);
+
+        Assert.Equal(new (double, double, double)[] { (30, 30, 18), (100, 100, 18), (190, 100, 18), (-10, 100, 18) }, holes);
+    }
+
+    [Fact]
+    public void NoOtherOrbsLeavesJustTheGroupsOwnDiscs()
+    {
+        var own = new (double X, double Y, double R)[] { (30, 30, 18), (60, 60, 18) };
+        Assert.Equal(own, BackdropGeometry.HolesFor(own, NoDiscs, default, 100, 100));
+    }
+
     // --- drawing style -------------------------------------------------------
 
     private static readonly Color Stroke = Color.FromArgb(90, 255, 0, 0);

@@ -26,6 +26,8 @@ public class GroupBackdropsTests : IDisposable
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
         GroupBackdrops.SetOutlinesVisible(true);
+        GroupBackdrops.SetArranged(true);
+        GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
         GroupBackdrops.Highlight(null);
     }
 
@@ -34,6 +36,8 @@ public class GroupBackdropsTests : IDisposable
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
         GroupBackdrops.SetOutlinesVisible(true);
+        GroupBackdrops.SetArranged(true);
+        GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
         GroupBackdrops.Highlight(null);
         foreach (var o in _orbs) o.Close();
         GroupBackdrops.Measure = _measure;
@@ -416,6 +420,86 @@ public class GroupBackdropsTests : IDisposable
 
         Assert.Empty(told);   // inside the silhouette, but over an orb: still pass-through
         Assert.False(GroupBackdrops.StateOf("g-a")!.Value.Catching);
+    }
+
+    // ---- free mode: user groups are live, the predefined ones follow Arrange ---------
+
+    [AvaloniaFact]
+    public void FreeModeKeepsUserGroupBackdropsAndDropsThePredefinedOnes()
+    {
+        var (a, b) = TwoGroups();
+        GroupBackdrops.SetArranged(false);
+        GroupBackdrops.Update(new[] { Spec("g-a", "heart", a), Spec("main", "circle", b) });
+
+        Assert.True(GroupBackdrops.StateOf("g-a")!.Value.Shown);
+        Assert.Null(GroupBackdrops.StateOf("main"));
+        Assert.Equal(1, GroupBackdrops.ShownCount);
+
+        GroupBackdrops.SetArranged(true);                       // Arrange comes on: main appears
+        Assert.NotNull(GroupBackdrops.StateOf("main"));
+        Assert.Equal(2, GroupBackdrops.ShownCount);
+
+        GroupBackdrops.SetArranged(false);                      // and goes again
+        Assert.Null(GroupBackdrops.StateOf("main"));
+        Assert.NotNull(GroupBackdrops.StateOf("g-a"));
+        GroupBackdrops.SetArranged(false);                      // idempotent
+        Assert.Equal(1, GroupBackdrops.ShownCount);
+    }
+
+    [AvaloniaFact]
+    public void ASnapHighlightWorksOnAUserGroupInFreeModeAndIsNothingOnAMissingOne()
+    {
+        var (a, b) = TwoGroups();
+        GroupBackdrops.SetArranged(false);
+        GroupBackdrops.Update(new[] { Spec("g-a", "heart", a), Spec("main", "circle", b) });
+
+        GroupBackdrops.Highlight("g-a");
+        Assert.True(GroupBackdrops.StateOf("g-a")!.Value.Highlighted);
+        Assert.Equal(255, GroupBackdrops.StateOf("g-a")!.Value.Stroke.A);
+
+        GroupBackdrops.Highlight("main");          // no backdrop in free mode: nothing to light
+        Assert.Null(GroupBackdrops.StateOf("main"));
+    }
+
+    // A loose stack orb standing inside the group's bounding box — and, to be hard
+    // on it, inside its silhouette — must keep its click: the backdrop is never
+    // caught over it, even though it is not one of the group's own orbs.
+    [AvaloniaFact]
+    public void ALooseOrbInsideTheBackdropIsNeverCoveredByIt()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.SetArranged(false);
+        GroupBackdrops.Update(new[] { Spec("g-a", "circle", a) });
+        var s = GroupBackdrops.StateOf("g-a")!.Value;
+
+        // Right at the middle of the group's silhouette, where it would be caught.
+        var cx = (int)(s.Position.X + s.Width / 2);
+        var cy = (int)(s.Position.Y + s.Height / 2);
+        var loose = Orb("loose", cx - 28, cy - 28);
+        var centre = new Point(cx, cy);
+
+        var before = new List<bool>();
+        GroupBackdrops.HitTestTick(centre, false, (_, c) => before.Add(c));
+        Assert.Equal(new[] { true }, before);                    // no hole yet: it would catch
+
+        GroupBackdrops.SetLooseOrbs(new[] { loose });
+        GroupBackdrops.Refresh();
+
+        var after = new List<bool>();
+        GroupBackdrops.HitTestTick(new Point(centre.X + 1, centre.Y), false, (_, c) => after.Add(c));   // cursor moved a pixel
+        Assert.Equal(new[] { false }, after);                    // now pass-through over the loose orb
+        Assert.False(GroupBackdrops.StateOf("g-a")!.Value.Catching);
+
+        // Just beyond the orb's circle, still inside the silhouette, it catches again.
+        var clear = new Point(cx + loose.OrbRadius + 6, cy);
+        var again = new List<bool>();
+        GroupBackdrops.HitTestTick(clear, false, (_, c) => again.Add(c));
+        Assert.Equal(new[] { true }, again);
+
+        // A loose orb in a far corner of the box, outside the silhouette, changes nothing.
+        GroupBackdrops.SetLooseOrbs(new[] { loose, Orb("far", 4000, 4000), Orb("alsoLoose", cx, cy) });
+        GroupBackdrops.Refresh();
+        Assert.True(GroupBackdrops.StateOf("g-a")!.Value.Shown);
     }
 
     // ---- pointer: only inside the silhouette ------------------------------------

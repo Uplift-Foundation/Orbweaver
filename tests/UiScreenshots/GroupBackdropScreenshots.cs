@@ -23,6 +23,8 @@ public class GroupBackdropScreenshots : IDisposable
         GroupBackdrops.Measure = o => (new Point(o.Position.X + o.CentreDip, o.Position.Y + o.CentreDip), 1.0);
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.SetOutlinesVisible(true);
+        GroupBackdrops.SetArranged(true);
+        GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
         GroupBackdrops.Highlight(null);
     }
 
@@ -30,6 +32,8 @@ public class GroupBackdropScreenshots : IDisposable
     {
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
+        GroupBackdrops.SetArranged(true);
+        GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
         GroupBackdrops.Measure = _measure;
         foreach (var o in _orbs) o.Close();
     }
@@ -143,5 +147,51 @@ public class GroupBackdropScreenshots : IDisposable
 
         ScreenshotHelper.SideBySide(new[] { Dress("g-default", left), Dress("g-custom", right) },
             "group-backdrops-style-override.png");
+    }
+
+    // Free mode (Arrange off): a user group is still its own shape with a backdrop,
+    // beside the loose orbs, which stand in a column with nothing behind them.
+    // There is no backdrop for "main" here, which is the point of the picture.
+    [AvaloniaFact]
+    public void AFreeModeGroupBesideTheLooseStack()
+    {
+        var leadOf = new[] { -1, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1, -1 };
+        var heart = Arranged("g", "heart", leadOf, Stage);
+
+        var stack = Enumerable.Range(0, 5).Select(i => Orb($"loose{i}", 0, 0)).ToList();
+
+        GroupBackdrops.SetArranged(false);
+        GroupBackdrops.SetLooseOrbs(stack);
+        GroupBackdrops.Update(new[]
+        {
+            new BackdropSpec("g-free", "heart", heart, null, CurveOf(heart)),
+            new BackdropSpec("main", "circle", stack, null, null)        // offered, and ignored in free mode
+        });
+
+        Assert.Null(GroupBackdrops.StateOf("main"));
+
+        var groupWindow = Dress("g-free", heart);
+
+        // The loose stack, drawn as the orbs alone on the same page: a column.
+        var column = new StackPanel { Background = new SolidColorBrush(Color.Parse("#1E1E24")), Spacing = 14, Margin = new Thickness(0) };
+        column.Children.Add(new TextBlock { Text = "loose", Foreground = Brushes.Gray, Margin = new Thickness(18, 8, 0, 0) });
+        foreach (var _ in stack)
+            column.Children.Add(new Avalonia.Controls.Shapes.Ellipse
+            {
+                Width = 36, Height = 36, Fill = new SolidColorBrush(Color.Parse("#5B8DEF")),
+                Margin = new Thickness(18, 0, 18, 0)
+            });
+        var stackWindow = new Window
+        {
+            Width = 72,
+            Height = Math.Max(groupWindow.Height, 300),
+            Content = column,
+            WindowDecorations = WindowDecorations.None,
+            Background = new SolidColorBrush(Color.Parse("#1E1E24"))
+        };
+        stackWindow.Show();
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.SideBySide(new Window[] { groupWindow, stackWindow }, "group-backdrops-free-mode.png");
     }
 }

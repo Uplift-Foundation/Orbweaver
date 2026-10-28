@@ -59,6 +59,20 @@ namespace Orbweaver
         internal static bool CursorMoved(Point? last, Point now) => last is not { } l || l != now;
     }
 
+    // Which groups get a backdrop. User groups (g-…) are always live: they are drawn
+    // as their own shape, grabbable and highlightable, whether or not the orbs are
+    // Arranged. The predefined groups (main, heartbeats, crons) follow Arrange mode,
+    // so with Arrange off the loose orbs have nothing behind them.
+    internal static class BackdropVisibility
+    {
+        internal const string UserPrefix = "g-";
+
+        internal static bool IsUserGroup(string groupId) =>
+            groupId.StartsWith(UserPrefix, StringComparison.Ordinal);
+
+        internal static bool Shows(string groupId, bool arranged) => arranged || IsUserGroup(groupId);
+    }
+
     internal static class BackdropOrder
     {
         // `zOrder` is every top-level window front to back. Returns the rearmost
@@ -111,6 +125,27 @@ namespace Orbweaver
             return Math.Abs(next.Value.Scale - prev.Value.Scale) <= tolerance &&
                    Math.Abs(next.Value.Centre.X - prev.Value.Centre.X - dx) <= tolerance &&
                    Math.Abs(next.Value.Centre.Y - prev.Value.Centre.Y - dy) <= tolerance;
+        }
+
+        // The discs a backdrop must not take clicks over: its own group's, and any
+        // other orb (a loose stack orb, another group's) whose circle reaches into
+        // the window. `extra` are absolute screen discs; the result is relative to
+        // the window's top-left. Others that cannot touch the window are left out so
+        // the Windows region carries no holes it does not need.
+        internal static (double X, double Y, double R)[] HolesFor(
+            IReadOnlyList<(double X, double Y, double R)> groupLocal,
+            IReadOnlyList<(double X, double Y, double R)> extra,
+            Point origin, double width, double height)
+        {
+            var holes = new List<(double X, double Y, double R)>(groupLocal);
+            foreach (var d in extra)
+            {
+                var x = d.X - origin.X;
+                var y = d.Y - origin.Y;
+                if (x + d.R < 0 || y + d.R < 0 || x - d.R > width || y - d.R > height) continue;
+                holes.Add((x, y, d.R));
+            }
+            return holes.ToArray();
         }
 
         // Discs relative to the window's top-left.
