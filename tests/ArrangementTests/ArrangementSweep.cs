@@ -699,14 +699,16 @@ namespace Orbweaver.Tests
             string Split,
             SizeMix? Mix = null,
             string Obstacles = "none",
-            bool EmptyPredefined = false)
+            bool EmptyPredefined = false,
+            string Offsets = "none")
         {
             public override string ToString()
                 => $"{Screen.Name} / {Shape} / spacing {Spacing:0.00} / {Count} orbs / {Team.Name}"
                  + $" / {Groups} groups, anchors {Anchors}, dealt {Split}"
                  + (Mix is { } mix ? $" / sizes {mix.Name}" : "")
                  + (Obstacles == "none" ? "" : $" / obstacles {Obstacles}")
-                 + (EmptyPredefined ? " / user groups only" : "");
+                 + (EmptyPredefined ? " / user groups only" : "")
+                 + (Offsets == "none" ? "" : $" / member offsets {Offsets}");
         }
 
         // Fixed rectangles no group may be drawn on (free mode, CB-268 F2):
@@ -739,6 +741,37 @@ namespace Orbweaver.Tests
                 },
                 _ => Array.Empty<PixelRect>(),
             };
+        }
+
+        // Hand-placed member offsets (CB-268 T2), in DIP from the lead:
+        //   small        a nudge off where a fan would put it
+        //   large        most of a screen away
+        //   off-screen   thousands of DIP away, alternating directions
+        //   overlapping  zero: on top of the lead, and of every sibling given
+        //                the same
+        // Only members get one — a root's entry would be ignored, which is the
+        // point of asking for it to be.
+        internal static readonly string[] OffsetKinds = { "small", "large", "off-screen", "overlapping" };
+
+        internal static (double Dx, double Dy)?[] OffsetsOf(string kind, int[] leads, int count)
+        {
+            var result = new (double, double)?[count];
+
+            for (var i = 0; i < count; i++)
+            {
+                if (kind == "none") break;
+
+                // A root gets one too, deliberately: it must be ignored.
+                result[i] = kind switch
+                {
+                    "small" => ((i % 3 - 1) * 30.0, (i % 2 * 2 - 1) * 25.0),
+                    "large" => (i % 2 == 0 ? 400.0 : -400.0, i % 3 == 0 ? 300.0 : -300.0),
+                    "off-screen" => (i % 2 == 0 ? 6000.0 : -6000.0, i % 3 == 0 ? -6000.0 : 6000.0),
+                    _ => (0.0, 0.0),
+                };
+            }
+
+            return result;
         }
 
         internal static readonly int[] GroupCounts = { 3, 8, 20 };
@@ -798,6 +831,25 @@ namespace Orbweaver.Tests
                 yield return new GroupCase(
                     screen, shape, 0.85, count, team, groups, kind, "round robin",
                     Obstacles: obstacles, EmptyPredefined: userOnly);
+
+            // Members the user placed by hand, in teams, with and without an
+            // obstacle beside them.
+            var teamy = TeamShapes
+                .Where(t => t.Name is "one team of 3" or "two teams of 6" or "everything in one team"
+                    || t.Name.StartsWith("nested"))
+                .ToArray();
+
+            foreach (var screen in Screens)
+            foreach (var groups in new[] { 1, 3 })
+            foreach (var kind in new[] { "spread", "colliding" })
+            foreach (var offsets in OffsetKinds)
+            foreach (var obstacles in new[] { "none", "stack" })
+            foreach (var shape in Shapes)
+            foreach (var count in new[] { 8, 20 })
+            foreach (var team in teamy)
+                yield return new GroupCase(
+                    screen, shape, 0.85, count, team, groups, kind, "blocks",
+                    Obstacles: obstacles, Offsets: offsets);
         }
 
         // The invariants for one user-group case. Returns what went wrong,
@@ -824,6 +876,7 @@ namespace Orbweaver.Tests
             var centres = Enumerable.Repeat((PixelPoint?)null, slotBase)
                 .Concat(AnchorsOf(test.Anchors, test.Groups, screen)).ToArray();
             var obstacles = ObstaclesOf(test.Obstacles, screen);
+            var offsets = OffsetsOf(test.Offsets, leads, count);
 
             var sizes = test.Mix?.Build(count) ?? Enumerable.Repeat(1.0, count).ToArray();
             double[]? sizeArgument = test.Mix is null ? null : sizes;
@@ -839,7 +892,7 @@ namespace Orbweaver.Tests
             try
             {
                 result = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, out path);
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, test.Offsets == "none" ? null : offsets, out path);
             }
             catch (Exception ex)
             {
@@ -937,9 +990,19 @@ namespace Orbweaver.Tests
             double CentreX(int i) => pts[i].X + windowOf[i] / 2.0;
             double CentreY(int i) => pts[i].Y + windowOf[i] / 2.0;
 
+            // With obstacles and groups that cannot all be got apart, the
+            // groups stay at their best-effort places and may overlap each
+            // other as well as the obstacles; the orbs of one group still may
+            // not (CB-268 F2 — a rebanded group on the stack column is worse).
+            var slotOfOrb = new int[count];
+            foreach (var group in placed) foreach (var orb in group.Orbs) slotOfOrb[orb] = group.Slot;
+            var crowded = path == OrbArrangement.GroupPath.Fallback && obstacles.Length > 0;
+
             for (var i = 0; i < count; i++)
             for (var j = i + 1; j < count; j++)
             {
+                if (crowded && slotOfOrb[i] != slotOfOrb[j]) continue;
+
                 var dx = CentreX(i) - CentreX(j);
                 var dy = CentreY(i) - CentreY(j);
                 var gap = Math.Sqrt(dx * dx + dy * dy) - RadiusOf(i) - RadiusOf(j);
@@ -952,10 +1015,18 @@ namespace Orbweaver.Tests
                 break;
             }
 
-            // 5. Every group's slot box holds the windows of the orbs in it.
+            // 5. Every group's slot box holds the windows of the orbs in it —
+            //    except a member the user placed by hand, which is put where
+            //    they left it after the group is laid out and is not part of
+            //    the box (CB-268 T2).
+            bool ByHand(int orb) =>
+                test.Offsets != "none" && offsets[orb] is not null && OrbArrangement.Resolves(orb, leads, count);
+
             foreach (var group in placed)
             foreach (var orb in group.Orbs)
             {
+                if (ByHand(orb)) continue;
+
                 var box = group.SlotBounds;
                 if (pts[orb].X >= box.X && pts[orb].Y >= box.Y
                     && pts[orb].X + windowOf[orb] <= box.Right && pts[orb].Y + windowOf[orb] <= box.Bottom) continue;
@@ -1064,10 +1135,40 @@ namespace Orbweaver.Tests
 
             // 8. Deterministic.
             var again = OrbArrangement.ComputeGroups(
-                count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, out var againPath);
+                count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, test.Offsets == "none" ? null : offsets, out var againPath);
 
             if (againPath != path || !pts.SequenceEqual(again.Positions) || !SamePlacements(placed, again.Groups))
                 Fail("not deterministic — two runs disagreed");
+
+            // 8b. Hand-placed members change nothing about the group: the same
+            //     case with no offsets gives the same route, the same
+            //     placements — Landed, box, shape and curve — and the same
+            //     positions for every orb that is not a hand-placed member or
+            //     hanging off one. A member drag cannot shift its group.
+            if (test.Offsets != "none")
+            {
+                var plain = OrbArrangement.ComputeGroups(
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, null, out var plainPath);
+
+                if (plainPath != path)
+                    Fail($"offsets changed the route from {plainPath} to {path}");
+                else if (!SamePlacements(placed, plain.Groups))
+                    Fail("offsets changed a group's placement (Landed, box, shape or curve)");
+                else
+                {
+                    bool UnderHand(int orb)
+                    {
+                        for (var at = orb; ; at = leads[at])
+                        {
+                            if (ByHand(at)) return true;
+                            if (!OrbArrangement.Resolves(at, leads, count)) return false;
+                        }
+                    }
+
+                    var moved = Enumerable.Range(0, count).FirstOrDefault(o => !UnderHand(o) && pts[o] != plain.Positions[o], -1);
+                    if (moved >= 0) Fail($"offsets moved orb {moved}, which is not a hand-placed member or under one");
+                }
+            }
 
             // 9. Feeding each group's Landed back as its anchor reproduces the
             //    layout, orb for orb: what was reported is what was drawn, so
@@ -1084,7 +1185,7 @@ namespace Orbweaver.Tests
                     .ToArray();
 
                 var round = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(landed), layout, sizeArgument, obstacles, out var roundPath);
+                    count, leads, groupOf, Table(landed), layout, sizeArgument, obstacles, test.Offsets == "none" ? null : offsets, out var roundPath);
 
                 if (roundPath != path)
                     Fail($"feeding Landed back took the {roundPath} route, not {path}");

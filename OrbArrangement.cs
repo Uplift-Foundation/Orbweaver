@@ -300,24 +300,58 @@ namespace Orbweaver
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
             IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null,
-            IReadOnlyList<PixelRect>? obstacles = null)
-            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, obstacles, out _);
+            IReadOnlyList<PixelRect>? obstacles = null,
+            IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf = null)
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, obstacles, memberOffsetOf, out _);
 
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
             IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf, out GroupPath path)
-            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, null, out path);
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, null, null, out path);
 
-        // The same, saying which route it took. `obstacles` are fixed rectangles
-        // in physical pixels (the free-mode stack column, free-pinned orbs)
-        // that no group may be drawn on: groups are separated from them as from
-        // each other. The fallback — Bands + Compact for the whole set, taken
-        // when the groups cannot all be got apart — cannot see them, so a group
-        // may overlap an obstacle there, and only there.
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
             IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf,
             IReadOnlyList<PixelRect>? obstacles, out GroupPath path)
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, obstacles, null, out path);
+
+        // The same, saying which route it took.
+        //
+        // `obstacles` are fixed rectangles in physical pixels (the free-mode
+        // stack column, free-pinned orbs) that no group may be drawn on: groups
+        // are separated from them as from each other. When they cannot all be
+        // got apart the route is Fallback, and what that means depends on
+        // whether there are any: with none, the whole set is drawn through
+        // Bands + Compact, as ever; with some, every group stays at its
+        // best-effort position and may overlap an obstacle or another group,
+        // because Bands cannot see obstacles and would throw user groups
+        // across the screen and onto the stack column (CB-268 F2, F4). Landed
+        // is then what was asked for, since SeparateGroups started from the
+        // asked positions and a second run started from its own best effort
+        // would not stop where the first did; asking the same question again
+        // gets the same answer.
+        //
+        // `memberOffsetOf[i]` is a team member's hand-placed offset from its
+        // lead, in DIP, centre to centre (CB-268 T2). Null, a missing entry,
+        // a non-finite one, or a root's, is ignored. A member with one is not
+        // part of the layout above: the group is laid out, separated and
+        // reported exactly as if nobody had moved anybody, so a member drag can
+        // never shift its group, its box, its Landed or its curve. Only then is
+        // the member put at its lead's final centre plus the offset times
+        // layout.Scale — its own team following it rigidly — kept on the
+        // screen, and, if that is on top of an orb, an obstacle or another
+        // group's box, moved to the nearest spot that is not. Nothing else is
+        // moved to make room: the lead above all. (Laying it out inside the
+        // group instead was the first draft, and it is wrong twice: the group
+        // is drawn about the middle of the screen, where an offset reaching
+        // across the screen from a lead near one edge is clamped short; and a
+        // member dragged to an edge pulled its whole group by the amount it
+        // stuck out.)
+        internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+            int count, int[] leadOf, int[] groupOf,
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf,
+            IReadOnlyList<PixelRect>? obstacles,
+            IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf, out GroupPath path)
         {
             path = GroupPath.Separated;
 
@@ -397,17 +431,23 @@ namespace Orbweaver
             var gap = Math.Max(1, (int)Math.Round(WindowFor(layout.Scale, sizes.Max()) * GroupGapWindows));
             var (moved, separated) = SeparateGroups(boxes, work, gap, obstacles);
 
-            if (!separated)
+            var hasObstacles = obstacles is { Count: > 0 };
+
+            if (!separated && !hasObstacles)
             {
                 path = GroupPath.Fallback;
 
                 var fallback = ComputeCore(
                     count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _, out var fallbackGrid);
 
-                return (fallback, Describe(fallback, leadOf, slotOf, shapes, sizes, layout.Scale, askedOf, fallbackGrid));
+                var described = Describe(fallback, leadOf, slotOf, shapes, sizes, layout.Scale, askedOf, fallbackGrid);
+
+                PlaceByHand(fallback, leadOf, sizes, layout, memberOffsetOf, obstacles, described.Select(d => d.SlotBounds).ToArray(), described.Select(d => d.Orbs).ToArray());
+
+                return (fallback, described);
             }
 
-            path = GroupPath.Separated;
+            path = separated ? GroupPath.Separated : GroupPath.Fallback;
 
             var placements = new GroupPlacement[usedSlots.Count];
 
@@ -427,13 +467,15 @@ namespace Orbweaver
 
                 placements[k] = new GroupPlacement(
                     usedSlots[k],
-                    new PixelPoint(middle.X + dx, middle.Y + dy),
+                    separated ? new PixelPoint(middle.X + dx, middle.Y + dy) : askedOf[usedSlots[k]],
                     moved[k],
                     drawn[k],
                     members[k],
                     curveAt,
                     curveScale);
             }
+
+            PlaceByHand(positions, leadOf, sizes, layout, memberOffsetOf, obstacles, moved, members.ToArray());
 
             return (positions, placements);
         }
@@ -621,6 +663,160 @@ namespace Orbweaver
             }
 
             return new PixelRect(left, top, right - left, bottom - top);
+        }
+
+        // Puts every hand-placed member (CB-268 T2) where the user left it,
+        // on a finished layout: at its lead's centre plus the offset, with its
+        // own team (everything that hangs off it) moved rigidly along, then on
+        // the screen, then — if that is on an orb outside its own subtree, an
+        // obstacle, or another group's box — at the nearest spot that is not,
+        // found by walking outward in rings of fixed steps in a fixed order of
+        // angles so the answer is the same every time. A member whose lead is
+        // itself placed by hand is done after it. Only the member and its own
+        // team move: the lead, the rest of the fan and every other group stay
+        // exactly where the layout put them, which is why the group's box,
+        // Landed and curve cannot depend on any of this.
+        //
+        // A spot that avoids orbs, obstacles and boxes is preferred; failing
+        // that one that merely avoids orbs; failing that the clamped target,
+        // which is the honest answer on a screen with no room left.
+        private static void PlaceByHand(
+            PixelPoint[] positions, int[] leadOf, double[] sizes, Layout layout,
+            IReadOnlyList<(double Dx, double Dy)?>? offsets, IReadOnlyList<PixelRect>? obstacles,
+            IReadOnlyList<PixelRect> boxes, int[][] groupOrbs)
+        {
+            if (offsets is null) return;
+
+            var count = positions.Length;
+            var work = layout.Work;
+
+            bool ByHand(int i) =>
+                i < offsets.Count && offsets[i] is { } o && double.IsFinite(o.Dx) && double.IsFinite(o.Dy)
+                && Resolves(i, leadOf, count);
+
+            var hand = Enumerable.Range(0, count).Where(ByHand).ToList();
+            if (hand.Count == 0) return;
+
+            int Depth(int i)
+            {
+                var d = 0;
+                for (var at = i; Resolves(at, leadOf, count) && d <= count; at = leadOf[at]) d++;
+                return d;
+            }
+
+            var children = new List<int>[count];
+            for (var i = 0; i < count; i++)
+                if (Resolves(i, leadOf, count)) (children[leadOf[i]] ??= new List<int>()).Add(i);
+
+            var groupOfOrb = new int[count];
+            for (var g = 0; g < groupOrbs.Length; g++) foreach (var o in groupOrbs[g]) groupOfOrb[o] = g;
+
+            double Window(int i) => WindowFor(layout.Scale, sizes[i]);
+            double Radius(int i) =>
+                CircleDip * layout.Scale * sizes[i] / 2
+                * (i < leadOf.Length && leadOf[i] >= 0 && leadOf[i] < count ? MemberScale : 1.0);
+
+            foreach (var h in hand.OrderBy(Depth).ThenBy(i => i))
+            {
+                var subtree = new List<int> { h };
+                for (var at = 0; at < subtree.Count; at++)
+                    if (children[subtree[at]] is { } kids) subtree.AddRange(kids);
+
+                var inside = new HashSet<int>(subtree);
+                var lead = leadOf[h];
+                var offset = offsets[h]!.Value;
+
+                var wantX = positions[lead].X + Window(lead) / 2.0 + offset.Dx * layout.Scale - Window(h) / 2.0;
+                var wantY = positions[lead].Y + Window(lead) / 2.0 + offset.Dy * layout.Scale - Window(h) / 2.0;
+
+                var start = subtree.Select(i => new PixelPoint(
+                    positions[i].X + (int)Math.Round(wantX) - positions[h].X,
+                    positions[i].Y + (int)Math.Round(wantY) - positions[h].Y)).ToArray();
+
+                // Onto the screen, as one piece, by the least that gets the
+                // whole subtree's windows inside.
+                int Shift(int low, int high, int lo, int hi) =>
+                    low < lo ? lo - low : high > hi ? hi - high : 0;
+
+                var sx = Shift(
+                    subtree.Select((i, k) => start[k].X).Min(),
+                    subtree.Select((i, k) => start[k].X + (int)Window(i)).Max(), work.X, work.Right);
+                var sy = Shift(
+                    subtree.Select((i, k) => start[k].Y).Min(),
+                    subtree.Select((i, k) => start[k].Y + (int)Window(i)).Max(), work.Y, work.Bottom);
+
+                // The subtree's windows at `at`, shifted by (dx, dy), and
+                // whether that spot is acceptable at the given strictness.
+                bool Acceptable(int dx, int dy, bool strict)
+                {
+                    for (var k = 0; k < subtree.Count; k++)
+                    {
+                        var i = subtree[k];
+                        var w = (int)Window(i);
+                        var x = start[k].X + sx + dx;
+                        var y = start[k].Y + sy + dy;
+
+                        if (x < work.X || y < work.Y || x + w > work.Right || y + w > work.Bottom) return false;
+
+                        var cx = x + w / 2.0;
+                        var cy = y + w / 2.0;
+                        var r = Radius(i);
+
+                        for (var other = 0; other < count; other++)
+                        {
+                            if (inside.Contains(other)) continue;
+
+                            var ox = positions[other].X + Window(other) / 2.0;
+                            var oy = positions[other].Y + Window(other) / 2.0;
+                            var ddx = ox - cx;
+                            var ddy = oy - cy;
+
+                            if (Math.Sqrt(ddx * ddx + ddy * ddy) < r + Radius(other) + 2) return false;
+                        }
+
+                        if (!strict) continue;
+
+                        bool Hits(PixelRect rect) =>
+                            cx + r > rect.X && cx - r < rect.Right && cy + r > rect.Y && cy - r < rect.Bottom;
+
+                        if (obstacles is not null && obstacles.Any(Hits)) return false;
+
+                        for (var g = 0; g < boxes.Count; g++)
+                            if (g != groupOfOrb[h] && Hits(boxes[g])) return false;
+                    }
+
+                    return true;
+                }
+
+                var moveX = 0;
+                var moveY = 0;
+                var found = false;
+
+                var step = Math.Max(1.0, CircleDip * layout.Scale * sizes[h] / 6);
+
+                foreach (var strict in new[] { true, false })
+                {
+                    if (found) break;
+
+                    for (var ring = 0; ring <= 80 && !found; ring++)
+                    for (var k = 0; k < (ring == 0 ? 1 : 24) && !found; k++)
+                    {
+                        var angle = k * Math.PI / 12;
+                        var dx = (int)Math.Round(Math.Cos(angle) * step * ring);
+                        var dy = (int)Math.Round(Math.Sin(angle) * step * ring);
+
+                        if (!Acceptable(dx, dy, strict)) continue;
+
+                        moveX = dx;
+                        moveY = dy;
+                        found = true;
+                    }
+                }
+
+                // Nowhere is acceptable: the clamped target, overlap and all.
+                for (var k = 0; k < subtree.Count; k++)
+                    positions[subtree[k]] = new PixelPoint(start[k].X + sx + moveX, start[k].Y + sy + moveY);
+            }
         }
 
         // One group laid out on its own, about `middle`: its orbs only, with

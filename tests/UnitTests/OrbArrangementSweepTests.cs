@@ -82,10 +82,11 @@ namespace Orbweaver.Tests
 
         // The user-group half (CB-268), which is its own matrix rather than
         // more rows of Cases() — the floor above guards the first three sweeps
-        // and this guards the fourth, at 137088: 108864 across 1–6 groups ×
+        // and this guards the fourth, at 142464: 108864 across 1–6 groups ×
         // six anchor arrangements × every shape, spacing, team shape and
         // screen at three orb counts and two ways of dealing the orbs, 8064 with
-        // mixed sizes, and 20160 beside fixed obstacles (free mode). Raised to
+        // mixed sizes, 20160 beside fixed obstacles (free mode), and 5376 with members placed
+        // by hand. Raised to
         // the real count, not near it.
         [Fact]
         public void TheGroupSweepStillCoversTheWholeMatrix()
@@ -93,8 +94,8 @@ namespace Orbweaver.Tests
             var cases = ArrangementSweep.GroupCases().ToList();
 
             Assert.True(
-                cases.Count >= 137088,
-                $"the group sweep is down to {cases.Count} cases from 137088 — "
+                cases.Count >= 142464,
+                $"the group sweep is down to {cases.Count} cases from 142464 — "
                     + "if that was deliberate, raise the floor in this test");
 
             // Every dimension that earns its keep: from one group to six, each
@@ -114,6 +115,11 @@ namespace Orbweaver.Tests
                 cases.Select(c => c.Obstacles).Where(o => o != "none").Distinct().OrderBy(k => k));
             Assert.Contains(cases, c => c.Obstacles != "none" && c.EmptyPredefined);
             Assert.Contains(cases, c => c.Obstacles != "none" && !c.EmptyPredefined);
+
+            // Hand-placed members, in all four kinds.
+            Assert.Equal(
+                ArrangementSweep.OffsetKinds.OrderBy(k => k),
+                cases.Select(c => c.Offsets).Where(o => o != "none").Distinct().OrderBy(k => k));
 
             // T1 is only proven if a team's members are dealt to a different
             // group from their lead somewhere in it.
