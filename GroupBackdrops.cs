@@ -301,6 +301,7 @@ namespace Orbweaver
             private (double X, double Y, double R)[] _localDiscs = Array.Empty<(double, double, double)>();
             private double _scale = 1;
             private bool _shown;
+            private string _drawnShape = "";
             private GroupOutline.PlacedCurve? _curve;
             private bool _highlighted;
             private Point _origin; // window top-left in screen units
@@ -347,7 +348,7 @@ namespace Orbweaver
             {
                 _groupId = groupId;
 
-                if (_discs is not null && scale == _scale &&
+                if (_discs is not null && scale == _scale && shape == _drawnShape &&
                     BackdropGeometry.TryTranslation(_discs, discs) is { } d &&
                     IsWhole(d.Dx) && IsWhole(d.Dy) && BackdropGeometry.CurveFollows(_curve, curve, d.Dx, d.Dy))
                 {
@@ -359,6 +360,7 @@ namespace Orbweaver
                 }
 
                 _curve = curve;
+                _drawnShape = shape;
                 var outline = GroupOutline.Silhouette(shape, discs, PaddingDip * scale, curve);
                 var box = GroupOutline.Bounds(outline).Inflate(EdgeDip * scale);
 

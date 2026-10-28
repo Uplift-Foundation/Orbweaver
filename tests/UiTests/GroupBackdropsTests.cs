@@ -254,6 +254,26 @@ public class GroupBackdropsTests : IDisposable
         Assert.Equal(before.Height, after.Height);
     }
 
+    // A shape change leaves the discs exactly where they were — a zero translation —
+    // so the translate-instead-of-refit shortcut must not be taken for it.
+    [AvaloniaFact]
+    public void ChangingTheDrawnShapeRefitsEvenWhenTheOrbsDidNotMove()
+    {
+        var orbs = new List<OrbWindow> { Orb("s1", 100, 100), Orb("s2", 400, 100) };
+
+        GroupBackdrops.Update(new[] { Spec("g-s", "line", orbs) });
+        var line = GroupBackdrops.StateOf("g-s")!.Value;
+
+        GroupBackdrops.Update(new[] { Spec("g-s", "heart", orbs) });
+        var heart = GroupBackdrops.StateOf("g-s")!.Value;
+
+        Assert.NotEqual((line.Width, line.Height, line.Vertices), (heart.Width, heart.Height, heart.Vertices));
+        Assert.Equal(360, heart.Vertices);
+
+        GroupBackdrops.Update(new[] { Spec("g-s", "line", orbs) });
+        Assert.Equal(line.Vertices, GroupBackdrops.StateOf("g-s")!.Value.Vertices);
+    }
+
     [AvaloniaFact]
     public void MovingOneOrbRefitsTheSilhouette()
     {
