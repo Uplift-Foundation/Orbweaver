@@ -2,14 +2,30 @@
 
 The shared surface every CB-268 stream builds against. The approved plan's decisions are final, and this file only fixes the names, the types, the units and the edge cases the plan leaves open, so that streams built in parallel compile together and agree on what a value means. If a stream needs to change a signature here, say so to the architect and the other affected owner before you push. Don't change it silently.
 
-Already in code (commit `OrbGroups.cs`, `OrbArrangement.cs`): `OrbGroup`, `GroupStyle`, `OrbGroups.Main/Heartbeats/Crons`, `OrbArrangement.GroupLayout`, `OrbArrangement.GroupPlacement`. Everything else below is a signature to implement.
+Already in code (`OrbGroups.cs`, `OrbArrangement.cs`, first pushed at `ac81f062`): `OrbGroup`, `GroupStyle`, `OrbGroups.Main/Heartbeats/Crons`, `OrbArrangement.GroupLayout`, `OrbArrangement.GroupPlacement`. Everything else below is a signature to implement.
 
 ## Units, once
 
-- **Physical pixels** for anything about where orbs or groups sit on screen: orb window top-lefts, `GroupLayout.Center`, `GroupPlacement.Landed/SlotBounds`, `OrbGroup.Anchor`, and the `discs` handed to `GroupOutline`. This is the space `OrbArrangement` and `OrbWindow.Position` already use.
-- **DIP** only for the snap/drag thresholds (`OrbSnap`, `DragPlan`). The drag handler divides by the screen's render scaling once, before calling them.
+- **Screen units** for anything about where orbs or groups sit on screen: orb window top-lefts, `GroupLayout.Center`, `GroupPlacement.Landed/SlotBounds`, `OrbGroup.Anchor`, the `discs` handed to `GroupOutline`, and `PointToScreen` results. This is the space `OrbArrangement`, `OrbWindow.Position` and `PointToScreen` already use. The rest of this file and the code comments say "physical px" for these, but they are **physical pixels on Windows and points on macOS**: on a Retina Mac, Avalonia's screen coordinates are already points (see `LinkWindow.Apply`'s comment in `TeamLinks.cs`).
+- **DIP** only for the snap/drag thresholds and outline padding (`OrbSnap`, `DragPlan`, `GroupBackdrops`). To convert screen units to DIP, divide by the **measured** screen-units-per-DIP, taken the way `LinkWindow.Apply` takes it (`(PointToScreen(new Point(64, 0)).X - PointToScreen(new Point(0, 0)).X) / 64`). That is 1 on macOS and the display scaling on Windows. **Never use `RenderScaling` for this**: it is 2 on a Retina Mac while `PointToScreen` is already in points, so dividing by it would halve every distance and double the threshold. (This bullet said "render scaling" until the CB-268 team-orb revision, and that was wrong.)
 - **Opacity** is 0..1 everywhere in code and settings. The Settings slider shows 0–100%.
 - **Colours** are `#RRGGBB` strings, the form settings.json already stores. Any alpha in the string is ignored, because the opacity fields are the alpha.
+
+## Agent-team orbs (T1–T7, final)
+
+The rules Warren added for agent teams, as they land on these contracts:
+
+- **T1 — one root, one group.** A team's group is resolved from its **root lead**, and its members never diverge from it. In `ComputeGroups`, every member inherits its root lead's slot, whatever its own `groupOf` entry says. In `SessionManager`, the group of every orb in a team is the root's `GroupIdFor`.
+- **T2 — a team moves as one.** A plain drag on a lead **or** on any member, at any depth, moves the whole team (root plus every descendant, nested included), and snaps or unsnaps it as one. `OrbSnap` measures from **all** of the team's discs. Shift-drag or a backdrop drag moves the whole group, teams included.
+- **T3 — membership on every key.** Membership is written under every team key, including members that arrive later; S7 writes those the first time it sees them. A member that outlives its lead then keeps the group.
+- **T4 — the root survives its lead.** When a lead ends, the root becomes its **nearest surviving ancestor**: walk the `Lead` chain past orbs that are no longer on screen to the first one that is. If none is, the orb is its own root. S7 builds `leadOf` this way, so `ComputeGroups`, `TeamIdsOf` and the arrows all see the same tree. A lead cycle (no root) resolves the way `OrbArrangement.Classify` already resolves one: the cycle's first orb by index becomes the anchor.
+- **T5 — the outline encloses fanned members.** This is `GroupOutline`'s guarantee, applied to members' discs as well (S3 covers it).
+- **T6 — arrows above, orbs never covered.** Team arrows stay above the backdrop and stay click-through. The backdrop's hit area never covers an orb: on Windows its region is the silhouette **minus every orb's disc**, and on macOS `ShouldCatch` is false inside any orb's disc. This does not rely on z-order alone. See the spike doc.
+- **T7 — tests.**
+  - The sweep crosses `TeamShapes` with group splits: nested teams, a lead in A whose members' `groupOf` says B, a missing lead, and cycles.
+  - Team cases in `OrbSnap` and `DragPlan`.
+  - A UI test that drags a member onto another group and checks that the whole team moved.
+  - A screenshot of a group containing a team.
 
 ## S1 — `OrbGroups` (nadia-okafor)
 
@@ -39,7 +55,8 @@ internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
     IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null);
 ```
 
-- `groupOf[i]` is a slot index into `groups`. Out of range, or missing, reads as slot 0. Only an anchor's slot counts: a team member goes wherever its lead is.
+- `groupOf[i]` is a slot index into `groups`. Out of range, or missing, reads as slot 0.
+- **T1: only a root's slot counts.** A member at any depth goes to the slot of the root it resolves to through `leadOf`, even when its own `groupOf` names another slot. A cycle's root is whichever orb `Classify` makes the anchor. `GroupPlacement.Orbs` therefore lists the whole team under the root's slot.
 - `layout.Work`, `Scale` and `Spacing` apply to every group. `layout.Shape` and `layout.Center` are ignored.
 - **No group has a `Center`** → use today's Bands+Compact path, so a first draw looks the way it does today. The `Landed` values come back from that layout and are what the caller saves.
 - **Otherwise** each group is fit on its own against all of `Work`, with the squeezed → grid retry. Then `SeparateGroups` runs. If boxes still overlap afterwards, fall back to Bands+Compact.
@@ -93,22 +110,29 @@ internal abstract record SnapOutcome
     internal sealed record Leave : SnapOutcome;
 }
 
-// One group the dragged orb could be near. Outline may be empty (outlines off and
+// One group the dragged team could be near. Outline may be empty (outlines off and
 // not computed yet), in which case only the discs count.
-// Discs exclude the dragged orb and its team.
+// Discs exclude every orb of the dragged team (T2).
 internal readonly record struct SnapCandidate(
     string GroupId, Point[] Outline, IReadOnlyList<(double X, double Y, double R)> Discs);
 
 internal static class OrbSnap
 {
-    // All in DIP. The gap to a group is the smaller of: the distance from the dragged
-    // orb's edge to the candidate's outline (from outside), or its edge-to-edge distance
-    // to the nearest disc.
+    // All in DIP. `team` is every disc of the dragged team: the root and all its
+    // descendants, or just the orb if it has no team (T2).
+    // The gap to a group is the minimum, over the team's discs, of: the distance from
+    // that disc's edge to the candidate's outline (from outside), or its edge-to-edge
+    // distance to the nearest candidate disc.
     //   Join(id): the nearest group other than currentGroupId with gap <= joinDip.
     //             Ties go to the ordinal-smallest id. Join beats Leave.
-    //   Leave:    no Join, the current group has at least one other disc, and every
-    //             one of them is > leaveDip away edge-to-edge.
-    //   NoChange: otherwise, including when the dragged orb is its group's only orb.
+    //   Leave:    no Join, the current group has at least one disc outside the team,
+    //             and every team disc is > leaveDip from every one of them, edge-to-edge.
+    //   NoChange: otherwise, including when the team is the whole of its group.
+    SnapOutcome Decide(IReadOnlyList<(double X, double Y, double R)> team, string currentGroupId,
+        IReadOnlyList<SnapCandidate> candidates, double joinDip = 24, double leaveDip = 72);
+
+    // Convenience overload for an orb with no team; it delegates to the one above.
+    // It must be covered like any other line.
     SnapOutcome Decide(Point centre, double radius, string currentGroupId,
         IReadOnlyList<SnapCandidate> candidates, double joinDip = 24, double leaveDip = 72);
 }
@@ -117,9 +141,14 @@ internal enum DragSource { Orb, Backdrop }
 
 internal static class DragPlan
 {
-    internal const double ThresholdDip = 6;   // the inline 6 px from OrbWindow.OnPointerPressed
+    // The inline 6 from OrbWindow.OnPointerMoved, which compared PointToScreen deltas:
+    // 6 points on macOS and 6 physical px on Windows. Converting with the measured
+    // units-per-DIP (see Units) keeps it at exactly that on both platforms.
+    internal const double ThresholdDip = 6;
 
-    // teamIds: the pressed orb plus its team (lead and members); groupIds: every orb in its group.
+    // teamIds: the whole team of the pressed orb (root lead + every descendant, nested
+    // included), the same list whichever team orb was pressed (T2). Just the orb if it
+    // has no team. groupIds: every orb in its group, teams included.
     // Orb, !shift   → (false, teamIds)   — snap/unsnap is decided on release
     // Orb, shift    → (true,  groupIds)
     // Backdrop, any → (true,  groupIds)
@@ -128,11 +157,35 @@ internal static class DragPlan
 }
 ```
 
-Ids are session ids (`SessionStatus.SessionId`), the identity `OrbWindow` already carries. When the drag is released:
+Ids are session ids (`SessionStatus.SessionId`), the identity `OrbWindow` already carries. When the drag is released (`OrbDragCommit`, S4):
 
-- **Join**: write the membership for the lead and every member, then call `ReapplyArrangement()`.
-- **Leave**: make a new one-orb group (`NewUserGroupId`, "Group N"), anchored at the drop point.
-- A menu "Leave group" instead sends the orb back to `Main`.
+- **Join**: `OrbweaverSettings.AssignTeamToGroup(rootKey, memberKeys, id)`, where the keys are the `PositionKey` of every team orb. Then `ReapplyArrangement()`.
+- **Leave**: `CreateOrbGroup`, then `AssignTeamToGroup` for the whole team, then `SetOrbGroupAnchor(new, drop point)`. The team becomes a new group, anchored where it was dropped.
+- A whole-group drag: `ShiftGroupAnchor(sourceGroup, dx, dy)`, then `ReapplyArrangement()`.
+- A menu "Leave group" instead sends the orb's team back to `Main`.
+
+### The S4 ↔ S7 seam: `IOrbDragHost` (juno-abernathy proposes, architect implements)
+
+```csharp
+// OrbDragHost.cs (S4). SessionManager implements it in S7 and assigns OrbDragHost.Current
+// at startup. Until then, Current is null and OrbWindow keeps today's drag behaviour,
+// so S4 compiles and tests (against a fake host) without touching SessionManager.
+internal interface IOrbDragHost
+{
+    bool IsArranged { get; }
+    IReadOnlyList<string> TeamIdsOf(string sessionId);    // T2/T4: root + all descendants; includes sessionId
+    IReadOnlyList<string> GroupIdsOf(string sessionId);   // every visible orb in that orb's group, teams included
+    string GroupIdOf(string sessionId);                   // T1: resolved from the root
+    OrbWindow? WindowOf(string sessionId);
+    IReadOnlyList<SnapCandidate> CandidatesFor(IReadOnlyCollection<string> excludedIds); // discs in screen units; S4 converts to DIP
+    void HighlightGroup(string? groupId);                 // → GroupBackdrops.Highlight
+    void ShiftGroupAnchor(string groupId, int dx, int dy);
+    void ReapplyArrangement();
+    void RefreshBackdrops();                              // → GroupBackdrops.Refresh, beside TeamLinks.Refresh
+}
+
+internal static class OrbDragHost { internal static IOrbDragHost? Current { get; set; } }
+```
 
 ## S5 — `GroupStyle.Resolve` and `GroupBackdrops` (backdrop engineer)
 
@@ -166,10 +219,16 @@ internal static class GroupBackdrops
 }
 ```
 
-A disc for `GroupOutline` is the orb's visible circle, not its window: the circle's centre and radius in physical px. If `OrbWindow` doesn't already expose that, S5 adds `internal (double X, double Y, double R) ScreenDisc` to `OrbWindow`. A team member's circle is `MemberScale` of its lead's. Padding is `TeamLinkGeometry`-independent: 10 DIP × scaling, as a named constant in `GroupBackdrops`.
+A disc for `GroupOutline` is the orb's visible circle, not its window: the circle's centre and radius in screen units. If `OrbWindow` doesn't already expose that, S5 adds `internal (double X, double Y, double R) ScreenDisc` to `OrbWindow`. A team member's circle is `MemberScale` of its lead's. Padding is `TeamLinkGeometry`-independent: 10 DIP × the measured units-per-DIP (see Units), as a named constant in `GroupBackdrops`.
+
+**T6:** the hit area is the silhouette **minus every orb disc** in the group. On Windows that is `CombineRgn(…, RGN_DIFF)` with an elliptic region per disc. On macOS `BackdropHitTest.ShouldCatch` answers false inside any disc. Team arrows stay above the backdrop and stay click-through.
 
 The window ordering and the hit-test mechanism follow `docs/cb268-backdrop-spike.md` (S0).
 
 ## S7 — integration (architect)
 
-`SessionManager.ComputeClusteredPositions` builds `GroupLayout`s from `OrbGroups.Ordered` and calls `ComputeGroups`. It saves each group's `Landed` anchor when it changed. `ShiftArrangementAnchor(int dx, int dy, string groupId = OrbGroups.Main)`.
+- `SessionManager.ComputeClusteredPositions` builds `GroupLayout`s from `OrbGroups.Ordered` and calls `ComputeGroups`. It saves each group's `Landed` anchor when it changed.
+- `ShiftArrangementAnchor(int dx, int dy, string groupId = OrbGroups.Main)`, exposed to S4 as `IOrbDragHost.ShiftGroupAnchor`.
+- `leadOf` is built with T4's nearest-surviving-ancestor rule.
+- Implements `IOrbDragHost` and assigns `OrbDragHost.Current`.
+- **T3:** the first time a scan sees a team member with no membership of its own, it writes the root's group under that member's key.
