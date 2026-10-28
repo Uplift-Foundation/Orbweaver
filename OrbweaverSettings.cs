@@ -85,7 +85,7 @@ namespace Orbweaver
             "orbColors", "claudeCodeProfileDirs", "codexHomes", "grokHomes", "profiles", "orbPositions",
             "collapsedSettingsSections",
             "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale",
-            "orbSize", "orbSizes",
+            "orbSize", "orbSizes", "orbMemberOffsets",
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
             "openclawReplyEnabled", "openclawActiveWithinMinutes",
@@ -182,6 +182,11 @@ namespace Orbweaver
         // size", which is 1.0. The chat-panel and arrange-anchor uses of this
         // record leave it null and never write it.
         internal sealed record OrbPlacement(int X, int Y, double? Size = null);
+
+        // CB-268 T2: where a team member sits relative to its lead inside a laid-out
+        // group, in physical pixels — the lead's top-left to the member's. See
+        // OrbMemberOffsets on the model.
+        internal sealed record MemberOffset(int Dx, int Dy);
 
         // How big one agent's chat panel is, in DIPs. Doubles rather than the
         // ints above because this is a layout size and not a screen coordinate:
@@ -692,6 +697,15 @@ namespace Orbweaver
             public Dictionary<string, double> OrbSizes { get; init; } =
                 new(StringComparer.OrdinalIgnoreCase);
 
+            // CB-268 T2: a member dragged inside a laid-out group keeps its offset
+            // from its lead, and ComputeGroups places it at lead + offset instead
+            // of fanning it out. Keyed by SoundKey, like OrbSizes and for the same
+            // reason: teammates sharing one cwd share a PositionKey, so keying by
+            // it would move every member of a team together. No entry means the
+            // member takes the fan.
+            public Dictionary<string, MemberOffset> OrbMemberOffsets { get; init; } =
+                new(StringComparer.OrdinalIgnoreCase);
+
             // CB-111: which chat panels were pinned when the app last quit,
             // and where each one was — the two things CB-110 deliberately did
             // not persist, because a pin then died with the process. Presence
@@ -1053,6 +1067,69 @@ namespace Orbweaver
             {
                 if (size is null) _model.OrbSizes.Remove(key);
                 else _model.OrbSizes[key] = OrbSizing.Clamp(size.Value);
+            }
+
+            Save();
+        }
+
+        // ---- team member offsets (CB-268 T2) ----------------------------------
+
+        // Null when the member has no saved offset and takes the fan.
+        internal static MemberOffset? MemberOffsetFor(string? soundKey)
+        {
+            if (string.IsNullOrEmpty(soundKey)) return null;
+
+            Load();
+            lock (Gate) return _model.OrbMemberOffsets.GetValueOrDefault(soundKey);
+        }
+
+        // Written once, at the end of a member drag. Offsets are physical pixels.
+        // (0, 0) is a real offset — the member sitting exactly on its lead's
+        // corner — and is kept, distinct from having none.
+        internal static void SetMemberOffset(string? soundKey, int dx, int dy)
+        {
+            if (string.IsNullOrEmpty(soundKey)) return;
+
+            var offset = new MemberOffset(dx, dy);
+            Load();
+            lock (Gate)
+            {
+                if (_model.OrbMemberOffsets.GetValueOrDefault(soundKey) == offset) return;
+                _model.OrbMemberOffsets[soundKey] = offset;
+            }
+
+            Save();
+        }
+
+        // "Reset this orb's position" calls this, so the member takes the fan again.
+        internal static void ClearMemberOffset(string? soundKey)
+        {
+            if (string.IsNullOrEmpty(soundKey)) return;
+
+            Load();
+            lock (Gate)
+            {
+                if (!_model.OrbMemberOffsets.Remove(soundKey)) return;
+            }
+
+            Save();
+        }
+
+        // Called when an orb's SoundKey changes (CB-10: an untitled session is keyed
+        // by its id until a title arrives). Copied, never moved and never over an
+        // offset the new key already has — OrbWindow.RefreshSoundKey's rule, for its
+        // reasons: two orbs can share a key, so clearing the old one would take the
+        // other's offset with it, and an entry under the new key is somebody's choice.
+        internal static void CarryMemberOffset(string? oldKey, string? newKey)
+        {
+            if (string.IsNullOrEmpty(oldKey) || string.IsNullOrEmpty(newKey)) return;
+
+            Load();
+            lock (Gate)
+            {
+                if (!_model.OrbMemberOffsets.TryGetValue(oldKey, out var offset)
+                    || _model.OrbMemberOffsets.ContainsKey(newKey)) return;
+                _model.OrbMemberOffsets[newKey] = offset;
             }
 
             Save();
@@ -2426,6 +2503,21 @@ namespace Orbweaver
                         }
                     }
 
+                    if (root["orbMemberOffsets"] is JsonObject memberOffsets)
+                    {
+                        foreach (var (key, node) in memberOffsets)
+                        {
+                            if (node is not JsonObject entry) continue;
+
+                            var dx = Number(entry["dx"]);
+                            var dy = Number(entry["dy"]);
+                            if (dx is null || dy is null) continue;
+
+                            model.OrbMemberOffsets[key] =
+                                new MemberOffset((int)Math.Round(dx.Value), (int)Math.Round(dy.Value));
+                        }
+                    }
+
                     if (root["pinnedChatPanels"] is JsonObject pinned)
                     {
                         // Number(), not GetValue<int>() the way orbPositions
@@ -2682,6 +2774,10 @@ namespace Orbweaver
                     var orbSizes = new JsonObject();
                     foreach (var (key, size) in _model.OrbSizes) orbSizes[key] = size;
 
+                    var orbMemberOffsets = new JsonObject();
+                    foreach (var (key, offset) in _model.OrbMemberOffsets)
+                        orbMemberOffsets[key] = new JsonObject { ["dx"] = offset.Dx, ["dy"] = offset.Dy };
+
                     var pinnedChatPanels = new JsonObject();
                     foreach (var (key, placement) in _model.PinnedChatPanels)
                     {
@@ -2835,6 +2931,7 @@ namespace Orbweaver
                         ["chatPanelSizes"] = panelSizes,
                         ["orbTurnSounds"] = turnSounds,
                         ["orbSizes"] = orbSizes,
+                        ["orbMemberOffsets"] = orbMemberOffsets,
                         ["pinnedChatPanels"] = pinnedChatPanels,
                         ["arrangeAnchor"] = arrangeAnchor,
                         ["orbGroups"] = _model.Groups.ToJson(),

@@ -3600,6 +3600,10 @@ namespace Orbweaver
                 // 200% chosen before the title arrived must not snap back to
                 // the slider the moment it does, and a shared key must not be
                 // emptied out from under the other orb using it.
+                // The team-member offset (CB-268 T2) rides the same key and the
+                // same rule.
+                OrbweaverSettings.CarryMemberOffset(SoundKey, key);
+
                 var staleSize = OrbweaverSettings.OrbSizeFor(SoundKey);
                 if (staleSize is not null && OrbweaverSettings.OrbSizeFor(key) is null)
                 {
