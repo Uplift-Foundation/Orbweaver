@@ -8,11 +8,20 @@ using Xunit.Abstractions;
 namespace Orbweaver.UnitTests;
 
 // CB-268 motion QA (M1 magnetic pull, M4 drag squash, M5 spring glide) under a fake clock.
+// Reduce motion is pinned off for every test here: left to the OS read, a
+// machine with animations off (the windows-latest runner is one) turns squash
+// and pull off too, and the tests then measure that setting, not the motion.
 [Collection("Settings")]
-public class MotionPureQaTests
+public class MotionPureQaTests : IDisposable
 {
     private readonly ITestOutputHelper _out;
-    public MotionPureQaTests(ITestOutputHelper o) => _out = o;
+    public MotionPureQaTests(ITestOutputHelper o)
+    {
+        _out = o;
+        MotionPolicy.ReduceMotionProbe = () => false;
+    }
+
+    public void Dispose() => MotionPolicy.ReduceMotionProbe = null;
 
     private static SnapCandidate Disc(double x, double y, double r = 18) =>
         new("g-1", Array.Empty<Point>(), new[] { (x, y, r) });
@@ -88,7 +97,7 @@ public class MotionPureQaTests
             }
             return (max, identityWhenRest, det);
         }
-        finally { MotionPolicy.ReduceMotionProbe = null; MotionPolicy.Clock = null; }
+        finally { MotionPolicy.ReduceMotionProbe = () => false; MotionPolicy.Clock = null; }
     }
 
     [Theory]
