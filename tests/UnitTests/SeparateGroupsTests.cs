@@ -178,5 +178,27 @@ namespace Orbweaver.Tests
                 Assert.Equal(boxes[i].Height, moved[i].Height);
             }
         }
+
+        [Fact]
+        public void WhenNothingIsClearOfEveryEarlierBoxItTakesTheNearestWayOutOfTheFirstInTheWay()
+        {
+            // Three 90-wide boxes fill a 300-wide strip with 8px gaps; a fourth
+            // has nowhere clear. Beside the first box is inside the work area
+            // but on top of the second, so no candidate is clear of all of
+            // them and it falls back to the first box's own nearest exit — and
+            // the answer honestly says they are not separated.
+            var strip = new PixelRect(0, 0, 300, 100);
+            var boxes = new[]
+            {
+                new PixelRect(0, 0, 90, 100), new PixelRect(98, 0, 90, 100),
+                new PixelRect(196, 0, 90, 100), new PixelRect(100, 0, 90, 100),
+            };
+
+            var (moved, separated) = OrbArrangement.SeparateGroups(boxes, strip, 8);
+
+            Assert.False(separated);
+            Assert.Equal(boxes.Take(3), moved.Take(3));
+            Assert.All(moved, box => Assert.True(box.X >= 0 && box.Right <= 300));
+        }
     }
 }
