@@ -306,6 +306,109 @@ public class ArrangementMotionTests : IDisposable
         Assert.Equal(settled["c"], Windows(manager)["c"].Position);
     }
 
+    // --- M5: the release's momentum carries into the settle ------------------
+
+    // Drops b `offset` px right of its slot, settles it with `fling`, and
+    // returns b's x and y on every frame plus its slot.
+    private (List<PixelPoint> Path, PixelPoint Slot) Settle(
+        SessionManager manager, Dictionary<string, PixelPoint> settled, int offset, Fling? fling)
+    {
+        var b = Windows(manager)["b"];
+        b.Position = new PixelPoint(settled["b"].X + offset, settled["b"].Y);
+        IOrbDragHost host = manager;
+        if (fling is { } f) host.SettleAfterDrop(Array.Empty<string>(), f);
+        else host.SettleAfterDrop(Array.Empty<string>());
+
+        var path = new List<PixelPoint>();
+        for (var i = 0; i < 600 && Targets(manager) is not null; i++)
+        {
+            Tick(manager, 16);
+            path.Add(b.Position);
+        }
+
+        Assert.Null(Targets(manager));
+        Assert.Equal(settled["b"], b.Position);   // ends exactly on its slot
+        return (path, settled["b"]);
+    }
+
+    [AvaloniaFact]
+    public void AFlungDropOvershootsFurtherInTheThrowDirectionButWithinTheCap()
+    {
+        var (manager, settled) = FreeGroup();
+        var units = SessionManager.UsableUnits(OrbWindow.UnitsPerDip(Windows(manager)["b"]));
+        var cap = Math.Max(SpringGlide.MaxOvershootFraction * 90, SpringGlide.MaxOvershootDip * units);
+
+        // Let go 90 px right of the slot, once still and once thrown hard
+        // left, at it: the throw carries it further past the slot, never past
+        // the cap (+1 px for rounding to whole pixels).
+        var (still, slot) = Settle(manager, settled, 90, null);
+        var (thrown, _) = Settle(manager, settled, 90, new Fling(new[] { "b" }, -6000, 0));
+
+        var stillPast = slot.X - still.Min(p => p.X);
+        var thrownPast = slot.X - thrown.Min(p => p.X);
+        Assert.True(thrownPast > stillPast + 2, $"thrown {thrownPast} px past, still {stillPast} px");
+        Assert.True(thrownPast <= cap + 1, $"thrown {thrownPast} px past, cap {cap}");
+        Assert.All(thrown, p => Assert.Equal(slot.Y, p.Y));   // the throw was purely horizontal
+    }
+
+    [AvaloniaFact]
+    public void AnOrbThrownOnItsOwnSlotCarriesOnInTheThrowsDirectionAndSpringsBack()
+    {
+        var (manager, settled) = FreeGroup();
+        var units = SessionManager.UsableUnits(OrbWindow.UnitsPerDip(Windows(manager)["b"]));
+
+        // Dropped exactly on its slot, flung upwards: it still moves, up only,
+        // by at most the 12 DIP cap, and lands back on the slot.
+        var (path, slot) = Settle(manager, settled, 0, new Fling(new[] { "b" }, 0, -3000));
+
+        Assert.Contains(path, p => p.Y < slot.Y);
+        Assert.All(path, p => Assert.InRange(slot.Y - p.Y, -1, SpringGlide.MaxOvershootDip * units + 1));
+        Assert.All(path, p => Assert.Equal(slot.X, p.X));
+    }
+
+    [AvaloniaFact]
+    public void AZeroVelocityDropIsExactlyTheSettleWithNoFling()
+    {
+        var (manager, settled) = FreeGroup();
+
+        var (plain, _) = Settle(manager, settled, 90, null);
+        var (zero, _) = Settle(manager, settled, 90, new Fling(new[] { "b" }, 0, 0));
+        var (none, _) = Settle(manager, settled, 90, default(Fling));
+
+        Assert.Equal(plain, zero);
+        Assert.Equal(plain, none);
+
+        // And at zero velocity an orb already on its slot is not moved at all.
+        ((IOrbDragHost)manager).SettleAfterDrop(Array.Empty<string>(), new Fling(new[] { "b" }, 0, 0));
+        Assert.Null(Targets(manager));
+    }
+
+    [AvaloniaFact]
+    public void WithReduceMotionAFlingIsIgnoredPlainGlideNoOvershoot()
+    {
+        MotionPolicy.ReduceMotionProbe = () => true;
+        var (manager, settled) = FreeGroup();
+
+        var (path, slot) = Settle(manager, settled, 90, new Fling(new[] { "b" }, -6000, -6000));
+
+        Assert.True(path.Count <= 10, $"{path.Count} frames: longer than the ~150 ms plain glide");
+        Assert.All(path, p => Assert.True(p.X >= slot.X && p.Y == slot.Y, $"{p} overshot {slot}"));
+
+        // Thrown on its own slot under reduce motion: nothing to glide, no animation.
+        ((IOrbDragHost)manager).SettleAfterDrop(Array.Empty<string>(), new Fling(new[] { "b" }, 0, -3000));
+        Assert.Null(Targets(manager));
+    }
+
+    [AvaloniaFact]
+    public void AFlingOfOrbsNotOnScreenThrowsNothing()
+    {
+        var (manager, _) = FreeGroup();
+
+        ((IOrbDragHost)manager).SettleAfterDrop(Array.Empty<string>(), new Fling(new[] { "ghost" }, 4000, 0));
+
+        Assert.Null(Targets(manager));
+    }
+
     [AvaloniaFact]
     public void ADropThatMovesNobodyStartsNoGlide()
     {

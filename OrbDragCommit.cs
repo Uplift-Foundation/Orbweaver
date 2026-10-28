@@ -65,6 +65,21 @@ namespace Orbweaver
         /// a host without motion still lands everything.
         /// </summary>
         void SettleAfterDrop(IReadOnlyCollection<string> arrivingIds) => ReapplyArrangement();
+
+        /// <summary>
+        /// <see cref="SettleAfterDrop(IReadOnlyCollection{string})"/> with the
+        /// release's momentum (CB-283 M5): the orbs in <paramref name="fling"/>
+        /// start their settle moving at its velocity instead of from rest.
+        /// Defaults to the settle without it, for a host with no springs.
+        /// </summary>
+        void SettleAfterDrop(IReadOnlyCollection<string> arrivingIds, Fling fling) => SettleAfterDrop(arrivingIds);
+    }
+
+    // CB-283 M5: the orbs a drag moved and how fast it was going when let go,
+    // in DIP per second. `default` is no fling: no orbs, no velocity.
+    internal readonly record struct Fling(IReadOnlyCollection<string>? Ids, double X, double Y)
+    {
+        internal bool IsNone => Ids is null || Ids.Count == 0 || (X == 0 && Y == 0);
     }
 
     // Where the drag handlers find the roster. Null until SessionManager sets it
@@ -128,7 +143,8 @@ namespace Orbweaver
         // Every path ends by reapplying, because a team dropped inside its own
         // group's shape would otherwise stay wherever the pointer left it.
         internal static SnapOutcome Release(
-            IOrbDragHost host, string pressedId, bool wholeGroup, int dx, int dy, double unitsPerDip)
+            IOrbDragHost host, string pressedId, bool wholeGroup, int dx, int dy, double unitsPerDip,
+            Fling fling = default)
         {
             host.HighlightGroup(null);
             host.PreviewPair(null, null);
@@ -136,7 +152,7 @@ namespace Orbweaver
             if (wholeGroup)
             {
                 host.ShiftGroupAnchor(host.GroupIdOf(pressedId), dx, dy);
-                host.SettleAfterDrop(Array.Empty<string>());
+                host.SettleAfterDrop(Array.Empty<string>(), fling);
                 return new SnapOutcome.NoChange();
             }
 
@@ -145,7 +161,7 @@ namespace Orbweaver
                 if (host.IsLaidOut(pressedId))
                 {
                     host.SaveMemberOffset(pressedId);
-                    host.SettleAfterDrop(Array.Empty<string>());
+                    host.SettleAfterDrop(Array.Empty<string>(), fling);
                 }
 
                 return new SnapOutcome.NoChange();
@@ -214,7 +230,7 @@ namespace Orbweaver
                 _ => Array.Empty<string>(),
             };
 
-            host.SettleAfterDrop(arriving);
+            host.SettleAfterDrop(arriving, fling);
             return outcome;
         }
 

@@ -44,6 +44,14 @@ public class OrbWindowMotionTests : IDisposable
             ReapplyArrangement();
         }
 
+        // CB-283 M5: what the release threw, as the host is handed it.
+        public List<Fling> Flings { get; } = new();
+        public void SettleAfterDrop(IReadOnlyCollection<string> arrivingIds, Fling fling)
+        {
+            Flings.Add(fling);
+            SettleAfterDrop(arrivingIds);
+        }
+
         public IReadOnlyList<string> TeamIdsOf(string id) => new[] { id };
         public string GroupIdOf(string id) => OrbweaverSettings.OrbGroupMembershipFor("key:" + id) ?? OrbGroups.Main;
         public IReadOnlyList<string> OrbIdsInGroup(string g) => Windows.Keys.Where(id => GroupIdOf(id) == g).ToList();
@@ -101,6 +109,47 @@ public class OrbWindowMotionTests : IDisposable
             _now += 16;
             session.Move(dx, 0);
         }
+    }
+
+    // --- M5: the release velocity reaches the settle ---
+
+    [AvaloniaFact]
+    public void AReleaseThrowsTheDraggedOrbsAtThePointersVelocityInDip()
+    {
+        var (roster, a, _) = Scene();
+
+        // Two screen units per DIP: 40 units every 16 ms, away from B, is
+        // 20 DIP per 16 ms, 1250 DIP/s.
+        var session = new OrbDragSession(roster, a, DragSource.Orb, false, 2.0);
+        for (var i = 1; i <= 6; i++)
+        {
+            _now += 16;
+            session.Move(-40 * i, 0);
+        }
+
+        session.End();
+
+        var fling = Assert.Single(roster.Flings);
+        Assert.Equal(new[] { a }, fling.Ids);
+        Assert.Equal(-1250, fling.X, 6);
+        Assert.Equal(0, fling.Y, 6);
+    }
+
+    [AvaloniaFact]
+    public void AnOrbHeldStillBeforeItIsLetGoIsThrownAtNoSpeed()
+    {
+        var (roster, a, _) = Scene();
+        var session = new OrbDragSession(roster, a, DragSource.Orb, false, 1.0);
+        for (var i = 1; i <= 6; i++)
+        {
+            _now += 16;
+            session.Move(-40 * i, 0);
+        }
+
+        _now += FlingTracker.StaleMs + 1;   // the pointer stops, then lets go
+        session.End();
+
+        Assert.True(Assert.Single(roster.Flings).IsNone);
     }
 
     // --- M1: magnetic pull ---

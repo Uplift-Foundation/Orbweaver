@@ -4957,11 +4957,12 @@ namespace Orbweaver
         internal Func<long> Now { get; set; } = () => Environment.TickCount64;
 
         private void AnimateArrangement(
-            Action? onComplete = null, bool spring = false, IReadOnlyCollection<string>? first = null)
+            Action? onComplete = null, bool spring = false, IReadOnlyCollection<string>? first = null,
+            Fling fling = default)
         {
             _arrangeAnimComplete = onComplete;
             _arrangeAnimStart = Now();
-            _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first) : null;
+            _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first, fling) : null;
             _arrangePops = _arrangeSprings is { } springs ? PopsFor(springs, first) : null;
 
             if (_arrangeAnimTimer is null)
@@ -4976,12 +4977,21 @@ namespace Orbweaver
         }
 
         // One SpringGlide per moving orb: `first` (the orbs that just arrived)
-        // leads, the rest follow in display order, StaggerMs apart.
+        // leads, then the orbs the drag threw, then the rest in display order,
+        // StaggerMs apart.
+        //
+        // M5: a thrown orb starts its glide at the release velocity, turned from
+        // DIP/s into its screen's units. SpringGlide caps it so the overshoot
+        // stays within max(8% of the distance, 12 DIP). Reduce motion ignores
+        // it: the plain glide has no velocity to carry.
         private Dictionary<string, (SpringGlide Glide, long DelayMs)> SpringsFor(
-            Dictionary<string, (PixelPoint From, PixelPoint To)> targets, IReadOnlyCollection<string>? first)
+            Dictionary<string, (PixelPoint From, PixelPoint To)> targets, IReadOnlyCollection<string>? first,
+            Fling fling)
         {
             var reduce = MotionPolicy.ReduceMotion;
+            var thrown = Thrown(fling);
             var order = (first ?? Array.Empty<string>()).Where(targets.ContainsKey)
+                .Concat(thrown.Where(targets.ContainsKey))
                 .Concat(DisplayOrder().Where(targets.ContainsKey))
                 .Concat(targets.Keys)
                 .Distinct(StringComparer.Ordinal)
@@ -4992,11 +5002,28 @@ namespace Orbweaver
             {
                 var (from, to) = targets[order[i]];
                 var delay = reduce ? 0 : (long)i * StaggerMs;
-                springs[order[i]] = (new SpringGlide(from, to, (0, 0), delay, reduce), delay);
+                // Thrown orbs are on screen by construction (Thrown).
+                var units = thrown.Contains(order[i]) ? UsableUnits(OrbWindow.UnitsPerDip(_windows[order[i]])) : 1;
+                var velocity = thrown.Contains(order[i]) ? (fling.X * units, fling.Y * units) : (0, 0);
+                springs[order[i]] = (new SpringGlide(from, to, velocity, delay, reduce, units), delay);
             }
 
             return springs;
         }
+
+        // Screen units per DIP as measured (OrbWindow.UnitsPerDip), or 1 when
+        // the measurement is unusable. PointToScreen on a window with no
+        // platform position could answer 0, and a 0 would turn every throw into
+        // no throw at all.
+        internal static double UsableUnits(double measured) =>
+            Finite.All(measured) && measured > 0 ? measured : 1;
+
+        // The orbs a fling throws: those on screen, and none at all with no
+        // velocity or with reduce motion on.
+        private HashSet<string> Thrown(Fling fling) =>
+            fling.IsNone || MotionPolicy.ReduceMotion
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : fling.Ids!.Where(_windows.ContainsKey).ToHashSet(StringComparer.Ordinal);
 
         // The arriving orbs that are on screen, each popping as its glide starts.
         private Dictionary<string, long>? PopsFor(
@@ -5128,7 +5155,13 @@ namespace Orbweaver
         // no-change drop is the same call), its group around it — with the
         // arriving orbs leading the stagger. A glide already in flight lands
         // first. Nothing that is already in place moves.
-        void IOrbDragHost.SettleAfterDrop(IReadOnlyCollection<string> arrivingIds)
+        void IOrbDragHost.SettleAfterDrop(IReadOnlyCollection<string> arrivingIds) =>
+            ((IOrbDragHost)this).SettleAfterDrop(arrivingIds, default);
+
+        // M5: the orbs the drag threw start their spring at its release
+        // velocity (see SpringsFor). One thrown on its own slot still moves:
+        // it carries on in the throw's direction and springs back.
+        void IOrbDragHost.SettleAfterDrop(IReadOnlyCollection<string> arrivingIds, Fling fling)
         {
             FinishGlide();
 
@@ -5142,6 +5175,9 @@ namespace Orbweaver
                     moves[id] = (from, window.Position);
             }
 
+            foreach (var id in Thrown(fling))
+                moves.TryAdd(id, (_windows[id].Position, _windows[id].Position));
+
             // Nothing to glide and nobody arriving: no animation at all. An
             // arriving orb that is already on its slot still pops (M2), on an
             // animation with nothing to move.
@@ -5149,7 +5185,7 @@ namespace Orbweaver
 
             foreach (var (id, (from, _)) in moves) _windows[id].Position = from;
             _arrangeAnimTargets = moves;
-            AnimateArrangement(spring: true, first: arrivingIds);
+            AnimateArrangement(spring: true, first: arrivingIds, fling: fling);
         }
 
         // Called from the settings slider so the user sees orbs reposition

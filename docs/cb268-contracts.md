@@ -421,6 +421,11 @@ The pure pieces are S4's: `Spring` (`Step`, `AtRest`, `Pop` at about 8% overshoo
   - It re-lays out the current mode, then springs every orb whose slot changed from where it is now, `arrivingIds` leading.
   - Nothing that is already in place moves, and a drop that moves nobody starts no glide.
   - **S4 calls it after every drop outcome:** Join/Pair with the dropped team; NoChange (M5 spring-back), LeaveToFree and Leave with an empty set. `ReapplyArrangement()` stays instant, for the settings sliders' live preview.
+- **M5 momentum: `IOrbDragHost.SettleAfterDrop(arrivingIds, Fling fling)`.** `Fling(Ids, X, Y)` is the orbs the drag moved and the pointer's release velocity in **DIP/s**. `default` and zero velocity are `IsNone`. The interface default drops the fling and calls the one-argument settle, so a host with no springs is unchanged. `OrbDragCommit.Release` takes it as an optional last argument and passes it to every `SettleAfterDrop` it makes.
+  - **Measured by `FlingTracker`** in `OrbDragSession`. It covers the pointer's travel over the last 80 ms, keeping one base sample at or before the window. It reads zero when the pointer had not moved for more than `DragSquash.StaleMilliseconds` (60 ms) before the release.
+  - **SessionManager** seeds each thrown orb's `SpringGlide` with that velocity × its `OrbWindow.UnitsPerDip` (an unusable measurement counts as 1, never 0). SpringGlide's `CapVelocity` keeps the overshoot within max(8% of the distance, 12 DIP).
+  - **Ordering and edge cases.** Thrown orbs follow the arriving ones in the stagger order. A thrown orb already on its slot still moves: it carries on in the throw's direction and springs back. Thrown orbs never pop; only arrivals do.
+  - **Reduce motion ignores the fling**, giving the plain ~150 ms glide. A fling at zero velocity is exactly today's settle.
 - **Free mode mid-glide:** `ReflowPositions` defers (sets `_refitPending`) while a glide is in flight, and the glide re-runs it as it lands. A scan cannot yank a settling orb.
 - **The clock** is `SessionManager.Now` (a `Func<long>`), so tests step the animation on a fake clock (`ArrangementMotionTests`).
 - **Unchanged:** CB-161 (a departure starts no glide), and `ReFittingAnAlreadySettledShapeStartsNoNewGlide`.

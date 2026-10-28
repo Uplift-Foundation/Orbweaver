@@ -31,6 +31,9 @@ namespace Orbweaver
         private long _pullAt;
         private DispatcherTimer? _timer;
 
+        // M5: the pointer's travel in DIP, for the velocity the drop is thrown with.
+        private readonly FlingTracker _fling = new();
+
 
         internal bool WholeGroup { get; }
 
@@ -64,6 +67,7 @@ namespace Orbweaver
             }
 
             _pullAt = OrbWindow.MotionClock();
+            _fling.Observe(0, 0, _pullAt);
 
             // The orb the pointer is on is the one that squashes; a backdrop
             // press has no orb under it.
@@ -95,6 +99,7 @@ namespace Orbweaver
             }
 
             _pressedWindow?.SquashObserve(dx / Units, dy / Units);
+            _fling.Observe(dx / Units, dy / Units, now);
 
             Refresh();
         }
@@ -152,7 +157,12 @@ namespace Orbweaver
             _timer?.Stop();
             _pressedWindow?.SquashRelease();
 
-            var outcome = OrbDragCommit.Release(_host, _anchorId, WholeGroup, _dx, _dy, _unitsPerDip);
+            // M5: everything this drag moved is thrown with the pointer's
+            // release velocity; the settle springs it on from there.
+            var (vx, vy) = _fling.VelocityAt(OrbWindow.MotionClock());
+            var fling = new Fling(_moving.Select(m => m.Orb.SessionId).ToList(), vx, vy);
+
+            var outcome = OrbDragCommit.Release(_host, _anchorId, WholeGroup, _dx, _dy, _unitsPerDip, fling);
 
             // Whatever is not in a user group after the release is loose and
             // stays where it was dropped: pinned, unless something is arranging
