@@ -264,7 +264,7 @@ User groups are laid out by **their own `ComputeGroups` call**, before anything 
   2. `ComputeGroups` runs with only the user groups' orbs, and with **obstacles** = the window rect of every loose orb, stacked or pinned (F2: never overlap the stack column or a pinned orb).
 - **Arranged mode**
   1. The same user-groups call, with no obstacles. The stack column does not exist while arranged.
-  2. `ComputeGroups` runs with only the predefined groups' orbs, and obstacles = the user groups' `SlotBounds` from step 1.
+  2. `ComputeGroups` runs in `Arranged` mode with only the predefined groups' orbs, and obstacles = the user groups' `SlotBounds` from step 1 plus every user-group orb's landing rect (T2). With no user group on screen, the list is empty and the result is today's arrangement.
 - **Un-arrange** restores `_preArrangeState` only for orbs that are not in a user group. User-group orbs stay where their group is (F4).
 - **CB-211 per group, both modes:** every placed group's `Landed` is saved when it differs from what was asked. A user group pushed off the stack column keeps that spot; it does not ratchet back.
 
@@ -275,14 +275,23 @@ internal static (PixelRect[] Boxes, bool Separated) SeparateGroups(
     IReadOnlyList<PixelRect> boxes, PixelRect work, int gap,
     IReadOnlyList<PixelRect>? obstacles = null);
 
+internal enum GroupLayoutMode { Arranged, Free }
+
 internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
     int count, int[] leadOf, int[] groupOf, IReadOnlyList<GroupLayout> groups, Layout layout,
-    double[]? sizeOf = null, IReadOnlyList<PixelRect>? obstacles = null);
+    double[]? sizeOf, GroupLayoutMode mode, IReadOnlyList<PixelRect> obstacles,
+    IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf = null);
 ```
+
+- **The mode is explicit (hana-moriyama, `a5bf2965`).** It used to be inferred from the obstacle list: any list, even an empty one, meant free. That would have put arranged mode with no user group onto the free path and dropped the Bands+Compact fallback. Now:
+  - **`Arranged`** separates the groups from each other and from the obstacles with `SeparateGroups`, and keeps the Bands+Compact fallback. That fallback cannot see obstacles and may overlap one.
+  - **`Free`** places user groups with `PlaceClear`, best effort near the anchor, with `Landed` equal to the drawn position. It never rebands.
+  - `obstacles` is never null, and is often empty. The overloads with no mode are `Arranged` with an empty list, which is today's arrangement bit for bit.
+- **SessionManager's three calls, and the mode each one passes:** free mode's user-groups call is `Free` with the loose orbs' rects. Arranged mode's user-groups call is `Arranged` with an empty list. Arranged mode's predefined call is `Arranged` with the user groups' boxes and landing rects, or an empty list when no user group is on screen, so the arrangement with no user group is exactly today's. `SessionManagerGroupsTests.WithNoUserGroupArrangingIsTodaysArrangementExactly` pins that last case against the plain overload. The Arranged-vs-Free difference is pinned in `OrbArrangementGroupAnchorTests`.
 
 - **Obstacles are fixed.** They never move, they rank above box 0, and every box is pushed at least `gap` clear of each one, then slid back into `work`. `Separated` covers box↔obstacle pairs as well as box↔box. Units are screen units, like the boxes.
 - **A partial call keeps the full group table.** The caller passes the whole table as `groups`, so slot indices stay stable, and passes only the orbs being laid out in `count`, `leadOf`, `groupOf` and `sizeOf` (indices local to that subset). Slots with no orbs in the call produce no placement, as today.
-- **With obstacles, there is no Bands+Compact fallback (accepted, final; built at `4c061afc`).** When groups cannot be separated, each one stays at its best-effort `SeparateGroups` position, with overlap tolerated, and the `out GroupPath` overload reports `Fallback`.
+- **In `Free` mode there is no Bands+Compact fallback (accepted, final; built at `4c061afc`, made explicit at `a5bf2965`).** When groups cannot be separated, each one stays at its best-effort `SeparateGroups` position, with overlap tolerated, and the `out GroupPath` overload reports `Fallback`.
   - **`Landed` on that route is the asked anchor, not the best-effort one.** `SeparateGroups` starts from the asked positions, so asking again gives the same answer, whereas re-feeding the best effort would drift.
   - The cost: a raw off-screen anchor stays saved raw in that cramped case.
   - Bands cannot see obstacles: a rebanded user group would land on the stack column (F2) and leave its anchor (F4), in exactly the cramped case.

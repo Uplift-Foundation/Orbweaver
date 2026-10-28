@@ -307,6 +307,52 @@ public class SessionManagerGroupsTests : IDisposable
         Assert.Equal(anchors, (OrbweaverSettings.ArrangeAnchor, OrbweaverSettings.OrbGroupFor(group.Id)!.Anchor));
     }
 
+    // CB-268 S2: with no user group on screen, arranging is today's
+    // arrangement bit for bit, which is ComputeGroups' plain overload (Arranged,
+    // no obstacles), fed exactly what SessionManager feeds it. A team is in it,
+    // so the member fan is part of what has to match.
+    //
+    // This pins the SessionManager side of the explicit mode. With three orbs
+    // and one group Free would happen to draw the same thing, so a wrong mode
+    // passed here is caught by hana's ArrangedModeWithAnEmptyObstacleListIsTodaysOutputBitForBit
+    // and the cramped Arranged-vs-Free unit test, not by this one.
+    [AvaloniaFact]
+    public void WithNoUserGroupArrangingIsTodaysArrangementExactly()
+    {
+        OrbweaverSettings.ArrangeAnchor = null;
+        var manager = Scan(("a", ""), ("b", "codex"), ("c", "grok"));
+        manager.StatusFor("b")!.Lead = "a";
+        var ids = new[] { "a", "b", "c" };
+
+        var placed = Targets(manager, ids);
+
+        // The first arrange saved main's anchor (CB-211), so the table read
+        // now is the one a second arrange would be handed.
+        var orbs = ids.Select(id => Windows(manager)[id]).ToList();
+        var groups = OrbweaverSettings.OrbGroupList();
+        Assert.Equal(OrbGroups.Main, groups[0].Id);
+        var screen = orbs[0].Screens.Primary ?? orbs[0].Screens.All.FirstOrDefault();
+        var layout = new OrbArrangement.Layout(
+            screen?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080),
+            screen?.Scaling ?? 1.0,
+            groups[0].Shape,
+            OrbweaverSettings.ArrangeSpacing);
+        var layouts = groups
+            .Select(g => new OrbArrangement.GroupLayout(
+                g.Shape, g.Anchor is { } a ? new PixelPoint(a.X, a.Y) : null))
+            .ToList();
+
+        var (today, todayGroups) = OrbArrangement.ComputeGroups(
+            3, new[] { -1, 0, -1 }, new int[3], layouts, layout,
+            orbs.Select(o => o.OrbSize).ToArray(), out var path);
+
+        Assert.Equal(OrbArrangement.GroupPath.Separated, path);
+        Assert.Equal(today, ids.Select(id => placed[id]).ToArray());
+        Assert.Equal(
+            todayGroups.Select(g => groups[g.Slot].Id),
+            Field<IEnumerable<object>>(manager, "_groupPlacements").Select(g => (string)g.GetType().GetProperty("GroupId")!.GetValue(g)!));
+    }
+
     [AvaloniaFact]
     public void ShiftingAGroupsAnchorMovesThatGroupOnlyAndOnlyIfItHasOne()
     {
