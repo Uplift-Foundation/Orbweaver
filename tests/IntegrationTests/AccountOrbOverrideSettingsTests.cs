@@ -75,6 +75,22 @@ public class AccountOrbOverrideSettingsTests
     }
 
     [Fact]
+    public void HandEditedLongName_IsCutOnLoad_AndSetNameCutsToo()
+    {
+        var dir = NewDir();
+        File.WriteAllText(Path.Combine(dir, "settings.json"),
+            "{ \"accountOrbOverrides\": { \"a\": { \"name\": \"" + new string('n', 5000) + "\", \"initials\": \"ABCDE\" } } }");
+        PointAt(dir);
+        var loaded = OrbweaverSettings.AccountOrbOverrideFor("a")!;
+        Assert.Equal(64, loaded.Name!.Length);
+        Assert.Equal("AB", loaded.Initials);
+
+        AccountOrbCustomization.SetName("b", new string('m', 5000));
+        Assert.Equal(64, AccountOrbCustomization.Current("b")!.Name!.Length);
+        Assert.Equal(64, Read(dir)["accountOrbOverrides"]!["b"]!["name"]!.GetValue<string>().Length);
+    }
+
+    [Fact]
     public void FileWithoutKey_LoadsEmpty()
     {
         var dir = NewDir();

@@ -1,5 +1,8 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using SkiaSharp;
+using System.Net.Http;
 using Xunit;
 
 namespace Orbweaver.Tests;
@@ -56,6 +59,9 @@ public class AccountOrbIconsTests : IDisposable
     [InlineData("sub/0123456789ab-0123456789abcdef.png", false)]
     [InlineData("sub\\0123456789ab-0123456789abcdef.png", false)]
     [InlineData("0123456789AB-0123456789abcdef.png", false)]
+    [InlineData("0123456789ab-0123456789abcdef.png\n", false)]
+    [InlineData("0123456789ab-0123456789abcdef.png\r\n", false)]
+    [InlineData(" 0123456789ab-0123456789abcdef.png", false)]
     [InlineData("0123456789ab-0123456789abcdef.jpg", false)]
     [InlineData("", false)]
     public void IsSafeFileName(string name, bool want) =>
@@ -149,6 +155,159 @@ public class AccountOrbIconsTests : IDisposable
     {
         var r = AccountOrbIcons.Import(WriteSvg(body), "k", Icons);
         Assert.Equal(IconImportError.SvgReferencesExternalContent, r.Error);
+    }
+
+    private static string Nested(string innerBody)
+    {
+        var inner = "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\">" + innerBody + "</svg>";
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\">"
+            + "<image width=\"20\" height=\"20\" href=\"data:image/svg+xml;base64," + Convert.ToBase64String(Encoding.UTF8.GetBytes(inner)) + "\"/></svg>";
+    }
+
+    // QA's finding on 03243773: a data:image/svg+xml is a second document, and
+    // Svg.Skia honoured its external references. Refused at the preflight now…
+    [Fact]
+    public void Import_NestedSvgDataUri_IsRefusedByName()
+    {
+        var p = Write("n.svg", Encoding.UTF8.GetBytes(Nested("<rect width=\"20\" height=\"20\" fill=\"#0f0\"/>")));
+        Assert.Equal(IconImportError.SvgReferencesExternalContent, AccountOrbIcons.Import(p, "k", Icons).Error);
+    }
+
+    // …and, with the preflight bypassed, Svg.Skia's own switches must still
+    // stop the nested document fetching: a real local listener counts hits (its
+    // control request proves it can), and the file:// marker must not be drawn.
+    [Fact]
+    public void RenderStep_AloneNeverFetchesFromANestedSvg()
+    {
+        var tcp = new TcpListener(IPAddress.Loopback, 0);
+        tcp.Start();
+        var port = ((IPEndPoint)tcp.LocalEndpoint).Port;
+        tcp.Stop();
+
+        var hits = new List<string>();
+        using var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        var loop = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    var ctx = await listener.GetContextAsync();
+                    lock (hits) hits.Add(ctx.Request.RawUrl!);
+                    ctx.Response.StatusCode = 404;
+                    ctx.Response.Close();
+                }
+            }
+            catch (Exception) { }
+        });
+
+        try
+        {
+            // Control: the listener does count a request.
+            using (var http = new HttpClient()) http.GetAsync($"http://127.0.0.1:{port}/control").GetAwaiter().GetResult();
+            lock (hits) Assert.Equal(new[] { "/control" }, hits);
+
+            var marker = Write("marker.png", Png(new SKColor(255, 0, 255)));
+            var net = Nested($"<image width=\"20\" height=\"20\" href=\"http://127.0.0.1:{port}/NESTED-HTTP.png\"/>");
+            var file = Nested($"<image width=\"20\" height=\"20\" href=\"file://{marker}\"/>");
+
+            AccountOrbIcons.RenderSvg(net);
+            var png = AccountOrbIcons.RenderSvg(file);
+            Thread.Sleep(300);
+
+            lock (hits) Assert.DoesNotContain(hits, h => h.Contains("NESTED-HTTP"));
+            if (png is not null)
+            {
+                using var bmp = SKBitmap.Decode(png);
+                Assert.DoesNotContain(bmp.Pixels, px => px.Red == 255 && px.Green == 0 && px.Blue == 255 && px.Alpha == 255);
+            }
+        }
+        finally { listener.Stop(); }
+    }
+
+    // The control that the nested render path can draw at all: an embedded
+    // raster inside a nested SVG shows up, so a blank output cannot pass.
+    [Fact]
+    public void RenderStep_NestedSvgWithEmbeddedPng_DoesDraw()
+    {
+        var b64 = Convert.ToBase64String(Png(new SKColor(255, 0, 255)));
+        var svg = Nested($"<image width=\"20\" height=\"20\" href=\"data:image/png;base64,{b64}\"/>");
+        using var bmp = SKBitmap.Decode(AccountOrbIcons.RenderSvg(svg)!);
+        Assert.Contains(bmp.Pixels, px => px.Red == 255 && px.Green == 0 && px.Blue == 255);
+    }
+
+    [Fact]
+    public void Import_SvgWithEmbeddedPngDataUri_Allowed_Others_Refused()
+    {
+        var b64 = Convert.ToBase64String(Png(SKColors.Red));
+        foreach (var type in new[] { "png", "jpeg", "gif", "webp" })
+            Assert.True(AccountOrbIcons.IsSelfContained(
+                $"<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"data:image/{type};base64,{b64}\"/></svg>"), type);
+        Assert.False(AccountOrbIcons.IsSelfContained(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"data:text/html;base64,AA==\"/></svg>"));
+    }
+
+    [Fact]
+    public void Import_TruncatedPng_IsNotAnImage()
+    {
+        var full = Png(SKColors.Red);
+        var cut = full[..(full.Length / 2)];
+        Assert.Equal(IconImportError.NotAnImage, AccountOrbIcons.Import(Write("cut.png", cut), "k", Icons).Error);
+        Assert.False(Directory.Exists(Icons) && Directory.GetFiles(Icons).Length > 0);
+    }
+
+    // Over the full-decode limit the codec is read a scanline at a time and
+    // reduced on the way, so the whole bitmap is never allocated.
+    [Fact]
+    public void Import_LargeDimensionPng_WithinHardLimit_StillGives256Square()
+    {
+        var big = Encode(2400, 1200, new SKColor(255, 0, 0), new SKColor(0, 0, 255), SKEncodedImageFormat.Png);
+        var r = AccountOrbIcons.Import(Write("big.png", big), "k", Icons, fullDecodeMaxPixels: 100_000, hardMaxPixels: 10_000_000);
+        Assert.Null(r.Error);
+        using var bmp = SKBitmap.Decode(File.ReadAllBytes(Path.Combine(Icons, r.FileName!)));
+        Assert.Equal(256, bmp.Width);
+        Assert.True(bmp.GetPixel(10, 128).Red > 240);
+        Assert.True(bmp.GetPixel(245, 128).Blue > 240);
+    }
+
+    // PNG cannot be reduced on the way in (see AccountOrbIcons.Decode), so past
+    // the hard limit it is refused by name rather than decoded whole.
+    [Fact]
+    public void Import_PngPastTheHardPixelLimit_IsTooLarge()
+    {
+        var big = Encode(2400, 1200, SKColors.Red, SKColors.Blue, SKEncodedImageFormat.Png);
+        var r = AccountOrbIcons.Import(Write("huge.png", big), "k", Icons, fullDecodeMaxPixels: 100_000, hardMaxPixels: 1_000_000);
+        Assert.Equal(IconImportError.TooLarge, r.Error);
+        Assert.False(Directory.Exists(Icons) && Directory.GetFiles(Icons).Length > 0);
+    }
+
+    [Fact]
+    public void Import_LargeDimensionJpeg_Reduces()
+    {
+        var big = Encode(1800, 1800, new SKColor(0, 0, 255), new SKColor(0, 0, 255), SKEncodedImageFormat.Jpeg);
+        var r = AccountOrbIcons.Import(Write("big.jpg", big), "k", Icons, fullDecodeMaxPixels: 100_000);
+        Assert.Null(r.Error);
+        Assert.True(CentrePixel(r.FileName!).Blue > 200);
+    }
+
+    [Fact]
+    public void Import_TruncatedLargeJpeg_IsNotAnImage()
+    {
+        var big = Encode(1800, 1800, SKColors.Blue, SKColors.Blue, SKEncodedImageFormat.Jpeg);
+        var cut = big[..(big.Length / 2)];
+        Assert.Equal(IconImportError.NotAnImage,
+            AccountOrbIcons.Import(Write("bigcut.jpg", cut), "k", Icons, fullDecodeMaxPixels: 100_000).Error);
+    }
+
+    [Fact]
+    public void Import_TruncatedLargePng_IsNotAnImage()
+    {
+        var big = Encode(2400, 1200, SKColors.Red, SKColors.Blue, SKEncodedImageFormat.Png);
+        var cut = big[..(big.Length / 2)];
+        Assert.Equal(IconImportError.NotAnImage,
+            AccountOrbIcons.Import(Write("bigcut.png", cut), "k", Icons, fullDecodeMaxPixels: 100_000, hardMaxPixels: 10_000_000).Error);
     }
 
     [Fact]

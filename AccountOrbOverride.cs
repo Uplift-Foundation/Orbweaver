@@ -11,11 +11,25 @@ namespace Orbweaver
         // and on load, so a hand-edited file and a UI write reach the same
         // shape and "nothing set" is spelled exactly one way.
         internal AccountOrbOverride Normalise() =>
-            new(Blank(Initials), Blank(Name), Blank(IconFile));
+            new(Empty(OrbGlyph.Clip(Initials, twoLetter: true)), Empty(OrbGlyph.ClipText(Blank(Name), MaxNameElements).Trim()), Blank(IconFile));
+
+        // The display name feeds the tooltip and the card, so a hand-edited
+        // 5000-character value is cut here, on every path in (UI write and
+        // file load alike), by the same text-element rule the initials use.
+        internal const int MaxNameElements = 64;
+
+        private static string? Empty(string s) => s.Length == 0 ? null : s;
 
         // True when this overrides nothing — the entry is removed rather than
         // stored, the same rule SetOrbTurnSound applies.
-        internal bool IsEmpty => Blank(Initials) is null && Blank(Name) is null && Blank(IconFile) is null;
+        internal bool IsEmpty
+        {
+            get
+            {
+                var n = Normalise();
+                return n.Initials is null && n.Name is null && n.IconFile is null;
+            }
+        }
 
         private static string? Blank(string? s) =>
             string.IsNullOrWhiteSpace(s) ? null : s.Trim();

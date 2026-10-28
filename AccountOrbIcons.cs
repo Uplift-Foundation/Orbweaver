@@ -29,7 +29,7 @@ namespace Orbweaver
         // before any disk access, so a hand-edited file cannot point the app at
         // an arbitrary file.
         private static readonly Regex Minted = new(
-            @"^[0-9a-f]{12}-[0-9a-f]{16}\.png$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            @"^[0-9a-f]{12}-[0-9a-f]{16}\.png\z", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         internal static string IconsDirectory => Path.Combine(OrbweaverSettings.Directory, DirectoryName);
 
@@ -58,11 +58,12 @@ namespace Orbweaver
                 return new(IconLoadOutcome.Missing, null);
             }
 
-            using var bitmap = Decode(bytes);
+            using var bitmap = Decode(bytes, out _);
             return bitmap is null ? new(IconLoadOutcome.Corrupt, null) : new(IconLoadOutcome.Loaded, bytes);
         }
 
-        internal static IconImport Import(string sourcePath, string positionKey, string iconsDir)
+        internal static IconImport Import(
+            string sourcePath, string positionKey, string iconsDir, int fullDecodeMaxPixels = FullDecodeMaxPixels, int hardMaxPixels = HardMaxPixels)
         {
             byte[] source;
             try
@@ -79,10 +80,12 @@ namespace Orbweaver
 
             byte[]? png;
             var svgRefused = false;
-            if (IsPng(source) || IsJpeg(source)) png = Normalise(source);
+            var tooLarge = false;
+            if (IsPng(source) || IsJpeg(source)) png = Normalise(source, fullDecodeMaxPixels, hardMaxPixels, out tooLarge);
             else if (LooksLikeSvg(sourcePath, source)) png = RasteriseSvg(source, out svgRefused);
             else return new(null, Skia(source) ? IconImportError.UnsupportedFormat : IconImportError.NotAnImage);
 
+            if (tooLarge) return new(null, IconImportError.TooLarge);
             if (png is null) return new(null, svgRefused ? IconImportError.SvgReferencesExternalContent : IconImportError.NotAnImage);
 
             var name = NameFor(positionKey, png);
@@ -136,15 +139,108 @@ namespace Orbweaver
             return codec is not null;
         }
 
-        private static SKBitmap? Decode(byte[] bytes)
+        // A picture is never decoded at its own size if that would be large: a
+        // 16000x16000 PNG is a gigabyte of RGBA and a 100 MP camera JPEG under
+        // the byte cap is a realistic pick. Past FullDecodeMaxPixels the codec
+        // is read one scanline at a time and box-averaged down as it goes, so
+        // only a row and the reduced result are ever resident. Either way the
+        // decode must report complete: a truncated file hands back a partial
+        // bitmap that looks like success, which is how a corrupt icon would
+        // otherwise be stored.
+        //
+        // Measured limit of that: this Skia build's PNG codec does not
+        // implement scanline decoding (StartScanlineDecode answers
+        // Unimplemented; JPEG does implement it), so a PNG cannot be reduced
+        // on the way in. A PNG past the reduction threshold is decoded whole
+        // only up to HardMaxPixels (50 MP, about 200 MB transient, once, on a
+        // user action) and refused as too large beyond that.
+        internal const int FullDecodeMaxPixels = 16_000_000;
+        internal const int HardMaxPixels = 50_000_000;
+
+        private static SKBitmap? Decode(
+            byte[] bytes, out bool tooLarge,
+            int fullDecodeMaxPixels = FullDecodeMaxPixels, int hardMaxPixels = HardMaxPixels)
         {
-            try { return SKBitmap.Decode(bytes); }
+            tooLarge = false;
+            try
+            {
+                using var codec = SKCodec.Create(new MemoryStream(bytes));
+                if (codec is null) return null;
+
+                var info = new SKImageInfo(codec.Info.Width, codec.Info.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                if (info.Width <= 0 || info.Height <= 0) return null;
+
+                var pixels = (long)info.Width * info.Height;
+                if (pixels > fullDecodeMaxPixels)
+                {
+                    var reduced = DecodeReduced(codec, info);
+                    if (reduced is not null) return reduced;
+
+                    // Reduction unavailable (PNG) or the file ran short.
+                    if (pixels > hardMaxPixels) { tooLarge = true; return null; }
+                }
+
+                var bitmap = new SKBitmap(info);
+                if (codec.GetPixels(info, bitmap.GetPixels()) == SKCodecResult.Success) return bitmap;
+                bitmap.Dispose();
+                return null;
+            }
             catch (Exception) { return null; }
         }
 
-        private static byte[]? Normalise(byte[] source)
+        private static SKBitmap? DecodeReduced(SKCodec codec, SKImageInfo info)
         {
-            using var bitmap = Decode(source);
+            // Factor chosen so the short side stays at or above Size.
+            var n = Math.Max(1, Math.Min(info.Width, info.Height) / Size);
+            var dw = info.Width / n;
+            var dh = info.Height / n;
+            if (codec.StartScanlineDecode(info) != SKCodecResult.Success) return null;
+            // From here the codec is committed to scanline mode; a short file
+            // returns null and the caller refuses the pixel count it would
+            // otherwise decode whole.
+
+            var result = new SKBitmap(new SKImageInfo(dw, dh, SKColorType.Rgba8888, SKAlphaType.Premul));
+            var row = System.Runtime.InteropServices.Marshal.AllocHGlobal(info.RowBytes);
+            try
+            {
+                var line = new byte[info.RowBytes];
+                var sums = new long[dw * 4];
+                for (var y = 0; y < info.Height; y++)
+                {
+                    if (codec.GetScanlines(row, 1, info.RowBytes) != 1) { result.Dispose(); return null; }
+
+                    var dy = y / n;
+                    if (dy >= dh) continue;
+
+                    System.Runtime.InteropServices.Marshal.Copy(row, line, 0, info.RowBytes);
+                    for (var x = 0; x < dw * n; x++)
+                    {
+                        var d = x / n * 4;
+                        sums[d] += line[x * 4];
+                        sums[d + 1] += line[x * 4 + 1];
+                        sums[d + 2] += line[x * 4 + 2];
+                        sums[d + 3] += line[x * 4 + 3];
+                    }
+
+                    if ((y + 1) % n != 0) continue;
+
+                    var count = (long)n * n;
+                    for (var x = 0; x < dw; x++)
+                    {
+                        result.SetPixel(x, dy, new SKColor(
+                            (byte)(sums[x * 4] / count), (byte)(sums[x * 4 + 1] / count),
+                            (byte)(sums[x * 4 + 2] / count), (byte)(sums[x * 4 + 3] / count)));
+                    }
+                    Array.Clear(sums);
+                }
+                return result;
+            }
+            finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(row); }
+        }
+
+        private static byte[]? Normalise(byte[] source, int fullDecodeMaxPixels, int hardMaxPixels, out bool tooLarge)
+        {
+            using var bitmap = Decode(source, out tooLarge, fullDecodeMaxPixels, hardMaxPixels);
             if (bitmap is null || bitmap.Width == 0 || bitmap.Height == 0) return null;
 
             return Render(canvas =>
@@ -257,6 +353,18 @@ namespace Orbweaver
         private static readonly Regex ImportRule = new(
             @"@import", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+        // Embedded pictures are allowed only when they are plain rasters. A
+        // data:image/svg+xml is a whole second document that Svg.Skia would
+        // parse and honour the references of (QA drove a nested one to a
+        // network hit and a local-file read on 03243773), so it is refused
+        // along with every other type rather than validated recursively.
+        private static bool IsRasterDataUri(string value) =>
+            value.StartsWith("data:image/png", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("data:image/jpeg", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("data:image/jpg", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("data:image/gif", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("data:image/webp", StringComparison.OrdinalIgnoreCase);
+
         internal static bool IsSelfContained(string svg)
         {
             var settings = new XmlReaderSettings
@@ -281,7 +389,7 @@ namespace Orbweaver
                         var value = reader.Value.Trim();
                         if (reader.LocalName.Equals("href", StringComparison.OrdinalIgnoreCase)
                             && !value.StartsWith('#')
-                            && !value.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+                            && !IsRasterDataUri(value))
                             return false;
                         if (UrlRef.IsMatch(value) || ImportRule.IsMatch(value)) return false;
                     }

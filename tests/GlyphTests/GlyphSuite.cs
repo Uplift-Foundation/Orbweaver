@@ -184,6 +184,12 @@ namespace Orbweaver.Tests
             new("family emoji is one",       "\U0001F468\u200D\U0001F469\u200D\U0001F467A", true, "\U0001F468\u200D\U0001F469\u200D\U0001F467A"),
             new("flag is one",               "\U0001F1EF\U0001F1F5X", true, "\U0001F1EF\U0001F1F5X"),
             new("combining accent attached", "e\u0301xy",    true,  "e\u0301x"),
+            new("internal space skipped",    "A B",          true,  "AB"),
+            new("lone zero-width joiner",    "\u200D",       true,  ""),
+            new("lone surrogate",            "\uD83D",       true,  ""),
+            new("control chars skipped",     "\u0001\u0002A", true,  "A"),
+            new("leading joiner skipped",    "\u200DAB",     true,  "AB"),
+            new("nbsp is not visible",       "\u00A0\u00A0", true,  ""),
             new("emoji one-letter",          "\U0001F600A",  false, "\U0001F600"),
         };
 

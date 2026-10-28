@@ -39,6 +39,28 @@ public class AccountOrbLooksTests
         Assert.Equal("Acme Corp", look.DisplayName);
     }
 
+    [Theory]
+    [InlineData("\u200D")]
+    [InlineData("\uD83D")]
+    [InlineData("  \u00A0 ")]
+    public void InvisibleInitials_FallBackToDerivedLetters(string initials)
+    {
+        Assert.Equal("Cb", AccountOrbLooks.Resolve("claude-buddy", new(initials, null, null), true).Glyph);
+    }
+
+    [Fact]
+    public void Name_IsCutToSixtyFourElements_KeepingInternalSpaces()
+    {
+        var n = new AccountOrbOverride(null, "Acme Corp " + new string('x', 5000), null).Normalise();
+        Assert.Equal(64, System.Globalization.StringInfo.ParseCombiningCharacters(n.Name!).Length);
+        Assert.StartsWith("Acme Corp x", n.Name);
+
+        var emoji = string.Concat(Enumerable.Repeat("\U0001F468\u200D\U0001F469\u200D\U0001F467", 70));
+        var e = new AccountOrbOverride(null, emoji, null).Normalise();
+        Assert.Equal(64, System.Globalization.StringInfo.ParseCombiningCharacters(e.Name!).Length);
+        Assert.True(new AccountOrbOverride(null, "\u200D\u0001", null).IsEmpty);
+    }
+
     [Fact]
     public void BlankInitials_FallBack()
     {
