@@ -21,9 +21,11 @@ namespace Orbweaver
         {
             private readonly Dictionary<string, string> _last = new(StringComparer.Ordinal);
 
-            // Every session on screen with its current key. Returns (old, new)
-            // for each whose key changed from one non-empty key to another, and
-            // forgets sessions that are no longer passed in.
+            // Every known session with its current key — SessionManager passes
+            // all of its statuses, not only the orbs on screen. Returns (old,
+            // new) for each whose key changed from one non-empty key to
+            // another, and forgets a session only once it is no longer passed
+            // in, which is when the session itself has ended.
             internal IReadOnlyList<(string Old, string New)> Observe(IEnumerable<(string Id, string Key)> current)
             {
                 var carries = new List<(string, string)>();

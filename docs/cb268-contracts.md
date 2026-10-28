@@ -65,7 +65,8 @@ internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
   - The formula: the centre of anchor orb k is `CurveCentre + CurveScale × OrbArrangement.Unit(DrawnShape, anchorCount)[k]`, in screen units, after separation and translation.
     - "Anchor" means a non-member orb (a team root or a solo orb), and k runs over the anchors in index order.
   - It is a **least-squares fit** to where the anchors actually landed, not a value carried through the layout. It is within a few px of the real placement; the worst measured was a star at about 7.5 px. So an outline built from it still has to enclose the real discs (T5) and must not assume the anchors sit exactly on the curve.
-  - For a `grid`, `CurveScale` is the lattice step. For a one-orb group, `CurveScale` is 0 and `CurveCentre` is that orb's centre.
+  - **"No curve" is `CurveScale == 0`; the fields are never null** (final at `c179b432`, fallback at `9839db6f`). It covers a grid, a line, a column, a group the fallback redrew as a grid (its `DrawnShape` is then `"grid"`), and a one-orb group. `CurveCentre` is still filled: the anchors' mean centre, or a lone orb's centre.
+  - **One owner:** `SessionManager.CurveOf(placement)` is the single place a placement becomes `BackdropSpec.Curve`, and it returns null exactly when `CurveScale == 0`. `GroupOutline` tolerates a zero, non-finite or negative scale by falling back to its scaled fit, but that is a safety net, not a second decision: nothing in the app hands it one.
   - For `grid`, `line` and `vline`, `GroupOutline` keeps its rounded rectangle or stadium around the discs, and a one-orb group keeps its circle. The curve drives the outline only for heart, circle, diamond and star.
 - **`GroupOutline` (S3) draws the outward offset of that curve,** `CurveCentre + CurveScale × curve(t)` for heart, circle, diamond and star, offset outward by the smallest distance that still encloses every disc of the group plus padding (T5, fanned members included). It does not fit a fresh, freely scaled shape around the discs: that read 2–3× too big on a heart in the screenshots.
 - S7 hands each `GroupPlacement` through to `GroupBackdrops` whole, `DrawnShape`, `CurveCentre` and `CurveScale` included.
@@ -259,6 +260,7 @@ What calls what, as built.
 1. Refresh `_knownLead` from the statuses and prune it with `TeamTree.Reachable`.
 2. `OrbGroupSync.KeyTracker.Observe`, then `OrbweaverSettings.CarryOrbGroupMembership(old, new)` for each key that changed (CB-10).
    - This is needed because `OrbWindow.PositionKey` is set once at creation and never changes.
+   - It observes **every session in `_statuses`**, not the orbs on screen, and forgets one only when its session ends. Hiding the orbs never dropped one, but a session known without an orb for a scan did, and its carry was lost.
 3. For every team of two or more: `OrbweaverSettings.EnsureTeamMembership(rootKey, memberKeys)` (T3). It is idempotent, fills only member keys with no entry of their own, and does nothing for a root that is in its group by classification. A team *move* that should overwrite is `AssignTeamToGroup`.
 
 None of the three moves an orb, so CB-161 is untouched.
@@ -277,6 +279,8 @@ None of the three moves an orb, so CB-161 is untouched.
 - Outside an arrangement, `OrbDragSession.End` still pins.
 
 **Anchors:** `ShiftArrangementAnchor(dx, dy, groupId = main)` moves one group's saved anchor, and does nothing for a group with no anchor yet.
+
+**A predefined group keeps its saved anchor after it empties (intended).** When `main`, `heartbeats` or `crons` empties and later refills, it comes back where it was, exactly as the single `ArrangeAnchor` always did. A user group never faces the question, because it is pruned when it empties.
 
 **`IOrbDragHost`** is implemented explicitly on `SessionManager`, and `Start()` assigns `OrbDragHost.Current = this`.
 - Every list is over visible orbs:

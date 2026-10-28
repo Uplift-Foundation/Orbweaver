@@ -159,9 +159,20 @@ public class OrbArrangementAnimationTests
             manager.ArrangeOrbsInPattern();
             CompleteTheGlide(manager);
 
+            // Forget that the orb was already placed, so this is a real re-fit
+            // rather than CB-161's departure-only shortcut — which is what an
+            // absorb with nobody new would otherwise take, never reaching the
+            // "already where the shape wants it" check this test is named for.
+            // The re-fit has to reproduce the settled layout to the pixel
+            // (ComputeGroups' one path, fed its own saved anchors).
+            GetPrivate<HashSet<string>>(manager, "_arrangedIds").Clear();
+            var before = Windows(manager)["a"].Position;
+
             InvokePrivate(manager, "AbsorbIntoArrangement");
 
             Assert.Null(GetPrivate<object?>(manager, "_arrangeAnimTargets"));
+            Assert.Equal(before, Windows(manager)["a"].Position);
+            Assert.Contains("a", GetPrivate<HashSet<string>>(manager, "_arrangedIds"));
         }
         finally
         {

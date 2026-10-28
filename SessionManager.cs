@@ -4946,7 +4946,8 @@ namespace Orbweaver
 
         // What every scan does for groups, before it lays anything out:
         //  - remembers this scan's leads and forgets ones nothing descends from;
-        //  - carries a membership across a key that changed (CB-10);
+        //  - carries a membership across a key that changed (CB-10), tracking
+        //    every known session rather than every orb on screen;
         //  - gives a team member with no group of its own its root's (T3), so a
         //    member that outlives its lead keeps the group.
         // None of these moves an orb, so none of them breaks CB-161.
@@ -4963,8 +4964,12 @@ namespace Orbweaver
             foreach (var stale in _knownLead.Keys.Where(id => !keep.Contains(id)).ToList())
                 _knownLead.Remove(stale);
 
+            // Every session the manager knows, not only the orbs on screen: an
+            // entry is forgotten when its session ends — _statuses' own
+            // lifetime — so a key that changes while a session has no orb for
+            // a scan is still carried when the orb comes back.
             foreach (var (old, renamed) in _groupKeys.Observe(
-                         tree.Present.Select(id => (id, OrbGroupMenu.KeyOf(id, _statuses)))))
+                         _statuses.Keys.Select(id => (id, OrbGroupMenu.KeyOf(id, _statuses))).ToList()))
             {
                 OrbweaverSettings.CarryOrbGroupMembership(old, renamed);
             }

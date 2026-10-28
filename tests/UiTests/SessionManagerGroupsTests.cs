@@ -220,6 +220,58 @@ public class SessionManagerGroupsTests : IDisposable
         Assert.Equal(group.Id, OrbweaverSettings.OrbGroupMembershipFor(after));
     }
 
+    // The membership key is tracked per session for as long as the session is
+    // known, not per orb on screen. Hiding the orbs alone never dropped one
+    // (the windows stay, only invisible) — this test passes with or without
+    // that rule, and pins the behaviour. The next one is what the rule fixes.
+    [AvaloniaFact]
+    public void AKeyThatChangesWhileTheOrbIsHiddenStillCarriesItsGroup()
+    {
+        var manager = Scan(("a", ""));
+        var group = NewGroup();
+        var before = KeyOf(manager, "a");
+        OrbweaverSettings.MoveOrbToGroup(before, group.Id);
+        Invoke(manager, "SyncOrbGroups");
+
+        // Hidden for a scan, and the title arrives meanwhile.
+        manager.SetOrbsVisible(false);
+        manager.StatusFor("a")!.Title = "named while hidden";
+        var after = KeyOf(manager, "a");
+        Assert.NotEqual(before, after);
+        Invoke(manager, "SyncOrbGroups");
+
+        manager.SetOrbsVisible(true);
+        Invoke(manager, "SyncOrbGroups");
+
+        Assert.Equal(group.Id, OrbweaverSettings.OrbGroupMembershipFor(after));
+    }
+
+    // A session the manager still knows but has no orb for, for a scan: the
+    // key was forgotten when tracking followed orbs on screen, and the carry
+    // never fired. Constructed by taking the window away and putting it back;
+    // this fails on the version that observed only the team tree.
+    [AvaloniaFact]
+    public void AKeyThatChangesWhileTheSessionHasNoOrbStillCarriesItsGroup()
+    {
+        var manager = Scan(("a", ""));
+        var group = NewGroup();
+        var before = KeyOf(manager, "a");
+        OrbweaverSettings.MoveOrbToGroup(before, group.Id);
+        Invoke(manager, "SyncOrbGroups");
+
+        var windows = Windows(manager);
+        var orb = windows["a"];
+        windows.Remove("a");
+        manager.StatusFor("a")!.Title = "named with no orb";
+        var after = KeyOf(manager, "a");
+        Invoke(manager, "SyncOrbGroups");
+
+        windows["a"] = orb;
+        Invoke(manager, "SyncOrbGroups");
+
+        Assert.Equal(group.Id, OrbweaverSettings.OrbGroupMembershipFor(after));
+    }
+
     // --- per-group anchors -------------------------------------------------
 
     // This found a real S2 defect (a heart's first-draw anchor, fed back,
