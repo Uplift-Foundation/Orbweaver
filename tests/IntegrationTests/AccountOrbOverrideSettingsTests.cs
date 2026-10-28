@@ -134,8 +134,6 @@ public class AccountOrbOverrideSettingsTests
             AccountOrbCustomization.SetName("", "x");
             Assert.Null(AccountOrbCustomization.Current(""));
             Assert.Equal(5, raised.Count);
-
-            Assert.Equal(IconImportError.UnsupportedFormat, AccountOrbCustomization.SetIcon("k", "x").Error);
         }
         finally { AccountOrbCustomization.Changed -= On; }
     }

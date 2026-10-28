@@ -27,17 +27,36 @@ namespace Orbweaver
         internal static void SetName(string positionKey, string? name) =>
             Write(positionKey, o => o with { Name = name });
 
-        // Import, swap and delete-the-old-one arrive with AccountOrbIcons.Import.
-        internal static IconImport SetIcon(string positionKey, string sourcePath) =>
-            new(null, IconImportError.UnsupportedFormat);
+        // Import the new file, point settings at it, and only then delete the
+        // old one — so a failure at any step leaves the previous icon working.
+        // A failed import changes nothing: no file, no setting, no event.
+        internal static IconImport SetIcon(string positionKey, string sourcePath)
+        {
+            if (string.IsNullOrEmpty(positionKey)) return new(null, IconImportError.Unreadable);
 
-        internal static void RemoveIcon(string positionKey) =>
+            var dir = AccountOrbIcons.IconsDirectory;
+            var imported = AccountOrbIcons.Import(sourcePath, positionKey, dir);
+            if (imported.FileName is null) return imported;
+
+            var old = Current(positionKey)?.IconFile;
+            Write(positionKey, o => o with { IconFile = imported.FileName });
+            if (old != imported.FileName) AccountOrbIcons.Delete(dir, old);
+            return imported;
+        }
+
+        internal static void RemoveIcon(string positionKey)
+        {
+            var old = Current(positionKey)?.IconFile;
             Write(positionKey, o => o with { IconFile = null });
+            AccountOrbIcons.Delete(AccountOrbIcons.IconsDirectory, old);
+        }
 
         internal static void Reset(string positionKey)
         {
             if (string.IsNullOrEmpty(positionKey)) return;
+            var old = Current(positionKey)?.IconFile;
             OrbweaverSettings.SetAccountOrbOverride(positionKey, null);
+            AccountOrbIcons.Delete(AccountOrbIcons.IconsDirectory, old);
             Changed?.Invoke(positionKey);
         }
 
