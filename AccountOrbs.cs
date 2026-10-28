@@ -107,7 +107,14 @@ namespace Orbweaver
         // one arm a real click cannot reach.
         internal void RaiseCustomizeForTests(AccountOrbWindow orb) => OnCustomizeRequested(orb);
 
-        private void OnCustomizationChanged(string positionKey) => RefreshLooks();
+        // Changed is raised from whichever thread wrote the override. Orb
+        // windows are touched on the UI thread only, so a write from anywhere
+        // else is posted across rather than redrawing from the wrong thread.
+        private void OnCustomizationChanged(string positionKey)
+        {
+            if (Dispatcher.UIThread.CheckAccess()) RefreshLooks();
+            else Dispatcher.UIThread.Post(RefreshLooks);
+        }
 
         private void OnCustomizeRequested(AccountOrbWindow orb)
         {

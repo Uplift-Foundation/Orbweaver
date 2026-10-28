@@ -22,8 +22,18 @@ public class AccountOrbOverrideTests : IDisposable
 
     public AccountOrbOverrideTests() => OrbweaverSettings.TwoLetterGlyphs = true;
 
+    private readonly System.Collections.Generic.List<AccountOrbs> _made = new();
+
+    private AccountOrbs Make(IUsageSource source)
+    {
+        var orbs = new AccountOrbs(source);
+        _made.Add(orbs);
+        return orbs;
+    }
+
     public void Dispose()
     {
+        foreach (var orbs in _made) orbs.CloseAll();
         OrbweaverSettings.TwoLetterGlyphs = _twoLetter;
         AccountOrbWindow.ClearBreathingForTests();
         AccountOrbs.OpenEditorForTests = null;
@@ -247,7 +257,7 @@ public class AccountOrbOverrideTests : IDisposable
     [AvaloniaFact]
     public void Accounts_ListsKeySourceLabel()
     {
-        var orbs = new AccountOrbs(new NoSource());
+        var orbs = Make(new NoSource());
         orbs.Apply(new[]
         {
             Usage(null, "wt"),
@@ -264,7 +274,7 @@ public class AccountOrbOverrideTests : IDisposable
     [AvaloniaFact]
     public void CustomizationChange_RedrawsOrbAndCard_WithoutAPoll()
     {
-        var orbs = new AccountOrbs(new NoSource());
+        var orbs = Make(new NoSource());
         orbs.Apply(new[] { Usage(null, "wt") }, Now);
         orbs.OpenCardForTests(string.Empty);
         var orb = orbs.Orbs[string.Empty];
@@ -290,7 +300,7 @@ public class AccountOrbOverrideTests : IDisposable
     [AvaloniaFact]
     public void AfterTheLastOrbCloses_ChangesNoLongerReachThisInstance()
     {
-        var orbs = new AccountOrbs(new NoSource());
+        var orbs = Make(new NoSource());
         orbs.Apply(new[] { Usage(null, "wt") }, Now);
         orbs.CloseAll();
         Assert.Empty(orbs.Orbs);
@@ -304,7 +314,7 @@ public class AccountOrbOverrideTests : IDisposable
     [AvaloniaFact]
     public void Customize_OpensEditorForThatAccount()
     {
-        var orbs = new AccountOrbs(new NoSource());
+        var orbs = Make(new NoSource());
         orbs.Apply(new[]
         {
             Usage(null, "wt"),
@@ -327,7 +337,7 @@ public class AccountOrbOverrideTests : IDisposable
     [AvaloniaFact]
     public void Customize_ForAnOrbWithNoReading_OpensNothing()
     {
-        var orbs = new AccountOrbs(new NoSource());
+        var orbs = Make(new NoSource());
         orbs.Apply(new[] { Usage(null, "wt") }, Now);
         var opened = false;
         AccountOrbs.OpenEditorForTests = (_, _) => opened = true;

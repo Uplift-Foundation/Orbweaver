@@ -20,8 +20,26 @@ namespace Orbweaver.Tests;
 // the timers guard — which card is open, what a pin does to it — are driven
 // directly below; the delays themselves are named as uncovered in the PR.
 [Collection("Settings")]
-public class AccountOrbsTests
+public class AccountOrbsTests : IDisposable
 {
+    // CB-287: AccountOrbs listens to the process-wide
+    // AccountOrbCustomization.Changed while it holds orbs. A case that never
+    // closed its orbs left an instance subscribed, and a later test's write
+    // reached it from the wrong thread. Every instance made here is closed.
+    private readonly List<AccountOrbs> _made = new();
+
+    private AccountOrbs Make(IUsageSource source)
+    {
+        var orbs = new AccountOrbs(source);
+        _made.Add(orbs);
+        return orbs;
+    }
+
+    public void Dispose()
+    {
+        foreach (var orbs in _made) orbs.CloseAll();
+    }
+
     private static readonly DateTimeOffset Now =
         new(2026, 8, 30, 12, 0, 0, TimeSpan.Zero);
 
@@ -70,7 +88,7 @@ public class AccountOrbsTests
     public void OneOrbPerAccountThatAnswered()
     {
         var source = new FakeUsageSource();
-        var orbs = new AccountOrbs(source);
+        var orbs = Make(source);
 
         orbs.Apply(new[]
         {
@@ -88,7 +106,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void AReadingUpdatesTheOrbItAlreadyHasRatherThanMakingASecond()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
 
         orbs.Apply(new[] { Usage(null, "wthompson", weekly: 10) }, Now);
         var first = orbs.Orbs[string.Empty];
@@ -108,7 +126,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void AnAccountThatAnswersNothingKeepsTheOrbItHad()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
 
         orbs.Apply(new[] { Usage(null, "wthompson") }, Now);
         Assert.Single(orbs.Orbs);
@@ -123,7 +141,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void PinningKeepsTheCardAndMarksTheOrb()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[] { Usage(null, "wthompson") }, Now);
 
         orbs.TogglePin(string.Empty);
@@ -143,7 +161,7 @@ public class AccountOrbsTests
         // The poll redraws every orb from its reading. A pin that did not
         // survive that would come undone every five minutes on its own, which
         // is the one failure a pin cannot have.
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[] { Usage(null, "wthompson") }, Now);
 
         orbs.TogglePin(string.Empty);
@@ -157,7 +175,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void HidingTakesTheCardsWithTheOrbs()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[] { Usage(null, "wthompson") }, Now);
         orbs.TogglePin(string.Empty);
 
@@ -171,7 +189,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void ClosingEverythingLeavesNothingBehind()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[]
         {
             Usage(null, "wthompson"),
@@ -193,7 +211,7 @@ public class AccountOrbsTests
         OrbweaverSettings.AccountUsageEnabled = false;
         OrbweaverSettings.GrokAccountUsageEnabled = true;
 
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[]
         {
             Usage("/Users/x/.grok", "user", source: AccountUsageSource.Grok)
@@ -215,7 +233,7 @@ public class AccountOrbsTests
         OrbweaverSettings.AccountUsageEnabled = false;
         OrbweaverSettings.GrokAccountUsageEnabled = true;
 
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[]
         {
             Usage(null, "wthompson"),
@@ -239,7 +257,7 @@ public class AccountOrbsTests
         OrbweaverSettings.AccountUsageEnabled = true;
         OrbweaverSettings.GrokAccountUsageEnabled = false;
 
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[]
         {
             Usage(null, "wthompson"),
@@ -264,7 +282,7 @@ public class AccountOrbsTests
         OrbweaverSettings.GrokAccountUsageEnabled = false;
         OrbweaverSettings.CodexAccountUsageEnabled = false;
 
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[]
         {
             Usage(null, "wthompson"),
@@ -287,7 +305,7 @@ public class AccountOrbsTests
         OrbweaverSettings.GrokAccountUsageEnabled = false;
         OrbweaverSettings.CodexAccountUsageEnabled = true;
 
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[]
         {
             Usage("/Users/x/.codex", "codex", source: AccountUsageSource.Codex)
@@ -309,7 +327,7 @@ public class AccountOrbsTests
         OrbweaverSettings.AccountUsageEnabled = false;
         OrbweaverSettings.CodexAccountUsageEnabled = true;
 
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         orbs.Apply(new[]
         {
             Usage(null, "wthompson"),
@@ -333,7 +351,7 @@ public class AccountOrbsTests
     public void TheSettingBeingOffMeansNothingIsAsked()
     {
         var source = new FakeUsageSource();
-        var orbs = new AccountOrbs(source);
+        var orbs = Make(source);
 
         OrbweaverSettings.AccountUsageEnabled = false;
         orbs.Tick(Now);
@@ -354,7 +372,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void APollThatMovesNothingBacksTheCadenceOff()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         var reading = Usage(null, "board", weekly: 40);
 
         // First reading of an account is always a change — there is nothing to
@@ -381,7 +399,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void APollThatMovesARingReturnsToTheFastCadence()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         var reading = Usage(null, "board", weekly: 40);
 
         orbs.Apply(new[] { reading }, Now);
@@ -404,7 +422,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void OneMovingAccountKeepsTheCadenceFastForAllOfThem()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         var still = Usage(null, "board", weekly: 40);
         var moving = Usage("/Users/x/.claude-work", "work", weekly: 20);
 
@@ -426,7 +444,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void APollThatAnsweredNothingBacksOff()
     {
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
 
         orbs.Apply(new[] { Usage(null, "board") }, Now);
         Assert.Equal(UsagePollCadence.Fast, orbs.PollInterval);
@@ -442,7 +460,7 @@ public class AccountOrbsTests
     [AvaloniaFact]
     public void ANewInstanceStartsFast()
     {
-        Assert.Equal(UsagePollCadence.Fast, new AccountOrbs(new FakeUsageSource()).PollInterval);
+        Assert.Equal(UsagePollCadence.Fast, Make(new FakeUsageSource()).PollInterval);
     }
 
     // ...and so does a switch that has just been turned on, for the same
@@ -462,7 +480,7 @@ public class AccountOrbsTests
         OrbweaverSettings.ReloadForTests();
         OrbweaverSettings.AccountUsageEnabled = true;
 
-        var orbs = new AccountOrbs(new FakeUsageSource());
+        var orbs = Make(new FakeUsageSource());
         var reading = Usage(null, "board");
 
         orbs.Apply(new[] { reading }, Now);
