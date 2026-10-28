@@ -1,0 +1,39 @@
+using System;
+using System.Collections.Generic;
+
+namespace Orbweaver
+{
+    internal enum DragSource { Orb, Backdrop }
+
+    // CB-268: who moves when something is dragged. Pure, so the gesture table
+    // (orb vs Shift vs backdrop, solo vs lead vs member vs nested team) is a
+    // list of cases rather than something to be driven through a pointer.
+    internal static class DragPlan
+    {
+        /// <summary>
+        /// How far, in DIP, a pressed pointer must travel before the press is a
+        /// drag rather than a click. It used to be an inline 6 compared against
+        /// physical pixels, which made it half the distance on a 2x display.
+        /// </summary>
+        internal const double ThresholdDip = 6;
+
+        /// <summary>True once the pointer has moved far enough to be a drag.</summary>
+        internal static bool Exceeded(double dxPx, double dyPx, double scaling)
+        {
+            var s = scaling > 0 ? scaling : 1;
+            return Math.Abs(dxPx) / s >= ThresholdDip || Math.Abs(dyPx) / s >= ThresholdDip;
+        }
+
+        // teamIds: the pressed orb plus its whole team (root lead, members,
+        // nested members). groupIds: every orb in its group.
+        //   Orb, !shift   -> (false, teamIds)  snap/unsnap is decided on release
+        //   Orb, shift    -> (true,  groupIds)
+        //   Backdrop, any -> (true,  groupIds)
+        internal static (bool WholeGroup, IReadOnlyList<string> Ids) Followers(
+            DragSource source, bool shift,
+            IReadOnlyList<string> teamIds, IReadOnlyList<string> groupIds) =>
+            source == DragSource.Backdrop || shift
+                ? (true, groupIds)
+                : (false, teamIds);
+    }
+}

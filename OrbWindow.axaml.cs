@@ -2493,12 +2493,62 @@ namespace Orbweaver
         private PixelPoint _windowStart;
         private PixelPoint _pointerStart;
 
-        // A team lead drags its members along with it, so a team can be moved
-        // out of the way as one thing — which is the whole point of drawing it
-        // as one thing. Captured on press, because membership can change
-        // mid-drag and an orb that joins the team while you're moving it should
-        // not jump.
-        private readonly List<(OrbWindow Orb, PixelPoint Start)> _followers = new();
+        // Who moves with this orb, and what releasing it does to groups, is an
+        // OrbDragSession (CB-268): DragPlan decides the followers — plain drag
+        // moves the orb's whole team, Shift moves its whole group — and
+        // OrbDragCommit decides whether the drop joins, leaves or changes
+        // nothing. Created on press, because membership can change mid-drag and
+        // an orb that joins the team while you are moving it should not jump.
+        private OrbDragSession? _session;
+
+        // The seam between a drag and SessionManager; replaceable so a test can
+        // drive a real OrbWindow against a fake roster.
+        private static IOrbDragHost? _dragHost;
+        internal static IOrbDragHost? DragHost
+        {
+            get => _dragHost ?? SessionManager.Instance as IOrbDragHost;
+            set => _dragHost = value;
+        }
+
+        // The entry point a group backdrop calls (GroupBackdrops.BackdropPressed):
+        // dragging empty space inside a group's shape moves the whole group. The
+        // pointer is captured by the backdrop window that took the press and
+        // the session follows it from there, so the backdrop needs no drag
+        // code of its own. Excluded from coverage for the same reason as the
+        // orb handlers below: it forwards real pointer events.
+        [ExcludeFromCodeCoverage]
+        internal static void BeginBackdropDrag(
+            string groupId, PointerPressedEventArgs e, Window source)
+        {
+            if (!e.GetCurrentPoint(source).Properties.IsLeftButtonPressed) return;
+            if (DragHost is not { } host || host.OrbIdsInGroup(groupId).FirstOrDefault() is not { } first)
+                return;
+
+            var session = new OrbDragSession(host, first, DragSource.Backdrop, false, source.DesktopScaling);
+            var start = source.PointToScreen(e.GetPosition(source));
+            var dragging = false;
+            e.Pointer.Capture(source);
+
+            void Moved(object? _, PointerEventArgs m)
+            {
+                var now = source.PointToScreen(m.GetPosition(source));
+                int dx = now.X - start.X, dy = now.Y - start.Y;
+                if (!dragging && !DragPlan.Exceeded(dx, dy, source.DesktopScaling)) return;
+                dragging = true;
+                session.Move(dx, dy);
+            }
+
+            void Released(object? _, PointerReleasedEventArgs r)
+            {
+                source.PointerMoved -= Moved;
+                source.PointerReleased -= Released;
+                r.Pointer.Capture(null);
+                if (dragging) session.End();
+            }
+
+            source.PointerMoved += Moved;
+            source.PointerReleased += Released;
+        }
 
         // Excluded from coverage: a synthesized press on an orb ends in a real
         // click being resolved, and OnClicked's default action is
@@ -2507,13 +2557,13 @@ namespace Orbweaver
         // runner that is an unpredictable side effect rather than a test, and on
         // a developer's machine it moves their windows.
         //
-        // The drag arithmetic these three share is not lost with them: the
-        // 6-pixel threshold, the follower offsets and the arranged-anchor nudge
-        // are all OrbArrangement's, which is pure and swept by
-        // tests/ArrangementTests across 20736 cases. What is excluded here is the
-        // plumbing from a pointer to those answers, and the click resolution
-        // itself is covered directly in OrbWindowClickResolutionTests via
-        // OnClicked/ActionFor rather than through a pointer.
+        // The decisions these three share are not lost with them: who moves is
+        // DragPlan, what a drop does is OrbSnap and OrbDragCommit, and the
+        // moving itself is OrbDragSession, all covered without a pointer (see
+        // OrbWindowDragSnapTests). What is excluded here is the plumbing from a
+        // pointer to those answers, and the click resolution itself is covered
+        // directly in OrbWindowClickResolutionTests via OnClicked/ActionFor
+        // rather than through a pointer.
         [ExcludeFromCodeCoverage]
         protected override void OnPointerPressed(PointerPressedEventArgs e)
         {
@@ -2530,34 +2580,18 @@ namespace Orbweaver
                 _windowStart = Position;
                 _pointerStart = this.PointToScreen(e.GetPosition(this));
 
-                _followers.Clear();
-                foreach (var member in SessionManager.Instance?.MembersOf(SessionId)
-                                       ?? Enumerable.Empty<OrbWindow>())
-                {
-                    _followers.Add((member, member.Position));
-                }
-
-                // When arranged, the whole cluster moves as one — every
-                // orb in the pattern that isn't already a team follower
-                // tags along so the shape stays intact.
-                if (SessionManager.Instance?.IsArranged == true)
-                {
-                    var existing = new HashSet<string>(_followers.Select(f => f.Orb.SessionId));
-                    foreach (var sibling in SessionManager.Instance.ArrangedSiblings(SessionId))
-                    {
-                        if (!existing.Contains(sibling.SessionId))
-                            _followers.Add((sibling, sibling.Position));
-                    }
-                }
+                _session = DragHost is { } host
+                    ? new OrbDragSession(
+                        host, SessionId, DragSource.Orb,
+                        e.KeyModifiers.HasFlag(KeyModifiers.Shift), DesktopScaling)
+                    : null;
 
                 e.Pointer.Capture(this);
             }
         }
 
         // Excluded from coverage: same reason as OnPointerPressed — this only runs
-        // between a real press and a real release, and it moves live windows via
-        // Position while TeamLinks.Refresh() redraws native arrow windows over
-        // them.
+        // between a real press and a real release.
         [ExcludeFromCodeCoverage]
         protected override void OnPointerMoved(PointerEventArgs e)
         {
@@ -2568,7 +2602,7 @@ namespace Orbweaver
             var dx = current.X - _pointerStart.X;
             var dy = current.Y - _pointerStart.Y;
 
-            if (!_dragging && Math.Abs(dx) < 6 && Math.Abs(dy) < 6) return;
+            if (!_dragging && !DragPlan.Exceeded(dx, dy, DesktopScaling)) return;
 
             // Only on the transition into dragging, not every move after —
             // a flyout animating toward a stale position underneath a moving
@@ -2577,30 +2611,15 @@ namespace Orbweaver
             if (!_dragging) HideFlyoutNow();
 
             _dragging = true;
-            Position = new PixelPoint(_windowStart.X + dx, _windowStart.Y + dy);
+            if (_session is { } session) session.Move(dx, dy);
+            else Position = new PixelPoint(_windowStart.X + dx, _windowStart.Y + dy);
 
-            // The team travels with its lead, keeping the shape the user
-            // arranged it in rather than being re-stacked around the new spot.
-            foreach (var (member, start) in _followers)
-            {
-                member.Position = new PixelPoint(start.X + dx, start.Y + dy);
-            }
-
-            // Drag a member away and its arrow to the lead stretches with it —
-            // which is the point of the arrow, since a dragged orb is exactly
-            // the one that no longer sits next to the team it belongs to. Cheap
-            // enough to do per pointer move: a few windows repositioned, no
-            // scan of anything.
-            TeamLinks.Refresh();
             ChatPanel.RepositionFor(this);
         }
 
         // Excluded from coverage: the end of the same gesture. Either it commits a
-        // drag — writing every dragged orb's position through SessionManager and
-        // re-anchoring the arrangement — or it resolves a click, which is
-        // TerminalFocuser again. Both halves are covered where they are decided:
-        // OrbArrangement for the geometry, OrbWindowClickResolutionTests for the
-        // click.
+        // drag — OrbDragSession.End — or it resolves a click, which is
+        // TerminalFocuser again.
         [ExcludeFromCodeCoverage]
         protected override void OnPointerReleased(PointerReleasedEventArgs e)
         {
@@ -2612,36 +2631,11 @@ namespace Orbweaver
 
             if (_dragging)
             {
-                SetPinned(true);
-                SessionManager.Instance?.RememberOrbPosition(this);
-
-                // Members carried along are pinned too, or the next reflow
-                // would pull them back into the stack and leave the lead on its
-                // own with three long arrows.
-                //
-                // Their positions are only *remembered* when they don't share
-                // the lead's key. A team usually runs in one directory, and
-                // positions are keyed by directory, so writing each member's
-                // spot would overwrite the lead's with an offset copy of
-                // itself — the group would come back scattered rather than not
-                // come back at all. See RestoreOrbPosition.
-                foreach (var (member, _) in _followers)
+                if (_session is { } session) session.End();
+                else
                 {
-                    member.SetPinned(true);
-                    if (member.PositionKey != PositionKey)
-                    {
-                        SessionManager.Instance?.RememberOrbPosition(member);
-                    }
-                }
-
-                // When arranged, every orb in the pattern moved by this same
-                // delta (see OnPointerPressed's ArrangedSiblings) — the shape's
-                // saved centre needs to move with it, or absorbing the next
-                // orb to join or leave would snap it back to where it was.
-                if (SessionManager.Instance?.IsArranged == true)
-                {
-                    SessionManager.Instance.ShiftArrangementAnchor(
-                        Position.X - _windowStart.X, Position.Y - _windowStart.Y);
+                    SetPinned(true);
+                    SessionManager.Instance?.RememberOrbPosition(this);
                 }
             }
             else
@@ -2664,7 +2658,7 @@ namespace Orbweaver
                 OnClicked(_clickCount);
             }
 
-            _followers.Clear();
+            _session = null;
         }
 
         // --- what a click does ------------------------------------------------
