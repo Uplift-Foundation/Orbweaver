@@ -60,8 +60,9 @@ namespace Orbweaver
         /// has to move to its slot. <paramref name="arrivingIds"/> are the orbs
         /// that just joined or paired and get the arrival pop; an empty set is a
         /// drop that changed nothing (it springs back to its slots), a leave, a
-        /// member drag or a whole-group drag. Defaults to the instant
-        /// <see cref="ReapplyArrangement"/> until the roster animates it.
+        /// member drag or a whole-group drag. SessionManager springs them (CB-283
+        /// M2/M5); the default is the instant <see cref="ReapplyArrangement"/>, so
+        /// a host without motion still lands everything.
         /// </summary>
         void SettleAfterDrop(IReadOnlyCollection<string> arrivingIds) => ReapplyArrangement();
     }

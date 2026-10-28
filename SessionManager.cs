@@ -3829,6 +3829,14 @@ namespace Orbweaver
                 return;
             }
 
+            // Free mode mid-glide (a drop settling): laying out now would yank
+            // the gliding orbs to their slots. The glide re-runs this as it lands.
+            if (_arrangeAnimTargets is not null)
+            {
+                _refitPending = true;
+                return;
+            }
+
             var first = _windows[_order[0]];
             var screen = first.Screens.Primary ?? first.Screens.All.FirstOrDefault();
             if (screen is null) return;
@@ -4696,7 +4704,7 @@ namespace Orbweaver
 
             _arrangedIds.Clear();
             foreach (var orb in allOrbs) _arrangedIds.Add(orb.SessionId);
-            AnimateArrangement();
+            AnimateArrangement(spring: true);
 
             foreach (var w in _windows.Values)
                 w.SetFlyoutArranged(true);
@@ -4910,7 +4918,7 @@ namespace Orbweaver
             _groupPlacements = _groupPlacements.Where(g => IsUserGroup(g.GroupId)).ToList();
             UpdateGroupBackdrops();
 
-            AnimateArrangement(() =>
+            AnimateArrangement(spring: true, onComplete: () =>
             {
                 foreach (var (id, (origPos, wasPinned)) in _preArrangeState)
                 {
@@ -4928,10 +4936,27 @@ namespace Orbweaver
                 w.SetFlyoutArranged(false);
         }
 
-        private void AnimateArrangement(Action? onComplete = null)
+        // CB-283 M2: a user-initiated move — arranging, un-arranging, a drop —
+        // springs each orb into its slot (S4's SpringGlide, Spring.Pop, about
+        // 8% overshoot), staggered StaggerMs apart with the arriving orbs first.
+        // A scan's re-fit (an orb arriving or leaving on its own) keeps the
+        // eased glide it always had: nobody asked for it, so it does not pop.
+        // With reduce motion on, SpringGlide is the plain ~150 ms glide and
+        // there is no stagger (M6). Every glide ends exactly on its slot.
+        internal const int StaggerMs = 20;
+
+        private Dictionary<string, (SpringGlide Glide, long DelayMs)>? _arrangeSprings;
+
+        // The animation's clock, a seam so tests step it by hand rather than
+        // waiting. Every glide is stepped with time since the animation began.
+        internal Func<long> Now { get; set; } = () => Environment.TickCount64;
+
+        private void AnimateArrangement(
+            Action? onComplete = null, bool spring = false, IReadOnlyCollection<string>? first = null)
         {
             _arrangeAnimComplete = onComplete;
-            _arrangeAnimStart = Environment.TickCount64;
+            _arrangeAnimStart = Now();
+            _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first) : null;
 
             if (_arrangeAnimTimer is null)
             {
@@ -4944,6 +4969,29 @@ namespace Orbweaver
             _arrangeAnimTimer.Start();
         }
 
+        // One SpringGlide per moving orb: `first` (the orbs that just arrived)
+        // leads, the rest follow in display order, StaggerMs apart.
+        private Dictionary<string, (SpringGlide Glide, long DelayMs)> SpringsFor(
+            Dictionary<string, (PixelPoint From, PixelPoint To)> targets, IReadOnlyCollection<string>? first)
+        {
+            var reduce = MotionPolicy.ReduceMotion;
+            var order = (first ?? Array.Empty<string>()).Where(targets.ContainsKey)
+                .Concat(DisplayOrder().Where(targets.ContainsKey))
+                .Concat(targets.Keys)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var springs = new Dictionary<string, (SpringGlide, long)>(StringComparer.Ordinal);
+            for (var i = 0; i < order.Count; i++)
+            {
+                var (from, to) = targets[order[i]];
+                var delay = reduce ? 0 : (long)i * StaggerMs;
+                springs[order[i]] = (new SpringGlide(from, to, (0, 0), delay, reduce), delay);
+            }
+
+            return springs;
+        }
+
         private void OnArrangeAnimTick(object? sender, EventArgs e)
         {
             if (_arrangeAnimTargets is null)
@@ -4952,27 +5000,78 @@ namespace Orbweaver
                 return;
             }
 
-            var elapsed = Environment.TickCount64 - _arrangeAnimStart;
-            var t = Math.Min(1.0, elapsed / (double)ArrangeAnimMs);
-            var eased = 1 - Math.Pow(1 - t, 3);
+            var elapsed = Now() - _arrangeAnimStart;
+            bool finished;
 
-            foreach (var (id, (from, to)) in _arrangeAnimTargets)
+            if (_arrangeSprings is { } springs)
             {
-                if (!_windows.TryGetValue(id, out var window)) continue;
-                window.Position = new PixelPoint(
-                    (int)Math.Round(from.X + (to.X - from.X) * eased),
-                    (int)Math.Round(from.Y + (to.Y - from.Y) * eased));
+                // A glide is stepped only once its stagger has passed: stepping
+                // it earlier would count the wait as time already sprung.
+                //
+                // And it lands, exactly, ArrangeAnimMs after it starts, whatever
+                // the spring says. Spring.Pop is within about 6e-5 of the distance
+                // by then (under 0.06 px across 1000 px), so the snap cannot be
+                // seen, but SpringGlide's rest test also wants the velocity under
+                // 0.05 px/s, which a long move can miss for a while longer. A
+                // glide that ends when it ends, rather than when a threshold
+                // agrees, is what "every glide ends on its slot" needs.
+                var finishedAll = true;
+                foreach (var (id, (glide, delay)) in springs)
+                {
+                    if (elapsed < delay || !_windows.TryGetValue(id, out var window))
+                    {
+                        finishedAll &= glide.Done;
+                        continue;
+                    }
+
+                    var at = glide.Step(elapsed);
+                    var landed = glide.Done || elapsed - delay >= ArrangeAnimMs;
+                    window.Position = landed ? glide.Target : at;
+                    finishedAll &= landed;
+                }
+
+                finished = finishedAll;
             }
+            else
+            {
+                var t = Math.Min(1.0, elapsed / (double)ArrangeAnimMs);
+                var eased = 1 - Math.Pow(1 - t, 3);
+
+                foreach (var (id, (from, to)) in _arrangeAnimTargets)
+                {
+                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    window.Position = new PixelPoint(
+                        (int)Math.Round(from.X + (to.X - from.X) * eased),
+                        (int)Math.Round(from.Y + (to.Y - from.Y) * eased));
+                }
+
+                finished = t >= 1.0;
+            }
+
             RefreshOverlays();
 
-            if (t < 1.0) return;
+            if (!finished) return;
+            FinishGlide();
+        }
 
-            _arrangeAnimTimer!.Stop();
+        // Lands the glide in flight: every orb on its slot, the completion run,
+        // and any re-fit that arrived meanwhile done now.
+        private void FinishGlide()
+        {
+            if (_arrangeAnimTargets is not { } targets) return;
+
+            foreach (var (id, (_, to)) in targets)
+            {
+                if (_windows.TryGetValue(id, out var window)) window.Position = to;
+            }
+
+            _arrangeAnimTimer?.Stop();
             var complete = _arrangeAnimComplete;
             _arrangeAnimComplete = null;
-            var targets = _arrangeAnimTargets;
             _arrangeAnimTargets = null;
+            _arrangeSprings = null;
             complete?.Invoke();
+            RefreshOverlays();
 
             // An orb arrived or left while that was flying. Fit it in now,
             // rather than leaving it as the one orb outside the shape.
@@ -4980,6 +5079,34 @@ namespace Orbweaver
 
             _refitPending = false;
             if (_isArranged) AbsorbIntoArrangement();
+            else ReflowPositions();
+        }
+
+        // CB-283 M2/M5: a drop. The current mode is laid out again and every
+        // orb that has somewhere new to be springs there from where it is now —
+        // the dropped team from where it was let go (M5's spring-back on a
+        // no-change drop is the same call), its group around it — with the
+        // arriving orbs leading the stagger. A glide already in flight lands
+        // first. Nothing that is already in place moves.
+        void IOrbDragHost.SettleAfterDrop(IReadOnlyCollection<string> arrivingIds)
+        {
+            FinishGlide();
+
+            var before = _windows.ToDictionary(kv => kv.Key, kv => kv.Value.Position, StringComparer.Ordinal);
+            ReapplyArrangement();
+
+            var moves = new Dictionary<string, (PixelPoint From, PixelPoint To)>(StringComparer.Ordinal);
+            foreach (var (id, window) in _windows)
+            {
+                if (before.TryGetValue(id, out var from) && from != window.Position)
+                    moves[id] = (from, window.Position);
+            }
+
+            if (moves.Count == 0) return;
+
+            foreach (var (id, (from, _)) in moves) _windows[id].Position = from;
+            _arrangeAnimTargets = moves;
+            AnimateArrangement(spring: true, first: arrivingIds);
         }
 
         // Called from the settings slider so the user sees orbs reposition

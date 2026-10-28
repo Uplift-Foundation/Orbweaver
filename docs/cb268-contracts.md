@@ -398,6 +398,25 @@ Warren found that members could no longer be dragged and arranged on their own. 
 - **Obstacle rects:** each loose orb's window, `Position` to `Position + OrbPixels`, in screen units.
 - **Tests (F6):** UI drags in free mode (Pair, Join, LeaveToFree, NoChange-then-pin), reflow excluding grouped orbs, F4 (arrange/un-arrange leaves a user group's orbs and anchor unchanged), and obstacles honoured against the real stack column.
 
+## Motion: M2 drop pop and the arrangement glide (CB-283; S4 and S7)
+
+The pure pieces are S4's: `Spring` (`Step`, `AtRest`, `Pop` at about 8% overshoot), `SpringGlide` (one orb, timestamp-driven, exact at the end, and the plain ~150 ms glide under reduce motion), `MotionPolicy.ReduceMotion` (with a test seam), and `DragSquash`. S7 orchestrates them in the arrangement animation.
+
+- **Which glide.** A user-initiated move springs: arranging, un-arranging, and a drop (`SettleAfterDrop`). It uses one `SpringGlide` per moving orb, with velocity 0, staggered **`SessionManager.StaggerMs` = 20 ms** apart, the arriving orbs first and then display order. A scan's own re-fit (an orb arriving or leaving by itself) keeps the 600 ms eased glide: nobody asked for it, so it doesn't pop.
+- **Reduce motion (M6):** `SpringGlide`'s plain ~150 ms glide, with no stagger and no overshoot.
+- **Every glide ends exactly on its slot.** A glide is stepped with time since the animation began, only once its stagger has passed. It lands on `Target` when `SpringGlide` reports `Done` or **`ArrangeAnimMs` (600 ms) after its own start**, whichever comes first.
+  - `Spring.Pop` is within about 6e-5 of the distance by then, so the snap is invisible.
+  - The cap exists because the rest test also requires velocity under 0.05 px/s, which a long move can miss for a while longer.
+- **`IOrbDragHost.SettleAfterDrop(IReadOnlyCollection<string> arrivingIds)`.** The interface default is `ReapplyArrangement()`; SessionManager overrides it.
+  - It lands any glide in flight first.
+  - It re-lays out the current mode, then springs every orb whose slot changed from where it is now, `arrivingIds` leading.
+  - Nothing that is already in place moves, and a drop that moves nobody starts no glide.
+  - **S4 calls it after every drop outcome:** Join/Pair with the dropped team; NoChange (M5 spring-back), LeaveToFree and Leave with an empty set. `ReapplyArrangement()` stays instant, for the settings sliders' live preview.
+- **Free mode mid-glide:** `ReflowPositions` defers (sets `_refitPending`) while a glide is in flight, and the glide re-runs it as it lands. A scan cannot yank a settling orb.
+- **The clock** is `SessionManager.Now` (a `Func<long>`), so tests step the animation on a fake clock (`ArrangementMotionTests`).
+- **Unchanged:** CB-161 (a departure starts no glide), and `ReFittingAnAlreadySettledShapeStartsNoNewGlide`.
+- **M2's squash-and-stretch pop** (1.15 → 0.92 → 1.0, about 280 ms, on `arrivingIds`) is **not wired yet**. It waits on S4's composition of `DragSquash` with a pop scale on the `Disc` render transform: one owner for that transform, so the two can't fight at release.
+
 ## S7 — integration (architect)
 
 What calls what, as built.
