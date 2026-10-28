@@ -181,12 +181,29 @@ public class GroupBackdropsMotionTests : IDisposable
         var final = GroupBackdrops.OutlineOf("g-m");
         var c = OutlineMorph.Centroid(drawn);
 
-        // Just inside the DRAWN edge but outside the final polygon is impossible for a
-        // swell, so probe both sides of the drawn edge directly.
-        var edge = drawn[60];
-        var inward = new Point(c.X + (edge.X - c.X) * 0.97, c.Y + (edge.Y - c.Y) * 0.97);
-        var outward = new Point(c.X + (edge.X - c.X) * 1.03, c.Y + (edge.Y - c.Y) * 1.03);
-        Assert.NotEqual(final[60], edge);                                 // genuinely mid-morph
+        // Probe both sides of the drawn edge directly. Which vertex is a good probe
+        // depends on the orbs' size, so pick one rather than hard-code an index: its
+        // inward point must be inside the drawn polygon and outside every orb disc
+        // (a disc is never caught, so a probe inside one would tell nothing), and its
+        // outward point must be outside the polygon.
+        var bounds = GroupOutline.Bounds(drawn).Inflate(50);
+        bool InAnyDisc(Point p) => orbs.Any(o =>
+        {
+            var dx = p.X - (o.Position.X + o.CentreDip);
+            var dy = p.Y - (o.Position.Y + o.CentreDip);
+            return Math.Sqrt(dx * dx + dy * dy) <= o.OrbRadius;
+        });
+
+        Point Toward(Point edge, double k) => new(c.X + (edge.X - c.X) * k, c.Y + (edge.Y - c.Y) * k);
+
+        var probe = Enumerable.Range(0, drawn.Length).First(i =>
+            BackdropHitTest.InsideSilhouette(Toward(drawn[i], 0.97), bounds, drawn) && !InAnyDisc(Toward(drawn[i], 0.97)) &&
+            !BackdropHitTest.InsideSilhouette(Toward(drawn[i], 1.03), bounds, drawn) &&
+            final[i] != drawn[i]);
+        var edge = drawn[probe];
+        var inward = Toward(edge, 0.97);
+        var outward = Toward(edge, 1.03);
+        Assert.NotEqual(final[probe], edge);                              // genuinely mid-morph
 
         var told = new List<bool>();
         GroupBackdrops.HitTestTick(inward, false, (_, catches) => told.Add(catches));
