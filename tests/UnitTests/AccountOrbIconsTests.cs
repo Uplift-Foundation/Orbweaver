@@ -279,7 +279,7 @@ public class AccountOrbIconsTests : IDisposable
     {
         var big = Encode(2400, 1200, SKColors.Red, SKColors.Blue, SKEncodedImageFormat.Png);
         var r = AccountOrbIcons.Import(Write("huge.png", big), "k", Icons, fullDecodeMaxPixels: 100_000, hardMaxPixels: 1_000_000);
-        Assert.Equal(IconImportError.TooLarge, r.Error);
+        Assert.Equal(IconImportError.ImageDimensionsTooLarge, r.Error);
         Assert.False(Directory.Exists(Icons) && Directory.GetFiles(Icons).Length > 0);
     }
 

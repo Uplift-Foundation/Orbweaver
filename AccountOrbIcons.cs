@@ -85,7 +85,7 @@ namespace Orbweaver
             else if (LooksLikeSvg(sourcePath, source)) png = RasteriseSvg(source, out svgRefused);
             else return new(null, Skia(source) ? IconImportError.UnsupportedFormat : IconImportError.NotAnImage);
 
-            if (tooLarge) return new(null, IconImportError.TooLarge);
+            if (tooLarge) return new(null, IconImportError.ImageDimensionsTooLarge);
             if (png is null) return new(null, svgRefused ? IconImportError.SvgReferencesExternalContent : IconImportError.NotAnImage);
 
             var name = NameFor(positionKey, png);

@@ -73,7 +73,7 @@ namespace Orbweaver
         }
     }
 
-    internal enum IconImportError { Unreadable, Empty, TooLarge, NotAnImage, UnsupportedFormat, SvgReferencesExternalContent }
+    internal enum IconImportError { Unreadable, Empty, TooLarge, NotAnImage, UnsupportedFormat, SvgReferencesExternalContent, ImageDimensionsTooLarge }
 
     internal sealed record IconImport(string? FileName, IconImportError? Error);
 }
