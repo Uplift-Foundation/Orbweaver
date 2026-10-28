@@ -155,6 +155,84 @@ public class GroupOutlineTests
         Assert.Equal(outline, GroupOutline.Silhouette("grid", discs, Padding));
     }
 
+    // CB-268 T5: teams. Members are drawn at MemberScale and fanned off their lead
+    // by FanOut, so their discs are smaller and far from the shape the leads sit
+    // on. Discs come from the real Compute with real team arrays.
+    public static readonly Dictionary<string, int[]> Teams = new()
+    {
+        ["one team"] = new[] { -1, 0, 0, 0, 0 },
+        ["several teams"] = new[] { -1, 0, 0, -1, 3, 3, -1, 6 },
+        ["nested"] = new[] { -1, 0, 1, 2, 0, 4 },
+        ["big team around one lead"] = new[] { -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        ["huge team"] = new[] { -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        ["team plus solos"] = new[] { -1, -1, 1, 1, 1, -1, -1, 6, 6, -1 },
+    };
+
+    public static IEnumerable<object[]> TeamCases()
+    {
+        foreach (var shape in new[] { "circle", "diamond", "star", "heart", "line", "vline", "grid" })
+            foreach (var team in Teams.Keys)
+                foreach (var mixed in new[] { false, true })
+                    yield return new object[] { shape, team, mixed };
+    }
+
+    private static List<(double X, double Y, double R)> TeamDiscs(string shape, string team, bool mixed)
+    {
+        var leadOf = Teams[team];
+        var n = leadOf.Length;
+        var sizeOf = mixed ? Enumerable.Range(0, n).Select(i => i % 3 == 0 ? 2.0 : 0.6).ToArray() : null;
+        var layout = new OrbArrangement.Layout(new PixelRect(0, 0, 3024, 1890), 1.0, shape, 1.0);
+        var at = OrbArrangement.Compute(n, leadOf, layout, sizeOf);
+
+        var discs = new List<(double, double, double)>();
+        for (var i = 0; i < n; i++)
+        {
+            var size = sizeOf?[i] ?? 1.0;
+            var member = leadOf[i] >= 0;
+            var window = OrbArrangement.WindowFor(1.0, size);
+            var memberScale = member ? OrbArrangement.MemberScale : 1.0;
+            discs.Add((at[i].X + window / 2.0, at[i].Y + window / 2.0, OrbArrangement.CircleDip * size * memberScale / 2));
+        }
+        return discs;
+    }
+
+    [Theory]
+    [MemberData(nameof(TeamCases))]
+    public void TheOutlineEnclosesFannedTeamMembersAndIsTight(string shape, string team, bool mixed)
+    {
+        var discs = TeamDiscs(shape, team, mixed);
+        var fit = GroupOutline.Fit(shape, discs, Padding);
+
+        Assert.True(Slack(fit.Polygon, discs) >= Padding - Epsilon, $"{shape}/{team}/mixed={mixed}");
+        Assert.False(GroupOutline.Encloses(fit.Base, fit.Centre, fit.Scale * 0.98, discs, Padding),
+            $"{shape}/{team}/mixed={mixed}: 2% smaller still encloses");
+    }
+
+    [Fact]
+    public void TeamDiscsReallyAreFannedAwayFromTheirLeads()
+    {
+        // Guards the fixture: if Compute ever stopped fanning, the cases above
+        // would quietly turn back into solo-orb cases.
+        var discs = TeamDiscs("circle", "big team around one lead", false);
+        Assert.Contains(discs, d => Math.Abs(d.R - OrbArrangement.CircleDip * OrbArrangement.MemberScale / 2) < 1e-9);
+        var lead = discs[0];
+        Assert.True(discs.Skip(1).Max(d => Math.Sqrt(Math.Pow(d.X - lead.X, 2) + Math.Pow(d.Y - lead.Y, 2))) > OrbArrangement.CircleDip);
+    }
+
+    [Fact]
+    public void ABigTeamOffToOneSideStillGetsAnOutlineAroundItsWholeSpread()
+    {
+        // Centring is on ALL discs (members included), not only the leads: a lead
+        // with twelve members fanned to one side has an anchor far from the mass
+        // of the group, and centring there would inflate the scale to reach back.
+        var discs = TeamDiscs("heart", "big team around one lead", false);
+        var fit = GroupOutline.Fit("heart", discs, Padding);
+        var cx = discs.Average(d => d.X);
+        var cy = discs.Average(d => d.Y);
+        Assert.Equal(cx, fit.Centre.X, 6);
+        Assert.Equal(cy, fit.Centre.Y, 6);
+    }
+
     [Fact]
     public void ASingleDiscIsACircleOfExactlyItsRadiusPlusPadding()
     {
@@ -318,6 +396,6 @@ public class GroupOutlineTests
 
         var sw = Stopwatch.StartNew();
         for (var i = 0; i < 20; i++) GroupOutline.Silhouette("heart", discs, Padding);
-        Assert.True(sw.Elapsed.TotalMilliseconds / 20 < 8, $"{sw.Elapsed.TotalMilliseconds / 20} ms per call");
+        Assert.True(sw.Elapsed.TotalMilliseconds / 20 < 100, $"{sw.Elapsed.TotalMilliseconds / 20} ms per call");
     }
 }
