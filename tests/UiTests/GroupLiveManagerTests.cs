@@ -95,6 +95,10 @@ public class GroupLiveManagerTests : IDisposable
         fill.Color = Color.FromRgb(4, 5, 6);
         In<Slider>(rows[4]).Value = 0.5;
 
+        var names = In<Avalonia.Controls.Primitives.ToggleButton>(rows[5]);
+        names.IsChecked = !(names.IsChecked ?? false);
+        names.IsChecked = false;
+
         var state = In<ColorPicker>((Control)window.ColorRow("Idle", "idle"));
         Arm(state);
         state.Color = Color.FromRgb(7, 8, 9);

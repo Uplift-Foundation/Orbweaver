@@ -56,14 +56,16 @@ public class GroupBackdropScreenshots : IDisposable
         var w = GroupBackdrops.WindowOf(groupId)!;
         var s = GroupBackdrops.StateOf(groupId)!.Value;
 
-        // A pooled window comes back with the previous test's stage still in it:
-        // take the outline back out of that rather than stacking stages.
-        var shape = w.Content is Panel old ? old.Children[0] : (Control)w.Content!;
-        if (w.Content is Panel prior) prior.Children.Clear();
+        // The backdrop's content is a canvas holding the outline and, with names
+        // on, the caption (CB-282). A pooled window comes back with the previous
+        // test's stage still around that canvas: take the canvas back out of
+        // whichever of the two it is, rather than stacking stages.
+        var layer = w.Content as Canvas ?? (Canvas)((Panel)w.Content!).Children[0];
+        if (w.Content is Panel prior && prior is not Canvas) prior.Children.Clear();
         w.Content = null;
 
         var stage = new Panel { Background = new SolidColorBrush(Color.Parse("#1E1E24")) };
-        stage.Children.Add(shape);
+        stage.Children.Add(layer);
 
         foreach (var o in orbs)
         {
@@ -121,6 +123,43 @@ public class GroupBackdropScreenshots : IDisposable
 
         ScreenshotHelper.SideBySide(new[] { Dress("g-heart", heart), Dress("g-circle", ring) },
             "group-backdrops-heart-and-circle.png");
+    }
+
+    // CB-282: the two groups with their names written above their outlines, in
+    // each group's own stroke colour at full opacity.
+    [AvaloniaFact]
+    public void TwoGroupsWithTheirNamesShown()
+    {
+        var created = new List<string>();
+        var namesBefore = OrbweaverSettings.GroupNamesVisible;
+        try
+        {
+            var a = OrbweaverSettings.CreateOrbGroup("heart");
+            var b = OrbweaverSettings.CreateOrbGroup("circle");
+            created.Add(a.Id);
+            created.Add(b.Id);
+            OrbweaverSettings.RenameOrbGroup(a.Id, "Reviewers");
+            OrbweaverSettings.RenameOrbGroup(b.Id, "Build farm");
+
+            var heart = Arranged("nh", "heart", Enumerable.Repeat(-1, 10).ToArray(), Stage);
+            var ring = Arranged("nc", "circle", Enumerable.Repeat(-1, 8).ToArray(), Stage);
+
+            GroupBackdrops.SetNamesVisible(true);
+            GroupBackdrops.Update(new[]
+            {
+                new BackdropSpec(a.Id, "heart", heart, new GroupStyle("#58A6FF", 0.7, null, null), CurveOf(heart)),
+                new BackdropSpec(b.Id, "circle", ring, new GroupStyle("#FF7B72", 0.7, null, null), CurveOf(ring))
+            });
+
+            ScreenshotHelper.SideBySide(new[] { Dress(a.Id, heart), Dress(b.Id, ring) },
+                "group-backdrops-names-shown.png");
+        }
+        finally
+        {
+            GroupBackdrops.SetNamesVisible(false);
+            foreach (var id in created) OrbweaverSettings.DeleteOrbGroup(id);
+            OrbweaverSettings.GroupNamesVisible = namesBefore;
+        }
     }
 
     [AvaloniaFact]

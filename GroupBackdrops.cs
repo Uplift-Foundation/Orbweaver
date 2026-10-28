@@ -19,6 +19,11 @@ namespace Orbweaver
         string GroupId, bool Shown, PixelPoint Position, double Width, double Height,
         Color Stroke, Color Fill, double StrokeWidth, int Vertices, bool Highlighted, bool? Catching);
 
+    // The caption last laid out on a backdrop, in DIP within the window: its
+    // text (null when names are off), whether it is shown, its colour and where it
+    // sits. For tests and diagnostics.
+    internal readonly record struct CaptionState(string? Text, bool Visible, Color Colour, Rect Rect);
+
     // CB-268 S5: the shape drawn behind each group of orbs — the group's own
     // silhouette (GroupOutline) in the group's style, in a transparent window of
     // its own that sits BEHIND every orb and arrow and catches the pointer only
@@ -57,6 +62,7 @@ namespace Orbweaver
         private static readonly Stack<BackdropWindow> Parked = new();
 
         private static bool _outlines = true;
+        private static bool _names;
         private static bool _arranged = true;
         private static List<OrbWindow>? _previewOrbs;
         private static BackdropWindow? _preview;
@@ -75,6 +81,9 @@ namespace Orbweaver
 
         internal static Window? WindowOf(string groupId) =>
             Active.TryGetValue(groupId, out var w) ? w : null;
+
+        internal static CaptionState? CaptionOf(string groupId) =>
+            Active.TryGetValue(groupId, out var w) ? w.Caption : null;
 
         internal static BackdropState? StateOf(string groupId) =>
             Active.TryGetValue(groupId, out var w) ? w.State : null;
@@ -125,7 +134,7 @@ namespace Orbweaver
                 _preview.MakeClickThrough();
             }
 
-            _preview.Fit("preview", GroupOutline.MinimumCircleShape, discs, scale, null);
+            _preview.Fit("preview", GroupOutline.MinimumCircleShape, discs, scale, null, null);
             _preview.Restyle(GlobalStyle(), highlighted: true, outlines: true);
             _preview.EnsureShown();
 
@@ -177,7 +186,7 @@ namespace Orbweaver
                     added = true;
                 }
 
-                window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve);
+                window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve, _names ? CaptionFor(spec.GroupId) : null);
                 window.SyncHoles(looseDiscs);
                 window.Restyle(StyleFor(spec), spec.GroupId == _highlight, _outlines);
                 window.EnsureShown();
@@ -214,6 +223,30 @@ namespace Orbweaver
                 if (Active.TryGetValue(spec.GroupId, out var w))
                     w.Restyle(StyleFor(spec), spec.GroupId == _highlight, _outlines);
             }
+        }
+
+        // CB-282: show each group's name above its outline. Refreshes, because the
+        // caption changes the window's size and not just what it draws.
+        internal static void SetNamesVisible(bool visible)
+        {
+            if (_names == visible) return;
+            _names = visible;
+            Refresh();
+        }
+
+        // The caption text for a group, read from the table on every Refresh so a
+        // rename shows up on the next one without anything being told.
+        private static string CaptionFor(string groupId)
+        {
+            var groups = OrbweaverSettings.OrbGroupList();
+            var ordinal = 0;
+            foreach (var g in groups)
+            {
+                if (!OrbGroups.IsPredefined(g.Id)) ordinal++;
+                if (g.Id == groupId) return GroupCaption.TextFor(g.Name, ordinal);
+            }
+
+            return GroupCaption.TextFor(null, ordinal + 1);
         }
 
         internal static void SetOutlinesVisible(bool visible)
@@ -387,6 +420,9 @@ namespace Orbweaver
             private readonly ShapePath _shape;
             private readonly SolidColorBrush _stroke = new(Colors.Transparent);
             private readonly SolidColorBrush _fill = new(Colors.Transparent);
+            private readonly TextBlock _caption;
+            private readonly SolidColorBrush _captionBrush = new(Colors.White);
+            private string? _captionText;
 
             private string _groupId = "";
             private List<(double X, double Y, double R)>? _discs;
@@ -425,7 +461,17 @@ namespace Orbweaver
                     StrokeJoin = PenLineJoin.Round,
                     IsHitTestVisible = false
                 };
-                Content = _shape;
+
+                // CB-282's caption: never hit-testable, so a press on it falls
+                // through like the rest of the window outside the silhouette.
+                _caption = new TextBlock
+                {
+                    FontSize = GroupCaption.FontSizeDip,
+                    Foreground = _captionBrush,
+                    IsHitTestVisible = false,
+                    IsVisible = false
+                };
+                Content = new Canvas { Children = { _shape, _caption } };
 
                 Opened += (_, _) => OnOpenedNative();
                 PointerPressed += OnPressed;
@@ -439,11 +485,11 @@ namespace Orbweaver
             // by the same whole amount.
             internal void Fit(
                 string groupId, string shape, List<(double X, double Y, double R)> discs, double scale,
-                GroupOutline.PlacedCurve? curve)
+                GroupOutline.PlacedCurve? curve, string? caption)
             {
                 _groupId = groupId;
 
-                if (_discs is not null && scale == _scale && shape == _drawnShape &&
+                if (_discs is not null && scale == _scale && shape == _drawnShape && caption == _captionText &&
                     BackdropGeometry.TryTranslation(_discs, discs) is { } d &&
                     IsWhole(d.Dx) && IsWhole(d.Dy) && BackdropGeometry.CurveFollows(_curve, curve, d.Dx, d.Dy))
                 {
@@ -457,7 +503,23 @@ namespace Orbweaver
                 _curve = curve;
                 _drawnShape = shape;
                 var outline = GroupOutline.Silhouette(shape, discs, PaddingDip * scale, curve);
-                var box = GroupOutline.Bounds(outline).Inflate(EdgeDip * scale);
+                var outlineBounds = GroupOutline.Bounds(outline);
+
+                // The caption is measured in DIP and placed in the outline's units.
+                Rect? captionRect = null;
+                if (caption is not null)
+                {
+                    // Visible first: an invisible control measures to nothing.
+                    _caption.IsVisible = true;
+                    _caption.Text = caption;
+                    _caption.Measure(Size.Infinity);
+                    var text = new Size(_caption.DesiredSize.Width * scale, _caption.DesiredSize.Height * scale);
+                    captionRect = GroupCaption.Place(outlineBounds, text, GroupCaption.GapDip * scale);
+                }
+                _captionText = caption;
+                _caption.IsVisible = caption is not null;
+
+                var box = GroupCaption.WindowBox(outlineBounds, captionRect, EdgeDip * scale);
 
                 _discs = discs;
                 _scale = scale;
@@ -483,6 +545,12 @@ namespace Orbweaver
                 }
                 _shape.Data = geometry;
 
+                if (captionRect is { } c)
+                {
+                    Canvas.SetLeft(_caption, (c.X - _origin.X) / scale);
+                    Canvas.SetTop(_caption, (c.Y - _origin.Y) / scale);
+                }
+
                 ApplyRegion();
             }
 
@@ -495,7 +563,17 @@ namespace Orbweaver
                 if (_stroke.Color != stroke) _stroke.Color = stroke;
                 if (_fill.Color != fill) _fill.Color = fill;
                 _shape.StrokeThickness = width;
+
+                // The caption wears the resolved stroke colour at full opacity: the
+                // stroke's opacity is for the line, and a caption at 35% is unreadable.
+                var caption = Color.FromRgb(style.Stroke.R, style.Stroke.G, style.Stroke.B);
+                if (_captionBrush.Color != caption) _captionBrush.Color = caption;
             }
+
+            internal CaptionState Caption => new(
+                _captionText, _caption.IsVisible, _captionBrush.Color,
+                new Rect(Canvas.GetLeft(_caption), Canvas.GetTop(_caption),
+                    _caption.DesiredSize.Width, _caption.DesiredSize.Height));
 
             internal void EnsureShown()
             {

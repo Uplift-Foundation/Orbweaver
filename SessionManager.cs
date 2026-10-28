@@ -5231,6 +5231,7 @@ namespace Orbweaver
             GroupBackdrops.SetArranged(_isArranged);
             if (_isArranged) GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
             GroupBackdrops.SetOutlinesVisible(OrbweaverSettings.GroupOutlinesEnabled);
+            GroupBackdrops.SetNamesVisible(OrbweaverSettings.GroupNamesVisible);
             GroupBackdrops.Update(_groupPlacements.Select(g => new BackdropSpec(
                 g.GroupId, g.DrawnShape, g.Orbs, OrbweaverSettings.OrbGroupFor(g.GroupId)?.Style, g.Curve)));
         }

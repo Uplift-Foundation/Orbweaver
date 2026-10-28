@@ -16,6 +16,7 @@ namespace Orbweaver.Tests;
 public class SettingsGroupOutlineRowTests : IDisposable
 {
     private readonly bool _enabled = OrbweaverSettings.GroupOutlinesEnabled;
+    private readonly bool _names = OrbweaverSettings.GroupNamesVisible;
     private readonly string _stroke = OrbweaverSettings.GroupOutlineStroke;
     private readonly double _strokeOpacity = OrbweaverSettings.GroupOutlineStrokeOpacity;
     private readonly string _fill = OrbweaverSettings.GroupOutlineFill;
@@ -24,6 +25,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     public void Dispose()
     {
         OrbweaverSettings.GroupOutlinesEnabled = _enabled;
+        OrbweaverSettings.GroupNamesVisible = _names;
         OrbweaverSettings.GroupOutlineStroke = _stroke;
         OrbweaverSettings.GroupOutlineStrokeOpacity = _strokeOpacity;
         OrbweaverSettings.GroupOutlineFill = _fill;
@@ -65,7 +67,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     {
         var rows = NewWindow().GroupOutlineRows();
 
-        Assert.Equal(5, rows.Length);
+        Assert.Equal(6, rows.Length);
         Assert.All(rows, row =>
             Assert.True(row.GetLogicalDescendants().OfType<TextBlock>().Count() >= 2, "label plus help"));
     }
@@ -167,5 +169,21 @@ public class SettingsGroupOutlineRowTests : IDisposable
         Assert.Equal(Colors.White, GroupStyleControls.ColorOf("not a colour"));
         Assert.Equal(Color.Parse("#112233"), GroupStyleControls.ColorOf("#112233"));
         Assert.Equal(Colors.White, GroupStyleControls.ColorOf(null));
+    }
+
+    [AvaloniaFact]
+    public void TheShowGroupNamesSwitchIsOffByDefaultAndWritesItsSetting()
+    {
+        OrbweaverSettings.GroupNamesVisible = false;
+        var row = NewWindow().GroupOutlineRows()[5];
+        Assert.Contains(row.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "Show group names");
+        var toggle = In<ToggleButton>(row);
+        Assert.False(toggle.IsChecked);
+
+        toggle.IsChecked = true;
+        Assert.True(OrbweaverSettings.GroupNamesVisible);
+
+        toggle.IsChecked = false;
+        Assert.False(OrbweaverSettings.GroupNamesVisible);
     }
 }

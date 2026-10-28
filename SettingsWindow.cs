@@ -1043,7 +1043,14 @@ namespace Orbweaver
             Row("Fill opacity", GroupStyleControls.OpacityControl(
                     OrbweaverSettings.GroupOutlineFillOpacity,
                     v => { OrbweaverSettings.GroupOutlineFillOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
-                "Keep this low to read the orbs through it.")
+                "Keep this low to read the orbs through it."),
+            Row("Show group names", Switch(OrbweaverSettings.GroupNamesVisible, on =>
+                {
+                    OrbweaverSettings.GroupNamesVisible = on;
+                    SessionManager.Instance?.ReapplyGroupStyles();
+                }),
+                "Write each group's name in a small caption above its outline, in the outline's "
+                + "colour. Rename a group from its Group menu.")
         };
 
         // internal for the same reason the rows above are: a test drives the

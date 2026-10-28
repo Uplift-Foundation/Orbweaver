@@ -99,7 +99,7 @@ namespace Orbweaver
             "openclawCronMode", "openclawCronShape",
             // CB-268. The legacy shape and anchor keys above stay written next
             // to orbGroups, so an older build still reads the file.
-            "orbGroups", "groupOutlinesEnabled", "groupOutlineStroke",
+            "orbGroups", "groupOutlinesEnabled", "groupNamesVisible", "groupOutlineStroke",
             "groupOutlineStrokeOpacity", "groupOutlineFill", "groupOutlineFillOpacity",
             "codexChatEnabled", "codexReplyEnabled", "codexAccountUsageEnabled", "autoColorSessions",
             "claudeCodeEnabled", "codexEnabled",
@@ -801,6 +801,7 @@ namespace Orbweaver
             // is unchanged. Colours are #RRGGBB strings, kept as text so this
             // file stays free of Avalonia types.
             public bool GroupOutlinesEnabled { get; set; }
+            public bool GroupNamesVisible { get; set; }
             public string GroupOutlineStroke { get; set; } = DefaultGroupOutlineStroke;
             public double GroupOutlineStrokeOpacity { get; set; } = DefaultGroupOutlineStrokeOpacity;
             public string GroupOutlineFill { get; set; } = DefaultGroupOutlineFill;
@@ -1796,6 +1797,15 @@ namespace Orbweaver
 
         // ---- group outline style (CB-268) -------------------------------------
 
+        // CB-282: a small caption with each group's name above its outline. Off
+        // by default; deferred write like the other outline settings, because it
+        // sits behind a switch that is flipped while looking at the result.
+        public static bool GroupNamesVisible
+        {
+            get { Load(); lock (Gate) return _model.GroupNamesVisible; }
+            set { Load(); lock (Gate) _model.GroupNamesVisible = value; SaveSoon(); }
+        }
+
         public static bool GroupOutlinesEnabled
         {
             get { Load(); lock (Gate) return _model.GroupOutlinesEnabled; }
@@ -2566,6 +2576,7 @@ namespace Orbweaver
                     // the predefined groups when the block is overlaid on them.
                     model.Groups.ReadJson(root["orbGroups"]);
                     model.GroupOutlinesEnabled = Bool(root["groupOutlinesEnabled"], false);
+                    model.GroupNamesVisible = Bool(root["groupNamesVisible"], false);
                     model.GroupOutlineStroke =
                         OrbGroups.NormalizeColor(Text(root["groupOutlineStroke"]))
                         ?? DefaultGroupOutlineStroke;
@@ -2948,6 +2959,7 @@ namespace Orbweaver
                         ["arrangeAnchor"] = arrangeAnchor,
                         ["orbGroups"] = _model.Groups.ToJson(),
                         ["groupOutlinesEnabled"] = _model.GroupOutlinesEnabled,
+                        ["groupNamesVisible"] = _model.GroupNamesVisible,
                         ["groupOutlineStroke"] = _model.GroupOutlineStroke,
                         ["groupOutlineStrokeOpacity"] = _model.GroupOutlineStrokeOpacity,
                         ["groupOutlineFill"] = _model.GroupOutlineFill,
