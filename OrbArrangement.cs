@@ -221,21 +221,16 @@ namespace Orbweaver
             return placed;
         }
 
-        // Which of ComputeGroups' three routes produced an answer. Reported so a
-        // test can say what it is asserting about: "feeding Landed back
-        // reproduces the layout" is a property of Separated and means nothing
-        // for Bands, whose Landed is read off a layout that had no anchors.
+        // Which of ComputeGroups' two routes produced an answer. Reported so a
+        // test can say what it is asserting about; callers can ignore it.
         internal enum GroupPath
         {
-            // No group had an anchor: today's Bands + Compact, so a first draw
-            // looks the way it always did.
-            Bands,
-
             // Every group fitted on its own, then SeparateGroups got them apart.
             Separated,
 
-            // Anchors were given but could not all be honoured at once, so the
-            // whole set went through Bands + Compact after all.
+            // The groups could not all be got apart (more of them, or bigger,
+            // than the screen holds), so the whole set was drawn through
+            // Bands + Compact, which always puts every orb somewhere.
             Fallback
         }
 
@@ -262,9 +257,21 @@ namespace Orbweaver
         // drawn again through Bands + Compact, which has never failed to put
         // orbs somewhere, and the path out says so.
         //
-        // A group with no anchor is drawn about the middle of the work area, so
-        // a table with one anchored group and a fresh one still places both;
-        // its Landed is what the caller will save.
+        // **One path, whatever has been anchored.** A group with no anchor is
+        // asked for the middle of its band — the strip of screen Bands would
+        // give it, which is where it would have been drawn before groups had
+        // anchors — and from there it is the same as one that has been. The
+        // layout is a pure function of the anchors, so the first draw and every
+        // redraw go through the same code and feeding Landed back in
+        // reproduces the layout, orb for orb. (An earlier draft drew a first
+        // draw through Bands + Compact and read Landed off it; the groups were
+        // band-fitted then and screen-fitted on the next arrange, which resized
+        // every shape once, and a heart's anchor was not the middle of its box.)
+        //
+        // The one exception is the fallback, which is Bands + Compact and does
+        // not use anchors at all. It is a function of the same inputs too, so
+        // its Landed is simply what was asked for: feeding that back asks the
+        // same question and gets the same fallback.
         //
         // Landed is the asked-for anchor plus the group's *whole* integer
         // translation: what it took to bring the group's box inside the work
@@ -280,7 +287,7 @@ namespace Orbweaver
             int count, int[] leadOf, int[] groupOf,
             IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf, out GroupPath path)
         {
-            path = GroupPath.Bands;
+            path = GroupPath.Separated;
 
             if (count <= 0) return (Array.Empty<PixelPoint>(), Array.Empty<GroupPlacement>());
 
@@ -294,18 +301,24 @@ namespace Orbweaver
             var slotOf = SlotsFor(count, leadOf, groupOf, slots);
             var sizes = SizesFor(count, sizeOf);
 
-            var anchored = groups.Any(g => g.Center is not null);
-
-            if (!anchored)
-            {
-                var banded = ComputeCore(
-                    count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
-
-                return (banded, Describe(banded, leadOf, slotOf, shapes, sizes, layout));
-            }
-
             var work = layout.Work;
             var middle = new PixelPoint(work.X + work.Width / 2, work.Y + work.Height / 2);
+
+            // Where each slot is asked to be: its anchor, or else the middle of
+            // the band Bands would cut for it (the same anchors-per-slot count
+            // Arrange gives it, so a slot with a team is not counted per member).
+            var anchorsIn = new int[slots];
+            for (var i = 0; i < count; i++)
+                if (!Resolves(i, leadOf, count)) anchorsIn[slotOf[i]]++;
+
+            var bands = Bands(work, anchorsIn, WindowFor(layout.Scale, sizes.Max()));
+            var askedOf = new PixelPoint[slots];
+            for (var g = 0; g < slots; g++)
+            {
+                askedOf[g] = g < groups.Count && groups[g].Center is { } c
+                    ? c
+                    : new PixelPoint(bands[g].X + bands[g].Width / 2, bands[g].Y + bands[g].Height / 2);
+            }
 
             var members = new List<int[]>();   // orb indices per used slot
             var usedSlots = new List<int>();
@@ -337,7 +350,7 @@ namespace Orbweaver
                 // exact. A rigid body moved by whole pixels has neither
                 // problem: dragging moves it by exactly the delta, and feeding
                 // Landed back reproduces it to the pixel.
-                var asked = g < groups.Count && groups[g].Center is { } c ? c : middle;
+                var asked = askedOf[g];
 
                 var (placed, box, gridded) = LayGroup(orbs, leadOf, count, sizes, shapes[g], layout, middle, localOf);
 
@@ -359,7 +372,7 @@ namespace Orbweaver
                 var fallback = ComputeCore(
                     count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
 
-                return (fallback, Describe(fallback, leadOf, slotOf, shapes, sizes, layout));
+                return (fallback, Describe(fallback, slotOf, shapes, sizes, layout.Scale, askedOf));
             }
 
             path = GroupPath.Separated;
@@ -582,30 +595,18 @@ namespace Orbweaver
             return (placed, SlotBox(placed, subSize, layout.Scale, WindowFor(layout.Scale, subSize.Max())), gridded);
         }
 
-        // Placements read off a finished whole-set layout (the Bands and
-        // Fallback routes), whose shapes were fitted inside bands and so are
-        // not the shapes a group has when drawn alone.
-        //
-        // Landed is what makes feeding it back sensible: the anchor that would
-        // put the group's *own* layout's box centre where this layout's box
-        // centre is. Reading the box middle off as the anchor — the first
-        // draft — is wrong for any shape whose anchor is not the middle of its
-        // box: a heart's box middle sits well off the point its curve is drawn
-        // about, so the second draw dropped it 162 px. Exactly the same when
-        // the group fills the band the same way it fills the screen (one group,
-        // or one that was not squeezed); within the difference of the two
-        // boxes' sizes otherwise, since the centre is what is held.
+        // Placements read off the fallback's whole-set layout. Landed is what
+        // was asked for, per the note on ComputeGroups: the fallback ignores
+        // anchors, so what reproduces it is asking the same thing again.
         //
         // The shape drawn is the shape asked for: Compute's grid retry is
         // decided for the set as a whole and cannot be attributed to a group,
         // and GroupOutline encloses the discs whatever shape it is told.
         private static GroupPlacement[] Describe(
-            PixelPoint[] positions, int[] leadOf, int[] slotOf, string[] shapes, double[] sizes, Layout layout)
+            PixelPoint[] positions, int[] slotOf, string[] shapes, double[] sizes, double scale,
+            PixelPoint[] askedOf)
         {
-            var window = WindowFor(layout.Scale, sizes.Max());
-            var work = layout.Work;
-            var middle = new PixelPoint(work.X + work.Width / 2, work.Y + work.Height / 2);
-            var scratch = new int[positions.Length];
+            var window = WindowFor(scale, sizes.Max());
             var result = new List<GroupPlacement>();
 
             for (var g = 0; g < shapes.Length; g++)
@@ -616,18 +617,9 @@ namespace Orbweaver
                 var box = SlotBox(
                     orbs.Select(i => positions[i]).ToArray(),
                     orbs.Select(i => sizes[i]).ToArray(),
-                    layout.Scale, window);
+                    scale, window);
 
-                var own = LayGroup(orbs, leadOf, positions.Length, sizes, shapes[g], layout, middle, scratch).Box;
-
-                result.Add(new GroupPlacement(
-                    g,
-                    new PixelPoint(
-                        middle.X + (box.X + box.Width / 2) - (own.X + own.Width / 2),
-                        middle.Y + (box.Y + box.Height / 2) - (own.Y + own.Height / 2)),
-                    box,
-                    shapes[g],
-                    orbs));
+                result.Add(new GroupPlacement(g, askedOf[g], box, shapes[g], orbs));
             }
 
             return result.ToArray();

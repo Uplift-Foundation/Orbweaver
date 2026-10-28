@@ -41,50 +41,48 @@ namespace Orbweaver.Tests
         }
 
         [Fact]
-        public void WithNoAnchorsItIsTheBandsLayoutBitForBit()
+        public void WithNoAnchorsEachGroupIsAskedForTheMiddleOfItsBand()
         {
-            var shapes = new[] { "heart", "circle", "star" };
-            var table = Table(("heart", null), ("circle", null), ("star", null));
-            var leads = new[] { -1, 0, -1, -1, 3, -1, -1 };
-            var of = new[] { 0, 1, 1, 2, 0, 2, 1 };
+            var table = Table(("circle", null), ("circle", null), ("circle", null));
+            var of = Dealt(9, 3);
 
-            var (positions, groups) = ComputeGroups(7, leads, of, table, LayoutAt(), null, out var path);
+            var (_, groups, path) = Run(9, NoLeads(9), of, table);
 
-            Assert.Equal(GroupPath.Bands, path);
+            Assert.Equal(GroupPath.Separated, path);
 
-            // Orb 4 is orb 3's member, orb 1 is orb 0's: members take their
-            // lead's slot, which Compute does by following the lead too.
-            var expectedSlots = new[] { 0, 0, 1, 2, 2, 2, 1 };
-            var reference = Compute(7, leads, expectedSlots, shapes, LayoutAt());
-
-            Assert.Equal(reference, positions);
-            Assert.Equal(new[] { 0, 1, 2 }, groups.Select(g => g.Slot));
+            // The strip of screen Bands cuts for each: left to right in slot
+            // order, and each group landed in its own third.
+            var bands = Bands(Work, new[] { 3, 3, 3 }, 56);
+            for (var g = 0; g < 3; g++)
+                Assert.True(
+                    groups[g].Landed.X >= bands[g].X - 60 && groups[g].Landed.X <= bands[g].Right + 60,
+                    $"slot {g} landed at {groups[g].Landed} outside its band {bands[g]}");
         }
 
         [Fact]
-        public void ThePlacementsOfAFirstDrawAreReadOffTheLayout()
+        public void TheFirstDrawIsAFunctionOfTheAnchorsSoFeedingLandedBackReproducesItOrbForOrb()
         {
-            var (positions, groups) = ComputeGroups(
-                6, NoLeads(6), Dealt(6, 2), Table(("circle", null), ("heart", null)), LayoutAt(), null, out var path);
+            var leads = new[] { -1, 0, -1, -1, 3, -1, -1, -1, 6 };
+            var of = new[] { 0, 1, 1, 2, 0, 2, 3, 3, 0 };
 
-            Assert.Equal(GroupPath.Bands, path);
-
-            foreach (var group in groups)
+            // None anchored, then one anchored and the rest not, then all.
+            foreach (var anchors in new[]
             {
-                // Landed is an anchor on the screen — not the box middle, which
-                // is not where a heart is drawn about — and the box holds every
-                // orb's window.
-                Assert.True(Work.Contains(group.Landed));
+                new PixelPoint?[] { null, null, null, null },
+                new PixelPoint?[] { null, new PixelPoint(1500, 300), null, null },
+                new PixelPoint?[] { new PixelPoint(400, 300), new PixelPoint(900, 700), new PixelPoint(1500, 300), new PixelPoint(5000, 5000) },
+            })
+            {
+                var shapes = new[] { "heart", "star", "line", "heart" };
+                var (first, groups, path) = Run(9, leads, of, Table(shapes.Select((sh, i) => (sh, anchors[i])).ToArray()));
 
-                foreach (var orb in group.Orbs)
-                {
-                    Assert.True(positions[orb].X >= group.SlotBounds.X && positions[orb].Y >= group.SlotBounds.Y);
-                    Assert.True(positions[orb].X + 56 <= group.SlotBounds.Right && positions[orb].Y + 56 <= group.SlotBounds.Bottom);
-                }
+                var fed = shapes.Select((sh, g) => (sh, (PixelPoint?)groups.FirstOrDefault(p => p.Slot == g).Landed)).ToArray();
+                var (second, groups2, path2) = Run(9, leads, of, Table(fed));
+
+                Assert.Equal(path, path2);
+                Assert.Equal(first, second);
+                Assert.Equal(groups.Select(g => g.Landed), groups2.Select(g => g.Landed));
             }
-
-            Assert.Equal("circle", groups[0].DrawnShape);
-            Assert.Equal("heart", groups[1].DrawnShape);
         }
 
         [Fact]
@@ -125,9 +123,9 @@ namespace Orbweaver.Tests
             return (positions, groups, path);
         }
 
-        // A heart's anchor is not the middle of its box. The first draft read
-        // Landed off the box middle for the first draw, and the redraw from the
-        // saved anchors put the heart 162 px lower (found by S7).
+        // A heart's anchor is not the middle of its box: an early draft read the
+        // first draw's Landed off the box middle and the redraw from the saved
+        // anchors put the heart 162 px lower (found by S7).
         [Theory]
         [InlineData("heart")]
         [InlineData("circle")]
@@ -138,16 +136,13 @@ namespace Orbweaver.Tests
             var table = Table((mainShape, null), ("circle", null), ("line", null), ("heart", null));
             var of = new[] { 0, 0, 3 };
 
-            var (first, groups, path) = Run(3, NoLeads(3), of, table);
-            Assert.Equal(GroupPath.Bands, path);
+            var (first, groups, _) = Run(3, NoLeads(3), of, table);
 
             var fed = groups.ToDictionary(g => g.Slot, g => (PixelPoint?)g.Landed);
-            var again = Table(
-                (mainShape, fed[0]), ("circle", null), ("line", null), ("heart", fed[3]));
+            var again = Table((mainShape, fed[0]), ("circle", null), ("line", null), ("heart", fed[3]));
 
-            var (second, _, path2) = Run(3, NoLeads(3), of, again);
+            var (second, _, _) = Run(3, NoLeads(3), of, again);
 
-            Assert.Equal(GroupPath.Separated, path2);
             Assert.Equal(first, second);
         }
 
@@ -211,7 +206,7 @@ namespace Orbweaver.Tests
         }
 
         [Fact]
-        public void TheGroupWithoutAnAnchorIsAskedForTheMiddleAndReportsWhereItLanded()
+        public void TheGroupWithoutAnAnchorIsAskedForItsBandsMiddleAndReportsWhereItLanded()
         {
             var table = Table(("circle", new PixelPoint(1500, 300)), ("grid", null));
 
@@ -219,9 +214,11 @@ namespace Orbweaver.Tests
 
             Assert.False(Overlap(groups[0].SlotBounds, groups[1].SlotBounds));
 
-            // Slot 1 was nobody's anchor: it sits at the middle of the screen,
-            // and what it reports is what a caller should save.
-            Assert.InRange(groups[1].Landed.X, Work.Width / 2 - 200, Work.Width / 2 + 200);
+            // Slot 1 was nobody's anchor: it is asked for the middle of its
+            // band (the right half of two equal bands, 1440) and, being in the
+            // way of slot 0 at (1500,300) or not, reports what it landed at.
+            var band = Bands(Work, new[] { 4, 4 }, 56)[1];
+            Assert.InRange(groups[1].Landed.X, band.X - 400, band.Right + 400);
         }
 
         [Fact]
@@ -371,7 +368,7 @@ namespace Orbweaver.Tests
         }
 
         [Fact]
-        public void TooManyBigGroupsFallBackToBandsAndStillPutEveryOrbOnTheScreen()
+        public void TooManyBigGroupsFallBackAndStillPutEveryOrbOnTheScreen()
         {
             var small = new PixelRect(0, 0, 1280, 800);
             var at = new PixelPoint(640, 400);
@@ -382,6 +379,13 @@ namespace Orbweaver.Tests
 
             Assert.Equal(GroupPath.Fallback, path);
             Assert.Equal(3, groups.Length);
+
+            // Landed is what was asked for (the fallback ignores anchors), so
+            // feeding it back asks the same question and gets the same layout.
+            var fed = groups.Select(g => ("grid", (PixelPoint?)g.Landed)).ToArray();
+            var (again, _, againPath) = Run(60, NoLeads(60), Dealt(60, 3), Table(fed), LayoutAt(work: small), sizes);
+            Assert.Equal(GroupPath.Fallback, againPath);
+            Assert.Equal(positions, again);
             Assert.All(positions, p =>
             {
                 Assert.True(p.X >= 0 && p.Y >= 0 && p.X + 112 <= 1280 && p.Y + 112 <= 800);

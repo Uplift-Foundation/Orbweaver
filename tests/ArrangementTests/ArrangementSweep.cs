@@ -645,7 +645,7 @@ namespace Orbweaver.Tests
 
         // Where each of N groups is anchored. A function of the screen and N
         // for the same reason a Split is a function of the count.
-        //   none       nobody anchored: the first-draw route (Bands + Compact)
+        //   none       nobody anchored: every group asked for its band's middle
         //   partial    only group 0, so the rest are asked for the screen's middle
         //   spread     evenly across the middle, each honoured as asked
         //   colliding  all on the same point, which SeparateGroups must untangle
@@ -944,12 +944,14 @@ namespace Orbweaver.Tests
                 Fail("not deterministic — two runs disagreed");
 
             // 9. Feeding each group's Landed back as its anchor reproduces the
-            //    layout exactly: what was reported is what was drawn, so saving
-            //    it neither moves a group nor leaves an overshoot hiding in the
-            //    settings (CB-211, per group). Only on the separated route; the
-            //    others are read off a layout that had no per-group anchors, so
-            //    the second draw is a different route by design.
-            if (path == OrbArrangement.GroupPath.Separated)
+            //    layout, orb for orb: what was reported is what was drawn, so
+            //    saving it neither moves a group nor leaves an overshoot hiding
+            //    in the settings (CB-211, per group). Holds for a first draw too
+            //    (no anchors, mixed anchored and unanchored, all of them): a
+            //    group nobody anchored is asked for its band's middle, and from
+            //    there it is the same as one that was. On the fallback route
+            //    Landed is what was asked for and the fallback ignores anchors,
+            //    so the same route and the same orbs come back.
             {
                 var landed = Enumerable.Range(0, test.Groups)
                     .Select(g => placed.Where(p => p.Slot == g).Select(p => (PixelPoint?)p.Landed).FirstOrDefault() ?? centres[g])
@@ -958,61 +960,15 @@ namespace Orbweaver.Tests
                 var round = OrbArrangement.ComputeGroups(
                     count, leads, groupOf, Table(landed), layout, sizeArgument, out var roundPath);
 
-                if (roundPath != OrbArrangement.GroupPath.Separated)
-                    Fail($"feeding Landed back took the {roundPath} route");
+                if (roundPath != path)
+                    Fail($"feeding Landed back took the {roundPath} route, not {path}");
                 else if (!pts.SequenceEqual(round.Positions))
                 {
                     var i = Enumerable.Range(0, count).First(k => pts[k] != round.Positions[k]);
                     Fail($"feeding Landed back moved orb {i} from ({pts[i].X},{pts[i].Y}) to ({round.Positions[i].X},{round.Positions[i].Y})");
                 }
-            }
-
-            // 10. The first draw (no anchors, so Bands + Compact) reports a
-            //     Landed per group that a caller saves, and the next draw is
-            //     the separated route fed those. The pair must agree about
-            //     where each group is — a heart's anchor is not the middle of
-            //     its box, and reporting the box middle sent a heart 162 px
-            //     down on the redraw. Exactly, when one group fills the screen
-            //     the same way in both draws; otherwise each group's box
-            //     centre may differ by no more than the two boxes' sizes can
-            //     account for (the centre is what is held, and a band-fitted
-            //     shape is not the same size as one fitted to the screen).
-            if (path == OrbArrangement.GroupPath.Bands)
-            {
-                var landed = Enumerable.Range(0, test.Groups)
-                    .Select(g => placed.Where(p => p.Slot == g).Select(p => (PixelPoint?)p.Landed).FirstOrDefault())
-                    .ToArray();
-
-                var round = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(landed), layout, sizeArgument, out var roundPath);
-
-                if (roundPath == OrbArrangement.GroupPath.Bands)
-                    Fail("feeding the first draw's Landed back was still a first draw");
-                else if (test.Groups == 1 && !pts.SequenceEqual(round.Positions))
-                {
-                    var i = Enumerable.Range(0, count).First(k => pts[k] != round.Positions[k]);
-                    Fail($"feeding a lone group's Landed back moved orb {i} from ({pts[i].X},{pts[i].Y}) to ({round.Positions[i].X},{round.Positions[i].Y})");
-                }
-                else
-                {
-                    foreach (var before in placed)
-                    {
-                        var after = round.Groups.First(p => p.Slot == before.Slot);
-                        var dx = Math.Abs(before.SlotBounds.X + before.SlotBounds.Width / 2.0 - after.SlotBounds.X - after.SlotBounds.Width / 2.0);
-                        var dy = Math.Abs(before.SlotBounds.Y + before.SlotBounds.Height / 2.0 - after.SlotBounds.Y - after.SlotBounds.Height / 2.0);
-
-                        // Slot boxes are never bigger than the work area, so
-                        // the centre of a box that moved by more than its own
-                        // size plus the other's is not "held".
-                        var allowX = before.SlotBounds.Width + after.SlotBounds.Width;
-                        var allowY = before.SlotBounds.Height + after.SlotBounds.Height;
-
-                        if (dx <= allowX / 2.0 && dy <= allowY / 2.0) continue;
-
-                        Fail($"slot {before.Slot} moved ({dx:0},{dy:0}) when the first draw's Landed was fed back");
-                        break;
-                    }
-                }
+                else if (!SamePlacements(placed, round.Groups))
+                    Fail("feeding Landed back reproduced the orbs but not the placements");
             }
 
             return failures;
