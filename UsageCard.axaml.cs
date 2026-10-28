@@ -103,11 +103,19 @@ namespace Orbweaver
                 : Brushes.Transparent;
         }
 
-        internal void UpdateFrom(AccountUsage usage, string? email, DateTimeOffset now)
+        // CB-287 read-backs: what the card shows, not how it is drawn.
+        internal string AccountNameText => AccountName.Text ?? string.Empty;
+
+        internal string? AccountDotHex => (AccountDot.Fill as SolidColorBrush)?.Color.ToString();
+
+        // displayName is CB-287's override of the name only. The dot below stays
+        // coloured from the *derived* label: colour is identity and the name is
+        // presentation, so renaming an account must not re-colour it.
+        internal void UpdateFrom(AccountUsage usage, string? email, DateTimeOffset now, string? displayName = null)
         {
             AccountKey = usage.ConfigDir ?? string.Empty;
 
-            AccountName.Text = usage.Label;
+            AccountName.Text = displayName ?? usage.Label;
             AccountWhere.Text = email ?? Where(usage.ConfigDir);
             AccountDot.Fill = new SolidColorBrush(
                 Color.Parse(AgentPalette.HexFor(usage.Label)));

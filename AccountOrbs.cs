@@ -78,6 +78,46 @@ namespace Orbweaver
 
         internal IReadOnlyDictionary<string, AccountOrbWindow> Orbs => _orbs;
 
+        // CB-287: the accounts that currently have an orb, as the editor and the
+        // Settings rows need to name them. Built from live readings on purpose —
+        // listing config directories instead would re-derive labels from auth
+        // files a second way.
+        internal IReadOnlyList<AccountOrbIdentity> Accounts =>
+            _readings
+                .OrderBy(p => p.Key, StringComparer.Ordinal)
+                .Select(p => new AccountOrbIdentity(
+                    p.Key, PositionKey(p.Value.ConfigDir), p.Value.Source, p.Value.Label))
+                .ToList();
+
+        // Redraws every orb and open card now, from the readings already held,
+        // so a changed override shows without waiting five minutes for a poll.
+        internal void RefreshLooks() => Redraw(DateTimeOffset.UtcNow);
+
+        // Opens the editor for one account. Replaceable so a headless test can
+        // see the request without constructing a window.
+        internal static Action<AccountOrbIdentity, Action>? OpenEditorForTests { get; set; }
+
+        private bool _listening;
+
+        // The hover path opens a card after a timer and a pointer check
+        // headless cannot arrange; this is the decision without the delay.
+        internal void OpenCardForTests(string key) => OpenCard(_orbs[key]);
+
+        // Lets a test hand over an orb this instance holds no reading for, the
+        // one arm a real click cannot reach.
+        internal void RaiseCustomizeForTests(AccountOrbWindow orb) => OnCustomizeRequested(orb);
+
+        private void OnCustomizationChanged(string positionKey) => RefreshLooks();
+
+        private void OnCustomizeRequested(AccountOrbWindow orb)
+        {
+            if (!_readings.TryGetValue(orb.AccountKey, out var reading)) return;
+
+            var identity = new AccountOrbIdentity(
+                orb.AccountKey, PositionKey(reading.ConfigDir), reading.Source, reading.Label);
+            (OpenEditorForTests ?? AccountOrbEditorWindow.Open)(identity, RefreshLooks);
+        }
+
         // Whether orbs are shown as they are created — the last SetVisible.
         internal bool Visible => _visible;
 
@@ -205,12 +245,13 @@ namespace Orbweaver
                     if (_visible) orb.Show();
                 }
 
-                orb.UpdateFrom(reading, now);
+                var look = AccountOrbLooks.For(reading);
+                orb.UpdateFrom(reading, look, now);
                 orb.SetPinned(_pinned.Contains(key));
 
                 if (_cards.TryGetValue(key, out var card))
                 {
-                    card.UpdateFrom(reading, _emails.GetValueOrDefault(key), now);
+                    card.UpdateFrom(reading, _emails.GetValueOrDefault(key), now, look.DisplayName);
                     card.Reposition(orb);
                 }
 
@@ -228,6 +269,15 @@ namespace Orbweaver
             orb.HoverEnded += OnHoverEnded;
             orb.Clicked += OnClicked;
             orb.Moved += OnMoved;
+            orb.CustomizeRequested += OnCustomizeRequested;
+
+            // Listening only while orbs exist: the event is static, so an
+            // instance that subscribed for good would outlive its orbs.
+            if (!_listening)
+            {
+                AccountOrbCustomization.Changed += OnCustomizationChanged;
+                _listening = true;
+            }
 
             return orb;
         }
@@ -373,7 +423,8 @@ namespace Orbweaver
 
             if (_readings.TryGetValue(key, out var reading))
             {
-                card.UpdateFrom(reading, _emails.GetValueOrDefault(key), DateTimeOffset.UtcNow);
+                card.UpdateFrom(reading, _emails.GetValueOrDefault(key), DateTimeOffset.UtcNow,
+                    AccountOrbLooks.For(reading).DisplayName);
             }
 
             card.SetPinned(_pinned.Contains(key));
@@ -472,6 +523,12 @@ namespace Orbweaver
 
             _pinned.Remove(key);
             _readings.Remove(key);
+
+            if (_orbs.Count == 0 && _listening)
+            {
+                AccountOrbCustomization.Changed -= OnCustomizationChanged;
+                _listening = false;
+            }
         }
     }
 }

@@ -56,6 +56,15 @@
             Cursor="Hand"
             HorizontalAlignment="Left" VerticalAlignment="Top">
 
+        <!-- CB-287. Account orbs had no right-click menu at all; this is the
+             first item. It raises CustomizeRequested and leaves what to open to
+             AccountOrbs, so the window stays ignorant of the editor. -->
+        <Canvas.ContextMenu>
+            <ContextMenu>
+                <MenuItem x:Name="CustomizeItem" Header="Customize…" Click="Customize_Click"/>
+            </ContextMenu>
+        </Canvas.ContextMenu>
+
         <!-- The unfilled part of each ring, so a ring at 3% still reads as a
              ring rather than as a stray tick floating above an orb. -->
         <Ellipse x:Name="WeeklyTrack" Canvas.Left="4" Canvas.Top="4"
@@ -76,9 +85,31 @@
         <Path x:Name="SessionArc" StrokeThickness="5" StrokeLineCap="Round"/>
         <Path x:Name="ExtraArc" StrokeThickness="5" StrokeLineCap="Round"/>
 
-        <Ellipse x:Name="Disc" Canvas.Left="22" Canvas.Top="22"
+        <!-- The disc is split in two so a picked icon (CB-287) can sit between
+             the fill and the rim: fill, then picture, then rim, then letters.
+             The picture is clipped to a circle just inside the rim and the
+             disc itself is 28 wide, so it never reaches the innermost ring,
+             whose stroke starts at r=15.5. Nothing is drawn over an icon but
+             the rim, which is why no scrim is needed and why the rings read
+             exactly as they do without one. -->
+        <Ellipse x:Name="DiscFill" Canvas.Left="22" Canvas.Top="22"
                  Width="28" Height="28"
-                 Fill="#F51C1C1E" Stroke="#B8FFFFFF" StrokeThickness="1.5"/>
+                 Fill="#F51C1C1E"/>
+
+        <Image x:Name="Icon" Canvas.Left="22" Canvas.Top="22"
+               Width="28" Height="28"
+               Stretch="UniformToFill"
+               IsVisible="False"
+               IsHitTestVisible="False">
+            <Image.Clip>
+                <EllipseGeometry Center="14,14" RadiusX="13.25" RadiusY="13.25"/>
+            </Image.Clip>
+        </Image>
+
+        <Ellipse x:Name="DiscRim" Canvas.Left="22" Canvas.Top="22"
+                 Width="28" Height="28"
+                 Stroke="#B8FFFFFF" StrokeThickness="1.5"
+                 IsHitTestVisible="False"/>
 
         <TextBlock x:Name="Glyph"
                    Canvas.Left="22" Canvas.Top="22"
