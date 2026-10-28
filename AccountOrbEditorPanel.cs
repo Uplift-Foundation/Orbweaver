@@ -35,7 +35,7 @@ namespace Orbweaver
 
         // A name goes into settings.json, a tooltip and the usage card; nothing
         // there is meant for a paragraph.
-        internal const int MaxNameLength = 64;
+        internal const int MaxNameLength = AccountOrbOverride.MaxNameElements;
 
         private readonly AccountOrbIdentity _account;
 
