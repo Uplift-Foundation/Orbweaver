@@ -69,6 +69,8 @@ namespace Orbweaver
             var distance = Math.Abs(from - target);
             var limit = Math.Max(MaxOvershootFraction * distance, MaxOvershootDip * unitsPerDip);
 
+            if (Excursion(from, target, velocity) <= limit) return velocity;
+
             double lo = 0, hi = 1;
             for (var i = 0; i < 30; i++)
             {
