@@ -30,6 +30,7 @@ namespace Orbweaver
         private double _pullTargetX, _pullTargetY;
         private long _pullAt;
         private DispatcherTimer? _timer;
+        private bool _lifted;
 
         // M5: the pointer's travel in DIP, for the velocity the drop is thrown with.
         private readonly FlingTracker _fling = new();
@@ -79,6 +80,16 @@ namespace Orbweaver
         internal void Move(int dx, int dy)
         {
             var now = OrbWindow.MotionClock();
+
+            // The first move is where a press becomes a drag (a click never gets
+            // here). Lift the orbs before moving them, so the group's outline
+            // keeps them where they were rather than stretching after them.
+            if (!_lifted && !WholeGroup)
+            {
+                GroupBackdrops.Lift(_moving.Select(m => m.Orb));
+                _lifted = true;
+            }
+
             _dx = dx;
             _dy = dy;
 
@@ -90,7 +101,8 @@ namespace Orbweaver
             // only a lead drag is pulled towards what it would snap to (M1).
             if (!WholeGroup && _leadDrag)
             {
-                var (_, pullDip) = OrbDragCommit.PreviewWithPull(_host, _anchorId, _unitsPerDip);
+                var (outcome, pullDip) = OrbDragCommit.PreviewWithPull(_host, _anchorId, _unitsPerDip);
+                GroupBackdrops.SetLiftedLeaving(outcome is not SnapOutcome.NoChange);
                 _pullTargetX = pullDip.X * _unitsPerDip;
                 _pullTargetY = pullDip.Y * _unitsPerDip;
                 StepPull(now);
@@ -156,6 +168,7 @@ namespace Orbweaver
         {
             _timer?.Stop();
             _pressedWindow?.SquashRelease();
+            GroupBackdrops.Drop();
 
             // M5: everything this drag moved is thrown with the pointer's
             // release velocity; the settle springs it on from there.

@@ -111,6 +111,63 @@ public class OrbWindowMotionTests : IDisposable
         }
     }
 
+    // --- the outline holds still while its orb is dragged out ---
+
+    // Lifting measures shown orbs only, through GroupBackdrops' Measure seam.
+    private static void Lifting(Roster roster, Action test)
+    {
+        var measure = GroupBackdrops.Measure;
+        GroupBackdrops.Measure = o => (new Point(o.Position.X + o.CentreDip, o.Position.Y + o.CentreDip), 1.0);
+        foreach (var w in roster.Windows.Values) w.Show();
+        try { test(); }
+        finally
+        {
+            GroupBackdrops.Drop();
+            GroupBackdrops.Measure = measure;
+            foreach (var w in roster.Windows.Values) w.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ADragLiftsItsOrbsUntilReleaseAndSaysWhenTheyWouldLeave()
+    {
+        var (roster, a, _) = Scene();
+        Lifting(roster, () =>
+        {
+            var session = new OrbDragSession(roster, a, DragSource.Orb, false, 1.0);
+            Assert.False(GroupBackdrops.IsLifted(roster.Windows[a]));      // a press alone lifts nothing
+
+            Hold(session, 10, 1);                                           // still where it was: no change
+            Assert.True(GroupBackdrops.IsLifted(roster.Windows[a]));
+            Assert.False(GroupBackdrops.LiftedLeaving);
+
+            Hold(session, 250, 1);                                          // beside B's group: a Join takes it
+            Assert.True(GroupBackdrops.LiftedLeaving);
+
+            Hold(session, 10, 1);                                           // and back
+            Assert.False(GroupBackdrops.LiftedLeaving);
+
+            session.End();
+            Assert.False(GroupBackdrops.IsLifted(roster.Windows[a]));
+            Assert.False(GroupBackdrops.LiftedLeaving);
+        });
+    }
+
+    [AvaloniaFact]
+    public void AWholeGroupDragLiftsNothing()
+    {
+        var (roster, _, b) = Scene();
+        Lifting(roster, () =>
+        {
+            var session = new OrbDragSession(roster, b, DragSource.Orb, true, 1.0);
+            Assert.True(session.WholeGroup);
+
+            Hold(session, -40, 2);
+            Assert.False(GroupBackdrops.IsLifted(roster.Windows[b]));
+            session.End();
+        });
+    }
+
     // --- M5: the release velocity reaches the settle ---
 
     [AvaloniaFact]

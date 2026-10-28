@@ -40,6 +40,8 @@ public class GroupBackdropsMorphStabilityTests : IDisposable
 
     public void Dispose()
     {
+        GroupBackdrops.Drop();
+        GroupBackdrops.SetDestinations(null);
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
         GroupBackdrops.ResetHitTestState();
@@ -200,5 +202,154 @@ public class GroupBackdropsMorphStabilityTests : IDisposable
         Assert.True(State().Shown);
         Assert.False(State().Morphing);
         Assert.True(State().Width < BackdropGeometry.MaxSide);
+    }
+
+    // --- dragging an orb out: the outline holds still, then lets go once ---
+
+    private void AssertOutlineIs(IEnumerable<OrbWindow> orbsAt, string shape = "line")
+    {
+        var target = GroupOutline.Silhouette(shape, Discs(orbsAt), GroupBackdrops.PaddingDip);
+        var outline = GroupBackdrops.OutlineOf("g-m");
+        Assert.Equal(target.Length, outline.Length);
+        for (var i = 0; i < target.Length; i++)
+        {
+            Assert.Equal(target[i].X, outline[i].X, 6);
+            Assert.Equal(target[i].Y, outline[i].Y, 6);
+        }
+    }
+
+    [AvaloniaFact]
+    public void ALiftedOrbIsCountedWhereItWasPressedSoTheOutlineDoesNotStretchAfterIt()
+    {
+        var orbs = Ring();
+        var dragged = Orb("d", 300, 420);
+        orbs.Add(dragged);
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        var before = GroupBackdrops.OutlineOf("g-m");
+        var window = (State().Position, State().Width, State().Height);
+
+        GroupBackdrops.Lift(new[] { dragged });
+        for (var frame = 1; frame <= 30; frame++)
+        {
+            dragged.Position = new PixelPoint(300 - frame * 6, 420 + frame * 9);
+            GroupBackdrops.Refresh();
+        }
+
+        Assert.Equal(before, GroupBackdrops.OutlineOf("g-m"));
+        Assert.Equal(window, (State().Position, State().Width, State().Height));
+        Assert.False(State().Morphing);
+    }
+
+    [AvaloniaFact]
+    public void LeavingContractsTheOutlineOnceAndComingBackSwellsItAgain()
+    {
+        var orbs = Ring();
+        var dragged = Orb("d", 300, 420);
+        orbs.Add(dragged);
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        GroupBackdrops.Lift(new[] { dragged });
+        dragged.Position = new PixelPoint(100, 700);
+
+        GroupBackdrops.SetLiftedLeaving(true);
+        Assert.True(State().Morphing);
+        AssertOutlineIs(orbs.Take(7));                                  // its target: the rest alone
+        At(BackdropMotion.MorphSeconds + 0.01);
+        AssertOutlineIs(orbs.Take(7));
+
+        GroupBackdrops.SetLiftedLeaving(true);                           // said again: nothing to do
+        Assert.False(State().Morphing);
+
+        GroupBackdrops.SetLiftedLeaving(false);
+        Assert.True(State().Morphing);
+        dragged.Position = new PixelPoint(300, 420);                     // where it was pressed
+        AssertOutlineIs(orbs);
+    }
+
+    [AvaloniaFact]
+    public void TheLayoutAfterADropSpringsOnceEvenWhenNoMembershipChanged()
+    {
+        var orbs = Ring();
+        var dragged = Orb("d", 300, 420);
+        orbs.Add(dragged);
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+
+        GroupBackdrops.Lift(new[] { dragged });
+        GroupBackdrops.Drop();
+        Assert.False(GroupBackdrops.IsLifted(dragged));
+
+        dragged.Position = new PixelPoint(290, 400);                      // a member's new spot
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        Assert.True(State().Morphing);
+
+        At(BackdropMotion.MorphSeconds + 0.01);
+        dragged.Position = new PixelPoint(280, 390);                      // only once
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        Assert.False(State().Morphing);
+    }
+
+    [AvaloniaFact]
+    public void NothingLiftedMeansNothingToLeaveOrDrop()
+    {
+        var orbs = Ring();
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+
+        GroupBackdrops.SetLiftedLeaving(true);
+        Assert.False(GroupBackdrops.LiftedLeaving);
+        GroupBackdrops.Drop();
+
+        orbs[0].Position = new PixelPoint(420, 300);
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        Assert.False(State().Morphing);                                   // no spring was armed
+    }
+
+    [AvaloniaFact]
+    public void AHiddenOrbIsNotLifted()
+    {
+        var orb = Orb("h", 300, 300);
+        orb.Hide();
+        GroupBackdrops.Lift(new[] { orb });
+        Assert.False(GroupBackdrops.IsLifted(orb));
+    }
+
+    [AvaloniaFact]
+    public void GlidingOrbsAreCountedAtTheirSlotsUntilTheGlideEnds()
+    {
+        var orbs = Ring();
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        var slot = orbs[0].Position;
+
+        // A drop flung it away; the glide brings it back to its slot.
+        orbs[0].Position = new PixelPoint(700, 600);
+        GroupBackdrops.SetDestinations(new[] { (orbs[0], slot) });
+        GroupBackdrops.Refresh();
+        orbs[0].Position = slot;
+        AssertOutlineIs(orbs);
+
+        // Over: it is measured where it is again.
+        GroupBackdrops.SetDestinations(null);
+        orbs[0].Position = new PixelPoint(430, 310);
+        GroupBackdrops.Refresh();
+        AssertOutlineIs(orbs);
+    }
+
+    [AvaloniaFact]
+    public void ThePairPreviewFollowsTheDraggedOrbsLiveEvenWhileTheyAreLifted()
+    {
+        var a = Orb("pa", 300, 300);
+        var b = Orb("pb", 380, 300);
+        a.Position = new PixelPoint(320, 300);
+        GroupBackdrops.PreviewPair(new[] { a, b });
+        var live = GroupBackdrops.PreviewState!.Value;
+        GroupBackdrops.PreviewPair(null);
+
+        // Lifted at 300, now at 320: the preview is the same circle as above.
+        a.Position = new PixelPoint(300, 300);
+        GroupBackdrops.Lift(new[] { a });
+        a.Position = new PixelPoint(320, 300);
+        GroupBackdrops.PreviewPair(new[] { a, b });
+        var lifted = GroupBackdrops.PreviewState!.Value;
+
+        Assert.Equal((live.Position, live.Width, live.Height), (lifted.Position, lifted.Width, lifted.Height));
+        GroupBackdrops.PreviewPair(null);
     }
 }

@@ -4989,6 +4989,12 @@ namespace Orbweaver
             _arrangeAnimComplete = onComplete;
             _arrangeAnimStart = Now();
             _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first, fling) : null;
+
+            // The outlines measure every gliding orb at its slot, so they spring
+            // once to their final shape instead of chasing the orbs there.
+            GroupBackdrops.SetDestinations(_arrangeAnimTargets?
+                .Where(t => _windows.ContainsKey(t.Key))
+                .Select(t => (_windows[t.Key], t.Value.To)));
             _arrangePops = _arrangeSprings is { } springs ? PopsFor(springs, first) : null;
 
             if (_arrangeAnimTimer is null)
@@ -5163,6 +5169,7 @@ namespace Orbweaver
             _arrangeAnimTargets = null;
             _arrangeSprings = null;
             _arrangePops = null;
+            GroupBackdrops.SetDestinations(null);
             complete?.Invoke();
             RefreshOverlays();
 

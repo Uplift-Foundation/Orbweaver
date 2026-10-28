@@ -98,6 +98,66 @@ namespace Orbweaver
         private static List<OrbWindow>? _previewOrbs;
         private static BackdropWindow? _preview;
         private static readonly List<OrbWindow> Loose = new();
+
+        // Where a group's outline counts an orb that is in motion, rather than
+        // where its window is this frame. Without these the outline re-measured
+        // the orb under the pointer on every drag frame and stretched to keep it
+        // in, then chased every orb along its spring into its slot after the
+        // drop: dragging an orb OUT of a group made the group grow.
+        //
+        // Lifted: the orbs a drag holds, measured where they were pressed. While
+        // the drag would leave them where they are, the outline keeps them there
+        // and holds still; once it would take them elsewhere (Leave, Join, Pair)
+        // they are left out and their old group contracts around the rest.
+        // Destinations: orbs gliding into a new layout, measured at the slot they
+        // will land on, so the outline springs once to its final shape.
+        private static readonly Dictionary<OrbWindow, Point> Lifted = new();
+        private static bool _liftedLeaving;
+        private static readonly Dictionary<OrbWindow, PixelPoint> Destinations = new();
+        private static bool _springOnce;
+
+        // A drag that moves orbs out of their own layout (not a whole-group drag)
+        // holds them at their press positions until it ends.
+        internal static void Lift(IEnumerable<OrbWindow> orbs)
+        {
+            Lifted.Clear();
+            _liftedLeaving = false;
+            foreach (var orb in orbs)
+            {
+                if (orb.IsVisible && Measure(orb) is { } m) Lifted[orb] = m.Centre;
+            }
+        }
+
+        // Whether the drag in progress would take the lifted orbs out of their
+        // group. Flipping it refits: the old group contracts or swells back.
+        internal static void SetLiftedLeaving(bool leaving)
+        {
+            if (_liftedLeaving == leaving || Lifted.Count == 0) return;
+            _liftedLeaving = leaving;
+            Refresh();
+        }
+
+        // The drag is over. The layout that follows the drop springs the
+        // outline once (a member's new spot changes no membership, and would
+        // otherwise jump).
+        internal static void Drop()
+        {
+            if (Lifted.Count == 0) return;
+            Lifted.Clear();
+            _liftedLeaving = false;
+            _springOnce = true;
+        }
+
+        // The slots orbs are gliding to; null when the glide is over.
+        internal static void SetDestinations(IEnumerable<(OrbWindow Orb, PixelPoint Slot)>? slots)
+        {
+            Destinations.Clear();
+            if (slots is null) return;
+            foreach (var (orb, slot) in slots) Destinations[orb] = slot;
+        }
+
+        internal static bool IsLifted(OrbWindow orb) => Lifted.ContainsKey(orb);
+        internal static bool LiftedLeaving => _liftedLeaving;
         private static string? _highlight;
         private static Point? _lastCursor;
 
@@ -196,6 +256,7 @@ namespace Orbweaver
             Specs.Clear();
             Specs.AddRange(groups);
             Refresh();
+            _springOnce = false;
             Restack();
         }
 
@@ -213,7 +274,7 @@ namespace Orbweaver
             foreach (var spec in Specs)
             {
                 if (!BackdropVisibility.Shows(spec.GroupId, _arranged)) continue;
-                if (!MeasureDiscs(spec.Orbs, out var discs, out var scale)) continue;
+                if (!MeasureDiscs(spec.Orbs, out var discs, out var scale, inMotionAtRest: true)) continue;
 
                 wanted.Add(spec.GroupId);
 
@@ -225,7 +286,8 @@ namespace Orbweaver
                     added = true;
                 }
 
-                if (!window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve, _names ? CaptionFor(spec.GroupId) : null)) continue;
+                if (!window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve, _names ? CaptionFor(spec.GroupId) : null,
+                        springAnyway: _springOnce)) continue;
                 window.SyncHoles(looseDiscs);
                 window.Restyle(StyleFor(spec), spec.GroupId == _highlight, _outlines);
                 window.EnsureShown();
@@ -438,7 +500,8 @@ namespace Orbweaver
         }
 
         private static bool MeasureDiscs(
-            IReadOnlyList<OrbWindow> orbs, out List<(double X, double Y, double R)> discs, out double scale)
+            IReadOnlyList<OrbWindow> orbs, out List<(double X, double Y, double R)> discs, out double scale,
+            bool inMotionAtRest = false)
         {
             discs = new List<(double, double, double)>();
             scale = 1;
@@ -449,6 +512,21 @@ namespace Orbweaver
                 if (!orb.IsVisible) continue;
 
                 if (Measure(orb) is not { } m) continue;
+
+                // A group's outline counts an orb in motion where it rests: held
+                // at its press point, left out while leaving, or at its slot.
+                if (inMotionAtRest)
+                {
+                    if (Lifted.TryGetValue(orb, out var pressed))
+                    {
+                        if (_liftedLeaving) continue;
+                        m = (pressed, m.Scale);
+                    }
+                    else if (Destinations.TryGetValue(orb, out var slot))
+                    {
+                        m = (new Point(m.Centre.X + slot.X - orb.Position.X, m.Centre.Y + slot.Y - orb.Position.Y), m.Scale);
+                    }
+                }
 
                 // An orb read before it has been positioned can come back as NaN or
                 // infinity. GroupOutline rejects those loudly, so they are dropped
@@ -623,7 +701,7 @@ namespace Orbweaver
             // when an outline that is already on screen changes.
             internal bool Fit(
                 string groupId, string shape, List<(double X, double Y, double R)> discs, double scale,
-                GroupOutline.PlacedCurve? curve, string? caption)
+                GroupOutline.PlacedCurve? curve, string? caption, bool springAnyway = false)
             {
                 _groupId = groupId;
 
@@ -645,7 +723,8 @@ namespace Orbweaver
 
                 var hadOutline = _shown && _local.Length > 0;
                 var shownNow = _morph is not null ? CurrentDisplayed() : (hadOutline ? Absolute(_local) : null);
-                var membershipChanged = BackdropGeometry.MembershipChanged(_discs?.Count, _drawnShape, discs.Count, shape);
+                var membershipChanged = springAnyway ||
+                    BackdropGeometry.MembershipChanged(_discs?.Count, _drawnShape, discs.Count, shape);
 
                 _curve = curve;
                 _drawnShape = shape;
