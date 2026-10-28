@@ -282,7 +282,10 @@ internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
 
 - **Obstacles are fixed.** They never move, they rank above box 0, and every box is pushed at least `gap` clear of each one, then slid back into `work`. `Separated` covers box↔obstacle pairs as well as box↔box. Units are screen units, like the boxes.
 - **A partial call keeps the full group table.** The caller passes the whole table as `groups`, so slot indices stay stable, and passes only the orbs being laid out in `count`, `leadOf`, `groupOf` and `sizeOf` (indices local to that subset). Slots with no orbs in the call produce no placement, as today.
-- **With obstacles, there is no Bands+Compact fallback.** When groups cannot be separated, each one stays at its best-effort `SeparateGroups` position, with overlap tolerated, and the `out GroupPath` overload reports `Fallback`. Rebanding would throw user groups across the screen (F4), and a group stuck in a corner is better than one teleported.
+- **With obstacles, there is no Bands+Compact fallback (accepted, final).** When groups cannot be separated, each one stays at its best-effort `SeparateGroups` position, with overlap tolerated, and the `out GroupPath` overload reports `Fallback`.
+  - Bands cannot see obstacles: a rebanded user group would land on the stack column (F2) and leave its anchor (F4), in exactly the cramped case.
+  - A test pins the outcome as best-effort and deterministic: the same inputs give the same positions, obstacles are untouched, and the result is `Fallback`.
+  - The PR names it as a known limit.
 - The predefined groups' first draw (no anchors) keeps its band-centre rule; the band is computed over the work area as today.
 - Sweep (F6): stack-column obstacles, meaning a right-edge column of 1–30 slots, plus a few pinned rects, crossed with user groups at colliding and off-screen anchors.
   - Invariants: no box overlaps an obstacle (when `Separated`); obstacles are never moved; deterministic; re-feeding `Landed` reproduces.
@@ -299,34 +302,71 @@ internal abstract record SnapOutcome
     internal sealed record LeaveToFree : SnapOutcome;                // free mode: out of a user group → loose, dropped in place
 }
 
-// A loose team in free mode: its root and every disc of the team.
-internal readonly record struct LooseCandidate(string RootId, IReadOnlyList<(double X, double Y, double R)> Discs);
+// Loose teams are candidates too, in free mode: Loose = true, GroupId = the team's ROOT session id,
+// Discs = every disc of that team, Outline empty. (Revised from a separate LooseCandidate type,
+// at the S4 owner's request: one candidate list, one Decide.)
+internal readonly record struct SnapCandidate(
+    string GroupId, Point[] Outline, IReadOnlyList<(double X, double Y, double R)> Discs, bool Loose = false);
 
 SnapOutcome OrbSnap.Decide(
     IReadOnlyList<(double X, double Y, double R)> team, string currentGroupId,
     IReadOnlyList<SnapCandidate> candidates, bool free,
-    IReadOnlyList<LooseCandidate>? loose = null,
     double joinDip = 24, double leaveDip = 72);   // the existing overloads remain, as free: false
 ```
 
-- **Arranged mode (`free: false`):** exactly today's rules. `loose` is ignored.
+- **Arranged mode (`free: false`):** exactly today's rules. No candidate is `Loose`.
 - **Free mode:**
-  - **Candidates** are user groups only (`main` is never one, F3), plus `loose`, each loose team counted as one target. Gaps are measured as today: the dragged team's edge to the group's outline or discs, or to the loose team's discs.
-  - **Precedence:** the nearest target within `joinDip` wins. A group gives `Join(id)`. A loose team gives `Pair(rootId)`, but **only when the dragged team is itself loose** (`currentGroupId == main`). Ties go to the ordinal-smallest id; a group id ties against a root id by ordinal string compare too.
-  - **`LeaveToFree`:** no target applies, the dragged team is in a user group, and every team disc is more than `leaveDip` from every other disc of that group, edge to edge.
-  - **`NoChange`:** otherwise. That includes a loose team dropped near nothing, which is pinned where it lands, as today.
-- **`DragPlan.Followers`:** in free mode, an orb in `main` has no group to move, so **Shift on a loose orb is a plain team drag**: `(false, teamIds)`. Shift on a grouped orb, or a backdrop drag, moves the whole user group as today.
-- **`OrbDragCommit.Release`** has no `IsArranged` gates any more. Every outcome ends with `host.ReapplyArrangement()`, which now re-lays whatever the current mode lays out (see S7).
+  - **Candidates** are user groups (never `main`, `heartbeats` or `crons`, F3) plus one `Loose` candidate per loose team. Gaps are measured as today.
+  - **Precedence:** the nearest within `joinDip` wins. A group gives `Join(id)`. A `Loose` candidate gives `Pair(rootId)`, **only when the dragged team is itself loose**. Ties go to the ordinal-smallest id.
+  - **`LeaveToFree`:** no target applies, the dragged team is in a user group, and every team disc is more than `leaveDip` from every other disc of that group.
+  - **`NoChange`:** otherwise.
+- **Lead drags only.** A member drag never reaches `Decide`; see "T2 revised" below.
+- **`DragPlan.Followers`:** in free mode, Shift on a loose orb is a plain team drag. Shift on a grouped orb, or a backdrop drag, moves the whole user group.
+- **`OrbDragCommit.Release`** loses its `IsArranged` gates. Every outcome ends with `host.ReapplyArrangement()`, which re-lays whatever the current mode lays out. There is **no separate `ReapplyGroups`**: `ReapplyArrangement` does both modes.
   - **Join:** `AssignTeamToGroup(rootKey, memberKeys, id)`.
-  - **Pair(rootId):** `CreateOrbGroup()`. Then `AssignTeamToGroup` for the dragged team and again for the target team. Then `SetOrbGroupAnchor(new, midpoint)`, where the midpoint is between the two teams' disc centroids in screen units, rounded.
-  - **LeaveToFree:** `UnassignOrbGroup(key)` for every team key, so the team is loose again, and it floats where it was dropped.
-  - **Leave (arranged):** unchanged; it becomes a new one-team group at the drop point.
-  - **Whole-group drag:** `ShiftGroupAnchor(groupId, dx, dy)` in both modes, for a user group. A predefined group is only dragged as a whole while arranged.
-- **`OrbDragSession.End`** pins only what ends up loose. In free mode that means a `NoChange` on a loose team, and `LeaveToFree`. A grouped team is never pinned (F2); its group's layout holds it.
+  - **Pair(rootId):** `CreateOrbGroup()`, then `AssignTeamToGroup` for the dragged team and for `TeamIdsOf(rootId)`, then `SetOrbGroupAnchor(new, midpoint of the two teams' disc centroids)`.
+  - **LeaveToFree:** `UnassignOrbGroup(key)` for every team key. A heartbeat or cron orb returns to its CB-14 cluster, which is loose in free mode.
+  - **Leave (arranged):** unchanged.
+  - **Whole-group drag:** `ShiftGroupAnchor(groupId, dx, dy)` for any group with an anchor, in both modes.
+- **`OrbDragSession.End`** pins only what ends up loose in free mode: a `NoChange` on a loose team, or `LeaveToFree`. A grouped team is never pinned (F2).
 - **Preview:**
-  - `Join` → `host.HighlightGroup(id)`, as today.
+  - `Join` → `host.HighlightGroup(id)`.
   - `Pair` → `host.PreviewPair(draggedTeamIds, targetRootId)`.
-  - Anything else → `host.HighlightGroup(null)` and `host.PreviewPair(null, null)`.
+  - Anything else → clear both.
+
+### T2 revised — a member drag moves only that member (final, Warren 2026-10-27)
+
+Warren found that members could no longer be dragged and arranged on their own. **A lead (root) drag moves the whole team**, as above. **A member drag moves only that member and never changes membership (T1).** Shift and backdrop drags still move the whole group.
+
+- **`DragPlan.Followers(source, shift, isRoot, teamIds, groupIds)`:**
+  - Orb, no Shift, root → `(false, teamIds)`.
+  - Orb, no Shift, **member** → `(false, [pressedId])`.
+  - Shift or backdrop → `(true, groupIds)`, as today.
+- **Release of a member drag:** no `Decide` and no membership write. Then:
+  - if `host.IsLaidOut(memberId)` → `host.SaveMemberOffset(memberId)`, then `host.ReapplyArrangement()`;
+  - otherwise (free mode, loose team) → pin the member where it was dropped, as before CB-268.
+- **Settings (nadia-okafor), key `orbMemberOffsets { soundKey → { dx, dy } }`** in `KnownKeys`.
+  - Offsets are **DIP, relative to the member's lead's visible centre** (its effective lead, `TeamTree.LeadOf`). DIP so an offset survives a display-scale change.
+  - API:
+    ```csharp
+    public static (double Dx, double Dy)? OrbMemberOffsetFor(string? soundKey);
+    public static void SetOrbMemberOffset(string? soundKey, (double Dx, double Dy)? offset);   // null clears
+    ```
+  - It is keyed by **SoundKey**, so teammates sharing a directory key don't collide.
+  - It is carried across a SoundKey change exactly as the size override is (`OrbWindow.RefreshSoundKey`): copied, never moved, never over an existing entry.
+- **`ComputeGroups` (hana-moriyama)** gains `IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf = null`, after `obstacles`, indexed like the orb arrays (local to the call).
+  - A **member** with an offset is placed at its lead's slot centre + offset × `layout.Scale` instead of by FanOut, then nudged inside the work area and off other discs. Null, or a root's entry, is ignored.
+  - Offsets never move anchors, `Landed` or the curve fit (anchors only), so a member drag cannot shift its group.
+- **`IOrbDragHost` additions (S7 implements):**
+  ```csharp
+  bool IsFree => !IsArranged;                    // default interface member, at the S4 owner's request
+  bool IsRoot(string sessionId);                 // TeamTree.RootOf(id) == id
+  bool IsLaidOut(string sessionId);              // its root's group is laid out in this mode: a user group, or any group while arranged
+  void SaveMemberOffset(string memberId);        // (member centre − effective lead centre) / UnitsPerDip → SetOrbMemberOffset(SoundKey)
+  void PreviewPair(IReadOnlyList<string>? draggedTeamIds, string? targetRootId);
+  ```
+  `TeamIdsOf(id)` works for any id, a loose team's root included. `CandidatesFor` in free mode returns user groups plus `Loose` team candidates; arranged mode is as today. (`LooseCandidatesFor` from the first version of this section is dropped.)
+- **"Reset this orb's position"** (S7) also clears the member's offset, `SetOrbMemberOffset(soundKey, null)`, then re-lays out.
 
 ### S5 — backdrops (celeste-ngata)
 
@@ -345,18 +385,10 @@ SnapOutcome OrbSnap.Decide(
 - **Arranged mode:** `ComputeClusteredPositions` runs the two calls described above, user groups first.
 - **Un-arrange:** restore and unpin only orbs that are not in a user group.
 - **`ReapplyArrangement()`** re-lays what the current mode lays out, in both modes. It used to return early when not arranged; it now lays out the user groups then.
-- **`IOrbDragHost` additions:**
-
-```csharp
-// Free mode: every loose team (root not in a user group) outside excludedIds, with its discs.
-// Empty while arranged.
-IReadOnlyList<LooseCandidate> LooseCandidatesFor(IReadOnlyCollection<string> excludedIds);
-
-// The provisional pair outline: the dragged team plus the target root's team. Both null clears it.
-void PreviewPair(IReadOnlyList<string>? draggedTeamIds, string? targetRootId);
-```
-
-- **`CandidatesFor`** in free mode returns user groups only; arranged mode returns every group, as today. "Free" is `!IsArranged`, so no new flag is needed.
+- **`IOrbDragHost` additions:** as listed under "T2 revised": `IsFree`, `IsRoot`, `IsLaidOut`, `SaveMemberOffset` and `PreviewPair`. `CandidatesFor` in free mode returns user groups plus `Loose` team candidates.
+- **Member offsets** go to every `ComputeGroups` call: `OrbMemberOffsetFor(SoundKey)` for each non-root orb in the call.
+- **"Reset this orb's position"** also clears the member offset.
+- **PreviewPair stays in scope** (accepted): a visible preview before release is in the acceptance criteria.
 - **Obstacle rects:** each loose orb's window, `Position` to `Position + OrbPixels`, in screen units.
 - **Tests (F6):** UI drags in free mode (Pair, Join, LeaveToFree, NoChange-then-pin), reflow excluding grouped orbs, F4 (arrange/un-arrange leaves a user group's orbs and anchor unchanged), and obstacles honoured against the real stack column.
 
