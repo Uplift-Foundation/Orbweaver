@@ -127,6 +127,8 @@ internal static class GroupOutline
         // a factor that certainly encloses — an upper bound for the bisection,
         // with no guessing about how large is large enough.
         var inner = SignedDistanceInside(default, basePoly);
+        // Unreachable with the shapes that exist (each base contains its own centre);
+        // kept so a future shape that breaks that fails loudly instead of dividing by zero.
         if (!(inner > 0)) throw new InvalidOperationException("base outline does not contain its own centre");
 
         double hi = 0;
