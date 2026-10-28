@@ -185,7 +185,9 @@ namespace Orbweaver
 
             try
             {
-                using var svg = Svg.Skia.SKSvg.CreateFromSvg(text);
+                Harden();
+                using var stream = new MemoryStream(Encoding.UTF8.GetBytes(text));
+                using var svg = Svg.Skia.SKSvg.CreateFromStream(stream, Parameters);
                 // A null picture or a zero-sized one throws inside Render and
                 // is caught below, which is the same answer as a parse failure.
                 var picture = svg.Picture!;
@@ -201,6 +203,27 @@ namespace Orbweaver
                 });
             }
             catch (Exception) { return null; }
+        }
+
+        // Second line of defence behind IsSelfContained, which Svg.Skia's
+        // defaults would not give us on their own: external resources are
+        // enabled and `file://` goes through WebRequest. Per document, the
+        // strictest policy in secure mode; process-wide, no external images or
+        // entities and no DTD processing. Each is pinned by a test.
+        private static readonly Svg.Model.SvgParameters Parameters = new(
+            null, null, null,
+            new Svg.SvgDocumentLoadOptions
+            {
+                ProcessingMode = Svg.SvgProcessingMode.SecureStatic,
+                ExternalResources = Svg.SvgExternalResourcePolicy.Disabled
+            });
+
+        internal static void Harden()
+        {
+            Svg.SvgDocument.ResolveExternalImages = Svg.ExternalType.None;
+            Svg.SvgDocument.ResolveExternalElements = Svg.ExternalType.None;
+            Svg.SvgDocument.ResolveExternalXmlEntites = Svg.ExternalType.None;
+            Svg.SvgDocument.DisableDtdProcessing = true;
         }
 
         private static readonly Regex UrlRef = new(

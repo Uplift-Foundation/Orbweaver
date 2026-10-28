@@ -152,6 +152,28 @@ public class AccountOrbIconsTests : IDisposable
     }
 
     [Fact]
+    public void Harden_TurnsOffEveryExternalSwitch()
+    {
+        Svg.SvgDocument.ResolveExternalImages = Svg.ExternalType.Local | Svg.ExternalType.Remote;
+        Svg.SvgDocument.DisableDtdProcessing = false;
+        AccountOrbIcons.Harden();
+        Assert.Equal(Svg.ExternalType.None, Svg.SvgDocument.ResolveExternalImages);
+        Assert.Equal(Svg.ExternalType.None, Svg.SvgDocument.ResolveExternalElements);
+        Assert.Equal(Svg.ExternalType.None, Svg.SvgDocument.ResolveExternalXmlEntites);
+        Assert.True(Svg.SvgDocument.DisableDtdProcessing);
+    }
+
+    [Fact]
+    public void Import_SvgWithHugeDimensions_StillGives256Square()
+    {
+        var p = Write("h.svg", Encoding.UTF8.GetBytes(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1000000\" height=\"1000000\" viewBox=\"0 0 20 20\"><rect width=\"20\" height=\"20\" fill=\"#0f0\"/></svg>"));
+        var r = AccountOrbIcons.Import(p, "k", Icons);
+        Assert.Null(r.Error);
+        Assert.True(CentrePixel(r.FileName!).Green > 200);
+    }
+
+    [Fact]
     public void Import_SvgWithDoctype_IsRefused()
     {
         var p = Write("d.svg", Encoding.UTF8.GetBytes(
