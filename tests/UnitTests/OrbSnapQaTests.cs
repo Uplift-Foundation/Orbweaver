@@ -84,3 +84,49 @@ public class OrbSnapQaTests
             new[] { new SnapCandidate("g-1", System.Array.Empty<Point>(), System.Array.Empty<(double, double, double)>()) }));
     }
 }
+
+// Free-mode contract probes (CB-268 F3).
+public class OrbSnapFreeModeQaTests
+{
+    private static readonly (double X, double Y, double R)[] Dragged = { (0, 0, 18) };
+
+    private static SnapCandidate Loose(string root, double x) =>
+        new(root, System.Array.Empty<Point>(), new[] { (x, 0.0, 18.0) }, Loose: true);
+
+    [Fact]
+    public void ALooseTeamPairsWithANearbyLooseTeam()
+    {
+        Assert.Equal(new SnapOutcome.Pair("s-2"),
+            OrbSnap.Decide(Dragged, "main", new[] { Loose("s-2", 50) }, free: true));
+    }
+
+    [Fact]
+    public void ALooseCandidateIsIgnoredWhenNotFree()
+    {
+        Assert.IsType<SnapOutcome.NoChange>(
+            OrbSnap.Decide(Dragged, "main", new[] { Loose("s-2", 50) }, free: false));
+    }
+
+    // Contract (docs/cb268-contracts.md, S4 free mode): Pair only when the dragged team is itself loose.
+    [Fact]
+    public void ATeamAlreadyInAUserGroupDoesNotPairWithALooseTeam()
+    {
+        var own = new SnapCandidate("g-0000000a", System.Array.Empty<Point>(), new[] { (30.0, 100.0, 18.0) });
+        var outcome = OrbSnap.Decide(Dragged, "g-0000000a", new[] { own, Loose("s-2", 50) }, free: true);
+        Assert.IsNotType<SnapOutcome.Pair>(outcome);
+    }
+
+    [Fact]
+    public void ALeaveInFreeModeIsLeaveToFreeAndNeverALeave()
+    {
+        var own = new SnapCandidate("g-0000000a", System.Array.Empty<Point>(), new[] { (500.0, 0.0, 18.0) });
+        Assert.IsType<SnapOutcome.LeaveToFree>(OrbSnap.Decide(Dragged, "g-0000000a", new[] { own }, free: true));
+        Assert.IsType<SnapOutcome.Leave>(OrbSnap.Decide(Dragged, "g-0000000a", new[] { own }, free: false));
+    }
+
+    [Fact]
+    public void ALooseTeamWithNobodyNearStaysPut()
+    {
+        Assert.IsType<SnapOutcome.NoChange>(OrbSnap.Decide(Dragged, "main", new[] { Loose("s-2", 500) }, free: true));
+    }
+}
