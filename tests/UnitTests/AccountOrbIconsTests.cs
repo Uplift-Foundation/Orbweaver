@@ -112,6 +112,36 @@ public class AccountOrbIconsTests : IDisposable
             $"<!-- hi --><svg {ns}><!-- c --><image href=\"http://example.invalid/x.png\"/></svg>"));
     }
 
+    // An ordinary logo has a <style> block and a <text> label. Text and CDATA
+    // that carry no url() or @import must pass the preflight; the refusals
+    // above (url() in style, @import, CDATA url()) are the paired controls.
+    [Fact]
+    public void Import_SvgWithStyleBlockAndTextLabel_Imports()
+    {
+        var r = AccountOrbIcons.Import(WriteSvg(
+            "<style>.a{fill:#123}</style><rect class=\"a\" width=\"20\" height=\"20\"/><text x=\"1\" y=\"10\">Acme</text>"),
+            "k", Icons);
+        Assert.Null(r.Error);
+        Assert.NotNull(r.FileName);
+    }
+
+    [Fact]
+    public void Import_SvgWithCdataStyleWithoutUrl_Imports()
+    {
+        var r = AccountOrbIcons.Import(WriteSvg(
+            "<style><![CDATA[.a{fill:#123}]]></style><rect class=\"a\" width=\"20\" height=\"20\"/>"), "k", Icons);
+        Assert.Null(r.Error);
+    }
+
+    [Fact]
+    public void IsSelfContained_AcceptsPlainTextAndCdata_RefusesTheSameWithAReference()
+    {
+        const string ns = "xmlns=\"http://www.w3.org/2000/svg\"";
+        Assert.True(AccountOrbIcons.IsSelfContained($"<svg {ns}><text>Acme</text><style><![CDATA[.a{{fill:#123}}]]></style></svg>"));
+        Assert.False(AccountOrbIcons.IsSelfContained($"<svg {ns}><style>.a{{fill:url(http://x.invalid/g)}}</style></svg>"));
+        Assert.False(AccountOrbIcons.IsSelfContained($"<svg {ns}><style><![CDATA[@import 'x.css';]]></style></svg>"));
+    }
+
     [Fact]
     public void Import_Svg_Rasterises()
     {
