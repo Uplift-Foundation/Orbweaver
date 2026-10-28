@@ -13,6 +13,10 @@ public class OrbDragCommitTests
     private sealed class FakeHost : IOrbDragHost
     {
         public bool IsArranged { get; set; } = true;
+        public bool IsFree => !IsArranged;
+        public int GroupsReapplied { get; private set; }
+        public void ReapplyGroups() => GroupsReapplied++;
+        public Dictionary<string, string[]> LooseTeams { get; } = new();
         public Dictionary<string, string[]> Teams { get; } = new();
         public Dictionary<string, string> Groups { get; } = new();
         public Dictionary<string, (double X, double Y, double R)> Discs { get; } = new();
@@ -168,7 +172,7 @@ public class OrbDragCommitTests
     }
 
     [Fact]
-    public void ReleaseWhenNotArrangedDoesNotReapply()
+    public void ReleaseWhenNotArrangedReappliesTheGroupsNotTheArrangement()
     {
         var (host, orb, target) = Scene(50);
         host.IsArranged = false;
@@ -177,6 +181,7 @@ public class OrbDragCommitTests
 
         Assert.Equal(target, OrbweaverSettings.OrbGroupMembershipFor("key:" + orb));
         Assert.Equal(0, host.Reapplied);
+        Assert.Equal(1, host.GroupsReapplied);
     }
 
     [Fact]
@@ -273,15 +278,174 @@ public class OrbDragCommitTests
         Assert.Equal(1, host.Reapplied);
     }
 
-    [Fact]
-    public void AWholeGroupDragWhenNotArrangedShiftsNothing()
-    {
-        var (host, orb, _) = Scene(50);
-        host.IsArranged = false;
+    // --- free mode (F3) ---
 
-        OrbDragCommit.Release(host, orb, true, 12, -7, 1);
+    // A free-mode scene: orb `a` at the origin, loose and in main. Candidates:
+    // another loose team at `otherX` (id "loose-..."), and a user group at
+    // `groupX`. Main is not a candidate.
+    private static (FakeHost Host, string A, string Loose, string Group) FreeScene(double otherX, double groupX)
+    {
+        var a = "a-" + UniqueId();
+        var loose = "loose-" + UniqueId();
+        var group = OrbweaverSettings.CreateOrbGroup().Id;
+        var host = new FakeHost { IsArranged = false };
+        host.Discs[a] = (0, 0, 18);
+        host.Discs[loose] = (otherX, 0, 18);
+        host.Candidates.Add(new SnapCandidate(loose, Array.Empty<Point>(), new[] { (otherX, 0.0, 18.0) }, Loose: true));
+        host.Candidates.Add(new SnapCandidate(group, Array.Empty<Point>(), new[] { (groupX, 0.0, 18.0) }));
+        return (host, a, loose, group);
+    }
+
+    [Fact]
+    public void DroppingALooseOrbBesideAnotherLooseOrbPairsThemIntoANewGroupAnchoredBetweenThem()
+    {
+        var (host, a, loose, group) = FreeScene(50, 5000);
+
+        var outcome = OrbDragCommit.Release(host, a, false, 5, 5, 1);
+
+        Assert.Equal(new SnapOutcome.Pair(loose), outcome);
+        var made = OrbweaverSettings.OrbGroupMembershipFor("key:" + a)!;
+        Assert.NotEqual(group, made);
+        Assert.Equal(made, OrbweaverSettings.OrbGroupMembershipFor("key:" + loose));
+        // Bounds x -18..68 -> 25; y -18..18 -> 0.
+        Assert.Equal(new OrbweaverSettings.OrbPlacement(25, 0), OrbweaverSettings.OrbGroupFor(made)!.Anchor);
+        Assert.Equal(1, host.GroupsReapplied);
+        Assert.Equal(0, host.Reapplied);
+    }
+
+    [Fact]
+    public void PairingTakesBothWholeTeams()
+    {
+        var (host, a, loose, _) = FreeScene(50, 5000);
+        var lead = "lead-" + UniqueId();
+        var other = "other-" + UniqueId();
+        host.Teams[a] = new[] { lead, a };
+        host.Discs[lead] = (-30, 0, 18);
+        host.Teams[loose] = new[] { loose, other };
+        host.Discs[other] = (120, 0, 10);
+
+        OrbDragCommit.Release(host, a, false, 5, 5, 1);
+
+        var made = OrbweaverSettings.OrbGroupMembershipFor("key:" + a)!;
+        foreach (var id in new[] { lead, a, loose, other })
+            Assert.Equal(made, OrbweaverSettings.OrbGroupMembershipFor("key:" + id));
+        // Bounds x -48..130 -> 41; y -18..18 -> 0.
+        Assert.Equal(new OrbweaverSettings.OrbPlacement(41, 0), OrbweaverSettings.OrbGroupFor(made)!.Anchor);
+    }
+
+    [Fact]
+    public void ADropOntoAUserGroupInFreeModeStillJoinsIt()
+    {
+        var (host, a, _, group) = FreeScene(5000, 50);
+
+        Assert.Equal(new SnapOutcome.Join(group), OrbDragCommit.Release(host, a, false, 5, 5, 1));
+        Assert.Equal(group, OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+    }
+
+    [Fact]
+    public void ApairWithNoKeyOnEitherSideDoesNothing()
+    {
+        var (host, a, loose, _) = FreeScene(50, 5000);
+        var groups = OrbweaverSettings.OrbGroupList().Count;
+
+        host.KeylessIds.Add(loose);
+        Assert.IsType<SnapOutcome.NoChange>(OrbDragCommit.Release(host, a, false, 5, 5, 1));
+
+        host.KeylessIds.Clear();
+        host.KeylessIds.Add(a);
+        Assert.IsType<SnapOutcome.NoChange>(OrbDragCommit.Release(host, a, false, 5, 5, 1));
+        Assert.Equal(groups, OrbweaverSettings.OrbGroupList().Count);
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + loose));
+    }
+
+    [Fact]
+    public void DraggingAGroupMemberOutInFreeModeUnassignsTheWholeTeam()
+    {
+        var (host, a, _, group) = FreeScene(5000, 5000);
+        var lead = "lead-" + UniqueId();
+        var mate = "mate-" + UniqueId();
+        host.Teams[a] = new[] { lead, a };
+        host.Discs[lead] = (0, 0, 18);
+        host.Groups[a] = group;
+        host.Groups[lead] = group;
+        host.Groups[mate] = group;
+        host.Discs[mate] = (0, 0, 18);
+        // The rest of the group is far away, so the team leaves.
+        host.Candidates[1] = new SnapCandidate(group, Array.Empty<Point>(), new[] { (500.0, 0.0, 18.0) });
+        host.Candidates.RemoveAt(0);
+        OrbweaverSettings.AssignTeamToGroup("key:" + lead, new[] { "key:" + a, "key:" + mate }, group);
+
+        var outcome = OrbDragCommit.Release(host, a, false, 5, 5, 1);
+
+        Assert.IsType<SnapOutcome.LeaveToFree>(outcome);
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + lead));
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+        // Someone who stayed behind keeps the group.
+        Assert.Equal(group, OrbweaverSettings.OrbGroupMembershipFor("key:" + mate));
+        Assert.Equal(1, host.GroupsReapplied);
+    }
+
+    [Fact]
+    public void ALooseOrbFarFromEverythingInFreeModeJustStaysLoose()
+    {
+        var (host, a, _, group) = FreeScene(5000, 5000);
+
+        var outcome = OrbDragCommit.Release(host, a, false, 5, 5, 1);
+
+        Assert.IsType<SnapOutcome.NoChange>(outcome);
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+        Assert.DoesNotContain(group, new[] { OrbweaverSettings.OrbGroupMembershipFor("key:" + a) });
+    }
+
+    [Fact]
+    public void TheSameSceneInArrangedModeMakesASingletonGroupInsteadOfLeavingToFree()
+    {
+        var (host, a, _, group) = FreeScene(5000, 5000);
+        host.IsArranged = true;
+        host.Groups[a] = group;
+        host.Candidates[1] = new SnapCandidate(group, Array.Empty<Point>(), new[] { (500.0, 0.0, 18.0) });
+        host.Candidates.RemoveAt(0);
+
+        Assert.IsType<SnapOutcome.Leave>(OrbDragCommit.Release(host, a, false, 5, 5, 1));
+        Assert.NotEqual(group, OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+        Assert.Equal(1, host.Reapplied);
+        Assert.Equal(0, host.GroupsReapplied);
+    }
+
+    [Fact]
+    public void AWholeGroupDragOfAUserGroupInFreeModeShiftsItsAnchorAndReappliesGroups()
+    {
+        var (host, a, _, group) = FreeScene(5000, 5000);
+        host.Groups[a] = group;
+
+        OrbDragCommit.Release(host, a, true, 12, -7, 1);
+
+        Assert.Equal(new[] { (group, 12, -7) }, host.Shifts);
+        Assert.Equal(1, host.GroupsReapplied);
+        Assert.Equal(0, host.Reapplied);
+    }
+
+    [Fact]
+    public void AWholeGroupDragOfThePredefinedMainGroupInFreeModeHasNothingToShift()
+    {
+        var (host, a, _, _) = FreeScene(5000, 5000);
+
+        OrbDragCommit.Release(host, a, true, 12, -7, 1);
 
         Assert.Empty(host.Shifts);
-        Assert.Equal(0, host.Reapplied);
+        Assert.Equal(0, host.GroupsReapplied);
+    }
+
+    [Fact]
+    public void PreviewInFreeModeHighlightsAUserGroupButNotALooseTargetThatHasNoGroupYet()
+    {
+        var (host, a, _, group) = FreeScene(50, 5000);
+        Assert.IsType<SnapOutcome.Pair>(OrbDragCommit.Preview(host, a, 1));
+        Assert.Equal(new string?[] { null }, host.Highlights);
+
+        host.Candidates[1] = new SnapCandidate(group, Array.Empty<Point>(), new[] { (40.0, 0.0, 18.0) });
+        host.Candidates[0] = host.Candidates[0] with { Discs = new[] { (5000.0, 0.0, 18.0) } };
+        Assert.Equal(new SnapOutcome.Join(group), OrbDragCommit.Preview(host, a, 1));
+        Assert.Equal(group, host.Highlights[^1]);
     }
 }

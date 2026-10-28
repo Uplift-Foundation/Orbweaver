@@ -270,4 +270,108 @@ public class OrbSnapTests
         // Outline: 40 - 18 = 22. Disc: 60 - 28 = 32.
         Assert.Equal(22, OrbSnap.GapTo(moving, group), 6);
     }
+
+    // --- free mode (F3) ---
+
+    private static SnapCandidate Loose(string id, params (double X, double Y, double R)[] discs) =>
+        new(id, System.Array.Empty<Point>(), discs, Loose: true);
+
+    private static (double X, double Y, double R)[] One(double x = 0, double y = 0, double r = 18) =>
+        new[] { (x, y, r) };
+
+    [Fact]
+    public void ALooseCandidateWithinJoinDistanceIsPairedNotJoined()
+    {
+        var outcome = OrbSnap.Decide(One(), "main", new[] { Loose("s-1", (50, 0, 18)) }, free: true);
+
+        Assert.Equal(new SnapOutcome.Pair("s-1"), outcome);
+    }
+
+    [Fact]
+    public void ALooseCandidateJustOutsideJoinDistanceIsLeftAlone()
+    {
+        Assert.IsType<SnapOutcome.NoChange>(
+            OrbSnap.Decide(One(), "main", new[] { Loose("s-1", (60.5, 0, 18)) }, free: true));
+    }
+
+    [Fact]
+    public void ANearerUserGroupBeatsAFartherLooseOrbAndTheOtherWayRound()
+    {
+        var group = Group("g-a", (45, 0, 18));
+        var far = Loose("s-1", (60, 0, 18));
+
+        Assert.Equal(new SnapOutcome.Join("g-a"), OrbSnap.Decide(One(), "main", new[] { far, group }, free: true));
+
+        var near = Loose("s-2", (45, 0, 18));
+        var farGroup = Group("g-b", (60, 0, 18));
+        Assert.Equal(new SnapOutcome.Pair("s-2"), OrbSnap.Decide(One(), "main", new[] { farGroup, near }, free: true));
+    }
+
+    [Fact]
+    public void TiesBetweenALooseTeamAndAGroupGoToTheOrdinalSmallestId()
+    {
+        var outcome = OrbSnap.Decide(One(), "main", new[]
+        {
+            Loose("s-9", (50, 0, 18)),
+            Group("g-1", (0, 50, 18)),
+        }, free: true);
+
+        Assert.Equal(new SnapOutcome.Join("g-1"), outcome);
+    }
+
+    [Fact]
+    public void LeavingAUserGroupInFreeModeIsLeaveToFreeNotLeave()
+    {
+        var own = Group("g-own", (200, 0, 18));
+
+        Assert.IsType<SnapOutcome.LeaveToFree>(OrbSnap.Decide(One(), "g-own", new[] { own }, free: true));
+        Assert.IsType<SnapOutcome.Leave>(OrbSnap.Decide(One(), "g-own", new[] { own }, free: false));
+    }
+
+    [Fact]
+    public void FreeModeHasHysteresisToo()
+    {
+        // Inside the band between the thresholds nothing fires, in either mode.
+        var own = Group("g-own", (100, 0, 18));   // 64 dip edge to edge: under 72
+
+        Assert.IsType<SnapOutcome.NoChange>(OrbSnap.Decide(One(), "g-own", new[] { own }, free: true));
+    }
+
+    [Fact]
+    public void ALooseTeamHasNoGroupToLeaveSoWanderingAwayChangesNothing()
+    {
+        // Free mode leaves `main` out of the candidates, so a loose orb has no
+        // "own" group: far from everything it simply stays loose.
+        Assert.IsType<SnapOutcome.NoChange>(
+            OrbSnap.Decide(One(), "main", new[] { Loose("s-1", (900, 0, 18)) }, free: true));
+    }
+
+    [Fact]
+    public void ATeamMemberFannedTowardsALooseOrbPairsTheWholeTeam()
+    {
+        var team = new[] { (0.0, 0.0, 18.0), (230.0, 0.0, 10.0) };
+
+        var outcome = OrbSnap.Decide(team, "main", new[] { Loose("s-1", (270, 0, 18)) }, free: true);
+
+        Assert.Equal(new SnapOutcome.Pair("s-1"), outcome);
+    }
+
+    [Fact]
+    public void ALooseCandidateIsIgnoredOutsideFreeMode()
+    {
+        Assert.IsType<SnapOutcome.NoChange>(
+            OrbSnap.Decide(One(), "main", new[] { Loose("s-1", (50, 0, 18)) }, free: false));
+        Assert.IsType<SnapOutcome.NoChange>(
+            OrbSnap.Decide(new Point(0, 0), 18, "main", new[] { Loose("s-1", (50, 0, 18)) }));
+    }
+
+    [Fact]
+    public void ALooseCandidateIsMeasuredByItsOutlineToo()
+    {
+        var team = new SnapCandidate("s-1", Square, new[] { (190.0, 190.0, 10.0) }, Loose: true);
+
+        Assert.Equal(
+            new SnapOutcome.Pair("s-1"),
+            OrbSnap.Decide(One(-40, 100), "main", new[] { team }, free: true));
+    }
 }

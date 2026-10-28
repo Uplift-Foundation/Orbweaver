@@ -15,17 +15,27 @@ namespace Orbweaver
         internal sealed record NoChange : SnapOutcome;
         internal sealed record Join(string GroupId) : SnapOutcome;
         internal sealed record Leave : SnapOutcome;
+
+        // Free mode only (F3). Pair: the dragged team dropped within join
+        // distance of another loose team; `OtherId` is that team's candidate
+        // id (its root session id). LeaveToFree: the dragged team left a user
+        // group and floats where it was dropped.
+        internal sealed record Pair(string OtherId) : SnapOutcome;
+        internal sealed record LeaveToFree : SnapOutcome;
     }
 
     /// <summary>
     /// One group the dragged orb could be near. <paramref name="Outline"/> may be
     /// empty (outlines off, or not computed yet), in which case only the discs
     /// count. <paramref name="Discs"/> exclude the dragged orb and its team.
+    /// <paramref name="Loose"/> marks a free-mode target that is one ungrouped
+    /// team rather than a group: snapping to it is a Pair, not a Join.
     /// </summary>
     internal readonly record struct SnapCandidate(
         string GroupId,
         Point[] Outline,
-        IReadOnlyList<(double X, double Y, double R)> Discs);
+        IReadOnlyList<(double X, double Y, double R)> Discs,
+        bool Loose = false);
 
     internal static class OrbSnap
     {
@@ -49,6 +59,12 @@ namespace Orbweaver
             double joinDip = JoinDip, double leaveDip = LeaveDip) =>
             Decide(new[] { (centre.X, centre.Y, radius) }, currentGroupId, candidates, joinDip, leaveDip);
 
+        internal static SnapOutcome Decide(
+            IReadOnlyList<(double X, double Y, double R)> moving, string currentGroupId,
+            IReadOnlyList<SnapCandidate> candidates,
+            double joinDip = JoinDip, double leaveDip = LeaveDip) =>
+            Decide(moving, currentGroupId, candidates, free: false, joinDip, leaveDip);
+
         // `moving` is every disc being dragged — the pressed orb and its whole
         // team (T2). A team is measured as one thing: the gap to a group is the
         // smallest gap from any of its discs, so a member fanned out towards a
@@ -63,19 +79,31 @@ namespace Orbweaver
         //   NoChange: otherwise, including when the moving team is its group's
         //             only occupant. The 24..72 band between the two thresholds
         //             is the hysteresis: neither fires inside it.
+        //
+        // Free mode (F3) changes two things. A loose candidate is Paired with
+        // rather than Joined, and leaving a user group is LeaveToFree, not
+        // Leave: the team is simply let go, there is no singleton group to
+        // make. The caller leaves the predefined groups out of the candidates
+        // in free mode, and a team that is itself loose has no group to leave.
         internal static SnapOutcome Decide(
             IReadOnlyList<(double X, double Y, double R)> moving, string currentGroupId,
-            IReadOnlyList<SnapCandidate> candidates,
+            IReadOnlyList<SnapCandidate> candidates, bool free,
             double joinDip = JoinDip, double leaveDip = LeaveDip)
         {
             if (moving.Count == 0) return new SnapOutcome.NoChange();
 
             string? bestId = null;
+            var bestLoose = false;
             var bestGap = double.PositiveInfinity;
             SnapCandidate? own = null;
 
             foreach (var candidate in candidates)
             {
+                // A loose target exists only in free mode. Arranged mode keeps
+                // today's rule, so a host that offered one anyway cannot make
+                // an arranged drop pair.
+                if (candidate.Loose && !free) continue;
+
                 if (string.Equals(candidate.GroupId, currentGroupId, StringComparison.Ordinal))
                 {
                     own ??= candidate;
@@ -90,13 +118,15 @@ namespace Orbweaver
                 {
                     bestGap = gap;
                     bestId = candidate.GroupId;
+                    bestLoose = candidate.Loose;
                 }
             }
 
-            if (bestId is not null) return new SnapOutcome.Join(bestId);
+            if (bestId is not null)
+                return bestLoose ? new SnapOutcome.Pair(bestId) : new SnapOutcome.Join(bestId);
 
             if (own is { } mine && mine.Discs.Count > 0 && DiscGap(moving, mine.Discs) > leaveDip)
-                return new SnapOutcome.Leave();
+                return free ? new SnapOutcome.LeaveToFree() : new SnapOutcome.Leave();
 
             return new SnapOutcome.NoChange();
         }

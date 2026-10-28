@@ -13,7 +13,7 @@ namespace Orbweaver
     {
         private readonly IOrbDragHost _host;
         private readonly string _anchorId;
-        private readonly double _scaling;
+        private readonly double _unitsPerDip;
         private readonly List<(OrbWindow Orb, PixelPoint Start)> _moving = new();
         private int _dx, _dy;
 
@@ -28,10 +28,16 @@ namespace Orbweaver
         {
             _host = host;
             _anchorId = pressedId;
-            _scaling = unitsPerDip;
+            _unitsPerDip = unitsPerDip;
 
             var team = host.TeamIdsOf(pressedId);
-            var group = host.OrbIdsInGroup(host.GroupIdOf(pressedId));
+            // In free mode the predefined groups are not groups to the user: their
+            // orbs are loose, and Shift on one moves its own team, not every loose
+            // orb on the screen (F3).
+            var groupId = host.GroupIdOf(pressedId);
+            var group = host.IsFree && OrbGroups.IsPredefined(groupId)
+                ? team
+                : host.OrbIdsInGroup(groupId);
             var (whole, ids) = DragPlan.Followers(source, shift, team, group);
             WholeGroup = whole;
 
@@ -51,7 +57,7 @@ namespace Orbweaver
             foreach (var (orb, start) in _moving)
                 orb.Position = new PixelPoint(start.X + dx, start.Y + dy);
 
-            if (!WholeGroup) OrbDragCommit.Preview(_host, _anchorId, _scaling);
+            if (!WholeGroup) OrbDragCommit.Preview(_host, _anchorId, _unitsPerDip);
 
             TeamLinks.Refresh();
             GroupBackdrops.Refresh();
@@ -59,25 +65,27 @@ namespace Orbweaver
 
         internal SnapOutcome End()
         {
-            // Pinned only when nothing is arranging them: an arranged group is
-            // re-laid-out by the release below, and a pin would make that layout
-            // treat the dragged team as an exception again.
-            if (!_host.IsArranged)
-            {
-                foreach (var (orb, _) in _moving) orb.PinAt(orb.Position);
-            }
+            var outcome = OrbDragCommit.Release(_host, _anchorId, WholeGroup, _dx, _dy, _unitsPerDip);
 
+            // Whatever is not in a user group after the release is loose and
+            // stays where it was dropped: pinned, unless something is arranging
+            // it. A user group's orbs are laid out by the group (F2), so neither
+            // a pin nor a remembered spot belongs to them.
+            //
             // Positions are keyed by directory and a team usually runs in one,
             // so writing every member's spot would overwrite the lead's with an
             // offset copy of itself. First orb with a key wins.
             var seen = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
             foreach (var (orb, _) in _moving)
             {
+                if (!OrbGroups.IsPredefined(_host.GroupIdOf(orb.SessionId))) continue;
+
+                if (!_host.IsArranged) orb.PinAt(orb.Position);
                 if (!string.IsNullOrEmpty(orb.PositionKey) && seen.Add(orb.PositionKey))
                     SessionManager.Instance?.RememberOrbPosition(orb);
             }
 
-            return OrbDragCommit.Release(_host, _anchorId, WholeGroup, _dx, _dy, _scaling);
+            return outcome;
         }
     }
 }

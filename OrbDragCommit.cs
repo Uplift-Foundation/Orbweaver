@@ -13,6 +13,9 @@ namespace Orbweaver
     {
         bool IsArranged { get; }
 
+        /// <summary>Free mode: the orbs are not arranged. User groups are live and the predefined ones are not snap targets (F1, F3).</summary>
+        bool IsFree => !IsArranged;
+
         /// <summary>The pressed orb's whole team: root lead first, then every member, nested ones included. Always contains <paramref name="sessionId"/>; a solo orb gives just itself.</summary>
         IReadOnlyList<string> TeamIdsOf(string sessionId);
 
@@ -38,6 +41,9 @@ namespace Orbweaver
         void ShiftGroupAnchor(string groupId, int dx, int dy);
 
         void ReapplyArrangement();
+
+        /// <summary>Re-lays out the user groups; the free-mode counterpart of ReapplyArrangement. Defaults to it until the roster says otherwise.</summary>
+        void ReapplyGroups() => ReapplyArrangement();
     }
 
     // Where the drag handlers find the roster. Null until SessionManager sets it
@@ -78,10 +84,14 @@ namespace Orbweaver
 
             if (wholeGroup)
             {
-                if (host.IsArranged)
+                // A predefined group only has an anchor of its own while the
+                // orbs are arranged; in free mode its orbs are loose and a
+                // whole-group drag has nothing to shift (see OrbDragSession).
+                var groupId = host.GroupIdOf(pressedId);
+                if (host.IsArranged || !OrbGroups.IsPredefined(groupId))
                 {
-                    host.ShiftGroupAnchor(host.GroupIdOf(pressedId), dx, dy);
-                    host.ReapplyArrangement();
+                    host.ShiftGroupAnchor(groupId, dx, dy);
+                    Reapply(host);
                 }
 
                 return new SnapOutcome.NoChange();
@@ -96,13 +106,33 @@ namespace Orbweaver
             // written there is nothing to join or leave: making the group first
             // would leave an empty one, with an anchor, in settings.json for
             // good.
+            IReadOnlyList<string> otherTeam = Array.Empty<string>();
+            if (outcome is SnapOutcome.Pair pair) otherTeam = host.TeamIdsOf(pair.OtherId);
+            var otherKeys = otherTeam.Select(host.PositionKeyOf).ToList();
+
             if (outcome is not SnapOutcome.NoChange && keys.All(string.IsNullOrEmpty))
+                outcome = new SnapOutcome.NoChange();
+            // A pair needs a key on both sides, or the group would hold only one.
+            if (outcome is SnapOutcome.Pair && otherKeys.All(string.IsNullOrEmpty))
                 outcome = new SnapOutcome.NoChange();
 
             switch (outcome)
             {
                 case SnapOutcome.Join join:
                     OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1), join.GroupId);
+                    break;
+
+                case SnapOutcome.Pair:
+                    // A new user group holding both whole teams, anchored at the
+                    // middle of their combined discs.
+                    var paired = OrbweaverSettings.CreateOrbGroup();
+                    OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1).Concat(otherKeys), paired.Id);
+                    var both = team.Concat(otherTeam).Select(host.DiscOf).ToList();
+                    OrbweaverSettings.SetOrbGroupAnchor(paired.Id, BoundsCentre(both));
+                    break;
+
+                case SnapOutcome.LeaveToFree:
+                    foreach (var key in keys) OrbweaverSettings.UnassignOrbGroup(key);
                     break;
 
                 case SnapOutcome.Leave:
@@ -112,17 +142,29 @@ namespace Orbweaver
                     // Anchored at the middle of the team's discs, not at the
                     // pressed orb: a group's anchor is its shape's centre, and a
                     // member fanned out from its lead is not where that is.
-                    var discs = team.Select(host.DiscOf).ToList();
-                    var x = (discs.Min(d => d.X - d.R) + discs.Max(d => d.X + d.R)) / 2;
-                    var y = (discs.Min(d => d.Y - d.R) + discs.Max(d => d.Y + d.R)) / 2;
                     OrbweaverSettings.SetOrbGroupAnchor(
-                        made.Id,
-                        new OrbweaverSettings.OrbPlacement((int)Math.Round(x), (int)Math.Round(y)));
+                        made.Id, BoundsCentre(team.Select(host.DiscOf).ToList()));
                     break;
             }
 
-            if (host.IsArranged) host.ReapplyArrangement();
+            Reapply(host);
             return outcome;
+        }
+
+        // Arranged: the whole arrangement. Free: only the user groups, which
+        // are live in both modes (F1); the loose orbs stay where they were put.
+        private static void Reapply(IOrbDragHost host)
+        {
+            if (host.IsArranged) host.ReapplyArrangement();
+            else host.ReapplyGroups();
+        }
+
+        private static OrbweaverSettings.OrbPlacement BoundsCentre(
+            IReadOnlyList<(double X, double Y, double R)> discs)
+        {
+            var x = (discs.Min(d => d.X - d.R) + discs.Max(d => d.X + d.R)) / 2;
+            var y = (discs.Min(d => d.Y - d.R) + discs.Max(d => d.Y + d.R)) / 2;
+            return new OrbweaverSettings.OrbPlacement((int)Math.Round(x), (int)Math.Round(y));
         }
 
         private static SnapOutcome Decide(IOrbDragHost host, string pressedId, double unitsPerDip)
@@ -148,7 +190,7 @@ namespace Orbweaver
             var size = radius > 0 ? radius / OrbSnap.BaseRadiusDip : 1;
 
             return OrbSnap.Decide(
-                moving, host.GroupIdOf(pressedId), candidates,
+                moving, host.GroupIdOf(pressedId), candidates, host.IsFree,
                 OrbSnap.JoinDip * size, OrbSnap.LeaveDip * size);
         }
     }
