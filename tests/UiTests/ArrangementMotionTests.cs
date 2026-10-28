@@ -95,6 +95,24 @@ public class ArrangementMotionTests : IDisposable
         return frames;
     }
 
+    // The disc's uniform scale. With no drag squash on it, the matrix is just
+    // the pop.
+    private static double Pop(OrbWindow w) => w.SquashMatrix.M11;
+
+    // Runs the animation to its end, recording each orb's pop scale per frame.
+    private List<Dictionary<string, double>> PopsToEnd(SessionManager m)
+    {
+        var frames = new List<Dictionary<string, double>>();
+        for (var i = 0; i < 600 && Targets(m) is not null; i++)
+        {
+            Tick(m, 16);
+            frames.Add(Windows(m).ToDictionary(kv => kv.Key, kv => Pop(kv.Value)));
+        }
+
+        Assert.Null(Targets(m));
+        return frames;
+    }
+
     private static bool PassedTarget(int from, int to, int at) =>
         to > from ? at > to : to < from && at < to;
 
@@ -179,6 +197,96 @@ public class ArrangementMotionTests : IDisposable
         Assert.Equal(settled["c"], Windows(manager)["c"].Position);
     }
 
+    // --- M2: the arriving orbs pop --------------------------------------------
+
+    [AvaloniaFact]
+    public void AJoinPopsTheArrivingOrbsOnlyAndEndsEveryDiscAtRest()
+    {
+        var (manager, settled) = FreeGroup();
+        var b = Windows(manager)["b"];
+        b.Position = new PixelPoint(settled["b"].X + 90, settled["b"].Y + 40);
+
+        // "ghost" has no orb: it is skipped, not popped and not a crash.
+        ((IOrbDragHost)manager).SettleAfterDrop(new[] { "b", "ghost" });
+        var frames = PopsToEnd(manager);
+
+        // b swells past 1.14 and dips under 0.93 (DropPop's 1.15 and 0.92, read
+        // off 16 ms frames); nobody else's disc changes; everything ends at 1.
+        Assert.Contains(frames, f => f["b"] > 1.14);
+        Assert.Contains(frames, f => f["b"] < 0.93);
+        Assert.All(frames, f => Assert.Equal(1.0, f["c"]));
+        Assert.All(frames, f => Assert.Equal(1.0, f["loose"]));
+        Assert.All(Windows(manager).Values, w => Assert.Equal(Matrix.Identity, w.SquashMatrix));
+        Assert.Equal(settled["b"], b.Position);
+    }
+
+    [AvaloniaFact]
+    public void AnArrivingOrbAlreadyOnItsSlotStillPops()
+    {
+        var (manager, _) = FreeGroup();
+
+        ((IOrbDragHost)manager).SettleAfterDrop(new[] { "b" });
+
+        // Nothing moves, but there is an animation, and it is the pop.
+        Assert.Empty(Targets(manager)!);
+        var frames = PopsToEnd(manager);
+        Assert.Contains(frames, f => f["b"] > 1.14);
+        Assert.True(frames.Count * 16 >= DropPop.DurationMs, $"ended after {frames.Count} frames, before the pop did");
+        Assert.Equal(1.0, Pop(Windows(manager)["b"]));
+    }
+
+    [AvaloniaFact]
+    public void WithReduceMotionNothingPopsAndAnArrivalInPlaceStartsNoAnimation()
+    {
+        MotionPolicy.ReduceMotionProbe = () => true;
+        var (manager, settled) = FreeGroup();
+        IOrbDragHost host = manager;
+
+        host.SettleAfterDrop(new[] { "b" });
+        Assert.Null(Targets(manager));
+
+        var b = Windows(manager)["b"];
+        b.Position = new PixelPoint(settled["b"].X + 90, settled["b"].Y);
+        host.SettleAfterDrop(new[] { "b" });
+        Assert.All(PopsToEnd(manager), f => Assert.Equal(1.0, f["b"]));
+        Assert.Equal(settled["b"], b.Position);
+    }
+
+    [AvaloniaFact]
+    public void AnArrivalWithNoOrbOnScreenPopsNothingAndMovesNothing()
+    {
+        var (manager, settled) = FreeGroup();
+        IOrbDragHost host = manager;
+
+        // Nobody moved and the only arrival has no orb: no animation.
+        host.SettleAfterDrop(new[] { "ghost" });
+        Assert.Null(Targets(manager));
+
+        // Somebody moved: the glide runs, with nothing to pop.
+        var b = Windows(manager)["b"];
+        b.Position = new PixelPoint(settled["b"].X + 90, settled["b"].Y);
+        host.SettleAfterDrop(new[] { "ghost" });
+        Assert.Null(Field<Dictionary<string, long>?>(manager, "_arrangePops"));
+        Assert.All(PopsToEnd(manager), f => Assert.Equal(1.0, f["b"]));
+    }
+
+    [AvaloniaFact]
+    public void AnOrbThatLeavesMidPopIsSkippedAndTheAnimationStillEnds()
+    {
+        var (manager, settled) = FreeGroup();
+        var b = Windows(manager)["b"];
+        b.Position = new PixelPoint(settled["b"].X + 90, settled["b"].Y);
+        ((IOrbDragHost)manager).SettleAfterDrop(new[] { "b" });
+        Tick(manager, 16);
+
+        // Its window goes while it is popping. The frames and the landing both
+        // skip it, and the animation still ends. (Only the window is taken
+        // out, so this is the animation's own guard, not a scan's removal.)
+        Windows(manager).Remove("b");
+        PopsToEnd(manager);
+        Assert.Null(Field<Dictionary<string, long>?>(manager, "_arrangePops"));
+    }
+
     // Found while testing M2: a glide whose orb's window went mid-flight was
     // never stepped, so never Done, and the animation never ended, which left
     // every later re-layout deferred behind it for good. A scan removes the
@@ -218,12 +326,15 @@ public class ArrangementMotionTests : IDisposable
         host.SettleAfterDrop(new[] { "b" });
         Tick(manager, 16);
 
+        Assert.NotEqual(1.0, Pop(b));   // mid-pop
+
         var c = Windows(manager)["c"];
         c.Position = new PixelPoint(settled["c"].X - 70, settled["c"].Y);
         host.SettleAfterDrop(new[] { "c" });
 
-        // b was landed on its slot outright; only c is gliding now.
+        // b was landed on its slot outright, its pop at rest; only c is gliding now.
         Assert.Equal(settled["b"], b.Position);
+        Assert.Equal(1.0, Pop(b));
         Assert.Equal(new[] { "c" }, Targets(manager)!.Keys);
         RunToEnd(manager);
         Assert.Equal(settled["c"], c.Position);

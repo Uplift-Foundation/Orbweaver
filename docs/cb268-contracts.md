@@ -424,7 +424,11 @@ The pure pieces are S4's: `Spring` (`Step`, `AtRest`, `Pop` at about 8% overshoo
 - **Free mode mid-glide:** `ReflowPositions` defers (sets `_refitPending`) while a glide is in flight, and the glide re-runs it as it lands. A scan cannot yank a settling orb.
 - **The clock** is `SessionManager.Now` (a `Func<long>`), so tests step the animation on a fake clock (`ArrangementMotionTests`).
 - **Unchanged:** CB-161 (a departure starts no glide), and `ReFittingAnAlreadySettledShapeStartsNoNewGlide`.
-- **M2's squash-and-stretch pop** (1.15 → 0.92 → 1.0, about 280 ms, on `arrivingIds`) is **not wired yet**. It waits on S4's composition of `DragSquash` with a pop scale on the `Disc` render transform: one owner for that transform, so the two can't fight at release.
+- **M2's squash-and-stretch pop** (`DropPop`, pure): on `arrivingIds`, the disc goes 1.0 → **1.15** at 70 ms → **0.92** at 170 ms → **1.0** at **280 ms**, exactly. Each leg is a half-cosine, so the scale is still at every keyframe. It rises from 1.0 instead of starting on 1.15, because a one-frame jump reads as a glitch.
+  - SessionManager hands the scale to juno's **`OrbWindow.SetPopScale`** each frame. OrbWindow composes it with the drag squash (squash × pop) and owns the disc's one render transform.
+  - Each arriving orb's pop starts with its glide, at its stagger. An arriving orb already on its slot still pops, on an animation with nothing to move. An arriving id with no orb on screen is skipped.
+  - The animation ends when every glide has landed **and** every pop has reached 280 ms. Landing the animation early (a second drop) puts every pop back to 1.0, just as it puts every orb on its slot.
+  - **Reduce motion: no pop.** An arrival with nothing to move then starts no animation at all.
 
 ## S7 — integration (architect)
 

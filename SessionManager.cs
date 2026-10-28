@@ -4947,6 +4947,11 @@ namespace Orbweaver
 
         private Dictionary<string, (SpringGlide Glide, long DelayMs)>? _arrangeSprings;
 
+        // M2's pop: the arriving orbs of a drop, each with when its pop starts
+        // (its glide's stagger, or 0 for one already on its slot). DropPop has
+        // the curve. Null when nothing pops, and always under reduce motion.
+        private Dictionary<string, long>? _arrangePops;
+
         // The animation's clock, a seam so tests step it by hand rather than
         // waiting. Every glide is stepped with time since the animation began.
         internal Func<long> Now { get; set; } = () => Environment.TickCount64;
@@ -4957,6 +4962,7 @@ namespace Orbweaver
             _arrangeAnimComplete = onComplete;
             _arrangeAnimStart = Now();
             _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first) : null;
+            _arrangePops = _arrangeSprings is { } springs ? PopsFor(springs, first) : null;
 
             if (_arrangeAnimTimer is null)
             {
@@ -4990,6 +4996,22 @@ namespace Orbweaver
             }
 
             return springs;
+        }
+
+        // The arriving orbs that are on screen, each popping as its glide starts.
+        private Dictionary<string, long>? PopsFor(
+            Dictionary<string, (SpringGlide Glide, long DelayMs)> springs, IReadOnlyCollection<string>? arriving)
+        {
+            if (arriving is null || arriving.Count == 0 || MotionPolicy.ReduceMotion) return null;
+
+            var pops = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (var id in arriving)
+            {
+                if (_windows.ContainsKey(id))
+                    pops[id] = springs.TryGetValue(id, out var spring) ? spring.DelayMs : 0;
+            }
+
+            return pops.Count == 0 ? null : pops;
         }
 
         private void OnArrangeAnimTick(object? sender, EventArgs e)
@@ -5034,6 +5056,13 @@ namespace Orbweaver
                     finishedAll &= landed;
                 }
 
+                foreach (var (id, start) in _arrangePops ?? new Dictionary<string, long>())
+                {
+                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    window.SetPopScale(DropPop.ScaleAt(elapsed - start));
+                    finishedAll &= elapsed - start >= DropPop.DurationMs;
+                }
+
                 finished = finishedAll;
             }
             else
@@ -5069,11 +5098,18 @@ namespace Orbweaver
                 if (_windows.TryGetValue(id, out var window)) window.Position = to;
             }
 
+            // A pop cut short by a second drop ends at rest, like its glide.
+            foreach (var id in _arrangePops?.Keys ?? Enumerable.Empty<string>())
+            {
+                if (_windows.TryGetValue(id, out var window)) window.SetPopScale(1.0);
+            }
+
             _arrangeAnimTimer?.Stop();
             var complete = _arrangeAnimComplete;
             _arrangeAnimComplete = null;
             _arrangeAnimTargets = null;
             _arrangeSprings = null;
+            _arrangePops = null;
             complete?.Invoke();
             RefreshOverlays();
 
@@ -5106,7 +5142,10 @@ namespace Orbweaver
                     moves[id] = (from, window.Position);
             }
 
-            if (moves.Count == 0) return;
+            // Nothing to glide and nobody arriving: no animation at all. An
+            // arriving orb that is already on its slot still pops (M2), on an
+            // animation with nothing to move.
+            if (moves.Count == 0 && (!arrivingIds.Any(_windows.ContainsKey) || MotionPolicy.ReduceMotion)) return;
 
             foreach (var (id, (from, _)) in moves) _windows[id].Position = from;
             _arrangeAnimTargets = moves;
