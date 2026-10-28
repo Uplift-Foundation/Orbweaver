@@ -39,6 +39,51 @@ namespace Orbweaver
             double Spacing,
             PixelPoint? Center = null);
 
+        // CB-268: one group's own shape and anchor, as handed to ComputeGroups.
+        // A group list is indexed by *slot*, and the slot order comes from the
+        // group table rather than from which sessions exist: main, heartbeats,
+        // crons, then user groups ordered by id (see OrbClusters.GroupOf for
+        // why a dense index was rejected). Center is the group's saved anchor
+        // in physical pixels, null if it has never been drawn.
+        //
+        // The signature S2 implements, kept here as a comment rather than a
+        // throwing stub so nothing can call it before it exists:
+        //
+        //   internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+        //       int count, int[] leadOf, int[] groupOf,
+        //       IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null)
+        //
+        // groupOf[i] is a slot index into `groups`, with Compute's rules: out
+        // of range or missing reads as slot 0, and only an anchor's slot is
+        // consulted — a member goes wherever its lead is. layout.Work, Scale
+        // and Spacing apply to every group; layout.Shape and layout.Center are
+        // ignored in favour of each group's own. Positions are window
+        // top-lefts exactly as Compute returns them. docs/cb268-contracts.md
+        // has the fallback rules (no anchors yet → Bands+Compact).
+        /// <summary>One group's shape and saved anchor (physical px), indexed by slot.</summary>
+        internal readonly record struct GroupLayout(string Shape, PixelPoint? Center);
+
+        // What ComputeGroups decided for one group that has orbs on screen —
+        // one entry per non-empty slot, in ascending slot order; an empty slot
+        // gets none. Landed is the anchor the group actually ended up at (the
+        // asked-for one plus its total integer translation, CB-211's rule
+        // applied per group), which the caller saves back when it differs.
+        // SlotBounds is the union of the group's slot boxes in physical
+        // pixels, the box SeparateGroups pushed. DrawnShape is the shape
+        // really drawn — "grid" when a squeezed group fell back to one — and
+        // is what GroupOutline is asked to draw. Orbs are the orb indices in
+        // this group, members included, ascending.
+        //
+        // Orbs is an array, so record equality compares it by reference;
+        // compare Orbs with SequenceEqual in tests.
+        /// <summary>Where one non-empty group landed, and what was drawn for it.</summary>
+        internal readonly record struct GroupPlacement(
+            int Slot,
+            PixelPoint Landed,
+            PixelRect SlotBounds,
+            string DrawnShape,
+            int[] Orbs);
+
         // leadOf[i] is the index of orb i's team lead, or -1 if it leads itself.
         //
         // One shape for everything, which is what the app did before groups
