@@ -137,6 +137,36 @@ public class OrbGroupSubmenuTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void MoveToLeavesOutGroupsWithNothingOnScreen()
+    {
+        var shown = NewGroup();
+        var gone = NewGroup();          // every session in it has ended
+        var orb = NewOrb();
+        orb.GroupsOnScreenForTests = () => new HashSet<string> { OrbGroups.Main, shown.Id };
+        orb.RebuildGroupSubmenu();
+
+        var moveTo = Child(Submenu(orb), "Move to");
+        var targets = Items(moveTo).Select(i => (string)i.Header!).ToList();
+
+        Assert.True(moveTo.IsEnabled);
+        Assert.Contains(shown.Name, targets);
+        Assert.DoesNotContain(gone.Name, targets);
+    }
+
+    [AvaloniaFact]
+    public void MoveToIsDisabledWhenThereIsNowhereToMove()
+    {
+        NewGroup();
+        var orb = NewOrb();
+        orb.GroupsOnScreenForTests = () => new HashSet<string> { OrbGroups.Main };
+        orb.RebuildGroupSubmenu();
+
+        var moveTo = Child(Submenu(orb), "Move to");
+        Assert.Empty(Items(moveTo));
+        Assert.False(moveTo.IsEnabled);
+    }
+
+    [AvaloniaFact]
     public void MovingASoloOrbWritesItsMembership()
     {
         var group = NewGroup();

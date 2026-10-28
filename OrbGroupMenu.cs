@@ -95,6 +95,17 @@ namespace Orbweaver
             return new GroupMenuContext(groupId, rootKey.Length == 0 ? null : rootKey, members);
         }
 
+        // The groups an orb's "Move to" offers: every other group with an orb on
+        // screen, in the table's order, and Main always (Leave group's target).
+        // Without that filter the list kept every group ever made, including the
+        // ones whose sessions had all ended, and only ever grew. A null
+        // `onScreen` (no SessionManager behind the menu) filters nothing.
+        internal static IReadOnlyList<OrbGroup> MoveTargets(
+            IEnumerable<OrbGroup> groups, string currentGroupId, IReadOnlySet<string>? onScreen) =>
+            groups.Where(g => g.Id != currentGroupId &&
+                              (onScreen is null || g.Id == OrbGroups.Main || onScreen.Contains(g.Id)))
+                  .ToList();
+
         // An orb's membership key, empty for an orb with no status or no key.
         internal static string KeyOf(string id, IReadOnlyDictionary<string, SessionStatus> statuses) =>
             statuses.TryGetValue(id, out var status) ? SessionManager.PositionKeyFor(status, id) : "";

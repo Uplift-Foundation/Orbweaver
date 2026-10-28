@@ -19,6 +19,35 @@ public class OrbGroupMenuTests : IDisposable
         foreach (var id in _groups) OrbweaverSettings.DeleteOrbGroup(id);
     }
 
+    // --- Move to: only groups something can be moved next to ---
+
+    private static OrbGroup G(string id) => new(id, id, "line", null, null);
+
+    private static readonly OrbGroup[] Table =
+        { G(OrbGroups.Main), G(OrbGroups.Heartbeats), G(OrbGroups.Crons), G("g-a"), G("g-b"), G("g-c") };
+
+    [Fact]
+    public void MoveToOffersOnlyOtherGroupsWithAnOrbOnScreenAndMainAlways()
+    {
+        var targets = OrbGroupMenu.MoveTargets(Table, "g-a", new HashSet<string> { "g-a", "g-c", OrbGroups.Crons });
+        Assert.Equal(new[] { OrbGroups.Main, OrbGroups.Crons, "g-c" }, targets.Select(g => g.Id));
+    }
+
+    [Fact]
+    public void MoveToNeverOffersTheOrbsOwnGroupNotEvenMain()
+    {
+        var targets = OrbGroupMenu.MoveTargets(Table, OrbGroups.Main, new HashSet<string> { OrbGroups.Main, "g-b" });
+        Assert.Equal(new[] { "g-b" }, targets.Select(g => g.Id));
+    }
+
+    [Fact]
+    public void WithNothingElseOnScreenMoveToIsEmptyForAnOrbInMain() =>
+        Assert.Empty(OrbGroupMenu.MoveTargets(Table, OrbGroups.Main, new HashSet<string> { OrbGroups.Main }));
+
+    [Fact]
+    public void WithoutAnAnswerAboutTheScreenMoveToOffersEveryOtherGroup() =>
+        Assert.Equal(Table.Length - 1, OrbGroupMenu.MoveTargets(Table, "g-a", null).Count);
+
     private SessionStatus Status(string title, string lead = "")
     {
         var status = new SessionStatus { Cwd = _dir, Title = title, Lead = lead };

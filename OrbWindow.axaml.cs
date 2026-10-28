@@ -3391,6 +3391,14 @@ namespace Orbweaver
         // tray icon.
         internal Func<SessionManager?> CurrentManager { get; set; } = () => SessionManager.Instance;
 
+        // The groups with an orb on screen, which "Move to" is filtered to; null
+        // (no manager) filters nothing. A test says which they are here.
+        internal Func<IReadOnlySet<string>?>? GroupsOnScreenForTests { get; set; }
+
+        private IReadOnlySet<string>? GroupsOnScreen() =>
+            GroupsOnScreenForTests is { } forTests ? forTests() : CurrentManager()?.GroupsOnScreen();
+
+
         private readonly SessionDependents.GuardRequests _endGuardRequests = new();
         private bool _endGuardHeld;
 
@@ -3544,15 +3552,15 @@ namespace Orbweaver
             GroupMenuItem.Items.Add(shape);
 
             var moveTo = new MenuItem { Header = "Move to" };
-            foreach (var other in OrbweaverSettings.OrbGroupList())
+            foreach (var other in OrbGroupMenu.MoveTargets(
+                         OrbweaverSettings.OrbGroupList(), group.Id, GroupsOnScreen()))
             {
-                if (other.Id == group.Id) continue;
-
                 var target = other.Id;
                 var item = new MenuItem { Header = other.Name };
                 item.Click += (_, _) => MoveTeamToGroup(context, target);
                 moveTo.Items.Add(item);
             }
+            moveTo.IsEnabled = moveTo.Items.Count > 0;
             GroupMenuItem.Items.Add(moveTo);
 
             var rename = new MenuItem { Header = "Rename…" };

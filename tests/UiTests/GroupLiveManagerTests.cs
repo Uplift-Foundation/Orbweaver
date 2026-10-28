@@ -77,6 +77,27 @@ public class GroupLiveManagerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void AManagerWithNoOrbsHasNoGroupOnScreen() =>
+        Assert.Empty(_manager.GroupsOnScreen());
+
+    [AvaloniaFact]
+    public void AnOrbsMenuAsksItsManagerWhichGroupsAreOnScreen()
+    {
+        // No sessions behind this manager: nothing is on screen, so even a
+        // group that exists is not offered — only Main, which always is.
+        var group = NewGroup();
+        NewGroup();
+        var key = "live-" + Guid.NewGuid();
+        var orb = new OrbWindow(Guid.NewGuid().ToString()) { PositionKey = key };
+        orb.CurrentManager = () => _manager;
+        orb.GroupContextOverride = () => new GroupMenuContext(group.Id, key, Array.Empty<string>());
+        orb.RebuildGroupSubmenu();
+
+        var moveTo = orb.GroupMenuItem.Items.OfType<MenuItem>().Single(i => Equals(i.Header, "Move to"));
+        Assert.Equal(new[] { "Main" }, moveTo.Items.OfType<MenuItem>().Select(i => (string)i.Header!));
+    }
+
+    [AvaloniaFact]
     public void EverySettingsControlTellsTheManager()
     {
         var window = NewSettings();
@@ -131,6 +152,7 @@ public class GroupLiveManagerTests : IDisposable
         var orb = new OrbWindow(Guid.NewGuid().ToString()) { PositionKey = key, SoundKey = key };
         orb.CurrentManager = () => _manager;
         orb.GroupContextOverride = () => new GroupMenuContext(OrbGroups.Main, key, Array.Empty<string>());
+        orb.GroupsOnScreenForTests = () => new HashSet<string> { OrbGroups.Main, group.Id };
         orb.RebuildGroupSubmenu();
 
         orb.GroupMenuItem.Items.OfType<MenuItem>().Single(i => Equals(i.Header, "Shape"))

@@ -5344,6 +5344,16 @@ namespace Orbweaver
 
         IReadOnlyList<string> IOrbDragHost.TeamIdsOf(string sessionId) => VisibleTeams().TeamOf(sessionId);
 
+        // The groups with at least one orb on screen: what an orb's "Move to"
+        // offers. A group whose every session has ended keeps its members (they
+        // rejoin it when they come back), but has nothing to move to.
+        internal IReadOnlySet<string> GroupsOnScreen()
+        {
+            var visible = DisplayOrder().Where(id => _windows.TryGetValue(id, out var w) && w.IsVisible).ToList();
+            var tree = new TeamTree(visible, KnownLeads());
+            return visible.Select(id => GroupIdOf(tree, id)).ToHashSet(StringComparer.Ordinal);
+        }
+
         IReadOnlyList<string> IOrbDragHost.OrbIdsInGroup(string groupId)
         {
             var tree = VisibleTeams();

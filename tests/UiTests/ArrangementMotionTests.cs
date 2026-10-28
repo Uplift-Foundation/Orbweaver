@@ -117,6 +117,24 @@ public class ArrangementMotionTests : IDisposable
         to > from ? at > to : to < from && at < to;
 
     [AvaloniaFact]
+    public void TheGroupsOnScreenAreTheGroupsOfTheOrbsShown()
+    {
+        var group = OrbweaverSettings.CreateOrbGroup("line");
+        try
+        {
+            var manager = Scan(("on-a", "claude"), ("on-b", "codex"));
+            Assert.Equal(new[] { OrbGroups.Main }, manager.GroupsOnScreen());
+
+            OrbweaverSettings.MoveOrbToGroup(Windows(manager)["on-a"].PositionKey, group.Id);
+            manager.ScanAndUpdate();
+
+            Assert.Equal(new[] { OrbGroups.Main, group.Id }.OrderBy(x => x), manager.GroupsOnScreen().OrderBy(x => x));
+            OrbweaverSettings.UnassignOrbGroup(Windows(manager)["on-a"].PositionKey);
+        }
+        finally { OrbweaverSettings.DeleteOrbGroup(group.Id); }
+    }
+
+    [AvaloniaFact]
     public void ArrangingSpringsEachOrbInStaggeredOvershootingAndLandingExactly()
     {
         var manager = Scan(("a", ""), ("b", "codex"), ("c", "grok"));
