@@ -238,7 +238,7 @@ json_string() {
 # %APPDATA% under Git Bash, else under WSL each Windows user's AppData.
 settings_pool_dir() {
   local dir f u home appdata
-  dir="${ORBWEAVER_SETTINGS_DIR:-${CLAUDE_BUDDY_SETTINGS_DIR:-}}"
+  dir="${ORBWEAVER_SETTINGS_DIR:-}"
   if [ -n "$dir" ]; then
     native "$dir"; json_string personaPoolDir "${REPLY%/}/settings.json"; return
   fi
