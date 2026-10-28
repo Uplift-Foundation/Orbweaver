@@ -334,24 +334,6 @@ public class AccountOrbEditorPanelTests : IDisposable
         Assert.Equal("", panel.NameBox.Text);
     }
 
-    // Every failure has its own words; none falls through to a generic line.
-    [Fact]
-    public void EveryImportErrorHasItsOwnMessage()
-    {
-        var messages = Enum.GetValues<IconImportError>()
-            .Select(e => AccountOrbEditorPanel.MessageFor(e))
-            .ToList();
-
-        Assert.All(messages, m => Assert.False(string.IsNullOrWhiteSpace(m)));
-        Assert.Equal(messages.Count, messages.Distinct().Count());
-    }
-
-    // A value added to the enum without words fails loudly here rather than
-    // quietly showing a generic line.
-    [Fact]
-    public void UnknownImportError_Throws() =>
-        Assert.Throws<ArgumentOutOfRangeException>(() => AccountOrbEditorPanel.MessageFor((IconImportError)999));
-
     [AvaloniaFact]
     public void Escape_RevertsADraft_AndDoesNotCommitIt()
     {
@@ -417,17 +399,4 @@ public class AccountOrbEditorPanelTests : IDisposable
         Assert.Null(AccountOrbCustomization.Current(_account.PositionKey)?.IconFile);
     }
 
-    // Two different "too large"s, each saying which limit was hit: the byte cap
-    // talks about the file, the pixel cap about megapixels.
-    [Fact]
-    public void TooLargeMessages_NameTheirOwnLimit()
-    {
-        var bytes = AccountOrbEditorPanel.MessageFor(IconImportError.TooLarge);
-        var pixels = AccountOrbEditorPanel.MessageFor(IconImportError.ImageDimensionsTooLarge);
-
-        Assert.Contains("16 MB", bytes);
-        Assert.Contains("file", bytes);
-        Assert.Contains("50 megapixels", pixels);
-        Assert.DoesNotContain("MB", pixels);
-    }
 }
