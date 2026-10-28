@@ -91,6 +91,14 @@ namespace Orbweaver
             var team = host.TeamIdsOf(pressedId);
             var keys = team.Select(host.PositionKeyOf).ToList();
 
+            // Membership is keyed by position key, and an orb with none (a CLI
+            // with no cwd) has no stable identity to remember. If nothing can be
+            // written there is nothing to join or leave: making the group first
+            // would leave an empty one, with an anchor, in settings.json for
+            // good.
+            if (outcome is not SnapOutcome.NoChange && keys.All(string.IsNullOrEmpty))
+                outcome = new SnapOutcome.NoChange();
+
             switch (outcome)
             {
                 case SnapOutcome.Join join:
@@ -100,11 +108,16 @@ namespace Orbweaver
                 case SnapOutcome.Leave:
                     var made = OrbweaverSettings.CreateOrbGroup();
                     OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1), made.Id);
-                    var drop = host.DiscOf(pressedId);
+
+                    // Anchored at the middle of the team's discs, not at the
+                    // pressed orb: a group's anchor is its shape's centre, and a
+                    // member fanned out from its lead is not where that is.
+                    var discs = team.Select(host.DiscOf).ToList();
+                    var x = (discs.Min(d => d.X - d.R) + discs.Max(d => d.X + d.R)) / 2;
+                    var y = (discs.Min(d => d.Y - d.R) + discs.Max(d => d.Y + d.R)) / 2;
                     OrbweaverSettings.SetOrbGroupAnchor(
                         made.Id,
-                        new OrbweaverSettings.OrbPlacement(
-                            (int)Math.Round(drop.X), (int)Math.Round(drop.Y)));
+                        new OrbweaverSettings.OrbPlacement((int)Math.Round(x), (int)Math.Round(y)));
                     break;
             }
 

@@ -27,7 +27,8 @@ public class OrbDragCommitTests
             Groups.Where(g => g.Value == groupId).Select(g => g.Key).ToList();
         public OrbWindow? WindowOf(string id) => null;
         public string GroupIdOf(string id) => Groups.GetValueOrDefault(id) ?? OrbGroups.Main;
-        public string PositionKeyOf(string id) => "key:" + id;
+        public HashSet<string> KeylessIds { get; } = new();
+        public string PositionKeyOf(string id) => KeylessIds.Contains(id) ? "" : "key:" + id;
         public (double X, double Y, double R) DiscOf(string id) => Discs[id];
 
         public IReadOnlyList<SnapCandidate> CandidatesFor(IReadOnlyCollection<string> excludedIds)
@@ -114,6 +115,44 @@ public class OrbDragCommitTests
         Assert.DoesNotContain(madeId, before);
         Assert.Equal(new OrbweaverSettings.OrbPlacement(310, 221), OrbweaverSettings.OrbGroupFor(madeId)!.Anchor);
         Assert.Equal(1, host.Reapplied);
+    }
+
+    [Fact]
+    public void ReleaseLeavingAnchorsTheNewGroupAtTheMiddleOfTheWholeTeam()
+    {
+        // The pressed orb is a member fanned out to the right of its lead: the
+        // group's shape is centred between them, not on the member.
+        var (host, orb, _) = Scene(5000);
+        var lead = "lead-" + UniqueId();
+        host.Teams[orb] = new[] { lead, orb };
+        host.Discs[lead] = (100, 200, 20);
+        host.Discs[orb] = (180, 200, 10);
+
+        var outcome = OrbDragCommit.Release(host, orb, false, 5, 5, 1);
+
+        Assert.IsType<SnapOutcome.Leave>(outcome);
+        var made = OrbweaverSettings.OrbGroupMembershipFor("key:" + orb)!;
+        // Bounds x 80..190 -> 135; y 180..220 -> 200.
+        Assert.Equal(new OrbweaverSettings.OrbPlacement(135, 200), OrbweaverSettings.OrbGroupFor(made)!.Anchor);
+    }
+
+    [Fact]
+    public void ALeaveOrJoinWithNothingToKeyTheMembershipByDoesNothingAtAll()
+    {
+        var before = OrbweaverSettings.OrbGroupList().Count;
+        var (host, orb, target) = Scene(5000);   // Scene itself made one group
+        before++;
+        host.KeylessIds.Add(orb);
+
+        var outcome = OrbDragCommit.Release(host, orb, false, 5, 5, 1);
+
+        Assert.IsType<SnapOutcome.NoChange>(outcome);
+        Assert.Equal(before, OrbweaverSettings.OrbGroupList().Count);
+
+        // A join to a real group is refused the same way.
+        host.Candidates[1] = new SnapCandidate(target, Array.Empty<Point>(), new[] { (50.0, 0.0, 18.0) });
+        Assert.IsType<SnapOutcome.NoChange>(OrbDragCommit.Release(host, orb, false, 5, 5, 1));
+        Assert.Equal(before, OrbweaverSettings.OrbGroupList().Count);
     }
 
     [Fact]
