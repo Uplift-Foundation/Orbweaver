@@ -147,4 +147,30 @@ public class SettingsWindowAccountOrbRowsTests : IDisposable
 
         Assert.Contains("claude-acme", row.SearchText);
     }
+
+    // Escape in a Settings row reverts the field and never closes Settings: the
+    // row's panel has no close callback and consumes the key, so the window's
+    // own Escape shortcut never sees it.
+    [AvaloniaFact]
+    public void EscapeInARow_RevertsAndLeavesSettingsOpen()
+    {
+        var window = NewWindow();
+        window.Show();
+        try
+        {
+            var panel = PanelsIn(new[] { (Control)window.Sections["codex"] }).Single();
+            panel.NameBox.Text = "draft";
+
+            PressEscape(panel.NameBox);
+            Assert.Equal("", panel.NameBox.Text);
+            Assert.True(window.IsVisible);
+
+            PressEscape(panel.NameBox);
+            Assert.True(window.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }

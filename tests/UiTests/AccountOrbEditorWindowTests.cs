@@ -78,17 +78,49 @@ public class AccountOrbEditorWindowTests
     }
 
     [AvaloniaFact]
-    public void Escape_ClosesTheWindow()
+    public void Escape_InACleanBox_ClosesTheWindow()
     {
         var account = Account("esc-" + Guid.NewGuid().ToString("N")[..6]);
         AccountOrbEditorWindow.Open(account, () => { });
         var window = AccountOrbEditorWindow.Find(account.PositionKey)!;
 
-        window.RaiseEvent(new Avalonia.Input.KeyEventArgs
+        PressEscape(window.Panel.NameBox);
+
+        Assert.Null(AccountOrbEditorWindow.Find(account.PositionKey));
+    }
+
+    // First Escape reverts the draft and keeps the window; the second closes.
+    [AvaloniaFact]
+    public void Escape_WithADraft_RevertsFirstThenCloses()
+    {
+        var account = Account("escd-" + Guid.NewGuid().ToString("N")[..6]);
+        AccountOrbEditorWindow.Open(account, () => { });
+        var window = AccountOrbEditorWindow.Find(account.PositionKey)!;
+        try
         {
-            RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent,
-            Key = Avalonia.Input.Key.Escape
-        });
+            window.Panel.NameBox.Text = "draft";
+            PressEscape(window.Panel.NameBox);
+            Assert.NotNull(AccountOrbEditorWindow.Find(account.PositionKey));
+            Assert.Equal("", window.Panel.NameBox.Text);
+
+            PressEscape(window.Panel.NameBox);
+            Assert.Null(AccountOrbEditorWindow.Find(account.PositionKey));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    // No field focused: Escape reaches the window itself.
+    [AvaloniaFact]
+    public void Escape_OnTheWindowItself_Closes()
+    {
+        var account = Account("escw-" + Guid.NewGuid().ToString("N")[..6]);
+        AccountOrbEditorWindow.Open(account, () => { });
+        var window = AccountOrbEditorWindow.Find(account.PositionKey)!;
+
+        PressEscape(window);
 
         Assert.Null(AccountOrbEditorWindow.Find(account.PositionKey));
     }

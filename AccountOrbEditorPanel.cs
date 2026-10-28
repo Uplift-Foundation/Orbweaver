@@ -118,9 +118,9 @@ namespace Orbweaver
                 TextWrapping = TextWrapping.Wrap
             });
 
-            InitialsBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) CommitInitials(); };
+            InitialsBox.KeyDown += (_, e) => OnKeyDown(e, InitialsBox);
             InitialsBox.LostFocus += (_, _) => CommitInitials();
-            NameBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) CommitName(); };
+            NameBox.KeyDown += (_, e) => OnKeyDown(e, NameBox);
             NameBox.LostFocus += (_, _) => CommitName();
             ChooseIconButton.Click += async (_, _) => await ChooseIconAsync();
             RemoveIconButton.Click += (_, _) => RemoveIcon();
@@ -148,6 +148,30 @@ namespace Orbweaver
         {
             if (string.Equals(positionKey, _account.PositionKey, StringComparison.OrdinalIgnoreCase))
                 Refresh();
+        }
+
+        // Called when Escape is pressed in a box that holds no draft. The Customize
+        // window sets it to close itself; in a Settings row it stays null, so
+        // Escape there only ever reverts and never closes Settings.
+        internal Action? EscapeWithNothingToRevert { get; set; }
+
+        private void OnKeyDown(KeyEventArgs e, TextBox box)
+        {
+            if (e.Key == Key.Enter)
+            {
+                if (ReferenceEquals(box, InitialsBox)) CommitInitials(); else CommitName();
+            }
+            else if (e.Key == Key.Escape)
+            {
+                // Always handled: an unhandled Escape would reach the Settings
+                // window's own Escape-closes shortcut.
+                e.Handled = true;
+                var committed = ReferenceEquals(box, InitialsBox) ? _committedInitials : _committedName;
+                if ((box.Text ?? "") != committed)
+                    box.Text = committed;
+                else
+                    EscapeWithNothingToRevert?.Invoke();
+            }
         }
 
         internal void CommitInitials()
@@ -202,6 +226,8 @@ namespace Orbweaver
             IconImportError.TooLarge => "That image is too large — pick one under 16 MB.",
             IconImportError.NotAnImage => "That file isn't an image.",
             IconImportError.UnsupportedFormat => "Use a PNG, JPG or SVG file.",
+            IconImportError.SvgReferencesExternalContent =>
+                "This SVG links to files outside itself — export it with embedded images.",
             _ => throw new ArgumentOutOfRangeException(nameof(error), error, "No message for this import error")
         };
 

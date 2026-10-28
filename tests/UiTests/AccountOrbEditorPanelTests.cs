@@ -351,4 +351,69 @@ public class AccountOrbEditorPanelTests : IDisposable
     [Fact]
     public void UnknownImportError_Throws() =>
         Assert.Throws<ArgumentOutOfRangeException>(() => AccountOrbEditorPanel.MessageFor((IconImportError)999));
+
+    [AvaloniaFact]
+    public void Escape_RevertsADraft_AndDoesNotCommitIt()
+    {
+        AccountOrbCustomization.SetName(_account.PositionKey, "Stored");
+        var panel = new AccountOrbEditorPanel(_account);
+        var closed = 0;
+        panel.EscapeWithNothingToRevert = () => closed++;
+        panel.NameBox.Text = "typed but not committed";
+
+        PressEscape(panel.NameBox);
+
+        Assert.Equal("Stored", panel.NameBox.Text);
+        Assert.Equal("Stored", AccountOrbCustomization.Current(_account.PositionKey)?.Name);
+        Assert.Equal(0, closed);
+    }
+
+    [AvaloniaFact]
+    public void Escape_RevertsInitialsToo()
+    {
+        AccountOrbCustomization.SetInitials(_account.PositionKey, "ST");
+        var panel = new AccountOrbEditorPanel(_account);
+        panel.InitialsBox.Text = "ZZ";
+
+        PressEscape(panel.InitialsBox);
+
+        Assert.Equal("ST", panel.InitialsBox.Text);
+    }
+
+    // With nothing to revert the editor window closes, but a Settings row (no
+    // callback) does nothing — and either way the key is consumed so Settings'
+    // own Escape shortcut never sees it.
+    [AvaloniaFact]
+    public void Escape_WithNoDraft_CallsBackOnlyWhenWired()
+    {
+        var wired = new AccountOrbEditorPanel(_account);
+        var closed = 0;
+        wired.EscapeWithNothingToRevert = () => closed++;
+        PressEscape(wired.NameBox);
+        Assert.Equal(1, closed);
+
+        var args = new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Escape };
+        new AccountOrbEditorPanel(_account).NameBox.RaiseEvent(args);
+        Assert.True(args.Handled);
+    }
+
+    // End to end: an SVG that links outside itself is refused by the importer
+    // and the editor says why in plain words.
+    [AvaloniaFact]
+    public async Task ChooseIcon_ExternalSvg_ShowsTheNamedMessage()
+    {
+        var svg = Path.Combine(_dir, "linked.svg");
+        File.WriteAllText(svg,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"10\" height=\"10\">"
+            + "<image href=\"https://example.com/logo.png\" width=\"10\" height=\"10\"/></svg>");
+        AccountOrbEditorPanel.ChooseIconFileForTests = () => Task.FromResult<string?>(svg);
+        var panel = new AccountOrbEditorPanel(_account);
+
+        await panel.ChooseIconAsync();
+
+        Assert.True(panel.ErrorText.IsVisible);
+        Assert.Equal(
+            "This SVG links to files outside itself — export it with embedded images.", panel.ErrorText.Text);
+        Assert.Null(AccountOrbCustomization.Current(_account.PositionKey)?.IconFile);
+    }
 }

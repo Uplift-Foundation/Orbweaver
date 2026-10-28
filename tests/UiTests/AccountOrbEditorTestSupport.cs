@@ -37,6 +37,9 @@ internal static class AccountOrbEditorTestSupport
     internal static void PressEnter(TextBox box) =>
         box.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
 
+    internal static void PressEscape(Control control) =>
+        control.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
+
     internal static void LoseFocus(TextBox box) =>
         box.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
 }

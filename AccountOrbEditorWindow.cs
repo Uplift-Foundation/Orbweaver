@@ -55,6 +55,7 @@ namespace Orbweaver
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
             Panel = new AccountOrbEditorPanel(account) { Margin = new Thickness(16) };
+            Panel.EscapeWithNothingToRevert = Close;
             Content = Panel;
 
             KeyDown += (_, e) =>
