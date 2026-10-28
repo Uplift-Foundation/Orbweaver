@@ -114,6 +114,20 @@ namespace BackdropProbe
 
             Console.WriteLine($"env: os={RuntimeInformation.OSDescription} arch={RuntimeInformation.ProcessArchitecture} pid={Environment.ProcessId} at={at}");
 
+            if (args.Contains("--scales"))
+            {
+                // Which factor converts a window's DIPs to its Position units:
+                // Avalonia's declared DesktopScaling, or the one measured off
+                // PointToScreen (OrbWindow.UnitsPerDip). Read, not assumed.
+                var w = new OrbStandIn { Position = at };
+                w.Show();
+                await Pause();
+                var measured = (w.PointToScreen(new Point(64, 0)).X - w.PointToScreen(new Point(0, 0)).X) / 64.0;
+                Console.WriteLine($"scales: DesktopScaling={w.DesktopScaling} RenderScaling={w.RenderScaling} PointToScreenUnitsPerDip={measured} Screen.Scaling={w.Screens.ScreenFromWindow(w)?.Scaling}");
+                w.Close();
+                return;
+            }
+
             if (OperatingSystem.IsMacOS()) await MacProbe.Run(at, args.Contains("--cpu"), Arg(args, "--hold", 0));
             else if (OperatingSystem.IsWindows()) await WinProbe.Run(at);
             else Console.WriteLine("unsupported OS");
