@@ -110,8 +110,20 @@ namespace Orbweaver
             var key = SessionManager.PositionKeyFor(status, id);
             if (key.Length == 0) return null;
 
+            return OrbweaverSettings.OrbGroupMembershipFor(key, FallbackKeyOf(id, statuses));
+        }
+
+        // The bare-directory second chance for an orb's membership lookup, or
+        // null when it has none: Claude Code only, as SessionManager does it for
+        // positions, so one rule serves every caller (MembershipOf, T3's team
+        // fill) and a Codex or Grok orb never takes a Claude Code orb's group.
+        internal static string? FallbackKeyOf(string id, IReadOnlyDictionary<string, SessionStatus> statuses)
+        {
+            if (!statuses.TryGetValue(id, out var status)) return null;
+
+            var key = SessionManager.PositionKeyFor(status, id);
             var directory = status.Source == SessionSource.ClaudeCode ? SessionManager.DirectoryKeyFor(status) : "";
-            return OrbweaverSettings.OrbGroupMembershipFor(key, directory.Length > 0 && directory != key ? directory : null);
+            return directory.Length > 0 && directory != key ? directory : null;
         }
     }
 }

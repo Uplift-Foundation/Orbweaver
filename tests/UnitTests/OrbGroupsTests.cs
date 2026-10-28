@@ -893,4 +893,46 @@ public class OrbGroupsTests
         Assert.Null(table.MembershipFor("a"));
         Assert.Equal(two.Id, table.MembershipFor("b"));
     }
+
+    [Fact]
+    public void ARootGroupedOnlyByItsDirectoryKeyGivesItsMembersThatGroup()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        table.Move("/work/repo", a.Id);
+
+        var changed = table.EnsureTeamMembership(
+            "/work/repo\ntitle", new string?[] { "m1", "m2" }, "/work/repo");
+
+        Assert.True(changed);
+        Assert.Equal(a.Id, table.MembershipFor("m1"));
+        Assert.Equal(a.Id, table.MembershipFor("m2"));
+    }
+
+    [Fact]
+    public void ARootWithNoFallbackGivesItsMembersNothingFromAMatchingDirectoryEntry()
+    {
+        // Codex and Grok roots are passed no fallback, so a Claude Code orb's
+        // directory entry is not theirs to lend.
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        table.Move("/work/repo", a.Id);
+
+        Assert.False(table.EnsureTeamMembership("codex\n/work/repo\ntitle", new string?[] { "m1" }, null));
+        Assert.Null(table.MembershipFor("m1"));
+    }
+
+    [Fact]
+    public void TheRootsOwnKeyBeatsTheFallbackWhenBothExist()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        var b = table.Create(idSource: Ids("g-00000002"));
+        table.Move("/work/repo", a.Id);
+        table.Move("/work/repo\ntitle", b.Id);
+
+        table.EnsureTeamMembership("/work/repo\ntitle", new string?[] { "m1" }, "/work/repo");
+
+        Assert.Equal(b.Id, table.MembershipFor("m1"));
+    }
 }

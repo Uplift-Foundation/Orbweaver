@@ -220,9 +220,18 @@ namespace Orbweaver
         // has one: an explicit different entry is somebody's choice, and the only
         // thing allowed to replace it is a team move, which is AssignTeam. A root
         // with no group of its own has nothing to give.
-        internal bool EnsureTeamMembership(string? rootKey, IEnumerable<string?> memberKeys)
+        //
+        // The root's group is found the way MembershipFor finds anyone's, with the
+        // same optional bare-directory fallback: a root grouped only under its
+        // directory key (saved before titles were part of the key, or before a
+        // retitle) still gives its team that group. The caller applies the Claude
+        // Code-only rule when it chooses `rootFallbackKey` — null for Codex and
+        // Grok — exactly as for MembershipFor, so a Codex root never lends out a
+        // Claude Code orb's group.
+        internal bool EnsureTeamMembership(
+            string? rootKey, IEnumerable<string?> memberKeys, string? rootFallbackKey = null)
         {
-            if (MembershipFor(rootKey) is not { } id) return false;
+            if (MembershipFor(rootKey, rootFallbackKey) is not { } id) return false;
 
             var changed = false;
             foreach (var key in memberKeys)

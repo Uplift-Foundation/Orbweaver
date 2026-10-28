@@ -4962,7 +4962,8 @@ namespace Orbweaver
 
                 OrbweaverSettings.EnsureTeamMembership(
                     OrbGroupMenu.KeyOf(root, _statuses),
-                    team.Skip(1).Select(id => OrbGroupMenu.KeyOf(id, _statuses)));
+                    team.Skip(1).Select(id => OrbGroupMenu.KeyOf(id, _statuses)),
+                    OrbGroupMenu.FallbackKeyOf(root, _statuses));
             }
         }
 

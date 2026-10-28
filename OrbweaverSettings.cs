@@ -1667,8 +1667,9 @@ namespace Orbweaver
         // T3: gives members that have no group the root's. See
         // OrbGroupTable.EnsureTeamMembership — S7 calls it when a late member
         // appears under a lead that has an explicit membership.
-        public static void EnsureTeamMembership(string? rootKey, IEnumerable<string?> memberKeys) =>
-            ChangeGroups(groups => groups.EnsureTeamMembership(rootKey, memberKeys));
+        public static void EnsureTeamMembership(
+            string? rootKey, IEnumerable<string?> memberKeys, string? rootFallbackKey = null) =>
+            ChangeGroups(groups => groups.EnsureTeamMembership(rootKey, memberKeys, rootFallbackKey));
 
         // T1: the group an orb belongs to once its team is considered — the
         // team root's explicit membership, or null so OrbGroups.GroupIdFor falls
