@@ -31,13 +31,6 @@ namespace Orbweaver
         private long _pullAt;
         private DispatcherTimer? _timer;
 
-        // The pointer's last velocity, for the spring back (M5): a flung orb
-        // carries its momentum into the settle. Stale after 60 ms, like the
-        // squash's: a drag that has stopped has no velocity.
-        private int _lastDx, _lastDy;
-        private long _lastMoveAt;
-        private double _velX, _velY;
-        private bool _hasMoved;
 
         internal bool WholeGroup { get; }
 
@@ -82,17 +75,6 @@ namespace Orbweaver
         internal void Move(int dx, int dy)
         {
             var now = OrbWindow.MotionClock();
-            if (_hasMoved && now > _lastMoveAt)
-            {
-                var dt = (now - _lastMoveAt) / 1000.0;
-                _velX = (dx - _lastDx) / dt;
-                _velY = (dy - _lastDy) / dt;
-            }
-
-            _hasMoved = true;
-            _lastDx = dx;
-            _lastDy = dy;
-            _lastMoveAt = now;
             _dx = dx;
             _dy = dy;
 
@@ -170,7 +152,6 @@ namespace Orbweaver
             _timer?.Stop();
             _pressedWindow?.SquashRelease();
 
-            var dropped = _moving.Select(m => (m.Orb, m.Orb.Position)).ToList();
             var outcome = OrbDragCommit.Release(_host, _anchorId, WholeGroup, _dx, _dy, _unitsPerDip);
 
             // Whatever is not in a user group after the release is loose and
@@ -189,26 +170,6 @@ namespace Orbweaver
                 if (!_host.IsArranged) orb.PinAt(orb.Position);
                 if (!string.IsNullOrEmpty(orb.PositionKey) && seen.Add(orb.PositionKey))
                     SessionManager.Instance?.RememberOrbPosition(orb);
-            }
-
-            // M5: a drop that changed nothing springs back to its slot. The
-            // release has just laid the group out, which puts every orb on its
-            // slot at once; put the team back where it was dropped and glide it
-            // there instead, carrying the drag's last velocity in. Only a lead
-            // drag of a team that is laid out has a slot to come back to.
-            if (outcome is SnapOutcome.NoChange && _leadDrag && !WholeGroup && _host.IsLaidOut(_anchorId))
-            {
-                var stale = OrbWindow.MotionClock() - _lastMoveAt > DragSquash.StaleMilliseconds;
-                var velocity = stale ? (0.0, 0.0) : (_velX, _velY);
-
-                foreach (var (orb, drop) in dropped)
-                {
-                    var slot = orb.Position;
-                    if (slot == drop) continue;
-
-                    orb.Position = drop;
-                    orb.GlideTo(slot, velocity);
-                }
             }
 
             return outcome;

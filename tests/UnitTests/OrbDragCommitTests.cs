@@ -14,6 +14,12 @@ public class OrbDragCommitTests
     {
         public bool IsArranged { get; set; } = true;
         public bool IsFree => !IsArranged;
+        public List<string[]> Settles { get; } = new();
+        public void SettleAfterDrop(IReadOnlyCollection<string> arrivingIds)
+        {
+            Settles.Add(arrivingIds.ToArray());
+            Reapplied++;
+        }
         public List<string> OffsetsSaved { get; } = new();
         public List<(IReadOnlyList<string>? Team, string? Target)> PairPreviews { get; } = new();
         public bool LaidOutOverride { get; set; }
@@ -522,5 +528,76 @@ public class OrbDragCommitTests
         // A join previews no pair.
         Assert.Null(host.PairPreviews[^1].Team);
         Assert.Null(host.PairPreviews[^1].Target);
+    }
+
+    // --- the end of a drag goes through the host's one settle (SettleAfterDrop) ---
+
+    [Fact]
+    public void AJoinSettlesWithTheDroppedTeamArriving()
+    {
+        var (host, orb, _) = Scene(50);
+        var lead = "lead-" + UniqueId();
+        host.Teams[lead] = new[] { lead, orb };
+        host.Discs[lead] = (0, 0, 18);
+
+        OrbDragCommit.Release(host, lead, false, 5, 5, 1);
+
+        Assert.Single(host.Settles);
+        Assert.Equal(new[] { lead, orb }.OrderBy(x => x), host.Settles[0].OrderBy(x => x));
+    }
+
+    [Fact]
+    public void APairSettlesWithBothTeamsArriving()
+    {
+        var (host, a, loose, _) = FreeScene(50, 5000);
+        var other = "other-" + UniqueId();
+        host.Teams[loose] = new[] { loose, other };
+        host.Discs[other] = (80, 0, 10);
+
+        OrbDragCommit.Release(host, a, false, 5, 5, 1);
+
+        Assert.Single(host.Settles);
+        Assert.Equal(new[] { a, loose, other }.OrderBy(x => x), host.Settles[0].OrderBy(x => x));
+    }
+
+    [Fact]
+    public void NoChangeLeaveAndLeaveToFreeSettleWithNobodyArriving()
+    {
+        // NoChange (arranged, nothing near).
+        var (h1, a1, _) = Scene(5000, mainX: 70);
+        OrbDragCommit.Release(h1, a1, false, 5, 5, 1);
+        Assert.Single(h1.Settles);
+        Assert.Empty(h1.Settles[0]);
+
+        // Leave (arranged, far from its own group).
+        var (h2, a2, _) = Scene(5000);
+        OrbDragCommit.Release(h2, a2, false, 5, 5, 1);
+        Assert.Single(h2.Settles);
+        Assert.Empty(h2.Settles[0]);
+
+        // LeaveToFree.
+        var (h3, a3, _, g3) = FreeScene(5000, 5000);
+        h3.Groups[a3] = g3;
+        h3.Candidates.RemoveAt(0);
+        h3.Candidates[0] = new SnapCandidate(g3, Array.Empty<Point>(), new[] { (500.0, 0.0, 18.0) });
+        OrbweaverSettings.AssignTeamToGroup("key:" + a3, Array.Empty<string>(), g3);
+        Assert.IsType<SnapOutcome.LeaveToFree>(OrbDragCommit.Release(h3, a3, false, 5, 5, 1));
+        Assert.Single(h3.Settles);
+        Assert.Empty(h3.Settles[0]);
+    }
+
+    [Fact]
+    public void MemberAndWholeGroupDragsSettleWithNobodyArriving()
+    {
+        var (host, lead, member) = TeamScene(laidOut: true);
+        OrbDragCommit.Release(host, member, false, 9, 9, 1);
+        Assert.Single(host.Settles);
+        Assert.Empty(host.Settles[0]);
+
+        var (h2, a, _, group) = FreeScene(5000, 5000);
+        h2.Groups[a] = group;
+        OrbDragCommit.Release(h2, a, true, 12, -7, 1);
+        Assert.Single(h2.Settles);
+        Assert.Empty(h2.Settles[0]);
     }
 }

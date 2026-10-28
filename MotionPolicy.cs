@@ -76,6 +76,10 @@ namespace Orbweaver
         /// </summary>
         internal static double ReducedGlide(double from, double to, double elapsedSeconds)
         {
+            // Non-finite inputs finish at the target (or stay put if that is not
+            // a number either): a glitching clock must not move an orb to NaN.
+            if (!Finite.All(from, to)) return Finite.Or(to, Finite.Or(from, 0));
+            if (!Finite.All(elapsedSeconds)) return to;
             if (elapsedSeconds >= ReducedGlideSeconds) return to;
             if (elapsedSeconds <= 0) return from;
 
@@ -85,6 +89,7 @@ namespace Orbweaver
         /// <summary>Slow in, fast through the middle, slow out. 0 at 0, 1 at 1, clamped outside.</summary>
         internal static double EaseInOutCubic(double t)
         {
+            if (double.IsNaN(t)) return 1;
             t = Math.Clamp(t, 0, 1);
             return t < 0.5 ? 4 * t * t * t : 1 - Math.Pow(-2 * t + 2, 3) / 2;
         }

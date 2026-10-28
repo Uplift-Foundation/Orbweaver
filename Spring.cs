@@ -34,6 +34,23 @@ namespace Orbweaver
         /// <summary>A gentle, nearly critical settle with about 1% overshoot, for things that should relax rather than bounce.</summary>
         internal static readonly SpringParams Relax = new(Omega: 18, Zeta: DampingRatioForOvershoot(0.01));
 
+        /// <summary>About 20% overshoot with a couple of visible wobbles: a contract that settles with a wobble.</summary>
+        internal static readonly SpringParams Wobble = new(Omega: 28, Zeta: DampingRatioForOvershoot(0.20));
+
+        /// <summary>
+        /// Progress from 0 to 1 after <paramref name="elapsedSeconds"/>, for a
+        /// spring starting at rest: overshoots by the preset's fraction and is
+        /// exactly 1.0 once it has rested. A negative or non-finite time reads
+        /// as the start (0) or the end (1) respectively.
+        /// </summary>
+        internal static double Evaluate(double elapsedSeconds, SpringParams p)
+        {
+            if (double.IsNaN(elapsedSeconds) || elapsedSeconds <= 0) return 0;
+            if (double.IsPositiveInfinity(elapsedSeconds)) return 1;
+
+            return Step(new SpringState(0, 0), 1, elapsedSeconds, p).Value;
+        }
+
         /// <summary>
         /// The damping ratio whose first overshoot is <paramref name="overshoot"/>
         /// (a fraction of the distance travelled: 0.08 is 8%). 0 or less is
@@ -62,6 +79,12 @@ namespace Orbweaver
         /// </summary>
         internal static SpringState Step(SpringState state, double target, double dt, SpringParams p)
         {
+            // A non-finite time skips the step and a non-finite target never
+            // moves it (a NaN here would poison every later frame); a spring
+            // whose own state is already non-finite is put on the target.
+            if (!Finite.All(dt, target)) return Finite.All(state.Value, state.Velocity) ? state : new SpringState(Finite.Or(target, 0), 0);
+            if (!Finite.All(state.Value, state.Velocity)) return new SpringState(target, 0);
+            if (!Finite.All(p.Omega, p.Zeta)) return new SpringState(target, 0);
             if (dt <= 0) return state;
             if (p.Omega <= 0) return new SpringState(target, 0);
 

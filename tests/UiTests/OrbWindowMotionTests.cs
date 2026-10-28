@@ -37,6 +37,12 @@ public class OrbWindowMotionTests : IDisposable
         // Where ReapplyArrangement puts an orb: its slot, instantly, as the real
         // arrangement does.
         public Dictionary<string, PixelPoint> Slots { get; } = new();
+        public List<IReadOnlyCollection<string>> Settles { get; } = new();
+        public void SettleAfterDrop(IReadOnlyCollection<string> arrivingIds)
+        {
+            Settles.Add(arrivingIds.ToList());
+            ReapplyArrangement();
+        }
 
         public IReadOnlyList<string> TeamIdsOf(string id) => new[] { id };
         public string GroupIdOf(string id) => OrbweaverSettings.OrbGroupMembershipFor("key:" + id) ?? OrbGroups.Main;
@@ -190,7 +196,7 @@ public class OrbWindowMotionTests : IDisposable
 
         var m = roster.Windows[a].SquashMatrix;
         Assert.NotEqual(Matrix.Identity, m);
-        Assert.InRange(m.M11, 1.07, 1.115);   // longer along the drag (x)
+        Assert.InRange(m.M11, 1.07, 1.1001);   // longer along the drag (x), never past 10%
         Assert.True(m.M22 < 1);               // narrower across it
         Assert.Equal(Matrix.Identity, roster.Windows[b].SquashMatrix);
     }
@@ -275,152 +281,115 @@ public class OrbWindowMotionTests : IDisposable
         Assert.Equal(Matrix.Identity, roster.Windows[b].SquashMatrix);
     }
 
-    // --- M5: spring back ---
+    // --- M5: the spring back is the host's (SettleAfterDrop) ---
 
     // An arranged team whose slot is (100,100), dragged to (160,100) and dropped
-    // where nothing snaps: the release re-lays it out onto the slot at once, and
-    // the session turns that into a glide from the drop point.
-    private (Roster Roster, string A, OrbDragSession Session) Dropped(int pointerFrames = 4)
+    // where nothing snaps. The drag no longer animates the return itself: it
+    // hands the host one SettleAfterDrop with no arriving ids, and the host's
+    // glide (the one engine) moves every orb from where it was dropped.
+    [AvaloniaFact]
+    public void ANoChangeDropAsksTheHostToSettleWithNoArrivingOrbs()
     {
         var (roster, a, _) = Scene();
         roster.Arranged = true;
         roster.Slots[a] = new PixelPoint(100, 100);
         var session = new OrbDragSession(roster, a, DragSource.Orb, false, 1.0);
-        for (var i = 1; i <= pointerFrames; i++)
-        {
-            _now += 16;
-            session.Move(15 * i, 0);   // 60 px in total, at 937 DIP/s
-        }
-
-        return (roster, a, session);
-    }
-
-    [AvaloniaFact]
-    public void ANoChangeDropSpringsBackWithOvershootAndEndsExactlyOnTheSlot()
-    {
-        var (roster, a, session) = Dropped();
-        var w = roster.Windows[a];
-        _now += 200;   // the pointer was still when it let go: no carried velocity
-
-        session.End();
-
-        Assert.Equal(new PixelPoint(160, 100), w.Position);   // starts from the drop, not the slot
-        Assert.True(w.IsGliding);
-
-        var lowest = int.MaxValue;
-        for (var i = 0; i < 120 && w.IsGliding; i++)
-        {
-            _now += 16;
-            w.StepGlide(_now);
-            lowest = Math.Min(lowest, w.Position.X);
-        }
-
-        Assert.InRange(lowest, 93, 99);                       // past the slot, by under ~9% of 60
-        Assert.Equal(new PixelPoint(100, 100), w.Position);   // and then exactly on it
-        Assert.False(w.IsGliding);
-    }
-
-    [AvaloniaFact]
-    public void TheDragsLastVelocityIsCarriedIntoTheSpringBack()
-    {
-        var (rosterStill, aStill, sessionStill) = Dropped();
-        _now += 200;
-        sessionStill.End();
         _now += 16;
-        rosterStill.Windows[aStill].StepGlide(_now);
-        var still = rosterStill.Windows[aStill].Position.X;
+        session.Move(60, 0);
 
-        // The same drop, released at once while still moving away from the slot.
-        var (roster, a, session) = Dropped();
         session.End();
-        _now += 16;
-        roster.Windows[a].StepGlide(_now);
 
-        Assert.True(roster.Windows[a].Position.X > still, "momentum carries it a little further out first");
+        Assert.Single(roster.Settles);
+        Assert.Empty(roster.Settles[0]);
+        // The default settle is the instant re-layout: the orb is on its slot.
+        Assert.Equal(new PixelPoint(100, 100), roster.Windows[a].Position);
     }
 
     [AvaloniaFact]
-    public void ReduceMotionSpringBackIsAPlainGlideOfAbout150MsWithNoOvershoot()
-    {
-        var (roster, a, session) = Dropped();
-        var w = roster.Windows[a];
-        _now += 200;
-        MotionPolicy.ReduceMotionProbe = () => true;
-
-        session.End();
-        var xs = new List<int>();
-        for (var i = 0; i < 20 && w.IsGliding; i++)
-        {
-            _now += 16;
-            w.StepGlide(_now);
-            xs.Add(w.Position.X);
-        }
-
-        Assert.All(xs, x => Assert.InRange(x, 100, 160));
-        Assert.Equal(xs.OrderByDescending(x => x), xs);   // only ever towards the slot
-        Assert.Equal(new PixelPoint(100, 100), w.Position);
-        Assert.InRange(xs.Count, 8, 11);                  // 150 ms of 16 ms frames
-    }
-
-    [AvaloniaFact]
-    public void ADropThatJoinsDoesNotSpringBackBecauseTheArrangementOwnsThatMotion()
+    public void ADropThatJoinsAsksTheHostToSettleWithTheDroppedTeamArriving()
     {
         var (roster, a, _) = Scene();
-        roster.Arranged = true;
         var session = new OrbDragSession(roster, a, DragSource.Orb, false, 1.0);
         _now += 16;
         session.Move(250, 0);   // 14 from B: Join
 
         session.End();
 
-        Assert.False(roster.Windows[a].IsGliding);
+        Assert.Single(roster.Settles);
+        Assert.Equal(new[] { a }, roster.Settles[0]);
     }
 
     [AvaloniaFact]
-    public void ALooseOrbDroppedInFreeModeStaysWhereItWasDropped()
+    public void ADraggedOrbIsNeverMovedByTheDragItselfAfterTheRelease()
     {
+        // No glide of the drag's own: after End the position is whatever the
+        // host's settle left, and nothing steps it afterwards.
         var (roster, a, _) = Scene();
         var session = new OrbDragSession(roster, a, DragSource.Orb, false, 1.0);
         _now += 16;
-        session.Move(100, 0);   // nowhere near anything, nothing lays it out
-
+        session.Move(100, 0);
         session.End();
+        var at = roster.Windows[a].Position;
 
-        Assert.False(roster.Windows[a].IsGliding);
-        Assert.Equal(new PixelPoint(200, 100), roster.Windows[a].Position);
+        _now += 1000;
+
+        Assert.Equal(at, roster.Windows[a].Position);
+    }
+
+    // --- arrival pop composed with the squash (Disc transform has one owner) ---
+
+    [AvaloniaFact]
+    public void ThePopScaleScalesTheDiscUniformly()
+    {
+        var w = new OrbWindow("pop-" + Uid());
+
+        w.SetPopScale(1.15);
+
+        Assert.Equal(1.15, w.SquashMatrix.M11, 9);
+        Assert.Equal(1.15, w.SquashMatrix.M22, 9);
+        Assert.Equal(0.0, w.SquashMatrix.M12, 9);
+
+        w.SetPopScale(1.0);
+        Assert.Equal(Matrix.Identity, w.SquashMatrix);
     }
 
     [AvaloniaFact]
-    public void ADropThatIsAlreadyOnItsSlotDoesNotGlide()
+    public void PopAndSquashComposeInsteadOfFighting()
     {
-        var (roster, a, session) = Dropped();
-        roster.Slots[a] = new PixelPoint(160, 100);   // the slot is where it was dropped
-        _now += 200;
+        var (roster, a, _) = Scene();
+        var w = roster.Windows[a];
+        var session = new OrbDragSession(roster, a, DragSource.Orb, false, 1.0);
+        for (var i = 1; i <= 30; i++)
+        {
+            _now += 16;
+            session.Move(20 * i, 0);
+        }
 
-        session.End();
+        var squashed = w.SquashMatrix;
+        w.SetPopScale(1.15);
 
-        Assert.False(roster.Windows[a].IsGliding);
-        Assert.Equal(new PixelPoint(160, 100), roster.Windows[a].Position);
+        // Along the drag: stretch times pop; across it: squeeze times pop.
+        Assert.Equal(squashed.M11 * 1.15, w.SquashMatrix.M11, 9);
+        Assert.Equal(squashed.M22 * 1.15, w.SquashMatrix.M22, 9);
+
+        // The squash keeps updating under the pop rather than overwriting it.
+        _now += 16;
+        w.StepSquash(_now);
+        Assert.True(w.SquashMatrix.M11 > 1.1);
     }
 
-    [AvaloniaFact]
-    public void AGlideStartedWhileAlreadyAtTheTargetEndsAtOnce()
+    [AvaloniaTheory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(0.0)]
+    [InlineData(-2.0)]
+    public void ANonsensePopScaleReadsAsRest(double bad)
     {
-        var w = new OrbWindow("glide-" + Uid()) { Position = new PixelPoint(5, 5) };
+        var w = new OrbWindow("badpop-" + Uid());
+        w.SetPopScale(1.3);
 
-        w.GlideTo(new PixelPoint(5, 5), (0, 0));
+        w.SetPopScale(bad);
 
-        Assert.False(w.IsGliding);
-        Assert.Equal(new PixelPoint(5, 5), w.Position);
-    }
-
-    [AvaloniaFact]
-    public void SteppingWithNoGlideChangesNothing()
-    {
-        var w = new OrbWindow("idle-" + Uid()) { Position = new PixelPoint(7, 7) };
-
-        w.StepGlide(_now);
-
-        Assert.Equal(new PixelPoint(7, 7), w.Position);
+        Assert.Equal(Matrix.Identity, w.SquashMatrix);
     }
 }

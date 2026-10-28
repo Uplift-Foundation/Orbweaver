@@ -215,4 +215,75 @@ public class SpringTests
     {
         Assert.InRange(Run(0, 1, Spring.Relax, dt: 0.001).Peak - 1, 0.0, 0.015);
     }
+
+    [Fact]
+    public void EvaluateIsProgressFromRestEndingExactlyOnOne()
+    {
+        Assert.Equal(0.0, Spring.Evaluate(0, Spring.Pop));
+        Assert.Equal(0.0, Spring.Evaluate(-1, Spring.Pop));
+        Assert.Equal(0.0, Spring.Evaluate(double.NaN, Spring.Pop));
+        Assert.Equal(1.0, Spring.Evaluate(double.PositiveInfinity, Spring.Pop));
+        Assert.Equal(1.0, Spring.Evaluate(5, Spring.Pop));
+
+        var peak = 0.0;
+        for (var t = 0.0; t < 1.5; t += 0.001) peak = Math.Max(peak, Spring.Evaluate(t, Spring.Pop));
+        Assert.InRange(peak, 1.07, 1.09);   // the 8% swell
+    }
+
+    [Fact]
+    public void ThePopPresetRestsWithinAboutThreeHundredMilliseconds()
+    {
+        double t = 0;
+        while (Spring.Evaluate(t, Spring.Pop) != 1.0 && t < 2) t += 0.001;
+
+        Assert.InRange(t, 0.15, 0.55);
+    }
+
+    [Fact]
+    public void TheWobblePresetOvershootsAboutTwentyPercent()
+    {
+        var peak = 0.0;
+        for (var t = 0.0; t < 2; t += 0.001) peak = Math.Max(peak, Spring.Evaluate(t, Spring.Wobble));
+
+        Assert.InRange(peak, 1.18, 1.22);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void ANonFiniteTimeStepSkipsTheStepInsteadOfPoisoningTheState(double dt)
+    {
+        var state = new SpringState(3, 4);
+
+        Assert.Equal(state, Spring.Step(state, 10, dt, Spring.Pop));
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void ANonFiniteTargetNeverMovesIt(double target)
+    {
+        var state = new SpringState(3, 4);
+
+        Assert.Equal(state, Spring.Step(state, target, 0.016, Spring.Pop));
+    }
+
+    [Fact]
+    public void AStateThatIsAlreadyNonFiniteIsPutOnTheTarget()
+    {
+        Assert.Equal(new SpringState(10, 0), Spring.Step(new SpringState(double.NaN, 0), 10, 0.016, Spring.Pop));
+        Assert.Equal(new SpringState(10, 0), Spring.Step(new SpringState(0, double.PositiveInfinity), 10, 0.016, Spring.Pop));
+        // Both broken at once: the target if it is a number, else zero.
+        Assert.Equal(new SpringState(0, 0), Spring.Step(new SpringState(double.NaN, 0), double.NaN, double.NaN, Spring.Pop));
+        Assert.Equal(new SpringState(10, 0), Spring.Step(new SpringState(double.NaN, 0), 10, double.NaN, Spring.Pop));
+    }
+
+    [Fact]
+    public void NonFiniteParametersPutItOnTheTarget()
+    {
+        Assert.Equal(new SpringState(10, 0), Spring.Step(new SpringState(3, 4), 10, 0.016, new SpringParams(double.NaN, 1)));
+        Assert.Equal(new SpringState(10, 0), Spring.Step(new SpringState(3, 4), 10, 0.016, new SpringParams(20, double.NaN)));
+    }
 }

@@ -125,4 +125,27 @@ public class MotionPolicyTests : IDisposable
     {
         Assert.Equal(expected, MotionPolicy.EaseInOutCubic(t), 9);
     }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void ANonFiniteElapsedTimeFinishesAtTheTargetNeverNaN(double elapsed)
+    {
+        Assert.Equal(110.0, MotionPolicy.ReducedGlide(10, 110, elapsed));
+    }
+
+    [Fact]
+    public void NonFiniteEndpointsNeverProduceNaN()
+    {
+        Assert.Equal(7.0, MotionPolicy.ReducedGlide(double.NaN, 7, 0.05));
+        Assert.Equal(3.0, MotionPolicy.ReducedGlide(3, double.NaN, 0.05));
+        Assert.Equal(0.0, MotionPolicy.ReducedGlide(double.NaN, double.NaN, 0.05));
+    }
+
+    [Fact]
+    public void EaseOfNaNIsDone()
+    {
+        Assert.Equal(1.0, MotionPolicy.EaseInOutCubic(double.NaN));
+    }
 }

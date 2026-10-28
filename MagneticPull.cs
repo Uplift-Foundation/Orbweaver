@@ -29,7 +29,8 @@ namespace Orbweaver
         internal static (double X, double Y) Offset(
             IReadOnlyList<(double X, double Y, double R)> moving, SnapCandidate target, double joinDip)
         {
-            if (moving.Count == 0 || joinDip <= 0) return (0, 0);
+            if (moving.Count == 0 || !Finite.All(joinDip) || joinDip <= 0) return (0, 0);
+            if (!AllFinite(moving, target)) return (0, 0);
 
             var best = (Gap: double.PositiveInfinity, Dx: 0.0, Dy: 0.0);
 
@@ -42,13 +43,26 @@ namespace Orbweaver
                     ConsiderOutline(ref best, new Point(x, y), r, target.Outline);
             }
 
-            if (double.IsInfinity(best.Gap) || best.Gap <= 0 || best.Gap > joinDip) return (0, 0);
+            if (!Finite.All(best.Gap) || best.Gap <= 0 || best.Gap > joinDip) return (0, 0);
 
             var depth = (joinDip - best.Gap) / joinDip;
             var weight = Smooth(Math.Clamp(depth / RampDepth, 0, 1));
             var pull = MaxFraction * best.Gap * weight;
 
             return (best.Dx * pull, best.Dy * pull);
+        }
+
+        // Any non-finite number anywhere in the geometry means there is no
+        // reliable direction to pull in, so there is no pull.
+        private static bool AllFinite(IReadOnlyList<(double X, double Y, double R)> moving, SnapCandidate target)
+        {
+            foreach (var (x, y, r) in moving)
+                if (!Finite.All(x, y, r)) return false;
+            foreach (var (x, y, r) in target.Discs)
+                if (!Finite.All(x, y, r)) return false;
+            foreach (var p in target.Outline)
+                if (!Finite.All(p.X, p.Y)) return false;
+            return true;
         }
 
         /// <summary>The pull's smoothstep: 0 at 0, 1 at 1, flat at both ends.</summary>

@@ -111,4 +111,79 @@ public class SpringGlideTests
         Assert.Equal(new PixelPoint(0, 0), first);
         Assert.False(glide.Done);
     }
+
+    // The most the orb may go beyond where its spring takes it anyway: 8% of the
+    // distance to the slot, or 12 DIP, whichever is larger (the lead's ruling;
+    // DIP, so a 2x display allows 24 screen units).
+    private static double Allowed(double distance, double units) =>
+        Math.Max(SpringGlide.MaxOvershootFraction * distance, SpringGlide.MaxOvershootDip * units);
+
+    [Theory]
+    [InlineData(2000, 5, 1)] [InlineData(2000, 20, 1)] [InlineData(2000, 400, 1)]
+    [InlineData(8000, 5, 1)] [InlineData(8000, 20, 1)] [InlineData(8000, 400, 1)]
+    [InlineData(30000, 5, 1)] [InlineData(30000, 20, 1)] [InlineData(30000, 400, 1)]
+    [InlineData(100000, 5, 1)] [InlineData(100000, 20, 1)] [InlineData(100000, 400, 1)]
+    [InlineData(2000, 5, 2)] [InlineData(2000, 20, 2)] [InlineData(2000, 400, 2)]
+    [InlineData(8000, 5, 2)] [InlineData(8000, 20, 2)] [InlineData(8000, 400, 2)]
+    [InlineData(30000, 5, 2)] [InlineData(30000, 20, 2)] [InlineData(30000, 400, 2)]
+    [InlineData(100000, 5, 2)] [InlineData(100000, 20, 2)] [InlineData(100000, 400, 2)]
+    public void AFlungReleaseNeverThrowsTheOrbFarPastItsSlot(double speed, int distance, double units)
+    {
+        foreach (var direction in new[] { 1, -1 })
+        {
+            // Flung along the way to the slot, and flung straight away from it.
+            foreach (var along in new[] { 1, -1 })
+            {
+                var target = new PixelPoint(0, 0);
+                var from = new PixelPoint(direction * distance, 0);
+                var velocity = (X: speed * along, Y: 0.0);
+                var glide = new SpringGlide(from, target, velocity, 0, false, units);
+
+                // Excursion past the slot (the far side) and out beyond the start.
+                var side = direction;   // + when the orb started on the + side
+                var past = 0.0;
+                var beyond = 0.0;
+                for (long t = 1; t < 3000 && !glide.Done; t++)
+                {
+                    var x = glide.Step(t).X * side;
+                    past = Math.Max(past, -x);
+                    beyond = Math.Max(beyond, x - distance);
+                }
+
+                var limit = Allowed(distance, units) + 1.5;   // pixel rounding
+                Assert.True(past <= limit, $"speed {speed}, slot {distance}, units {units}, along {along}: past {past} > {limit}");
+                Assert.True(beyond <= limit, $"speed {speed}, slot {distance}, units {units}, along {along}: beyond {beyond} > {limit}");
+                Assert.Equal(target, glide.Step(99999));   // and still ends exactly on it
+            }
+        }
+    }
+
+    [Fact]
+    public void ASlowReleaseIsCarriedWhollyAndOnlyAFastOneIsCapped()
+    {
+        Assert.Equal(50.0, SpringGlide.CapVelocity(0, 400, 50, 1));
+        Assert.Equal(0.0, SpringGlide.CapVelocity(0, 400, 0, 1));
+        var capped = SpringGlide.CapVelocity(0, 20, -30000, 1);
+        Assert.True(capped < 0 && capped > -30000);
+    }
+
+    [Fact]
+    public void ANonFiniteReleaseVelocityCarriesNothing()
+    {
+        var glide = new SpringGlide(new PixelPoint(50, 0), new PixelPoint(0, 0), (double.NaN, double.PositiveInfinity), 0, false);
+
+        var p = glide.Step(16);
+
+        Assert.InRange(p.X, 0, 50);
+        Assert.Equal(0, p.Y);
+    }
+
+    [Fact]
+    public void ANonsenseUnitsFactorReadsAsOne()
+    {
+        var a = new SpringGlide(new PixelPoint(0, 0), new PixelPoint(20, 0), (30000, 0), 0, false, double.NaN);
+        var b = new SpringGlide(new PixelPoint(0, 0), new PixelPoint(20, 0), (30000, 0), 0, false, 1);
+
+        Assert.Equal(b.Step(16), a.Step(16));
+    }
 }

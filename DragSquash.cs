@@ -30,7 +30,13 @@ namespace Orbweaver
         // velocity would otherwise stay "current" for ever.
         internal const long StaleMilliseconds = 60;
 
-        private static readonly SpringParams Params = new(Omega: 32, Zeta: 0.55, RestDelta: 0.0005, RestVelocity: 0.005);
+        private const double Zeta = 0.55;
+        private static readonly SpringParams Params = new(Omega: 32, Zeta: Zeta, RestDelta: 0.0005, RestVelocity: 0.005);
+
+        // The spring overshoots its target (Zeta 0.55 by about 12%), so the
+        // target is scaled down until the PEAK is MaxStretch: "up to 10%" is
+        // meant literally.
+        private static readonly double TargetScale = 1 / (1 + Spring.Overshoot(Zeta));
 
         private SpringState _stretch;
         private double _lastX, _lastY;
@@ -52,6 +58,10 @@ namespace Orbweaver
         /// </summary>
         internal void Observe(double x, double y, long nowMs)
         {
+            // A pointer sample that is not a number is ignored: the last good
+            // one still stands and nothing non-finite reaches the matrix.
+            if (!Finite.All(x, y)) return;
+
             if (_hasObserved && nowMs > _lastObservedAt)
             {
                 var dt = (nowMs - _lastObservedAt) / 1000.0;
@@ -89,7 +99,7 @@ namespace Orbweaver
 
             var moving = _active && nowMs - _lastObservedAt <= StaleMilliseconds;
             var target = moving && MotionPolicy.AllowsSquash
-                ? Math.Min(1, _speed / FullSpeed) * MaxStretch
+                ? Math.Min(1, _speed / FullSpeed) * MaxStretch * TargetScale
                 : 0;
 
             if (!moving) _active = false;
@@ -116,7 +126,10 @@ namespace Orbweaver
 
         internal Matrix Current()
         {
-            var s = _stretch.Value;
+            // Clamped as well: a spring driven by a changing speed can overshoot
+            // a little more than one started from rest, and the stretch is
+            // never to exceed MaxStretch in either direction.
+            var s = Math.Clamp(_stretch.Value, -MaxStretch, MaxStretch);
             if (s == 0) return Matrix.Identity;
 
             // Scale by (1+s) along the direction of travel and 1/(1+s) across it:

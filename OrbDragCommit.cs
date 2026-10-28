@@ -54,6 +54,16 @@ namespace Orbweaver
 
         /// <summary>Re-lays out whatever the current mode lays out: the user groups always, the predefined groups while arranged.</summary>
         void ReapplyArrangement();
+
+        /// <summary>
+        /// The end of a drag: re-lay out the current mode and move every orb that
+        /// has to move to its slot. <paramref name="arrivingIds"/> are the orbs
+        /// that just joined or paired and get the arrival pop; an empty set is a
+        /// drop that changed nothing (it springs back to its slots), a leave, a
+        /// member drag or a whole-group drag. Defaults to the instant
+        /// <see cref="ReapplyArrangement"/> until the roster animates it.
+        /// </summary>
+        void SettleAfterDrop(IReadOnlyCollection<string> arrivingIds) => ReapplyArrangement();
     }
 
     // Where the drag handlers find the roster. Null until SessionManager sets it
@@ -125,7 +135,7 @@ namespace Orbweaver
             if (wholeGroup)
             {
                 host.ShiftGroupAnchor(host.GroupIdOf(pressedId), dx, dy);
-                host.ReapplyArrangement();
+                host.SettleAfterDrop(Array.Empty<string>());
                 return new SnapOutcome.NoChange();
             }
 
@@ -134,7 +144,7 @@ namespace Orbweaver
                 if (host.IsLaidOut(pressedId))
                 {
                     host.SaveMemberOffset(pressedId);
-                    host.ReapplyArrangement();
+                    host.SettleAfterDrop(Array.Empty<string>());
                 }
 
                 return new SnapOutcome.NoChange();
@@ -194,7 +204,16 @@ namespace Orbweaver
                     break;
             }
 
-            host.ReapplyArrangement();
+            // The orbs that just arrived in a group (a Join, or both teams of a
+            // Pair) pop; everything else that moves just settles.
+            IReadOnlyCollection<string> arriving = outcome switch
+            {
+                SnapOutcome.Join => team,
+                SnapOutcome.Pair => team.Concat(otherTeam).ToList(),
+                _ => Array.Empty<string>(),
+            };
+
+            host.SettleAfterDrop(arriving);
             return outcome;
         }
 

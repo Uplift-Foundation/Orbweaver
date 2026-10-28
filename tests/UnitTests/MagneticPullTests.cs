@@ -138,4 +138,16 @@ public class MagneticPullTests
         Assert.Equal(1.0, MagneticPull.Smooth(1));
         Assert.Equal(1.0, MagneticPull.Smooth(7));
     }
+
+    [Fact]
+    public void NonFiniteGeometryPullsNothingAndNeverNaN()
+    {
+        var n = double.NaN;
+        Assert.Equal((0.0, 0.0), MagneticPull.Offset(Team(n, 0), Disc(40, 0), 24));
+        Assert.Equal((0.0, 0.0), MagneticPull.Offset(Team(0, 0), Disc(40, n), 24));
+        Assert.Equal((0.0, 0.0), MagneticPull.Offset(Team(0, 0, double.PositiveInfinity), Disc(40, 0), 24));
+        Assert.Equal((0.0, 0.0), MagneticPull.Offset(Team(0, 0), Disc(40, 0), double.NaN));
+        var badOutline = new SnapCandidate("g", new[] { new Point(0, 0), new Point(n, 5), new Point(9, 9) }, System.Array.Empty<(double, double, double)>());
+        Assert.Equal((0.0, 0.0), MagneticPull.Offset(Team(-50, 0), badOutline, 24));
+    }
 }
