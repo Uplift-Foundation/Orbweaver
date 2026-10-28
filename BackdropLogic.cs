@@ -24,12 +24,17 @@ namespace Orbweaver
         // changed since `previous` (so the native call happens only on a change).
         // `previous` null means "never set", which always yields an answer — the
         // spike found the default, never-set state unreliable.
+        //
+        // `orbDiscs` (same space) are the orbs sitting on this backdrop: inside one
+        // the answer is always false, so an orb keeps its own click even if the
+        // window order is wrong for a moment (a first show can land in front).
         internal static bool? ShouldCatch(
-            Point cursor, Rect bounds, Point[] polygon, bool buttonsDown, bool? previous)
+            Point cursor, Rect bounds, Point[] polygon,
+            IReadOnlyList<(double X, double Y, double R)> orbDiscs, bool buttonsDown, bool? previous)
         {
             if (buttonsDown) return null;
 
-            var want = InsideSilhouette(cursor, bounds, polygon);
+            var want = InsideSilhouette(cursor, bounds, polygon) && !InsideAnyDisc(cursor, orbDiscs);
             return previous == want ? null : want;
         }
 
@@ -37,6 +42,17 @@ namespace Orbweaver
         // cursor nowhere near any backdrop.
         internal static bool InsideSilhouette(Point p, Rect bounds, Point[] polygon) =>
             bounds.Contains(p) && GroupOutline.SignedDistanceInside(p, polygon) >= 0;
+
+        internal static bool InsideAnyDisc(Point p, IReadOnlyList<(double X, double Y, double R)> discs)
+        {
+            foreach (var d in discs)
+            {
+                var dx = p.X - d.X;
+                var dy = p.Y - d.Y;
+                if (dx * dx + dy * dy <= d.R * d.R) return true;
+            }
+            return false;
+        }
 
         // The poll skips a tick when the cursor has not moved: nothing it would
         // decide can have changed.
@@ -81,6 +97,30 @@ namespace Orbweaver
                     (int)Math.Round((polygon[i].X - origin.X) * toDevice),
                     (int)Math.Round((polygon[i].Y - origin.Y) * toDevice));
             return pts;
+        }
+
+        // Discs relative to the window's top-left.
+        internal static (double X, double Y, double R)[] LocalDiscs(
+            IReadOnlyList<(double X, double Y, double R)> discs, Point origin)
+        {
+            var local = new (double, double, double)[discs.Count];
+            for (var i = 0; i < local.Length; i++)
+                local[i] = (discs[i].X - origin.X, discs[i].Y - origin.Y, discs[i].R);
+            return local;
+        }
+
+        // The same discs as window-relative device pixels, for cutting out of the
+        // Windows region (CombineRgn RGN_DIFF), so an orb keeps its click.
+        internal static (int X, int Y, int R)[] RegionHoles(
+            IReadOnlyList<(double X, double Y, double R)> localDiscs, double toDevice)
+        {
+            var holes = new (int, int, int)[localDiscs.Count];
+            for (var i = 0; i < holes.Length; i++)
+                holes[i] = (
+                    (int)Math.Round(localDiscs[i].X * toDevice),
+                    (int)Math.Round(localDiscs[i].Y * toDevice),
+                    (int)Math.Ceiling(localDiscs[i].R * toDevice));
+            return holes;
         }
 
         // A group drag moves every orb by the same amount, so the outline needs

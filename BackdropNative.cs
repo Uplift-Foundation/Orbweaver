@@ -70,13 +70,16 @@ namespace Orbweaver
 
         [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr h, IntPtr rgn, bool redraw);
         [DllImport("gdi32.dll")] private static extern IntPtr CreatePolygonRgn(POINT[] pts, int count, int mode);
+        [DllImport("gdi32.dll")] private static extern IntPtr CreateEllipticRgn(int l, int t, int r, int b);
+        [DllImport("gdi32.dll")] private static extern int CombineRgn(IntPtr dest, IntPtr a, IntPtr b, int mode);
+        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr o);
 
         [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
 
         // The system owns the region after a successful call, so it is not deleted.
         // Survives Hide/Show, moves and resizes (spike §3); set again whenever the
         // silhouette itself changes.
-        internal static void SetPolygonRegion(Window w, (int X, int Y)[] points)
+        internal static void SetPolygonRegion(Window w, (int X, int Y)[] points, (int X, int Y, int R)[] holes)
         {
             if (!OperatingSystem.IsWindows() || points.Length < 3) return;
             var hwnd = w.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
@@ -85,7 +88,20 @@ namespace Orbweaver
             var pts = new POINT[points.Length];
             for (var i = 0; i < pts.Length; i++) pts[i] = new POINT { X = points[i].X, Y = points[i].Y };
             const int Winding = 2;
-            SetWindowRgn(hwnd, CreatePolygonRgn(pts, pts.Length, Winding), true);
+            var region = CreatePolygonRgn(pts, pts.Length, Winding);
+
+            // Every orb's disc is cut out, so an orb keeps its click even if the
+            // backdrop is momentarily in front of it (a first show lands in front
+            // of orbs and arrows until PlaceBehindAll runs).
+            const int RgnDiff = 4;
+            foreach (var h in holes)
+            {
+                var hole = CreateEllipticRgn(h.X - h.R, h.Y - h.R, h.X + h.R, h.Y + h.R);
+                CombineRgn(region, region, hole, RgnDiff);
+                DeleteObject(hole);
+            }
+
+            SetWindowRgn(hwnd, region, true);
         }
     }
 }

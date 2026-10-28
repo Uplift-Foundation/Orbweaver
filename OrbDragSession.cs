@@ -54,6 +54,7 @@ namespace Orbweaver
             if (!WholeGroup) OrbDragCommit.Preview(_host, _anchorId, _scaling);
 
             TeamLinks.Refresh();
+            GroupBackdrops.Refresh();
         }
 
         internal SnapOutcome End()

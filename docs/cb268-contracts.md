@@ -223,6 +223,14 @@ A disc for `GroupOutline` is the orb's visible circle, not its window: the circl
 
 **T6:** the hit area is the silhouette **minus every orb disc** in the group. On Windows that is `CombineRgn(…, RGN_DIFF)` with an elliptic region per disc. On macOS `BackdropHitTest.ShouldCatch` answers false inside any disc. Team arrows stay above the backdrop and stay click-through.
 
+Decisions settled during S5 (Celeste):
+
+- `GroupOutline.Silhouette` still **throws** on a non-finite disc. `GroupBackdrops` is the guard: it drops any orb whose measured centre or radius is not finite, so a refresh that reads a not-yet-positioned orb skips it instead of crashing; a group left with no finite orb has no backdrop until the next `Refresh`.
+- `internal static Point[] OutlineOf(string groupId)` returns the silhouette last drawn for a group, in screen units, or empty.
+- Orb discs are cut out of the hit area: on Windows the region is the polygon minus every orb's disc (`CombineRgn RGN_DIFF`); on macOS `BackdropHitTest.ShouldCatch(cursor, bounds, polygon, orbDiscs, buttonsDown, previous)` is false inside any disc.
+- `Refresh()` puts a window that has just appeared behind the orbs (`Restack`) immediately, not only on `Update`. `Restack()` is also public to callers for drag end.
+- `Highlight` shows the target (full stroke opacity, twice the width) even when outlines are off.
+
 The window ordering and the hit-test mechanism follow `docs/cb268-backdrop-spike.md` (S0).
 
 ## S7 — integration (architect)

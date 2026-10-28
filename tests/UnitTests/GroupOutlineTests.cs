@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using Avalonia;
 using Xunit;
@@ -386,16 +385,21 @@ public class GroupOutlineTests
         Assert.Equal(GroupOutline.Silhouette("heart", discs, Padding), GroupOutline.Silhouette("heart", discs, Padding));
     }
 
+    // Not a stopwatch: a wall-clock bound goes red on a loaded CI runner and a
+    // widened one proves nothing. The cost of a fit is Iterations x discs x edges
+    // by construction, so what is worth pinning is that the bisection really runs
+    // to its precision — if Iterations were cut, the scale would stop being
+    // tight to a hundred-thousandth, which this notices, and cutting the work
+    // is the only way the fit gets faster.
     [Fact]
-    public void ThirtyDiscsFitInWellUnderAFrameBudget()
+    public void TheScaleIsFoundToWithinAHundredThousandth()
     {
-        // The backdrop refits on every drag move. Not a benchmark — a tripwire
-        // for the search going accidentally quadratic.
-        var discs = Discs("heart", 30, true, true);
-        GroupOutline.Silhouette("heart", discs, Padding);
+        Assert.Equal(24, GroupOutline.Iterations);
 
-        var sw = Stopwatch.StartNew();
-        for (var i = 0; i < 20; i++) GroupOutline.Silhouette("heart", discs, Padding);
-        Assert.True(sw.Elapsed.TotalMilliseconds / 20 < 100, $"{sw.Elapsed.TotalMilliseconds / 20} ms per call");
+        var discs = Discs("heart", 30, true, true);
+        var fit = GroupOutline.Fit("heart", discs, Padding);
+
+        Assert.True(GroupOutline.Encloses(fit.Base, fit.Centre, fit.Scale, discs, Padding));
+        Assert.False(GroupOutline.Encloses(fit.Base, fit.Centre, fit.Scale * (1 - 1e-5), discs, Padding));
     }
 }

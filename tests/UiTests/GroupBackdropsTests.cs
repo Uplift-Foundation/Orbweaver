@@ -298,6 +298,57 @@ public class GroupBackdropsTests : IDisposable
         Assert.True(members[0].OrbRadius < lead.OrbRadius);
     }
 
+    [AvaloniaFact]
+    public void OutlineOfIsTheDrawnSilhouetteInScreenUnitsAndEmptyWithoutABackdrop()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.Update(new[] { Spec("g-a", "heart", a) });
+
+        var outline = GroupBackdrops.OutlineOf("g-a");
+        var s = GroupBackdrops.StateOf("g-a")!.Value;
+
+        Assert.Equal(360, outline.Length);
+        Assert.All(outline, p => Assert.True(
+            p.X >= s.Position.X && p.X <= s.Position.X + s.Width && p.Y >= s.Position.Y && p.Y <= s.Position.Y + s.Height));
+        // every orb centre is inside it by at least its own radius
+        foreach (var o in a)
+            Assert.True(GroupOutline.SignedDistanceInside(
+                new Point(o.Position.X + o.CentreDip, o.Position.Y + o.CentreDip), outline) >= o.OrbRadius);
+
+        Assert.Empty(GroupBackdrops.OutlineOf("nope"));
+    }
+
+    [AvaloniaFact]
+    public void AnOrbReadAsNaNIsSkippedRatherThanBreakingTheRefresh()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.Measure = o => o.Position.X == 100
+            ? (new Point(double.NaN, 0), 1.0)
+            : (new Point(o.Position.X + o.CentreDip, o.Position.Y + o.CentreDip), 1.0);
+
+        GroupBackdrops.Update(new[] { Spec("g-a", "heart", a) });
+        Assert.Equal(1, GroupBackdrops.ShownCount);       // the other two still get one
+
+        GroupBackdrops.Measure = o => (new Point(0, 0), double.PositiveInfinity);   // infinite radius
+        GroupBackdrops.Update(new[] { Spec("g-a", "heart", a) });
+        Assert.Equal(0, GroupBackdrops.ShownCount);
+    }
+
+    [AvaloniaFact]
+    public void ThePollNeverCatchesOverAnOrbOnTheBackdrop()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.Update(new[] { Spec("g-a", "circle", a) });
+        var s = GroupBackdrops.StateOf("g-a")!.Value;
+        var onOrb = new Point(a[0].Position.X + a[0].CentreDip, a[0].Position.Y + a[0].CentreDip);
+
+        var told = new List<bool>();
+        GroupBackdrops.HitTestTick(onOrb, false, (_, c) => told.Add(c));
+
+        Assert.Empty(told);   // inside the silhouette, but over an orb: still pass-through
+        Assert.False(GroupBackdrops.StateOf("g-a")!.Value.Catching);
+    }
+
     // ---- pointer: only inside the silhouette ------------------------------------
 
     [AvaloniaFact]

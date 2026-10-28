@@ -15,14 +15,15 @@ public class BackdropLogicTests
         { new(10, 10), new(90, 10), new(90, 90), new(10, 90) };
 
     private static readonly Rect Bounds = new(0, 0, 100, 100);
+    private static readonly (double X, double Y, double R)[] NoDiscs = Array.Empty<(double, double, double)>();
 
     // --- ShouldCatch ---------------------------------------------------------
 
     [Fact]
     public void InsideTheSilhouetteCatchesAndOutsideDoesNot()
     {
-        Assert.True(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, false, null));
-        Assert.False(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, false, null));
+        Assert.True(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, NoDiscs, false, null));
+        Assert.False(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, NoDiscs, false, null));
     }
 
     [Fact]
@@ -32,30 +33,53 @@ public class BackdropLogicTests
             .Select(i => new Point(50 + 45 * Math.Cos(i * Math.PI / 180), 50 + 45 * Math.Sin(i * Math.PI / 180)))
             .ToArray();
 
-        Assert.False(BackdropHitTest.ShouldCatch(new Point(8, 8), Bounds, circle, false, null));
-        Assert.True(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, circle, false, null));
+        Assert.False(BackdropHitTest.ShouldCatch(new Point(8, 8), Bounds, circle, NoDiscs, false, null));
+        Assert.True(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, circle, NoDiscs, false, null));
     }
 
     [Fact]
     public void OutsideTheBoundsIsDecidedWithoutTheSilhouette()
     {
-        Assert.False(BackdropHitTest.ShouldCatch(new Point(500, 500), Bounds, Square, false, null));
+        Assert.False(BackdropHitTest.ShouldCatch(new Point(500, 500), Bounds, Square, NoDiscs, false, null));
     }
 
     [Fact]
     public void NothingChangesWhileAButtonIsDown()
     {
-        Assert.Null(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, true, null));
-        Assert.Null(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, true, true));
+        Assert.Null(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, NoDiscs, true, null));
+        Assert.Null(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, NoDiscs, true, true));
     }
 
     [Fact]
     public void ANativeCallIsOnlyAskedForOnAChange()
     {
-        Assert.Null(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, false, true));
-        Assert.Null(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, false, false));
-        Assert.False(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, false, true));
-        Assert.True(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, false, false));
+        Assert.Null(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, NoDiscs, false, true));
+        Assert.Null(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, NoDiscs, false, false));
+        Assert.False(BackdropHitTest.ShouldCatch(new Point(5, 5), Bounds, Square, NoDiscs, false, true));
+        Assert.True(BackdropHitTest.ShouldCatch(new Point(50, 50), Bounds, Square, NoDiscs, false, false));
+    }
+
+    [Fact]
+    public void AnOrbsDiscIsNeverCaughtEvenInsideTheSilhouette()
+    {
+        var discs = new (double X, double Y, double R)[] { (50, 50, 10), (20, 20, 5) };
+
+        Assert.False(BackdropHitTest.ShouldCatch(new Point(55, 50), Bounds, Square, discs, false, null));   // inside disc 1
+        Assert.False(BackdropHitTest.ShouldCatch(new Point(22, 20), Bounds, Square, discs, false, null));   // inside disc 2
+        Assert.True(BackdropHitTest.ShouldCatch(new Point(70, 70), Bounds, Square, discs, false, null));    // clear of both
+        Assert.True(BackdropHitTest.InsideAnyDisc(new Point(60, 50), discs));                               // on the edge
+        Assert.False(BackdropHitTest.InsideAnyDisc(new Point(61, 50), discs));
+        Assert.False(BackdropHitTest.InsideAnyDisc(new Point(0, 0), NoDiscs));
+    }
+
+    [Fact]
+    public void LocalDiscsAreRelativeToTheWindowAndRegionHolesAreDevicePixels()
+    {
+        var local = BackdropGeometry.LocalDiscs(new (double, double, double)[] { (150, 260, 18.2) }, new Point(100, 200));
+        Assert.Equal(new (double, double, double)[] { (50, 60, 18.2) }, local);
+
+        Assert.Equal(new[] { (100, 120, 37) }, BackdropGeometry.RegionHoles(local, 2));
+        Assert.Empty(BackdropGeometry.RegionHoles(NoDiscs, 1));
     }
 
     [Fact]

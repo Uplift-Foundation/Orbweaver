@@ -90,6 +90,7 @@ namespace Orbweaver
         internal static void Refresh()
         {
             var wanted = new HashSet<string>();
+            var added = false;
 
             foreach (var spec in Specs)
             {
@@ -102,6 +103,7 @@ namespace Orbweaver
                     window = Parked.Count > 0 ? Parked.Pop() : new BackdropWindow();
                     Active[spec.GroupId] = window;
                     _lastCursor = null; // a new window must be classified even under a still cursor
+                    added = true;
                 }
 
                 window.Fit(spec.GroupId, spec.DrawnShape, discs, scale);
@@ -114,8 +116,19 @@ namespace Orbweaver
                 Park(id);
             }
 
+            // A first show lands IN FRONT of orbs and arrows on Windows, so a window
+            // that has just appeared is put behind them straight away rather than
+            // waiting for the next Update.
+            if (added) Restack();
+
             EnsureTimer();
         }
+
+        // The silhouette last drawn for a group, in screen units (the space of
+        // Window.Position), or empty if it has no backdrop. OrbSnap measures
+        // against this so the padding lives only here.
+        internal static Point[] OutlineOf(string groupId) =>
+            Active.TryGetValue(groupId, out var w) ? w.Outline() : Array.Empty<Point>();
 
         // Highlight draws the target at full stroke opacity and twice the width —
         // also when outlines are off, since it is the "you will join this" cue.
@@ -213,6 +226,14 @@ namespace Orbweaver
 
                 if (Measure(orb) is not { } m) continue;
 
+                // An orb read before it has been positioned can come back as NaN or
+                // infinity. GroupOutline rejects those loudly, so they are dropped
+                // here: a group of only such orbs has no backdrop yet and the next
+                // Refresh has it.
+                var r = orb.OrbRadius * m.Scale;
+                if (!double.IsFinite(m.Centre.X) || !double.IsFinite(m.Centre.Y) ||
+                    !double.IsFinite(r) || r < 0) continue;
+
                 if (!measured) { scale = m.Scale; measured = true; }
                 discs.Add((m.Centre.X, m.Centre.Y, orb.OrbRadius * m.Scale));
             }
@@ -276,6 +297,7 @@ namespace Orbweaver
             private string _groupId = "";
             private List<(double X, double Y, double R)>? _discs;
             private Point[] _local = Array.Empty<Point>();
+            private (double X, double Y, double R)[] _localDiscs = Array.Empty<(double, double, double)>();
             private double _scale = 1;
             private bool _shown;
             private bool _highlighted;
@@ -341,6 +363,7 @@ namespace Orbweaver
                 _local = new Point[outline.Length];
                 for (var i = 0; i < outline.Length; i++)
                     _local[i] = new Point(outline[i].X - _origin.X, outline[i].Y - _origin.Y);
+                _localDiscs = BackdropGeometry.LocalDiscs(discs, _origin);
 
                 Position = new PixelPoint((int)_origin.X, (int)_origin.Y);
                 Width = Math.Ceiling(box.Right - _origin.X) / scale;
@@ -389,12 +412,19 @@ namespace Orbweaver
             // Where the cursor (screen units) is relative to this backdrop, decided
             // by BackdropHitTest. Returns the new catching state, or null for no
             // change.
+            internal Point[] Outline()
+            {
+                var abs = new Point[_local.Length];
+                for (var i = 0; i < abs.Length; i++) abs[i] = new Point(_local[i].X + _origin.X, _local[i].Y + _origin.Y);
+                return abs;
+            }
+
             internal bool? Classify(Point cursor)
             {
                 var local = new Point(cursor.X - _origin.X, cursor.Y - _origin.Y);
                 var bounds = new Rect(0, 0, Width * _scale, Height * _scale);
 
-                if (BackdropHitTest.ShouldCatch(local, bounds, _local, false, Catching) is not { } now) return null;
+                if (BackdropHitTest.ShouldCatch(local, bounds, _local, _localDiscs, false, Catching) is not { } now) return null;
                 Catching = now;
                 return now;
             }
@@ -423,7 +453,8 @@ namespace Orbweaver
 
             [ExcludeFromCodeCoverage]
             private void ApplyRegion() =>
-                BackdropNative.SetPolygonRegion(this, BackdropGeometry.RegionPoints(_local, default, 1));
+                BackdropNative.SetPolygonRegion(
+                    this, BackdropGeometry.RegionPoints(_local, default, 1), BackdropGeometry.RegionHoles(_localDiscs, 1));
         }
     }
 }
