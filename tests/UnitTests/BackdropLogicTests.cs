@@ -227,6 +227,32 @@ public class BackdropLogicTests
     }
 
     [Fact]
+    public void AHighlightedLargeGroupsRegionHoldsThePeakBreathOutlineAndItsStroke()
+    {
+        const double r = 600;   // a large group: 4% of it is 24px, well past the stroke pad
+        var local = Circle(r, 720);
+        var pad = BackdropGeometry.RegionPad(1);
+        var stroke = BackdropStyle.StrokeDip * BackdropStyle.HighlightFactor * OutlineMorph.BreathMax;
+
+        var region = BackdropGeometry.PaddedRegionPoints(BackdropGeometry.RegionPolygon(local, true), default, 1, pad);
+        var peak = r * OutlineMorph.BreathMax;
+        foreach (var (x, y) in region)
+            Assert.True(Math.Sqrt((x - 300) * (x - 300) + (y - 300) * (y - 300)) >= peak + stroke / 2 - 1,
+                "the region reaches past the breathing outline plus half its stroke");
+
+        // Not highlighted: today's region, only the stroke pad past the silhouette.
+        var plain = BackdropGeometry.PaddedRegionPoints(BackdropGeometry.RegionPolygon(local, false), default, 1, pad);
+        Assert.All(plain, p => Assert.InRange(Math.Sqrt((p.X - 300) * (p.X - 300) + (p.Y - 300) * (p.Y - 300)), r, r + pad + 1));
+    }
+
+    [Fact]
+    public void ADegeneratePolygonIsLeftAloneEvenWhenHighlighted()
+    {
+        var two = new[] { new Point(0, 0), new Point(5, 5) };
+        Assert.Same(two, BackdropGeometry.RegionPolygon(two, true));
+    }
+
+    [Fact]
     public void ATranslatedDiscSetIsRecognisedWithItsOffset()
     {
         var a = new List<(double X, double Y, double R)> { (0, 0, 10), (50, 20, 7) };

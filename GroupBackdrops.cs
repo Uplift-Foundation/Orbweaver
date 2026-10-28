@@ -797,6 +797,7 @@ namespace Orbweaver
 
             internal void Restyle((Color Stroke, Color Fill) style, bool highlighted, bool outlines)
             {
+                var regionChanges = highlighted != _highlighted;
                 if (highlighted && !_highlighted) _breathStart = BackdropMotion.Clock();   // begins at its true size
                 if (!highlighted && _highlighted)
                 {
@@ -810,6 +811,10 @@ namespace Orbweaver
                 if (_stroke.Color != stroke) _stroke.Color = stroke;
                 if (_fill.Color != fill) _fill.Color = fill;
                 _shape.StrokeThickness = width;
+
+                // The Windows region follows the highlight: the peak-breath polygon
+                // while it breathes, the plain silhouette otherwise.
+                if (regionChanges) ApplyRegion();
 
                 // The caption wears the resolved stroke colour at full opacity: the
                 // stroke's opacity is for the line, and a caption at 35% is unreadable.
@@ -941,7 +946,7 @@ namespace Orbweaver
             [ExcludeFromCodeCoverage]
             private void ApplyRegionNow() =>
                 BackdropNative.SetPolygonRegion(
-                    this, BackdropGeometry.PaddedRegionPoints(_local, default, 1, BackdropGeometry.RegionPad(_scale)),
+                    this, BackdropGeometry.PaddedRegionPoints(BackdropGeometry.RegionPolygon(_local, _highlighted), default, 1, BackdropGeometry.RegionPad(_scale)),
                     BackdropGeometry.RegionHoles(_holes, 1));
         }
 

@@ -121,6 +121,23 @@ namespace Orbweaver
         internal static double RegionPad(double scale) =>
             (BackdropStyle.StrokeDip * BackdropStyle.HighlightFactor * OutlineMorph.BreathMax / 2 + 1) * scale;
 
+        // The polygon the Windows region is built from. A highlighted group breathes
+        // up to OutlineMorph.BreathMax about its centroid, so its drawn outline grows
+        // by that fraction of its extent, which the stroke pad alone does not cover:
+        // use the peak-breath polygon. Otherwise the silhouette as it is.
+        internal static Point[] RegionPolygon(Point[] local, bool highlighted)
+        {
+            if (!highlighted || local.Length < 3) return local;
+
+            var c = OutlineMorph.Centroid(local);
+            var peak = new Point[local.Length];
+            for (var i = 0; i < peak.Length; i++)
+                peak[i] = new Point(
+                    c.X + (local[i].X - c.X) * OutlineMorph.BreathMax,
+                    c.Y + (local[i].Y - c.Y) * OutlineMorph.BreathMax);
+            return peak;
+        }
+
         // The silhouette offset outward by `pad` device pixels, as region points. Each
         // vertex moves along the mitred bisector of its two edges' outward normals
         // (the mitre capped at twice the pad, so a sharp star tip cannot spike).
