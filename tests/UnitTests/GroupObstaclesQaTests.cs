@@ -137,3 +137,63 @@ public class GroupObstaclesQaTests
         Assert.Equal(landed, landed2);
     }
 }
+
+// Arranged mode with obstacles (S2 explicit mode parameter).
+public class ArrangedModeQaTests
+{
+    private static readonly PixelRect Work = new(0, 0, 1920, 1080);
+
+    private static (PixelPoint[] At, OrbArrangement.GroupPlacement[] G, OrbArrangement.GroupPath P) Go(
+        PixelRect[] obstacles, bool anchored = true)
+    {
+        var n = 9;
+        var leadOf = new[] { -1, 0, 0, -1, 3, -1, -1, 6, 6 };
+        var groupOf = new[] { 0, 0, 0, 1, 1, 2, 2, 2, 2 };
+        PixelPoint? A(int x, int y) => anchored ? new PixelPoint(x, y) : null;
+        var (at, g) = OrbArrangement.ComputeGroups(n, leadOf, groupOf,
+            new[]
+            {
+                new OrbArrangement.GroupLayout("heart", A(500, 400)),
+                new OrbArrangement.GroupLayout("circle", A(1300, 600)),
+                new OrbArrangement.GroupLayout("star", A(900, 800)),
+            },
+            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null,
+            OrbArrangement.GroupLayoutMode.Arranged, obstacles, null, out var path);
+        return (at, g, path);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnEmptyObstacleListAndAHarmlessOffScreenObstacleGiveTheSameArrangedOutput(bool anchored)
+    {
+        var empty = Go(Array.Empty<PixelRect>(), anchored);
+        var harmless = Go(new[] { new PixelRect(-9000, -9000, 100, 100) }, anchored);
+        Assert.Equal(empty.At, harmless.At);
+        Assert.Equal(empty.G.Select(x => x.Landed), harmless.G.Select(x => x.Landed));
+        Assert.Equal(empty.P, harmless.P);
+        // Determinism.
+        Assert.Equal(empty.At, Go(Array.Empty<PixelRect>(), anchored).At);
+    }
+
+    [Fact]
+    public void ArrangedWithAnObstacleKeepsEveryGroupBoxClearOfItWhenSeparated()
+    {
+        var obstacle = new PixelRect(400, 300, 250, 250);        // on the first group's anchor
+        var r = Go(new[] { obstacle });
+        Assert.Equal(OrbArrangement.GroupPath.Separated, r.P);
+        foreach (var g in r.G) Assert.False(g.SlotBounds.Intersects(obstacle), $"slot {g.Slot} box {g.SlotBounds} overlaps {obstacle}");
+        // Control: without the obstacle the first group's box does sit on that rectangle.
+        Assert.True(Go(Array.Empty<PixelRect>()).G.First(g => g.Slot == 0).SlotBounds.Intersects(obstacle));
+    }
+
+    [Fact]
+    public void ArrangedWithNoRoomKeepsTheBandsFallbackAndLandedIsStillReportedForEveryGroup()
+    {
+        var wall = new[] { new PixelRect(0, 0, 940, 1080), new PixelRect(980, 0, 940, 1080) };    // a 40 px strip
+        var r = Go(wall);
+        Assert.Equal(OrbArrangement.GroupPath.Fallback, r.P);
+        Assert.Equal(3, r.G.Length);
+        Assert.All(r.At, p => Assert.True(p.X >= 0 && p.Y >= 0 && p.X <= 1920 && p.Y <= 1080));
+    }
+}
