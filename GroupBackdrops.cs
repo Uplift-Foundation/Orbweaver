@@ -91,7 +91,7 @@ namespace Orbweaver
 
         // A provisional, highlighted outline around the orbs of both teams while a
         // free-mode Pair is the outcome of the drag in progress — the Pair half of
-        // the snap highlight. One shape (a circle fitted to their discs, no curve).
+        // the snap highlight. One shape: the minimum enclosing circle of their discs, so it hugs them.
         // It is not a group: it is not hit-tested (click-through on both platforms),
         // not in Active, so not in OutlineOf and not in the poll; it follows the orbs
         // on every Refresh and goes away on null, on an empty list, or on ParkAll.
@@ -122,7 +122,7 @@ namespace Orbweaver
             _preview ??= Parked.Count > 0 ? Parked.Pop() : new BackdropWindow();
             _preview.MakeClickThrough();
 
-            _preview.Fit("preview", "circle", discs, scale, null);
+            _preview.Fit("preview", GroupOutline.MinimumCircleShape, discs, scale, null);
             _preview.Restyle(GlobalStyle(), highlighted: true, outlines: true);
             _preview.EnsureShown();
 

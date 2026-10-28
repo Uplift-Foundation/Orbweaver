@@ -520,7 +520,14 @@ public class GroupBackdropsTests : IDisposable
         Assert.True(p.Highlighted);
         Assert.Equal(255, p.Stroke.A);                              // full opacity
         Assert.Equal(BackdropStyle.StrokeDip * 2, p.StrokeWidth);   // twice the width
-        Assert.Equal(360, p.Vertices);                              // the one-shape circle fit
+        Assert.Equal(360, p.Vertices);                              // the circle
+
+        // It is the minimum enclosing circle plus padding, not a window-centred one:
+        // its width is that circle's diameter plus the slack the window keeps.
+        var discs = all.Select(o => (X: (double)o.Position.X + o.CentreDip, Y: (double)o.Position.Y + o.CentreDip, R: o.OrbRadius)).ToList();
+        var (_, radius) = GroupOutline.MinimumEnclosingCircle(discs);
+        var expected = 2 * (radius + GroupBackdrops.PaddingDip) + 2 * GroupBackdrops.EdgeDip;
+        Assert.InRange(p.Width, expected - 3, expected + 3);
 
         // Every orb is inside it by at least its radius plus the padding.
         var outline = GroupBackdrops.PreviewWindow!;

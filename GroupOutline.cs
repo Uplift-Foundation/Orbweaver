@@ -29,6 +29,11 @@ internal static class GroupOutline
     internal const int CurveSamples = 360;
     internal const int Iterations = 24;
 
+    // Shape name for the one outline that is not a group's shape: the smallest circle
+    // holding every disc (the Pair preview, which spans two teams with no shape of
+    // their own).
+    internal const string MinimumCircleShape = "min-circle";
+
     // Corner arcs on the rounded rectangle and each end cap of a stadium.
     private const int CornerSamples = 24;
     private const int CapSamples = 60;
@@ -107,6 +112,21 @@ internal static class GroupOutline
             return new Fitted(circle, unit, new Point(only.X, only.Y), 1);
         }
 
+        if (shape == MinimumCircleShape)
+        {
+            var (mid, radius) = MinimumEnclosingCircle(discs);
+            var vertex = (radius + padding + 1e-9) / Math.Cos(Math.PI / CurveSamples);
+            var unit = new Point[CurveSamples];
+            var circle = new Point[CurveSamples];
+            for (var i = 0; i < CurveSamples; i++)
+            {
+                var a = 2 * Math.PI * i / CurveSamples;
+                unit[i] = new Point(vertex * Math.Sin(a), -vertex * Math.Cos(a));
+                circle[i] = new Point(mid.X + unit[i].X, mid.Y + unit[i].Y);
+            }
+            return new Fitted(circle, unit, mid, 1);
+        }
+
         if (placed is { } curve && IsCurveShape(shape) &&
             double.IsFinite(curve.Centre.X) && double.IsFinite(curve.Centre.Y) &&
             double.IsFinite(curve.Scale) && curve.Scale > 0)
@@ -169,6 +189,63 @@ internal static class GroupOutline
         for (var i = 0; i < result.Length; i++)
             result[i] = new Point(centre.X + basePoly[i].X * hi, centre.Y + basePoly[i].Y * hi);
         return new Fitted(result, basePoly, centre, hi);
+    }
+
+    // The smallest circle that contains every disc, each with its own radius: the
+    // centre c minimising max over discs of (|c - centre_i| + R_i), and that
+    // maximum as the radius. The function is convex, so it is minimised exactly (to
+    // numerical precision) by nested golden-section searches over x and then y —
+    // no assumption that the discs are disjoint, equal or few, which is where a
+    // three-circle Apollonius case analysis goes wrong. At the optimum at least two
+    // discs touch the circle (one, if a single disc swallows the rest).
+    internal static (Point Centre, double Radius) MinimumEnclosingCircle(
+        IReadOnlyList<(double X, double Y, double R)> discs)
+    {
+        if (discs.Count == 0) return (default, 0);
+
+        double Reach(double x, double y)
+        {
+            var worst = 0.0;
+            foreach (var d in discs)
+                worst = Math.Max(worst, Math.Sqrt((x - d.X) * (x - d.X) + (y - d.Y) * (y - d.Y)) + d.R);
+            return worst;
+        }
+
+        double lowX = double.MaxValue, highX = double.MinValue, lowY = double.MaxValue, highY = double.MinValue;
+        foreach (var d in discs)
+        {
+            lowX = Math.Min(lowX, d.X); highX = Math.Max(highX, d.X);
+            lowY = Math.Min(lowY, d.Y); highY = Math.Max(highY, d.Y);
+        }
+
+        const double Phi = 0.6180339887498949;
+
+        double BestY(double x, out double y)
+        {
+            double a = lowY, b = highY;
+            double c = b - Phi * (b - a), e = a + Phi * (b - a);
+            double fc = Reach(x, c), fe = Reach(x, e);
+            for (var i = 0; i < 80; i++)
+            {
+                if (fc < fe) { b = e; e = c; fe = fc; c = b - Phi * (b - a); fc = Reach(x, c); }
+                else { a = c; c = e; fc = fe; e = a + Phi * (b - a); fe = Reach(x, e); }
+            }
+            y = (a + b) / 2;
+            return Reach(x, y);
+        }
+
+        double xa = lowX, xb = highX;
+        double xc = xb - Phi * (xb - xa), xe = xa + Phi * (xb - xa);
+        double gc = BestY(xc, out _), ge = BestY(xe, out _);
+        for (var i = 0; i < 80; i++)
+        {
+            if (gc < ge) { xb = xe; xe = xc; ge = gc; xc = xb - Phi * (xb - xa); gc = BestY(xc, out _); }
+            else { xa = xc; xc = xe; gc = ge; xe = xa + Phi * (xb - xa); ge = BestY(xe, out _); }
+        }
+
+        var bx = (xa + xb) / 2;
+        var radius = BestY(bx, out var by);
+        return (new Point(bx, by), radius);
     }
 
     // Whether every disc, with its padding, is inside the base shape scaled by
