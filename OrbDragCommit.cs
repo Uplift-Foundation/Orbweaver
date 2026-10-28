@@ -172,6 +172,20 @@ namespace Orbweaver
             return outcome;
         }
 
+        // A member's offset from its lead as it is stored: centre to centre, so
+        // it does not depend on either orb's size (a member is drawn smaller
+        // than its lead, and the two windows' top-lefts differ by more than their
+        // centres do), in DIP so it survives a display-scale change. Discs are in
+        // the host's screen units; `unitsPerDip` is OrbWindow.UnitsPerDip.
+        // SessionManager.SaveMemberOffset hands the result to
+        // OrbweaverSettings.SetOrbMemberOffset(soundKey, ...).
+        internal static (double Dx, double Dy) MemberOffsetDip(
+            (double X, double Y, double R) member, (double X, double Y, double R) lead, double unitsPerDip)
+        {
+            var s = unitsPerDip > 0 ? unitsPerDip : 1;
+            return ((member.X - lead.X) / s, (member.Y - lead.Y) / s);
+        }
+
         private static (double X, double Y) Centroid(IReadOnlyList<(double X, double Y, double R)> discs) =>
             (discs.Average(d => d.X), discs.Average(d => d.Y));
 

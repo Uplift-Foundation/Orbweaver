@@ -433,6 +433,26 @@ public class OrbDragCommitTests
 
     // --- member drags (T2 revised) ---
 
+    [Fact]
+    public void AMemberOffsetIsCentreToCentreInDipWhateverTheTwoSizes()
+    {
+        // The lead is a full-size orb (radius 18) and the member a 0.72-scale one
+        // (radius 13): their windows' top-lefts would differ by more than their
+        // centres, which is what the offset must not depend on.
+        var lead = (X: 100.0, Y: 200.0, R: 18.0);
+        var member = (X: 160.0, Y: 170.0, R: 13.0);
+
+        Assert.Equal((60.0, -30.0), OrbDragCommit.MemberOffsetDip(member, lead, 1));
+        // On a 2x display the same screen units are half the DIP; and the sizes
+        // do not enter.
+        Assert.Equal((30.0, -15.0), OrbDragCommit.MemberOffsetDip(member, lead, 2));
+        Assert.Equal(
+            OrbDragCommit.MemberOffsetDip(member, lead, 1),
+            OrbDragCommit.MemberOffsetDip(member with { R = 5 }, lead with { R = 40 }, 1));
+        // Nonsense units read as 1.
+        Assert.Equal((60.0, -30.0), OrbDragCommit.MemberOffsetDip(member, lead, 0));
+    }
+
     private static (FakeHost Host, string Lead, string Member) TeamScene(bool laidOut)
     {
         var lead = "lead-" + UniqueId();
