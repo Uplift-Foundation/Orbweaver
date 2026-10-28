@@ -132,6 +132,9 @@ Source: "..\tools\install-hooks.ps1"; DestDir: "{app}\tools"; Flags: ignoreversi
 Source: "..\tools\install-windows-hooks.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\tools\install-codex-hooks.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\tools\install-grok-hooks.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+; The orbweaver-team skill (CB-291). install-windows-hooks.ps1 resolves it as
+; ..\skills\orbweaver-team from its own folder, the same relative layout the repo has.
+Source: "..\skills\orbweaver-team\*"; DestDir: "{app}\skills\orbweaver-team"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 

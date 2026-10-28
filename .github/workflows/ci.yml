@@ -89,6 +89,20 @@ jobs:
       - name: Unit tests (require-team-sdlc.sh)
         run: python tools/test-require-team-sdlc.py
 
+      # CB-291: the team resolver the orbweaver-team skill ships. Real script,
+      # real files in a scratch pool; on the Windows leg it runs under Git Bash
+      # with Windows-style paths, which is what Claude Code uses there and what
+      # the script's path conversion has to get right. macOS runs it under
+      # bash 3.2, which is why it uses no associative arrays.
+      - name: Unit tests (orbweaver-team.sh)
+        run: python tools/test-orbweaver-team.py
+
+      # CB-291: install-skill.sh, which copies the skill into each Claude Code
+      # account. Plain bash, so unlike install-macos-hooks.sh (osascript) it runs
+      # on both legs; on Windows it is Git Bash again.
+      - name: Unit tests (install-skill.sh)
+        run: python tools/test-install-skill.py
+
       # CB-237: runs publish-screenshots.yml's real publish step against a local
       # bare repository. Skips itself on Windows -- that workflow runs on ubuntu.
       - name: Unit tests (publish-screenshots.yml)

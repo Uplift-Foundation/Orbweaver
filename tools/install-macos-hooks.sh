@@ -95,6 +95,23 @@ if [[ $UNINSTALL -eq 0 ]]; then
   fi
 fi
 
+# The orbweaver-team skill (CB-291), into this account's own skills folder.
+# Done per settings file, here, so each extra profile this script re-invokes
+# itself for gets its copy by the same path the default account does. It is its
+# own script because this one needs osascript and can only run on a Mac, and that
+# copy is worth being able to test everywhere. A failure to find the skill is a
+# warning, not an error: the hooks are what this script is for.
+SKILL_INSTALLER="$HERE/install-skill.sh"
+[[ -f "$SKILL_INSTALLER" ]] || SKILL_INSTALLER="$HERE/../tools/install-skill.sh"
+if [[ -f "$SKILL_INSTALLER" ]]; then
+  skill_mode=()
+  [[ $UNINSTALL -eq 1 ]] && skill_mode=(--uninstall)
+  bash "$SKILL_INSTALLER" --settings "$SETTINGS" "${skill_mode[@]+"${skill_mode[@]}"}" \
+    || echo "warning: the orbweaver-team skill was not installed for $(dirname "$SETTINGS")." >&2
+else
+  echo "warning: can't find install-skill.sh next to $HERE; the team skill was not installed." >&2
+fi
+
 if [[ ! -f "$SETTINGS" ]]; then
   # An absent settings file is normal on a fresh install; start one rather than
   # refusing, but never invent anything beyond the hooks themselves.

@@ -102,6 +102,7 @@ namespace Orbweaver
             "grokChatEnabled", "grokReplyEnabled", "grokEnabled", "grokAccountUsageEnabled",
             "grokAutoRefreshEnabled", "peerInboundNoticeSeen",
             "clickAction", "doubleClickAction", "tripleClickAction",
+            "personaPoolDir",
             "remoteControlEnabled", "remoteControlProfileDir", "remoteControlProfileDirs",
             "remoteControlIdleMinutes", "remoteControlServeOnLaunch",
             "peerLinkEnabled", "peerLinkPort",
@@ -493,6 +494,11 @@ namespace Orbweaver
             // can only see sessions belonging to whichever account it logs in
             // as, so a user whose remote machines are on a second account has to
             // be able to say so.
+            // Where the user's shared persona pool lives when ORBWEAVER_PERSONAS is
+            // not set (PersonaPool). Null when never chosen, so the default
+            // under the home directory is the answer rather than a copy of it.
+            public string? PersonaPoolDir { get; set; }
+
             public string? RemoteControlProfileDir { get; set; }
 
             // Every account to run a relay for.
@@ -1126,6 +1132,14 @@ namespace Orbweaver
 
         // Never empty: a blank stored value means "never chosen", and the
         // bridge has to launch under *some* config directory.
+        // The shared persona pool, as saved. Null for "use the default"; the
+        // environment variable still outranks it (PersonaPool.SharedRoot).
+        public static string? PersonaPoolDir
+        {
+            get { Load(); lock (Gate) return _model.PersonaPoolDir; }
+            set { Load(); lock (Gate) _model.PersonaPoolDir = string.IsNullOrWhiteSpace(value) ? null : value.Trim(); Save(); }
+        }
+
         public static string RemoteControlProfileDir
         {
             get
@@ -1938,6 +1952,7 @@ namespace Orbweaver
                         OpenClawCronShape = Shape(
                             root["openclawCronShape"], DefaultOpenClawCronShape),
                         RemoteControlEnabled = root["remoteControlEnabled"]?.GetValue<bool>() ?? false,
+                        PersonaPoolDir = Text(root["personaPoolDir"]),
                         RemoteControlProfileDir = Text(root["remoteControlProfileDir"]),
                         RemoteControlIdleMinutes =
                             root["remoteControlIdleMinutes"]?.GetValue<int>() ?? DefaultRemoteControlIdle,
@@ -2574,6 +2589,7 @@ namespace Orbweaver
                         // current default, the same as speakVoice below — so
                         // changing which profile ships as the default still
                         // reaches everyone who never picked one.
+                        ["personaPoolDir"] = _model.PersonaPoolDir,
                         ["remoteControlProfileDir"] = _model.RemoteControlProfileDir,
                         ["remoteControlProfileDirs"] = remoteProfileDirs,
                         ["remoteControlIdleMinutes"] = _model.RemoteControlIdleMinutes,
