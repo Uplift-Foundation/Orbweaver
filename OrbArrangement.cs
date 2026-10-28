@@ -46,20 +46,12 @@ namespace Orbweaver
         // why a dense index was rejected). Center is the group's saved anchor
         // in physical pixels, null if it has never been drawn.
         //
-        // The signature S2 implements, kept here as a comment rather than a
-        // throwing stub so nothing can call it before it exists:
-        //
-        //   internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
-        //       int count, int[] leadOf, int[] groupOf,
-        //       IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null)
-        //
-        // groupOf[i] is a slot index into `groups`, with Compute's rules: out
-        // of range or missing reads as slot 0, and only an anchor's slot is
-        // consulted — a member goes wherever its lead is. layout.Work, Scale
-        // and Spacing apply to every group; layout.Shape and layout.Center are
-        // ignored in favour of each group's own. Positions are window
-        // top-lefts exactly as Compute returns them. docs/cb268-contracts.md
-        // has the fallback rules (no anchors yet → Bands+Compact).
+        // groupOf[i] is a slot index into `groups` (see ComputeGroups below),
+        // with Compute's rules: out of range or missing reads as slot 0, and
+        // only a root lead's slot is consulted — a member goes wherever its
+        // lead is. layout.Work, Scale and Spacing apply to every group;
+        // layout.Shape and layout.Center are ignored in favour of each
+        // group's own. docs/cb268-contracts.md has the fallback rules.
         /// <summary>One group's shape and saved anchor (physical px), indexed by slot.</summary>
         internal readonly record struct GroupLayout(string Shape, PixelPoint? Center);
 
@@ -144,7 +136,17 @@ namespace Orbweaver
         internal static PixelPoint[] Compute(
             int count, int[] leadOf, int[] groupOf, IReadOnlyList<string> shapes, Layout layout,
             double[]? sizeOf = null)
+            => ComputeCore(count, leadOf, groupOf, shapes, layout, sizeOf, out _);
+
+        // Compute's body, with one extra answer: whether the grid retry below
+        // was taken *and kept*. ComputeGroups needs it to report the shape it
+        // really drew (CB-268); Compute itself does not, and is this with the
+        // answer thrown away, so every arrangement it returns is unchanged.
+        private static PixelPoint[] ComputeCore(
+            int count, int[] leadOf, int[] groupOf, IReadOnlyList<string> shapes, Layout layout,
+            double[]? sizeOf, out bool gridded)
         {
+            gridded = false;
             if (count <= 0) return Array.Empty<PixelPoint>();
 
             var anchors = new List<int>();
@@ -195,11 +197,15 @@ namespace Orbweaver
             // construction, not by a threshold tuned until the sweep went quiet.
             if (squeezed && WorstGap(placed, leadOf, circle) < -Slack(circle, layout.Spacing))
             {
-                var gridded = Arrange(
+                var retried = Arrange(
                     count, leadOf, groupOf, shapes, layout, anchors, members, window, circle,
                     gridWhenSqueezed: true, out _);
 
-                if (WorstGap(gridded, leadOf, circle) > WorstGap(placed, leadOf, circle)) placed = gridded;
+                if (WorstGap(retried, leadOf, circle) > WorstGap(placed, leadOf, circle))
+                {
+                    placed = retried;
+                    gridded = true;
+                }
             }
 
             // From slots to orbs: each one centred in the slot it was given, at
@@ -213,6 +219,388 @@ namespace Orbweaver
             }
 
             return placed;
+        }
+
+        // Which of ComputeGroups' three routes produced an answer. Reported so a
+        // test can say what it is asserting about: "feeding Landed back
+        // reproduces the layout" is a property of Separated and means nothing
+        // for Bands, whose Landed is read off a layout that had no anchors.
+        internal enum GroupPath
+        {
+            // No group had an anchor: today's Bands + Compact, so a first draw
+            // looks the way it always did.
+            Bands,
+
+            // Every group fitted on its own, then SeparateGroups got them apart.
+            Separated,
+
+            // Anchors were given but could not all be honoured at once, so the
+            // whole set went through Bands + Compact after all.
+            Fallback
+        }
+
+        // The air SeparateGroups leaves between two groups' slot boxes, as a
+        // fraction of the largest window. A box is already a window wider than
+        // the discs it holds, and an outline stands off the discs by about the
+        // same again, so boxes that merely touch would draw outlines that kiss.
+        internal const double GroupGapWindows = 0.15;
+
+        // CB-268: every group drawn in its own shape around its own anchor.
+        //
+        // **Independent first, separated after.** Each group is laid out by
+        // exactly the machinery a lone shape has always used — ComputeCore on
+        // that group's orbs alone, against the whole work area, with the
+        // squeeze-then-grid retry — so a group's picture depends on nothing but
+        // its own orbs, sizes, shape and anchor. That is what lets a drag move
+        // one group without redrawing the others, and it is why this does not
+        // share Bands: bands cut the screen by orb count, which makes every
+        // group's shape depend on every other group's size.
+        //
+        // The price is that two groups can be asked for the same patch of
+        // screen, which is SeparateGroups' job. When it cannot get them apart
+        // (more groups than the screen holds at these sizes) the whole set is
+        // drawn again through Bands + Compact, which has never failed to put
+        // orbs somewhere, and the path out says so.
+        //
+        // A group with no anchor is drawn about the middle of the work area, so
+        // a table with one anchored group and a fresh one still places both;
+        // its Landed is what the caller will save.
+        //
+        // Landed is the asked-for anchor plus the group's *whole* integer
+        // translation: what it took to bring the group's box inside the work
+        // area (CB-211, per group) plus what SeparateGroups moved it by. No
+        // second Compute is needed to find it, because the translation is the
+        // only thing that ever moves a finished group.
+        internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+            int count, int[] leadOf, int[] groupOf,
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null)
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, out _);
+
+        internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+            int count, int[] leadOf, int[] groupOf,
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf, out GroupPath path)
+        {
+            path = GroupPath.Bands;
+
+            if (count <= 0) return (Array.Empty<PixelPoint>(), Array.Empty<GroupPlacement>());
+
+            var slots = Math.Max(1, groups.Count);
+            var shapes = new string[slots];
+            for (var g = 0; g < slots; g++)
+                shapes[g] = ShapeAt(groups.Select(x => x.Shape).ToList(), g, layout.Shape);
+
+            // Members take their ROOT lead's slot whatever their own entry in
+            // groupOf says (CB-268 T1) — a team is the unit of grouping.
+            var slotOf = SlotsFor(count, leadOf, groupOf, slots);
+            var sizes = SizesFor(count, sizeOf);
+
+            var anchored = groups.Any(g => g.Center is not null);
+
+            if (!anchored)
+            {
+                var banded = ComputeCore(
+                    count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
+
+                return (banded, Describe(banded, slotOf, shapes, sizes, layout.Scale));
+            }
+
+            var work = layout.Work;
+            var middle = new PixelPoint(work.X + work.Width / 2, work.Y + work.Height / 2);
+
+            var members = new List<int[]>();   // orb indices per used slot
+            var usedSlots = new List<int>();
+            for (var g = 0; g < slots; g++)
+            {
+                var orbs = Enumerable.Range(0, count).Where(i => slotOf[i] == g).ToArray();
+                if (orbs.Length == 0) continue;
+                members.Add(orbs);
+                usedSlots.Add(g);
+            }
+
+            var positions = new PixelPoint[count];
+            var boxes = new PixelRect[usedSlots.Count];
+            var canonical = new PixelRect[usedSlots.Count];
+            var drawn = new string[usedSlots.Count];
+            var localOf = new int[count];
+
+            for (var k = 0; k < usedSlots.Count; k++)
+            {
+                var g = usedSlots[k];
+                var orbs = members[k];
+
+                Array.Fill(localOf, -1);
+                for (var li = 0; li < orbs.Length; li++) localOf[orbs[li]] = li;
+
+                var subLead = new int[orbs.Length];
+                var subSize = new double[orbs.Length];
+                for (var li = 0; li < orbs.Length; li++)
+                {
+                    var i = orbs[li];
+                    var lead = i < leadOf.Length ? leadOf[i] : -1;
+                    subLead[li] = lead >= 0 && lead < count ? localOf[lead] : -1;
+                    subSize[li] = sizes[i];
+                }
+
+                // Always laid out about the middle of the work area, whatever
+                // the group's anchor is; the anchor is applied below as one
+                // integer translation of the finished group. A shape drawn
+                // *at* its anchor depends on it through rounding, Slide and
+                // the fans turning away from edges, so a drag could change a
+                // group's picture, and the anchor Landed reports could not be
+                // exact. A rigid body moved by whole pixels has neither
+                // problem: dragging moves it by exactly the delta, and feeding
+                // Landed back reproduces it to the pixel.
+                var asked = g < groups.Count && groups[g].Center is { } c ? c : middle;
+                var one = layout with { Shape = shapes[g], Center = middle };
+                var alone = new int[orbs.Length];
+
+                var placed = ComputeCore(
+                    orbs.Length, subLead, alone, new[] { shapes[g] }, one, subSize, out var gridded);
+
+                drawn[k] = gridded ? "grid" : shapes[g];
+
+                for (var li = 0; li < orbs.Length; li++) positions[orbs[li]] = placed[li];
+
+                var box = SlotBox(placed, subSize, layout.Scale, WindowFor(layout.Scale, subSize.Max()));
+                canonical[k] = box;
+                boxes[k] = new PixelRect(box.X + asked.X - middle.X, box.Y + asked.Y - middle.Y, box.Width, box.Height);
+            }
+
+            var gap = Math.Max(1, (int)Math.Round(WindowFor(layout.Scale, sizes.Max()) * GroupGapWindows));
+            var (moved, separated) = SeparateGroups(boxes, work, gap);
+
+            if (!separated)
+            {
+                path = GroupPath.Fallback;
+
+                var fallback = ComputeCore(
+                    count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
+
+                return (fallback, Describe(fallback, slotOf, shapes, sizes, layout.Scale));
+            }
+
+            path = GroupPath.Separated;
+
+            var placements = new GroupPlacement[usedSlots.Count];
+
+            for (var k = 0; k < usedSlots.Count; k++)
+            {
+                // From where the group was drawn to where it ended up: the
+                // anchor's own offset, plus whatever it took to get inside the
+                // work area and clear of the groups before it.
+                var dx = moved[k].X - canonical[k].X;
+                var dy = moved[k].Y - canonical[k].Y;
+
+                foreach (var i in members[k])
+                    positions[i] = new PixelPoint(positions[i].X + dx, positions[i].Y + dy);
+
+                placements[k] = new GroupPlacement(
+                    usedSlots[k],
+                    new PixelPoint(middle.X + dx, middle.Y + dy),
+                    moved[k],
+                    drawn[k],
+                    members[k]);
+            }
+
+            return (positions, placements);
+        }
+
+        // Pushes later boxes out of earlier ones and back inside `work`.
+        //
+        // Index order is priority: box 0 only ever moves to get inside the work
+        // area, never for another box. A box in the way is moved along the axis
+        // where it has to go least — right, left, down or up, in that order on a
+        // tie, so the answer is deterministic — but only to a place that is
+        // still inside `work` when there is one: pushing a box off the screen
+        // and sliding it back lands it on top of the box it was pushed from,
+        // which is the failure a naive "push then clamp" loop never leaves.
+        //
+        // Fifty passes is a ceiling, not a target; the loop leaves the moment a
+        // pass moves nothing. `Separated` is read off the final boxes, not off
+        // whether the loop converged.
+        internal static (PixelRect[] Boxes, bool Separated) SeparateGroups(
+            IReadOnlyList<PixelRect> boxes, PixelRect work, int gap)
+        {
+            var n = boxes.Count;
+            var x = new int[n];
+            var y = new int[n];
+            var w = new int[n];
+            var h = new int[n];
+
+            for (var i = 0; i < n; i++)
+            {
+                w[i] = boxes[i].Width;
+                h[i] = boxes[i].Height;
+                x[i] = Within(boxes[i].X, w[i], work.X, work.Right);
+                y[i] = Within(boxes[i].Y, h[i], work.Y, work.Bottom);
+            }
+
+            bool Close(int a, int b) =>
+                x[a] < x[b] + w[b] + gap && x[b] < x[a] + w[a] + gap
+                && y[a] < y[b] + h[b] + gap && y[b] < y[a] + h[a] + gap;
+
+            for (var pass = 0; pass < 50; pass++)
+            {
+                var moved = false;
+
+                for (var j = 1; j < n; j++)
+                {
+                    var first = -1;
+                    for (var i = 0; i < j && first < 0; i++)
+                        if (Close(i, j)) first = i;
+
+                    if (first < 0) continue;
+
+                    // Every place j could stand flush against an earlier box:
+                    // right, left, below, above each of them. Judged against
+                    // *all* of them, not just the one it was pushed from — a
+                    // box pushed clear of one neighbour and onto the next was
+                    // the stalemate the first draft lived in, five boxes asked
+                    // for one spot ending in a row with the last still on top.
+                    var options = new List<(int X, int Y)>();
+                    for (var i = 0; i < j; i++)
+                    {
+                        options.Add((x[i] + w[i] + gap, y[j]));
+                        options.Add((x[i] - w[j] - gap, y[j]));
+                        options.Add((x[j], y[i] + h[i] + gap));
+                        options.Add((x[j], y[i] - h[j] - gap));
+                    }
+
+                    bool Fits((int X, int Y) o) =>
+                        o.X >= work.X && o.X + w[j] <= work.Right && o.Y >= work.Y && o.Y + h[j] <= work.Bottom;
+
+                    bool ClearOfEarlier((int X, int Y) o)
+                    {
+                        for (var i = 0; i < j; i++)
+                        {
+                            if (o.X < x[i] + w[i] + gap && x[i] < o.X + w[j] + gap
+                                && o.Y < y[i] + h[i] + gap && y[i] < o.Y + h[j] + gap) return false;
+                        }
+
+                        return true;
+                    }
+
+                    int Cost((int X, int Y) o) => Math.Abs(o.X - x[j]) + Math.Abs(o.Y - y[j]);
+
+                    // Nearest first by displacement; the generation order
+                    // above (earlier box, then right, left, down, up) breaks a
+                    // tie, so the answer is the same every time.
+                    var best = -1;
+                    for (var o = 0; o < options.Count; o++)
+                    {
+                        if (!Fits(options[o]) || !ClearOfEarlier(options[o])) continue;
+                        if (best < 0 || Cost(options[o]) < Cost(options[best])) best = o;
+                    }
+
+                    // Nowhere inside the work area is clear of every earlier
+                    // box: take the nearest way out of the first one in the
+                    // way, inside the work area if it can be, and clamp.
+                    if (best < 0)
+                    {
+                        for (var o = 0; o < 4; o++)
+                        {
+                            var at = first * 4 + o;
+                            if (!Fits(options[at])) continue;
+                            if (best < 0 || Cost(options[at]) < Cost(options[best])) best = at;
+                        }
+
+                        if (best < 0)
+                        {
+                            best = first * 4;
+                            for (var o = 1; o < 4; o++)
+                                if (Cost(options[first * 4 + o]) < Cost(options[best])) best = first * 4 + o;
+                        }
+                    }
+
+                    x[j] = Within(options[best].X, w[j], work.X, work.Right);
+                    y[j] = Within(options[best].Y, h[j], work.Y, work.Bottom);
+                    moved = true;
+                }
+
+                if (!moved) break;
+            }
+
+            var separated = true;
+            for (var j = 1; j < n && separated; j++)
+            for (var i = 0; i < j; i++)
+            {
+                if (Close(i, j)) { separated = false; break; }
+            }
+
+            return (Enumerable.Range(0, n).Select(i => new PixelRect(x[i], y[i], w[i], h[i])).ToArray(), separated);
+        }
+
+        // `pos` clamped so [pos, pos+size) sits in [lo, hi); the low edge wins
+        // when the box is wider than the room.
+        private static int Within(int pos, int size, int lo, int hi) => Math.Max(lo, Math.Min(pos, hi - size));
+
+        // The slot a root lead's whole team shares: the root's own groupOf
+        // entry, read as Compute reads one. Walks only while Resolves says the
+        // orb really hangs off somebody, so a cycle or a dangling lead stops at
+        // the orb Classify makes an anchor.
+        private static int[] SlotsFor(int count, int[] leadOf, int[] groupOf, int slots)
+        {
+            var result = new int[count];
+
+            for (var i = 0; i < count; i++)
+            {
+                var root = i;
+                while (Resolves(root, leadOf, count)) root = leadOf[root];
+                result[i] = SlotOf(root, groupOf, slots);
+            }
+
+            return result;
+        }
+
+        // The union of a group's slot boxes: each orb's window, outset back to
+        // the slot it was centred in (the group's largest window).
+        private static PixelRect SlotBox(PixelPoint[] placed, double[] sizes, double scale, int window)
+        {
+            int left = int.MaxValue, top = int.MaxValue, right = int.MinValue, bottom = int.MinValue;
+
+            for (var i = 0; i < placed.Length; i++)
+            {
+                var inset = (window - WindowFor(scale, sizes[i])) / 2;
+                left = Math.Min(left, placed[i].X - inset);
+                top = Math.Min(top, placed[i].Y - inset);
+                right = Math.Max(right, placed[i].X - inset + window);
+                bottom = Math.Max(bottom, placed[i].Y - inset + window);
+            }
+
+            return new PixelRect(left, top, right - left, bottom - top);
+        }
+
+        // Placements read off a finished whole-set layout (the Bands and
+        // Fallback routes). Landed here is the middle of the group's box — there
+        // was no per-group anchor to start from. The shape drawn is the shape
+        // asked for: Compute's grid retry is decided for the set as a whole and
+        // cannot be attributed to a group, and GroupOutline encloses the discs
+        // whatever shape it is told.
+        private static GroupPlacement[] Describe(
+            PixelPoint[] positions, int[] slotOf, string[] shapes, double[] sizes, double scale)
+        {
+            var window = WindowFor(scale, sizes.Max());
+            var result = new List<GroupPlacement>();
+
+            for (var g = 0; g < shapes.Length; g++)
+            {
+                var orbs = Enumerable.Range(0, positions.Length).Where(i => slotOf[i] == g).ToArray();
+                if (orbs.Length == 0) continue;
+
+                var box = SlotBox(
+                    orbs.Select(i => positions[i]).ToArray(),
+                    orbs.Select(i => sizes[i]).ToArray(),
+                    scale, window);
+
+                result.Add(new GroupPlacement(
+                    g,
+                    new PixelPoint(box.X + box.Width / 2, box.Y + box.Height / 2),
+                    box,
+                    shapes[g],
+                    orbs));
+            }
+
+            return result.ToArray();
         }
 
         // The anchor that would have drawn `placed` where it landed (CB-211):

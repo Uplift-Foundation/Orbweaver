@@ -79,5 +79,41 @@ namespace Orbweaver.Tests
             Assert.Contains(cases, c => c.Mix is null && c.Size == OrbSizing.Max);
             Assert.Contains(cases, c => c.Mix is { } mix && mix.Build(5).Distinct().Count() > 1);
         }
+
+        // The user-group half (CB-268), which is its own matrix rather than
+        // more rows of Cases() — the floor above guards the first three sweeps
+        // and this guards the fourth, at 116928: 108864 across 1–6 groups ×
+        // six anchor arrangements × every shape, spacing, team shape and
+        // screen at three orb counts and two ways of dealing the orbs, and
+        // 8064 with mixed sizes. Raised to the real count, not near it.
+        [Fact]
+        public void TheGroupSweepStillCoversTheWholeMatrix()
+        {
+            var cases = ArrangementSweep.GroupCases().ToList();
+
+            Assert.True(
+                cases.Count >= 116928,
+                $"the group sweep is down to {cases.Count} cases from 116928 — "
+                    + "if that was deliberate, raise the floor in this test");
+
+            // Every dimension that earns its keep: from one group to six, each
+            // way of anchoring them (including none, which is the first-draw
+            // route), both ways of dealing the orbs, and mixed sizes.
+            Assert.Equal(new[] { 1, 2, 3, 4, 5, 6 }, cases.Select(c => c.Groups).Distinct().OrderBy(g => g));
+            Assert.Equal(
+                ArrangementSweep.AnchorKinds.OrderBy(k => k),
+                cases.Select(c => c.Anchors).Distinct().OrderBy(k => k));
+            Assert.Equal(2, cases.Select(c => c.Split).Distinct().Count());
+            Assert.Contains(cases, c => c.Mix is not null);
+
+            // T1 is only proven if a team's members are dealt to a different
+            // group from their lead somewhere in it.
+            Assert.Contains(cases, c =>
+            {
+                var leads = c.Team.Build(c.Count);
+                var of = ArrangementSweep.DealTo(c.Split, c.Count, c.Groups);
+                return Enumerable.Range(0, c.Count).Any(i => leads[i] >= 0 && leads[i] < c.Count && of[i] != of[leads[i]]);
+            });
+        }
     }
 }
