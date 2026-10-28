@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using Avalonia;
 using Avalonia.Controls;
@@ -17,7 +18,31 @@ namespace Orbweaver
     // What a backdrop currently is, for tests and diagnostics.
     internal readonly record struct BackdropState(
         string GroupId, bool Shown, PixelPoint Position, double Width, double Height,
-        Color Stroke, Color Fill, double StrokeWidth, int Vertices, bool Highlighted, bool? Catching);
+        Color Stroke, Color Fill, double StrokeWidth, int Vertices, bool Highlighted, bool? Catching,
+        double Breath = 1, bool Morphing = false);
+
+    // The clock and switches the outline motion (M3 morph, M1 breathing) runs on.
+    // Seams, so a test can hold time still and step it by hand.
+    internal static class BackdropMotion
+    {
+        internal static Func<double> Clock = () => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+
+        // On in the app. Off, an outline jumps as it did before the morph existed.
+        internal static bool Enabled = true;
+
+        // OS reduce-motion: only a plain 150 ms glide, no overshoot or wobble.
+        internal static Func<bool> ReducedMotion = () => false;
+
+        internal const double MorphSeconds = 0.30;
+        internal const double ReducedSeconds = 0.15;
+
+        // A join swells and settles (well damped); a leave contracts with a small
+        // wobble. Both are closed-form springs that are within a fraction of a
+        // percent of done by MorphSeconds, where the window snaps onto the exact
+        // target polygon.
+        internal const double JoinOmega = 28, JoinDamping = 0.7;
+        internal const double LeaveOmega = 34, LeaveDamping = 0.5;
+    }
 
     // The caption last laid out for a backdrop: its text (null when names are
     // off), whether its window is shown, its colour, and where it is, in the
@@ -56,6 +81,10 @@ namespace Orbweaver
         // when highlighted) is never clipped by the window edge.
         internal const double EdgeDip = 4;
 
+        // Room the highlight's breathing (up to 4% about the outline's centre) needs
+        // beyond the stroke's slack, as a share of the outline's larger side.
+        internal const double BreathRoom = 0.05;
+
         private const int MaxParked = 8;
         private const int PollMs = 33; // ~30 Hz
 
@@ -80,6 +109,10 @@ namespace Orbweaver
 
         internal static int ShownCount => Active.Count;
         internal static int ParkedCount => Parked.Count;
+
+        // The polygon on screen at this instant, which mid-morph is not OutlineOf's.
+        internal static Point[] DisplayedOutlineOf(string groupId) =>
+            Active.TryGetValue(groupId, out var w) ? w.Displayed() : Array.Empty<Point>();
 
         internal static Window? WindowOf(string groupId) =>
             Active.TryGetValue(groupId, out var w) ? w : null;
@@ -132,7 +165,7 @@ namespace Orbweaver
             var added = _preview is null || !_preview.State.Shown;
             if (_preview is null)
             {
-                _preview = new BackdropWindow();
+                _preview = new BackdropWindow { Morphs = false };
                 _preview.MakeClickThrough();
             }
 
@@ -207,6 +240,7 @@ namespace Orbweaver
             if (added) Restack();
 
             EnsureTimer();
+            EnsureAnimTimer();
         }
 
         // The silhouette last drawn for a group, in screen units (the space of
@@ -225,6 +259,8 @@ namespace Orbweaver
                 if (Active.TryGetValue(spec.GroupId, out var w))
                     w.Restyle(StyleFor(spec), spec.GroupId == _highlight, _outlines);
             }
+
+            EnsureAnimTimer();
         }
 
         // CB-282: show each group's name above its outline. Refreshes, because the
@@ -293,6 +329,42 @@ namespace Orbweaver
             all.AddRange(Active.Values.Select(w => w.CaptionWindowIfShown).OfType<Window>());
             if (_preview is { } p && p.State.Shown) all.Add(p);
             if (all.Count > 0) WindowsWindowOrder.PlaceBehindAll(all);
+        }
+
+        // ---- motion ---------------------------------------------------------------
+
+        private static DispatcherTimer? _animTimer;
+
+        // One animation step at the current BackdropMotion.Clock time: advances every
+        // morph and every breathing highlight. The timer calls it; a test calls it
+        // with a clock it holds still.
+        internal static void Tick()
+        {
+            var now = BackdropMotion.Clock();
+            foreach (var w in Active.Values) w.Advance(now);
+            _preview?.Advance(now);
+            EnsureAnimTimer();
+        }
+
+        private static bool AnythingAnimating() =>
+            Active.Values.Any(w => w.Animating) || (_preview?.Animating ?? false);
+
+        // Runs only while something is morphing or breathing, so an idle desktop
+        // costs nothing.
+        private static void EnsureAnimTimer()
+        {
+            var want = AnythingAnimating();
+
+            if (want && _animTimer is null)
+            {
+                _animTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Render, (_, _) => Tick());
+                _animTimer.Start();
+            }
+            else if (!want && _animTimer is not null)
+            {
+                _animTimer.Stop();
+                _animTimer = null;
+            }
         }
 
         private static void Park(string id)
@@ -482,19 +554,64 @@ namespace Orbweaver
                 PointerPressed += OnPressed;
             }
 
+            // ---- morph / breath state ---------------------------------------------
+
+            private sealed class Morph
+            {
+                internal OutlineMorph.Polar From = default!, To = default!;
+                internal Point[] Final = Array.Empty<Point>();
+                internal Rect FinalBox;
+                internal double Start;
+                internal bool Growing;
+                internal bool Reduced;
+            }
+
+            private Morph? _morph;
+            private Point[]? _finalOutline;      // the true silhouette, while a morph is in flight
+            private double _breathStart;
+            private double _breath = 1;
+            private bool _visible = true;        // outlines on, or highlighted
+
+            // The Pair preview follows a drag frame by frame, so it jumps; a group's
+            // backdrop is the one that springs.
+            internal bool Morphs = true;
+
+            internal bool Animating => _morph is not null || _highlighted;
+
+            // What is drawn right now (the interpolated polygon mid-morph), in screen units.
+            internal Point[] Displayed() => Absolute(_local);
+
             internal BackdropState State => new(
                 _groupId, _shown, Position, Width, Height,
-                _stroke.Color, _fill.Color, _shape.StrokeThickness, _local.Length, _highlighted, Catching);
+                _stroke.Color, _fill.Color, _shape.StrokeThickness, _local.Length, _highlighted, Catching,
+                _breath, _morph is not null);
+
+            // The outline as the snap logic should see it: the TRUE silhouette, even
+            // while the drawn one is still on its way there.
+            internal Point[] Outline() => _finalOutline ?? Absolute(_local);
+
+            private Point[] Absolute(Point[] local)
+            {
+                var abs = new Point[local.Length];
+                for (var i = 0; i < abs.Length; i++) abs[i] = new Point(local[i].X + _origin.X, local[i].Y + _origin.Y);
+                return abs;
+            }
+
+            // The window's box around an outline: its bounds, the stroke's slack, and
+            // room for the highlight's breathing (a few percent of the outline's size).
+            private static Rect BoxFor(Rect outlineBounds, double scale) =>
+                outlineBounds.Inflate(EdgeDip * scale + BreathRoom * Math.Max(outlineBounds.Width, outlineBounds.Height));
 
             // Refits the silhouette — or just moves the window when every disc moved
-            // by the same whole amount.
+            // by the same whole amount, or springs from the old outline to the new one
+            // when an outline that is already on screen changes.
             internal void Fit(
                 string groupId, string shape, List<(double X, double Y, double R)> discs, double scale,
                 GroupOutline.PlacedCurve? curve, string? caption)
             {
                 _groupId = groupId;
 
-                if (_discs is not null && scale == _scale && shape == _drawnShape && caption == _captionText &&
+                if (_morph is null && _discs is not null && scale == _scale && shape == _drawnShape && caption == _captionText &&
                     BackdropGeometry.TryTranslation(_discs, discs) is { } d &&
                     IsWhole(d.Dx) && IsWhole(d.Dy) && BackdropGeometry.CurveFollows(_curve, curve, d.Dx, d.Dy))
                 {
@@ -510,31 +627,75 @@ namespace Orbweaver
                     return;
                 }
 
+                var hadOutline = _shown && _local.Length > 0;
+                var shownNow = _morph is not null ? CurrentDisplayed() : (hadOutline ? Absolute(_local) : null);
+                var oldBox = new Rect(_origin.X, _origin.Y, Width * _scale, Height * _scale);
+
                 _curve = curve;
                 _drawnShape = shape;
+                _discs = discs;
+                _scale = scale;
+
                 var outline = GroupOutline.Silhouette(shape, discs, PaddingDip * scale, curve);
                 var outlineBounds = GroupOutline.Bounds(outline);
 
-                // The box is the outline's alone. The caption is a window of its own
-                // (see CaptionWindow), because a Windows window region clips what it
-                // draws as well as what it hits, and the caption lies outside the
-                // silhouette.
-                var box = outlineBounds.Inflate(EdgeDip * scale);
+                // The box is the outline's alone, plus room for the highlight's breathing.
+                // The caption is a window of its own (see CaptionWindow), because a
+                // Windows window region clips what it draws as well as what it hits,
+                // and the caption lies outside the silhouette.
+                var box = BoxFor(outlineBounds, scale);
+                if (BackdropMotion.Enabled && Morphs && _visible && shownNow is not null && !SamePolygon(shownNow, outline))
+                {
+                    // The caption starts where the old outline was and rides the morph.
+                    SetCaption(caption, GroupOutline.Bounds(shownNow), scale);
+                    StartMorph(shownNow, oldBox, outline, box);
+                    return;
+                }
 
-                _discs = discs;
-                _scale = scale;
+                _morph = null;
+                _finalOutline = null;
+                Place(outline, box);
+                SetCaption(caption, outlineBounds, scale);
+            }
+
+            private static bool SamePolygon(Point[] a, Point[] b)
+            {
+                if (a.Length != b.Length) return false;
+                for (var i = 0; i < a.Length; i++)
+                    if (Math.Abs(a[i].X - b[i].X) > 1e-6 || Math.Abs(a[i].Y - b[i].Y) > 1e-6) return false;
+                return true;
+            }
+
+            private Point[] CurrentDisplayed() => Absolute(_local);
+
+            // Sizes and places the window around `box` and re-derives everything
+            // that is relative to its top-left; then draws `outline` in it.
+            private void Place(Point[] outline, Rect box)
+            {
+                SetWindowBox(box);
+                SetOutline(outline);
+            }
+
+            private void SetWindowBox(Rect box)
+            {
                 _origin = new Point(Math.Floor(box.X), Math.Floor(box.Y));
+                Position = new PixelPoint((int)_origin.X, (int)_origin.Y);
+                Width = Math.Ceiling(box.Right - _origin.X) / _scale;
+                Height = Math.Ceiling(box.Bottom - _origin.Y) / _scale;
 
+                _localDiscs = BackdropGeometry.LocalDiscs(_discs!, _origin);
+                _holes = _localDiscs;
+            }
+
+            // Draws an absolute polygon in the window as it now stands and makes it
+            // the hit area too: what is drawn is what catches the pointer.
+            private void SetOutline(Point[] outline)
+            {
                 _local = new Point[outline.Length];
                 for (var i = 0; i < outline.Length; i++)
                     _local[i] = new Point(outline[i].X - _origin.X, outline[i].Y - _origin.Y);
-                _localDiscs = BackdropGeometry.LocalDiscs(discs, _origin);
-                _holes = _localDiscs;
 
-                Position = new PixelPoint((int)_origin.X, (int)_origin.Y);
-                Width = Math.Ceiling(box.Right - _origin.X) / scale;
-                Height = Math.Ceiling(box.Bottom - _origin.Y) / scale;
-
+                var scale = _scale;
                 var geometry = new StreamGeometry();
                 using (var ctx = geometry.Open())
                 {
@@ -544,16 +705,103 @@ namespace Orbweaver
                     ctx.EndFigure(true);
                 }
                 _shape.Data = geometry;
+                UpdateBreathOrigin();
+                PlaceCaption(GroupOutline.Bounds(outline));
 
                 ApplyRegion();
-                SetCaption(caption, outlineBounds, scale);
+            }
+
+            // The window covers the union of the old and new boxes (plus a margin for
+            // the spring's overshoot) for the length of the morph, then shrinks.
+            private void StartMorph(Point[] from, Rect oldBox, Point[] to, Rect newBox)
+            {
+                var union = oldBox.Union(newBox);
+                var margin = 0.15 * Math.Max(union.Width, union.Height);
+                SetWindowBox(union.Inflate(margin));
+
+                _morph = new Morph
+                {
+                    From = OutlineMorph.Resample(from),
+                    To = OutlineMorph.Resample(to),
+                    Final = to,
+                    FinalBox = newBox,
+                    Start = BackdropMotion.Clock(),
+                    Growing = OutlineMorph.IsGrowing(from, to),
+                    Reduced = BackdropMotion.ReducedMotion()
+                };
+                _finalOutline = to;
+
+                SetOutline(from);
+            }
+
+            // One step. Returns whether this window still needs more of them.
+            internal bool Advance(double now)
+            {
+                if (_morph is { } m)
+                {
+                    var elapsed = now - m.Start;
+                    var duration = m.Reduced ? BackdropMotion.ReducedSeconds : BackdropMotion.MorphSeconds;
+
+                    if (elapsed >= duration)
+                    {
+                        // Exactly the target, not a resampled copy of it.
+                        _morph = null;
+                        _finalOutline = null;
+                        Place(m.Final, m.FinalBox);
+                    }
+                    else
+                    {
+                        var s = m.Reduced
+                            ? elapsed / duration
+                            : m.Growing
+                                ? OutlineMorph.SpringProgress(elapsed, BackdropMotion.JoinOmega, BackdropMotion.JoinDamping)
+                                : OutlineMorph.SpringProgress(elapsed, BackdropMotion.LeaveOmega, BackdropMotion.LeaveDamping);
+                        SetOutline(OutlineMorph.Frame(m.From, m.To, s));
+                    }
+                }
+
+                if (_highlighted)
+                {
+                    _breath = OutlineMorph.Breath(now - _breathStart);
+                    _shape.RenderTransform = new ScaleTransform(_breath, _breath);
+                }
+
+                return Animating;
+            }
+
+            // The caption rides whatever polygon is being drawn: centred over its bounds
+            // and a gap above its top, so mid-morph it moves with the outline.
+            private void PlaceCaption(Rect outlineBounds)
+            {
+                if (_captionText is null || _captionWindow is null) return;
+
+                _captionRect = GroupCaption.Place(
+                    outlineBounds, new Size(_captionWindow.TextSize.Width * _scale, _captionWindow.TextSize.Height * _scale),
+                    GroupCaption.GapDip * _scale);
+                _captionWindow.Place(_captionRect, _scale);
+            }
+
+            // The highlight scales about the outline's own centre, in the window's DIP.
+            private void UpdateBreathOrigin()
+            {
+                if (_local.Length == 0) return;
+                var c = OutlineMorph.Centroid(_local);
+                _shape.RenderTransformOrigin = new RelativePoint(c.X / _scale, c.Y / _scale, RelativeUnit.Absolute);
             }
 
             private static bool IsWhole(double v) => Math.Abs(v - Math.Round(v)) < 1e-6;
 
             internal void Restyle((Color Stroke, Color Fill) style, bool highlighted, bool outlines)
             {
+                if (highlighted && !_highlighted) _breathStart = BackdropMotion.Clock();   // begins at its true size
+                if (!highlighted && _highlighted)
+                {
+                    _breath = 1;
+                    _shape.RenderTransform = null;
+                }
+
                 _highlighted = highlighted;
+                _visible = highlighted || outlines;
                 var (stroke, fill, width) = BackdropStyle.Compute(style.Stroke, style.Fill, highlighted, outlines);
                 if (_stroke.Color != stroke) _stroke.Color = stroke;
                 if (_fill.Color != fill) _fill.Color = fill;
@@ -609,6 +857,14 @@ namespace Orbweaver
                 _shown = false;
                 Catching = null;
                 _captionWindow?.Park();
+                _morph = null;
+                _finalOutline = null;
+
+                // A window that comes back later starts its highlight, and its breath,
+                // from scratch rather than from wherever the last one left off.
+                _highlighted = false;
+                _breath = 1;
+                _shape.RenderTransform = null;
                 Hide();
             }
 
@@ -625,13 +881,6 @@ namespace Orbweaver
 
                 _holes = holes;
                 ApplyRegion();
-            }
-
-            internal Point[] Outline()
-            {
-                var abs = new Point[_local.Length];
-                for (var i = 0; i < abs.Length; i++) abs[i] = new Point(_local[i].X + _origin.X, _local[i].Y + _origin.Y);
-                return abs;
             }
 
             internal bool? Classify(Point cursor)
@@ -688,7 +937,8 @@ namespace Orbweaver
             [ExcludeFromCodeCoverage]
             private void ApplyRegionNow() =>
                 BackdropNative.SetPolygonRegion(
-                    this, BackdropGeometry.RegionPoints(_local, default, 1), BackdropGeometry.RegionHoles(_holes, 1));
+                    this, BackdropGeometry.PaddedRegionPoints(_local, default, 1, BackdropGeometry.RegionPad(_scale)),
+                    BackdropGeometry.RegionHoles(_holes, 1));
         }
 
         // CB-282's caption, in a window of its own beside its backdrop: transparent,

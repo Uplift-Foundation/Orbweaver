@@ -146,6 +146,86 @@ public class BackdropLogicTests
         Assert.Equal(new[] { (5, 7) }, BackdropGeometry.RegionPoints(new[] { new Point(15, 27) }, new Point(10, 20), 1));
     }
 
+    // ---- the Windows region is padded past the silhouette (CB-268 M1) -----------------------
+
+    private static Point[] Circle(double r, int n, bool clockwise = true)
+    {
+        var pts = new Point[n];
+        for (var i = 0; i < n; i++)
+        {
+            var a = 2 * Math.PI * i / n * (clockwise ? 1 : -1);
+            pts[i] = new Point(300 + r * Math.Cos(a), 300 + r * Math.Sin(a));
+        }
+        return pts;
+    }
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(1.5)]
+    [InlineData(2.0)]
+    public void ThePaddedRegionContainsTheWidestStrokeAtEveryScale(double scale)
+    {
+        // Highlight width, swollen by the breath's largest scale, half of it outside the edge.
+        var stroke = BackdropStyle.StrokeDip * BackdropStyle.HighlightFactor * OutlineMorph.BreathMax * scale;
+        var pad = BackdropGeometry.RegionPad(scale);
+        Assert.True(pad >= stroke / 2 + 1 - 1e-9, "pad covers half the widest stroke plus a pixel");
+
+        var r = 100 * scale;
+        foreach (var cw in new[] { true, false })
+        {
+            var region = BackdropGeometry.PaddedRegionPoints(Circle(r, 720, cw), default, 1, pad);
+            foreach (var (x, y) in region)
+            {
+                var d = Math.Sqrt((x - 300) * (x - 300) + (y - 300) * (y - 300));
+                Assert.True(d >= r + stroke / 2 + 1 - 1.0, $"region point at {d:0.00} reaches past r+stroke/2+1 = {r + stroke / 2 + 1:0.00}");
+            }
+        }
+    }
+
+    [Fact]
+    public void ThePaddedRegionIsOnlyAsLargeAsThePad()
+    {
+        var region = BackdropGeometry.PaddedRegionPoints(Circle(100, 360), default, 1, 5);
+        foreach (var (x, y) in region)
+            Assert.InRange(Math.Sqrt((x - 300) * (x - 300) + (y - 300) * (y - 300)), 104.5, 105.5);
+    }
+
+    [Fact]
+    public void ASharpTipDoesNotSpikeBeyondTwicePad()
+    {
+        // A thin triangle: its tip's mitre would run away without the cap.
+        var tri = new[] { new Point(0, 0), new Point(200, 4), new Point(0, 8) };
+        var region = BackdropGeometry.PaddedRegionPoints(tri, default, 1, 5);
+        Assert.All(region, p => Assert.InRange(p.X, -11, 211));
+    }
+
+    [Fact]
+    public void ADegenerateOrZeroPadFallsBackToTheExactRegion()
+    {
+        var tri = new[] { new Point(0, 0), new Point(10, 0), new Point(0, 10) };
+        Assert.Equal(BackdropGeometry.RegionPoints(tri, default, 1), BackdropGeometry.PaddedRegionPoints(tri, default, 1, 0));
+        Assert.Equal(BackdropGeometry.RegionPoints(tri.Take(2).ToArray(), default, 1), BackdropGeometry.PaddedRegionPoints(tri.Take(2).ToArray(), default, 1, 5));
+    }
+
+    [Fact]
+    public void RepeatedAndBackTrackingVerticesStayFinite()
+    {
+        // A zero-length edge has no normal, and a spike that reverses on itself has opposite ones.
+        var odd = new[] { new Point(0, 0), new Point(0, 0), new Point(10, 0), new Point(0, 0.0001), new Point(0, 10) };
+        var region = BackdropGeometry.PaddedRegionPoints(odd, default, 1, 5);
+        Assert.Equal(odd.Length, region.Length);
+
+        var spike = new[] { new Point(0, 0), new Point(10, 0), new Point(0, 0), new Point(0, 10) };
+        Assert.Equal(spike.Length, BackdropGeometry.PaddedRegionPoints(spike, default, 1, 5).Length);
+    }
+
+    [Fact]
+    public void TheOrbHolesAreUnchangedByThePadding()
+    {
+        var discs = new List<(double X, double Y, double R)> { (50, 60, 20.2) };
+        Assert.Equal(new[] { (50, 60, 21) }, BackdropGeometry.RegionHoles(discs, 1));
+    }
+
     [Fact]
     public void ATranslatedDiscSetIsRecognisedWithItsOffset()
     {

@@ -18,11 +18,14 @@ public class GroupBackdropsTests : IDisposable
     private readonly List<OrbWindow> _orbs = new();
 
     private readonly Func<OrbWindow, (Point Centre, double Scale)?> _measure = GroupBackdrops.Measure;
+    private readonly Func<double> _clock = BackdropMotion.Clock;
+    private readonly Func<bool> _reduced = BackdropMotion.ReducedMotion;
 
     public GroupBackdropsTests()
     {
         // The headless PointToScreen ignores Position; place orbs where the test said.
         GroupBackdrops.Measure = o => (new Point(o.Position.X + o.CentreDip, o.Position.Y + o.CentreDip), 1.0);
+        BackdropMotion.Enabled = false;   // the morph has its own tests; these read geometry straight after a change
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
         GroupBackdrops.SetOutlinesVisible(true);
@@ -43,6 +46,9 @@ public class GroupBackdropsTests : IDisposable
         GroupBackdrops.Highlight(null);
         foreach (var o in _orbs) o.Close();
         GroupBackdrops.Measure = _measure;
+        BackdropMotion.Enabled = true;
+        BackdropMotion.Clock = _clock;
+        BackdropMotion.ReducedMotion = _reduced;
     }
 
     private OrbWindow Orb(string id, int x, int y, bool member = false)
@@ -526,7 +532,8 @@ public class GroupBackdropsTests : IDisposable
         // its width is that circle's diameter plus the slack the window keeps.
         var discs = all.Select(o => (X: (double)o.Position.X + o.CentreDip, Y: (double)o.Position.Y + o.CentreDip, R: o.OrbRadius)).ToList();
         var (_, radius) = GroupOutline.MinimumEnclosingCircle(discs);
-        var expected = 2 * (radius + GroupBackdrops.PaddingDip) + 2 * GroupBackdrops.EdgeDip;
+        var diameter = 2 * (radius + GroupBackdrops.PaddingDip);
+        var expected = diameter + 2 * (GroupBackdrops.EdgeDip + GroupBackdrops.BreathRoom * diameter);
         Assert.InRange(p.Width, expected - 3, expected + 3);
 
         // Every orb is inside it by at least its radius plus the padding.

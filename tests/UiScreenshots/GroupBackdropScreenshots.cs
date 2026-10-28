@@ -17,10 +17,12 @@ public class GroupBackdropScreenshots : IDisposable
 {
     private readonly List<OrbWindow> _orbs = new();
     private readonly Func<OrbWindow, (Point Centre, double Scale)?> _measure = GroupBackdrops.Measure;
+    private readonly Func<double> _clock = BackdropMotion.Clock;
 
     public GroupBackdropScreenshots()
     {
         GroupBackdrops.Measure = o => (new Point(o.Position.X + o.CentreDip, o.Position.Y + o.CentreDip), 1.0);
+        BackdropMotion.Enabled = false;
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.SetArranged(true);
@@ -37,6 +39,8 @@ public class GroupBackdropScreenshots : IDisposable
         GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
         GroupBackdrops.PreviewPair(null);
         GroupBackdrops.Measure = _measure;
+        BackdropMotion.Enabled = true;
+        BackdropMotion.Clock = _clock;
         foreach (var o in _orbs) o.Close();
     }
 
@@ -279,6 +283,39 @@ public class GroupBackdropScreenshots : IDisposable
         ScreenshotHelper.Flush();
 
         ScreenshotHelper.Capture(window, "group-backdrops-pair-preview.png");
+    }
+
+    // M3: a frame from the middle of an outline morph, at a fixed time on a clock
+    // that is held still: six orbs in a circle, and a seventh has just joined from
+    // far to the right, so the outline is partway between the old circle and the
+    // new, larger shape (and a little past it, as a swell overshoots).
+    [AvaloniaFact]
+    public void AnOutlineMidMorph()
+    {
+        double now = 50;
+        var clock = BackdropMotion.Clock;
+        BackdropMotion.Clock = () => now;
+        BackdropMotion.Enabled = true;
+        try
+        {
+            var orbs = Arranged("m", "circle", Enumerable.Repeat(-1, 6).ToArray(), new PixelRect(0, 0, 900, 720));
+            GroupBackdrops.Update(new[] { new BackdropSpec("g-morph", "circle", orbs, null, null) });
+
+            var joiner = Orb("m-join", orbs.Max(o => o.Position.X) + 230, orbs.Min(o => o.Position.Y) + 20);
+            orbs.Add(joiner);
+            GroupBackdrops.Update(new[] { new BackdropSpec("g-morph", "circle", orbs, null, null) });
+
+            now += 0.09;                                   // 90 ms into the 300 ms morph
+            GroupBackdrops.Tick();
+            Assert.True(GroupBackdrops.StateOf("g-morph")!.Value.Morphing);
+
+            ScreenshotHelper.Capture(Dress("g-morph", orbs), "group-backdrops-mid-morph.png");
+        }
+        finally
+        {
+            BackdropMotion.Clock = clock;
+            BackdropMotion.Enabled = false;                // the fixture's own setting
+        }
     }
 
     private static Panel Stage_(Window w, BackdropState s, IEnumerable<OrbWindow> orbs)

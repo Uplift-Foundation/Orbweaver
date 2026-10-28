@@ -113,6 +113,64 @@ namespace Orbweaver
             return pts;
         }
 
+        // How far the Windows region reaches past the silhouette, in device pixels:
+        // SetWindowRgn clips painting as well as hits, so it must hold the widest
+        // stroke that is ever drawn — the highlight's doubled width, swelled by the
+        // breathing's largest scale — centred on the edge (half of it falls outside),
+        // plus a pixel for antialiasing.
+        internal static double RegionPad(double scale) =>
+            (BackdropStyle.StrokeDip * BackdropStyle.HighlightFactor * OutlineMorph.BreathMax / 2 + 1) * scale;
+
+        // The silhouette offset outward by `pad` device pixels, as region points. Each
+        // vertex moves along the mitred bisector of its two edges' outward normals
+        // (the mitre capped at twice the pad, so a sharp star tip cannot spike).
+        // macOS never asks for this: its hit test stays on the exact silhouette.
+        internal static (int X, int Y)[] PaddedRegionPoints(Point[] polygon, Point origin, double toDevice, double pad)
+        {
+            var n = polygon.Length;
+            if (n < 3 || pad <= 0) return RegionPoints(polygon, origin, toDevice);
+
+            double area = 0;
+            for (var i = 0; i < n; i++)
+            {
+                var a = polygon[i];
+                var b = polygon[(i + 1) % n];
+                area += a.X * b.Y - b.X * a.Y;
+            }
+            var sign = area >= 0 ? 1.0 : -1.0;   // outward is to the right of a positive-area walk
+
+            var padded = new Point[n];
+            for (var i = 0; i < n; i++)
+            {
+                var prev = polygon[(i + n - 1) % n];
+                var cur = polygon[i];
+                var next = polygon[(i + 1) % n];
+                var (n1x, n1y) = Outward(prev, cur, sign);
+                var (n2x, n2y) = Outward(cur, next, sign);
+
+                var bx = n1x + n2x;
+                var by = n1y + n2y;
+                var len = Math.Sqrt(bx * bx + by * by);
+                if (len < 1e-9) { bx = n1x; by = n1y; len = 1; }
+                bx /= len; by /= len;
+
+                // Distance along the bisector that puts both edges `pad` out.
+                var cos = bx * n1x + by * n1y;
+                var reach = Math.Min(pad / Math.Max(cos, 1e-3), 2 * pad) / toDevice;
+                padded[i] = new Point(cur.X + bx * reach, cur.Y + by * reach);
+            }
+
+            return RegionPoints(padded, origin, toDevice);
+        }
+
+        private static (double X, double Y) Outward(Point a, Point b, double sign)
+        {
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            var len = Math.Sqrt(dx * dx + dy * dy);
+            if (len < 1e-12) return (0, 0);
+            return (sign * dy / len, -sign * dx / len);
+        }
+
         // Whether the placed curve moved along with the discs: both absent, or both
         // present with the same scale and the centre shifted by the same offset.
         // Otherwise the outline must be rebuilt even when the discs only translated.
