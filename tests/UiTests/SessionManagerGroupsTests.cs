@@ -1,5 +1,6 @@
 using System.Reflection;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Media;
 using Xunit;
@@ -34,14 +35,18 @@ public class SessionManagerGroupsTests : IDisposable
     // GroupBackdrops is process-wide, so every test starts and ends with none.
     private static void ResetBackdrops()
     {
+        GroupBackdrops.PreviewPair(null);
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
         GroupBackdrops.Highlight(null);
         GroupBackdrops.SetOutlinesVisible(true);
     }
 
+    private readonly List<string> _offsetKeys = new();
+
     public void Dispose()
     {
+        foreach (var key in _offsetKeys) OrbweaverSettings.SetOrbMemberOffset(key, null);
         ResetBackdrops();
         OrbweaverSettings.GroupOutlinesEnabled = _outlines;
         OrbweaverSettings.ShowOrbs = _showOrbs;
@@ -347,9 +352,15 @@ public class SessionManagerGroupsTests : IDisposable
     [AvaloniaFact]
     public void SnapCandidatesAreEveryOtherGroupWithItsDiscsAndNothingOfTheDraggedTeam()
     {
+        // Arranged: every group is a target. (Free mode's targets, where main
+        // is not one, are FreeModeSnapTargetsAreUserGroupsAndLooseTeamsNeverMain.)
+        OrbweaverSettings.ArrangeAnchor = null;
         var manager = Scan(("a", ""), ("b", "codex"), ("c", "grok"));
         var group = NewGroup();
         OrbweaverSettings.MoveOrbToGroup(KeyOf(manager, "b"), group.Id);
+        manager.ArrangeOrbsInPattern();
+        CompleteTheGlide(manager);
+        ResetBackdrops();                      // only the discs matter here, not the drawn outlines
         IOrbDragHost host = manager;
 
         var all = host.CandidatesFor(Array.Empty<string>());
@@ -386,7 +397,7 @@ public class SessionManagerGroupsTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void ArrangingGivesEveryGroupABackdropAndRestoringTakesThemAway()
+    public void ArrangingGivesEveryGroupABackdropAndUnarrangingLeavesOnlyTheUserGroups()
     {
         var (manager, group) = ArrangedInTwoGroups();
 
@@ -415,10 +426,12 @@ public class SessionManagerGroupsTests : IDisposable
         manager.SetOrbsVisible(true);
         Assert.Equal(2, GroupBackdrops.ShownCount);
 
-        // Unarranged orbs have no groups on screen.
+        // Un-arranged, main has no backdrop any more; the user group keeps its
+        // own (CB-268 F1: user groups are always live).
         manager.ArrangeOrbsInPattern();
         Assert.False(manager.IsArranged);
-        Assert.Equal(0, GroupBackdrops.ShownCount);
+        Assert.Null(GroupBackdrops.StateOf(OrbGroups.Main));
+        Assert.True(GroupBackdrops.StateOf(group.Id)!.Value.Shown);
     }
 
     [AvaloniaFact]
@@ -440,6 +453,185 @@ public class SessionManagerGroupsTests : IDisposable
         var off = GroupBackdrops.StateOf(group.Id)!.Value;
         Assert.True(off.Shown);
         Assert.Equal(Colors.Transparent, off.Stroke);
+    }
+
+    // --- free mode (F1–F4) --------------------------------------------------
+
+    private static PixelRect Bounds(SessionManager manager, string groupId)
+    {
+        var placements = (System.Collections.IEnumerable)typeof(SessionManager)
+            .GetField("_groupPlacements", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(manager)!;
+        foreach (var g in placements)
+        {
+            var t = g.GetType();
+            if ((string)t.GetProperty("GroupId")!.GetValue(g)! == groupId)
+                return (PixelRect)t.GetProperty("Bounds")!.GetValue(g)!;
+        }
+        throw new InvalidOperationException("no placement for " + groupId);
+    }
+
+    private static PixelRect Rect(OrbWindow w)
+    {
+        var size = SessionManager.OrbPixels(w, w.Screens.Primary?.Scaling ?? 1);
+        return new PixelRect(w.Position, new PixelSize(size, size));
+    }
+
+    private (SessionManager Manager, OrbGroup Group) FreeWithAUserGroup()
+    {
+        OrbweaverSettings.ArrangeAnchor = null;
+        var manager = Scan(("loose", ""), ("b", "codex"), ("c", "grok"));
+        var group = NewGroup("heart");
+        OrbweaverSettings.MoveOrbToGroup(KeyOf(manager, "b"), group.Id);
+        OrbweaverSettings.MoveOrbToGroup(KeyOf(manager, "c"), group.Id);
+        manager.ReapplyArrangement();      // free mode: the reflow lays the user group out
+        Assert.False(manager.IsArranged);
+        return (manager, group);
+    }
+
+    [AvaloniaFact]
+    public void InFreeModeAUserGroupIsLaidOutClearOfTheLooseStackWithItsOwnBackdrop()
+    {
+        var (manager, group) = FreeWithAUserGroup();
+        var w = Windows(manager);
+
+        // F1: the user group has a backdrop; main, not arranged, has none.
+        Assert.True(GroupBackdrops.StateOf(group.Id)!.Value.Shown);
+        Assert.Null(GroupBackdrops.StateOf(OrbGroups.Main));
+
+        // F2: the loose orb is an obstacle — the group's box keeps clear of it.
+        Assert.False(Bounds(manager, group.Id).Intersects(Rect(w["loose"])));
+
+        // And a grouped orb is not the stack's: the loose orb alone holds the
+        // stack's first slot, as it would with no group at all.
+        Assert.NotEqual(w["loose"].Position, w["b"].Position);
+        Assert.NotEqual(w["loose"].Position, w["c"].Position);
+    }
+
+    [AvaloniaFact]
+    public void ArrangingAndUnarrangingNeverMoveAUserGroup()
+    {
+        var (manager, group) = FreeWithAUserGroup();
+        var w = Windows(manager);
+        var before = (w["b"].Position, w["c"].Position, OrbweaverSettings.OrbGroupFor(group.Id)!.Anchor);
+
+        manager.ArrangeOrbsInPattern();
+        CompleteTheGlide(manager);
+        Assert.True(manager.IsArranged);
+        Assert.Equal(before, (w["b"].Position, w["c"].Position, OrbweaverSettings.OrbGroupFor(group.Id)!.Anchor));
+        Assert.True(GroupBackdrops.StateOf(OrbGroups.Main)!.Value.Shown);
+
+        manager.ArrangeOrbsInPattern();
+        CompleteTheGlide(manager);
+        Assert.False(manager.IsArranged);
+        Assert.Equal(before, (w["b"].Position, w["c"].Position, OrbweaverSettings.OrbGroupFor(group.Id)!.Anchor));
+        Assert.True(GroupBackdrops.StateOf(group.Id)!.Value.Shown);
+        Assert.Null(GroupBackdrops.StateOf(OrbGroups.Main));
+    }
+
+    [AvaloniaFact]
+    public void FreeModeSnapTargetsAreUserGroupsAndLooseTeamsNeverMain()
+    {
+        var manager = Scan(("a", ""), ("lead", "codex"), ("member", "grok"));
+        manager.StatusFor("member")!.Lead = "lead";
+        var group = NewGroup();
+        OrbweaverSettings.MoveOrbToGroup(KeyOf(manager, "a"), group.Id);
+        manager.ReapplyArrangement();
+        IOrbDragHost host = manager;
+
+        var free = host.CandidatesFor(Array.Empty<string>());
+        Assert.Equal(new[] { group.Id, "lead" }, free.Select(c => c.GroupId));
+        Assert.False(free[0].Loose);
+        Assert.True(free[1].Loose);
+        Assert.Equal(2, free[1].Discs.Count);                  // the whole loose team
+        Assert.Empty(free[1].Outline);
+
+        // Dragging that team: it is not its own target.
+        Assert.Equal(new[] { group.Id }, host.CandidatesFor(new[] { "lead", "member" }).Select(c => c.GroupId));
+
+        // Arranged: today's candidates, main included, nothing loose.
+        manager.ArrangeOrbsInPattern();
+        CompleteTheGlide(manager);
+        var arranged = host.CandidatesFor(Array.Empty<string>());
+        Assert.Equal(new[] { group.Id, OrbGroups.Main }, arranged.Select(c => c.GroupId));
+        Assert.All(arranged, c => Assert.False(c.Loose));
+    }
+
+    [AvaloniaFact]
+    public void APairPreviewOutlinesBothTeamsAndClears()
+    {
+        var manager = Scan(("a", ""), ("lead", "codex"), ("member", "grok"));
+        manager.StatusFor("member")!.Lead = "lead";
+        manager.ReapplyArrangement();
+        IOrbDragHost host = manager;
+
+        // "a" dragged onto the loose team led by "lead": the preview takes in
+        // both teams, member included, as the group that would be made.
+        host.PreviewPair(new[] { "a" }, "member");          // any orb of the target team names it
+        Assert.NotNull(GroupBackdrops.PreviewState);
+
+        host.PreviewPair(null, null);
+        Assert.Null(GroupBackdrops.PreviewState);
+
+        host.PreviewPair(new[] { "a" }, "lead");
+        host.PreviewPair(new[] { "a" }, null);              // either side null clears
+        Assert.Null(GroupBackdrops.PreviewState);
+    }
+
+    // --- T2 revised: a member's own placement -------------------------------
+
+    [AvaloniaFact]
+    public void AMembersOffsetFromItsLeadIsSavedAndResetPositionForgetsIt()
+    {
+        var manager = Scan(("lead", ""), ("member", "codex"));
+        manager.StatusFor("member")!.Lead = "lead";
+        IOrbDragHost host = manager;
+        var w = Windows(manager);
+        var member = w["member"];
+        Assert.NotEqual("", member.SoundKey);
+        _offsetKeys.Add(member.SoundKey);
+
+        member.Position = new PixelPoint(w["lead"].Position.X + 30, w["lead"].Position.Y + 40);
+        host.SaveMemberOffset("member");
+
+        var m = host.DiscOf("member");
+        var l = host.DiscOf("lead");
+        var units = OrbWindow.UnitsPerDip(member);
+        Assert.Equal(((m.X - l.X) / units, (m.Y - l.Y) / units), OrbweaverSettings.OrbMemberOffsetFor(member.SoundKey));
+
+        // The menu offers to undo it even though nothing is pinned.
+        member.SessionMenu_Opening(null, new System.ComponentModel.CancelEventArgs());
+        Assert.True(member.FindControl<MenuItem>("ResetPositionItem")!.IsVisible);
+
+        manager.ReturnOrbToStack("member");
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor(member.SoundKey));
+        member.SessionMenu_Opening(null, new System.ComponentModel.CancelEventArgs());
+        Assert.False(member.FindControl<MenuItem>("ResetPositionItem")!.IsVisible);
+
+        // A lead has no lead to be offset from: nothing is written.
+        _offsetKeys.Add(w["lead"].SoundKey);
+        host.SaveMemberOffset("lead");
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor(w["lead"].SoundKey));
+        host.SaveMemberOffset("nobody");
+    }
+
+    [AvaloniaFact]
+    public void ResettingAMemberWhileArrangedReLaysTheArrangement()
+    {
+        OrbweaverSettings.ArrangeAnchor = null;
+        var manager = Scan(("lead", ""), ("member", "codex"));
+        manager.StatusFor("member")!.Lead = "lead";
+        manager.ArrangeOrbsInPattern();
+        CompleteTheGlide(manager);
+        var member = Windows(manager)["member"];
+        _offsetKeys.Add(member.SoundKey);
+        var settled = member.Position;
+
+        OrbweaverSettings.SetOrbMemberOffset(member.SoundKey, (200, 0));
+        member.Position = new PixelPoint(settled.X + 5, settled.Y + 5);
+        manager.ReturnOrbToStack("member");
+
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor(member.SoundKey));
+        Assert.Equal(settled, member.Position);    // re-laid, not left where it was nudged
     }
 
     [AvaloniaFact]

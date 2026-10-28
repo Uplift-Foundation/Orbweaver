@@ -3235,6 +3235,11 @@ namespace Orbweaver
             RebuildSizeSubmenu();
             RebuildGroupSubmenu();
 
+            // "Reset position" undoes a hand placement: a free pin, or (CB-268
+            // T2 revised) a team member's saved offset from its lead in a
+            // laid-out group, which is never a pin.
+            ResetPositionItem.IsVisible = IsPinned || OrbweaverSettings.OrbMemberOffsetFor(SoundKey) is not null;
+
             var manager = CurrentManager();
             if (manager is null) return;
 

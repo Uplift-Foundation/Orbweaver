@@ -3841,6 +3841,16 @@ namespace Orbweaver
             int spacing = (int)(12 * scale);
             int margin = (int)(24 * scale);
 
+            // CB-268 F2: orbs in a user group are not the stack's. They are
+            // laid out by their group below, and never stacked or free-pinned.
+            var tree = Teams();
+            var loose = new List<OrbWindow>();
+            var grouped = new List<OrbWindow>();
+            foreach (var id in DisplayOrder())
+            {
+                (IsUserGroup(GroupIdOf(tree, id)) ? grouped : loose).Add(_windows[id]);
+            }
+
             // Orbs the user has placed by hand keep their spot and don't take up
             // a slot, so the rest of the stack closes up behind them.
             //
@@ -3849,15 +3859,28 @@ namespace Orbweaver
             // actually occupies. Right edges line up, the column keeps the
             // same margin from the screen edge at every size.
             int y = work.Y + margin;
-            foreach (var id in DisplayOrder())
+            foreach (var window in loose)
             {
-                var window = _windows[id];
                 if (window.IsPinned) continue;
 
                 int size = OrbPixels(window, scale);
                 window.Position = new PixelPoint(work.Right - size - margin, y);
                 y += size + spacing;
             }
+
+            // F1/F2: the user groups, laid out where the loose orbs are not —
+            // every loose orb, stacked or pinned, is a fixed obstacle — and
+            // given their backdrops, which must not take a loose orb's click.
+            var visibleLoose = loose.Where(w => w.IsVisible).ToList();
+            var obstacles = visibleLoose
+                .Select(w => new PixelRect(w.Position, new PixelSize(OrbPixels(w, scale), OrbPixels(w, scale))))
+                .ToList();
+            var (targets, userGroups) = LayoutSubset(grouped.Where(w => w.IsVisible).ToList(), obstacles);
+            foreach (var (orb, at) in targets) orb.Position = at;
+
+            _groupPlacements = userGroups;
+            GroupBackdrops.SetLooseOrbs(visibleLoose);
+            UpdateGroupBackdrops();
 
             // Every arrow's geometry just moved.
             RefreshOverlays();
@@ -4298,7 +4321,14 @@ namespace Orbweaver
                 OrbweaverSettings.ClearOrbPosition(window.PositionKey);
             }
 
-            ReflowPositions();
+            // CB-268 T2 revised: "Reset this orb's position" also forgets a
+            // member's offset from its lead, so its group fans it again.
+            OrbweaverSettings.SetOrbMemberOffset(window.SoundKey, null);
+
+            // Arranged, a reflow takes CB-161's departure shortcut and would
+            // re-lay nothing; the offset change needs a real re-layout.
+            if (_isArranged) ReapplyArrangement();
+            else ReflowPositions();
         }
 
         public void ResetSessionToIdle(string sessionId)
@@ -4652,13 +4682,17 @@ namespace Orbweaver
             foreach (var orb in allOrbs)
                 _preArrangeState[orb.SessionId] = (orb.Position, orb.IsPinned);
 
+            // Arranged before the layout, not after: ComputeClusteredPositions
+            // hands the backdrops the new groups and the mode with them, and
+            // the predefined groups only have backdrops while arranged (F1).
+            _isArranged = true;
+
             var positioned = ComputeClusteredPositions(allOrbs);
 
             _arrangeAnimTargets = new();
             foreach (var (orb, target) in positioned)
                 _arrangeAnimTargets[orb.SessionId] = (orb.Position, target);
 
-            _isArranged = true;
             _arrangedIds.Clear();
             foreach (var orb in allOrbs) _arrangedIds.Add(orb.SessionId);
             AnimateArrangement();
@@ -4679,13 +4713,51 @@ namespace Orbweaver
         {
             if (allOrbs.Count == 0) return new List<(OrbWindow, PixelPoint)>();
 
-            // CB-268: the team tree and the group table replace the raw Lead
-            // lookup and the fixed three-shape list. leadOf is TeamTree's, so a
-            // member whose lead ended fans off its nearest surviving ancestor
-            // (T4); groupOf is each orb's *root's* group as a slot in the group
-            // table's order (T1), which is fixed by the table and never by which
-            // sessions exist — main, heartbeats, crons, then user groups by id.
+            // CB-268 F4: user groups are laid out by a call of their own, first,
+            // so arranging can never move them — they are fed into nothing else.
+            // The predefined groups then go around them: the user groups' boxes
+            // are obstacles to that second call. With no user group on screen the
+            // second call has no obstacles, which is exactly the arrangement as it
+            // was before free-mode groups.
             var tree = new TeamTree(allOrbs.Select(o => o.SessionId).ToList(), KnownLeads());
+            var user = allOrbs.Where(o => IsUserGroup(GroupIdOf(tree, o.SessionId))).ToList();
+            var rest = allOrbs.Where(o => !user.Contains(o)).ToList();
+
+            var (userTargets, userGroups) = LayoutSubset(user, obstacles: null);
+            var (restTargets, restGroups) = LayoutSubset(
+                rest, user.Count > 0 ? userGroups.Select(g => g.Bounds).ToList() : null);
+
+            // Every caller applies what this returns (a glide, or straight
+            // away), so the backdrops are told the new groups here, once —
+            // Refresh then follows the orbs through the glide.
+            _groupPlacements = userGroups.Concat(restGroups).ToList();
+            UpdateGroupBackdrops();
+
+            return allOrbs
+                .Select(orb => (orb, userTargets.TryGetValue(orb, out var at) ? at : restTargets[orb]))
+                .ToList();
+        }
+
+        private static bool IsUserGroup(string groupId) => !OrbGroups.IsPredefined(groupId);
+
+        // One ComputeGroups call over a subset of orbs: the full group table (so
+        // slots are stable) with only these orbs in it. A team is never split
+        // across a user group and a predefined one (T1 resolves both from the
+        // root), so a subset's own team tree is the whole team.
+        //
+        // CB-268 T2 revised: a member with a saved offset (keyed by its
+        // SoundKey) is handed to ComputeGroups to be placed at its lead plus that
+        // offset instead of fanned. Roots' entries are ignored by ComputeGroups.
+        private (Dictionary<OrbWindow, PixelPoint> Targets, List<GroupOnScreen> Groups) LayoutSubset(
+            List<OrbWindow> orbs, IReadOnlyList<PixelRect>? obstacles)
+        {
+            var targets = new Dictionary<OrbWindow, PixelPoint>();
+            if (orbs.Count == 0) return (targets, new List<GroupOnScreen>());
+
+            // leadOf is TeamTree's, so a member whose lead ended fans off its
+            // nearest surviving ancestor (T4); groupOf is each orb's *root's*
+            // group as a slot in the group table's order (T1).
+            var tree = new TeamTree(orbs.Select(o => o.SessionId).ToList(), KnownLeads());
             var leadOf = tree.LeadIndices();
 
             var groups = OrbweaverSettings.OrbGroupList();
@@ -4696,42 +4768,36 @@ namespace Orbweaver
             // MembershipFor already checked against this table, so every id is
             // in slotOf; slot 0 (main) is the answer for one that somehow is
             // not, the same fallback OrbArrangement gives an out-of-range slot.
-            var groupOf = allOrbs
+            var groupOf = orbs
                 .Select(orb => slotOf.GetValueOrDefault(GroupIdOf(tree, orb.SessionId)))
                 .ToArray();
 
-            var screen = allOrbs[0].Screens.Primary ?? allOrbs[0].Screens.All.FirstOrDefault();
+            var screen = orbs[0].Screens.Primary ?? orbs[0].Screens.All.FirstOrDefault();
             var work = screen?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
 
             // No Center: each group brings its own anchor (GroupLayout), and
             // ComputeGroups ignores Layout's. Nothing is seeded before the
-            // layout either — with no anchor anywhere ComputeGroups draws
-            // today's bands, which is what a first arrange must look like, and
-            // every group's landed anchor is saved from that.
+            // layout either: an unanchored group is asked for its band's middle.
             var layout = new OrbArrangement.Layout(
                 work,
                 screen?.Scaling ?? 1.0,
                 groups[0].Shape,
                 OrbweaverSettings.ArrangeSpacing);
 
-            // CB-198: each orb's effective size, in the same index order as
-            // leadOf and groupOf. Read off the window rather than recomputed
-            // from settings, so the arrangement lays out what is actually drawn
-            // — ReapplyOrbSizes applies the sizes before it arranges.
-            var sizeOf = allOrbs.Select(orb => orb.OrbSize).ToArray();
+            // CB-198: each orb's effective size, read off the window, so the
+            // arrangement lays out what is actually drawn.
+            var sizeOf = orbs.Select(orb => orb.OrbSize).ToArray();
 
-            var (placed, placements) = PlaceGroups(allOrbs.Count, leadOf, groupOf, groups, layout, sizeOf);
+            var (placed, placements) = PlaceGroups(orbs.Count, leadOf, groupOf, groups, layout, sizeOf, obstacles);
 
-            // Every caller applies what this returns (a glide, or straight
-            // away), so the backdrops are told the new groups here, once —
-            // Refresh then follows the orbs through the glide.
-            _groupPlacements = placements
+            for (var i = 0; i < orbs.Count; i++) targets[orbs[i]] = placed[i];
+
+            var onScreen = placements
                 .Select(p => new GroupOnScreen(
-                    groups[p.Slot].Id, p.DrawnShape, CurveOf(p), p.Orbs.Select(i => allOrbs[i]).ToList()))
+                    groups[p.Slot].Id, p.DrawnShape, CurveOf(p), p.Orbs.Select(i => orbs[i]).ToList(), p.SlotBounds))
                 .ToList();
-            UpdateGroupBackdrops();
 
-            return allOrbs.Select((orb, i) => (orb, placed[i])).ToList();
+            return (targets, onScreen);
         }
 
         // Where every orb goes, given the groups: S2's ComputeGroups, with one
@@ -4747,14 +4813,15 @@ namespace Orbweaver
         // swallowing the next drag back.
         private static (PixelPoint[] Positions, OrbArrangement.GroupPlacement[] Placements) PlaceGroups(
             int count, int[] leadOf, int[] groupOf, IReadOnlyList<OrbGroup> groups,
-            OrbArrangement.Layout layout, double[] sizeOf)
+            OrbArrangement.Layout layout, double[] sizeOf, IReadOnlyList<PixelRect>? obstacles)
         {
             var layouts = groups
                 .Select(g => new OrbArrangement.GroupLayout(
                     g.Shape, g.Anchor is { } a ? new PixelPoint(a.X, a.Y) : null))
                 .ToList();
 
-            var (positions, placed) = OrbArrangement.ComputeGroups(count, leadOf, groupOf, layouts, layout, sizeOf);
+            var (positions, placed) = OrbArrangement.ComputeGroups(
+                count, leadOf, groupOf, layouts, layout, sizeOf, obstacles);
 
             foreach (var group in placed)
             {
@@ -4799,6 +4866,12 @@ namespace Orbweaver
                 ChatPanel.HideFor(w.SessionId);
             }
 
+            // F4: un-arranging restores only the orbs the arrangement moved — a
+            // user group's orbs were laid out by their own group and stay.
+            var tree = Teams();
+            foreach (var id in _preArrangeState.Keys.Where(id => IsUserGroup(GroupIdOf(tree, id))).ToList())
+                _preArrangeState.Remove(id);
+
             var targets = new Dictionary<string, (PixelPoint From, PixelPoint To)>();
             foreach (var (id, (origPos, _)) in _preArrangeState)
             {
@@ -4810,8 +4883,8 @@ namespace Orbweaver
             _isArranged = false;
             _arrangedIds.Clear();
 
-            // Groups are an arrangement's: unarranged orbs have no backdrops.
-            _groupPlacements = new();
+            // The predefined groups are an arrangement's; user groups stay (F1).
+            _groupPlacements = _groupPlacements.Where(g => IsUserGroup(g.GroupId)).ToList();
             UpdateGroupBackdrops();
 
             AnimateArrangement(() =>
@@ -4891,7 +4964,14 @@ namespace Orbweaver
         // if they're not, the new spacing is just saved for next time.
         public void ReapplyArrangement()
         {
-            if (!_isArranged) return;
+            // Free mode has user groups to lay out (F1); the reflow does that
+            // and re-stacks the loose orbs around them.
+            if (!_isArranged)
+            {
+                ReflowPositions();
+                return;
+            }
+
             if (_arrangeAnimTargets is not null) return;
 
             var allOrbs = DisplayOrder()
@@ -5040,20 +5120,29 @@ namespace Orbweaver
         IReadOnlyList<SnapCandidate> IOrbDragHost.CandidatesFor(IReadOnlyCollection<string> excludedIds)
         {
             var tree = VisibleTeams();
+            var free = !_isArranged;
             var discs = new Dictionary<string, List<(double X, double Y, double R)>>(StringComparer.Ordinal);
+            var loose = new Dictionary<string, List<(double X, double Y, double R)>>(StringComparer.Ordinal);
 
             foreach (var id in tree.Present)
             {
                 if (excludedIds.Contains(id)) continue;
 
+                // CB-268 F3: in free mode main and the clusters are no target —
+                // their orbs are, one loose team at a time, keyed by its root.
                 var group = GroupIdOf(tree, id);
-                if (!discs.TryGetValue(group, out var list)) discs[group] = list = new();
+                var isLoose = free && !IsUserGroup(group);
+                var into = isLoose ? loose : discs;
+                var key = isLoose ? tree.RootOf(id) : group;
+
+                if (!into.TryGetValue(key, out var list)) into[key] = list = new();
                 list.Add(DiscOf(_windows[id]));
             }
 
             return discs
-                .OrderBy(p => p.Key, StringComparer.Ordinal)
                 .Select(p => new SnapCandidate(p.Key, GroupBackdrops.OutlineOf(p.Key), p.Value))
+                .Concat(loose.Select(p => new SnapCandidate(p.Key, Array.Empty<Point>(), p.Value, Loose: true)))
+                .OrderBy(c => c.GroupId, StringComparer.Ordinal)
                 .ToList();
         }
 
@@ -5064,12 +5153,41 @@ namespace Orbweaver
         void IOrbDragHost.ShiftGroupAnchor(string groupId, int dx, int dy) =>
             ShiftArrangementAnchor(dx, dy, groupId);
 
+        // CB-268 T2 revised: a member dragged within a laid-out group keeps
+        // where it was put, as an offset from its (effective) lead's centre in
+        // DIP, under its SoundKey so teammates sharing a directory don't collide.
+        void IOrbDragHost.SaveMemberOffset(string memberId)
+        {
+            if (!_windows.TryGetValue(memberId, out var member)) return;
+            if (Teams().LeadOf(memberId) is not { } leadId) return;
+
+            OrbweaverSettings.SetOrbMemberOffset(
+                member.SoundKey,
+                OrbDragCommit.MemberOffsetDip(DiscOf(member), DiscOf(_windows[leadId]), OrbWindow.UnitsPerDip(member)));
+        }
+
+        // CB-268 F3: while a free-mode drag would Pair two loose teams, a
+        // provisional outline around both — there is no backdrop to highlight
+        // for a group that does not exist yet. Null on either side clears it.
+        void IOrbDragHost.PreviewPair(IReadOnlyList<string>? draggedTeamIds, string? targetRootId)
+        {
+            if (draggedTeamIds is null || targetRootId is null)
+            {
+                GroupBackdrops.PreviewPair(null);
+                return;
+            }
+
+            var ids = draggedTeamIds.Concat(VisibleTeams().TeamOf(targetRootId)).Distinct(StringComparer.Ordinal);
+            GroupBackdrops.PreviewPair(ids.Where(_windows.ContainsKey).Select(id => _windows[id]).ToList());
+        }
+
         // --- the backdrops (S5) ---------------------------------------------------
 
         // One arranged group as the last arrange left it: what was drawn, the
         // curve it was drawn on, and its orbs.
         private sealed record GroupOnScreen(
-            string GroupId, string DrawnShape, GroupOutline.PlacedCurve? Curve, IReadOnlyList<OrbWindow> Orbs);
+            string GroupId, string DrawnShape, GroupOutline.PlacedCurve? Curve, IReadOnlyList<OrbWindow> Orbs,
+            PixelRect Bounds);
 
         private List<GroupOnScreen> _groupPlacements = new();
 
@@ -5089,6 +5207,11 @@ namespace Orbweaver
         // set — nothing arranged — parks them all.
         private void UpdateGroupBackdrops()
         {
+            // F1: user groups have backdrops in both modes, the predefined only
+            // while arranged — GroupBackdrops applies that from the mode. While
+            // arranged nothing is loose; free mode's reflow says who is.
+            GroupBackdrops.SetArranged(_isArranged);
+            if (_isArranged) GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
             GroupBackdrops.SetOutlinesVisible(OrbweaverSettings.GroupOutlinesEnabled);
             GroupBackdrops.Update(_groupPlacements.Select(g => new BackdropSpec(
                 g.GroupId, g.DrawnShape, g.Orbs, OrbweaverSettings.OrbGroupFor(g.GroupId)?.Style, g.Curve)));
