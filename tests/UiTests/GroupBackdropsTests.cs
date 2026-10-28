@@ -28,6 +28,7 @@ public class GroupBackdropsTests : IDisposable
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.SetArranged(true);
         GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
+        GroupBackdrops.PreviewPair(null);
         GroupBackdrops.Highlight(null);
     }
 
@@ -38,6 +39,7 @@ public class GroupBackdropsTests : IDisposable
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.SetArranged(true);
         GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
+        GroupBackdrops.PreviewPair(null);
         GroupBackdrops.Highlight(null);
         foreach (var o in _orbs) o.Close();
         GroupBackdrops.Measure = _measure;
@@ -500,6 +502,109 @@ public class GroupBackdropsTests : IDisposable
         GroupBackdrops.SetLooseOrbs(new[] { loose, Orb("far", 4000, 4000), Orb("alsoLoose", cx, cy) });
         GroupBackdrops.Refresh();
         Assert.True(GroupBackdrops.StateOf("g-a")!.Value.Shown);
+    }
+
+    // ---- the Pair preview --------------------------------------------------------
+
+    [AvaloniaFact]
+    public void APairPreviewIsAHighlightedCircleAroundBothTeamsAndNotAGroup()
+    {
+        var team1 = new[] { Orb("p1", 200, 200), Orb("p1m", 300, 240, member: true) };
+        var team2 = new[] { Orb("p2", 420, 220) };
+        var all = team1.Concat(team2).ToList();
+
+        GroupBackdrops.PreviewPair(all);
+
+        var p = GroupBackdrops.PreviewState!.Value;
+        Assert.True(p.Shown);
+        Assert.True(p.Highlighted);
+        Assert.Equal(255, p.Stroke.A);                              // full opacity
+        Assert.Equal(BackdropStyle.StrokeDip * 2, p.StrokeWidth);   // twice the width
+        Assert.Equal(360, p.Vertices);                              // the one-shape circle fit
+
+        // Every orb is inside it by at least its radius plus the padding.
+        var outline = GroupBackdrops.PreviewWindow!;
+        Assert.NotNull(outline);
+        Assert.True(p.Position.X < 200 && p.Position.X + p.Width > 420 + 56);
+
+        // It is not a group: no backdrop, nothing in OutlineOf, not in the poll.
+        Assert.Equal(0, GroupBackdrops.ShownCount);
+        Assert.Empty(GroupBackdrops.OutlineOf("preview"));
+        var told = new List<bool>();
+        GroupBackdrops.HitTestTick(new Point(p.Position.X + p.Width / 2, p.Position.Y + p.Height / 2), false, (_, c) => told.Add(c));
+        Assert.Empty(told);
+    }
+
+    [AvaloniaFact]
+    public void APairPreviewIsNeverPressable()
+    {
+        var all = new[] { Orb("q1", 200, 200), Orb("q2", 400, 200) };
+        GroupBackdrops.PreviewPair(all);
+        var p = GroupBackdrops.PreviewState!.Value;
+
+        var raised = 0;
+        Action<string, PointerPressedEventArgs, Avalonia.Controls.Window> handler = (_, _, _) => raised++;
+        GroupBackdrops.BackdropPressed += handler;
+        try
+        {
+            GroupBackdrops.PreviewWindow!.MouseDown(new Point(p.Width / 2, p.Height / 2), MouseButton.Left, RawInputModifiers.None);
+            Assert.Equal(0, raised);
+        }
+        finally { GroupBackdrops.BackdropPressed -= handler; }
+    }
+
+    [AvaloniaFact]
+    public void APairPreviewFollowsTheOrbsAndGoesAwayOnNullOrAnEmptyListOrParkAll()
+    {
+        var a = Orb("r1", 200, 200);
+        var b = Orb("r2", 400, 200);
+        GroupBackdrops.PreviewPair(new[] { a, b });
+        var first = GroupBackdrops.PreviewState!.Value;
+
+        b.Position = new PixelPoint(700, 200);                       // the dragged team moves
+        GroupBackdrops.Refresh();
+        Assert.True(GroupBackdrops.PreviewState!.Value.Width > first.Width);
+
+        GroupBackdrops.PreviewPair(null);
+        Assert.Null(GroupBackdrops.PreviewState);
+
+        GroupBackdrops.PreviewPair(new[] { a, b });
+        Assert.NotNull(GroupBackdrops.PreviewState);
+        GroupBackdrops.PreviewPair(Array.Empty<OrbWindow>());
+        Assert.Null(GroupBackdrops.PreviewState);
+
+        GroupBackdrops.PreviewPair(new[] { a, b });
+        GroupBackdrops.ParkAll();
+        Assert.Null(GroupBackdrops.PreviewState);
+
+        GroupBackdrops.Measure = o => null;                          // orbs with nothing to measure
+        GroupBackdrops.PreviewPair(new[] { a, b });
+        Assert.Null(GroupBackdrops.PreviewState);
+    }
+
+    [AvaloniaFact]
+    public void ThePreviewWindowIsPooledAndCanBeABackdropAfterwards()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.PreviewPair(a);
+        var parkedBefore = GroupBackdrops.ParkedCount;
+        GroupBackdrops.PreviewPair(null);
+        Assert.Equal(parkedBefore + 1, GroupBackdrops.ParkedCount);
+
+        // The pooled window comes back as a real, catching backdrop.
+        GroupBackdrops.Update(new[] { Spec("g-a", "circle", a) });
+        Assert.Equal(parkedBefore, GroupBackdrops.ParkedCount);
+        var s = GroupBackdrops.StateOf("g-a")!.Value;
+
+        var raised = 0;
+        Action<string, PointerPressedEventArgs, Avalonia.Controls.Window> handler = (_, _, _) => raised++;
+        GroupBackdrops.BackdropPressed += handler;
+        try
+        {
+            GroupBackdrops.WindowOf("g-a")!.MouseDown(new Point(s.Width / 2, s.Height / 2), MouseButton.Left, RawInputModifiers.None);
+            Assert.Equal(1, raised);
+        }
+        finally { GroupBackdrops.BackdropPressed -= handler; }
     }
 
     // ---- pointer: only inside the silhouette ------------------------------------

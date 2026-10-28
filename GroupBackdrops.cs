@@ -58,6 +58,8 @@ namespace Orbweaver
 
         private static bool _outlines = true;
         private static bool _arranged = true;
+        private static List<OrbWindow>? _previewOrbs;
+        private static BackdropWindow? _preview;
         private static readonly List<OrbWindow> Loose = new();
         private static string? _highlight;
         private static Point? _lastCursor;
@@ -85,6 +87,46 @@ namespace Orbweaver
             if (_arranged == arranged) return;
             _arranged = arranged;
             Refresh();
+        }
+
+        // A provisional, highlighted outline around the orbs of both teams while a
+        // free-mode Pair is the outcome of the drag in progress — the Pair half of
+        // the snap highlight. One shape (a circle fitted to their discs, no curve).
+        // It is not a group: it is not hit-tested (click-through on both platforms),
+        // not in Active, so not in OutlineOf and not in the poll; it follows the orbs
+        // on every Refresh and goes away on null, on an empty list, or on ParkAll.
+        internal static void PreviewPair(IReadOnlyList<OrbWindow>? orbs)
+        {
+            _previewOrbs = orbs is { Count: > 0 } ? orbs.ToList() : null;
+            RefreshPreview();
+        }
+
+        internal static BackdropState? PreviewState => _preview is { } p && p.State.Shown ? p.State : null;
+
+        internal static Window? PreviewWindow => _preview is { } p && p.State.Shown ? p : null;
+
+        private static void RefreshPreview()
+        {
+            if (_previewOrbs is null || !MeasureDiscs(_previewOrbs, out var discs, out var scale))
+            {
+                if (_preview is { } gone)
+                {
+                    gone.Park();
+                    if (Parked.Count < MaxParked) Parked.Push(gone);
+                    _preview = null;
+                }
+                return;
+            }
+
+            var added = _preview is null;
+            _preview ??= Parked.Count > 0 ? Parked.Pop() : new BackdropWindow();
+            _preview.MakeClickThrough();
+
+            _preview.Fit("preview", "circle", discs, scale, null);
+            _preview.Restyle(GlobalStyle(), highlighted: true, outlines: true);
+            _preview.EnsureShown();
+
+            if (added) Restack();
         }
 
         // Orbs that are not in any backdropped group — the loose stack, in free mode.
@@ -127,6 +169,7 @@ namespace Orbweaver
                 if (!Active.TryGetValue(spec.GroupId, out var window))
                 {
                     window = Parked.Count > 0 ? Parked.Pop() : new BackdropWindow();
+                    window.MakeCatching();
                     Active[spec.GroupId] = window;
                     _lastCursor = null; // a new window must be classified even under a still cursor
                     added = true;
@@ -142,6 +185,8 @@ namespace Orbweaver
             {
                 Park(id);
             }
+
+            RefreshPreview();
 
             // A first show lands IN FRONT of orbs and arrows on Windows, so a window
             // that has just appeared is put behind them straight away rather than
@@ -185,6 +230,8 @@ namespace Orbweaver
         internal static void ParkAll()
         {
             foreach (var id in Active.Keys.ToList()) Park(id);
+            _previewOrbs = null;
+            RefreshPreview();
             EnsureTimer();
         }
 
@@ -194,7 +241,9 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         internal static void Restack()
         {
-            if (Active.Count > 0) WindowsWindowOrder.PlaceBehindAll(Active.Values.ToList());
+            var all = Active.Values.ToList();
+            if (_preview is not null) all.Add(_preview);
+            if (all.Count > 0) WindowsWindowOrder.PlaceBehindAll(all);
         }
 
         private static void Park(string id)
@@ -205,12 +254,15 @@ namespace Orbweaver
             if (Parked.Count < MaxParked) Parked.Push(w);
         }
 
-        private static (Color Stroke, Color Fill) StyleFor(BackdropSpec spec) =>
-            GroupStyle.Resolve(spec.Style, new GroupStyle(
-                OrbweaverSettings.GroupOutlineStroke,
-                OrbweaverSettings.GroupOutlineStrokeOpacity,
-                OrbweaverSettings.GroupOutlineFill,
-                OrbweaverSettings.GroupOutlineFillOpacity));
+        private static (Color Stroke, Color Fill) StyleFor(BackdropSpec spec) => GroupStyle.Resolve(spec.Style, Globals());
+
+        private static (Color Stroke, Color Fill) GlobalStyle() => GroupStyle.Resolve(null, Globals());
+
+        private static GroupStyle Globals() => new(
+            OrbweaverSettings.GroupOutlineStroke,
+            OrbweaverSettings.GroupOutlineStrokeOpacity,
+            OrbweaverSettings.GroupOutlineFill,
+            OrbweaverSettings.GroupOutlineFillOpacity);
 
         // Each visible orb's circle — centre and radius in the same units as
         // Window.Position — and how many of those units make a DIP. A team member's
@@ -343,6 +395,7 @@ namespace Orbweaver
             private bool _shown;
             private string _drawnShape = "";
             private GroupOutline.PlacedCurve? _curve;
+            private bool _clickThrough;
             private bool _highlighted;
             private Point _origin; // window top-left in screen units
 
@@ -492,6 +545,7 @@ namespace Orbweaver
 
             private void OnPressed(object? sender, PointerPressedEventArgs e)
             {
+                if (_clickThrough) return;   // the Pair preview is only to be looked at
                 if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
 
                 // Belt and braces: the native layer already keeps the corners from
@@ -503,17 +557,38 @@ namespace Orbweaver
                 BackdropPressed?.Invoke(_groupId, e, this);
             }
 
+            // A pooled window may be a backdrop one day and the Pair preview the next,
+            // so the mode is set per use; the native side is applied from Opened on
+            // every Show.
+            internal void MakeClickThrough() => _clickThrough = true;
+
+            internal void MakeCatching() => _clickThrough = false;
+
             [ExcludeFromCodeCoverage]
             private void OnOpenedNative()
             {
                 this.ShowOnAllSpaces();
                 BackdropNative.SetLevelBelowOrbs(this);
+
+                if (_clickThrough)
+                {
+                    BackdropNative.MakeClickThrough(this);
+                    return;
+                }
+
                 BackdropNative.SetIgnoresMouse(this, Catching != true);
                 ApplyRegion();
             }
 
             [ExcludeFromCodeCoverage]
-            private void ApplyRegion() =>
+            private void ApplyRegion()
+            {
+                if (_clickThrough) return;
+                ApplyRegionNow();
+            }
+
+            [ExcludeFromCodeCoverage]
+            private void ApplyRegionNow() =>
                 BackdropNative.SetPolygonRegion(
                     this, BackdropGeometry.RegionPoints(_local, default, 1), BackdropGeometry.RegionHoles(_holes, 1));
         }

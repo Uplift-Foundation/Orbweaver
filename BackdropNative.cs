@@ -66,6 +66,29 @@ namespace Orbweaver
             OperatingSystem.IsMacOS() &&
             MsgULong(objc_getClass("NSEvent"), sel_registerName("pressedMouseButtons")) != 0;
 
+        // Wholly click-through, for a window that is only to be looked at (the Pair
+        // preview): ignoresMouseEvents on macOS, WS_EX_TRANSPARENT | WS_EX_LAYERED
+        // on Windows, as TeamLinks' arrows do. Applied from Opened on every Show.
+        internal static void MakeClickThrough(Window w)
+        {
+            if (OperatingSystem.IsMacOS())
+            {
+                SetIgnoresMouse(w, true);
+                return;
+            }
+
+            if (!OperatingSystem.IsWindows()) return;
+            var hwnd = w.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+            if (hwnd == IntPtr.Zero) return;
+
+            const int GwlExStyle = -20;
+            const long WsExTransparent = 0x20, WsExLayered = 0x80000;
+            SetWindowLongPtrW(hwnd, GwlExStyle, GetWindowLongPtrW(hwnd, GwlExStyle) | WsExTransparent | WsExLayered);
+        }
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern long GetWindowLongPtrW(IntPtr h, int index);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern long SetWindowLongPtrW(IntPtr h, int index, long value);
+
         // ---- Windows -------------------------------------------------------
 
         [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr h, IntPtr rgn, bool redraw);

@@ -25,6 +25,7 @@ public class GroupBackdropScreenshots : IDisposable
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.SetArranged(true);
         GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
+        GroupBackdrops.PreviewPair(null);
         GroupBackdrops.Highlight(null);
     }
 
@@ -34,6 +35,7 @@ public class GroupBackdropScreenshots : IDisposable
         GroupBackdrops.ParkAll();
         GroupBackdrops.SetArranged(true);
         GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
+        GroupBackdrops.PreviewPair(null);
         GroupBackdrops.Measure = _measure;
         foreach (var o in _orbs) o.Close();
     }
@@ -152,13 +154,10 @@ public class GroupBackdropScreenshots : IDisposable
     // Free mode (Arrange off): a user group is still its own shape with a backdrop,
     // beside the loose orbs, which stand in a column with nothing behind them.
     // There is no backdrop for "main" here, which is the point of the picture.
-    [AvaloniaFact]
-    public void AFreeModeGroupBesideTheLooseStack()
+    private void FreeModeShot(int[] leadOf, int loose, string file)
     {
-        var leadOf = new[] { -1, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1, -1 };
         var heart = Arranged("g", "heart", leadOf, Stage);
-
-        var stack = Enumerable.Range(0, 5).Select(i => Orb($"loose{i}", 0, 0)).ToList();
+        var stack = Enumerable.Range(0, loose).Select(i => Orb($"loose{i}", 0, 0)).ToList();
 
         GroupBackdrops.SetArranged(false);
         GroupBackdrops.SetLooseOrbs(stack);
@@ -192,6 +191,56 @@ public class GroupBackdropScreenshots : IDisposable
         stackWindow.Show();
         ScreenshotHelper.Flush();
 
-        ScreenshotHelper.SideBySide(new Window[] { groupWindow, stackWindow }, "group-backdrops-free-mode.png");
+        ScreenshotHelper.SideBySide(new Window[] { groupWindow, stackWindow }, file);
+    }
+
+    [AvaloniaFact]
+    public void AFreeModeGroupWithATeamBesideTheLooseStack() =>
+        FreeModeShot(new[] { -1, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1, -1 }, 5, "group-backdrops-free-mode.png");
+
+    // F6's picture: a heart of three orbs beside a column of four loose ones.
+    [AvaloniaFact]
+    public void AFreeModeHeartOfThreeBesideAColumnOfFour() =>
+        FreeModeShot(new[] { -1, -1, -1 }, 4, "group-backdrops-free-mode-three.png");
+
+    // The Pair preview: while a free-mode Pair is the snap outcome, a provisional
+    // highlighted circle around both teams — here a lead with two members and a
+    // second, solo orb. It is a window of its own, dressed like the backdrops.
+    [AvaloniaFact]
+    public void ThePairPreviewAroundTwoTeams()
+    {
+        var lead = Orb("pl", 160, 160);
+        var members = new[] { Orb("pm1", 100, 250, member: true), Orb("pm2", 220, 250, member: true) };
+        var other = Orb("po", 400, 190);
+        var pair = new List<OrbWindow> { lead, members[0], members[1], other };
+
+        GroupBackdrops.PreviewPair(pair);
+
+        var window = GroupBackdrops.PreviewWindow!;
+        var s = GroupBackdrops.PreviewState!.Value;
+        window.Content = Stage_(window, s, pair);
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.Capture(window, "group-backdrops-pair-preview.png");
+    }
+
+    private static Panel Stage_(Window w, BackdropState s, IEnumerable<OrbWindow> orbs)
+    {
+        var shape = w.Content is Panel old ? old.Children[0] : (Control)w.Content!;
+        if (w.Content is Panel prior) prior.Children.Clear();
+        w.Content = null;
+
+        var stage = new Panel { Background = new SolidColorBrush(Color.Parse("#1E1E24")) };
+        stage.Children.Add(shape);
+        foreach (var o in orbs)
+            stage.Children.Add(new Avalonia.Controls.Shapes.Ellipse
+            {
+                Width = o.OrbRadius * 2, Height = o.OrbRadius * 2,
+                Fill = new SolidColorBrush(Color.Parse(o.OrbRadius < 18 ? "#C97B4A" : "#5B8DEF")),
+                Margin = new Thickness(o.Position.X + o.CentreDip - s.Position.X - o.OrbRadius, o.Position.Y + o.CentreDip - s.Position.Y - o.OrbRadius, 0, 0),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top
+            });
+        return stage;
     }
 }
