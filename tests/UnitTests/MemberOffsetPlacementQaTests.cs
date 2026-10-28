@@ -19,7 +19,8 @@ public class MemberOffsetPlacementQaTests
         (double, double)?[]? offsets, PixelPoint? anchor = null, PixelRect[]? obstacles = null)
     {
         var groups = new[] { new OrbArrangement.GroupLayout("circle", anchor ?? new PixelPoint(960, 540)) };
-        return OrbArrangement.ComputeGroups(4, LeadOf, new int[4], groups, Layout, null, obstacles,
+        return OrbArrangement.ComputeGroups(4, LeadOf, new int[4], groups, Layout, null,
+            OrbArrangement.GroupLayoutMode.Free, obstacles ?? Array.Empty<PixelRect>(),
             offsets?.Select(o => o is { } v ? ((double, double)?)v : null).ToArray());
     }
 
@@ -128,7 +129,8 @@ public class MemberOffsetPlacementQaTests
         {
             var layout = new OrbArrangement.Layout(Work, scale, "circle", 1.0);
             var (at, _) = OrbArrangement.ComputeGroups(4, LeadOf, new int[4],
-                new[] { new OrbArrangement.GroupLayout("circle", new PixelPoint(960, 540)) }, layout, null, null,
+                new[] { new OrbArrangement.GroupLayout("circle", new PixelPoint(960, 540)) }, layout, null,
+                OrbArrangement.GroupLayoutMode.Arranged, Array.Empty<PixelRect>(),
                 new (double, double)?[] { null, (150, 0), null, null });
             return at[1];
         }

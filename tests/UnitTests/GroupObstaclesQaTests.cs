@@ -124,7 +124,7 @@ public class GroupObstaclesQaTests
         {
             var (at, g) = OrbArrangement.ComputeGroups(n, leadOf, groupOf,
                 new[] { new OrbArrangement.GroupLayout("circle", centre(0)), new OrbArrangement.GroupLayout("heart", centre(1)) },
-                new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, obstacles, off, out var path);
+                new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, OrbArrangement.GroupLayoutMode.Free, obstacles, off, out var path);
             return (at, g, path);
         }
 
