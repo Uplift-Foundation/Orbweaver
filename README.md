@@ -136,6 +136,18 @@ on the command line, so the app reads all three off the process it is already
 tracking. The assigned colour becomes the orb's ring and its arrow when the
 agent hasn't run `/color` itself; it is not the automatic accent described
 above, which really is nowhere on disk.
+**A team running in WSL is drawn as a team too.** A Claude Code inside a WSL
+distro has no process this app can read: the hook that reports it is a Windows
+process, so its status file records no `session_pid`, and Windows' process list
+does not show Linux processes. For those sessions alone the app reads what
+Claude Code leaves on disk instead — the member's transcript says which team and
+which agent it is, and `teams/<team>/config.json` beside the transcript's
+`projects` folder names the lead and the member's colour — through the
+`\\wsl.localhost` share. A session that does have a process is still read from
+its process, exactly as above, and a session that is not in a team costs one
+small read every fifteen seconds at most. Before this, a team started from WSL
+drew as unrelated full-size orbs with no arrows.
+
 Sessions that aren't in a team are completely unaffected: no arrow, full-size
 orb, nothing read that wasn't already being read.
 
@@ -2492,6 +2504,30 @@ outside the app (a launchd agent, an installer replacing the bundle) stopped it.
   unrelated. Found exactly that way, with two live agents and no arrows. Reading
   the process is true the moment the orb appears and needs no hook at all, which
   is also why the hook scripts carry nothing about teams.
+
+  **A session with no pid is read from files instead** (`AgentTeamFiles.cs`).
+  The hook for a Claude Code in WSL is Windows PowerShell started through WSL's
+  interop, so its parent chain ends in the interop bridge and never reaches the
+  Linux `claude`: every status file it writes carries `"session_pid":0`, and
+  `AgentTeam.Of` answers "no team" for any pid at or below zero. Measured on a
+  WSL team of four, the orbs drew alone, each wearing the main-session persona,
+  while `ps` inside the distro showed every member's command line carrying the
+  right `--parent-session-id`. What such a session does leave is its transcript
+  — every entry from the first user entry on carries `"teamName"` and
+  `"agentName"` — and `<config>/teams/<team>/config.json`, which holds
+  `leadSessionId` and each member's `color`. Only the first 64 KB of the
+  transcript is read, because the entry after the first carries the member's
+  whole `CLAUDE.md`; the transcript path is a Linux path, so each distro from the
+  `Lxss` registry key is tried as `\\wsl.localhost\<distro>\...`. The candidates
+  are exactly the Claude Code sessions with no pid and a transcript path
+  (`ScanProbePlan.FileTeamCandidates`), read in the scan's background half and
+  applied by the UI half through `ScanProbes.TeamOf(sessionId, pid)`, which
+  answers from the process whenever there is a pid and from the files only when
+  there is none. A found team is kept; "not in a team" is asked again after
+  fifteen seconds, because a teammate's config can land after its first status
+  file. Not covered: the roster this machine serves a far machine
+  (`ApplyTeams`) is still keyed by pid, so a WSL team is not yet sent over the
+  direct link.
 
   Downstream, that one value does three things: `OrbWindow.SetTeamRole` draws a
   member smaller (the *window* keeps the orb's size — 56x56 at the default, or
