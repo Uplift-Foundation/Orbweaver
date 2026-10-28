@@ -10,23 +10,23 @@ public class AccountOrbLooksTests
     [Fact]
     public void NoOverride_DerivesFromLabel()
     {
-        var look = AccountOrbLooks.Resolve("claude-buddy", null, true);
-        Assert.Equal("Cb", look.Glyph);
-        Assert.Equal("claude-buddy", look.DisplayName);
+        var look = AccountOrbLooks.Resolve("acme-team", null, true);
+        Assert.Equal("At", look.Glyph);
+        Assert.Equal("acme-team", look.DisplayName);
         Assert.Null(look.IconFile);
     }
 
     [Fact]
     public void Initials_Win_Verbatim()
     {
-        var look = AccountOrbLooks.Resolve("claude-buddy", new(" xYz ", null, null), true);
+        var look = AccountOrbLooks.Resolve("acme-team", new(" xYz ", null, null), true);
         Assert.Equal("xY", look.Glyph);
     }
 
     [Fact]
     public void NameOnly_LettersFromName_AndNameIsDisplayName()
     {
-        var look = AccountOrbLooks.Resolve("claude-buddy", new(null, "Acme Corp", null), true);
+        var look = AccountOrbLooks.Resolve("acme-team", new(null, "Acme Corp", null), true);
         Assert.Equal("Ac", look.Glyph);
         Assert.Equal("Acme Corp", look.DisplayName);
     }
@@ -45,7 +45,7 @@ public class AccountOrbLooksTests
     [InlineData("  \u00A0 ")]
     public void InvisibleInitials_FallBackToDerivedLetters(string initials)
     {
-        Assert.Equal("Cb", AccountOrbLooks.Resolve("claude-buddy", new(initials, null, null), true).Glyph);
+        Assert.Equal("At", AccountOrbLooks.Resolve("acme-team", new(initials, null, null), true).Glyph);
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public class AccountOrbLooksTests
     [Fact]
     public void BlankInitials_FallBack()
     {
-        Assert.Equal("Cb", AccountOrbLooks.Resolve("claude-buddy", new("  ", null, null), true).Glyph);
+        Assert.Equal("At", AccountOrbLooks.Resolve("acme-team", new("  ", null, null), true).Glyph);
     }
 
     [Fact]

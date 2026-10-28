@@ -408,13 +408,13 @@ public class AccountOrbOverrideTests : IDisposable
         try
         {
             OrbweaverSettings.TwoLetterGlyphs = true;
-            manager.AccountOrbsForTests.Apply(new[] { Usage(null, "claude-buddy") }, Now);
+            manager.AccountOrbsForTests.Apply(new[] { Usage(null, "acme-team") }, Now);
             var orb = manager.AccountOrbsForTests.Orbs[string.Empty];
-            Assert.Equal("Cb", orb.GlyphText);
+            Assert.Equal("At", orb.GlyphText);
 
             OrbweaverSettings.TwoLetterGlyphs = false;
             manager.ReapplyGlyphs();
-            Assert.Equal("C", orb.GlyphText);
+            Assert.Equal("A", orb.GlyphText);
 
             Assert.Single(manager.AccountOrbList());
             AccountOrbCustomization.SetInitials("account:~", "Zz");
