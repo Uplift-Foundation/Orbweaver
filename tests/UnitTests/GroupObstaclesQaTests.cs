@@ -30,7 +30,7 @@ public class GroupObstaclesQaTests
         var n = 6;
         var (at, placed) = OrbArrangement.ComputeGroups(
             n, Enumerable.Repeat(-1, n).ToArray(), Enumerable.Repeat(3, n).ToArray(), groups,
-            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, obstacles, out var path);
+            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, OrbArrangement.GroupLayoutMode.Free, obstacles, out var path);
 
         _out.WriteLine($"path={path} landed={placed[0].Landed} asked={asked} orbs x {at.Min(p => p.X)}..{at.Max(p => p.X)} y {at.Min(p => p.Y)}..{at.Max(p => p.Y)}");
         var landed = placed[0].Landed;
@@ -51,7 +51,7 @@ public class GroupObstaclesQaTests
         var n = 6;
         var (_, placed) = OrbArrangement.ComputeGroups(
             n, Enumerable.Repeat(-1, n).ToArray(), new int[n], groups,
-            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, null, out var path);
+            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, OrbArrangement.GroupLayoutMode.Free, Array.Empty<PixelRect>(), out var path);
         Assert.Equal(OrbArrangement.GroupPath.Separated, path);
         Assert.True(Math.Abs(placed[0].Landed.X - asked.X) < 5 && Math.Abs(placed[0].Landed.Y - asked.Y) < 5);
     }
@@ -64,7 +64,7 @@ public class GroupObstaclesQaTests
         var n = 4;
         var (at, placed) = OrbArrangement.ComputeGroups(
             n, Enumerable.Repeat(-1, n).ToArray(), new int[n], new[] { new OrbArrangement.GroupLayout("circle", anchor) },
-            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, new[] { obstacle }, out var path);
+            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, OrbArrangement.GroupLayoutMode.Free, new[] { obstacle }, out var path);
 
         Assert.Equal(OrbArrangement.GroupPath.Separated, path);
         var box = placed[0].SlotBounds;
@@ -78,7 +78,7 @@ public class GroupObstaclesQaTests
         var n = 5;
         var (_, placed) = OrbArrangement.ComputeGroups(
             n, Enumerable.Repeat(-1, n).ToArray(), new int[n], new[] { new OrbArrangement.GroupLayout("heart", new PixelPoint(1800, 540)) },
-            new OrbArrangement.Layout(Work, 1.0, "heart", 1.0), null, new[] { obstacle }, out var path);
+            new OrbArrangement.Layout(Work, 1.0, "heart", 1.0), null, OrbArrangement.GroupLayoutMode.Free, new[] { obstacle }, out var path);
 
         var box = placed[0].SlotBounds;
         Assert.Equal(OrbArrangement.GroupPath.Separated, path);
@@ -95,7 +95,7 @@ public class GroupObstaclesQaTests
         (PixelPoint[], OrbArrangement.GroupPlacement[]) Run(PixelRect[] obs) => OrbArrangement.ComputeGroups(
             n, Enumerable.Repeat(-1, n).ToArray(), Enumerable.Range(0, n).Select(i => i % 2).ToArray(),
             new[] { new OrbArrangement.GroupLayout("circle", new PixelPoint(1600, 500)), new OrbArrangement.GroupLayout("star", new PixelPoint(200, 200)) },
-            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, obs);
+            new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, OrbArrangement.GroupLayoutMode.Free, obs);
         var one = Run(new[] { a, b });
         var two = Run(new[] { b, a });
         Assert.Equal(one.Item1, two.Item1);

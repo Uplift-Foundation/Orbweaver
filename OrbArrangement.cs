@@ -253,6 +253,18 @@ namespace Orbweaver
             Fallback
         }
 
+        // What kind of layout a ComputeGroups call is; see ComputeGroups.
+        internal enum GroupLayoutMode
+        {
+            // The groups are being arranged: separated by SeparateGroups, with
+            // the Bands + Compact fallback.
+            Arranged,
+
+            // User groups beside loose orbs: placed clear one at a time, best
+            // effort near the anchor, never rebanded.
+            Free
+        }
+
         // The air SeparateGroups leaves between two groups' slot boxes, as a
         // fraction of the largest window. A box is already a window wider than
         // the discs it holds, and an outline stands off the discs by about the
@@ -299,39 +311,63 @@ namespace Orbweaver
         // only thing that ever moves a finished group.
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
-            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null,
-            IReadOnlyList<PixelRect>? obstacles = null,
-            IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf = null)
-            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, obstacles, memberOffsetOf, out _);
-
-        internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
-            int count, int[] leadOf, int[] groupOf,
-            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf, out GroupPath path)
-            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, null, null, out path);
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null)
+            => ComputeGroups(
+                count, leadOf, groupOf, groups, layout, sizeOf,
+                GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), null, out _);
 
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
             IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf,
-            IReadOnlyList<PixelRect>? obstacles, out GroupPath path)
-            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, obstacles, null, out path);
+            GroupLayoutMode mode, IReadOnlyList<PixelRect> obstacles,
+            IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf = null)
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, mode, obstacles, memberOffsetOf, out _);
+
+        internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+            int count, int[] leadOf, int[] groupOf,
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf, out GroupPath path)
+            => ComputeGroups(
+                count, leadOf, groupOf, groups, layout, sizeOf,
+                GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), null, out path);
+
+        internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+            int count, int[] leadOf, int[] groupOf,
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf,
+            GroupLayoutMode mode, IReadOnlyList<PixelRect> obstacles, out GroupPath path)
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, mode, obstacles, null, out path);
 
         // The same, saying which route it took.
         //
-        // `obstacles` are fixed rectangles in physical pixels (the free-mode
-        // stack column, free-pinned orbs) that no group may be drawn on. Passing
-        // a list at all, even an empty one, is free mode: groups are placed by
-        // PlaceClear, in slot order, each at the nearest spot clear of the
-        // obstacles and of the groups before it, or — when there is none —
-        // where it was asked to be, overlapping and reported as Fallback.
-        // There is no Bands + Compact fallback then: it cannot see obstacles
-        // and would throw user groups across the screen and onto the stack
-        // column (CB-268 F2, F4). Landed is where the group was drawn, and
-        // feeding it back reproduces the layout exactly, because a group that
-        // found a clear spot is still clear there and one that found none
-        // stays where it is asked; SeparateGroups' pushing cannot promise that,
-        // since a second run starts from its own best effort and need not stop
-        // where the first did. With no list, the layout is SeparateGroups and
-        // Bands + Compact as before.
+        // `mode` says what kind of layout this is, and it is a parameter rather
+        // than something inferred from the obstacle list because both modes
+        // take a list, and an empty one means different things in each.
+        //
+        //   Arranged  The groups are being arranged (the predefined ones, or
+        //             user groups while arranging). They are separated from each
+        //             other and from `obstacles` by SeparateGroups; if that
+        //             cannot get them apart, the whole set is drawn through
+        //             Bands + Compact, which always puts every orb somewhere and
+        //             cannot see obstacles, so a group may then overlap one. An
+        //             empty list is the arrangement exactly as it was before
+        //             obstacles existed, bit for bit.
+        //   Free      User groups beside orbs that are not in any group (the
+        //             free-mode stack column, free-pinned orbs). Groups are
+        //             placed by PlaceClear, in slot order, each at the nearest
+        //             spot clear of the obstacles and of the groups before it,
+        //             or — when there is none — where it was asked to be,
+        //             overlapping, with the route reported as Fallback. There
+        //             is no Bands + Compact then: it cannot see obstacles and
+        //             would throw user groups across the screen and onto the
+        //             stack column (CB-268 F2, F4). Landed is where the group
+        //             was drawn, and feeding it back reproduces the layout
+        //             exactly, because a group that found a clear spot is still
+        //             clear there and one that found none stays where it is
+        //             asked; SeparateGroups' pushing cannot promise that, since
+        //             a second run starts from its own best effort and need not
+        //             stop where the first did.
+        //
+        // `obstacles` are fixed rectangles in physical pixels, never null,
+        // often empty.
         //
         // `memberOffsetOf[i]` is a team member's hand-placed offset from its
         // lead, in DIP, centre to centre (CB-268 T2). Null, a missing entry,
@@ -352,7 +388,7 @@ namespace Orbweaver
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
             IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf,
-            IReadOnlyList<PixelRect>? obstacles,
+            GroupLayoutMode mode, IReadOnlyList<PixelRect> obstacles,
             IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf, out GroupPath path)
         {
             path = GroupPath.Separated;
@@ -431,10 +467,10 @@ namespace Orbweaver
             }
 
             var gap = Math.Max(1, (int)Math.Round(WindowFor(layout.Scale, sizes.Max()) * GroupGapWindows));
-            var free = obstacles is not null;
+            var free = mode == GroupLayoutMode.Free;
             var (moved, separated) = free
-                ? PlaceClear(boxes, work, gap, obstacles!)
-                : SeparateGroups(boxes, work, gap);
+                ? PlaceClear(boxes, work, gap, obstacles)
+                : SeparateGroups(boxes, work, gap, obstacles);
 
             if (!separated && !free)
             {

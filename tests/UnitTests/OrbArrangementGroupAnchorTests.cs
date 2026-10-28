@@ -449,7 +449,7 @@ namespace Orbweaver.Tests
                 ("heart", new PixelPoint(1800, 500)), ("star", new PixelPoint(1000, 500)));
             var of = Enumerable.Range(0, 10).Select(i => 3 + i % 2).ToArray();
 
-            var (positions, groups) = ComputeGroups(10, NoLeads(10), of, table, LayoutAt(), null, new[] { stack }, out var path);
+            var (positions, groups) = ComputeGroups(10, NoLeads(10), of, table, LayoutAt(), null, GroupLayoutMode.Free, new[] { stack }, out var path);
 
             Assert.Equal(GroupPath.Separated, path);
             Assert.Equal(new[] { 3, 4 }, groups.Select(g => g.Slot));
@@ -462,7 +462,7 @@ namespace Orbweaver.Tests
             var fed = Table(
                 ("circle", null), ("circle", null), ("circle", null),
                 ("heart", groups[0].Landed), ("star", groups[1].Landed));
-            var (again, againGroups) = ComputeGroups(10, NoLeads(10), of, fed, LayoutAt(), null, new[] { stack }, out var againPath);
+            var (again, againGroups) = ComputeGroups(10, NoLeads(10), of, fed, LayoutAt(), null, GroupLayoutMode.Free, new[] { stack }, out var againPath);
 
             Assert.Equal(GroupPath.Separated, againPath);
             Assert.Equal(positions, again);
@@ -470,14 +470,65 @@ namespace Orbweaver.Tests
         }
 
         [Fact]
-        public void NoObstaclesIsTheSameAsNotPassingAny()
+        public void ArrangedModeWithAnEmptyObstacleListIsTodaysOutputBitForBit()
         {
-            var table = Table(("heart", new PixelPoint(700, 400)), ("star", new PixelPoint(1300, 400)));
+            // The arranged call S7 makes for the predefined groups, with no
+            // user group on screen, passes an empty list. That must be the
+            // arrangement exactly as it was before obstacles existed — same
+            // route, positions and placements — including the Bands + Compact
+            // fallback.
+            var small = new PixelRect(0, 0, 1280, 800);
+            var sizes = Enumerable.Repeat(2.0, 60).ToArray();
+            var at = new PixelPoint(640, 400);
 
-            var plain = Run(8, NoLeads(8), Dealt(8, 2), table);
-            var (positions, _) = ComputeGroups(8, NoLeads(8), Dealt(8, 2), table, LayoutAt(), null, Array.Empty<PixelRect>());
+            foreach (var (table, count, layout, size) in new[]
+            {
+                (Table(("heart", new PixelPoint(700, 400)), ("star", new PixelPoint(1300, 400))), 8, LayoutAt(), (double[]?)null),
+                (Table(("circle", null), ("circle", null)), 8, LayoutAt(), (double[]?)null),
+                (Table(("grid", (PixelPoint?)at), ("grid", at), ("grid", at)), 60, LayoutAt(work: small), (double[]?)sizes),
+            })
+            {
+                var of = Dealt(count, table.Length);
 
-            Assert.Equal(plain.Positions, positions);
+                var plain = ComputeGroups(count, NoLeads(count), of, table, layout, size, out var plainPath);
+                var empty = ComputeGroups(
+                    count, NoLeads(count), of, table, layout, size, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), out var emptyPath);
+
+                Assert.Equal(plainPath, emptyPath);
+                Assert.Equal(plain.Positions, empty.Positions);
+                Assert.Equal(
+                    plain.Groups.Select(g => (g.Slot, g.Landed, g.SlotBounds, g.DrawnShape, g.CurveCentre, g.CurveScale)),
+                    empty.Groups.Select(g => (g.Slot, g.Landed, g.SlotBounds, g.DrawnShape, g.CurveCentre, g.CurveScale)));
+            }
+        }
+
+        [Fact]
+        public void ArrangedModeRespectsObstaclesButKeepsTheBandsFallbackWhenItCannotSeparate()
+        {
+            var table = Table(("heart", new PixelPoint(600, 400)), ("star", new PixelPoint(900, 400)));
+            var blocker = new PixelRect(160, 0, 1760, 1080);
+
+            // With room, an obstacle is avoided exactly as a group would be.
+            var stack = new PixelRect(1780, 60, 100, 960);
+            var (_, roomy) = ComputeGroups(10, NoLeads(10), Dealt(10, 2),
+                Table(("heart", new PixelPoint(1750, 500)), ("star", new PixelPoint(700, 500))), LayoutAt(), null,
+                GroupLayoutMode.Arranged, new[] { stack }, out var roomyPath);
+
+            Assert.Equal(GroupPath.Separated, roomyPath);
+            Assert.All(roomy, g => Assert.False(Overlap(g.SlotBounds, stack)));
+
+            // With none, Arranged falls back to Bands + Compact for the whole
+            // set (which cannot see the obstacle); Free keeps the groups near
+            // their anchors and says Fallback too. Same inputs, different
+            // pictures — which is why the mode is a parameter.
+            var (arrangedPositions, _) = ComputeGroups(
+                10, NoLeads(10), Dealt(10, 2), table, LayoutAt(), null, GroupLayoutMode.Arranged, new[] { blocker }, out var arrangedPath);
+            var (freePositions, _) = ComputeGroups(
+                10, NoLeads(10), Dealt(10, 2), table, LayoutAt(), null, GroupLayoutMode.Free, new[] { blocker }, out var freePath);
+
+            Assert.Equal(GroupPath.Fallback, arrangedPath);
+            Assert.Equal(GroupPath.Fallback, freePath);
+            Assert.NotEqual(arrangedPositions, freePositions);
         }
 
         [Fact]
@@ -494,7 +545,7 @@ namespace Orbweaver.Tests
             var asked = new PixelPoint(200, 300);
 
             var (positions, groups) = ComputeGroups(
-                6, NoLeads(6), new int[6], Table(("heart", asked)), LayoutAt(), null, new[] { left, right }, out var path);
+                6, NoLeads(6), new int[6], Table(("heart", asked)), LayoutAt(), null, GroupLayoutMode.Free, new[] { left, right }, out var path);
 
             Assert.Equal(GroupPath.Fallback, path);
 
@@ -511,7 +562,7 @@ namespace Orbweaver.Tests
             Assert.InRange(groups[0].Landed.Y, asked.Y - 1, asked.Y + 1);
 
             var (again, againGroups) = ComputeGroups(
-                6, NoLeads(6), new int[6], Table(("heart", groups[0].Landed)), LayoutAt(), null, new[] { left, right }, out var againPath);
+                6, NoLeads(6), new int[6], Table(("heart", groups[0].Landed)), LayoutAt(), null, GroupLayoutMode.Free, new[] { left, right }, out var againPath);
 
             Assert.Equal(GroupPath.Fallback, againPath);
             Assert.Equal(positions, again);
@@ -528,14 +579,14 @@ namespace Orbweaver.Tests
             var table = Table(("circle", new PixelPoint(900, 500)), ("circle", new PixelPoint(1500, 500)));
             var of = new[] { 0, 1 };
 
-            var (positions, groups) = ComputeGroups(2, NoLeads(2), of, table, LayoutAt(), null, obstacles, out var path);
+            var (positions, groups) = ComputeGroups(2, NoLeads(2), of, table, LayoutAt(), null, GroupLayoutMode.Free, obstacles, out var path);
 
             Assert.Equal(GroupPath.Fallback, path);
             Assert.False(obstacles.Any(o => Overlap(groups[0].SlotBounds, o)));
             Assert.True(obstacles.Any(o => Overlap(groups[1].SlotBounds, o)));
 
             var fed = Table(("circle", groups[0].Landed), ("circle", groups[1].Landed));
-            var (again, _) = ComputeGroups(2, NoLeads(2), of, fed, LayoutAt(), null, obstacles, out var againPath);
+            var (again, _) = ComputeGroups(2, NoLeads(2), of, fed, LayoutAt(), null, GroupLayoutMode.Free, obstacles, out var againPath);
 
             Assert.Equal(GroupPath.Fallback, againPath);
             Assert.Equal(positions, again);
@@ -552,7 +603,7 @@ namespace Orbweaver.Tests
             var table = Table(("circle", at), ("circle", at));
 
             var (_, groups) = ComputeGroups(
-                6, NoLeads(6), Dealt(6, 2), table, LayoutAt(), null, Array.Empty<PixelRect>(), out var path);
+                6, NoLeads(6), Dealt(6, 2), table, LayoutAt(), null, GroupLayoutMode.Free, Array.Empty<PixelRect>(), out var path);
 
             Assert.Equal(GroupPath.Separated, path);
             Assert.False(Overlap(groups[0].SlotBounds, groups[1].SlotBounds));
@@ -581,7 +632,7 @@ namespace Orbweaver.Tests
             var leads = new[] { -1, 0 };
 
             var (positions, _) = ComputeGroups(
-                2, leads, new int[2], table, layout, null, null, Offsets(2, (1, dx, dy)));
+                2, leads, new int[2], table, layout, null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(2, (1, dx, dy)));
 
             var window = WindowFor(scale, 1.0) / 2.0;
             Assert.Equal(dx * scale, positions[1].X - positions[0].X, 0.5);
@@ -596,7 +647,7 @@ namespace Orbweaver.Tests
             var leads = new[] { -1, 0, 0, 0 };
 
             var (fanned, fannedGroups) = ComputeGroups(4, leads, new int[4], table, LayoutAt());
-            var (placed, groups) = ComputeGroups(4, leads, new int[4], table, LayoutAt(), null, null, Offsets(4, (3, 300, 0)));
+            var (placed, groups) = ComputeGroups(4, leads, new int[4], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(4, (3, 300, 0)));
 
             // The member went where it was told; the lead and its other
             // members are where they were with nobody moved, and so are the
@@ -615,7 +666,7 @@ namespace Orbweaver.Tests
             var leads = new[] { -1, 0, 1 };
 
             var (fanned, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt());
-            var (placed, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, null, Offsets(3, (1, 250, 60)));
+            var (placed, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(3, (1, 250, 60)));
 
             Assert.Equal(fanned[0], placed[0]);
             Assert.Equal(250, placed[1].X - placed[0].X);
@@ -631,7 +682,7 @@ namespace Orbweaver.Tests
             var table = Table(("circle", new PixelPoint(900, 500)));
             var leads = new[] { -1, 0, 1 };
 
-            var (placed, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, null,
+            var (placed, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(),
                 Offsets(3, (1, 200, 0), (2, 0, 150)));
 
             Assert.Equal(200, placed[1].X - placed[0].X);
@@ -649,7 +700,7 @@ namespace Orbweaver.Tests
 
             // Orb 1 is dragged right onto the obstacle, 200 DIP from its lead.
             var (placed, groups) = ComputeGroups(
-                4, leads, of, table, LayoutAt(), null, new[] { pin }, Offsets(4, (1, 280, 0)));
+                4, leads, of, table, LayoutAt(), null, GroupLayoutMode.Free, new[] { pin }, Offsets(4, (1, 280, 0)));
 
             var centre = (X: placed[1].X + 28.0, Y: placed[1].Y + 28.0);
             var r = 36 * 0.72 / 2;
@@ -668,7 +719,7 @@ namespace Orbweaver.Tests
             var leads = new[] { -1, 0 };
 
             var (fanned, _) = ComputeGroups(2, leads, new int[2], table, LayoutAt());
-            var (placed, _) = ComputeGroups(2, leads, new int[2], table, LayoutAt(), null, null, Offsets(2, (1, 0, 0)));
+            var (placed, _) = ComputeGroups(2, leads, new int[2], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(2, (1, 0, 0)));
 
             Assert.Equal(fanned[0], placed[0]);
 
@@ -684,7 +735,7 @@ namespace Orbweaver.Tests
             var leads = new[] { -1, 0 };
 
             var (fanned, _) = ComputeGroups(2, leads, new int[2], table, LayoutAt());
-            var (placed, groups) = ComputeGroups(2, leads, new int[2], table, LayoutAt(), null, null, Offsets(2, (1, 9000, -9000)));
+            var (placed, groups) = ComputeGroups(2, leads, new int[2], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(2, (1, 9000, -9000)));
 
             Assert.Equal(fanned[0], placed[0]);
             Assert.True(placed[1].X >= 0 && placed[1].X + 56 <= 1920 && placed[1].Y >= 0 && placed[1].Y + 56 <= 1080);
@@ -700,7 +751,7 @@ namespace Orbweaver.Tests
             var leads = new[] { -1, 0, 0, 0, 0 };
             var offsets = Offsets(5, (1, 60, 40), (2, 60, 40), (3, 60, 40), (4, 60, 40));
 
-            var (placed, _) = ComputeGroups(5, leads, new int[5], table, LayoutAt(), null, null, offsets);
+            var (placed, _) = ComputeGroups(5, leads, new int[5], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), offsets);
 
             for (var a = 0; a < 5; a++)
             for (var b = a + 1; b < 5; b++)
@@ -726,7 +777,7 @@ namespace Orbweaver.Tests
                 (double.NaN, 4),                  // not a number: ignored
             };                                    // and orb 2 has no entry at all
 
-            var (placed, groups) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, null, odd);
+            var (placed, groups) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), odd);
 
             Assert.Equal(plain, placed);
             Assert.Equal(plainGroups.Select(g => g.Landed), groups.Select(g => g.Landed));
@@ -740,10 +791,10 @@ namespace Orbweaver.Tests
             var of = new[] { 0, 0, 0, 1, 1, 1 };
             var offsets = Offsets(6, (1, 200, 100), (2, 5000, 5000), (4, 0, 0));
 
-            var (first, groups) = ComputeGroups(6, leads, of, table, LayoutAt(), null, null, offsets);
+            var (first, groups) = ComputeGroups(6, leads, of, table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), offsets);
 
             var fed = Table(("heart", groups[0].Landed), ("star", groups[1].Landed));
-            var (again, _) = ComputeGroups(6, leads, of, fed, LayoutAt(), null, null, offsets);
+            var (again, _) = ComputeGroups(6, leads, of, fed, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), offsets);
 
             Assert.Equal(first, again);
         }

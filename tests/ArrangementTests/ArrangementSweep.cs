@@ -716,9 +716,13 @@ namespace Orbweaver.Tests
         //   pinned   six orbs left where the user dropped them
         //   blocker  all but a narrow strip on the left, which two groups
         //            cannot share: the case that has to take the fallback
-        //   free     an empty list: free mode with nothing in the way, which is
-        //            not the same as passing none (see ComputeGroups)
-        internal static readonly string[] ObstacleKinds = { "stack", "pinned", "blocker", "free" };
+        //   free     an empty list: free mode with nothing in the way
+        //   arranged-stack, arranged-empty
+        //            the same stack column, and an empty list, in Arranged mode,
+        //            where a list that is empty must change nothing at all
+        // The first four are Free mode; the last two are Arranged.
+        internal static readonly string[] ObstacleKinds =
+            { "stack", "pinned", "blocker", "free", "arranged-stack", "arranged-empty" };
 
         internal static PixelRect[] ObstaclesOf(string kind, Screen screen)
         {
@@ -741,7 +745,7 @@ namespace Orbweaver.Tests
                 {
                     new PixelRect(work.X + (int)Math.Round(160 * s), work.Y, work.Width - (int)Math.Round(160 * s), work.Height),
                 },
-                _ => Array.Empty<PixelRect>(),   // "free" (and "none", which the caller turns into null)
+                _ => Array.Empty<PixelRect>(),   // "free", "arranged-empty" and "none"
             };
         }
 
@@ -879,9 +883,18 @@ namespace Orbweaver.Tests
                 .Concat(AnchorsOf(test.Anchors, test.Groups, screen)).ToArray();
             // "none" is passing no list at all — the layout as it was before
             // free mode; any other kind, an empty one included, is free mode.
-            var freeMode = test.Obstacles != "none";
-            var obstacleArgument = freeMode ? ObstaclesOf(test.Obstacles, screen) : null;
-            var obstacles = obstacleArgument ?? Array.Empty<PixelRect>();
+            // "none" is the layout as it was before free mode: Arranged, no
+            // obstacles. Four kinds are Free (the stack, pinned orbs, a blocker
+            // and an empty list) and two are Arranged beside obstacles: the
+            // stack, and an empty list, which must be "none" bit for bit.
+            var freeMode = test.Obstacles is "stack" or "pinned" or "blocker" or "free";
+            var mode = freeMode ? OrbArrangement.GroupLayoutMode.Free : OrbArrangement.GroupLayoutMode.Arranged;
+            var obstacles = test.Obstacles switch
+            {
+                "none" or "arranged-empty" or "free" => Array.Empty<PixelRect>(),
+                "arranged-stack" => ObstaclesOf("stack", screen),
+                var kind => ObstaclesOf(kind, screen),
+            };
             var offsets = OffsetsOf(test.Offsets, leads, count);
 
             var sizes = test.Mix?.Build(count) ?? Enumerable.Repeat(1.0, count).ToArray();
@@ -898,7 +911,7 @@ namespace Orbweaver.Tests
             try
             {
                 result = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacleArgument, test.Offsets == "none" ? null : offsets, out path);
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, mode, obstacles, test.Offsets == "none" ? null : offsets, out path);
             }
             catch (Exception ex)
             {
@@ -1141,10 +1154,22 @@ namespace Orbweaver.Tests
 
             // 8. Deterministic.
             var again = OrbArrangement.ComputeGroups(
-                count, leads, groupOf, Table(centres), layout, sizeArgument, obstacleArgument, test.Offsets == "none" ? null : offsets, out var againPath);
+                count, leads, groupOf, Table(centres), layout, sizeArgument, mode, obstacles, test.Offsets == "none" ? null : offsets, out var againPath);
 
             if (againPath != path || !pts.SequenceEqual(again.Positions) || !SamePlacements(placed, again.Groups))
                 Fail("not deterministic — two runs disagreed");
+
+            // 8a. Arranged mode with an empty obstacle list is the arrangement
+            //     as it was before obstacles existed, bit for bit: the same
+            //     route, positions and placements as the call that takes none.
+            if (test.Obstacles == "arranged-empty" && test.Offsets == "none")
+            {
+                var bare = OrbArrangement.ComputeGroups(
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, out var bareRoute);
+
+                if (bareRoute != path || !pts.SequenceEqual(bare.Positions) || !SamePlacements(placed, bare.Groups))
+                    Fail("an empty obstacle list in Arranged mode differs from passing none");
+            }
 
             // 8b. Hand-placed members change nothing about the group: the same
             //     case with no offsets gives the same route, the same
@@ -1154,7 +1179,7 @@ namespace Orbweaver.Tests
             if (test.Offsets != "none")
             {
                 var plain = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacleArgument, null, out var plainPath);
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, mode, obstacles, null, out var plainPath);
 
                 if (plainPath != path)
                     Fail($"offsets changed the route from {plainPath} to {path}");
@@ -1191,7 +1216,7 @@ namespace Orbweaver.Tests
                     .ToArray();
 
                 var round = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(landed), layout, sizeArgument, obstacleArgument, test.Offsets == "none" ? null : offsets, out var roundPath);
+                    count, leads, groupOf, Table(landed), layout, sizeArgument, mode, obstacles, test.Offsets == "none" ? null : offsets, out var roundPath);
 
                 if (roundPath != path)
                     Fail($"feeding Landed back took the {roundPath} route, not {path}");
