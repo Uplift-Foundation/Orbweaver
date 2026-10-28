@@ -1127,7 +1127,10 @@ namespace Orbweaver
         // resolved — pointing at itself, at a missing orb, or round a cycle —
         // becomes an anchor, because a shape with nothing to draw is worse than
         // a team drawn as separate orbs.
-        private static void Classify(
+        // internal for OrbGroups.RootOf's cross-check (CB-268): the group
+        // resolver and the arrangement must agree on who a team's root is, and
+        // the test that says so runs this rather than a paraphrase of it.
+        internal static void Classify(
             int count, int[] leadOf, List<int> anchors, Dictionary<int, List<int>> members)
         {
             for (var i = 0; i < count; i++)

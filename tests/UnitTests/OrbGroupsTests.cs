@@ -762,7 +762,7 @@ public class OrbGroupsTests
     }
 
     [Fact]
-    public void ACycleAgreesOnOneRootWhoeverAsks()
+    public void EveryOrbInACycleIsItsOwnRootAndResolvesItsOwnMembership()
     {
         var table = new OrbGroupTable();
         var a = table.Create(idSource: Ids("g-00000001"));
@@ -771,10 +771,50 @@ public class OrbGroupsTests
         table.Move("k1", b.Id);
         table.Move("k2", b.Id);
 
-        // 0 -> 1 -> 2 -> 0, and a tail 3 -> 2 hanging off it.
+        // 0 -> 1 -> 2 -> 0, and a tail 3 -> 2 hanging off it. Classify makes
+        // all four anchors, so each answers from its own key.
         var leadOf = new[] { 1, 2, 0, 2 };
-        foreach (var i in new[] { 0, 1, 2, 3 })
-            Assert.Equal(a.Id, TeamGroup(table, i, leadOf, "k0", "k1", "k2", "k3"));
+        var keys = new string?[] { "k0", "k1", "k2", "k3" };
+        Assert.Equal(a.Id, TeamGroup(table, 0, leadOf, keys));
+        Assert.Equal(b.Id, TeamGroup(table, 1, leadOf, keys));
+        Assert.Equal(b.Id, TeamGroup(table, 2, leadOf, keys));
+        Assert.Null(TeamGroup(table, 3, leadOf, keys));
+    }
+
+    [Fact]
+    public void RootOfAgreesWithTheAnchorsTheArrangementActuallyUses()
+    {
+        // Run the rule, not a paraphrase: Classify is what the arrangement
+        // draws with, over every lead shape the sweep builds.
+        var checkedOrbs = 0;
+        foreach (var team in ArrangementSweep.TeamShapes)
+        {
+            foreach (var count in ArrangementSweep.Counts)
+            {
+                var leadOf = team.Build(count);
+                var anchors = new List<int>();
+                var members = new Dictionary<int, List<int>>();
+                OrbArrangement.Classify(count, leadOf, anchors, members);
+
+                for (var i = 0; i < count; i++)
+                {
+                    var root = OrbGroups.RootOf(i, leadOf, count);
+                    Assert.True(anchors.Contains(root), $"{team.Name} n={count} orb {i}: root {root} is not an anchor");
+
+                    if (anchors.Contains(i)) Assert.Equal(i, root);
+                    else
+                    {
+                        // A member is reached from its root through its leads.
+                        var at = i;
+                        while (at != root) at = leadOf[at];
+                    }
+
+                    checkedOrbs++;
+                }
+            }
+        }
+
+        Assert.True(checkedOrbs > 200);
     }
 
     [Fact]

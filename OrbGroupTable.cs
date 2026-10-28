@@ -51,11 +51,9 @@ namespace Orbweaver
         // split by a member carrying an entry of its own that differs.
         //
         // `leadOf[i]` is the index of orb i's lead, out of range (usually -1)
-        // for none — the same table OrbArrangement.Resolves walks, and cycle-safe
-        // for the same reason: a hop budget would end a cycle the walk is not
-        // part of, but here a cycle needs a *root*, and every member of it must
-        // agree on one. The smallest index in the cycle is it, so the answer does
-        // not depend on which member asked.
+        // for none — the same table OrbArrangement walks. See RootOf for how a
+        // cycle resolves: every orb in one is its own root, as the arrangement
+        // draws it.
         //
         // A lead that has ended is simply out of range, so the nearest surviving
         // ancestor is the end of the chain and becomes the root (T4); with no
@@ -69,17 +67,22 @@ namespace Orbweaver
             return membershipOf(root < keys.Count ? keys[root] : null);
         }
 
+        // The ONE resolver for a team's root (CB-268 T1/T4); SessionManager, the
+        // Group menu and the arrangement all ask this rather than walking leads
+        // themselves. The arrangement is the authority: an orb is an anchor
+        // exactly when OrbArrangement.Resolves says no, so that is called here
+        // rather than reimplemented. An anchor is its own root — which makes
+        // every orb in a lead cycle, an orb that leads itself, and an orb whose
+        // chain runs into a cycle each its own root, resolving its own
+        // membership. Any other orb walks up to the anchor its chain ends at,
+        // and Resolves having said yes guarantees that walk ends.
         internal static int RootOf(int index, int[] leadOf, int count)
         {
-            var path = new List<int>();
-            var at = index;
+            if (!OrbArrangement.Resolves(index, leadOf, count)) return index;
 
+            var at = index;
             while (true)
             {
-                var seen = path.IndexOf(at);
-                if (seen >= 0) return path.Skip(seen).Min();
-
-                path.Add(at);
                 var lead = at < leadOf.Length ? leadOf[at] : -1;
                 if (lead < 0 || lead >= count) return at;
                 at = lead;
