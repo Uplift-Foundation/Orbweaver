@@ -366,20 +366,20 @@ public class OrbSoundSubmenuTests : IDisposable
         var orb = new OrbWindow(Guid.NewGuid().ToString());
         orb.UpdateFrom(new SessionStatus { State = "idle", Cwd = "/Users/user/project", Title = "" });
         var oldKey = orb.SoundKey;
-        OrbweaverSettings.SetMemberOffset(oldKey, 30, -20);
+        OrbweaverSettings.SetOrbMemberOffset(oldKey, (30.0, -20.0));
 
         orb.UpdateFrom(new SessionStatus { State = "idle", Cwd = "/Users/user/project", Title = "titled-later" });
         var newKey = orb.SoundKey;
         try
         {
             Assert.NotEqual(oldKey, newKey);
-            Assert.Equal(new OrbweaverSettings.MemberOffset(30, -20), OrbweaverSettings.MemberOffsetFor(newKey));
-            Assert.Equal(new OrbweaverSettings.MemberOffset(30, -20), OrbweaverSettings.MemberOffsetFor(oldKey));
+            Assert.Equal(((double, double)?)(30.0, -20.0), OrbweaverSettings.OrbMemberOffsetFor(newKey));
+            Assert.Equal(((double, double)?)(30.0, -20.0), OrbweaverSettings.OrbMemberOffsetFor(oldKey));
         }
         finally
         {
-            OrbweaverSettings.ClearMemberOffset(oldKey);
-            OrbweaverSettings.ClearMemberOffset(newKey);
+            OrbweaverSettings.SetOrbMemberOffset(oldKey, null);
+            OrbweaverSettings.SetOrbMemberOffset(newKey, null);
         }
     }
 

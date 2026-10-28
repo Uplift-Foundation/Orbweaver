@@ -3602,7 +3602,7 @@ namespace Orbweaver
                 // emptied out from under the other orb using it.
                 // The team-member offset (CB-268 T2) rides the same key and the
                 // same rule.
-                OrbweaverSettings.CarryMemberOffset(SoundKey, key);
+                OrbweaverSettings.CarryOrbMemberOffset(SoundKey, key);
 
                 var staleSize = OrbweaverSettings.OrbSizeFor(SoundKey);
                 if (staleSize is not null && OrbweaverSettings.OrbSizeFor(key) is null)

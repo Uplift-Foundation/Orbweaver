@@ -35,9 +35,9 @@ public class MemberOffsetSettingsTests
     {
         Stage();
 
-        Assert.Null(OrbweaverSettings.MemberOffsetFor("member"));
-        Assert.Null(OrbweaverSettings.MemberOffsetFor(""));
-        Assert.Null(OrbweaverSettings.MemberOffsetFor(null));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("member"));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor(""));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor(null));
     }
 
     [Fact]
@@ -45,14 +45,14 @@ public class MemberOffsetSettingsTests
     {
         var dir = Stage();
 
-        OrbweaverSettings.SetMemberOffset("proj\nfix-login\nreviewer", -40, 25);
+        OrbweaverSettings.SetOrbMemberOffset("proj\nfix-login\nreviewer", (-40.0, 25.0));
 
         var entry = OnDisk(dir)["orbMemberOffsets"]!["proj\nfix-login\nreviewer"]!;
         Assert.Equal(-40, entry["dx"]!.GetValue<int>());
         Assert.Equal(25, entry["dy"]!.GetValue<int>());
 
         Reload(dir);
-        Assert.Equal(new OrbweaverSettings.MemberOffset(-40, 25), OrbweaverSettings.MemberOffsetFor("PROJ\nfix-login\nREVIEWER"));
+        Assert.Equal(((double, double)?)(-40.0, 25.0), OrbweaverSettings.OrbMemberOffsetFor("PROJ\nfix-login\nREVIEWER"));
     }
 
     [Fact]
@@ -60,11 +60,11 @@ public class MemberOffsetSettingsTests
     {
         Stage();
 
-        OrbweaverSettings.SetMemberOffset("dir\ntitle\nalice", 10, 10);
-        OrbweaverSettings.SetMemberOffset("dir\ntitle\nbob", -10, 30);
+        OrbweaverSettings.SetOrbMemberOffset("dir\ntitle\nalice", (10.0, 10.0));
+        OrbweaverSettings.SetOrbMemberOffset("dir\ntitle\nbob", (-10.0, 30.0));
 
-        Assert.Equal(new OrbweaverSettings.MemberOffset(10, 10), OrbweaverSettings.MemberOffsetFor("dir\ntitle\nalice"));
-        Assert.Equal(new OrbweaverSettings.MemberOffset(-10, 30), OrbweaverSettings.MemberOffsetFor("dir\ntitle\nbob"));
+        Assert.Equal(((double, double)?)(10.0, 10.0), OrbweaverSettings.OrbMemberOffsetFor("dir\ntitle\nalice"));
+        Assert.Equal(((double, double)?)(-10.0, 30.0), OrbweaverSettings.OrbMemberOffsetFor("dir\ntitle\nbob"));
     }
 
     [Fact]
@@ -72,9 +72,9 @@ public class MemberOffsetSettingsTests
     {
         var dir = Stage();
 
-        OrbweaverSettings.SetMemberOffset("member", 0, 0);
+        OrbweaverSettings.SetOrbMemberOffset("member", (0.0, 0.0));
 
-        Assert.Equal(new OrbweaverSettings.MemberOffset(0, 0), OrbweaverSettings.MemberOffsetFor("member"));
+        Assert.Equal(((double, double)?)(0.0, 0.0), OrbweaverSettings.OrbMemberOffsetFor("member"));
         Assert.NotNull(OnDisk(dir)["orbMemberOffsets"]!["member"]);
     }
 
@@ -82,12 +82,12 @@ public class MemberOffsetSettingsTests
     public void ClearingAnOffsetRemovesItFromTheModelAndTheFile()
     {
         var dir = Stage();
-        OrbweaverSettings.SetMemberOffset("member", 5, 6);
-        OrbweaverSettings.SetMemberOffset("other", 7, 8);
+        OrbweaverSettings.SetOrbMemberOffset("member", (5.0, 6.0));
+        OrbweaverSettings.SetOrbMemberOffset("other", (7.0, 8.0));
 
-        OrbweaverSettings.ClearMemberOffset("member");
+        OrbweaverSettings.SetOrbMemberOffset("member", null);
 
-        Assert.Null(OrbweaverSettings.MemberOffsetFor("member"));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("member"));
         Assert.Null(OnDisk(dir)["orbMemberOffsets"]!["member"]);
         Assert.NotNull(OnDisk(dir)["orbMemberOffsets"]!["other"]);
     }
@@ -96,16 +96,16 @@ public class MemberOffsetSettingsTests
     public void ANoOpSetOrClearDoesNotRewriteTheFileAndEmptyKeysAreIgnored()
     {
         var dir = Stage();
-        OrbweaverSettings.SetMemberOffset("member", 5, 6);
+        OrbweaverSettings.SetOrbMemberOffset("member", (5.0, 6.0));
         var path = Path.Combine(dir, "settings.json");
         File.Delete(path);
 
-        OrbweaverSettings.SetMemberOffset("member", 5, 6);
-        OrbweaverSettings.ClearMemberOffset("never-set");
-        OrbweaverSettings.SetMemberOffset("", 1, 1);
-        OrbweaverSettings.SetMemberOffset(null, 1, 1);
-        OrbweaverSettings.ClearMemberOffset("");
-        OrbweaverSettings.ClearMemberOffset(null);
+        OrbweaverSettings.SetOrbMemberOffset("member", (5.0, 6.0));
+        OrbweaverSettings.SetOrbMemberOffset("never-set", null);
+        OrbweaverSettings.SetOrbMemberOffset("", (1.0, 1.0));
+        OrbweaverSettings.SetOrbMemberOffset(null, (1.0, 1.0));
+        OrbweaverSettings.SetOrbMemberOffset("", null);
+        OrbweaverSettings.SetOrbMemberOffset(null, null);
 
         Assert.False(File.Exists(path));
     }
@@ -114,21 +114,21 @@ public class MemberOffsetSettingsTests
     public void ACarryCopiesNeverMovesAndNeverOverwrites()
     {
         var dir = Stage();
-        OrbweaverSettings.SetMemberOffset("session-id", 11, 12);
+        OrbweaverSettings.SetOrbMemberOffset("session-id", (11.0, 12.0));
 
-        OrbweaverSettings.CarryMemberOffset("session-id", "dir\ntitle\nagent");
+        OrbweaverSettings.CarryOrbMemberOffset("session-id", "dir\ntitle\nagent");
 
-        Assert.Equal(new OrbweaverSettings.MemberOffset(11, 12), OrbweaverSettings.MemberOffsetFor("dir\ntitle\nagent"));
-        Assert.Equal(new OrbweaverSettings.MemberOffset(11, 12), OrbweaverSettings.MemberOffsetFor("session-id"));
+        Assert.Equal(((double, double)?)(11.0, 12.0), OrbweaverSettings.OrbMemberOffsetFor("dir\ntitle\nagent"));
+        Assert.Equal(((double, double)?)(11.0, 12.0), OrbweaverSettings.OrbMemberOffsetFor("session-id"));
 
         // An offset the new key already has is somebody's choice.
-        OrbweaverSettings.SetMemberOffset("other-old", 1, 2);
-        OrbweaverSettings.SetMemberOffset("other-new", 3, 4);
-        OrbweaverSettings.CarryMemberOffset("other-old", "other-new");
-        Assert.Equal(new OrbweaverSettings.MemberOffset(3, 4), OrbweaverSettings.MemberOffsetFor("other-new"));
+        OrbweaverSettings.SetOrbMemberOffset("other-old", (1.0, 2.0));
+        OrbweaverSettings.SetOrbMemberOffset("other-new", (3.0, 4.0));
+        OrbweaverSettings.CarryOrbMemberOffset("other-old", "other-new");
+        Assert.Equal(((double, double)?)(3.0, 4.0), OrbweaverSettings.OrbMemberOffsetFor("other-new"));
 
         Reload(dir);
-        Assert.Equal(new OrbweaverSettings.MemberOffset(11, 12), OrbweaverSettings.MemberOffsetFor("dir\ntitle\nagent"));
+        Assert.Equal(((double, double)?)(11.0, 12.0), OrbweaverSettings.OrbMemberOffsetFor("dir\ntitle\nagent"));
     }
 
     [Theory]
@@ -140,14 +140,14 @@ public class MemberOffsetSettingsTests
     public void ACarryWithNothingToCarryOrNowhereToPutItDoesNothing(string? oldKey, string? newKey)
     {
         var dir = Stage();
-        OrbweaverSettings.SetMemberOffset("old", 1, 2);
+        OrbweaverSettings.SetOrbMemberOffset("old", (1.0, 2.0));
         var path = Path.Combine(dir, "settings.json");
         File.Delete(path);
 
-        OrbweaverSettings.CarryMemberOffset(oldKey, newKey);
+        OrbweaverSettings.CarryOrbMemberOffset(oldKey, newKey);
 
         Assert.False(File.Exists(path));
-        Assert.Null(OrbweaverSettings.MemberOffsetFor("new"));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("new"));
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class MemberOffsetSettingsTests
     {
         var dir = Stage("""{ "someFutureSetting": [1, 2] }""");
 
-        OrbweaverSettings.SetMemberOffset("member", 5, 6);
+        OrbweaverSettings.SetOrbMemberOffset("member", (5.0, 6.0));
         var text = File.ReadAllText(Path.Combine(dir, "settings.json"));
 
         Assert.Equal(2, OnDisk(dir)["someFutureSetting"]!.AsArray().Count);
@@ -169,14 +169,14 @@ public class MemberOffsetSettingsTests
         // save by rewriting the file without touching orbMemberOffsets, and check this
         // build still reads the offsets after.
         var dir = Stage();
-        OrbweaverSettings.SetMemberOffset("member", 5, 6);
+        OrbweaverSettings.SetOrbMemberOffset("member", (5.0, 6.0));
 
         var root = OnDisk(dir);
         root["arrangeShape"] = "star";
         File.WriteAllText(Path.Combine(dir, "settings.json"), root.ToJsonString());
         Reload(dir);
 
-        Assert.Equal(new OrbweaverSettings.MemberOffset(5, 6), OrbweaverSettings.MemberOffsetFor("member"));
+        Assert.Equal(((double, double)?)(5.0, 6.0), OrbweaverSettings.OrbMemberOffsetFor("member"));
     }
 
     [Theory]
@@ -187,17 +187,45 @@ public class MemberOffsetSettingsTests
     {
         Stage($$"""{ "orbMemberOffsets": {{block}}, "orbSize": 1.5 }""");
 
-        Assert.Null(OrbweaverSettings.MemberOffsetFor("a"));
-        Assert.Null(OrbweaverSettings.MemberOffsetFor("b"));
-        Assert.Null(OrbweaverSettings.MemberOffsetFor("c"));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("a"));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("b"));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("c"));
         Assert.Equal(1.5, OrbweaverSettings.OrbSize, 3);
     }
 
     [Fact]
-    public void HandEditedFractionalOffsetsAreRoundedToWholePixels()
+    public void FractionalOffsetsRoundTripExactly()
     {
-        Stage("""{ "orbMemberOffsets": { "m": { "dx": 10.6, "dy": -3.4 } } }""");
+        var dir = Stage();
 
-        Assert.Equal(new OrbweaverSettings.MemberOffset(11, -3), OrbweaverSettings.MemberOffsetFor("m"));
+        OrbweaverSettings.SetOrbMemberOffset("m", (10.625, -3.375));
+        Reload(dir);
+
+        Assert.Equal(((double, double)?)(10.625, -3.375), OrbweaverSettings.OrbMemberOffsetFor("m"));
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 1.0)]
+    [InlineData(1.0, double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity, 0.0)]
+    public void ANonFiniteOffsetIsIgnoredAndNeverReachesTheFile(double dx, double dy)
+    {
+        var dir = Stage();
+        OrbweaverSettings.SetOrbMemberOffset("m", (2.0, 3.0));
+
+        OrbweaverSettings.SetOrbMemberOffset("m", (dx, dy));
+
+        Assert.Equal(((double, double)?)(2.0, 3.0), OrbweaverSettings.OrbMemberOffsetFor("m"));
+        Assert.Equal(2.0, OnDisk(dir)["orbMemberOffsets"]!["m"]!["dx"]!.GetValue<double>());
+    }
+
+    [Fact]
+    public void ANonFiniteOffsetInTheFileIsDroppedOnLoad()
+    {
+        // JSON has no NaN, but a huge exponent parses to infinity in a double.
+        Stage("""{ "orbMemberOffsets": { "m": { "dx": 1e999, "dy": 1 }, "ok": { "dx": 1.5, "dy": 2 } } }""");
+
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("m"));
+        Assert.Equal(((double, double)?)(1.5, 2.0), OrbweaverSettings.OrbMemberOffsetFor("ok"));
     }
 }

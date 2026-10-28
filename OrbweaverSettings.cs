@@ -184,9 +184,9 @@ namespace Orbweaver
         internal sealed record OrbPlacement(int X, int Y, double? Size = null);
 
         // CB-268 T2: where a team member sits relative to its lead inside a laid-out
-        // group, in physical pixels — the lead's top-left to the member's. See
-        // OrbMemberOffsets on the model.
-        internal sealed record MemberOffset(int Dx, int Dy);
+        // group, in DIP from the lead's visible centre (so an offset survives a
+        // display-scale change; S7 computes it). See OrbMemberOffsets on the model.
+        internal sealed record MemberOffset(double Dx, double Dy);
 
         // How big one agent's chat panel is, in DIPs. Doubles rather than the
         // ints above because this is a layout size and not a screen coordinate:
@@ -1075,41 +1075,40 @@ namespace Orbweaver
         // ---- team member offsets (CB-268 T2) ----------------------------------
 
         // Null when the member has no saved offset and takes the fan.
-        internal static MemberOffset? MemberOffsetFor(string? soundKey)
+        public static (double Dx, double Dy)? OrbMemberOffsetFor(string? soundKey)
         {
             if (string.IsNullOrEmpty(soundKey)) return null;
 
             Load();
-            lock (Gate) return _model.OrbMemberOffsets.GetValueOrDefault(soundKey);
-        }
-
-        // Written once, at the end of a member drag. Offsets are physical pixels.
-        // (0, 0) is a real offset — the member sitting exactly on its lead's
-        // corner — and is kept, distinct from having none.
-        internal static void SetMemberOffset(string? soundKey, int dx, int dy)
-        {
-            if (string.IsNullOrEmpty(soundKey)) return;
-
-            var offset = new MemberOffset(dx, dy);
-            Load();
             lock (Gate)
-            {
-                if (_model.OrbMemberOffsets.GetValueOrDefault(soundKey) == offset) return;
-                _model.OrbMemberOffsets[soundKey] = offset;
-            }
-
-            Save();
+                return _model.OrbMemberOffsets.TryGetValue(soundKey, out var offset)
+                    ? (offset.Dx, offset.Dy)
+                    : null;
         }
 
-        // "Reset this orb's position" calls this, so the member takes the fan again.
-        internal static void ClearMemberOffset(string? soundKey)
+        // Written once, at the end of a member drag. Null clears — what "Reset this
+        // orb's position" means — and a (0, 0) offset is a real one, the member sitting
+        // exactly on its lead's centre, kept distinct from having none. A non-finite
+        // number is not an offset and is ignored, so a bad measurement cannot reach the
+        // file or ComputeGroups.
+        public static void SetOrbMemberOffset(string? soundKey, (double Dx, double Dy)? offset)
         {
             if (string.IsNullOrEmpty(soundKey)) return;
+            if (offset is { } o && (!double.IsFinite(o.Dx) || !double.IsFinite(o.Dy))) return;
 
             Load();
             lock (Gate)
             {
-                if (!_model.OrbMemberOffsets.Remove(soundKey)) return;
+                if (offset is null)
+                {
+                    if (!_model.OrbMemberOffsets.Remove(soundKey)) return;
+                }
+                else
+                {
+                    var next = new MemberOffset(offset.Value.Dx, offset.Value.Dy);
+                    if (_model.OrbMemberOffsets.GetValueOrDefault(soundKey) == next) return;
+                    _model.OrbMemberOffsets[soundKey] = next;
+                }
             }
 
             Save();
@@ -1120,7 +1119,7 @@ namespace Orbweaver
         // offset the new key already has — OrbWindow.RefreshSoundKey's rule, for its
         // reasons: two orbs can share a key, so clearing the old one would take the
         // other's offset with it, and an entry under the new key is somebody's choice.
-        internal static void CarryMemberOffset(string? oldKey, string? newKey)
+        internal static void CarryOrbMemberOffset(string? oldKey, string? newKey)
         {
             if (string.IsNullOrEmpty(oldKey) || string.IsNullOrEmpty(newKey)) return;
 
@@ -2512,9 +2511,9 @@ namespace Orbweaver
                             var dx = Number(entry["dx"]);
                             var dy = Number(entry["dy"]);
                             if (dx is null || dy is null) continue;
+                            if (!double.IsFinite(dx.Value) || !double.IsFinite(dy.Value)) continue;
 
-                            model.OrbMemberOffsets[key] =
-                                new MemberOffset((int)Math.Round(dx.Value), (int)Math.Round(dy.Value));
+                            model.OrbMemberOffsets[key] = new MemberOffset(dx.Value, dy.Value);
                         }
                     }
 
