@@ -326,13 +326,17 @@ public class AccountOrbOverrideTests : IDisposable
             // the "pool" write sometimes happened on the UI thread itself —
             // the flake QA measured at 5 failures in 7 runs.
             var writer = 0;
+            var writerHadUiAccess = true;
             var thread = new System.Threading.Thread(() =>
             {
                 writer = Environment.CurrentManagedThreadId;
+                writerHadUiAccess = Avalonia.Threading.Dispatcher.UIThread.CheckAccess();
                 AccountOrbCustomization.SetInitials("account:~", "Bb");
             });
             thread.Start();
             thread.Join();
+            Assert.False(writerHadUiAccess, "the writer must be provably off the UI thread");
+            Assert.Equal("Aa", orb.GlyphText); // nothing has pumped the posted redraw yet
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
             Assert.NotEqual(uiThread, writer);
