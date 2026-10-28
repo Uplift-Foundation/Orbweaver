@@ -51,6 +51,90 @@ public class ScanProbesTests
         Assert.Equal(A, probes.LeadOf(300));
     }
 
+    // --- teams read from files, for sessions with no pid ----------------------------
+
+    private static ScanProbes Probes(
+        IReadOnlyDictionary<int, AgentTeam.Membership> byPid,
+        IReadOnlyDictionary<string, AgentTeam.Membership>? byFile) =>
+        ScanProbes.Gather(
+            new ScanProbePlan(Array.Empty<SessionStatus>(), false, false, Array.Empty<string>()),
+            byPid,
+            _ => throw new InvalidOperationException("no claims"),
+            () => throw new InvalidOperationException("no daemon"),
+            () => throw new InvalidOperationException("no attach scan"),
+            _ => throw new InvalidOperationException("no viewer"),
+            byFile);
+
+    [Fact]
+    public void ASessionWithNoPidIsAnsweredFromItsFiles()
+    {
+        // The WSL case: the status file recorded session_pid 0, so there is no
+        // process to ask, and the answer the background half read from the
+        // transcript and team config is the only one there is.
+        var fromFiles = new AgentTeam.Membership(A, "orange", "probe_live");
+        var probes = Probes(NoMemberships, new Dictionary<string, AgentTeam.Membership> { [B] = fromFiles });
+
+        Assert.Equal(fromFiles, probes.TeamOf(B, 0));
+        Assert.Equal(A, probes.LeadOf(B, 0));
+        Assert.Equal(AgentTeam.None, probes.TeamOf(C, 0));   // another pid-less session: not known
+    }
+
+    [Fact]
+    public void AProcessAnswerIsNeverSecondGuessedByTheFiles()
+    {
+        // The pid answer wins for any session that has a pid, even when the
+        // files say something else and even when the pid answer is "no team":
+        // the files are for the sessions that cannot be asked, not a second
+        // opinion on the ones that can.
+        var byProcess = new AgentTeam.Membership(A, "blue", "ByProcess");
+        var byFile = new AgentTeam.Membership(C, "red", "ByFile");
+        var probes = Probes(
+            new Dictionary<int, AgentTeam.Membership> { [300] = byProcess },
+            new Dictionary<string, AgentTeam.Membership> { [B] = byFile });
+
+        Assert.Equal(byProcess, probes.TeamOf(B, 300));
+        Assert.Equal(AgentTeam.None, probes.TeamOf(B, 301));
+    }
+
+    [Fact]
+    public void WithoutFileAnswersASessionWithNoPidIsNotInATeam()
+    {
+        // Every caller from before the files existed passes none.
+        Assert.Equal(AgentTeam.None, Probes(NoMemberships, null).TeamOf(B, 0));
+        Assert.Equal(AgentTeam.None, ScanProbes.Nothing.TeamOf(B, 0));
+    }
+
+    [Fact]
+    public void OnlyAPidlessClaudeSessionWithATranscriptIsReadFromFiles()
+    {
+        // Exactly the broken case and nothing wider: a session with a pid is
+        // answered by its command line, a Codex one has no team files, and
+        // without a transcript there is nothing to read.
+        var found = Found(
+            Terminal(A, 300),                                    // has a pid
+            NoTerminal("pidless-no-transcript", 0),
+            NoTerminal("codex", 0, source: SessionSource.Codex));
+        var withTranscript = new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode,
+            SessionPid = 0,
+            TranscriptPath = "/home/user/.claude/projects/p/x.jsonl",
+        };
+        found.Add(new SessionManager.ScanEntry("wsl-member", withTranscript, DateTime.UtcNow));
+        found.Add(new SessionManager.ScanEntry("negative-pid", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode,
+            SessionPid = -1,
+            TranscriptPath = "/home/user/.claude/projects/p/y.jsonl",
+        }, DateTime.UtcNow));
+
+        var candidates = ScanProbePlan.FileTeamCandidates(found);
+
+        Assert.Equal(
+            new[] { ("wsl-member", "/home/user/.claude/projects/p/x.jsonl"), ("negative-pid", "/home/user/.claude/projects/p/y.jsonl") },
+            candidates);
+    }
+
     [Theory]
     [InlineData(301)]   // a pid nobody gathered
     [InlineData(0)]     // not a pid

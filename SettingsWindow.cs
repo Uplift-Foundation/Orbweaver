@@ -1293,6 +1293,9 @@ namespace Orbweaver
                 + "once every five minutes per account; nothing here reads your login "
                 + "details, and asking costs no tokens."));
 
+            if (OrbweaverSettings.AccountUsageEnabled)
+                rows.AddRange(AccountOrbRows(AccountUsageSource.ClaudeCode));
+
             return rows.ToArray();
         }
 
@@ -1561,6 +1564,51 @@ namespace Orbweaver
                 + "card up. The figures come from the last session's own rollout — Codex "
                 + "writes them on every turn — and nothing here reads your login token."));
 
+            if (OrbweaverSettings.CodexAccountUsageEnabled)
+                rows.AddRange(AccountOrbRows(AccountUsageSource.Codex));
+
+            return rows.ToArray();
+        }
+
+        // CB-287: the accounts a CLI's usage orbs are currently drawn for. A seam
+        // rather than a direct SessionManager read so tests can name accounts
+        // without a running poller; the default asks the live orbs, which is why
+        // an account only appears here once it has answered a poll (listing config
+        // directories instead would derive labels from auth files a second way).
+        internal static Func<IReadOnlyList<AccountOrbIdentity>> UsageAccounts { get; set; } =
+            () => SessionManager.Instance?.AccountOrbList() ?? [];
+
+        // One row per account of this CLI: its derived label over the same editor
+        // the orb's "Customize…" opens. The editor panels refresh themselves when
+        // an override changes — from here or from that window — so this does not
+        // rebuild the whole page on Changed: a rebuild replaces the text box the
+        // user is typing in, and a LostFocus commit would then eat the click that
+        // moved focus to the next field.
+        internal Control[] AccountOrbRows(AccountUsageSource source)
+        {
+            var rows = new List<Control>();
+            foreach (var account in UsageAccounts())
+            {
+                if (account.Source != source) continue;
+
+                var stack = new StackPanel { Spacing = 8 };
+                stack.Children.Add(new TextBlock
+                {
+                    Text = account.DerivedLabel,
+                    FontSize = 13,
+                    FontWeight = FontWeight.SemiBold
+                });
+                stack.Children.Add(new AccountOrbEditorPanel(account));
+
+                var row = new SettingsRow
+                {
+                    Margin = new Thickness(14, 10),
+                    SearchText = SettingsFilter.TextOf($"{account.DerivedLabel} orb initials name icon", null)
+                };
+                row.Children.Add(stack);
+                rows.Add(row);
+            }
+
             return rows.ToArray();
         }
 
@@ -1601,6 +1649,8 @@ namespace Orbweaver
                 + "token."));
 
             if (!OrbweaverSettings.GrokAccountUsageEnabled) return rows.ToArray();
+
+            rows.AddRange(AccountOrbRows(AccountUsageSource.Grok));
 
             rows.Add(Row("Keep Grok usage fresh automatically",
                 Switch(OrbweaverSettings.GrokAutoRefreshEnabled, OnGrokAutoRefreshToggled),

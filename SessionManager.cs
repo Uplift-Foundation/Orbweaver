@@ -473,7 +473,8 @@ namespace Orbweaver
             Action<int, SessionDependents.Verdict>? terminate = null,
             string? legacyStatusDir = null,
             Func<string, string?, bool>? stopJob = null,
-            Func<SessionStatus, string?>? desktopBridge = null)
+            Func<SessionStatus, string?>? desktopBridge = null,
+            Func<IEnumerable<(string SessionId, string TranscriptPath)>, IReadOnlyDictionary<string, AgentTeam.Membership>>? fileTeams = null)
         {
             _statusDir = statusDir;
             _legacyStatusDir = legacyStatusDir;
@@ -497,6 +498,7 @@ namespace Orbweaver
             _paneOwners = paneOwners ?? TerminalFocuser.TmuxPaneOwners;
             _agentViewer = agentViewer ?? AgentTeamViewer.For;
             _teams = teams ?? AgentTeam.OfAll;
+            _fileTeams = fileTeams ?? AgentTeamFiles.Default().ReadMany;
             _terminate = terminate ?? SessionTerminator.Terminate;
             _stopJob = stopJob ?? BackgroundJobs.Stop;
 
@@ -527,6 +529,11 @@ namespace Orbweaver
         // above, and so the scan suites can prove it is asked on the background
         // half only: the UI half reads the answer out of ScanProbes.TeamOf.
         private readonly Func<IReadOnlyList<int>, IReadOnlyDictionary<int, AgentTeam.Membership>> _teams;
+
+        // Which team a session with no pid is in, read from its transcript and
+        // team config (AgentTeamFiles). A seam for the reason _teams is one, and
+        // because the real read opens files in a WSL distro.
+        private readonly Func<IEnumerable<(string SessionId, string TranscriptPath)>, IReadOnlyDictionary<string, AgentTeam.Membership>> _fileTeams;
 
         // What ends a session's process once EndSession has decided it may
         // (CB-228). A seam so the scan suites can prove the kill runs off the
@@ -575,9 +582,15 @@ namespace Orbweaver
             // gates need the leads and the UI half needs the rest.
             var teams = _teams(ScanProbePlan.TeamPids(found));
 
+            // The sessions with no pid to ask about, from their files instead
+            // (AgentTeamFiles): a WSL session records none, so its team was
+            // unknowable and its orb drew alone. Asked here, off the UI thread,
+            // because it opens a file over a VM's share.
+            var fileTeams = _fileTeams(ScanProbePlan.FileTeamCandidates(found));
+
             return ScanProbes.Gather(
                 ScanProbePlan.For(found, pid => teams.TryGetValue(pid, out var m) ? m.Lead : ""),
-                teams, _paneOwners, _jobListing, _attachClients, _agentViewer);
+                teams, _paneOwners, _jobListing, _attachClients, _agentViewer, fileTeams);
         }
 
         internal static IEnumerable<string?> ClaudeTranscripts(IEnumerable<ScanEntry> found) =>
@@ -2716,7 +2729,7 @@ namespace Orbweaver
 
                 // From the background half's read, never AgentTeam itself: on
                 // Windows that is a WMI query (CB-212, see ScanProbes.TeamOf).
-                var agentLead = probes.LeadOf(entry.Status.SessionPid);
+                var agentLead = probes.LeadOf(entry.SessionId, entry.Status.SessionPid);
                 if (!string.IsNullOrEmpty(agentLead) && agentLead != entry.SessionId)
                 {
                     leadsWithLiveAgents.Add(agentLead);
@@ -2855,7 +2868,7 @@ namespace Orbweaver
                 // — by the background half, which asked about every pid in the
                 // pass in one read (CB-212). This only looks the answer up.
                 var membership = status.Source == SessionSource.ClaudeCode
-                    ? probes.TeamOf(status.SessionPid)
+                    ? probes.TeamOf(sessionId, status.SessionPid)
                     : AgentTeam.None;
 
                 // Guarded, where it used to run for everything. A gateway
@@ -3725,6 +3738,11 @@ namespace Orbweaver
             {
                 window.ReapplyGlyph();
             }
+
+            // CB-287: usage orbs wear letters too, and were never walked here,
+            // so flipping "two-letter initials" left them stale until the next
+            // five-minute poll.
+            _accountOrbs.RefreshLooks();
         }
 
         // CB-268: the Group outlines card and the group style dialog land here
@@ -3744,6 +3762,14 @@ namespace Orbweaver
                 tree.RootOf(sessionId), tree.TeamOf(sessionId), AllStatuses,
                 OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode);
         }
+
+        // CB-287: an override was written elsewhere (the editor, a Settings
+        // row); redraw the usage orbs and cards without waiting for a poll.
+        internal void RefreshAccountOrbLooks() => _accountOrbs.RefreshLooks();
+
+        // CB-287: the accounts that currently have a usage orb, for the
+        // Settings rows.
+        internal IReadOnlyList<AccountOrbIdentity> AccountOrbList() => _accountOrbs.Accounts;
 
         // CB-198: the settings slider and the Size menu both land here, the
         // same shape as ReapplyGlyphs — one change, every orb. Each orb takes

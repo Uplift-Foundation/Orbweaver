@@ -115,6 +115,20 @@ namespace Orbweaver
         // leadOf above asks about these same pids.
         internal static IReadOnlyList<int> TeamPids(IEnumerable<SessionManager.ScanEntry> found) =>
             found.Select(e => e.Status.SessionPid).Where(pid => pid > 0).Distinct().ToList();
+
+        // The sessions whose team has to be read from files because there is no
+        // pid to ask about: Claude Code sessions that recorded none and did
+        // record a transcript. Exactly the WSL case (see AgentTeamFiles), and
+        // deliberately nothing wider — a session with a pid is answered by its
+        // command line, and reading a transcript for it as well would be a
+        // second, slower opinion on a question already settled.
+        internal static IReadOnlyList<(string SessionId, string TranscriptPath)> FileTeamCandidates(
+            IEnumerable<SessionManager.ScanEntry> found) =>
+            found.Where(e => e.Status.Source == SessionSource.ClaudeCode
+                             && e.Status.SessionPid <= 0
+                             && !string.IsNullOrEmpty(e.Status.TranscriptPath))
+                .Select(e => (e.SessionId, e.Status.TranscriptPath!))
+                .ToList();
     }
 
     // One pass's subprocess answers, gathered off the UI thread and read on it.
@@ -132,24 +146,28 @@ namespace Orbweaver
         internal static readonly ScanProbes Nothing = new(
             new Dictionary<TmuxPaneKey, string?>(), null, null,
             new Dictionary<string, AgentViewer?>(StringComparer.Ordinal),
-            new Dictionary<int, AgentTeam.Membership>());
+            new Dictionary<int, AgentTeam.Membership>(),
+            new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
 
         private readonly IReadOnlyDictionary<TmuxPaneKey, string?> _paneOwners;
         private readonly IReadOnlyDictionary<string, AgentViewer?> _viewers;
         private readonly IReadOnlyDictionary<int, AgentTeam.Membership> _teams;
+        private readonly IReadOnlyDictionary<string, AgentTeam.Membership> _fileTeams;
 
         private ScanProbes(
             IReadOnlyDictionary<TmuxPaneKey, string?> paneOwners,
             Dictionary<string, string>? jobs,
             HashSet<string>? attachClients,
             IReadOnlyDictionary<string, AgentViewer?> viewers,
-            IReadOnlyDictionary<int, AgentTeam.Membership> teams)
+            IReadOnlyDictionary<int, AgentTeam.Membership> teams,
+            IReadOnlyDictionary<string, AgentTeam.Membership> fileTeams)
         {
             _paneOwners = paneOwners;
             Jobs = jobs;
             AttachClients = attachClients;
             _viewers = viewers;
             _teams = teams;
+            _fileTeams = fileTeams;
         }
 
         // Which agent team a process belongs to, as this pass's background half
@@ -172,6 +190,22 @@ namespace Orbweaver
             _teams.TryGetValue(pid, out var membership) ? membership : AgentTeam.None;
 
         internal string LeadOf(int pid) => TeamOf(pid).Lead;
+
+        // The same question for a session that may have no pid to ask about.
+        //
+        // A WSL session's status file records no pid, because the hook that
+        // wrote it is a Windows process and the `claude` is a Linux one (see
+        // AgentTeamFiles), so the process read has nothing to be asked. Those
+        // sessions are answered from their transcript and team config, which
+        // the background half read under the session's id. The process read
+        // still wins whenever there is a pid: this is only the answer for the
+        // sessions that have none, never a second opinion on the ones that do.
+        internal AgentTeam.Membership TeamOf(string sessionId, int pid) =>
+            pid > 0 ? TeamOf(pid)
+            : _fileTeams.TryGetValue(sessionId, out var membership) ? membership
+            : AgentTeam.None;
+
+        internal string LeadOf(string sessionId, int pid) => TeamOf(sessionId, pid).Lead;
 
         // The daemon's listing, or null when it was not asked or could not be
         // read. The scan already treats those two alike, since both mean it
@@ -221,7 +255,8 @@ namespace Orbweaver
             Func<IReadOnlyList<SessionStatus>, IReadOnlyDictionary<TmuxPaneKey, string?>> paneOwners,
             Func<Dictionary<string, string>?> jobListing,
             Func<HashSet<string>?> attachClients,
-            Func<string, AgentViewer?> viewerFor)
+            Func<string, AgentViewer?> viewerFor,
+            IReadOnlyDictionary<string, AgentTeam.Membership>? fileTeams = null)
         {
             var owners = plan.PaneClaims.Count > 0
                 ? paneOwners(plan.PaneClaims)
@@ -235,7 +270,8 @@ namespace Orbweaver
                 plan.AskTheDaemon ? jobListing() : null,
                 plan.AskAttachClients ? attachClients() : null,
                 viewers,
-                teams);
+                teams,
+                fileTeams ?? new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
         }
     }
 }

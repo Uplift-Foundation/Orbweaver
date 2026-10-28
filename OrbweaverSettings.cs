@@ -85,7 +85,7 @@ namespace Orbweaver
             "orbColors", "claudeCodeProfileDirs", "codexHomes", "grokHomes", "profiles", "orbPositions",
             "collapsedSettingsSections",
             "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale",
-            "orbSize", "orbSizes", "orbMemberOffsets",
+            "orbSize", "orbSizes", "orbMemberOffsets", "accountOrbOverrides",
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
             "openclawReplyEnabled", "openclawActiveWithinMinutes",
@@ -690,6 +690,12 @@ namespace Orbweaver
             public Dictionary<string, OrbTurnSound> OrbTurnSounds { get; init; } =
                 new(StringComparer.OrdinalIgnoreCase);
 
+            // CB-287: per-usage-orb overrides of initials, display name and icon,
+            // keyed by AccountOrbs.PositionKey exactly as OrbPositions is keyed
+            // by position — case-insensitive for the same Windows-path reason.
+            public Dictionary<string, AccountOrbOverride> AccountOrbOverrides { get; init; } =
+                new(StringComparer.OrdinalIgnoreCase);
+
             // CB-198's per-orb size override. Borrows OrbTurnSounds' key —
             // SessionManager.SoundKeyFor, the per-agent identity CB-167 built
             // precisely so teammates sharing one cwd are told apart — rather
@@ -1006,6 +1012,38 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.NeedsAttentionSound; }
             set { Load(); lock (Gate) _model.NeedsAttentionSound = value; Save(); }
+        }
+
+        internal static AccountOrbOverride? AccountOrbOverrideFor(string positionKey)
+        {
+            if (string.IsNullOrEmpty(positionKey)) return null;
+
+            Load();
+            lock (Gate) return _model.AccountOrbOverrides.GetValueOrDefault(positionKey);
+        }
+
+        // Null or an all-blank override removes the entry rather than storing
+        // one that overrides nothing.
+        internal static void SetAccountOrbOverride(string positionKey, AccountOrbOverride? value)
+        {
+            if (string.IsNullOrEmpty(positionKey)) return;
+
+            Load();
+            lock (Gate)
+            {
+                var normalised = value?.Normalise();
+                if (normalised is null || normalised.IsEmpty)
+                {
+                    if (!_model.AccountOrbOverrides.Remove(positionKey)) return;
+                }
+                else
+                {
+                    if (_model.AccountOrbOverrides.GetValueOrDefault(positionKey) == normalised) return;
+                    _model.AccountOrbOverrides[positionKey] = normalised;
+                }
+            }
+
+            Save();
         }
 
         // Null when this orb has never had either trigger overridden — the
@@ -2513,6 +2551,23 @@ namespace Orbweaver
                         }
                     }
 
+                    if (root["accountOrbOverrides"] is JsonObject accountOverrides)
+                    {
+                        foreach (var (key, node) in accountOverrides)
+                        {
+                            if (node is not JsonObject entry) continue;
+
+                            var parsed = new AccountOrbOverride(
+                                Text(entry["initials"]), Text(entry["name"]), Text(entry["iconFile"])).Normalise();
+
+                            // An entry that overrides nothing is dropped, as
+                            // SetAccountOrbOverride would have on the way in.
+                            if (parsed.IsEmpty) continue;
+
+                            model.AccountOrbOverrides[key] = parsed;
+                        }
+                    }
+
                     if (root["orbSizes"] is JsonObject orbSizes)
                     {
                         foreach (var (key, node) in orbSizes)
@@ -2794,6 +2849,17 @@ namespace Orbweaver
                         };
                     }
 
+                    var accountOverrides = new JsonObject();
+                    foreach (var (key, o) in _model.AccountOrbOverrides)
+                    {
+                        accountOverrides[key] = new JsonObject
+                        {
+                            ["initials"] = o.Initials,
+                            ["name"] = o.Name,
+                            ["iconFile"] = o.IconFile
+                        };
+                    }
+
                     var orbSizes = new JsonObject();
                     foreach (var (key, size) in _model.OrbSizes) orbSizes[key] = size;
 
@@ -2955,6 +3021,7 @@ namespace Orbweaver
                         ["orbTurnSounds"] = turnSounds,
                         ["orbSizes"] = orbSizes,
                         ["orbMemberOffsets"] = orbMemberOffsets,
+                        ["accountOrbOverrides"] = accountOverrides,
                         ["pinnedChatPanels"] = pinnedChatPanels,
                         ["arrangeAnchor"] = arrangeAnchor,
                         ["orbGroups"] = _model.Groups.ToJson(),

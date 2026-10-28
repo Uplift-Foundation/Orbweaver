@@ -168,13 +168,44 @@ namespace Orbweaver.Tests
             new("room",                     true,  false),
         };
 
+        // CB-287: OrbGlyph.Clip, the verbatim-override clipper. Rows are
+        // (why, input, twoLetter, want).
+        internal readonly record struct ClipCase(string Why, string? Input, bool TwoLetter, string Want);
+
+        internal static readonly ClipCase[] Clips =
+        {
+            new("two letters kept",          "AB",           true,  "AB"),
+            new("longer cut to two",         "ABC",          true,  "AB"),
+            new("one-letter setting",        "ABC",          false, "A"),
+            new("case preserved",            "aBc",          true,  "aB"),
+            new("surrounding space trimmed", "  Xy  ",       true,  "Xy"),
+            new("blank is empty",            "   ",          true,  ""),
+            new("null is empty",             null,           true,  ""),
+            new("family emoji is one",       "\U0001F468\u200D\U0001F469\u200D\U0001F467A", true, "\U0001F468\u200D\U0001F469\u200D\U0001F467A"),
+            new("flag is one",               "\U0001F1EF\U0001F1F5X", true, "\U0001F1EF\U0001F1F5X"),
+            new("combining accent attached", "e\u0301xy",    true,  "e\u0301x"),
+            new("internal space skipped",    "A B",          true,  "AB"),
+            new("lone zero-width joiner",    "\u200D",       true,  ""),
+            new("lone surrogate",            "\uD83D",       true,  ""),
+            new("control chars skipped",     "\u0001\u0002A", true,  "A"),
+            new("leading joiner skipped",    "\u200DAB",     true,  "AB"),
+            new("nbsp is not visible",       "\u00A0\u00A0", true,  ""),
+            new("emoji one-letter",          "\U0001F600A",  false, "\U0001F600"),
+        };
+
+        internal static string? CheckClip(ClipCase c)
+        {
+            var got = OrbGlyph.Clip(c.Input, c.TwoLetter);
+            return got == c.Want ? null : $"clip {c.Why}: Clip({Show(c.Input)}) = {Show(got)}, wanted {Show(c.Want)}";
+        }
+
         internal static string Show(string? s) => s is null ? "null" : $"\"{s}\"";
 
         // Null is counted as its own case rather than added to the Initials
         // table, because that table is not nullable and making it so to hold one
         // row would weaken every other row's type.
         internal static int Total =>
-            Glyphs.Length + Initials.Length + Speakers.Length + Fallbacks.Length + 1;
+            Glyphs.Length + Initials.Length + Speakers.Length + Fallbacks.Length + Clips.Length + 1;
 
         internal static string? CheckGlyph(GlyphCase c)
         {
@@ -233,6 +264,9 @@ namespace Orbweaver.Tests
 
             foreach (var c in Initials)
                 if (CheckInitials(c) is { } failure) failures.Add(failure);
+
+            foreach (var c in Clips)
+                if (CheckClip(c) is { } failure) failures.Add(failure);
 
             if (CheckNullInitials() is { } nullFailure) failures.Add(nullFailure);
 
