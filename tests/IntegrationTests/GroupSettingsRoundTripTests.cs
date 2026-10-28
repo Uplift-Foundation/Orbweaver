@@ -393,4 +393,28 @@ public class GroupSettingsRoundTripTests
         Assert.Equal(0.06, OrbweaverSettings.GroupOutlineFillOpacity, 3);
         Assert.Equal(1.5, OrbweaverSettings.OrbSize, 3);
     }
+
+    [Fact]
+    public void ALateMemberIsEnsuredIntoTheTeamsGroupAndSurvivesAReload()
+    {
+        var dir = Stage();
+        var group = OrbweaverSettings.CreateOrbGroup();
+        OrbweaverSettings.AssignTeamToGroup("lead", new string?[] { "m1" }, group.Id);
+
+        OrbweaverSettings.EnsureTeamMembership("lead", new string?[] { "m1", "late" });
+        OrbweaverSettings.EnsureTeamMembership("lead", new string?[] { "late" });
+        Reload(dir);
+
+        Assert.Equal(group.Id, OrbweaverSettings.OrbGroupMembershipFor("late"));
+        Assert.Equal(group.Id, OrbweaverSettings.OrbTeamGroupFor(1, new[] { -1, 0 }, new string?[] { "lead", "late" }));
+    }
+
+    [Fact]
+    public void ANamelessUserGroupInTheFileIsNotCalledMain()
+    {
+        Stage("""{ "orbGroups": { "groups": { "g-0000abcd": { "shape": "star" } } } }""");
+
+        Assert.Equal("Group 1", OrbweaverSettings.OrbGroupFor("g-0000abcd")!.Name);
+        Assert.Equal("Main", OrbweaverSettings.OrbGroupFor("main")!.Name);
+    }
 }

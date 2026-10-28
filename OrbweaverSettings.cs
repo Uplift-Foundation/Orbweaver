@@ -1657,6 +1657,23 @@ namespace Orbweaver
             string? leadKey, IEnumerable<string?> memberKeys, string groupId) =>
             ChangeGroups(groups => groups.AssignTeam(leadKey, memberKeys, groupId));
 
+        // T3: gives members that have no group the root's. See
+        // OrbGroupTable.EnsureTeamMembership — S7 calls it when a late member
+        // appears under a lead that has an explicit membership.
+        public static void EnsureTeamMembership(string? rootKey, IEnumerable<string?> memberKeys) =>
+            ChangeGroups(groups => groups.EnsureTeamMembership(rootKey, memberKeys));
+
+        // T1: the group an orb belongs to once its team is considered — the
+        // team root's explicit membership, or null so OrbGroups.GroupIdFor falls
+        // back to the classification. `keys[i]` is orb i's position key and
+        // `leadOf[i]` the index of its lead.
+        public static string? OrbTeamGroupFor(int index, int[] leadOf, IReadOnlyList<string?> keys)
+        {
+            Load();
+            lock (Gate)
+                return OrbGroups.TeamGroupOf(index, leadOf, keys, key => _model.Groups.MembershipFor(key));
+        }
+
         // Forgets an orb's explicit group, so the classification decides again.
         // The menu's "Leave group" is MoveOrbToGroup(key, OrbGroups.Main)
         // instead, which holds even a heartbeat orb in main.

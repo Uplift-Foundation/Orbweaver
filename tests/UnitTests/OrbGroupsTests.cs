@@ -587,7 +587,7 @@ public class OrbGroupsTests
 
         var group = table.Get("g-bbbbbbbb")!;
         Assert.Equal("g-bbbbbbbb", group.Id);
-        Assert.Equal("Main", group.Name);
+        Assert.Equal("Group 1", group.Name);
         Assert.Equal(OrbweaverSettings.DefaultArrangeShape, group.Shape);
         Assert.Null(group.Anchor);
         Assert.Null(group.Style);
@@ -614,7 +614,7 @@ public class OrbGroupsTests
 
         Assert.Null(table.Get("g-11111111"));
         var bad = table.Get("g-22222222")!;
-        Assert.Equal("Main", bad.Name);
+        Assert.StartsWith("Group ", bad.Name);
         Assert.Null(bad.Anchor);
         Assert.Null(bad.Style);
         var good = table.Get("g-33333333")!;
@@ -678,5 +678,150 @@ public class OrbGroupsTests
         Assert.Null(main["style"]!["strokeOpacity"]);
         Assert.Null(main["style"]!["fillOpacity"]);
         Assert.Empty(json["members"]!.AsObject());
+    }
+
+    [Fact]
+    public void NamelessUserGroupsGetDistinctGroupNNamesNeverMain()
+    {
+        var table = new OrbGroupTable();
+        table.ReadJson(JsonNode.Parse("""
+            { "groups": { "g-0000abcd": { "shape": "star" }, "g-0000abce": { "name": "  " } } }
+            """));
+
+        var names = new[] { table.Get("g-0000abcd")!.Name, table.Get("g-0000abce")!.Name };
+        Assert.DoesNotContain("Main", names);
+        Assert.Equal(2, names.Distinct().Count());
+        Assert.Equal("star", table.Get("g-0000abcd")!.Shape);
+    }
+
+    // ---- teams: root resolution (T1, T4) ---------------------------------------
+
+    private static string? TeamGroup(OrbGroupTable table, int index, int[] leadOf, params string?[] keys) =>
+        OrbGroups.TeamGroupOf(index, leadOf, keys, key => table.MembershipFor(key));
+
+    [Fact]
+    public void AMemberResolvesFromItsRootLeadNotFromItsOwnEntry()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        var b = table.Create(idSource: Ids("g-00000002"));
+        table.Move("lead", a.Id);
+        table.Move("member", b.Id);   // a stale entry that disagrees with the lead
+
+        Assert.Equal(a.Id, TeamGroup(table, 1, new[] { -1, 0 }, "lead", "member"));
+        Assert.Equal(a.Id, TeamGroup(table, 0, new[] { -1, 0 }, "lead", "member"));
+    }
+
+    [Fact]
+    public void NestedMembersResolveFromTheTopOfTheChain()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        table.Move("root", a.Id);
+
+        // 0 root <- 1 <- 2 <- 3
+        var leadOf = new[] { -1, 0, 1, 2 };
+        for (var i = 0; i < 4; i++)
+            Assert.Equal(a.Id, TeamGroup(table, i, leadOf, "root", "m1", "m2", "m3"));
+    }
+
+    [Fact]
+    public void AMissingLeadMakesTheNearestSurvivingAncestorTheRoot()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        var b = table.Create(idSource: Ids("g-00000002"));
+        table.Move("mid", a.Id);
+        table.Move("leaf", b.Id);
+
+        // 0 mid <- 1 leaf, and mid's own lead (index 9) is not on screen.
+        Assert.Equal(a.Id, TeamGroup(table, 1, new[] { 9, 0 }, "mid", "leaf"));
+    }
+
+    [Fact]
+    public void AMemberThatOutlivesItsLeadResolvesFromItsOwnKey()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        table.AssignTeam("lead", new string?[] { "member" }, a.Id);
+
+        // The lead's orb is gone: the member is alone, with a lead index of -1.
+        Assert.Equal(a.Id, TeamGroup(table, 0, new[] { -1 }, "member"));
+    }
+
+    [Fact]
+    public void ARootWithNoMembershipLeavesTheClassificationToDecide()
+    {
+        var table = new OrbGroupTable();
+        var b = table.Create(idSource: Ids("g-00000002"));
+        table.Move("member", b.Id);
+
+        Assert.Null(TeamGroup(table, 1, new[] { -1, 0 }, "lead", "member"));
+        Assert.Null(TeamGroup(table, 0, new[] { -1 }, ""));
+        Assert.Null(TeamGroup(table, 5, new[] { -1 }, "only"));
+    }
+
+    [Fact]
+    public void ACycleAgreesOnOneRootWhoeverAsks()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        var b = table.Create(idSource: Ids("g-00000002"));
+        table.Move("k0", a.Id);
+        table.Move("k1", b.Id);
+        table.Move("k2", b.Id);
+
+        // 0 -> 1 -> 2 -> 0, and a tail 3 -> 2 hanging off it.
+        var leadOf = new[] { 1, 2, 0, 2 };
+        foreach (var i in new[] { 0, 1, 2, 3 })
+            Assert.Equal(a.Id, TeamGroup(table, i, leadOf, "k0", "k1", "k2", "k3"));
+    }
+
+    [Fact]
+    public void ASelfLeadIsItsOwnRoot()
+    {
+        Assert.Equal(0, OrbGroups.RootOf(0, new[] { 0 }, 1));
+        Assert.Equal(1, OrbGroups.RootOf(1, new[] { -1 }, 2));
+        Assert.Equal(1, OrbGroups.RootOf(1, Array.Empty<int>(), 2));
+    }
+
+    // ---- teams: a late member (T3) ---------------------------------------------
+
+    [Fact]
+    public void ALateMemberGetsTheRootsGroupAndNothingIsOverwritten()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        var b = table.Create(idSource: Ids("g-00000002"));
+        table.AssignTeam("lead", new string?[] { "m1" }, a.Id);
+        table.Move("chose-b", b.Id);
+
+        var changed = table.EnsureTeamMembership("lead", new string?[] { "m1", "late", "chose-b", null, "" });
+
+        Assert.True(changed);
+        Assert.Equal(a.Id, table.MembershipFor("late"));
+        Assert.Equal(b.Id, table.MembershipFor("chose-b"));
+        Assert.Equal(a.Id, table.MembershipFor("m1"));
+    }
+
+    [Fact]
+    public void EnsuringATeamTwiceChangesNothingTheSecondTime()
+    {
+        var table = new OrbGroupTable();
+        var a = table.Create(idSource: Ids("g-00000001"));
+        table.Move("lead", a.Id);
+
+        Assert.True(table.EnsureTeamMembership("lead", new string?[] { "late" }));
+        Assert.False(table.EnsureTeamMembership("lead", new string?[] { "late" }));
+    }
+
+    [Fact]
+    public void ARootWithNoGroupHasNothingToGive()
+    {
+        var table = new OrbGroupTable();
+
+        Assert.False(table.EnsureTeamMembership("lead", new string?[] { "late" }));
+        Assert.False(table.EnsureTeamMembership(null, new string?[] { "late" }));
+        Assert.Empty(table.Members);
     }
 }

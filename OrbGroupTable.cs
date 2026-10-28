@@ -47,6 +47,45 @@ namespace Orbweaver
             };
         }
 
+        // T1/T4: an orb's group is its team's ROOT lead's, so a team is never
+        // split by a member carrying an entry of its own that differs.
+        //
+        // `leadOf[i]` is the index of orb i's lead, out of range (usually -1)
+        // for none — the same table OrbArrangement.Resolves walks, and cycle-safe
+        // for the same reason: a hop budget would end a cycle the walk is not
+        // part of, but here a cycle needs a *root*, and every member of it must
+        // agree on one. The smallest index in the cycle is it, so the answer does
+        // not depend on which member asked.
+        //
+        // A lead that has ended is simply out of range, so the nearest surviving
+        // ancestor is the end of the chain and becomes the root (T4); with no
+        // ancestor left the orb is its own root and its own key — which the team
+        // write put there — answers. `membershipOf` is the table's resolved
+        // lookup, so a group that was deleted reads as none.
+        internal static string? TeamGroupOf(
+            int index, int[] leadOf, IReadOnlyList<string?> keys, Func<string?, string?> membershipOf)
+        {
+            var root = RootOf(index, leadOf, keys.Count);
+            return membershipOf(root < keys.Count ? keys[root] : null);
+        }
+
+        internal static int RootOf(int index, int[] leadOf, int count)
+        {
+            var path = new List<int>();
+            var at = index;
+
+            while (true)
+            {
+                var seen = path.IndexOf(at);
+                if (seen >= 0) return path.Skip(seen).Min();
+
+                path.Add(at);
+                var lead = at < leadOf.Length ? leadOf[at] : -1;
+                if (lead < 0 || lead >= count) return at;
+                at = lead;
+            }
+        }
+
         // Slot order is the group table's, never the sessions': main,
         // heartbeats, crons, then user groups by ordinal id. A predefined group
         // missing from the dictionary is synthesised rather than skipped, so
@@ -172,6 +211,27 @@ namespace Orbweaver
 
         // ---- membership -----------------------------------------------------
 
+        // T3: idempotent. Gives every key in `memberKeys` that has no membership
+        // the root's group, so a member that appears after the snap — or outlives
+        // its lead — keeps the team's group. Never overwrites a key that already
+        // has one: an explicit different entry is somebody's choice, and the only
+        // thing allowed to replace it is a team move, which is AssignTeam. A root
+        // with no group of its own has nothing to give.
+        internal bool EnsureTeamMembership(string? rootKey, IEnumerable<string?> memberKeys)
+        {
+            if (MembershipFor(rootKey) is not { } id) return false;
+
+            var changed = false;
+            foreach (var key in memberKeys)
+            {
+                if (string.IsNullOrEmpty(key) || Resolve(key) is not null) continue;
+                _members[key] = id;
+                changed = true;
+            }
+
+            return changed;
+        }
+
         // The explicit group for a key, or null. `fallbackKey` is the same
         // second chance OrbPositionFor gets from SessionManager — the bare
         // directory, tried when nothing is saved under the full key, so a retitle
@@ -281,20 +341,25 @@ namespace Orbweaver
             var id = idSource();
             while (_groups.ContainsKey(id)) id = idSource();
 
+            var made = new OrbGroup(
+                id,
+                NextName(),
+                string.IsNullOrWhiteSpace(shape) ? _groups[OrbGroups.Main].Shape : shape,
+                null,
+                null);
+            _groups[id] = made;
+            return made;
+        }
+
+        private string NextName()
+        {
             var taken = new HashSet<string>(StringComparer.Ordinal);
             foreach (var group in _groups.Values) taken.Add(group.Name);
 
             var number = 1;
             while (taken.Contains("Group " + number.ToString(CultureInfo.InvariantCulture))) number++;
 
-            var made = new OrbGroup(
-                id,
-                "Group " + number.ToString(CultureInfo.InvariantCulture),
-                string.IsNullOrWhiteSpace(shape) ? _groups[OrbGroups.Main].Shape : shape,
-                null,
-                null);
-            _groups[id] = made;
-            return made;
+            return "Group " + number.ToString(CultureInfo.InvariantCulture);
         }
 
         // User groups only; the three predefined ones are slots the arrangement
@@ -365,11 +430,16 @@ namespace Orbweaver
                     if (string.IsNullOrWhiteSpace(id) || entry is not JsonObject fields) continue;
 
                     var predefined = OrbGroups.IsPredefined(id);
-                    var existing = _groups.GetValueOrDefault(id) ?? OrbGroups.DefaultFor(OrbGroups.Main) with { Id = id };
+                    var existing = _groups.GetValueOrDefault(id);
 
-                    var name = Text(fields["name"]) ?? existing.Name;
-                    var shape = predefined ? existing.Shape : Text(fields["shape"]) ?? existing.Shape;
-                    var anchor = id == OrbGroups.Main ? existing.Anchor : Anchor(fields["anchor"]);
+                    // A user group with no usable name is "Group N" like any
+                    // other, never a copy of Main's — two groups called Main
+                    // would make the menu's "In: ..." line a lie.
+                    var name = Text(fields["name"]) ?? existing?.Name ?? NextName();
+                    var shape = predefined
+                        ? existing!.Shape
+                        : Text(fields["shape"]) ?? _groups[OrbGroups.Main].Shape;
+                    var anchor = id == OrbGroups.Main ? existing!.Anchor : Anchor(fields["anchor"]);
                     var style = Style(fields["style"]);
 
                     _groups[id] = new OrbGroup(id, name, shape, anchor, style);
