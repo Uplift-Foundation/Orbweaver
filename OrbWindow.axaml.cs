@@ -115,6 +115,12 @@ namespace Orbweaver
         private readonly ColorTransition _colorTransition;
         private readonly ScaleTransform _orbScale = new();
 
+        // CB-268 M4: the drag squash. A matrix over the whole visible disc, the
+        // identity whenever the orb is not being dragged or motion is reduced.
+        private readonly MatrixTransform _squashTransform = new();
+        private readonly DragSquash _squash = new();
+        private DispatcherTimer? _squashTimer;
+
         // The heart badge's own beat, separate from the orb's breath so the two
         // can run at different rates without fighting over one transform.
         private readonly ScaleTransform _heartScale = new();
@@ -185,6 +191,11 @@ namespace Orbweaver
 
             Glow.Fill = _glowBrush;
             Orb.RenderTransform = _orbScale;
+
+            // CB-268 M4: the drag squash rides on the Disc cell (see the
+            // comment in OrbWindow.axaml), so it never competes with the
+            // breath on Orb and AvatarImage.
+            Disc.RenderTransform = _squashTransform;
 
             // One transform for both, so an agent's picture breathes with the
             // ring drawn around it rather than holding still inside it.
@@ -2657,6 +2668,100 @@ namespace Orbweaver
             }
 
             _session = null;
+        }
+
+        // ---- spring back (CB-268 M5, M6) ----------------------------------------
+
+        private SpringGlide? _glide;
+        private DispatcherTimer? _glideTimer;
+
+        /// <summary>Whether a spring-back is still moving this orb.</summary>
+        internal bool IsGliding => _glide is { Done: false };
+
+        /// <summary>
+        /// Glides from where the orb is now to <paramref name="target"/>: springs
+        /// with about 8% overshoot, carrying <paramref name="velocity"/> (pixels
+        /// per second) in; with reduce motion on, the plain eased glide. Ends
+        /// exactly on the target either way, and the team arrows and backdrops
+        /// follow every frame.
+        /// </summary>
+        internal void GlideTo(PixelPoint target, (double X, double Y) velocity)
+        {
+            _glide = new SpringGlide(Position, target, velocity, MotionClock(), MotionPolicy.ReduceMotion);
+            if (_glide.Done)
+            {
+                Position = target;
+                return;
+            }
+
+            _glideTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            _glideTimer.Tick -= OnGlideTick;
+            _glideTimer.Tick += OnGlideTick;
+            if (!_glideTimer.IsEnabled) _glideTimer.Start();
+        }
+
+        private void OnGlideTick(object? sender, EventArgs e) => StepGlide(MotionClock());
+
+        internal void StepGlide(long nowMs)
+        {
+            if (_glide is not { } glide) return;
+
+            Position = glide.Step(nowMs);
+            TeamLinks.Refresh();
+            GroupBackdrops.Refresh();
+            ChatPanel.RepositionFor(this);
+
+            if (glide.Done)
+            {
+                _glide = null;
+                _glideTimer?.Stop();
+            }
+        }
+
+        // ---- drag squash (CB-268 M4) -------------------------------------------
+
+        // The clock the motion work reads, in milliseconds. A seam so a test
+        // steps frames at exact times instead of racing the wall clock.
+        internal static Func<long> MotionClock { get; set; } = () => Environment.TickCount64;
+
+        /// <summary>The matrix currently on the orb's disc; the identity at rest.</summary>
+        internal Matrix SquashMatrix => _squashTransform.Matrix;
+
+        /// <summary>The pointer is at (x, y) DIP while this orb is dragged.</summary>
+        internal void SquashObserve(double x, double y)
+        {
+            var now = MotionClock();
+            _squash.Observe(x, y, now);
+            StepSquash(now);
+            EnsureSquashTimer();
+        }
+
+        /// <summary>The drag ended: the stretch relaxes from here (the timer keeps stepping until it is flat).</summary>
+        internal void SquashRelease()
+        {
+            _squash.Release();
+            EnsureSquashTimer();
+        }
+
+        internal void StepSquash(long nowMs)
+        {
+            _squashTransform.Matrix = _squash.Step(nowMs);
+            if (_squash.AtRest) _squashTimer?.Stop();
+        }
+
+        private void EnsureSquashTimer()
+        {
+            if (_squash.AtRest) return;
+
+            _squashTimer ??= CreateSquashTimer();
+            if (!_squashTimer.IsEnabled) _squashTimer.Start();
+        }
+
+        private DispatcherTimer CreateSquashTimer()
+        {
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            timer.Tick += (_, _) => StepSquash(MotionClock());
+            return timer;
         }
 
         // --- what a click does ------------------------------------------------

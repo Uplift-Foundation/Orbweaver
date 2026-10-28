@@ -70,13 +70,39 @@ namespace Orbweaver
         // During the move: the outcome if the user let go now. A Join highlights
         // the group; a Pair previews the provisional outline around both teams;
         // anything else clears both.
-        internal static SnapOutcome Preview(IOrbDragHost host, string pressedId, double unitsPerDip)
+        internal static SnapOutcome Preview(IOrbDragHost host, string pressedId, double unitsPerDip) =>
+            PreviewWithPull(host, pressedId, unitsPerDip).Outcome;
+
+        // The same, and also how far (M1) the team should be pulled towards its
+        // target, in DIP: zero unless the outcome is a Join or a Pair.
+        internal static (SnapOutcome Outcome, (double X, double Y) PullDip) PreviewWithPull(
+            IOrbDragHost host, string pressedId, double unitsPerDip)
         {
-            var outcome = Decide(host, pressedId, unitsPerDip);
+            var d = Decision(host, pressedId, unitsPerDip);
+            var outcome = d.Outcome;
             host.HighlightGroup(outcome is SnapOutcome.Join join ? join.GroupId : null);
             if (outcome is SnapOutcome.Pair pair) host.PreviewPair(host.TeamIdsOf(pressedId), pair.RootId);
             else host.PreviewPair(null, null);
-            return outcome;
+
+            var targetId = outcome switch
+            {
+                SnapOutcome.Join j => j.GroupId,
+                SnapOutcome.Pair p => p.RootId,
+                _ => null,
+            };
+
+            var pull = (0.0, 0.0);
+            if (targetId is not null && MotionPolicy.AllowsMagneticPull)
+            {
+                foreach (var c in d.Candidates)
+                {
+                    if (c.GroupId != targetId) continue;
+                    pull = MagneticPull.Offset(d.Moving, c, d.JoinDip);
+                    break;
+                }
+            }
+
+            return (outcome, pull);
         }
 
         // On release of a drag that moved (dx, dy) physical pixels.
@@ -197,7 +223,14 @@ namespace Orbweaver
             return new OrbweaverSettings.OrbPlacement((int)Math.Round(x), (int)Math.Round(y));
         }
 
-        private static SnapOutcome Decide(IOrbDragHost host, string pressedId, double unitsPerDip)
+        private static SnapOutcome Decide(IOrbDragHost host, string pressedId, double unitsPerDip) =>
+            Decision(host, pressedId, unitsPerDip).Outcome;
+
+        private static (
+            SnapOutcome Outcome,
+            List<(double X, double Y, double R)> Moving,
+            List<SnapCandidate> Candidates,
+            double JoinDip) Decision(IOrbDragHost host, string pressedId, double unitsPerDip)
         {
             var s = unitsPerDip > 0 ? unitsPerDip : 1;
             var team = host.TeamIdsOf(pressedId);
@@ -218,10 +251,13 @@ namespace Orbweaver
             // so the largest radius is the orb size the thresholds scale with.
             var radius = moving.Count == 0 ? 0 : moving.Max(d => d.R);
             var size = radius > 0 ? radius / OrbSnap.BaseRadiusDip : 1;
+            var joinDip = OrbSnap.JoinDip * size;
 
-            return OrbSnap.Decide(
+            var outcome = OrbSnap.Decide(
                 moving, host.GroupIdOf(pressedId), candidates, host.IsFree,
-                OrbSnap.JoinDip * size, OrbSnap.LeaveDip * size);
+                joinDip, OrbSnap.LeaveDip * size);
+
+            return (outcome, moving, candidates, joinDip);
         }
     }
 }
