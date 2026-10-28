@@ -615,6 +615,31 @@ public class SessionManagerGroupsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void ASavedOffsetPlacesTheMemberAtItsLeadPlusThatOffset()
+    {
+        var manager = Scan(("lead", ""), ("member", "codex"));
+        manager.StatusFor("member")!.Lead = "lead";
+        var group = NewGroup();
+        OrbweaverSettings.AssignTeamToGroup(KeyOf(manager, "lead"), new[] { KeyOf(manager, "member") }, group.Id);
+        var member = Windows(manager)["member"];
+        _offsetKeys.Add(member.SoundKey);
+        IOrbDragHost host = manager;
+
+        manager.ReapplyArrangement();                     // free mode, user group: fanned
+        var fanned = member.Position;
+
+        OrbweaverSettings.SetOrbMemberOffset(member.SoundKey, (150, 0));
+        manager.ReapplyArrangement();
+
+        var m = host.DiscOf("member");
+        var l = host.DiscOf("lead");
+        var units = OrbWindow.UnitsPerDip(member);
+        Assert.InRange(m.X - l.X, 150 * units - 1, 150 * units + 1);
+        Assert.InRange(m.Y - l.Y, -1, 1);
+        Assert.NotEqual(fanned, member.Position);
+    }
+
+    [AvaloniaFact]
     public void ResettingAMemberWhileArrangedReLaysTheArrangement()
     {
         OrbweaverSettings.ArrangeAnchor = null;

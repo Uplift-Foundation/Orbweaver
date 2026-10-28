@@ -4724,8 +4724,15 @@ namespace Orbweaver
             var rest = allOrbs.Where(o => !user.Contains(o)).ToList();
 
             var (userTargets, userGroups) = LayoutSubset(user, obstacles: null);
-            var (restTargets, restGroups) = LayoutSubset(
-                rest, user.Count > 0 ? userGroups.Select(g => g.Bounds).ToList() : null);
+
+            // The user groups' boxes, and every user-group orb where it is about
+            // to land: a hand-placed member (T2) sits outside its group's box,
+            // and the predefined groups must not land on it either.
+            var userObstacles = userGroups.Select(g => g.Bounds)
+                .Concat(userTargets.Select(t => new PixelRect(
+                    t.Value, new PixelSize(OrbPixels(t.Key, ScaleOf(t.Key)), OrbPixels(t.Key, ScaleOf(t.Key))))))
+                .ToList();
+            var (restTargets, restGroups) = LayoutSubset(rest, user.Count > 0 ? userObstacles : null);
 
             // Every caller applies what this returns (a glide, or straight
             // away), so the backdrops are told the new groups here, once —
@@ -4739,6 +4746,9 @@ namespace Orbweaver
         }
 
         private static bool IsUserGroup(string groupId) => !OrbGroups.IsPredefined(groupId);
+
+        private static double ScaleOf(OrbWindow orb) =>
+            (orb.Screens.Primary ?? orb.Screens.All.FirstOrDefault())?.Scaling ?? 1.0;
 
         // One ComputeGroups call over a subset of orbs: the full group table (so
         // slots are stable) with only these orbs in it. A team is never split
@@ -4788,7 +4798,14 @@ namespace Orbweaver
             // arrangement lays out what is actually drawn.
             var sizeOf = orbs.Select(orb => orb.OrbSize).ToArray();
 
-            var (placed, placements) = PlaceGroups(orbs.Count, leadOf, groupOf, groups, layout, sizeOf, obstacles);
+            // T2 revised: a member's saved offset from its lead (DIP, centre to
+            // centre, under its SoundKey). ComputeGroups ignores a root's entry.
+            var memberOffsetOf = orbs
+                .Select((orb, i) => leadOf[i] >= 0 ? OrbweaverSettings.OrbMemberOffsetFor(orb.SoundKey) : null)
+                .ToArray();
+
+            var (placed, placements) = PlaceGroups(
+                orbs.Count, leadOf, groupOf, groups, layout, sizeOf, obstacles, memberOffsetOf);
 
             for (var i = 0; i < orbs.Count; i++) targets[orbs[i]] = placed[i];
 
@@ -4813,7 +4830,8 @@ namespace Orbweaver
         // swallowing the next drag back.
         private static (PixelPoint[] Positions, OrbArrangement.GroupPlacement[] Placements) PlaceGroups(
             int count, int[] leadOf, int[] groupOf, IReadOnlyList<OrbGroup> groups,
-            OrbArrangement.Layout layout, double[] sizeOf, IReadOnlyList<PixelRect>? obstacles)
+            OrbArrangement.Layout layout, double[] sizeOf, IReadOnlyList<PixelRect>? obstacles,
+            IReadOnlyList<(double Dx, double Dy)?> memberOffsetOf)
         {
             var layouts = groups
                 .Select(g => new OrbArrangement.GroupLayout(
@@ -4821,7 +4839,7 @@ namespace Orbweaver
                 .ToList();
 
             var (positions, placed) = OrbArrangement.ComputeGroups(
-                count, leadOf, groupOf, layouts, layout, sizeOf, obstacles);
+                count, leadOf, groupOf, layouts, layout, sizeOf, obstacles, memberOffsetOf);
 
             foreach (var group in placed)
             {

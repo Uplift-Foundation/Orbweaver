@@ -282,7 +282,9 @@ internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
 
 - **Obstacles are fixed.** They never move, they rank above box 0, and every box is pushed at least `gap` clear of each one, then slid back into `work`. `Separated` covers box↔obstacle pairs as well as box↔box. Units are screen units, like the boxes.
 - **A partial call keeps the full group table.** The caller passes the whole table as `groups`, so slot indices stay stable, and passes only the orbs being laid out in `count`, `leadOf`, `groupOf` and `sizeOf` (indices local to that subset). Slots with no orbs in the call produce no placement, as today.
-- **With obstacles, there is no Bands+Compact fallback (accepted, final).** When groups cannot be separated, each one stays at its best-effort `SeparateGroups` position, with overlap tolerated, and the `out GroupPath` overload reports `Fallback`.
+- **With obstacles, there is no Bands+Compact fallback (accepted, final; built at `4c061afc`).** When groups cannot be separated, each one stays at its best-effort `SeparateGroups` position, with overlap tolerated, and the `out GroupPath` overload reports `Fallback`.
+  - **`Landed` on that route is the asked anchor, not the best-effort one.** `SeparateGroups` starts from the asked positions, so asking again gives the same answer, whereas re-feeding the best effort would drift.
+  - The cost: a raw off-screen anchor stays saved raw in that cramped case.
   - Bands cannot see obstacles: a rebanded user group would land on the stack column (F2) and leave its anchor (F4), in exactly the cramped case.
   - A test pins the outcome as best-effort and deterministic: the same inputs give the same positions, obstacles are untouched, and the result is `Fallback`.
   - The PR names it as a known limit.
@@ -346,7 +348,7 @@ Warren found that members could no longer be dragged and arranged on their own. 
   - if `host.IsLaidOut(memberId)` → `host.SaveMemberOffset(memberId)`, then `host.ReapplyArrangement()`;
   - otherwise (free mode, loose team) → pin the member where it was dropped, as before CB-268.
 - **Settings (nadia-okafor), key `orbMemberOffsets { soundKey → { dx, dy } }`** in `KnownKeys`.
-  - Offsets are **DIP, relative to the member's lead's visible centre** (its effective lead, `TeamTree.LeadOf`). DIP so an offset survives a display-scale change.
+  - Offsets are **DIP, centre to centre: the member's visible centre minus its lead's** (the effective lead, `TeamTree.LeadOf`). DIP so an offset survives a display-scale change. `OrbDragCommit.MemberOffsetDip` is the one formula; `SessionManager.SaveMemberOffset` calls it.
   - API:
     ```csharp
     public static (double Dx, double Dy)? OrbMemberOffsetFor(string? soundKey);
@@ -355,8 +357,12 @@ Warren found that members could no longer be dragged and arranged on their own. 
   - It is keyed by **SoundKey**, so teammates sharing a directory key don't collide.
   - It is carried across a SoundKey change exactly as the size override is (`OrbWindow.RefreshSoundKey`): copied, never moved, never over an existing entry.
 - **`ComputeGroups` (hana-moriyama)** gains `IReadOnlyList<(double Dx, double Dy)?>? memberOffsetOf = null`, after `obstacles`, indexed like the orb arrays (local to the call).
-  - A **member** with an offset is placed at its lead's slot centre + offset × `layout.Scale` instead of by FanOut, then nudged inside the work area and off other discs. Null, or a root's entry, is ignored.
-  - Offsets never move anchors, `Landed` or the curve fit (anchors only), so a member drag cannot shift its group.
+  - **As built (`4c061afc`):** offsets are applied **after** the layout, in the final frame.
+    - The member goes at its lead's final centre + offset × `layout.Scale`, and its own sub-team follows rigidly. If that lands on an orb outside its subtree, on an obstacle or on another group's box, it moves to the nearest clear spot.
+    - The group, its box, `Landed`, the curve and every other orb are exactly as if nobody had been hand-placed. A member dragged to an edge cannot shift its lead.
+    - Null, a root's entry, or a non-finite offset is ignored.
+  - **The fan is not re-dealt:** the other members stay where the layout put them, leaving a gap where the hand-placed one would have been.
+  - **`SlotBounds` excludes a hand-placed member.** That is why S7's arranged-mode second call takes every user-group orb's landing rect as an obstacle as well as the boxes. `GroupOutline` sizes from the real discs, so outlines still enclose the member.
 - **`IOrbDragHost` additions (S7 implements):**
   ```csharp
   bool IsFree => !IsArranged;                    // default interface member, at the S4 owner's request
@@ -382,11 +388,11 @@ Warren found that members could no longer be dragged and arranged on their own. 
 ### S7 — SessionManager (architect)
 
 - **`ReflowPositions` (free mode)** skips every orb whose root is in a user group, both from the stack and from the pinned set. It then lays out the user groups, with obstacles = the loose orbs' window rects after the reflow.
-- **Arranged mode:** `ComputeClusteredPositions` runs the two calls described above, user groups first.
+- **Arranged mode:** `ComputeClusteredPositions` runs the two calls described above, user groups first. The predefined groups' obstacles are the user groups' `SlotBounds` **plus every user-group orb's landing rect**, because a hand-placed member is outside its box.
 - **Un-arrange:** restore and unpin only orbs that are not in a user group.
 - **`ReapplyArrangement()`** re-lays what the current mode lays out, in both modes. It used to return early when not arranged; it now lays out the user groups then.
 - **`IOrbDragHost` additions:** as listed under "T2 revised": `IsFree`, `IsRoot`, `IsLaidOut`, `SaveMemberOffset` and `PreviewPair`. `CandidatesFor` in free mode returns user groups plus `Loose` team candidates.
-- **Member offsets** go to every `ComputeGroups` call: `OrbMemberOffsetFor(SoundKey)` for each non-root orb in the call.
+- **Member offsets** go to every `ComputeGroups` call (`LayoutSubset`): `OrbMemberOffsetFor(SoundKey)` for each orb with a lead in the call, null for a root.
 - **"Reset this orb's position"** also clears the member offset.
 - **PreviewPair stays in scope** (accepted): a visible preview before release is in the acceptance criteria.
 - **Obstacle rects:** each loose orb's window, `Position` to `Position + OrbPixels`, in screen units.
