@@ -936,6 +936,47 @@ namespace Orbweaver.Tests
                 break;
             }
 
+            // 7b. The curve each group reports is a real one: finite, never a
+            //     negative scale, and — where the group has no fanned members
+            //     and every orb is one size, so each orb is a point of the curve
+            //     — every anchor orb within half a window of the curve point it
+            //     was dealt. Loose on purpose: it is there to catch a curve
+            //     fitted to the wrong points or the wrong shape (which is off by
+            //     an orb or more), not the few pixels of rounding and nudging
+            //     that keep neighbours apart.
+            foreach (var group in placed)
+            {
+                if (!double.IsFinite(group.CurveCentre.X) || !double.IsFinite(group.CurveCentre.Y)
+                    || !double.IsFinite(group.CurveScale) || group.CurveScale < 0)
+                {
+                    Fail($"slot {group.Slot} reports a bad curve {group.CurveCentre} x {group.CurveScale}");
+                    break;
+                }
+
+                var anchorOrbs = group.Orbs.Where(o => !OrbArrangement.Resolves(o, leads, count)).ToArray();
+                // A lead cycle is two anchors that Separate still pulls toward
+                // each other as if one led the other, so they are off the curve
+                // by design; only a group with no lead links at all is a clean curve.
+                if (test.Mix is not null || group.Orbs.Any(o => leads[o] >= 0) || anchorOrbs.Length < 2) continue;
+
+                var unit = OrbArrangement.Unit(group.DrawnShape, anchorOrbs.Length);
+                var worstOff = 0.0;
+
+                for (var k = 0; k < anchorOrbs.Length; k++)
+                {
+                    var o = anchorOrbs[k];
+                    var dx = pts[o].X + windowOf[o] / 2.0 - (group.CurveCentre.X + group.CurveScale * unit[k].X);
+                    var dy = pts[o].Y + windowOf[o] / 2.0 - (group.CurveCentre.Y + group.CurveScale * unit[k].Y);
+                    worstOff = Math.Max(worstOff, Math.Sqrt(dx * dx + dy * dy));
+                }
+
+                if (worstOff > windowOf.Max() / 2.0 && path == OrbArrangement.GroupPath.Separated)
+                {
+                    Fail($"slot {group.Slot}'s orbs are up to {worstOff:0}px off the curve it reports");
+                    break;
+                }
+            }
+
             // 8. Deterministic.
             var again = OrbArrangement.ComputeGroups(
                 count, leads, groupOf, Table(centres), layout, sizeArgument, out var againPath);
@@ -979,7 +1020,8 @@ namespace Orbweaver.Tests
             a.Count == b.Count
             && Enumerable.Range(0, a.Count).All(i =>
                 a[i].Slot == b[i].Slot && a[i].Landed == b[i].Landed && a[i].SlotBounds == b[i].SlotBounds
-                && a[i].DrawnShape == b[i].DrawnShape && a[i].Orbs.SequenceEqual(b[i].Orbs));
+                && a[i].DrawnShape == b[i].DrawnShape && a[i].Orbs.SequenceEqual(b[i].Orbs)
+                && a[i].CurveCentre == b[i].CurveCentre && a[i].CurveScale == b[i].CurveScale);
 
         // The whole sweep, for a caller that just wants the verdict. The
         // user-group cases (CB-268) are counted in with the rest.

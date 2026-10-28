@@ -68,13 +68,28 @@ namespace Orbweaver
         //
         // Orbs is an array, so record equality compares it by reference;
         // compare Orbs with SequenceEqual in tests.
+        //
+        // CurveCentre and CurveScale describe the curve the group's anchor orbs
+        // (not their fanned team members) were placed on, in physical pixels,
+        // after separation and translation: orb i's centre is
+        // CurveCentre + CurveScale * Unit(DrawnShape, anchors)[i], to within the
+        // pixel rounding and the nudges that keep neighbours apart. It is what
+        // GroupOutline offsets outward to draw the group's own shape, instead of
+        // re-fitting a curve to the discs. Found as the least-squares fit of the
+        // placed centres to the shape's unit curve, which is exact for the
+        // curve the placement started from and absorbs the rounding. A group of
+        // one orb has no curve: CurveScale is 0 and CurveCentre is that orb's
+        // centre. A grid (asked for or fallen back to) is its lattice, fitted
+        // the same way, so CurveScale is the lattice step.
         /// <summary>Where one non-empty group landed, and what was drawn for it.</summary>
         internal readonly record struct GroupPlacement(
             int Slot,
             PixelPoint Landed,
             PixelRect SlotBounds,
             string DrawnShape,
-            int[] Orbs);
+            int[] Orbs,
+            Point CurveCentre = default,
+            double CurveScale = 0);
 
         // leadOf[i] is the index of orb i's team lead, or -1 if it leads itself.
         //
@@ -372,7 +387,7 @@ namespace Orbweaver
                 var fallback = ComputeCore(
                     count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
 
-                return (fallback, Describe(fallback, slotOf, shapes, sizes, layout.Scale, askedOf));
+                return (fallback, Describe(fallback, leadOf, slotOf, shapes, sizes, layout.Scale, askedOf));
             }
 
             path = GroupPath.Separated;
@@ -390,12 +405,17 @@ namespace Orbweaver
                 foreach (var i in members[k])
                     positions[i] = new PixelPoint(positions[i].X + dx, positions[i].Y + dy);
 
+                var (curveAt, curveScale) = FitCurve(
+                    drawn[k], members[k], positions, sizes, layout.Scale, leadOf, count);
+
                 placements[k] = new GroupPlacement(
                     usedSlots[k],
                     new PixelPoint(middle.X + dx, middle.Y + dy),
                     moved[k],
                     drawn[k],
-                    members[k]);
+                    members[k],
+                    curveAt,
+                    curveScale);
             }
 
             return (positions, placements);
@@ -595,6 +615,43 @@ namespace Orbweaver
             return (placed, SlotBox(placed, subSize, layout.Scale, WindowFor(layout.Scale, subSize.Max())), gridded);
         }
 
+        // The curve a group's anchor orbs sit on: the centre and scale that
+        // map the shape's unit curve onto their centres, by least squares.
+        // Anchors only, in index order — that is the order the shape's points
+        // were dealt to them, and a fanned team member is not on the curve.
+        // With the unit points u and the placed centres q, S = Σ(Δu·Δq)/Σ(Δu·Δu)
+        // about the means, and the centre is mean(q) − S·mean(u). Fit rather
+        // than carried out of Fit and Slide, which would mean threading three
+        // translations and a scale through two routes; it is exact for what
+        // they produced up to the pixel rounding.
+        private static (Point Centre, double Scale) FitCurve(
+            string shape, int[] orbs, PixelPoint[] positions, double[] sizes, double scale,
+            int[] leadOf, int count)
+        {
+            var anchors = orbs.Where(i => !Resolves(i, leadOf, count)).ToArray();
+            var unit = Unit(shape, anchors.Length);
+
+            var qx = anchors.Select(i => positions[i].X + WindowFor(scale, sizes[i]) / 2.0).ToArray();
+            var qy = anchors.Select(i => positions[i].Y + WindowFor(scale, sizes[i]) / 2.0).ToArray();
+
+            double mqx = qx.Average(), mqy = qy.Average();
+            double mux = unit.Average(u => u.X), muy = unit.Average(u => u.Y);
+
+            double num = 0, den = 0;
+            for (var i = 0; i < anchors.Length; i++)
+            {
+                var dux = unit[i].X - mux;
+                var duy = unit[i].Y - muy;
+                num += dux * (qx[i] - mqx) + duy * (qy[i] - mqy);
+                den += dux * dux + duy * duy;
+            }
+
+            // One orb, or points that all coincide: no curve to scale.
+            var s = den > 1e-9 ? num / den : 0;
+
+            return (new Point(mqx - s * mux, mqy - s * muy), s);
+        }
+
         // Placements read off the fallback's whole-set layout. Landed is what
         // was asked for, per the note on ComputeGroups: the fallback ignores
         // anchors, so what reproduces it is asking the same thing again.
@@ -603,7 +660,7 @@ namespace Orbweaver
         // decided for the set as a whole and cannot be attributed to a group,
         // and GroupOutline encloses the discs whatever shape it is told.
         private static GroupPlacement[] Describe(
-            PixelPoint[] positions, int[] slotOf, string[] shapes, double[] sizes, double scale,
+            PixelPoint[] positions, int[] leadOf, int[] slotOf, string[] shapes, double[] sizes, double scale,
             PixelPoint[] askedOf)
         {
             var window = WindowFor(scale, sizes.Max());
@@ -619,7 +676,9 @@ namespace Orbweaver
                     orbs.Select(i => sizes[i]).ToArray(),
                     scale, window);
 
-                result.Add(new GroupPlacement(g, askedOf[g], box, shapes[g], orbs));
+                var (curveAt, curveScale) = FitCurve(shapes[g], orbs, positions, sizes, scale, leadOf, positions.Length);
+
+                result.Add(new GroupPlacement(g, askedOf[g], box, shapes[g], orbs, curveAt, curveScale));
             }
 
             return result.ToArray();

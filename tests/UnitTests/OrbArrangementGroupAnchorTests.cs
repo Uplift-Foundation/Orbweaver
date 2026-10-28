@@ -278,6 +278,102 @@ namespace Orbweaver.Tests
             Assert.Equal(2, groups.Length);
         }
 
+        // --- the curve the orbs sit on ---
+
+        private static double Residual(GroupPlacement group, PixelPoint[] positions, double scale, int[] leads)
+        {
+            var anchors = group.Orbs.Where(i => leads[i] < 0).ToArray();
+            var unit = Unit(group.DrawnShape, anchors.Length);
+            var worst = 0.0;
+
+            for (var k = 0; k < anchors.Length; k++)
+            {
+                var window = WindowFor(scale, 1.0);
+                var dx = positions[anchors[k]].X + window / 2.0 - (group.CurveCentre.X + group.CurveScale * unit[k].X);
+                var dy = positions[anchors[k]].Y + window / 2.0 - (group.CurveCentre.Y + group.CurveScale * unit[k].Y);
+                worst = Math.Max(worst, Math.Sqrt(dx * dx + dy * dy));
+            }
+
+            return worst;
+        }
+
+        [Theory]
+        [InlineData("heart", 5, 1.0)]
+        [InlineData("heart", 13, 1.0)]
+        [InlineData("heart", 13, 2.0)]
+        [InlineData("circle", 8, 1.0)]
+        [InlineData("diamond", 9, 1.0)]
+        [InlineData("star", 10, 1.0)]
+        [InlineData("star", 10, 2.0)]
+        [InlineData("grid", 12, 1.0)]
+        [InlineData("line", 7, 1.0)]
+        [InlineData("vline", 7, 2.0)]
+        public void EveryOrbOfAnUnfannedGroupLiesOnTheCurveItReports(string shape, int n, double scale)
+        {
+            var layout = LayoutAt(scale, work: scale > 1 ? new PixelRect(0, 0, 3024, 1890) : null);
+            var table = Table((shape, new PixelPoint(900, 500)), ("circle", new PixelPoint(1600, 500)));
+            var of = Enumerable.Range(0, n + 3).Select(i => i < n ? 0 : 1).ToArray();
+
+            var (positions, groups, _) = Run(n + 3, NoLeads(n + 3), of, table, layout);
+
+            var group = groups[0];
+            Assert.Equal(shape, group.DrawnShape);
+            Assert.True(group.CurveScale > 0);
+
+            // Pixel rounding plus the nudges that keep neighbours apart: a few
+            // pixels, nowhere near an orb's width. A star's valleys sit close
+            // to its points and are nudged the most (7.5 px measured at size
+            // 1), so it gets twice the allowance.
+            var allowed = (shape == "star" ? 8 : 4) * scale;
+            Assert.True(Residual(group, positions, scale, NoLeads(n + 3)) <= allowed,
+                $"worst orb is {Residual(group, positions, scale, NoLeads(n + 3)):0.0}px off the curve");
+        }
+
+        [Fact]
+        public void ALoneOrbHasNoCurveAndItsCentreIsTheOrbs()
+        {
+            var (positions, groups, _) = Run(1, NoLeads(1), new int[1], Table(("heart", new PixelPoint(700, 400))));
+
+            var only = Assert.Single(groups);
+            Assert.Equal(0, only.CurveScale);
+            Assert.Equal(positions[0].X + 28.0, only.CurveCentre.X);
+            Assert.Equal(positions[0].Y + 28.0, only.CurveCentre.Y);
+        }
+
+        [Fact]
+        public void ATeamIsLeftOffTheCurveItsLeadsSitOn()
+        {
+            // Leads 0 and 3 are anchors; 1, 2 and 4 are fanned members.
+            var leads = new[] { -1, 0, 0, -1, 3 };
+
+            var (positions, groups, _) = Run(5, leads, new int[5], Table(("circle", new PixelPoint(900, 500))));
+
+            var only = Assert.Single(groups);
+            var unit = Unit("circle", 2);
+
+            // Two anchors, two unit points: the leads fit, to the pixel rounding.
+            for (var k = 0; k < 2; k++)
+            {
+                var lead = new[] { 0, 3 }[k];
+                Assert.Equal(only.CurveCentre.X + only.CurveScale * unit[k].X, positions[lead].X + 28.0, 2.0);
+                Assert.Equal(only.CurveCentre.Y + only.CurveScale * unit[k].Y, positions[lead].Y + 28.0, 2.0);
+            }
+        }
+
+        [Fact]
+        public void TheCurveMovesWithTheGroupByExactlyTheDrag()
+        {
+            var table = Table(("heart", new PixelPoint(700, 400)));
+            var moved = Table(("heart", new PixelPoint(738, 424)));
+
+            var (_, before, _) = Run(8, NoLeads(8), new int[8], table);
+            var (_, after, _) = Run(8, NoLeads(8), new int[8], moved);
+
+            Assert.Equal(before[0].CurveScale, after[0].CurveScale);
+            Assert.Equal(before[0].CurveCentre.X + 38, after[0].CurveCentre.X, 1e-6);
+            Assert.Equal(before[0].CurveCentre.Y + 24, after[0].CurveCentre.Y, 1e-6);
+        }
+
         // --- membership ---
 
         [Fact]
