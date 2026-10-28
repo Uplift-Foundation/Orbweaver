@@ -252,6 +252,38 @@ public class OrbWindowDragSnapTests
     }
 
     [AvaloniaFact]
+    public void AReleaseRemembersTheDraggedOrbsSpotThroughTheLiveManager()
+    {
+        // SessionManager.Instance has a private setter because only Start()
+        // assigns it, and Start() builds a tray icon and a gateway connection;
+        // set by reflection for this one test and put back, the pattern
+        // GroupLiveManagerTests uses for the same `Instance?.` arm.
+        var property = typeof(SessionManager).GetProperty("Instance")!;
+        var dir = Directory.CreateTempSubdirectory("drag-snap-").FullName;
+        var roster = new Roster();
+        var id = Uid();
+        var window = roster.Add("remember-" + id, OrbGroups.Main, 200, 300);
+        window.PositionKey = "remember-key-" + id;
+        using var _ = new HostScope(roster);
+        var before = property.GetValue(null);
+        property.SetValue(null, new SessionManager(dir));
+        try
+        {
+            Drag(window, 40, 20);
+
+            var saved = OrbweaverSettings.OrbPositionFor("remember-key-" + id);
+            Assert.NotNull(saved);
+            Assert.Equal(240, saved!.X);
+            Assert.Equal(320, saved.Y);
+        }
+        finally
+        {
+            property.SetValue(null, before);
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+        }
+    }
+
+    [AvaloniaFact]
     public void WithoutAHostADragStillMovesTheOrbItself()
     {
         var w = new OrbWindow("solo-" + Uid()) { Position = new PixelPoint(50, 50) };
