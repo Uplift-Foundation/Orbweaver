@@ -193,4 +193,66 @@ public class SessionManagerFreeModeQaTests : IDisposable
         Assert.Equal(g.Id, host.GroupIdOf("s1"));
         Assert.Equal(g.Id, host.GroupIdOf("s2"));
     }
+
+    // Warren's bug, end to end through the real host: drag a member of a laid-out group, re-lay-out, and the member
+    // must be at lead + offset (not back in the fan); Reset puts it back in the fan.
+    [AvaloniaFact]
+    public void ADraggedMemberStaysAtItsLeadPlusOffsetThroughRelayoutAndArrangeAndResetFansItAgain()
+    {
+        OrbweaverSettings.ArrangeAnchor = null;
+        var m = Scan(3);                                 // s0 lead, s1 member, s2 loose
+        m.StatusFor("s1")!.Lead = "s0";
+        var g = Group("circle");
+        foreach (var i in new[] { 0, 1 }) OrbweaverSettings.MoveOrbToGroup(KeyOf(m, "s" + i), g.Id);
+        m.ReapplyArrangement();
+        var w = Windows(m);
+        IOrbDragHost host = m;
+        var key = w["s1"].SoundKey;
+        try
+        {
+            var fanned = w["s1"].Position;
+            var leadAt = w["s0"].Position;
+            var anchorBefore = OrbweaverSettings.OrbGroupFor(g.Id)!.Anchor;
+            var boxBefore = Bounds(m, g.Id);
+
+            // "Drag" the member: put its window somewhere else and let the drag release save the offset.
+            w["s1"].Position = new PixelPoint(leadAt.X + 140, leadAt.Y + 110);
+            host.SaveMemberOffset("s1");
+            var saved = OrbweaverSettings.OrbMemberOffsetFor(key);
+            Assert.NotNull(saved);
+            Assert.NotEqual(fanned, w["s1"].Position);                    // control: it really is somewhere else now
+
+            PixelPoint Expected()
+            {
+                var l = host.DiscOf("s0"); var mem = host.DiscOf("s1");
+                var u = OrbWindow.UnitsPerDip(w["s1"]);
+                return new PixelPoint((int)Math.Round(l.X + saved!.Value.Dx * u), (int)Math.Round(l.Y + saved.Value.Dy * u));
+            }
+
+            void AssertAtOffset(string when)
+            {
+                var l = host.DiscOf("s0"); var mem = host.DiscOf("s1");
+                var u = OrbWindow.UnitsPerDip(w["s1"]);
+                Assert.True(Math.Abs((mem.X - l.X) / u - saved!.Value.Dx) < 1.5 && Math.Abs((mem.Y - l.Y) / u - saved.Value.Dy) < 1.5,
+                    $"{when}: member centre is ({(mem.X - l.X) / u:F1},{(mem.Y - l.Y) / u:F1}) DIP from its lead, saved offset {saved}");
+            }
+
+            m.ReapplyArrangement();
+            AssertAtOffset("after a free-mode relayout");
+            Assert.Equal(leadAt, w["s0"].Position);                        // the lead did not move
+            Assert.Equal(anchorBefore, OrbweaverSettings.OrbGroupFor(g.Id)!.Anchor);
+            Assert.Equal(boxBefore, Bounds(m, g.Id));
+
+            m.ArrangeOrbsInPattern(); Glide(m);
+            AssertAtOffset("while arranged");
+            m.ArrangeOrbsInPattern(); Glide(m);
+            AssertAtOffset("after un-arranging");
+
+            // Reset: the offset is forgotten and the member is fanned again.
+            m.ReturnOrbToStack("s1");
+            Assert.Null(OrbweaverSettings.OrbMemberOffsetFor(key));
+            Assert.Equal(fanned, w["s1"].Position);
+        }
+        finally { OrbweaverSettings.SetOrbMemberOffset(key, null); }
+    }
 }

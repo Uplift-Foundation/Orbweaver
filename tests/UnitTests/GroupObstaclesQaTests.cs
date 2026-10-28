@@ -101,4 +101,39 @@ public class GroupObstaclesQaTests
         Assert.Equal(one.Item1, two.Item1);
         Assert.Equal(one.Item1, Run(new[] { a, b }).Item1);
     }
+
+    // Hana's contract: Landed is where the group was drawn, so feeding it back reproduces the layout to the pixel -
+    // including on the no-room route, and with hand-placed members applied.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void FeedingLandedBackReproducesTheLayoutWithObstaclesAndHandPlacedMembers(bool cramped, bool offsets)
+    {
+        var obstacles = cramped
+            ? new[] { new PixelRect(0, 0, 910, 1080), new PixelRect(1010, 0, 910, 1080) }
+            : new[] { new PixelRect(1500, 0, 420, 1080), new PixelRect(300, 300, 150, 150) };
+        var n = 6;
+        var leadOf = new[] { -1, 0, 0, -1, 3, 3 };
+        var groupOf = new[] { 0, 0, 0, 1, 1, 1 };
+        var off = offsets ? new (double, double)?[] { null, (180, 90), null, null, (-150, 60), null } : null;
+        PixelPoint? Ask(int g) => g == 0 ? new PixelPoint(300, 600) : new PixelPoint(1300, 300);
+
+        (PixelPoint[] At, OrbArrangement.GroupPlacement[] G, OrbArrangement.GroupPath P) Go(Func<int, PixelPoint?> centre)
+        {
+            var (at, g) = OrbArrangement.ComputeGroups(n, leadOf, groupOf,
+                new[] { new OrbArrangement.GroupLayout("circle", centre(0)), new OrbArrangement.GroupLayout("heart", centre(1)) },
+                new OrbArrangement.Layout(Work, 1.0, "circle", 1.0), null, obstacles, off, out var path);
+            return (at, g, path);
+        }
+
+        var first = Go(Ask);
+        var landed = first.G.ToDictionary(x => x.Slot, x => x.Landed);
+        var second = Go(g => landed[g]);
+        Assert.Equal(first.At, second.At);
+        // Third pass too: a fixed point, not a one-off.
+        var landed2 = second.G.ToDictionary(x => x.Slot, x => x.Landed);
+        Assert.Equal(landed, landed2);
+    }
 }
