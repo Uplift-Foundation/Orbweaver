@@ -416,4 +416,18 @@ public class AccountOrbEditorPanelTests : IDisposable
             "This SVG links to files outside itself — export it with embedded images.", panel.ErrorText.Text);
         Assert.Null(AccountOrbCustomization.Current(_account.PositionKey)?.IconFile);
     }
+
+    // Two different "too large"s, each saying which limit was hit: the byte cap
+    // talks about the file, the pixel cap about megapixels.
+    [Fact]
+    public void TooLargeMessages_NameTheirOwnLimit()
+    {
+        var bytes = AccountOrbEditorPanel.MessageFor(IconImportError.TooLarge);
+        var pixels = AccountOrbEditorPanel.MessageFor(IconImportError.ImageDimensionsTooLarge);
+
+        Assert.Contains("16 MB", bytes);
+        Assert.Contains("file", bytes);
+        Assert.Contains("50 megapixels", pixels);
+        Assert.DoesNotContain("MB", pixels);
+    }
 }

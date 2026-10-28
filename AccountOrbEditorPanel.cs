@@ -223,9 +223,10 @@ namespace Orbweaver
         {
             IconImportError.Unreadable => "That file couldn't be read.",
             IconImportError.Empty => "That file is empty.",
-            IconImportError.TooLarge => "That image is too large — pick one under 16 MB.",
+            IconImportError.TooLarge => "That file is too large — pick one under 16 MB.",
             IconImportError.NotAnImage => "That file isn't an image.",
             IconImportError.UnsupportedFormat => "Use a PNG, JPG or SVG file.",
+            IconImportError.ImageDimensionsTooLarge => "This image is too large — use one under 50 megapixels.",
             IconImportError.SvgReferencesExternalContent =>
                 "This SVG links to files outside itself — export it with embedded images.",
             _ => throw new ArgumentOutOfRangeException(nameof(error), error, "No message for this import error")
