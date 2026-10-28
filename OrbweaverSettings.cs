@@ -1640,8 +1640,13 @@ namespace Orbweaver
 
         // The per-group outline override. Null, or a style with nothing set,
         // returns the group to the global one.
-        public static void SetOrbGroupStyle(string id, GroupStyle? style) =>
-            ChangeGroups(groups => groups.SetStyle(id, style));
+        //
+        // `defer` is for a caller behind a slider or colour picker, which raise
+        // a change on every pointer move: the model updates at once and the file
+        // write waits (SaveSoon), like the global outline setters. Anything that
+        // is one deliberate change — a checkbox, the menu — leaves it false.
+        public static void SetOrbGroupStyle(string id, GroupStyle? style, bool defer = false) =>
+            ChangeGroups(groups => groups.SetStyle(id, style), defer);
 
         public static void DeleteOrbGroup(string id) =>
             ChangeGroups(groups => groups.Delete(id));
@@ -1686,13 +1691,15 @@ namespace Orbweaver
         public static void CarryOrbGroupMembership(string? oldKey, string? newKey) =>
             ChangeGroups(groups => groups.CarryMembership(oldKey, newKey));
 
-        private static void ChangeGroups(Func<OrbGroupTable, bool> change)
+        private static void ChangeGroups(Func<OrbGroupTable, bool> change, bool defer = false)
         {
             Load();
             bool changed;
             lock (Gate) changed = change(_model.Groups);
 
-            if (changed) Save();
+            if (!changed) return;
+            if (defer) SaveSoon();
+            else Save();
         }
 
         // ---- group outline style (CB-268) -------------------------------------

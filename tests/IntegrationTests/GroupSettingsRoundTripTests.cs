@@ -417,4 +417,26 @@ public class GroupSettingsRoundTripTests
         Assert.Equal("Group 1", OrbweaverSettings.OrbGroupFor("g-0000abcd")!.Name);
         Assert.Equal("Main", OrbweaverSettings.OrbGroupFor("main")!.Name);
     }
+
+    [Fact]
+    public void ADeferredStyleChangeIsInTheModelAtOnceAndOnDiskAfterAFlush()
+    {
+        var dir = Stage();
+        var group = OrbweaverSettings.CreateOrbGroup();
+        OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#112233", 0.5, null, null));
+
+        OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#112233", 0.9, null, null), defer: true);
+
+        Assert.Equal(0.9, OrbweaverSettings.OrbGroupFor(group.Id)!.Style!.StrokeOpacity!.Value, 3);
+        Assert.Equal(
+            0.5, OnDisk(dir)["orbGroups"]!["groups"]![group.Id]!["style"]!["strokeOpacity"]!.GetValue<double>(), 3);
+
+        OrbweaverSettings.FlushPendingSave();
+
+        Assert.Equal(
+            0.9, OnDisk(dir)["orbGroups"]!["groups"]![group.Id]!["style"]!["strokeOpacity"]!.GetValue<double>(), 3);
+
+        // A deferred change that changes nothing schedules nothing.
+        OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#112233", 0.9, null, null), defer: true);
+    }
 }
