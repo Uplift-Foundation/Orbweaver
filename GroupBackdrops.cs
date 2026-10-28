@@ -109,18 +109,21 @@ namespace Orbweaver
         {
             if (_previewOrbs is null || !MeasureDiscs(_previewOrbs, out var discs, out var scale))
             {
-                if (_preview is { } gone)
-                {
-                    gone.Park();
-                    if (Parked.Count < MaxParked) Parked.Push(gone);
-                    _preview = null;
-                }
+                // Hidden, not parked: the window is the preview's alone and is kept.
+                _preview?.Park();
                 return;
             }
 
-            var added = _preview is null;
-            _preview ??= Parked.Count > 0 ? Parked.Pop() : new BackdropWindow();
-            _preview.MakeClickThrough();
+            // One window for the preview, created once and never taken from or
+            // returned to the backdrop pool. It is click-through from its first Show
+            // and stays that way, so no backdrop can ever inherit a click-through
+            // style that Windows keeps on the HWND across Hide and Show.
+            var added = _preview is null || !_preview.State.Shown;
+            if (_preview is null)
+            {
+                _preview = new BackdropWindow();
+                _preview.MakeClickThrough();
+            }
 
             _preview.Fit("preview", GroupOutline.MinimumCircleShape, discs, scale, null);
             _preview.Restyle(GlobalStyle(), highlighted: true, outlines: true);
@@ -169,7 +172,6 @@ namespace Orbweaver
                 if (!Active.TryGetValue(spec.GroupId, out var window))
                 {
                     window = Parked.Count > 0 ? Parked.Pop() : new BackdropWindow();
-                    window.MakeCatching();
                     Active[spec.GroupId] = window;
                     _lastCursor = null; // a new window must be classified even under a still cursor
                     added = true;
@@ -242,7 +244,7 @@ namespace Orbweaver
         internal static void Restack()
         {
             var all = Active.Values.ToList();
-            if (_preview is not null) all.Add(_preview);
+            if (_preview is { } p && p.State.Shown) all.Add(p);
             if (all.Count > 0) WindowsWindowOrder.PlaceBehindAll(all);
         }
 
@@ -557,12 +559,9 @@ namespace Orbweaver
                 BackdropPressed?.Invoke(_groupId, e, this);
             }
 
-            // A pooled window may be a backdrop one day and the Pair preview the next,
-            // so the mode is set per use; the native side is applied from Opened on
-            // every Show.
+            // Set once, on the preview's own window (never a pooled one); the native
+            // side is applied from Opened on every Show.
             internal void MakeClickThrough() => _clickThrough = true;
-
-            internal void MakeCatching() => _clickThrough = false;
 
             [ExcludeFromCodeCoverage]
             private void OnOpenedNative()

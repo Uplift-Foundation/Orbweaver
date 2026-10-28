@@ -589,26 +589,42 @@ public class GroupBackdropsTests : IDisposable
         Assert.Null(GroupBackdrops.PreviewState);
     }
 
+    // The preview has a window of its own, never taken from or returned to the
+    // backdrop pool, so no backdrop can inherit its click-through style (Windows
+    // keeps an extended style on the HWND across Hide and Show).
     [AvaloniaFact]
-    public void ThePreviewWindowIsPooledAndCanBeABackdropAfterwards()
+    public void ThePreviewHasItsOwnWindowAndNoBackdropIsEverThatWindow()
     {
         var (a, _) = TwoGroups();
+        var pool = GroupBackdrops.ParkedCount;
+
         GroupBackdrops.PreviewPair(a);
-        var parkedBefore = GroupBackdrops.ParkedCount;
+        var preview = GroupBackdrops.PreviewWindow!;
+        Assert.Equal(pool, GroupBackdrops.ParkedCount);        // taken from nowhere
+
         GroupBackdrops.PreviewPair(null);
-        Assert.Equal(parkedBefore + 1, GroupBackdrops.ParkedCount);
+        Assert.Null(GroupBackdrops.PreviewWindow);
+        Assert.Equal(pool, GroupBackdrops.ParkedCount);        // and returned nowhere
 
-        // The pooled window comes back as a real, catching backdrop.
-        GroupBackdrops.Update(new[] { Spec("g-a", "circle", a) });
-        Assert.Equal(parkedBefore, GroupBackdrops.ParkedCount);
-        var s = GroupBackdrops.StateOf("g-a")!.Value;
+        // Many backdrops, drawn from a pool that has been through the preview.
+        var orbs = Enumerable.Range(0, 12).Select(i => Orb($"n{i}", 50 + i * 90, 300)).ToList();
+        GroupBackdrops.Update(orbs.Select((o, i) => Spec($"g-n{i}", "circle", new[] { o })));
+        Assert.Equal(12, GroupBackdrops.ShownCount);
+        for (var i = 0; i < 12; i++)
+            Assert.NotSame(preview, GroupBackdrops.WindowOf($"g-n{i}"));
 
+        // And it is the same window each time it is previewed again.
+        GroupBackdrops.PreviewPair(a);
+        Assert.Same(preview, GroupBackdrops.PreviewWindow);
+
+        // Every one of those backdrops is still pressable: none went click-through.
+        var s = GroupBackdrops.StateOf("g-n0")!.Value;
         var raised = 0;
         Action<string, PointerPressedEventArgs, Avalonia.Controls.Window> handler = (_, _, _) => raised++;
         GroupBackdrops.BackdropPressed += handler;
         try
         {
-            GroupBackdrops.WindowOf("g-a")!.MouseDown(new Point(s.Width / 2, s.Height / 2), MouseButton.Left, RawInputModifiers.None);
+            GroupBackdrops.WindowOf("g-n0")!.MouseDown(new Point(s.Width / 2, s.Height / 2), MouseButton.Left, RawInputModifiers.None);
             Assert.Equal(1, raised);
         }
         finally { GroupBackdrops.BackdropPressed -= handler; }
