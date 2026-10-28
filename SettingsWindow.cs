@@ -113,7 +113,7 @@ namespace Orbweaver
             };
 
             BorrowFluentToggleSwitch();
-            EnsureColorPickerTheme();
+            EnsureColorPickerTheme(this);
 
             Rebuild();
 
@@ -298,19 +298,23 @@ namespace Orbweaver
         // assembly's layout has changed. Worst case the pickers come out
         // unstyled, which is a gap in one card rather than a crash — but neither
         // the load nor its failure can be arranged headlessly.
+        //
+        // Shared with GroupStyleWindow (CB-268), whose two pickers came out as
+        // exactly that empty gap on Windows until it called this too: any window
+        // that holds an ArmedColorPicker calls it from its constructor.
         [ExcludeFromCodeCoverage]
-        private void EnsureColorPickerTheme()
+        internal static void EnsureColorPickerTheme(Window window)
         {
             try
             {
                 var styles = Application.Current?.Styles;
                 if (styles is not null
-                    && styles.TryGetResource(typeof(ColorPicker), ActualThemeVariant, out _))
+                    && styles.TryGetResource(typeof(ColorPicker), window.ActualThemeVariant, out _))
                 {
                     return;
                 }
 
-                Styles.Add(new StyleInclude(new Uri($"avares://{Brand.AssemblyName}/"))
+                window.Styles.Add(new StyleInclude(new Uri($"avares://{Brand.AssemblyName}/"))
                 {
                     Source = new Uri(
                         "avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml")

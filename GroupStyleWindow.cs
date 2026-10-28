@@ -121,6 +121,10 @@ namespace Orbweaver
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             KeyDown += OnWindowKeyDown;
 
+            // Before Body() builds the two colour pickers: on Windows there is no
+            // ColorPicker template unless a window brings one (see the helper).
+            SettingsWindow.EnsureColorPickerTheme(this);
+
             Content = Body();
         }
 

@@ -50,6 +50,28 @@ public class GroupStyleWindowTests : IDisposable
 
     private static GroupStyle? StyleOf(OrbGroup group) => OrbweaverSettings.OrbGroupFor(group.Id)!.Style;
 
+    // On Windows, Fluent has no ColorPicker template: a window that holds one
+    // has to bring the picker's own styles, or the stroke and fill rows render
+    // as empty gaps — which is what CI's win-x64 capture of this dialog showed.
+    // Decided against the running app's styles, so it holds on either OS.
+    [AvaloniaFact]
+    public void TheDialogBringsAColorPickerThemeWheneverTheAppHasNone()
+    {
+        var group = OrbweaverSettings.CreateOrbGroup("circle");
+        try
+        {
+            var window = new GroupStyleWindow(group.Id, focusName: false);
+            var appHasOne = Avalonia.Application.Current!.Styles
+                .TryGetResource(typeof(Avalonia.Controls.ColorPicker), window.ActualThemeVariant, out _);
+            var brought = window.Styles.OfType<Avalonia.Markup.Xaml.Styling.StyleInclude>()
+                .Any(i => i.Source?.ToString().Contains("Avalonia.Controls.ColorPicker") == true);
+
+            Assert.Equal(!appHasOne, brought);
+            window.Close();
+        }
+        finally { OrbweaverSettings.DeleteOrbGroup(group.Id); }
+    }
+
     [AvaloniaFact]
     public void ItOpensOnTheGroupsNameAndUsingTheDefault()
     {
