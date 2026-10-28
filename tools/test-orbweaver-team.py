@@ -42,8 +42,10 @@ BASH = find_bash()
 
 
 def same_path(a, b):
-    """Two spellings of one file: C:/x and C:\\x, and a case-blind Windows."""
-    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+    """Two spellings of one file: C:/x and C:\\x, a case-blind Windows, and a
+    symlinked temp directory (macOS puts /var/folders under /private/var, and bash
+    reports the real one as its working directory)."""
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
 @unittest.skipIf(BASH is None, "bash is not available")
