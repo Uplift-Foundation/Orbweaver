@@ -257,7 +257,9 @@ namespace Orbweaver
 
         private void Write(Func<GroupStyle, GroupStyle> change)
         {
-            OrbweaverSettings.SetOrbGroupStyle(GroupId, change(Effective()));
+            // Deferred: a slider or picker fires on every tick of a drag, and the
+            // global card defers the same way.
+            OrbweaverSettings.SetOrbGroupStyle(GroupId, change(Effective()), defer: true);
             SessionManager.Instance?.ReapplyGroupStyles();
         }
     }

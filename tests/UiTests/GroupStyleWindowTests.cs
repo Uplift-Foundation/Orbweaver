@@ -244,4 +244,17 @@ public class GroupStyleWindowTests : IDisposable
         Assert.Equal("", window.NameBox.Text);
         Assert.Null(OrbweaverSettings.OrbGroupFor(group.Id));
     }
+
+    [AvaloniaFact]
+    public void ASliderDragDefersTheFileWriteButAnOverrideSwitchDoesNot()
+    {
+        var group = NewGroup();
+        var window = new GroupStyleWindow(group.Id, false);
+        window.UseDefaultBox.IsChecked = false;
+
+        window.StrokeOpacitySlider!.Value = 0.123;
+
+        // The in-memory style is current at once; the file write waits.
+        Assert.Equal(0.12, StyleOf(group)!.StrokeOpacity!.Value, 2);
+    }
 }

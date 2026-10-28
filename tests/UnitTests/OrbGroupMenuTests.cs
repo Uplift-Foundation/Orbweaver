@@ -90,17 +90,31 @@ public class OrbGroupMenuTests : IDisposable
     }
 
     [Fact]
-    public void ALeadCycleEndsInsteadOfLooping()
+    public void EveryOrbInALeadCycleIsItsOwnRoot()
     {
+        // OrbArrangement.Classify's rule, through OrbGroups.RootOf: a cycle has
+        // no lead to hang from, so each member is its own team.
         var statuses = Of(("a", Status("a", "b")), ("b", Status("b", "a")));
 
-        // Either end is a legal root; what matters is that it terminates and
-        // both orbs end up on the one team.
-        var fromA = Resolve(statuses, "a");
-        var fromB = Resolve(statuses, "b");
+        Assert.Equal("a", OrbGroupMenu.RootOf("a", statuses));
+        Assert.Equal("b", OrbGroupMenu.RootOf("b", statuses));
+        Assert.Empty(Resolve(statuses, "a").MemberKeys);
+        Assert.Empty(Resolve(statuses, "b").MemberKeys);
+    }
 
-        Assert.Equal(fromA.LeadKey is not null, fromB.LeadKey is not null);
-        Assert.Single(fromA.MemberKeys);
+    [Fact]
+    public void ACodexOrbDoesNotInheritAClaudeCodeOrbsDirectoryMembership()
+    {
+        var group = OrbweaverSettings.CreateOrbGroup("star");
+        _groups.Add(group.Id);
+        _keys.Add(_dir);
+        OrbweaverSettings.MoveOrbToGroup(_dir, group.Id);
+        var codex = new SessionStatus { Source = SessionSource.Codex, Cwd = _dir, Title = "t" };
+        _keys.Add(SessionManager.PositionKeyFor(codex, "x"));
+
+        Assert.Equal(OrbGroups.Main, Resolve(Of(("x", codex)), "x").GroupId);
+        // The control: a Claude Code orb in the same directory does get it.
+        Assert.Equal(group.Id, Resolve(Of(("y", Status("t"))), "y").GroupId);
     }
 
     [Fact]
