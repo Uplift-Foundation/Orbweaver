@@ -40,9 +40,6 @@ namespace Orbweaver
         internal static AccountOrbEditorWindow? Find(string positionKey) =>
             Windows.TryGetValue(positionKey, out var w) ? w : null;
 
-        // For tests, which must not leave a window registered for the next one.
-        internal static int OpenCount => Windows.Count;
-
         private AccountOrbEditorWindow(AccountOrbIdentity account, Action onChanged)
         {
             _account = account;
