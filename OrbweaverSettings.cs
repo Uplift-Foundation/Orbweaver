@@ -1118,11 +1118,11 @@ namespace Orbweaver
             Save();
         }
 
-        // No display is a hundred thousand DIP across, so anything beyond that is a
+        // No display is ten thousand DIP across, so anything beyond that is a
         // corrupt or hand-edited value, not a place a member was dragged to. Dropped
         // rather than clamped: a clamped garbage value would still put the member
         // somewhere nobody chose. Also rejects NaN and infinity.
-        internal const double MaxOffsetDip = 100_000;
+        internal const double MaxOffsetDip = 10_000;
 
         internal static bool SaneOffset(double value) =>
             double.IsFinite(value) && Math.Abs(value) <= MaxOffsetDip;
