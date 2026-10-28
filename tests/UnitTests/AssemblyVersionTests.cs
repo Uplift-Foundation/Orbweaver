@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace Orbweaver.Tests;
@@ -32,12 +33,27 @@ public class AssemblyVersionTests
         Assert.Equal(NumericPart() + ".0", App.GetName().Version!.ToString());
     }
 
+    // The literal <Version> element, which release.yml and the packaging scripts
+    // parse the same way.
+    private static string CsprojVersion()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Orbweaver.csproj")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+        var text = File.ReadAllText(Path.Combine(dir!.FullName, "Orbweaver.csproj"));
+        return Regex.Match(text, @"<Version>([^<]+)</Version>").Groups[1].Value;
+    }
+
     [Fact]
-    public void Informational_version_keeps_the_prerelease_label()
+    public void Informational_version_keeps_the_label_Version_carries()
     {
         // Stripping the suffix for the numeric fields must not strip it from the
-        // label users see.
-        Assert.StartsWith(NumericPart(), Informational());
-        Assert.Contains("-", Informational().Split('+')[0]);
+        // label users see. Compared against the csproj rather than demanding a
+        // hyphen, so a stable release (1.0.0, no label) passes and a prerelease
+        // (0.5.11-beta) still has to keep its label.
+        var shown = Informational().Split('+')[0];
+        Assert.Equal(CsprojVersion(), shown);
+        Assert.StartsWith(NumericPart(), shown);
     }
 }
