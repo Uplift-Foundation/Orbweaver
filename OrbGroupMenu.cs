@@ -53,39 +53,65 @@ namespace Orbweaver
             ClusterMode crons)
         {
             var rootId = RootOf(sessionId, statuses);
-            statuses.TryGetValue(rootId, out var root);
-
-            string rootKey = "";
-            string? fallback = null;
-            var cluster = OrbCluster.Chats;
-            if (root is not null)
-            {
-                rootKey = SessionManager.PositionKeyFor(root, rootId);
-                // Claude Code only, as SessionManager does it: a Codex or Grok orb
-                // must not take a Claude Code orb's place by sharing its directory.
-                var directory = root.Source == SessionSource.ClaudeCode ? SessionManager.DirectoryKeyFor(root) : "";
-                if (directory.Length > 0 && directory != rootKey) fallback = directory;
-                cluster = OrbClusters.Of(root.Heartbeat, root.Kind);
-            }
-
-            var membership = string.IsNullOrEmpty(rootKey)
-                ? null
-                : OrbweaverSettings.OrbGroupMembershipFor(rootKey, fallback);
-            var groupId = OrbGroups.GroupIdFor(membership, cluster, heartbeats, crons);
 
             var (ids, leadOf) = Indexed(statuses);
-            var members = new List<string>();
+            var team = new List<string> { rootId };
             for (var i = 0; i < ids.Length; i++)
             {
-                var id = ids[i];
-                var status = statuses[id];
-                if (id == rootId || ids[OrbGroups.RootOf(i, leadOf, ids.Length)] != rootId) continue;
+                if (ids[i] != rootId && ids[OrbGroups.RootOf(i, leadOf, ids.Length)] == rootId) team.Add(ids[i]);
+            }
 
-                var key = SessionManager.PositionKeyFor(status, id);
+            return ContextFor(rootId, team, statuses, heartbeats, crons);
+        }
+
+        // The same answer for a root and team someone else already resolved.
+        // SessionManager passes TeamTree's, which knows T4's nearest surviving
+        // ancestor across an ended lead — something the statuses alone cannot
+        // say, because the ended lead's own status is gone — so the menu, the
+        // drag and the arrangement all agree on who the root is. `team` lists
+        // the root first; keys are written in that order.
+        internal static GroupMenuContext ContextFor(
+            string rootId,
+            IEnumerable<string> team,
+            IReadOnlyDictionary<string, SessionStatus> statuses,
+            ClusterMode heartbeats,
+            ClusterMode crons)
+        {
+            statuses.TryGetValue(rootId, out var root);
+
+            var rootKey = KeyOf(rootId, statuses);
+            var cluster = root is null ? OrbCluster.Chats : OrbClusters.Of(root.Heartbeat, root.Kind);
+            var groupId = OrbGroups.GroupIdFor(MembershipOf(rootId, statuses), cluster, heartbeats, crons);
+
+            var members = new List<string>();
+            foreach (var id in team)
+            {
+                if (id == rootId) continue;
+
+                var key = KeyOf(id, statuses);
                 if (key.Length > 0 && key != rootKey && !members.Contains(key)) members.Add(key);
             }
 
             return new GroupMenuContext(groupId, rootKey.Length == 0 ? null : rootKey, members);
+        }
+
+        // An orb's membership key, empty for an orb with no status or no key.
+        internal static string KeyOf(string id, IReadOnlyDictionary<string, SessionStatus> statuses) =>
+            statuses.TryGetValue(id, out var status) ? SessionManager.PositionKeyFor(status, id) : "";
+
+        // The group an orb was explicitly put in, or null — looked up under its
+        // key and, for Claude Code only as SessionManager does it, its bare
+        // directory as a second chance: a Codex or Grok orb must not take a
+        // Claude Code orb's group by sharing its directory.
+        internal static string? MembershipOf(string id, IReadOnlyDictionary<string, SessionStatus> statuses)
+        {
+            if (!statuses.TryGetValue(id, out var status)) return null;
+
+            var key = SessionManager.PositionKeyFor(status, id);
+            if (key.Length == 0) return null;
+
+            var directory = status.Source == SessionSource.ClaudeCode ? SessionManager.DirectoryKeyFor(status) : "";
+            return OrbweaverSettings.OrbGroupMembershipFor(key, directory.Length > 0 && directory != key ? directory : null);
         }
     }
 }

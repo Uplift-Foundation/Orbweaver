@@ -136,6 +136,32 @@ public class OrbGroupMenuTests : IDisposable
         Assert.Equal(new[] { SessionManager.PositionKeyFor(statuses["m2"], "m2") }, context.MemberKeys);
     }
 
+    // S7 hands the menu TeamTree's root and team, which can reach across an
+    // ended lead (T4) — something Resolve's walk over live statuses cannot.
+    // The group is then the surviving root's, and the member's key is written
+    // with it, once, with the root's own key never repeated as a member.
+    [Fact]
+    public void ARootAndTeamFromTheTreeDecideTheGroupAndTheKeysWritten()
+    {
+        var statuses = Of(("root", Status("root")), ("m1", Status("m1", "gone")), ("m2", Status("m2", "gone")));
+        var group = OrbweaverSettings.CreateOrbGroup("star");
+        _groups.Add(group.Id);
+        OrbweaverSettings.MoveOrbToGroup(SessionManager.PositionKeyFor(statuses["root"], "root"), group.Id);
+
+        // Resolve alone sees m1 as its own root, in main.
+        Assert.Equal(OrbGroups.Main, Resolve(statuses, "m1").GroupId);
+
+        var context = OrbGroupMenu.ContextFor(
+            "root", new[] { "root", "m1", "m1", "root", "m2" }, statuses,
+            ClusterMode.WithChats, ClusterMode.WithChats);
+
+        Assert.Equal(group.Id, context.GroupId);
+        Assert.Equal(SessionManager.PositionKeyFor(statuses["root"], "root"), context.LeadKey);
+        Assert.Equal(
+            new[] { SessionManager.PositionKeyFor(statuses["m1"], "m1"), SessionManager.PositionKeyFor(statuses["m2"], "m2") },
+            context.MemberKeys);
+    }
+
     [Fact]
     public void AnOrbPointingAtItselfIsItsOwnRoot()
     {

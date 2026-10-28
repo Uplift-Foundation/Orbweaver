@@ -61,6 +61,12 @@ internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
 - **No group has a `Center`** → use today's Bands+Compact path, so a first draw looks the way it does today. The `Landed` values come back from that layout and are what the caller saves.
 - **Otherwise** each group is fit on its own against all of `Work`, with the squeezed → grid retry. Then `SeparateGroups` runs. If boxes still overlap afterwards, fall back to Bands+Compact.
 - `Groups` has one entry per non-empty slot, in ascending slot order. `Landed` = the asked-for centre + the group's total integer translation. `DrawnShape` is `"grid"` when the group fell back to a grid.
+- **`CurveCentre` and `CurveScale` (added by decision, final): the curve the anchors were actually placed on.** `Fit` scales a shape by one uniform factor, and `ShapeFor` maps `OrbArrangement.Unit(shape, n)` onto slot *centres*, so the whole curve is a centre plus one scale.
+  - `CurveCentre` (`Avalonia.Point`, screen units, not rounded) is where the unit curve's origin landed. `CurveScale` (`double`, screen units per unit-curve unit) is the factor applied to it.
+  - Each anchor's slot centre is `CurveCentre + CurveScale × Unit(DrawnShape, n)[k]`, up to the integer rounding and `Separate`'s nudges. Every later translation of the group (`Slide`, `SeparateGroups`, the anchor move) is already folded into `CurveCentre`.
+  - For a group drawn as `grid`, `line` or `vline` the two fields are still filled, but `GroupOutline` keeps its rounded-rectangle or stadium around the discs. A one-orb group keeps its circle.
+- **`GroupOutline` (S3) draws the outward offset of that curve,** `CurveCentre + CurveScale × curve(t)` for heart, circle, diamond and star, offset outward by the smallest distance that still encloses every disc of the group plus padding (T5, fanned members included). It does not fit a fresh, freely scaled shape around the discs: that read 2–3× too big on a heart in the screenshots.
+- S7 hands each `GroupPlacement` through to `GroupBackdrops` whole, `DrawnShape`, `CurveCentre` and `CurveScale` included.
 - Pure and deterministic: the same inputs give identical output.
 
 ```csharp
@@ -97,6 +103,8 @@ internal static class GroupOutline
     double SignedDistanceInside(Point p, Point[] polygon);
 }
 ```
+
+**Revised by decision (final):** `Silhouette` also takes the placement's curve, `CurveCentre` and `CurveScale` (see S2), and draws the outward offset of that curve instead of fitting its own. The exact parameter list is celeste-ngata's revision; until it lands, don't code against the signature above.
 
 `Point` and `Rect` are `Avalonia.Point` and `Avalonia.Rect`. Use `OrbArrangement.Unit`, which is already `internal`, for the curves. If you need a per-curve helper (`HeartAt` …), promote it from `private` to `internal` in its place in the file. Don't copy it.
 
@@ -235,8 +243,56 @@ The window ordering and the hit-test mechanism follow `docs/cb268-backdrop-spike
 
 ## S7 — integration (architect)
 
-- `SessionManager.ComputeClusteredPositions` builds `GroupLayout`s from `OrbGroups.Ordered` and calls `ComputeGroups`. It saves each group's `Landed` anchor when it changed.
-- `ShiftArrangementAnchor(int dx, int dy, string groupId = OrbGroups.Main)`, exposed to S4 as `IOrbDragHost.ShiftGroupAnchor`.
-- `leadOf` is built with T4's nearest-surviving-ancestor rule.
-- Implements `IOrbDragHost` and assigns `OrbDragHost.Current`.
-- **T3:** the first time a scan sees a team member with no membership of its own, it writes the root's group under that member's key.
+What calls what, as built. "(S5)" marks the seams still waiting on that stream.
+
+**One team tree.** `TeamTree` (pure, `TeamTree.cs`) holds the one thing the single root resolver cannot know: who an ended lead's lead was.
+- It is built from the on-screen ids in display order plus `SessionManager._knownLead`, the last `Lead` each session reported, kept after the session ends while something on screen still descends through it.
+- `LeadOf` is T4's nearest surviving ancestor, and `LeadIndices` is the `leadOf` array built from it.
+- `RootOf`/`TeamOf` (root first, nested members included) come from **`OrbGroups.RootOf`** (S1) over those indices. That is the single resolver, built on `OrbArrangement.Resolves`, so a cycle member is its own root, exactly as the arrangement draws it.
+- Nothing walks `SessionStatus.Lead` on its own any more except the menu's standalone `OrbGroupMenu.Resolve`, which the app no longer calls.
+
+**Every scan** (`ScanAndUpdateCore`), before `ReflowPositions`, runs `SyncOrbGroups()`:
+1. Refresh `_knownLead` from the statuses and prune it with `TeamTree.Reachable`.
+2. `OrbGroupSync.KeyTracker.Observe`, then `OrbweaverSettings.CarryOrbGroupMembership(old, new)` for each key that changed (CB-10).
+   - This is needed because `OrbWindow.PositionKey` is set once at creation and never changes.
+3. For every team of two or more: `OrbweaverSettings.EnsureTeamMembership(rootKey, memberKeys)` (T3). It is idempotent, fills only member keys with no entry of their own, and does nothing for a root that is in its group by classification. A team *move* that should overwrite is `AssignTeamToGroup`.
+
+None of the three moves an orb, so CB-161 is untouched.
+
+**Group of an orb** is `GroupIdOf(tree, id)`: the root's group, through `OrbGroupMenu.ContextFor(root, …)`. That is explicit membership first (key, then bare-directory fallback), then `OrbGroups.GroupIdFor`'s classification.
+
+**Arrangement:** `ComputeClusteredPositions` → `PlaceGroups` → **`OrbArrangement.ComputeGroups`** (S2).
+- Inputs: `leadOf = tree.LeadIndices()`, `groupOf[i]` = slot of the root's group in `OrbweaverSettings.OrbGroupList()` order, `sizeOf`, and one `GroupLayout(Shape, Anchor)` per table entry (empty ones too, so slots are stable).
+- Nothing is seeded before the layout. `ArrangementAnchor`, which put `main`'s anchor at the screen's middle first, is removed, so with no anchor anywhere `ComputeGroups` draws today's bands.
+- After it: `SetOrbGroupAnchor(id, Landed)` for every placed group whose `Landed` differs from the asked anchor (CB-211 per group, first draw included).
+- **Known S2 defect, reported to the S2 owner:** for an asymmetric shape (heart), the Bands path's `Landed` fed back as `Center` draws the group about 160 px away while reporting the same `Landed`, so the second arrange after a first-ever arrange jumps.
+  - `SessionManagerGroupsTests.TheFirstArrangeSavesEveryGroupsAnchorAndTheNextReproducesIt` pins it end to end. It is skipped with that reason until the fix lands.
+
+**Pinning in arranged mode is retired.**
+- `PinEveryOrbAtItsTarget` is deleted. It never ran, and a pin would make the next arrange treat the orb as an exception.
+- A drag on an arranged orb changes membership or a group anchor and then calls `ReapplyArrangement`.
+- Outside an arrangement, `OrbDragSession.End` still pins.
+
+**Anchors:** `ShiftArrangementAnchor(dx, dy, groupId = main)` moves one group's saved anchor, and does nothing for a group with no anchor yet.
+
+**`IOrbDragHost`** is implemented explicitly on `SessionManager`, and `Start()` assigns `OrbDragHost.Current = this`.
+- Every list is over visible orbs:
+  - `TeamIdsOf` = `TeamOf`
+  - `OrbIdsInGroup` and `GroupIdOf` through `GroupIdOf(tree, id)`
+  - `PositionKeyOf` = `OrbGroupMenu.KeyOf` (fresh, not the stale `window.PositionKey`)
+  - `DiscOf` = the visible circle in Position units: `Position + CentreDip × OrbWindow.UnitsPerDip`, radius `OrbRadius × UnitsPerDip`. That is the same factor `OrbDragCommit` divides out. Measured on a Retina MacBook: `UnitsPerDip` 1, `DesktopScaling` 1, `RenderScaling` 2.
+  - `CandidatesFor` = every group with its discs, ordinal by id, `Outline` empty until **(S5)**
+  - `HighlightGroup` is recorded in `HighlightedGroup` until **(S5)**
+  - `ShiftGroupAnchor` → `ShiftArrangementAnchor`
+- `MembersOf` and `ArrangedSiblings`, the pre-CB-268 drag helpers, are removed; nothing called them after S4.
+
+**Group menu:** `GroupMenuContextFor(id)` → `OrbGroupMenu.ContextFor(tree.RootOf(id), tree.TeamOf(id), …)`. The menu, the drag and the arrangement therefore agree on the root, T4 included.
+
+**Arrows:** `UpdateTeamLinks` pairs each on-screen orb with `tree.LeadOf(id)`. A member whose lead ended points at the ancestor it now fans off.
+
+**Still to wire (S5):**
+- `GroupBackdrops.Update(...)` after each arrange, from `ComputeGroups`' placements.
+- `GroupBackdrops.Refresh()` beside every `TeamLinks.Refresh()`: SessionManager's six, plus `OrbDragSession.Move` (juno).
+- `Highlight` from `HighlightGroup`.
+- `Outline` in `CandidatesFor` from `GroupBackdrops.OutlineOf`, so the padding constant lives in one place.
+- `ReapplyGroupStyles()` → re-resolve styles and refresh. It is a no-op until then.
