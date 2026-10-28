@@ -988,10 +988,10 @@ namespace Orbweaver
             };
         }
 
-        private static (double X, double Y) CircleAt(double t) =>
+        internal static (double X, double Y) CircleAt(double t) =>
             (10 * Math.Cos(t - Math.PI / 2), 10 * Math.Sin(t - Math.PI / 2));
 
-        private static (double X, double Y) DiamondAt(double t)
+        internal static (double X, double Y) DiamondAt(double t)
         {
             var a = t - Math.PI / 2;
             double cos = Math.Cos(a), sin = Math.Sin(a);
@@ -999,7 +999,7 @@ namespace Orbweaver
             return (r * cos, r * sin);
         }
 
-        private static (double X, double Y) StarAt(double t)
+        internal static (double X, double Y) StarAt(double t)
         {
             const int verts = 10;
             const double outer = 12, inner = outer * 0.4;
@@ -1021,7 +1021,7 @@ namespace Orbweaver
             return (a.X * (1 - frac) + b.X * frac, a.Y * (1 - frac) + b.Y * frac);
         }
 
-        private static (double X, double Y) HeartAt(double t)
+        internal static (double X, double Y) HeartAt(double t)
         {
             var sin = Math.Sin(t);
             return (
