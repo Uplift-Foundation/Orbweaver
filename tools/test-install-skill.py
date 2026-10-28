@@ -168,6 +168,27 @@ class InstallSkillTests(unittest.TestCase):
         self.assertIn("own source", err)
         self.assertTrue(os.path.isfile(os.path.join(source, "SKILL.md")))
 
+    @unittest.skipIf(os.name == "nt", "a symlink needs privileges the Windows runner may not grant")
+    def test_the_guard_sees_through_a_symlinked_spelling_of_the_source(self):
+        # macOS puts its temp directory behind a symlink (/var is /private/var), so
+        # the same folder arrives spelled two ways: as bash reports its working
+        # directory, and as it was typed. Compared as written they differ, and the
+        # uninstall deleted the source (found by the Mac CI leg).
+        root, source = self.checkout()
+        alias = os.path.join(self.root, "alias")
+        os.symlink(root, alias)
+
+        code, _, err = self.run_script("--settings", "settings.json", "--uninstall", "--source",
+                                       sh_path(os.path.join(alias, "skills", "orbweaver-team")), cwd=root)
+
+        self.assertEqual(code, 1, err)
+        self.assertTrue(os.path.isfile(os.path.join(source, "SKILL.md")))
+
+        code, out, err = self.run_script("--config-dir", sh_path(alias), "--source", sh_path(source))
+        self.assertEqual(code, 1, err)
+        self.assertNotIn("Skill installed", out)
+        self.assertTrue(os.path.isfile(os.path.join(source, "SKILL.md")))
+
     def test_installing_into_the_checkout_itself_is_refused_and_leaves_the_source(self):
         root, source = self.checkout()
 

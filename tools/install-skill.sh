@@ -59,7 +59,7 @@ if [[ -z "$CONFIG_DIR" ]]; then usage; exit 2; fi
 # an install, so only an existing one is canonicalised; for an uninstall a missing
 # one means there is nothing to remove.
 if [[ -d "$CONFIG_DIR" ]]; then
-  CONFIG_DIR="$(cd "$CONFIG_DIR" && pwd)"
+  CONFIG_DIR="$(cd "$CONFIG_DIR" && pwd -P)"
 elif [[ $UNINSTALL -eq 1 ]]; then
   exit 0
 fi
@@ -67,9 +67,12 @@ fi
 TARGET="$CONFIG_DIR/skills/orbweaver-team"
 
 # Whether two paths are the same place or one is inside the other, for the guard
-# below. Compared as canonical directories where they exist.
+# below. Compared by their physical location (`pwd -P`), not as typed: one folder
+# can arrive spelled two ways when a symlink is in the way, and macOS's own temp
+# directory is behind one (/var is /private/var). Compared as typed, the guard
+# below missed that the target was the source and let the delete through.
 canonical() {
-  if [[ -d "$1" ]]; then (cd "$1" && pwd); else printf '%s' "$1"; fi
+  if [[ -d "$1" ]]; then (cd "$1" && pwd -P); else printf '%s' "$1"; fi
 }
 
 overlaps() {
