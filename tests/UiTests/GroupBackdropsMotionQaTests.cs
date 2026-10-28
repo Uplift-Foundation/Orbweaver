@@ -119,6 +119,21 @@ public class GroupBackdropsMotionQaTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void ReduceMotionMeansAHighlightedOutlineDoesNotBreathe()
+    {
+        BackdropMotion.ReducedMotion = () => true;
+        var orbs = new List<OrbWindow> { Orb("r1", 300, 300), Orb("r2", 400, 300), Orb("r3", 350, 380) };
+        GroupBackdrops.Update(new[] { Spec("g-r", orbs) });
+        At(0);
+        GroupBackdrops.Highlight("g-r");
+        foreach (var t in new[] { 0.0, 0.35, OutlineMorph.BreathPeriodSeconds / 2, 1.0, 2.1 })
+        {
+            At(t);
+            Assert.Equal(1.0, GroupBackdrops.StateOf("g-r")!.Value.Breath, 9);
+        }
+    }
+
+    [AvaloniaFact]
     public void ControlWithoutReduceMotionTheSameHighlightDoesBreathe()
     {
         var orbs = new List<OrbWindow> { Orb("c1", 300, 300), Orb("c2", 400, 300), Orb("c3", 350, 380) };
