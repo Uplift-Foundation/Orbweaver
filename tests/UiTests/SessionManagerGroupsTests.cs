@@ -203,12 +203,10 @@ public class SessionManagerGroupsTests : IDisposable
 
     // --- per-group anchors -------------------------------------------------
 
-    // Skipped against a known S2 defect, not because the expectation is in
-    // doubt: ComputeGroups' Bands-path Landed, fed back as Center, takes the
-    // Separated path and draws a *heart* group ~160 px lower while reporting
-    // the same Landed (a circle reproduces exactly). Reported to the S2 owner
-    // with a pure repro; unskip when the fix lands.
-    [AvaloniaFact(Skip = "CB-268 S2 defect: Bands-path Landed does not reproduce for an asymmetric shape (heart drops ~160px). Unskip with the S2 fix.")]
+    // This found a real S2 defect (a heart's first-draw anchor, fed back,
+    // redrew the group ~160 px away); ComputeGroups is now one path, so the
+    // first draw and every later one are the same computation.
+    [AvaloniaFact]
     public void TheFirstArrangeSavesEveryGroupsAnchorAndTheNextReproducesIt()
     {
         // With no anchor anywhere, ComputeGroups draws today's bands; each

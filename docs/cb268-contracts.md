@@ -263,10 +263,9 @@ None of the three moves an orb, so CB-161 is untouched.
 
 **Arrangement:** `ComputeClusteredPositions` → `PlaceGroups` → **`OrbArrangement.ComputeGroups`** (S2).
 - Inputs: `leadOf = tree.LeadIndices()`, `groupOf[i]` = slot of the root's group in `OrbweaverSettings.OrbGroupList()` order, `sizeOf`, and one `GroupLayout(Shape, Anchor)` per table entry (empty ones too, so slots are stable).
-- Nothing is seeded before the layout. `ArrangementAnchor`, which put `main`'s anchor at the screen's middle first, is removed, so with no anchor anywhere `ComputeGroups` draws today's bands.
+- Nothing is seeded before the layout. `ArrangementAnchor`, which put `main`'s anchor at the screen's middle first, is removed, so with no anchor anywhere `ComputeGroups` asks each group for its band's middle and takes the same single path as every later arrange.
 - After it: `SetOrbGroupAnchor(id, Landed)` for every placed group whose `Landed` differs from the asked anchor (CB-211 per group, first draw included).
-- **Known S2 defect, reported to the S2 owner:** for an asymmetric shape (heart), the Bands path's `Landed` fed back as `Center` draws the group about 160 px away while reporting the same `Landed`, so the second arrange after a first-ever arrange jumps.
-  - `SessionManagerGroupsTests.TheFirstArrangeSavesEveryGroupsAnchorAndTheNextReproducesIt` pins it end to end. It is skipped with that reason until the fix lands.
+- `SessionManagerGroupsTests.TheFirstArrangeSavesEveryGroupsAnchorAndTheNextReproducesIt` pins that a first arrange saves every anchor and the next arrange reproduces it, every orb. It found an S2 defect (a heart's first-draw anchor redrew the group about 160 px away), which `ComputeGroups` becoming one path (`8ae815d4`) fixed.
 
 **Pinning in arranged mode is retired.**
 - `PinEveryOrbAtItsTarget` is deleted. It never ran, and a pin would make the next arrange treat the orb as an exception.
