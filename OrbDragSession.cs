@@ -41,8 +41,6 @@ namespace Orbweaver
             }
         }
 
-        internal IReadOnlyList<OrbWindow> Orbs => _moving.Select(m => m.Orb).ToList();
-
         // Called with the pointer's travel since the press, in physical pixels.
         // The caller has already decided the press is a drag (DragPlan.Exceeded).
         internal void Move(int dx, int dy)
