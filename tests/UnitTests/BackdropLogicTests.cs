@@ -187,7 +187,7 @@ public class BackdropLogicTests
     {
         var region = BackdropGeometry.PaddedRegionPoints(Circle(100, 360), default, 1, 5);
         foreach (var (x, y) in region)
-            Assert.InRange(Math.Sqrt((x - 300) * (x - 300) + (y - 300) * (y - 300)), 104.5, 105.5);
+            Assert.InRange(Math.Sqrt((x - 300) * (x - 300) + (y - 300) * (y - 300)), 104.2, 105.8);   // integer rounding adds up to 0.71
     }
 
     [Fact]

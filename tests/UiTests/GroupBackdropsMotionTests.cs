@@ -320,25 +320,21 @@ public class GroupBackdropsMotionTests : IDisposable
         foreach (var t in new[] { 0.04, 0.1, 0.2 })
         {
             At(t);
-            var window = GroupBackdrops.WindowOf("g-m")!;
             var drawn = GroupOutline.Bounds(GroupBackdrops.DisplayedOutlineOf("g-m"));
             var caption = GroupBackdrops.CaptionOf("g-m")!.Value;
-            var origin = GroupBackdrops.StateOf("g-m")!.Value.Position;
 
-            // Centred over the drawn outline's bounds and just above its top, in the
-            // window's own DIP.
-            Assert.Equal(drawn.Center.X - origin.X, caption.Rect.Center.X, 1);
-            Assert.Equal(drawn.Top - origin.Y - gap, caption.Rect.Bottom, 1);
-            Assert.True(caption.Rect.Top >= 0, "the caption stays inside the window while it moves");
+            // Centred over the drawn outline's bounds and just above its top, in screen
+            // units: the caption is a window of its own, not a child of the backdrop.
+            Assert.Equal(drawn.Center.X, caption.Rect.Center.X, 1);
+            Assert.Equal(drawn.Top - gap, caption.Rect.Bottom, 1);
         }
 
         At(BackdropMotion.MorphSeconds + 0.01);
         var final = GroupOutline.Bounds(GroupBackdrops.OutlineOf("g-m"));
         var end = GroupBackdrops.CaptionOf("g-m")!.Value;
-        var pos = GroupBackdrops.StateOf("g-m")!.Value.Position;
 
-        Assert.Equal(final.Center.X - pos.X, end.Rect.Center.X, 1);
-        Assert.Equal(final.Top - pos.Y - gap, end.Rect.Bottom, 1);
+        Assert.Equal(final.Center.X, end.Rect.Center.X, 1);
+        Assert.Equal(final.Top - gap, end.Rect.Bottom, 1);
     }
 
     // ---- breathing ---------------------------------------------------------------------------------
