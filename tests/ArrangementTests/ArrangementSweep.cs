@@ -697,12 +697,48 @@ namespace Orbweaver.Tests
             int Groups,
             string Anchors,
             string Split,
-            SizeMix? Mix = null)
+            SizeMix? Mix = null,
+            string Obstacles = "none",
+            bool EmptyPredefined = false)
         {
             public override string ToString()
                 => $"{Screen.Name} / {Shape} / spacing {Spacing:0.00} / {Count} orbs / {Team.Name}"
                  + $" / {Groups} groups, anchors {Anchors}, dealt {Split}"
-                 + (Mix is { } mix ? $" / sizes {mix.Name}" : "");
+                 + (Mix is { } mix ? $" / sizes {mix.Name}" : "")
+                 + (Obstacles == "none" ? "" : $" / obstacles {Obstacles}")
+                 + (EmptyPredefined ? " / user groups only" : "");
+        }
+
+        // Fixed rectangles no group may be drawn on (free mode, CB-268 F2):
+        //   stack    the stack column, hard against the right edge
+        //   pinned   six orbs left where the user dropped them
+        //   blocker  all but a narrow strip on the left, which two groups
+        //            cannot share: the case that has to take the fallback
+        internal static readonly string[] ObstacleKinds = { "stack", "pinned", "blocker" };
+
+        internal static PixelRect[] ObstaclesOf(string kind, Screen screen)
+        {
+            var work = screen.Work;
+            var s = screen.Scale;
+            int At(int origin, int length, double fraction) => origin + (int)Math.Round(length * fraction);
+            var pin = (int)Math.Round(OrbArrangement.WindowDip * s);
+
+            return kind switch
+            {
+                "stack" => new[]
+                {
+                    new PixelRect(work.Right - (int)Math.Round(120 * s), work.Y + (int)Math.Round(60 * s),
+                        (int)Math.Round(100 * s), work.Height - (int)Math.Round(120 * s)),
+                },
+                "pinned" => new[] { (0.2, 0.3), (0.35, 0.7), (0.5, 0.5), (0.6, 0.2), (0.75, 0.65), (0.9, 0.4) }
+                    .Select(f => new PixelRect(At(work.X, work.Width, f.Item1), At(work.Y, work.Height, f.Item2), pin, pin))
+                    .ToArray(),
+                "blocker" => new[]
+                {
+                    new PixelRect(work.X + (int)Math.Round(160 * s), work.Y, work.Width - (int)Math.Round(160 * s), work.Height),
+                },
+                _ => Array.Empty<PixelRect>(),
+            };
         }
 
         internal static readonly int[] GroupCounts = { 3, 8, 20 };
@@ -742,6 +778,26 @@ namespace Orbweaver.Tests
             foreach (var team in TeamShapes)
             foreach (var mix in GroupMixes)
                 yield return new GroupCase(screen, shape, 0.85, count, team, groups, kind, "round robin", mix);
+
+            // Free mode (CB-268 F2): user groups beside fixed obstacles, with
+            // the three predefined slots occupied and with them empty, so that
+            // the user groups are the whole table.
+            var obstacleTeams = TeamShapes
+                .Where(t => t.Name is "no teams" or "one team of 3" or "everything in one team"
+                    || t.Name.StartsWith("nested") || t.Name.StartsWith("lead cycle"))
+                .ToArray();
+
+            foreach (var screen in Screens)
+            foreach (var groups in new[] { 1, 2, 3, 6 })
+            foreach (var kind in new[] { "none", "spread", "colliding", "off-screen" })
+            foreach (var obstacles in ObstacleKinds)
+            foreach (var shape in Shapes)
+            foreach (var count in new[] { 3, 13 })
+            foreach (var team in obstacleTeams)
+            foreach (var userOnly in new[] { false, true })
+                yield return new GroupCase(
+                    screen, shape, 0.85, count, team, groups, kind, "round robin",
+                    Obstacles: obstacles, EmptyPredefined: userOnly);
         }
 
         // The invariants for one user-group case. Returns what went wrong,
@@ -756,14 +812,23 @@ namespace Orbweaver.Tests
             void Fail(string what) => failures.Add($"{where}: {what}");
 
             var leads = test.Team.Build(count);
-            var groupOf = DealTo(test.Split, count, test.Groups);
-            var shapes = ShapesFor(test.Shape).Take(test.Groups).ToArray();
-            var centres = AnchorsOf(test.Anchors, test.Groups, screen);
+            // With EmptyPredefined the table is the three predefined slots,
+            // none of which holds an orb, then the user groups: slot numbers
+            // are the table's, so the user groups start at 3.
+            var slotBase = test.EmptyPredefined ? 3 : 0;
+            var total = slotBase + test.Groups;
+
+            var groupOf = DealTo(test.Split, count, test.Groups).Select(g => g + slotBase).ToArray();
+            var shapes = Enumerable.Repeat("circle", slotBase)
+                .Concat(ShapesFor(test.Shape).Take(test.Groups)).ToArray();
+            var centres = Enumerable.Repeat((PixelPoint?)null, slotBase)
+                .Concat(AnchorsOf(test.Anchors, test.Groups, screen)).ToArray();
+            var obstacles = ObstaclesOf(test.Obstacles, screen);
 
             var sizes = test.Mix?.Build(count) ?? Enumerable.Repeat(1.0, count).ToArray();
             double[]? sizeArgument = test.Mix is null ? null : sizes;
 
-            var layout = new OrbArrangement.Layout(screen.Work, screen.Scale, shapes[0], test.Spacing);
+            var layout = new OrbArrangement.Layout(screen.Work, screen.Scale, shapes[slotBase], test.Spacing);
 
             List<OrbArrangement.GroupLayout> Table(PixelPoint?[] at) =>
                 shapes.Select((sh, g) => new OrbArrangement.GroupLayout(sh, at[g])).ToList();
@@ -774,7 +839,7 @@ namespace Orbweaver.Tests
             try
             {
                 result = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(centres), layout, sizeArgument, out path);
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, out path);
             }
             catch (Exception ex)
             {
@@ -814,7 +879,7 @@ namespace Orbweaver.Tests
             int ExpectedSlot(int i)
             {
                 var g = groupOf[RootOf(i)];
-                return g >= 0 && g < test.Groups ? g : 0;
+                return g >= 0 && g < total ? g : 0;
             }
 
             // 1. The table is right: one entry per non-empty slot, ascending,
@@ -928,6 +993,25 @@ namespace Orbweaver.Tests
                 }
             }
 
+            // 6b. On the separated route no group's box touches an obstacle,
+            //     to within the gap. Not promised on the fallback, which cannot
+            //     see them — and that is the only place it is not.
+            if (path == OrbArrangement.GroupPath.Separated)
+            {
+                foreach (var group in placed)
+                foreach (var obstacle in obstacles)
+                {
+                    var box = group.SlotBounds;
+                    if (!(box.X < obstacle.Right && obstacle.X < box.Right && box.Y < obstacle.Bottom && obstacle.Y < box.Bottom))
+                        continue;
+
+                    Fail($"slot {group.Slot}'s box {box} overlaps the obstacle {obstacle}");
+                    goto obstaclesChecked;
+                }
+
+                obstaclesChecked:;
+            }
+
             // 7. DrawnShape is the shape asked for, or a grid.
             foreach (var group in placed)
             {
@@ -980,7 +1064,7 @@ namespace Orbweaver.Tests
 
             // 8. Deterministic.
             var again = OrbArrangement.ComputeGroups(
-                count, leads, groupOf, Table(centres), layout, sizeArgument, out var againPath);
+                count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, out var againPath);
 
             if (againPath != path || !pts.SequenceEqual(again.Positions) || !SamePlacements(placed, again.Groups))
                 Fail("not deterministic — two runs disagreed");
@@ -995,12 +1079,12 @@ namespace Orbweaver.Tests
             //    Landed is what was asked for and the fallback ignores anchors,
             //    so the same route and the same orbs come back.
             {
-                var landed = Enumerable.Range(0, test.Groups)
+                var landed = Enumerable.Range(0, total)
                     .Select(g => placed.Where(p => p.Slot == g).Select(p => (PixelPoint?)p.Landed).FirstOrDefault() ?? centres[g])
                     .ToArray();
 
                 var round = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(landed), layout, sizeArgument, out var roundPath);
+                    count, leads, groupOf, Table(landed), layout, sizeArgument, obstacles, out var roundPath);
 
                 if (roundPath != path)
                     Fail($"feeding Landed back took the {roundPath} route, not {path}");

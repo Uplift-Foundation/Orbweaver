@@ -200,5 +200,92 @@ namespace Orbweaver.Tests
             Assert.Equal(boxes.Take(3), moved.Take(3));
             Assert.All(moved, box => Assert.True(box.X >= 0 && box.Right <= 300));
         }
+
+        // --- obstacles (CB-268 free mode): fixed rectangles groups avoid ---
+
+        [Fact]
+        public void AGroupOnAnObstacleIsPushedOutAndTheObstacleIsNotReturned()
+        {
+            var stack = new PixelRect(880, 50, 100, 500);
+            var group = new PixelRect(850, 200, 100, 100);
+
+            var (moved, separated) = OrbArrangement.SeparateGroups(new[] { group }, Work, 8, new[] { stack });
+
+            Assert.True(separated);
+            Assert.Single(moved);
+            Assert.True(Clear(moved[0], stack, 8));
+            Assert.True(moved[0].X >= 0 && moved[0].Right <= Work.Right);
+        }
+
+        [Fact]
+        public void AGroupClearOfEveryObstacleDoesNotMove()
+        {
+            var group = new PixelRect(100, 100, 100, 100);
+
+            var (moved, separated) = OrbArrangement.SeparateGroups(
+                new[] { group }, Work, 8, new[] { new PixelRect(880, 50, 100, 500) });
+
+            Assert.True(separated);
+            Assert.Equal(group, moved[0]);
+        }
+
+        [Fact]
+        public void AnObstacleOutranksEvenTheFirstGroup()
+        {
+            // Without obstacles box 0 never moves for anyone. With one, it
+            // is a group like the rest and gives way to it.
+            var pin = new PixelRect(400, 250, 100, 100);
+
+            var (moved, _) = OrbArrangement.SeparateGroups(
+                new[] { new PixelRect(410, 260, 100, 100), new PixelRect(700, 100, 100, 100) }, Work, 8, new[] { pin });
+
+            Assert.True(Clear(moved[0], pin, 8));
+            Assert.Equal(new PixelRect(700, 100, 100, 100), moved[1]);
+        }
+
+        [Fact]
+        public void PushingOutOfAnObstacleDoesNotLandOnAnotherGroup()
+        {
+            var pin = new PixelRect(450, 250, 100, 100);
+            var boxes = new[] { new PixelRect(460, 260, 100, 100), new PixelRect(570, 255, 100, 100) };
+
+            var (moved, separated) = OrbArrangement.SeparateGroups(boxes, Work, 8, new[] { pin });
+
+            Assert.True(separated);
+            Assert.True(Clear(moved[0], pin, 8) && Clear(moved[1], pin, 8) && Clear(moved[0], moved[1], 8));
+        }
+
+        [Fact]
+        public void ManyScatteredObstaclesAreAllAvoided()
+        {
+            var pins = Enumerable.Range(0, 6)
+                .Select(i => new PixelRect(100 + i * 140, 120 + (i % 2) * 260, 56, 56)).ToArray();
+            var boxes = Enumerable.Range(0, 3).Select(i => new PixelRect(300 + i * 30, 250, 150, 150)).ToArray();
+
+            var (moved, separated) = OrbArrangement.SeparateGroups(boxes, Work, 8, pins);
+
+            Assert.True(separated);
+            foreach (var box in moved) foreach (var pin in pins) Assert.True(Clear(box, pin, 8));
+        }
+
+        [Fact]
+        public void AnObstacleCoveringTheWorkAreaCannotBeSeparatedFrom()
+        {
+            var (moved, separated) = OrbArrangement.SeparateGroups(
+                new[] { new PixelRect(100, 100, 100, 100) }, Work, 8, new[] { Work });
+
+            Assert.False(separated);
+            Assert.Single(moved);
+        }
+
+        [Fact]
+        public void NoObstaclesAndAnEmptyListAreTheSameAsBefore()
+        {
+            var boxes = new[] { new PixelRect(400, 200, 100, 100), new PixelRect(420, 210, 100, 100) };
+
+            Assert.Equal(
+                OrbArrangement.SeparateGroups(boxes, Work, 8).Boxes,
+                OrbArrangement.SeparateGroups(boxes, Work, 8, Array.Empty<PixelRect>()).Boxes);
+        }
     }
 }

@@ -423,6 +423,64 @@ namespace Orbweaver.Tests
             Assert.Equal(before[0].CurveCentre.Y + 24, after[0].CurveCentre.Y, 1e-6);
         }
 
+        // --- free mode: user groups beside fixed obstacles ---
+
+        [Fact]
+        public void UserGroupsAloneBesideAStackColumnAvoidItAndLandExactly()
+        {
+            // The three predefined slots are empty; slots 3 and 4 are user
+            // groups, one of them anchored on the stack column itself.
+            var stack = new PixelRect(1780, 60, 100, 960);
+            var table = Table(
+                ("circle", null), ("circle", null), ("circle", null),
+                ("heart", new PixelPoint(1800, 500)), ("star", new PixelPoint(1000, 500)));
+            var of = Enumerable.Range(0, 10).Select(i => 3 + i % 2).ToArray();
+
+            var (positions, groups) = ComputeGroups(10, NoLeads(10), of, table, LayoutAt(), null, new[] { stack }, out var path);
+
+            Assert.Equal(GroupPath.Separated, path);
+            Assert.Equal(new[] { 3, 4 }, groups.Select(g => g.Slot));
+            Assert.All(groups, g => Assert.False(Overlap(g.SlotBounds, stack)));
+
+            // Landed is the anchor the pushed group ended up at, not the asked
+            // one, and feeding it back reproduces the layout.
+            Assert.NotEqual(new PixelPoint(1800, 500), groups[0].Landed);
+
+            var fed = Table(
+                ("circle", null), ("circle", null), ("circle", null),
+                ("heart", groups[0].Landed), ("star", groups[1].Landed));
+            var (again, againGroups) = ComputeGroups(10, NoLeads(10), of, fed, LayoutAt(), null, new[] { stack }, out var againPath);
+
+            Assert.Equal(GroupPath.Separated, againPath);
+            Assert.Equal(positions, again);
+            Assert.Equal(groups.Select(g => g.Landed), againGroups.Select(g => g.Landed));
+        }
+
+        [Fact]
+        public void NoObstaclesIsTheSameAsNotPassingAny()
+        {
+            var table = Table(("heart", new PixelPoint(700, 400)), ("star", new PixelPoint(1300, 400)));
+
+            var plain = Run(8, NoLeads(8), Dealt(8, 2), table);
+            var (positions, _) = ComputeGroups(8, NoLeads(8), Dealt(8, 2), table, LayoutAt(), null, Array.Empty<PixelRect>());
+
+            Assert.Equal(plain.Positions, positions);
+        }
+
+        [Fact]
+        public void AnObstacleThatLeavesNoRoomTakesTheFallback()
+        {
+            var blocker = new PixelRect(160, 0, 1760, 1080);
+            var table = Table(("heart", new PixelPoint(600, 400)), ("star", new PixelPoint(900, 400)));
+
+            var (positions, groups) = ComputeGroups(
+                10, NoLeads(10), Dealt(10, 2), table, LayoutAt(), null, new[] { blocker }, out var path);
+
+            Assert.Equal(GroupPath.Fallback, path);
+            Assert.Equal(2, groups.Length);
+            Assert.All(positions, p => Assert.True(p.X >= 0 && p.X + 56 <= 1920 && p.Y >= 0 && p.Y + 56 <= 1080));
+        }
+
         // --- membership ---
 
         [Fact]

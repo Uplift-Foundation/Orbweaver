@@ -299,12 +299,25 @@ namespace Orbweaver
         // only thing that ever moves a finished group.
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
-            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null)
-            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, out _);
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf = null,
+            IReadOnlyList<PixelRect>? obstacles = null)
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, obstacles, out _);
 
         internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
             int count, int[] leadOf, int[] groupOf,
             IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf, out GroupPath path)
+            => ComputeGroups(count, leadOf, groupOf, groups, layout, sizeOf, null, out path);
+
+        // The same, saying which route it took. `obstacles` are fixed rectangles
+        // in physical pixels (the free-mode stack column, free-pinned orbs)
+        // that no group may be drawn on: groups are separated from them as from
+        // each other. The fallback — Bands + Compact for the whole set, taken
+        // when the groups cannot all be got apart — cannot see them, so a group
+        // may overlap an obstacle there, and only there.
+        internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+            int count, int[] leadOf, int[] groupOf,
+            IReadOnlyList<GroupLayout> groups, Layout layout, double[]? sizeOf,
+            IReadOnlyList<PixelRect>? obstacles, out GroupPath path)
         {
             path = GroupPath.Separated;
 
@@ -382,7 +395,7 @@ namespace Orbweaver
             }
 
             var gap = Math.Max(1, (int)Math.Round(WindowFor(layout.Scale, sizes.Max()) * GroupGapWindows));
-            var (moved, separated) = SeparateGroups(boxes, work, gap);
+            var (moved, separated) = SeparateGroups(boxes, work, gap, obstacles);
 
             if (!separated)
             {
@@ -427,8 +440,15 @@ namespace Orbweaver
 
         // Pushes later boxes out of earlier ones and back inside `work`.
         //
+        // `obstacles` are fixed rectangles — the stack column, orbs pinned
+        // where the user left them — that outrank every box and never move;
+        // boxes are pushed out of them like out of an earlier box, and
+        // `Separated` is false if any is left within `gap` of one. They are
+        // not in the returned list.
+        //
         // Index order is priority: box 0 only ever moves to get inside the work
-        // area, never for another box. A box in the way is moved along the axis
+        // area, never for another box (or, with obstacles, for one of them
+        // either — it is then pushed out of those). A box in the way is moved along the axis
         // where it has to go least — right, left, down or up, in that order on a
         // tie, so the answer is deterministic — but only to a place that is
         // still inside `work` when there is one: pushing a box off the screen
@@ -439,9 +459,19 @@ namespace Orbweaver
         // pass moves nothing. `Separated` is read off the final boxes, not off
         // whether the loop converged.
         internal static (PixelRect[] Boxes, bool Separated) SeparateGroups(
-            IReadOnlyList<PixelRect> boxes, PixelRect work, int gap)
+            IReadOnlyList<PixelRect> boxes, PixelRect work, int gap,
+            IReadOnlyList<PixelRect>? obstacles = null)
         {
-            var n = boxes.Count;
+            // Obstacles go first, as extra boxes that outrank every group and
+            // never move — not even to get inside the work area, which is where
+            // they already are. Groups are pushed out of them exactly as they
+            // are pushed out of earlier groups, with the same gap, so the whole
+            // pass needs no second rule. `start` is the first box allowed to
+            // move: with no obstacles that is box 1 (box 0 only slides into the
+            // work area), with them it is the first group.
+            var m = obstacles?.Count ?? 0;
+            var n = m + boxes.Count;
+            var start = m > 0 ? m : 1;
             var x = new int[n];
             var y = new int[n];
             var w = new int[n];
@@ -449,10 +479,13 @@ namespace Orbweaver
 
             for (var i = 0; i < n; i++)
             {
-                w[i] = boxes[i].Width;
-                h[i] = boxes[i].Height;
-                x[i] = Within(boxes[i].X, w[i], work.X, work.Right);
-                y[i] = Within(boxes[i].Y, h[i], work.Y, work.Bottom);
+                var fixedBox = i < m;
+                var box = fixedBox ? obstacles![i] : boxes[i - m];
+
+                w[i] = box.Width;
+                h[i] = box.Height;
+                x[i] = fixedBox ? box.X : Within(box.X, w[i], work.X, work.Right);
+                y[i] = fixedBox ? box.Y : Within(box.Y, h[i], work.Y, work.Bottom);
             }
 
             bool Close(int a, int b) =>
@@ -463,7 +496,7 @@ namespace Orbweaver
             {
                 var moved = false;
 
-                for (var j = 1; j < n; j++)
+                for (var j = start; j < n; j++)
                 {
                     var first = -1;
                     for (var i = 0; i < j && first < 0; i++)
@@ -541,13 +574,13 @@ namespace Orbweaver
             }
 
             var separated = true;
-            for (var j = 1; j < n && separated; j++)
+            for (var j = start; j < n && separated; j++)
             for (var i = 0; i < j; i++)
             {
                 if (Close(i, j)) { separated = false; break; }
             }
 
-            return (Enumerable.Range(0, n).Select(i => new PixelRect(x[i], y[i], w[i], h[i])).ToArray(), separated);
+            return (Enumerable.Range(m, n - m).Select(i => new PixelRect(x[i], y[i], w[i], h[i])).ToArray(), separated);
         }
 
         // `pos` clamped so [pos, pos+size) sits in [lo, hi); the low edge wins
