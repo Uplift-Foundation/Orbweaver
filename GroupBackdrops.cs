@@ -19,10 +19,12 @@ namespace Orbweaver
         string GroupId, bool Shown, PixelPoint Position, double Width, double Height,
         Color Stroke, Color Fill, double StrokeWidth, int Vertices, bool Highlighted, bool? Catching);
 
-    // The caption last laid out on a backdrop, in DIP within the window: its
-    // text (null when names are off), whether it is shown, its colour and where it
-    // sits. For tests and diagnostics.
-    internal readonly record struct CaptionState(string? Text, bool Visible, Color Colour, Rect Rect);
+    // The caption last laid out for a backdrop: its text (null when names are
+    // off), whether its window is shown, its colour, and where it is, in the
+    // screen units of Window.Position. The caption is a window of its own, so it
+    // is never part of the backdrop's native region. For tests and diagnostics.
+    internal readonly record struct CaptionState(
+        string? Text, bool Visible, Color Colour, Rect Rect, bool ClickThrough);
 
     // CB-268 S5: the shape drawn behind each group of orbs — the group's own
     // silhouette (GroupOutline) in the group's style, in a transparent window of
@@ -276,7 +278,8 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         internal static void Restack()
         {
-            var all = Active.Values.ToList();
+            var all = new List<Window>(Active.Values);
+            all.AddRange(Active.Values.Select(w => w.CaptionWindowIfShown).OfType<Window>());
             if (_preview is { } p && p.State.Shown) all.Add(p);
             if (all.Count > 0) WindowsWindowOrder.PlaceBehindAll(all);
         }
@@ -420,9 +423,10 @@ namespace Orbweaver
             private readonly ShapePath _shape;
             private readonly SolidColorBrush _stroke = new(Colors.Transparent);
             private readonly SolidColorBrush _fill = new(Colors.Transparent);
-            private readonly TextBlock _caption;
-            private readonly SolidColorBrush _captionBrush = new(Colors.White);
+            private CaptionWindow? _captionWindow;
+            private Color _captionColour = Colors.White;
             private string? _captionText;
+            private Rect _captionRect; // screen units, Position's space
 
             private string _groupId = "";
             private List<(double X, double Y, double R)>? _discs;
@@ -461,17 +465,7 @@ namespace Orbweaver
                     StrokeJoin = PenLineJoin.Round,
                     IsHitTestVisible = false
                 };
-
-                // CB-282's caption: never hit-testable, so a press on it falls
-                // through like the rest of the window outside the silhouette.
-                _caption = new TextBlock
-                {
-                    FontSize = GroupCaption.FontSizeDip,
-                    Foreground = _captionBrush,
-                    IsHitTestVisible = false,
-                    IsVisible = false
-                };
-                Content = new Canvas { Children = { _shape, _caption } };
+                Content = _shape;
 
                 Opened += (_, _) => OnOpenedNative();
                 PointerPressed += OnPressed;
@@ -497,6 +491,11 @@ namespace Orbweaver
                     _origin = new Point(_origin.X + d.Dx, _origin.Y + d.Dy);
                     _discs = discs;
                     Position = new PixelPoint((int)_origin.X, (int)_origin.Y);
+                    if (_captionText is not null)
+                    {
+                        _captionRect = _captionRect.Translate(new Vector(d.Dx, d.Dy));
+                        _captionWindow!.Place(_captionRect, scale);
+                    }
                     return;
                 }
 
@@ -505,21 +504,11 @@ namespace Orbweaver
                 var outline = GroupOutline.Silhouette(shape, discs, PaddingDip * scale, curve);
                 var outlineBounds = GroupOutline.Bounds(outline);
 
-                // The caption is measured in DIP and placed in the outline's units.
-                Rect? captionRect = null;
-                if (caption is not null)
-                {
-                    // Visible first: an invisible control measures to nothing.
-                    _caption.IsVisible = true;
-                    _caption.Text = caption;
-                    _caption.Measure(Size.Infinity);
-                    var text = new Size(_caption.DesiredSize.Width * scale, _caption.DesiredSize.Height * scale);
-                    captionRect = GroupCaption.Place(outlineBounds, text, GroupCaption.GapDip * scale);
-                }
-                _captionText = caption;
-                _caption.IsVisible = caption is not null;
-
-                var box = GroupCaption.WindowBox(outlineBounds, captionRect, EdgeDip * scale);
+                // The box is the outline's alone. The caption is a window of its own
+                // (see CaptionWindow), because a Windows window region clips what it
+                // draws as well as what it hits, and the caption lies outside the
+                // silhouette.
+                var box = outlineBounds.Inflate(EdgeDip * scale);
 
                 _discs = discs;
                 _scale = scale;
@@ -545,13 +534,8 @@ namespace Orbweaver
                 }
                 _shape.Data = geometry;
 
-                if (captionRect is { } c)
-                {
-                    Canvas.SetLeft(_caption, (c.X - _origin.X) / scale);
-                    Canvas.SetTop(_caption, (c.Y - _origin.Y) / scale);
-                }
-
                 ApplyRegion();
+                SetCaption(caption, outlineBounds, scale);
             }
 
             private static bool IsWhole(double v) => Math.Abs(v - Math.Round(v)) < 1e-6;
@@ -566,17 +550,42 @@ namespace Orbweaver
 
                 // The caption wears the resolved stroke colour at full opacity: the
                 // stroke's opacity is for the line, and a caption at 35% is unreadable.
-                var caption = Color.FromRgb(style.Stroke.R, style.Stroke.G, style.Stroke.B);
-                if (_captionBrush.Color != caption) _captionBrush.Color = caption;
+                _captionColour = Color.FromRgb(style.Stroke.R, style.Stroke.G, style.Stroke.B);
+                _captionWindow?.SetColour(_captionColour);
             }
 
+            // Lays out the caption beside the backdrop, in a window of its own.
+            private void SetCaption(string? text, Rect outlineBounds, double scale)
+            {
+                _captionText = text;
+                if (text is null)
+                {
+                    _captionWindow?.Park();
+                    return;
+                }
+
+                _captionWindow ??= new CaptionWindow();
+                _captionWindow.SetText(text);
+                _captionWindow.SetColour(_captionColour);
+                var size = _captionWindow.TextSize;
+                _captionRect = GroupCaption.Place(
+                    outlineBounds, new Size(size.Width * scale, size.Height * scale), GroupCaption.GapDip * scale);
+                _captionWindow.Place(_captionRect, scale);
+                _captionWindow.EnsureShown();
+            }
+
+            internal Window? CaptionWindowIfShown => _captionWindow is { IsShown: true } w ? w : null;
+
             internal CaptionState Caption => new(
-                _captionText, _caption.IsVisible, _captionBrush.Color,
-                new Rect(Canvas.GetLeft(_caption), Canvas.GetTop(_caption),
-                    _caption.DesiredSize.Width, _caption.DesiredSize.Height));
+                _captionText, _captionWindow?.IsShown ?? false, _captionColour, _captionRect,
+                _captionWindow?.ClickThrough ?? false);
 
             internal void EnsureShown()
             {
+                // A parked window's caption was hidden with it, and Fit's
+                // translation shortcut does not touch visibility.
+                if (_captionText is not null) _captionWindow?.EnsureShown();
+
                 if (_shown) return;
                 _shown = true;
                 Catching = false; // pass-through until the poll says the cursor is inside
@@ -588,6 +597,7 @@ namespace Orbweaver
                 if (!_shown) return;
                 _shown = false;
                 Catching = null;
+                _captionWindow?.Park();
                 Hide();
             }
 
@@ -668,6 +678,81 @@ namespace Orbweaver
             private void ApplyRegionNow() =>
                 BackdropNative.SetPolygonRegion(
                     this, BackdropGeometry.RegionPoints(_local, default, 1), BackdropGeometry.RegionHoles(_holes, 1));
+        }
+
+        // CB-282's caption, in a window of its own beside its backdrop: transparent,
+        // click-through from its first Show, at the backdrop's level so it sits
+        // behind the orbs. Separate because the backdrop's native region is the
+        // silhouette, and on Windows a region clips drawing as well as hits — a
+        // caption above the outline, in the backdrop's own window, was never drawn.
+        // Pooled with its backdrop (one per backdrop window, hidden not closed).
+        private sealed class CaptionWindow : Window
+        {
+            private readonly TextBlock _text;
+            private readonly SolidColorBrush _brush = new(Colors.White);
+
+            internal bool IsShown { get; private set; }
+            internal bool ClickThrough => true;
+            internal Size TextSize { get; private set; }
+
+            public CaptionWindow()
+            {
+                WindowDecorations = WindowDecorations.None;
+                Background = Brushes.Transparent;
+                TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+                Topmost = false; // see BackdropWindow: Avalonia rewrites the level on assignment
+                ShowInTaskbar = false;
+                ShowActivated = false;
+                CanResize = false;
+                SizeToContent = SizeToContent.Manual;
+
+                _text = new TextBlock { FontSize = GroupCaption.FontSizeDip, Foreground = _brush, IsHitTestVisible = false };
+                Content = _text;
+
+                Opened += (_, _) => OnOpenedNative();
+            }
+
+            internal void SetText(string text)
+            {
+                _text.Text = text;
+                _text.Measure(Size.Infinity);
+                TextSize = _text.DesiredSize;
+            }
+
+            internal void SetColour(Color colour)
+            {
+                if (_brush.Color != colour) _brush.Color = colour;
+            }
+
+            // `rect` is in screen units; the window is its size in DIP.
+            internal void Place(Rect rect, double scale)
+            {
+                Width = rect.Width / scale;
+                Height = rect.Height / scale;
+                Position = new PixelPoint((int)Math.Floor(rect.X), (int)Math.Floor(rect.Y));
+            }
+
+            internal void EnsureShown()
+            {
+                if (IsShown) return;
+                IsShown = true;
+                Show();
+            }
+
+            internal void Park()
+            {
+                if (!IsShown) return;
+                IsShown = false;
+                Hide();
+            }
+
+            [ExcludeFromCodeCoverage]
+            private void OnOpenedNative()
+            {
+                this.ShowOnAllSpaces();
+                BackdropNative.SetLevelBelowOrbs(this);
+                BackdropNative.MakeClickThrough(this);
+            }
         }
     }
 }

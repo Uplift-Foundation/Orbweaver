@@ -9,9 +9,10 @@ namespace Orbweaver
     //
     // The caption is centred over the outline's bounding box and sits entirely
     // above its top edge. Nothing in a group is above its own outline, so it can
-    // never cover one of the group's orbs; and it lies outside the silhouette, so
-    // the backdrop's hit region (the macOS poll and the Windows polygon region
-    // both come from the silhouette) already leaves it click-through.
+    // never cover one of the group's orbs. It is drawn in a window of its own, a
+    // click-through one: the backdrop's native region is the silhouette, and on
+    // Windows a region clips drawing too, so a caption outside the silhouette in
+    // the backdrop's own window would never appear.
     //
     // Placement takes bounds, not a polygon, so an animated outline can ask on
     // every frame with the bounds of whatever polygon it is drawing and the
@@ -34,10 +35,5 @@ namespace Orbweaver
         // bounds and `gap` above its top.
         internal static Rect Place(Rect outlineBounds, Size text, double gap) =>
             new(outlineBounds.Center.X - text.Width / 2, outlineBounds.Top - gap - text.Height, text.Width, text.Height);
-
-        // The backdrop window: the outline's bounds, grown to take in the caption
-        // when there is one, plus `edge` all round so a stroke is never clipped.
-        internal static Rect WindowBox(Rect outlineBounds, Rect? caption, double edge) =>
-            (caption is { } c ? outlineBounds.Union(c) : outlineBounds).Inflate(edge);
     }
 }

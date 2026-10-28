@@ -54,40 +54,15 @@ public class GroupCaptionTests
         Assert.All(discs, d => Assert.True(d.Y - d.R >= caption.Bottom));
     }
 
-    [Theory]
-    [MemberData(nameof(Cases))]
-    public void TheWindowBoxTakesInTheCaptionAndTheEdge(string shape, int n, bool mixed)
-    {
-        var outline = GroupOutline.Silhouette(shape, Discs(shape, n, mixed), Padding);
-        var bounds = GroupOutline.Bounds(outline);
-        var caption = GroupCaption.Place(bounds, Text, 4);
-
-        var box = GroupCaption.WindowBox(bounds, caption, 4);
-
-        Assert.True(box.Contains(caption.TopLeft) && box.Contains(caption.BottomRight));
-        Assert.True(box.Contains(bounds.TopLeft) && box.Contains(bounds.BottomRight));
-        Assert.Equal(caption.Top - 4, box.Top, 6);
-        Assert.Equal(bounds.Bottom + 4, box.Bottom, 6);
-    }
-
     [Fact]
-    public void ACaptionWiderThanAnOutlineGrowsTheWindowSideways()
+    public void ACaptionWiderThanAnOutlineStillCentresOnIt()
     {
         var bounds = new Rect(100, 100, 20, 20);
+
         var caption = GroupCaption.Place(bounds, new Size(200, 16), 4);
 
-        var box = GroupCaption.WindowBox(bounds, caption, 4);
-
-        Assert.True(box.Left < bounds.Left && box.Right > bounds.Right);
         Assert.Equal(110, caption.Center.X, 6);
-    }
-
-    [Fact]
-    public void WithNoCaptionTheBoxIsTheOldOne()
-    {
-        var bounds = new Rect(10, 20, 30, 40);
-
-        Assert.Equal(bounds.Inflate(4), GroupCaption.WindowBox(bounds, null, 4));
+        Assert.True(caption.Left < bounds.Left && caption.Right > bounds.Right);
     }
 
     [Theory]

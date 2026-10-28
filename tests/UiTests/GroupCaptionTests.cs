@@ -91,11 +91,10 @@ public class GroupCaptionUiTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void WithNamesOnTheCaptionShowsTheNameAboveTheOutlineInsideAGrownWindow()
+    public void WithNamesOnTheCaptionShowsTheNameAboveTheOutlineInAWindowOfItsOwn()
     {
         var group = NewGroup("Reviewers");
-        var spec = Spec(group);
-        GroupBackdrops.Update(new[] { spec });
+        GroupBackdrops.Update(new[] { Spec(group) });
         var before = GroupBackdrops.StateOf(group.Id)!.Value;
 
         GroupBackdrops.SetNamesVisible(true);
@@ -104,13 +103,22 @@ public class GroupCaptionUiTests : IDisposable
         var after = GroupBackdrops.StateOf(group.Id)!.Value;
         Assert.True(caption.Visible);
         Assert.Equal("Reviewers", caption.Text);
-        // The window grew upward to hold it, and the caption is wholly inside.
-        Assert.True(after.Height > before.Height, $"h {before.Height}->{after.Height} rect {caption.Rect} pos {before.Position}->{after.Position}");
-        Assert.True(after.Position.Y < before.Position.Y);
-        Assert.True(caption.Rect.Top >= 0 && caption.Rect.Bottom <= after.Height);
-        // And the outline did not move: its top is below the caption.
-        var outlineTop = GroupBackdrops.OutlineOf(group.Id).Min(p => p.Y) - after.Position.Y;
-        Assert.True(caption.Rect.Bottom <= outlineTop + 1e-6);
+        Assert.True(caption.Rect.Width > 0 && caption.Rect.Height > 0);
+
+        // The backdrop is exactly what it was: its native region is the
+        // silhouette, and on Windows a region clips drawing, so the caption must
+        // not live in it.
+        Assert.Equal(before.Height, after.Height, 3);
+        Assert.Equal(before.Width, after.Width, 3);
+        Assert.Equal(before.Position, after.Position);
+
+        // The caption lies wholly above the outline, centred on the backdrop.
+        var outline = GroupBackdrops.OutlineOf(group.Id);
+        Assert.True(caption.Rect.Bottom <= outline.Min(p => p.Y) + 1e-6);
+        Assert.Equal(after.Position.X + after.Width / 2, caption.Rect.Center.X, 1);
+
+        // And it is click-through from its first Show.
+        Assert.True(caption.ClickThrough);
     }
 
     [AvaloniaFact]
@@ -198,21 +206,52 @@ public class GroupCaptionUiTests : IDisposable
         var state = GroupBackdrops.StateOf(group.Id)!.Value;
         var caption = GroupBackdrops.CaptionOf(group.Id)!.Value;
 
-        // Never hit-testable in Avalonia...
-        var canvas = (Canvas)((Window)GroupBackdrops.WindowOf(group.Id)!).Content!;
-        Assert.All(canvas.Children.OfType<TextBlock>(), t => Assert.False(t.IsHitTestVisible));
+        // A click-through window of its own, whose only content is not hit-testable.
+        Assert.True(caption.ClickThrough);
 
-        // ...and outside the silhouette, so the shared poll leaves it passing
-        // clicks through. The cursor is on the caption's centre.
-        var over = new Point(
-            state.Position.X + caption.Rect.Center.X, state.Position.Y + caption.Rect.Center.Y);
+        // The cursor on the caption's centre is outside the backdrop's silhouette,
+        // so the shared poll leaves the backdrop passing clicks through too.
         var changes = new List<bool>();
-        GroupBackdrops.HitTestTick(over, false, (_, catches) => changes.Add(catches));
+        GroupBackdrops.HitTestTick(caption.Rect.Center, false, (_, catches) => changes.Add(catches));
         Assert.DoesNotContain(true, changes);
 
         // The control: the middle of the group does catch it.
         var middle = new Point(state.Position.X + state.Width / 2, state.Position.Y + state.Height * 0.6);
         GroupBackdrops.HitTestTick(middle, false, (_, catches) => changes.Add(catches));
         Assert.Contains(true, changes);
+    }
+
+    [AvaloniaFact]
+    public void ADragThatMovesTheWholeGroupMovesTheCaptionWithIt()
+    {
+        var group = NewGroup("Follows");
+        GroupBackdrops.SetNamesVisible(true);
+        var spec = Spec(group);
+        GroupBackdrops.Update(new[] { spec });
+        var before = GroupBackdrops.CaptionOf(group.Id)!.Value;
+
+        foreach (var o in spec.Orbs) o.Position = new PixelPoint(o.Position.X + 50, o.Position.Y + 30);
+        GroupBackdrops.Refresh();
+
+        var after = GroupBackdrops.CaptionOf(group.Id)!.Value;
+        Assert.Equal(before.Rect.X + 50, after.Rect.X, 3);
+        Assert.Equal(before.Rect.Y + 30, after.Rect.Y, 3);
+        Assert.True(after.Visible);
+    }
+
+    [AvaloniaFact]
+    public void AParkedAndReturnedBackdropShowsItsCaptionAgain()
+    {
+        var group = NewGroup("Back again");
+        GroupBackdrops.SetNamesVisible(true);
+        var spec = Spec(group);
+        GroupBackdrops.Update(new[] { spec });
+        Assert.True(GroupBackdrops.CaptionOf(group.Id)!.Value.Visible);
+
+        GroupBackdrops.ParkAll();
+        Assert.Null(GroupBackdrops.CaptionOf(group.Id));
+
+        GroupBackdrops.Refresh();
+        Assert.True(GroupBackdrops.CaptionOf(group.Id)!.Value.Visible);
     }
 }

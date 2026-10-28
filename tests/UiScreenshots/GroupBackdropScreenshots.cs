@@ -56,16 +56,34 @@ public class GroupBackdropScreenshots : IDisposable
         var w = GroupBackdrops.WindowOf(groupId)!;
         var s = GroupBackdrops.StateOf(groupId)!.Value;
 
-        // The backdrop's content is a canvas holding the outline and, with names
-        // on, the caption (CB-282). A pooled window comes back with the previous
-        // test's stage still around that canvas: take the canvas back out of
-        // whichever of the two it is, rather than stacking stages.
-        var layer = w.Content as Canvas ?? (Canvas)((Panel)w.Content!).Children[0];
-        if (w.Content is Panel prior && prior is not Canvas) prior.Children.Clear();
+        // A pooled window comes back with the previous test's stage still in it:
+        // take the outline back out of that rather than stacking stages.
+        var shape = w.Content is Panel old ? old.Children[0] : (Control)w.Content!;
+        if (w.Content is Panel prior) prior.Children.Clear();
         w.Content = null;
 
+        // CB-282: the caption is a window of its own above the backdrop, so the
+        // page is made taller by what sits above the backdrop window, and the
+        // caption is drawn into it at the same spot, in the same colour.
+        var caption = GroupBackdrops.CaptionOf(groupId);
+        var lift = caption is { Visible: true } c ? Math.Max(0, s.Position.Y - c.Rect.Y) : 0;
+
         var stage = new Panel { Background = new SolidColorBrush(Color.Parse("#1E1E24")) };
-        stage.Children.Add(layer);
+        shape.Margin = new Thickness(0, lift, 0, 0);
+        stage.Children.Add(shape);
+        if (caption is { Visible: true } cap)
+        {
+            stage.Children.Add(new TextBlock
+            {
+                Text = cap.Text,
+                FontSize = GroupCaption.FontSizeDip,
+                Foreground = new SolidColorBrush(cap.Colour),
+                Margin = new Thickness(Math.Max(0, cap.Rect.X - s.Position.X), 0, 0, 0),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top
+            });
+            w.Height += lift;
+        }
 
         foreach (var o in orbs)
         {
@@ -76,7 +94,7 @@ public class GroupBackdropScreenshots : IDisposable
                 Width = o.OrbRadius * 2,
                 Height = o.OrbRadius * 2,
                 Fill = new SolidColorBrush(Color.Parse(o.OrbRadius < 18 ? "#C97B4A" : "#5B8DEF")),
-                Margin = new Thickness(cx - o.OrbRadius, cy - o.OrbRadius, 0, 0),
+                Margin = new Thickness(cx - o.OrbRadius, cy - o.OrbRadius + lift, 0, 0),
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top
             });
