@@ -745,6 +745,11 @@ namespace Orbweaver
         {
             Instance = this;
             OrbDragHost.Current = this;
+
+            // Dragging the empty space inside a group's shape moves the group
+            // (CB-268 decision 5). The backdrop raises the press; the drag
+            // itself is S4's, the same session an orb press starts.
+            GroupBackdrops.BackdropPressed += OrbWindow.BeginBackdropDrag;
             Directory.CreateDirectory(_statusDir);
             SyncAutoColorMarker();
 
@@ -3660,8 +3665,11 @@ namespace Orbweaver
             }
 
             // Arrows go with the orbs they join — two invisible orbs joined by a
-            // visible arrow is a line from nowhere to nowhere.
+            // visible arrow is a line from nowhere to nowhere. Backdrops too:
+            // parked, not dropped, so showing the orbs again brings them back.
             TeamLinks.SetVisible(visible);
+            if (visible) GroupBackdrops.Refresh();
+            else GroupBackdrops.ParkAll();
 
             if (visible) ReflowPositions();
             UpdateTray();
@@ -3720,13 +3728,10 @@ namespace Orbweaver
         }
 
         // CB-268: the Group outlines card and the group style dialog land here
-        // when a stroke or fill changed, the same shape as ReapplyGlyphs. The
-        // backdrops that draw the outlines are S5's and the wiring is S7's, so
-        // until they exist there is nothing to repaint and this is a safe no-op;
-        // S7 fills it in.
-        public void ReapplyGroupStyles()
-        {
-        }
+        // when the switch, a stroke or a fill changed, the same shape as
+        // ReapplyGlyphs. Re-handing the backdrops their groups re-reads each
+        // group's own override and the global style, and the switch.
+        public void ReapplyGroupStyles() => UpdateGroupBackdrops();
 
         // What an orb's Group submenu asks for: the group the orb's team is in
         // and the keys a move has to write. The root and the team are
@@ -3762,7 +3767,7 @@ namespace Orbweaver
 
             RescueOffscreenOrbs();
             RememberResizedPins();
-            TeamLinks.Refresh();
+            RefreshOverlays();
             ChatPanel.FollowOrbResize();
         }
 
@@ -3855,7 +3860,7 @@ namespace Orbweaver
             }
 
             // Every arrow's geometry just moved.
-            TeamLinks.Refresh();
+            RefreshOverlays();
         }
 
         // A new orb appeared or an old one vanished while the shape is active.
@@ -3932,7 +3937,7 @@ namespace Orbweaver
             if (allOrbs.All(o => _arrangedIds.Contains(o.SessionId)))
             {
                 _arrangedIds.IntersectWith(allOrbs.Select(o => o.SessionId));
-                TeamLinks.Refresh();
+                RefreshOverlays();
                 return;
             }
 
@@ -3948,7 +3953,7 @@ namespace Orbweaver
             // at all, including changes that do not move anybody.
             if (positioned.All(p => p.Orb.Position == p.Target))
             {
-                TeamLinks.Refresh();
+                RefreshOverlays();
                 return;
             }
 
@@ -4715,7 +4720,17 @@ namespace Orbweaver
             // — ReapplyOrbSizes applies the sizes before it arranges.
             var sizeOf = allOrbs.Select(orb => orb.OrbSize).ToArray();
 
-            var placed = PlaceGroups(allOrbs.Count, leadOf, groupOf, groups, layout, sizeOf);
+            var (placed, placements) = PlaceGroups(allOrbs.Count, leadOf, groupOf, groups, layout, sizeOf);
+
+            // Every caller applies what this returns (a glide, or straight
+            // away), so the backdrops are told the new groups here, once —
+            // Refresh then follows the orbs through the glide.
+            _groupPlacements = placements
+                .Select(p => new GroupOnScreen(
+                    groups[p.Slot].Id, p.DrawnShape, CurveOf(p), p.Orbs.Select(i => allOrbs[i]).ToList()))
+                .ToList();
+            UpdateGroupBackdrops();
+
             return allOrbs.Select((orb, i) => (orb, placed[i])).ToList();
         }
 
@@ -4730,7 +4745,7 @@ namespace Orbweaver
         // the first time, when none was. A drag that carried a group past what
         // the screen honours is repaired here on the next arrange instead of
         // swallowing the next drag back.
-        private static PixelPoint[] PlaceGroups(
+        private static (PixelPoint[] Positions, OrbArrangement.GroupPlacement[] Placements) PlaceGroups(
             int count, int[] leadOf, int[] groupOf, IReadOnlyList<OrbGroup> groups,
             OrbArrangement.Layout layout, double[] sizeOf)
         {
@@ -4749,7 +4764,7 @@ namespace Orbweaver
                     new OrbweaverSettings.OrbPlacement(group.Landed.X, group.Landed.Y));
             }
 
-            return positions;
+            return (positions, placed);
         }
 
         // A whole-group drag (OrbDragCommit.Release) moves every orb of the
@@ -4794,6 +4809,10 @@ namespace Orbweaver
             _arrangeAnimTargets = targets;
             _isArranged = false;
             _arrangedIds.Clear();
+
+            // Groups are an arrangement's: unarranged orbs have no backdrops.
+            _groupPlacements = new();
+            UpdateGroupBackdrops();
 
             AnimateArrangement(() =>
             {
@@ -4848,7 +4867,7 @@ namespace Orbweaver
                     (int)Math.Round(from.X + (to.X - from.X) * eased),
                     (int)Math.Round(from.Y + (to.Y - from.Y) * eased));
             }
-            TeamLinks.Refresh();
+            RefreshOverlays();
 
             if (t < 1.0) return;
 
@@ -4886,7 +4905,7 @@ namespace Orbweaver
             foreach (var (orb, target) in positioned)
                 orb.Position = target;
 
-            TeamLinks.Refresh();
+            RefreshOverlays();
         }
 
         // --- CB-268 S7: teams and groups -----------------------------------------
@@ -5010,9 +5029,9 @@ namespace Orbweaver
         }
 
         // Every group with an orb on screen outside `excludedIds`, with those
-        // orbs' discs. Outline stays empty until the backdrops (S5) can say
-        // what they drew — the contract allows it, and OrbSnap measures from
-        // the discs alone meanwhile.
+        // orbs' discs and the outline its backdrop last drew — the backdrop's,
+        // so the padding is decided in one place (GroupBackdrops.PaddingDip).
+        // Empty for a group with no backdrop yet; OrbSnap then uses the discs.
         IReadOnlyList<SnapCandidate> IOrbDragHost.CandidatesFor(IReadOnlyCollection<string> excludedIds)
         {
             var tree = VisibleTeams();
@@ -5029,17 +5048,52 @@ namespace Orbweaver
 
             return discs
                 .OrderBy(p => p.Key, StringComparer.Ordinal)
-                .Select(p => new SnapCandidate(p.Key, Array.Empty<Point>(), p.Value))
+                .Select(p => new SnapCandidate(p.Key, GroupBackdrops.OutlineOf(p.Key), p.Value))
                 .ToList();
         }
 
-        // Which group the drag would join, for the backdrops to draw. Recorded
-        // until S5's GroupBackdrops.Highlight exists to hand it to.
-        internal string? HighlightedGroup { get; private set; }
-
-        void IOrbDragHost.HighlightGroup(string? groupId) => HighlightedGroup = groupId;
+        // Which group the drag would join: its backdrop draws at full opacity
+        // and twice the stroke until the drag ends or aims elsewhere.
+        void IOrbDragHost.HighlightGroup(string? groupId) => GroupBackdrops.Highlight(groupId);
 
         void IOrbDragHost.ShiftGroupAnchor(string groupId, int dx, int dy) =>
             ShiftArrangementAnchor(dx, dy, groupId);
+
+        // --- the backdrops (S5) ---------------------------------------------------
+
+        // One arranged group as the last arrange left it: what was drawn, the
+        // curve it was drawn on, and its orbs.
+        private sealed record GroupOnScreen(
+            string GroupId, string DrawnShape, GroupOutline.PlacedCurve? Curve, IReadOnlyList<OrbWindow> Orbs);
+
+        private List<GroupOnScreen> _groupPlacements = new();
+
+        // The curve a group's orbs were placed on, for the outline to follow.
+        // ComputeGroups says "no curve" itself, with a CurveScale of 0 — a
+        // grid, a line, a column, a squeezed group that fell back to a grid,
+        // a lone orb — and GroupOutline draws a rounded rectangle, a stadium
+        // or a circle around the discs instead. Read off the placement rather
+        // than restated from shape names here, so the two cannot disagree.
+        internal static GroupOutline.PlacedCurve? CurveOf(OrbArrangement.GroupPlacement placement) =>
+            placement.CurveScale > 0
+                ? new GroupOutline.PlacedCurve(placement.CurveCentre, placement.CurveScale)
+                : null;
+
+        // Hands the backdrops the current groups with each group's style read
+        // fresh, so a style change and an arrange take the same path. An empty
+        // set — nothing arranged — parks them all.
+        private void UpdateGroupBackdrops()
+        {
+            GroupBackdrops.SetOutlinesVisible(OrbweaverSettings.GroupOutlinesEnabled);
+            GroupBackdrops.Update(_groupPlacements.Select(g => new BackdropSpec(
+                g.GroupId, g.DrawnShape, g.Orbs, OrbweaverSettings.OrbGroupFor(g.GroupId)?.Style, g.Curve)));
+        }
+
+        // Everything drawn from orb positions, re-read after the orbs moved.
+        private static void RefreshOverlays()
+        {
+            TeamLinks.Refresh();
+            GroupBackdrops.Refresh();
+        }
     }
 }

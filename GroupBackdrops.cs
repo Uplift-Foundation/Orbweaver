@@ -195,21 +195,34 @@ namespace Orbweaver
         // or null for an orb with no platform window yet (a startup race; the next
         // Refresh has it). A seam because the headless platform's PointToScreen
         // ignores Window.Position, so a test has to say where its orbs are.
-        internal static Func<OrbWindow, (Point Centre, double Scale)?> Measure = MeasureOnScreen;
+        internal static Func<OrbWindow, (Point Centre, double Scale)?> Measure =
+            orb => MeasureFromDisc(orb, SessionManager.DiscOf, OrbWindow.UnitsPerDip);
 
-        [ExcludeFromCodeCoverage]
-        private static (Point Centre, double Scale)? MeasureOnScreen(OrbWindow orb)
+        // S7: the same circle the drag measures (SessionManager.DiscOf) — the
+        // centre from Window.Position, so it is right under the headless
+        // platform too, and the scale from OrbWindow.UnitsPerDip, the factor
+        // the drag divides back out. One measurement, not two that could drift.
+        // The two are parameters so the guard below can be tested on purpose:
+        // whether the headless platform makes PointToScreen throw for a
+        // never-shown orb depends on what ran before it.
+        internal static (Point Centre, double Scale)? MeasureFromDisc(
+            OrbWindow orb,
+            Func<OrbWindow, (double X, double Y, double R)> disc,
+            Func<OrbWindow, double> unitsPerDip)
         {
             try
             {
-                var origin = orb.PointToScreen(new Point(0, 0));
-                var s = (orb.PointToScreen(new Point(64, 0)).X - origin.X) / 64.0;
-                if (s <= 0) s = 1;
-                var c = orb.PointToScreen(new Point(orb.CentreDip, orb.CentreDip));
-                return (new Point(c.X, c.Y), s);
+                var d = disc(orb);
+                return (new Point(d.X, d.Y), unitsPerDip(orb));
             }
-            catch (InvalidOperationException)
+            catch (ArgumentException)
             {
+                // An orb that is not in a visual tree: PointToScreen throws
+                // ArgumentException ("Visual does not belong to a visual tree"),
+                // observed on a never-shown orb run on its own. This used to
+                // catch InvalidOperationException, which PointToScreen was never
+                // seen to throw, so the guard caught nothing. The next Refresh
+                // has the orb.
                 return null;
             }
         }

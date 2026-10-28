@@ -1,6 +1,7 @@
 using System.Reflection;
 using Avalonia;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media;
 using Xunit;
 
 namespace Orbweaver.UiTests;
@@ -21,11 +22,29 @@ public class SessionManagerGroupsTests : IDisposable
     private readonly List<string> _groups = new();
     private readonly List<string> _keys = new();
     private readonly OrbweaverSettings.OrbPlacement? _mainAnchor = OrbweaverSettings.ArrangeAnchor;
+    private readonly bool _outlines = OrbweaverSettings.GroupOutlinesEnabled;
+    private readonly bool _showOrbs = OrbweaverSettings.ShowOrbs;
 
-    public SessionManagerGroupsTests() => Directory.CreateDirectory(_dir);
+    public SessionManagerGroupsTests()
+    {
+        Directory.CreateDirectory(_dir);
+        ResetBackdrops();
+    }
+
+    // GroupBackdrops is process-wide, so every test starts and ends with none.
+    private static void ResetBackdrops()
+    {
+        GroupBackdrops.Update(Array.Empty<BackdropSpec>());
+        GroupBackdrops.ParkAll();
+        GroupBackdrops.Highlight(null);
+        GroupBackdrops.SetOutlinesVisible(true);
+    }
 
     public void Dispose()
     {
+        ResetBackdrops();
+        OrbweaverSettings.GroupOutlinesEnabled = _outlines;
+        OrbweaverSettings.ShowOrbs = _showOrbs;
         foreach (var key in _keys) OrbweaverSettings.UnassignOrbGroup(key);
         foreach (var id in _groups) OrbweaverSettings.DeleteOrbGroup(id);
         OrbweaverSettings.ArrangeAnchor = _mainAnchor;
@@ -292,15 +311,125 @@ public class SessionManagerGroupsTests : IDisposable
         Assert.Equal(host.DiscOf("b"), Assert.Single(only.Discs));
     }
 
-    [AvaloniaFact]
-    public void TheHighlightedGroupIsRecordedForTheBackdrops()
-    {
-        var manager = new SessionManager(_dir);
-        IOrbDragHost host = manager;
+    // --- the backdrops (S5) -----------------------------------------------
 
-        host.HighlightGroup("g-target");
-        Assert.Equal("g-target", manager.HighlightedGroup);
+    private static void CompleteTheGlide(SessionManager manager)
+    {
+        typeof(SessionManager).GetField("_arrangeAnimStart", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(manager, Environment.TickCount64 - 700);
+        Invoke(manager, "OnArrangeAnimTick", null, EventArgs.Empty);
+    }
+
+    private (SessionManager Manager, OrbGroup Group) ArrangedInTwoGroups()
+    {
+        OrbweaverSettings.ArrangeAnchor = null;
+        var manager = Scan(("a", ""), ("b", "codex"));
+        var group = NewGroup("heart");
+        OrbweaverSettings.MoveOrbToGroup(KeyOf(manager, "b"), group.Id);
+
+        manager.ArrangeOrbsInPattern();
+        CompleteTheGlide(manager);
+        Assert.True(manager.IsArranged);
+        return (manager, group);
+    }
+
+    [AvaloniaFact]
+    public void ArrangingGivesEveryGroupABackdropAndRestoringTakesThemAway()
+    {
+        var (manager, group) = ArrangedInTwoGroups();
+
+        Assert.Equal(2, GroupBackdrops.ShownCount);
+        Assert.True(GroupBackdrops.StateOf(OrbGroups.Main)!.Value.Shown);
+        Assert.True(GroupBackdrops.StateOf(group.Id)!.Value.Shown);
+
+        // The snap candidates carry the outline the backdrop drew — one place
+        // decides the padding.
+        IOrbDragHost host = manager;
+        foreach (var candidate in host.CandidatesFor(Array.Empty<string>()))
+        {
+            Assert.NotEmpty(candidate.Outline);
+            Assert.Equal(GroupBackdrops.OutlineOf(candidate.GroupId), candidate.Outline);
+        }
+
+        // The drag's "you will join this" cue reaches the backdrop.
+        host.HighlightGroup(group.Id);
+        Assert.True(GroupBackdrops.StateOf(group.Id)!.Value.Highlighted);
         host.HighlightGroup(null);
-        Assert.Null(manager.HighlightedGroup);
+        Assert.False(GroupBackdrops.StateOf(group.Id)!.Value.Highlighted);
+
+        // Hidden with the orbs, back with them.
+        manager.SetOrbsVisible(false);
+        Assert.Equal(0, GroupBackdrops.ShownCount);
+        manager.SetOrbsVisible(true);
+        Assert.Equal(2, GroupBackdrops.ShownCount);
+
+        // Unarranged orbs have no groups on screen.
+        manager.ArrangeOrbsInPattern();
+        Assert.False(manager.IsArranged);
+        Assert.Equal(0, GroupBackdrops.ShownCount);
+    }
+
+    [AvaloniaFact]
+    public void AStyleOrTheOutlineSwitchReachesTheBackdropsThroughReapplyGroupStyles()
+    {
+        var (manager, group) = ArrangedInTwoGroups();
+        OrbweaverSettings.GroupOutlinesEnabled = true;
+        manager.ReapplyGroupStyles();
+
+        OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#FF0000", 1.0, null, null));
+        Assert.NotEqual(Color.FromArgb(255, 255, 0, 0), GroupBackdrops.StateOf(group.Id)!.Value.Stroke);
+
+        manager.ReapplyGroupStyles();
+        Assert.Equal(Color.FromArgb(255, 255, 0, 0), GroupBackdrops.StateOf(group.Id)!.Value.Stroke);
+
+        // Outlines off: invisible but still there, still grabbable.
+        OrbweaverSettings.GroupOutlinesEnabled = false;
+        manager.ReapplyGroupStyles();
+        var off = GroupBackdrops.StateOf(group.Id)!.Value;
+        Assert.True(off.Shown);
+        Assert.Equal(Colors.Transparent, off.Stroke);
+    }
+
+    [AvaloniaFact]
+    public void TheOutlineGetsTheCurveOnlyWhereComputeGroupsReportsOne()
+    {
+        OrbArrangement.GroupPlacement Placed(string shape, double scale) =>
+            new(0, new PixelPoint(0, 0), new PixelRect(0, 0, 10, 10), shape, new[] { 0 }, new Point(5, 6), scale);
+
+        // ComputeGroups' own "no curve" is a scale of 0, whatever the shape —
+        // including a heart squeezed into a grid, or a lone orb.
+        foreach (var shape in new[] { "grid", "line", "vline", "heart" })
+            Assert.Null(SessionManager.CurveOf(Placed(shape, 0)));
+
+        Assert.Equal(new GroupOutline.PlacedCurve(new Point(5, 6), 7.5), SessionManager.CurveOf(Placed("heart", 7.5)));
+    }
+
+    [AvaloniaFact]
+    public void AnOrbOutsideAVisualTreeMeasuresAsNothingRatherThanThrowing()
+    {
+        // What PointToScreen throws for a visual outside a visual tree —
+        // forced, because whether a never-shown orb is one under the headless
+        // platform depends on what ran before it.
+        var orb = new OrbWindow("measure");
+        (double, double, double) Outside(OrbWindow _) =>
+            throw new ArgumentException("Visual does not belong to a visual tree.", "visual");
+
+        Assert.Null(GroupBackdrops.MeasureFromDisc(orb, Outside, _ => 1));
+        Assert.Equal((new Point(3, 4), 2.0), GroupBackdrops.MeasureFromDisc(orb, _ => (3, 4, 5), _ => 2));
+        orb.Close();
+    }
+
+    [AvaloniaFact]
+    public void TheBackdropsMeasureAnOrbAsTheDragDoes()
+    {
+        var manager = Scan(("a", ""));
+        var a = Windows(manager)["a"];
+
+        var measured = GroupBackdrops.Measure(a);
+        var disc = ((IOrbDragHost)manager).DiscOf("a");
+
+        Assert.NotNull(measured);
+        Assert.Equal(new Point(disc.X, disc.Y), measured!.Value.Centre);
+        Assert.Equal(OrbWindow.UnitsPerDip(a), measured.Value.Scale);
     }
 }

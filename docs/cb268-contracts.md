@@ -247,7 +247,7 @@ The window ordering and the hit-test mechanism follow `docs/cb268-backdrop-spike
 
 ## S7 — integration (architect)
 
-What calls what, as built. "(S5)" marks the seams still waiting on that stream.
+What calls what, as built.
 
 **One team tree.** `TeamTree` (pure, `TeamTree.cs`) holds the one thing the single root resolver cannot know: who an ended lead's lead was.
 - It is built from the on-screen ids in display order plus `SessionManager._knownLead`, the last `Lead` each session reported, kept after the session ends while something on screen still descends through it.
@@ -284,8 +284,8 @@ None of the three moves an orb, so CB-161 is untouched.
   - `OrbIdsInGroup` and `GroupIdOf` through `GroupIdOf(tree, id)`
   - `PositionKeyOf` = `OrbGroupMenu.KeyOf` (fresh, not the stale `window.PositionKey`)
   - `DiscOf` = the visible circle in Position units: `Position + CentreDip × OrbWindow.UnitsPerDip`, radius `OrbRadius × UnitsPerDip`. That is the same factor `OrbDragCommit` divides out. Measured on a Retina MacBook: `UnitsPerDip` 1, `DesktopScaling` 1, `RenderScaling` 2.
-  - `CandidatesFor` = every group with its discs, ordinal by id, `Outline` empty until **(S5)**
-  - `HighlightGroup` is recorded in `HighlightedGroup` until **(S5)**
+  - `CandidatesFor` = every group with its discs, ordinal by id, and the outline its backdrop drew (empty for a group with no backdrop)
+  - `HighlightGroup` → `GroupBackdrops.Highlight`
   - `ShiftGroupAnchor` → `ShiftArrangementAnchor`
 - `MembersOf` and `ArrangedSiblings`, the pre-CB-268 drag helpers, are removed; nothing called them after S4.
 
@@ -293,9 +293,14 @@ None of the three moves an orb, so CB-161 is untouched.
 
 **Arrows:** `UpdateTeamLinks` pairs each on-screen orb with `tree.LeadOf(id)`. A member whose lead ended points at the ancestor it now fans off.
 
-**Still to wire (S5):**
-- `GroupBackdrops.Update(...)` after each arrange, from `ComputeGroups`' placements.
-- `GroupBackdrops.Refresh()` beside every `TeamLinks.Refresh()`: SessionManager's six, plus `OrbDragSession.Move` (juno).
-- `Highlight` from `HighlightGroup`.
-- `Outline` in `CandidatesFor` from `GroupBackdrops.OutlineOf`, so the padding constant lives in one place.
-- `ReapplyGroupStyles()` → re-resolve styles and refresh. It is a no-op until then.
+**Backdrops (S5), wired:**
+- **Update** after every arrange: `ComputeClusteredPositions` turns `ComputeGroups`' placements into `BackdropSpec(GroupId, DrawnShape, Orbs, Style, Curve)`.
+  - `Curve` is `SessionManager.CurveOf(placement)`, which is null wherever `ComputeGroups` reports `CurveScale == 0`: grid, line, vline, a squeezed group that fell back to a grid, and a lone orb.
+  - `Style` is read fresh from the group table each time.
+- **Refresh** beside every `TeamLinks.Refresh()`, through `RefreshOverlays()`; `OrbDragSession.Move` does the same.
+- **Restore** clears the set: unarranged orbs have no backdrops.
+- **Visibility:** `SetOrbsVisible(false)` → `ParkAll()`, and `true` → `Refresh()`.
+- **Styles:** `ReapplyGroupStyles()` → `SetOutlinesVisible(GroupOutlinesEnabled)` + `Update`, so a style change and an arrange take one path.
+- **Drag cues:** `HighlightGroup` → `GroupBackdrops.Highlight`. `CandidatesFor`' outline is `GroupBackdrops.OutlineOf`, so the padding lives only in `GroupBackdrops`.
+- **Empty-space drag:** `Start()` subscribes `GroupBackdrops.BackdropPressed += OrbWindow.BeginBackdropDrag`.
+- **Measurement:** `GroupBackdrops.Measure` defaults to `MeasureFromDisc(orb, SessionManager.DiscOf, OrbWindow.UnitsPerDip)`, the same circle the drag measures. Its guard catches `ArgumentException`, which `PointToScreen` throws for a visual outside a visual tree; the old `InvalidOperationException` catch caught nothing.
