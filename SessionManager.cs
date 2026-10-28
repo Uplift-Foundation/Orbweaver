@@ -3728,7 +3728,20 @@ namespace Orbweaver
             {
                 window.ReapplyGlyph();
             }
+
+            // CB-287: usage orbs wear letters too, and were never walked here,
+            // so flipping "two-letter initials" left them stale until the next
+            // five-minute poll.
+            _accountOrbs.RefreshLooks();
         }
+
+        // CB-287: an override was written elsewhere (the editor, a Settings
+        // row); redraw the usage orbs and cards without waiting for a poll.
+        internal void RefreshAccountOrbLooks() => _accountOrbs.RefreshLooks();
+
+        // CB-287: the accounts that currently have a usage orb, for the
+        // Settings rows.
+        internal IReadOnlyList<AccountOrbIdentity> AccountOrbList() => _accountOrbs.Accounts;
 
         // CB-198: the settings slider and the Size menu both land here, the
         // same shape as ReapplyGlyphs — one change, every orb. Each orb takes

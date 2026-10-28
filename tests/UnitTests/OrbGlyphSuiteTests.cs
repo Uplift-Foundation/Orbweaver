@@ -30,6 +30,16 @@ namespace Orbweaver.Tests
         public static IEnumerable<object[]> FallbackRows()
             => GlyphSuite.Fallbacks.Select(c => new object[] { c.Why, c.IsRoom, c.Want });
 
+        public static IEnumerable<object?[]> ClipRows()
+            => GlyphSuite.Clips.Select(c => new object?[] { c.Why, c.Input, c.TwoLetter, c.Want });
+
+        [Theory]
+        [MemberData(nameof(ClipRows))]
+        public void ClipKeepsWholeGraphemes(string why, string? input, bool twoLetter, string want)
+        {
+            Assert.Null(GlyphSuite.CheckClip(new GlyphSuite.ClipCase(why, input, twoLetter, want)));
+        }
+
         [Theory]
         [MemberData(nameof(GlyphRows))]
         public void OrbWearsTheRightLetters(string group, string input, bool twoLetter, string want)
