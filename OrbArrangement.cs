@@ -301,7 +301,7 @@ namespace Orbweaver
                 var banded = ComputeCore(
                     count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
 
-                return (banded, Describe(banded, slotOf, shapes, sizes, layout.Scale));
+                return (banded, Describe(banded, leadOf, slotOf, shapes, sizes, layout));
             }
 
             var work = layout.Work;
@@ -328,19 +328,6 @@ namespace Orbweaver
                 var g = usedSlots[k];
                 var orbs = members[k];
 
-                Array.Fill(localOf, -1);
-                for (var li = 0; li < orbs.Length; li++) localOf[orbs[li]] = li;
-
-                var subLead = new int[orbs.Length];
-                var subSize = new double[orbs.Length];
-                for (var li = 0; li < orbs.Length; li++)
-                {
-                    var i = orbs[li];
-                    var lead = i < leadOf.Length ? leadOf[i] : -1;
-                    subLead[li] = lead >= 0 && lead < count ? localOf[lead] : -1;
-                    subSize[li] = sizes[i];
-                }
-
                 // Always laid out about the middle of the work area, whatever
                 // the group's anchor is; the anchor is applied below as one
                 // integer translation of the finished group. A shape drawn
@@ -351,17 +338,13 @@ namespace Orbweaver
                 // problem: dragging moves it by exactly the delta, and feeding
                 // Landed back reproduces it to the pixel.
                 var asked = g < groups.Count && groups[g].Center is { } c ? c : middle;
-                var one = layout with { Shape = shapes[g], Center = middle };
-                var alone = new int[orbs.Length];
 
-                var placed = ComputeCore(
-                    orbs.Length, subLead, alone, new[] { shapes[g] }, one, subSize, out var gridded);
+                var (placed, box, gridded) = LayGroup(orbs, leadOf, count, sizes, shapes[g], layout, middle, localOf);
 
                 drawn[k] = gridded ? "grid" : shapes[g];
 
                 for (var li = 0; li < orbs.Length; li++) positions[orbs[li]] = placed[li];
 
-                var box = SlotBox(placed, subSize, layout.Scale, WindowFor(layout.Scale, subSize.Max()));
                 canonical[k] = box;
                 boxes[k] = new PixelRect(box.X + asked.X - middle.X, box.Y + asked.Y - middle.Y, box.Width, box.Height);
             }
@@ -376,7 +359,7 @@ namespace Orbweaver
                 var fallback = ComputeCore(
                     count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
 
-                return (fallback, Describe(fallback, slotOf, shapes, sizes, layout.Scale));
+                return (fallback, Describe(fallback, leadOf, slotOf, shapes, sizes, layout));
             }
 
             path = GroupPath.Separated;
@@ -570,16 +553,59 @@ namespace Orbweaver
             return new PixelRect(left, top, right - left, bottom - top);
         }
 
-        // Placements read off a finished whole-set layout (the Bands and
-        // Fallback routes). Landed here is the middle of the group's box — there
-        // was no per-group anchor to start from. The shape drawn is the shape
-        // asked for: Compute's grid retry is decided for the set as a whole and
-        // cannot be attributed to a group, and GroupOutline encloses the discs
-        // whatever shape it is told.
-        private static GroupPlacement[] Describe(
-            PixelPoint[] positions, int[] slotOf, string[] shapes, double[] sizes, double scale)
+        // One group laid out on its own, about `middle`: its orbs only, with
+        // the lead links that stay inside it, against the whole work area, with
+        // Compute's squeeze-then-grid retry. Returns the orbs' window top-lefts
+        // (in `orbs` order), the group's slot box, and whether a grid replaced
+        // the asked shape. `localOf` is scratch, one entry per orb.
+        private static (PixelPoint[] Placed, PixelRect Box, bool Gridded) LayGroup(
+            int[] orbs, int[] leadOf, int count, double[] sizes, string shape, Layout layout,
+            PixelPoint middle, int[] localOf)
         {
-            var window = WindowFor(scale, sizes.Max());
+            Array.Fill(localOf, -1);
+            for (var li = 0; li < orbs.Length; li++) localOf[orbs[li]] = li;
+
+            var subLead = new int[orbs.Length];
+            var subSize = new double[orbs.Length];
+            for (var li = 0; li < orbs.Length; li++)
+            {
+                var i = orbs[li];
+                var lead = i < leadOf.Length ? leadOf[i] : -1;
+                subLead[li] = lead >= 0 && lead < count ? localOf[lead] : -1;
+                subSize[li] = sizes[i];
+            }
+
+            var placed = ComputeCore(
+                orbs.Length, subLead, new int[orbs.Length], new[] { shape },
+                layout with { Shape = shape, Center = middle }, subSize, out var gridded);
+
+            return (placed, SlotBox(placed, subSize, layout.Scale, WindowFor(layout.Scale, subSize.Max())), gridded);
+        }
+
+        // Placements read off a finished whole-set layout (the Bands and
+        // Fallback routes), whose shapes were fitted inside bands and so are
+        // not the shapes a group has when drawn alone.
+        //
+        // Landed is what makes feeding it back sensible: the anchor that would
+        // put the group's *own* layout's box centre where this layout's box
+        // centre is. Reading the box middle off as the anchor — the first
+        // draft — is wrong for any shape whose anchor is not the middle of its
+        // box: a heart's box middle sits well off the point its curve is drawn
+        // about, so the second draw dropped it 162 px. Exactly the same when
+        // the group fills the band the same way it fills the screen (one group,
+        // or one that was not squeezed); within the difference of the two
+        // boxes' sizes otherwise, since the centre is what is held.
+        //
+        // The shape drawn is the shape asked for: Compute's grid retry is
+        // decided for the set as a whole and cannot be attributed to a group,
+        // and GroupOutline encloses the discs whatever shape it is told.
+        private static GroupPlacement[] Describe(
+            PixelPoint[] positions, int[] leadOf, int[] slotOf, string[] shapes, double[] sizes, Layout layout)
+        {
+            var window = WindowFor(layout.Scale, sizes.Max());
+            var work = layout.Work;
+            var middle = new PixelPoint(work.X + work.Width / 2, work.Y + work.Height / 2);
+            var scratch = new int[positions.Length];
             var result = new List<GroupPlacement>();
 
             for (var g = 0; g < shapes.Length; g++)
@@ -590,11 +616,15 @@ namespace Orbweaver
                 var box = SlotBox(
                     orbs.Select(i => positions[i]).ToArray(),
                     orbs.Select(i => sizes[i]).ToArray(),
-                    scale, window);
+                    layout.Scale, window);
+
+                var own = LayGroup(orbs, leadOf, positions.Length, sizes, shapes[g], layout, middle, scratch).Box;
 
                 result.Add(new GroupPlacement(
                     g,
-                    new PixelPoint(box.X + box.Width / 2, box.Y + box.Height / 2),
+                    new PixelPoint(
+                        middle.X + (box.X + box.Width / 2) - (own.X + own.Width / 2),
+                        middle.Y + (box.Y + box.Height / 2) - (own.Y + own.Height / 2)),
                     box,
                     shapes[g],
                     orbs));

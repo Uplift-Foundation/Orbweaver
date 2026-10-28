@@ -71,10 +71,10 @@ namespace Orbweaver.Tests
 
             foreach (var group in groups)
             {
-                // Landed is the middle of the box, which is a point inside it,
-                // and the box holds every orb's window.
-                Assert.Equal(group.SlotBounds.X + group.SlotBounds.Width / 2, group.Landed.X);
-                Assert.Equal(group.SlotBounds.Y + group.SlotBounds.Height / 2, group.Landed.Y);
+                // Landed is an anchor on the screen — not the box middle, which
+                // is not where a heart is drawn about — and the box holds every
+                // orb's window.
+                Assert.True(Work.Contains(group.Landed));
 
                 foreach (var orb in group.Orbs)
                 {
@@ -123,6 +123,32 @@ namespace Orbweaver.Tests
         {
             var (positions, groups) = ComputeGroups(count, leads, of, table, layout ?? LayoutAt(), sizes, out var path);
             return (positions, groups, path);
+        }
+
+        // A heart's anchor is not the middle of its box. The first draft read
+        // Landed off the box middle for the first draw, and the redraw from the
+        // saved anchors put the heart 162 px lower (found by S7).
+        [Theory]
+        [InlineData("heart")]
+        [InlineData("circle")]
+        [InlineData("star")]
+        [InlineData("diamond")]
+        public void TheFirstDrawsLandedFedBackReproducesIt(string mainShape)
+        {
+            var table = Table((mainShape, null), ("circle", null), ("line", null), ("heart", null));
+            var of = new[] { 0, 0, 3 };
+
+            var (first, groups, path) = Run(3, NoLeads(3), of, table);
+            Assert.Equal(GroupPath.Bands, path);
+
+            var fed = groups.ToDictionary(g => g.Slot, g => (PixelPoint?)g.Landed);
+            var again = Table(
+                (mainShape, fed[0]), ("circle", null), ("line", null), ("heart", fed[3]));
+
+            var (second, _, path2) = Run(3, NoLeads(3), of, again);
+
+            Assert.Equal(GroupPath.Separated, path2);
+            Assert.Equal(first, second);
         }
 
         // --- anchors and Landed ---
