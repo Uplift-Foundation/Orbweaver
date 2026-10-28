@@ -346,6 +346,8 @@ namespace Orbweaver
             EnsureAnimTimer();
         }
 
+        internal static bool AnimationTimerRunning => _animTimer is not null;
+
         private static bool AnythingAnimating() =>
             Active.Values.Any(w => w.Animating) || (_preview?.Animating ?? false);
 
@@ -576,7 +578,12 @@ namespace Orbweaver
             // backdrop is the one that springs.
             internal bool Morphs = true;
 
-            internal bool Animating => _morph is not null || _highlighted;
+            internal bool Animating => _morph is not null || Breathes;
+
+            // A highlight breathes unless the OS asks for reduced motion, which means
+            // no breathing at all (not a gentler breath).
+            private bool Breathes => _highlighted && !BackdropMotion.ReducedMotion();
+            private bool _regionBreathes;   // what the Windows region was last built for
 
             // What is drawn right now (the interpolated polygon mid-morph), in screen units.
             internal Point[] Displayed() => Absolute(_local);
@@ -764,11 +771,20 @@ namespace Orbweaver
                     }
                 }
 
-                if (_highlighted)
+                if (Breathes)
                 {
                     _breath = OutlineMorph.Breath(now - _breathStart);
                     _shape.RenderTransform = new ScaleTransform(_breath, _breath);
                 }
+                else if (_breath != 1)
+                {
+                    // Reduced motion switched on while breathing: settle at true size.
+                    _breath = 1;
+                    _shape.RenderTransform = null;
+                }
+
+                // The region follows whether the outline can swell, if that flipped mid-highlight.
+                if (Breathes != _regionBreathes) ApplyRegion();
 
                 return Animating;
             }
@@ -946,7 +962,7 @@ namespace Orbweaver
             [ExcludeFromCodeCoverage]
             private void ApplyRegionNow() =>
                 BackdropNative.SetPolygonRegion(
-                    this, BackdropGeometry.PaddedRegionPoints(BackdropGeometry.RegionPolygon(_local, _highlighted), default, 1, BackdropGeometry.RegionPad(_scale)),
+                    this, BackdropGeometry.PaddedRegionPoints(BackdropGeometry.RegionPolygon(_local, _regionBreathes = Breathes), default, 1, BackdropGeometry.RegionPad(_scale)),
                     BackdropGeometry.RegionHoles(_holes, 1));
         }
 

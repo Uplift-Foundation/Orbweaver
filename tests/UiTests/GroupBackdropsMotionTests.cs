@@ -364,6 +364,41 @@ public class GroupBackdropsMotionTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void ReduceMotionMeansAHighlightedOutlineDoesNotBreathe()
+    {
+        BackdropMotion.ReducedMotion = () => true;
+        var (orbs, _) = Joining();
+        At(0);
+        GroupBackdrops.Highlight("g-m");
+
+        foreach (var t in new[] { 0.0, 0.35, OutlineMorph.BreathPeriodSeconds / 2, 1.0, 2.1 })
+        {
+            At(t);
+            Assert.Equal(1.0, GroupBackdrops.StateOf("g-m")!.Value.Breath);
+        }
+
+        Assert.False(GroupBackdrops.AnimationTimerRunning, "nothing is animating, so the timer is off");
+    }
+
+    [AvaloniaFact]
+    public void ReduceMotionSwitchedOnMidBreathSettlesAtTrueSize()
+    {
+        var (orbs, _) = Joining();
+        At(0);
+        GroupBackdrops.Highlight("g-m");
+        At(OutlineMorph.BreathPeriodSeconds / 2);
+        Assert.Equal(1.04, GroupBackdrops.StateOf("g-m")!.Value.Breath, 9);
+
+        BackdropMotion.ReducedMotion = () => true;
+        At(OutlineMorph.BreathPeriodSeconds / 2 + 0.1);
+        Assert.Equal(1.0, GroupBackdrops.StateOf("g-m")!.Value.Breath);
+
+        BackdropMotion.ReducedMotion = () => false;   // and back on again
+        At(OutlineMorph.BreathPeriodSeconds);
+        Assert.InRange(GroupBackdrops.StateOf("g-m")!.Value.Breath, 1.0, 1.04 + 1e-9);
+    }
+
+    [AvaloniaFact]
     public void BreathingDoesNotMoveTheHitArea()
     {
         var (orbs, _) = Joining();
