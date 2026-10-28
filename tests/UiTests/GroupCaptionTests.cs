@@ -122,6 +122,20 @@ public class GroupCaptionUiTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void TurningNamesOnRestacksOnceAndTurningThemOnAgainDoesNot()
+    {
+        var group = NewGroup("Stacked");
+        GroupBackdrops.Update(new[] { Spec(group) });
+
+        var before = GroupBackdrops.RestackCount;
+        GroupBackdrops.SetNamesVisible(true);
+        Assert.Equal(before + 1, GroupBackdrops.RestackCount);
+
+        GroupBackdrops.SetNamesVisible(true);
+        Assert.Equal(before + 1, GroupBackdrops.RestackCount);
+    }
+
+    [AvaloniaFact]
     public void TheCaptionIsTheResolvedStrokeColourAtFullOpacity()
     {
         OrbweaverSettings.GroupOutlineStroke = "#58A6FF";

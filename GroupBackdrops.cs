@@ -234,6 +234,12 @@ namespace Orbweaver
             if (_names == visible) return;
             _names = visible;
             Refresh();
+
+            // A caption window shown for the first time lands IN FRONT of the orbs
+            // on Windows, like any newly shown topmost window, and Refresh only
+            // restacks when a backdrop was added. Names are the one thing that
+            // shows caption windows without adding a backdrop.
+            Restack();
         }
 
         // The caption text for a group, read from the table on every Refresh so a
@@ -275,9 +281,14 @@ namespace Orbweaver
         // Re-establishes "behind every orb" on Windows, where a newly shown topmost
         // window lands in front. Update does it; a drag end should too. A no-op
         // elsewhere (macOS orders by window level).
+        // Counted so a test can say a path restacked without a Windows window order
+        // to observe.
+        internal static int RestackCount { get; private set; }
+
         [ExcludeFromCodeCoverage]
         internal static void Restack()
         {
+            RestackCount++;
             var all = new List<Window>(Active.Values);
             all.AddRange(Active.Values.Select(w => w.CaptionWindowIfShown).OfType<Window>());
             if (_preview is { } p && p.State.Shown) all.Add(p);
