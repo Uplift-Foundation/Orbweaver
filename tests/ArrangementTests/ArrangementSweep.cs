@@ -957,7 +957,8 @@ namespace Orbweaver.Tests
                 // A lead cycle is two anchors that Separate still pulls toward
                 // each other as if one led the other, so they are off the curve
                 // by design; only a group with no lead links at all is a clean curve.
-                if (test.Mix is not null || group.Orbs.Any(o => leads[o] >= 0) || anchorOrbs.Length < 2) continue;
+                if (test.Mix is not null || group.Orbs.Any(o => leads[o] >= 0) || anchorOrbs.Length < 2
+                    || group.CurveScale == 0) continue;
 
                 var unit = OrbArrangement.Unit(group.DrawnShape, anchorOrbs.Length);
                 var worstOff = 0.0;

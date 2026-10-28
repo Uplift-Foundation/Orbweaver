@@ -305,9 +305,6 @@ namespace Orbweaver.Tests
         [InlineData("diamond", 9, 1.0)]
         [InlineData("star", 10, 1.0)]
         [InlineData("star", 10, 2.0)]
-        [InlineData("grid", 12, 1.0)]
-        [InlineData("line", 7, 1.0)]
-        [InlineData("vline", 7, 2.0)]
         public void EveryOrbOfAnUnfannedGroupLiesOnTheCurveItReports(string shape, int n, double scale)
         {
             var layout = LayoutAt(scale, work: scale > 1 ? new PixelRect(0, 0, 3024, 1890) : null);
@@ -327,6 +324,58 @@ namespace Orbweaver.Tests
             var allowed = (shape == "star" ? 8 : 4) * scale;
             Assert.True(Residual(group, positions, scale, NoLeads(n + 3)) <= allowed,
                 $"worst orb is {Residual(group, positions, scale, NoLeads(n + 3)):0.0}px off the curve");
+        }
+
+        [Theory]
+        [InlineData("grid", 12)]
+        [InlineData("line", 7)]
+        [InlineData("vline", 7)]
+        public void ALineAColumnAndAGridHaveNoCurve(string shape, int n)
+        {
+            var table = Table((shape, new PixelPoint(900, 500)));
+
+            var (positions, groups, _) = Run(n, NoLeads(n), new int[n], table);
+
+            var only = Assert.Single(groups);
+            Assert.Equal(0, only.CurveScale);
+            Assert.Equal(positions.Average(p => p.X + 28.0), only.CurveCentre.X, 1e-6);
+            Assert.Equal(positions.Average(p => p.Y + 28.0), only.CurveCentre.Y, 1e-6);
+        }
+
+        [Fact]
+        public void ASqueezedGroupThatFellBackToAGridHasNoCurveEither()
+        {
+            var sizes = Enumerable.Repeat(2.0, 30).ToArray();
+            var small = new PixelRect(0, 0, 1280, 800);
+
+            var (_, groups, _) = Run(
+                30, NoLeads(30), new int[30], Table(("circle", new PixelPoint(640, 400))), LayoutAt(work: small), sizes);
+
+            var only = Assert.Single(groups);
+            Assert.Equal("grid", only.DrawnShape);
+            Assert.Equal(0, only.CurveScale);
+        }
+
+        [Fact]
+        public void TheCurveIsTranslatedByTheSameDeltaAsTheOrbsAfterSeparationToo()
+        {
+            // Two groups asked for the same spot: slot 1 is pushed out of
+            // slot 0's way, and its curve must move with it to the pixel.
+            var at = new PixelPoint(960, 540);
+            var alone = Table(("heart", at), ("heart", at));
+            var (positions, groups, _) = Run(12, NoLeads(12), Dealt(12, 2), alone);
+
+            // The same group fitted on its own at the middle, then compared
+            // with where it ended up: orbs and curve moved by the same delta.
+            var (solo, soloGroups, _) = Run(6, NoLeads(6), new int[6], Table(("heart", at)));
+            var slot1Orbs = groups[1].Orbs;
+            var dx = positions[slot1Orbs[0]].X - solo[0].X;
+            var dy = positions[slot1Orbs[0]].Y - solo[0].Y;
+
+            Assert.NotEqual(0, dx + dy);   // it really was moved
+            Assert.Equal(soloGroups[0].CurveCentre.X + dx, groups[1].CurveCentre.X, 1e-6);
+            Assert.Equal(soloGroups[0].CurveCentre.Y + dy, groups[1].CurveCentre.Y, 1e-6);
+            Assert.Equal(soloGroups[0].CurveScale, groups[1].CurveScale, 1e-9);
         }
 
         [Fact]

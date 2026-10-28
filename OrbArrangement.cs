@@ -79,8 +79,10 @@ namespace Orbweaver
         // placed centres to the shape's unit curve, which is exact for the
         // curve the placement started from and absorbs the rounding. A group of
         // one orb has no curve: CurveScale is 0 and CurveCentre is that orb's
-        // centre. A grid (asked for or fallen back to) is its lattice, fitted
-        // the same way, so CurveScale is the lattice step.
+        // centre. So has a line, a column or a grid (asked for or fallen back
+        // to): CurveScale is 0 and CurveCentre is the middle of the anchors.
+        // The fit is made from the final positions, so it moves by exactly the
+        // integer delta the orbs do.
         /// <summary>Where one non-empty group landed, and what was drawn for it.</summary>
         internal readonly record struct GroupPlacement(
             int Slot,
@@ -629,7 +631,13 @@ namespace Orbweaver
             int[] leadOf, int count)
         {
             var anchors = orbs.Where(i => !Resolves(i, leadOf, count)).ToArray();
-            var unit = Unit(shape, anchors.Length);
+
+            // Lines, columns and grids have no curve to offset: their outline is
+            // a stadium or a rounded rectangle round the discs. Scale 0 says so,
+            // and the centre is the middle of the anchors.
+            var unit = shape is "line" or "vline" or "grid"
+                ? new (double X, double Y)[anchors.Length]
+                : Unit(shape, anchors.Length);
 
             var qx = anchors.Select(i => positions[i].X + WindowFor(scale, sizes[i]) / 2.0).ToArray();
             var qy = anchors.Select(i => positions[i].Y + WindowFor(scale, sizes[i]) / 2.0).ToArray();
