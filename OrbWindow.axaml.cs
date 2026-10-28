@@ -115,6 +115,12 @@ namespace Orbweaver
         private readonly ColorTransition _colorTransition;
         private readonly ScaleTransform _orbScale = new();
 
+        // CB-268 M4: the drag squash. A matrix over the whole visible disc, the
+        // identity whenever the orb is not being dragged or motion is reduced.
+        private readonly MatrixTransform _squashTransform = new();
+        private readonly DragSquash _squash = new();
+        private DispatcherTimer? _squashTimer;
+
         // The heart badge's own beat, separate from the orb's breath so the two
         // can run at different rates without fighting over one transform.
         private readonly ScaleTransform _heartScale = new();
@@ -185,6 +191,11 @@ namespace Orbweaver
 
             Glow.Fill = _glowBrush;
             Orb.RenderTransform = _orbScale;
+
+            // CB-268 M4: the drag squash rides on the Disc cell (see the
+            // comment in OrbWindow.axaml), so it never competes with the
+            // breath on Orb and AvatarImage.
+            Disc.RenderTransform = _squashTransform;
 
             // One transform for both, so an agent's picture breathes with the
             // ring drawn around it rather than holding still inside it.
@@ -2493,12 +2504,60 @@ namespace Orbweaver
         private PixelPoint _windowStart;
         private PixelPoint _pointerStart;
 
-        // A team lead drags its members along with it, so a team can be moved
-        // out of the way as one thing — which is the whole point of drawing it
-        // as one thing. Captured on press, because membership can change
-        // mid-drag and an orb that joins the team while you're moving it should
-        // not jump.
-        private readonly List<(OrbWindow Orb, PixelPoint Start)> _followers = new();
+        // Who moves with this orb, and what releasing it does to groups, is an
+        // OrbDragSession (CB-268): DragPlan decides the followers — plain drag
+        // moves the orb's whole team, Shift moves its whole group — and
+        // OrbDragCommit decides whether the drop joins, leaves or changes
+        // nothing. Created on press, because membership can change mid-drag and
+        // an orb that joins the team while you are moving it should not jump.
+        private OrbDragSession? _session;
+
+        // How many PointToScreen units one DIP spans, measured rather than read
+        // off RenderScaling: on macOS PointToScreen is already in points, so
+        // RenderScaling (2 on a Retina Mac) would double the drag threshold.
+        // 1 on macOS, the display scaling on Windows. See LinkWindow.Apply.
+        internal static double UnitsPerDip(Visual visual) =>
+            (visual.PointToScreen(new Point(64, 0)).X - visual.PointToScreen(new Point(0, 0)).X) / 64.0;
+
+        // The entry point a group backdrop calls (GroupBackdrops.BackdropPressed):
+        // dragging empty space inside a group's shape moves the whole group. The
+        // pointer is captured by the backdrop window that took the press and
+        // the session follows it from there, so the backdrop needs no drag
+        // code of its own. Excluded from coverage for the same reason as the
+        // orb handlers below: it forwards real pointer events.
+        [ExcludeFromCodeCoverage]
+        internal static void BeginBackdropDrag(
+            string groupId, PointerPressedEventArgs e, Window source)
+        {
+            if (!e.GetCurrentPoint(source).Properties.IsLeftButtonPressed) return;
+            if (OrbDragHost.Current is not { } host || host.OrbIdsInGroup(groupId).FirstOrDefault() is not { } first)
+                return;
+
+            var session = new OrbDragSession(host, first, DragSource.Backdrop, false, UnitsPerDip(source));
+            var start = source.PointToScreen(e.GetPosition(source));
+            var dragging = false;
+            e.Pointer.Capture(source);
+
+            void Moved(object? _, PointerEventArgs m)
+            {
+                var now = source.PointToScreen(m.GetPosition(source));
+                int dx = now.X - start.X, dy = now.Y - start.Y;
+                if (!dragging && !DragPlan.Exceeded(dx, dy, UnitsPerDip(source))) return;
+                dragging = true;
+                session.Move(dx, dy);
+            }
+
+            void Released(object? _, PointerReleasedEventArgs r)
+            {
+                source.PointerMoved -= Moved;
+                source.PointerReleased -= Released;
+                r.Pointer.Capture(null);
+                if (dragging) session.End();
+            }
+
+            source.PointerMoved += Moved;
+            source.PointerReleased += Released;
+        }
 
         // Excluded from coverage: a synthesized press on an orb ends in a real
         // click being resolved, and OnClicked's default action is
@@ -2507,13 +2566,13 @@ namespace Orbweaver
         // runner that is an unpredictable side effect rather than a test, and on
         // a developer's machine it moves their windows.
         //
-        // The drag arithmetic these three share is not lost with them: the
-        // 6-pixel threshold, the follower offsets and the arranged-anchor nudge
-        // are all OrbArrangement's, which is pure and swept by
-        // tests/ArrangementTests across 20736 cases. What is excluded here is the
-        // plumbing from a pointer to those answers, and the click resolution
-        // itself is covered directly in OrbWindowClickResolutionTests via
-        // OnClicked/ActionFor rather than through a pointer.
+        // The decisions these three share are not lost with them: who moves is
+        // DragPlan, what a drop does is OrbSnap and OrbDragCommit, and the
+        // moving itself is OrbDragSession, all covered without a pointer (see
+        // OrbWindowDragSnapTests). What is excluded here is the plumbing from a
+        // pointer to those answers, and the click resolution itself is covered
+        // directly in OrbWindowClickResolutionTests via OnClicked/ActionFor
+        // rather than through a pointer.
         [ExcludeFromCodeCoverage]
         protected override void OnPointerPressed(PointerPressedEventArgs e)
         {
@@ -2530,34 +2589,18 @@ namespace Orbweaver
                 _windowStart = Position;
                 _pointerStart = this.PointToScreen(e.GetPosition(this));
 
-                _followers.Clear();
-                foreach (var member in SessionManager.Instance?.MembersOf(SessionId)
-                                       ?? Enumerable.Empty<OrbWindow>())
-                {
-                    _followers.Add((member, member.Position));
-                }
-
-                // When arranged, the whole cluster moves as one — every
-                // orb in the pattern that isn't already a team follower
-                // tags along so the shape stays intact.
-                if (SessionManager.Instance?.IsArranged == true)
-                {
-                    var existing = new HashSet<string>(_followers.Select(f => f.Orb.SessionId));
-                    foreach (var sibling in SessionManager.Instance.ArrangedSiblings(SessionId))
-                    {
-                        if (!existing.Contains(sibling.SessionId))
-                            _followers.Add((sibling, sibling.Position));
-                    }
-                }
+                _session = OrbDragHost.Current is { } host
+                    ? new OrbDragSession(
+                        host, SessionId, DragSource.Orb,
+                        e.KeyModifiers.HasFlag(KeyModifiers.Shift), UnitsPerDip(this))
+                    : null;
 
                 e.Pointer.Capture(this);
             }
         }
 
         // Excluded from coverage: same reason as OnPointerPressed — this only runs
-        // between a real press and a real release, and it moves live windows via
-        // Position while TeamLinks.Refresh() redraws native arrow windows over
-        // them.
+        // between a real press and a real release.
         [ExcludeFromCodeCoverage]
         protected override void OnPointerMoved(PointerEventArgs e)
         {
@@ -2568,7 +2611,7 @@ namespace Orbweaver
             var dx = current.X - _pointerStart.X;
             var dy = current.Y - _pointerStart.Y;
 
-            if (!_dragging && Math.Abs(dx) < 6 && Math.Abs(dy) < 6) return;
+            if (!_dragging && !DragPlan.Exceeded(dx, dy, UnitsPerDip(this))) return;
 
             // Only on the transition into dragging, not every move after —
             // a flyout animating toward a stale position underneath a moving
@@ -2577,30 +2620,15 @@ namespace Orbweaver
             if (!_dragging) HideFlyoutNow();
 
             _dragging = true;
-            Position = new PixelPoint(_windowStart.X + dx, _windowStart.Y + dy);
+            if (_session is { } session) session.Move(dx, dy);
+            else Position = new PixelPoint(_windowStart.X + dx, _windowStart.Y + dy);
 
-            // The team travels with its lead, keeping the shape the user
-            // arranged it in rather than being re-stacked around the new spot.
-            foreach (var (member, start) in _followers)
-            {
-                member.Position = new PixelPoint(start.X + dx, start.Y + dy);
-            }
-
-            // Drag a member away and its arrow to the lead stretches with it —
-            // which is the point of the arrow, since a dragged orb is exactly
-            // the one that no longer sits next to the team it belongs to. Cheap
-            // enough to do per pointer move: a few windows repositioned, no
-            // scan of anything.
-            TeamLinks.Refresh();
             ChatPanel.RepositionFor(this);
         }
 
         // Excluded from coverage: the end of the same gesture. Either it commits a
-        // drag — writing every dragged orb's position through SessionManager and
-        // re-anchoring the arrangement — or it resolves a click, which is
-        // TerminalFocuser again. Both halves are covered where they are decided:
-        // OrbArrangement for the geometry, OrbWindowClickResolutionTests for the
-        // click.
+        // drag — OrbDragSession.End — or it resolves a click, which is
+        // TerminalFocuser again.
         [ExcludeFromCodeCoverage]
         protected override void OnPointerReleased(PointerReleasedEventArgs e)
         {
@@ -2612,36 +2640,11 @@ namespace Orbweaver
 
             if (_dragging)
             {
-                SetPinned(true);
-                SessionManager.Instance?.RememberOrbPosition(this);
-
-                // Members carried along are pinned too, or the next reflow
-                // would pull them back into the stack and leave the lead on its
-                // own with three long arrows.
-                //
-                // Their positions are only *remembered* when they don't share
-                // the lead's key. A team usually runs in one directory, and
-                // positions are keyed by directory, so writing each member's
-                // spot would overwrite the lead's with an offset copy of
-                // itself — the group would come back scattered rather than not
-                // come back at all. See RestoreOrbPosition.
-                foreach (var (member, _) in _followers)
+                if (_session is { } session) session.End();
+                else
                 {
-                    member.SetPinned(true);
-                    if (member.PositionKey != PositionKey)
-                    {
-                        SessionManager.Instance?.RememberOrbPosition(member);
-                    }
-                }
-
-                // When arranged, every orb in the pattern moved by this same
-                // delta (see OnPointerPressed's ArrangedSiblings) — the shape's
-                // saved centre needs to move with it, or absorbing the next
-                // orb to join or leave would snap it back to where it was.
-                if (SessionManager.Instance?.IsArranged == true)
-                {
-                    SessionManager.Instance.ShiftArrangementAnchor(
-                        Position.X - _windowStart.X, Position.Y - _windowStart.Y);
+                    SetPinned(true);
+                    SessionManager.Instance?.RememberOrbPosition(this);
                 }
             }
             else
@@ -2664,7 +2667,77 @@ namespace Orbweaver
                 OnClicked(_clickCount);
             }
 
-            _followers.Clear();
+            _session = null;
+        }
+
+        // ---- drag squash (CB-268 M4) -------------------------------------------
+
+        // The clock the motion work reads, in milliseconds. A seam so a test
+        // steps frames at exact times instead of racing the wall clock.
+        internal static Func<long> MotionClock { get; set; } = () => Environment.TickCount64;
+
+        // The disc's one render transform is the drag squash and the arrival pop
+        // composed — squash first, then the uniform pop scale — and OrbWindow is
+        // the only writer, so the two animations can run together without
+        // fighting over it.
+        private Matrix _squashOnly = Matrix.Identity;
+        private double _popScale = 1.0;
+
+        /// <summary>The matrix currently on the orb's disc (squash x pop scale); the identity at rest.</summary>
+        internal Matrix SquashMatrix => _squashTransform.Matrix;
+
+        /// <summary>
+        /// The arrival pop's uniform scale of the disc (1.0 is rest), set by the
+        /// arrangement's glide. A value that is not a finite positive number
+        /// reads as 1.
+        /// </summary>
+        internal void SetPopScale(double scale)
+        {
+            _popScale = Finite.All(scale) && scale > 0 ? scale : 1.0;
+            ApplyDiscTransform();
+        }
+
+        private void ApplyDiscTransform() =>
+            _squashTransform.Matrix = _popScale == 1.0
+                ? _squashOnly
+                : _squashOnly * Matrix.CreateScale(_popScale, _popScale);
+
+        /// <summary>The pointer is at (x, y) DIP while this orb is dragged.</summary>
+        internal void SquashObserve(double x, double y)
+        {
+            var now = MotionClock();
+            _squash.Observe(x, y, now);
+            StepSquash(now);
+            EnsureSquashTimer();
+        }
+
+        /// <summary>The drag ended: the stretch relaxes from here (the timer keeps stepping until it is flat).</summary>
+        internal void SquashRelease()
+        {
+            _squash.Release();
+            EnsureSquashTimer();
+        }
+
+        internal void StepSquash(long nowMs)
+        {
+            _squashOnly = _squash.Step(nowMs);
+            ApplyDiscTransform();
+            if (_squash.AtRest) _squashTimer?.Stop();
+        }
+
+        private void EnsureSquashTimer()
+        {
+            if (_squash.AtRest) return;
+
+            _squashTimer ??= CreateSquashTimer();
+            if (!_squashTimer.IsEnabled) _squashTimer.Start();
+        }
+
+        private DispatcherTimer CreateSquashTimer()
+        {
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            timer.Tick += (_, _) => StepSquash(MotionClock());
+            return timer;
         }
 
         // --- what a click does ------------------------------------------------
@@ -3241,6 +3314,12 @@ namespace Orbweaver
             // never made a SessionManager current.
             RebuildSoundSubmenus();
             RebuildSizeSubmenu();
+            RebuildGroupSubmenu();
+
+            // "Reset position" undoes a hand placement: a free pin, or (CB-268
+            // T2 revised) a team member's saved offset from its lead in a
+            // laid-out group, which is never a pin.
+            ResetPositionItem.IsVisible = IsPinned || OrbweaverSettings.OrbMemberOffsetFor(SoundKey) is not null;
 
             var manager = CurrentManager();
             if (manager is null) return;
@@ -3311,6 +3390,14 @@ namespace Orbweaver
         // be driven without SessionManager.Start() and its watcher, timer and
         // tray icon.
         internal Func<SessionManager?> CurrentManager { get; set; } = () => SessionManager.Instance;
+
+        // The groups with an orb on screen, which "Move to" is filtered to; null
+        // (no manager) filters nothing. A test says which they are here.
+        internal Func<IReadOnlySet<string>?>? GroupsOnScreenForTests { get; set; }
+
+        private IReadOnlySet<string>? GroupsOnScreen() =>
+            GroupsOnScreenForTests is { } forTests ? forTests() : CurrentManager()?.GroupsOnScreen();
+
 
         private readonly SessionDependents.GuardRequests _endGuardRequests = new();
         private bool _endGuardHeld;
@@ -3431,6 +3518,93 @@ namespace Orbweaver
             }
         }
 
+        // CB-268's Group submenu, rebuilt on Opening for the Size submenu's
+        // reason: the group table, this orb's membership and its team can all
+        // have changed since the menu was last shown (a drag-snap, another
+        // orb's menu). Every write goes to the *team* — a team is the unit of
+        // grouping, so moving a member moves its lead and its siblings with it.
+        internal void RebuildGroupSubmenu()
+        {
+            var context = CurrentGroupContext();
+            var group = OrbweaverSettings.OrbGroupFor(context.GroupId) ?? OrbGroups.DefaultFor(context.GroupId);
+
+            GroupMenuItem.Items.Clear();
+
+            GroupMenuItem.Items.Add(new MenuItem { Header = $"In: {group.Name}", IsEnabled = false });
+            GroupMenuItem.Items.Add(new Separator());
+
+            var shape = new MenuItem { Header = "Shape" };
+            foreach (var (label, value) in SettingsWindow.ShapeChoices)
+            {
+                var item = new MenuItem
+                {
+                    Header = label,
+                    ToggleType = MenuItemToggleType.CheckBox,
+                    IsChecked = value == group.Shape
+                };
+                item.Click += (_, _) =>
+                {
+                    OrbweaverSettings.SetOrbGroupShape(group.Id, value);
+                    CurrentManager()?.ReapplyArrangement();
+                };
+                shape.Items.Add(item);
+            }
+            GroupMenuItem.Items.Add(shape);
+
+            var moveTo = new MenuItem { Header = "Move to" };
+            foreach (var other in OrbGroupMenu.MoveTargets(
+                         OrbweaverSettings.OrbGroupList(), group.Id, GroupsOnScreen()))
+            {
+                var target = other.Id;
+                var item = new MenuItem { Header = other.Name };
+                item.Click += (_, _) => MoveTeamToGroup(context, target);
+                moveTo.Items.Add(item);
+            }
+            moveTo.IsEnabled = moveTo.Items.Count > 0;
+            GroupMenuItem.Items.Add(moveTo);
+
+            var rename = new MenuItem { Header = "Rename…" };
+            rename.Click += (_, _) => GroupStyleWindow.Toggle(group.Id, focusName: true);
+            GroupMenuItem.Items.Add(rename);
+
+            var style = new MenuItem { Header = "Style…" };
+            style.Click += (_, _) => GroupStyleWindow.Toggle(group.Id, focusName: false);
+            GroupMenuItem.Items.Add(style);
+
+            GroupMenuItem.Items.Add(new Separator());
+
+            // Hidden, not greyed, in main: there is nowhere further to leave to,
+            // and a disabled row would suggest something is missing.
+            var leave = new MenuItem { Header = "Leave group", IsVisible = group.Id != OrbGroups.Main };
+            leave.Click += (_, _) => MoveTeamToGroup(context, OrbGroups.Main);
+            GroupMenuItem.Items.Add(leave);
+        }
+
+        // A test seam, the same shape as CurrentManager: the context a manager
+        // would compute from the live statuses, which a menu test has no
+        // manager to supply.
+        internal Func<GroupMenuContext?>? GroupContextOverride { get; set; }
+
+        private GroupMenuContext CurrentGroupContext()
+        {
+            if (GroupContextOverride?.Invoke() is { } overridden) return overridden;
+            if (CurrentManager()?.GroupMenuContextFor(SessionId) is { } fromManager) return fromManager;
+
+            // No manager (a standalone window): this orb alone, in whatever its
+            // own key says.
+            var key = string.IsNullOrEmpty(PositionKey) ? null : PositionKey;
+            var membership = OrbweaverSettings.OrbGroupMembershipFor(key);
+            return new GroupMenuContext(
+                OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats),
+                key, Array.Empty<string>());
+        }
+
+        private void MoveTeamToGroup(GroupMenuContext context, string groupId)
+        {
+            OrbweaverSettings.AssignTeamToGroup(context.LeadKey, context.MemberKeys, groupId);
+            CurrentManager()?.ReapplyArrangement();
+        }
+
         internal static string SizeLabel(double size) =>
             $"{Math.Round(size * 100).ToString(System.Globalization.CultureInfo.InvariantCulture)}%";
 
@@ -3520,6 +3694,10 @@ namespace Orbweaver
                 // 200% chosen before the title arrived must not snap back to
                 // the slider the moment it does, and a shared key must not be
                 // emptied out from under the other orb using it.
+                // The team-member offset (CB-268 T2) rides the same key and the
+                // same rule.
+                OrbweaverSettings.CarryOrbMemberOffset(SoundKey, key);
+
                 var staleSize = OrbweaverSettings.OrbSizeFor(SoundKey);
                 if (staleSize is not null && OrbweaverSettings.OrbSizeFor(key) is null)
                 {

@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Collections.Generic;
 using Avalonia.Controls;
 
 namespace Orbweaver
@@ -60,6 +61,54 @@ namespace Orbweaver
         // with WindowFromPoint over the mic's circle: with the flyout behind,
         // the orb owned the mic's top rows and those clicks did nothing.
         private static readonly IntPtr HwndTopmost = new(-1);
+
+        [DllImport("user32.dll")] private static extern IntPtr GetTopWindow(IntPtr h);
+        [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint cmd);
+        [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern long GetWindowLongPtr(IntPtr h, int index);
+
+        private const uint GwHwndNext = 2;
+        private const int GwlExStyle = -20;
+        private const long WsExTopmost = 0x8;
+
+        // CB-268 S5: puts each group backdrop directly behind the LOWEST of this
+        // app's own visible topmost windows that is not a backdrop — orbs, team
+        // arrows and the mic flyout alike — so a backdrop is under all of them.
+        // "Ours" is read off the window list by process id rather than passed in,
+        // so a window nobody told us about (the flyout) is still counted. Called
+        // on show, on every Update and at drag end, never per drag frame: moves do
+        // not change the order (spike §3) and the walk visits every top-level
+        // window. The decision is BackdropOrder.LowestOf.
+        public static void PlaceBehindAll(IReadOnlyCollection<Window> backdrops)
+        {
+            if (!OperatingSystem.IsWindows() || backdrops.Count == 0) return;
+
+            var mine = new HashSet<IntPtr>();
+            foreach (var b in backdrops)
+            {
+                var h = b.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                if (h != IntPtr.Zero) mine.Add(h);
+            }
+            if (mine.Count == 0) return;
+
+            var pid = (uint)Environment.ProcessId;
+            var zOrder = new List<IntPtr>();
+            var ours = new HashSet<IntPtr>();
+
+            for (var h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero; h = GetWindow(h, GwHwndNext))
+            {
+                zOrder.Add(h);
+                if (!IsWindowVisible(h)) continue;
+                GetWindowThreadProcessId(h, out var owner);
+                if (owner == pid && (GetWindowLongPtr(h, GwlExStyle) & WsExTopmost) != 0) ours.Add(h);
+            }
+
+            if (BackdropOrder.LowestOf(zOrder, ours, mine) is not { } lowest) return;
+
+            foreach (var h in mine)
+                SetWindowPos(h, lowest, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        }
 
         public static void PlaceInFront(this Window window)
         {

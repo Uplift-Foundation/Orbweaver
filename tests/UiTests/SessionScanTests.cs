@@ -474,7 +474,7 @@ public class SessionScanTests
     }
 
     [AvaloniaFact]
-    public void ATeamsMemberIsGatheredBehindItsLeadAndFollowsItWhenDragged()
+    public void ATeamsMemberIsGatheredBehindItsLeadAndTheWholeTeamMovesFromEitherOrb()
     {
         // Two orbs and no more, for the reason the class comment gives: two
         // files sharing a pid *and* a CLI are what put Superseded's job-list
@@ -491,12 +491,11 @@ public class SessionScanTests
 
         Assert.Equal(new[] { "lead", "member" }, DisplayOrder(manager));
 
-        var members = manager.MembersOf("lead");
-        Assert.Single(members);
-        Assert.Equal("member", members[0].SessionId);
-
-        // A member leads nobody, and a lead is not dragged along with itself.
-        Assert.Empty(manager.MembersOf("member"));
+        // CB-268 T2: a plain drag on the lead *or* the member moves the whole
+        // team, root first — no longer "a member is dragged on its own".
+        IOrbDragHost host = manager;
+        Assert.Equal(new[] { "lead", "member" }, host.TeamIdsOf("lead"));
+        Assert.Equal(new[] { "lead", "member" }, host.TeamIdsOf("member"));
 
         // The next scan builds a fresh status from the file, which has no lead
         // in it — the field is the app's, not the hook's — so the team is gone
@@ -504,7 +503,7 @@ public class SessionScanTests
         // membership above came from the field this test set and not from
         // anything the file could have carried.
         manager.ScanAndUpdate();
-        Assert.Empty(manager.MembersOf("lead"));
+        Assert.Equal(new[] { "lead" }, host.TeamIdsOf("lead"));
     }
 
     [AvaloniaFact]
@@ -573,11 +572,10 @@ public class SessionScanTests
             manager.ArrangeOrbsInPattern();
             Assert.True(manager.IsArranged);
 
-            // The siblings a dragged orb pulls with it: every arranged orb but
-            // the one doing the dragging.
-            var siblings = manager.ArrangedSiblings("a");
-            Assert.Single(siblings);
-            Assert.Equal("b", siblings[0].SessionId);
+            // What a Shift-drag or a backdrop drag pulls with it (CB-268): the
+            // whole group, which is every orb while only `main` is in use.
+            IOrbDragHost host = manager;
+            Assert.Equal(new[] { "a", "b" }, host.OrbIdsInGroup(host.GroupIdOf("a")).Order());
         }
         finally
         {
@@ -586,16 +584,14 @@ public class SessionScanTests
     }
 
     [AvaloniaFact]
-    public void ThereAreNoArrangedSiblingsWhileNothingIsArranged()
+    public void ReapplyingTheArrangementDoesNothingWhileNothingIsArranged()
     {
         using var scratch = new Scratch();
         scratch.Write("a");
 
         var manager = Scan(scratch);
 
-        Assert.Empty(manager.ArrangedSiblings("a"));
-
-        // And the settings slider's live preview does nothing at all until the
+        // The settings slider's live preview does nothing at all until the
         // orbs are arranged; the new spacing is simply saved for next time.
         manager.ReapplyArrangement();
         Assert.False(manager.IsArranged);

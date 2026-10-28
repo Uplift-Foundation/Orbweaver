@@ -103,7 +103,7 @@ public class OrbArrangementAnimationTests
         GetPrivate<Dictionary<string, OrbWindow>>(manager, "_windows");
 
     [AvaloniaFact]
-    public void ArrangingAndCompletingTheGlidePinsEveryOrbAtItsTarget()
+    public void ArrangingAndCompletingTheGlideLeavesEveryOrbUnpinned()
     {
         var anchorBefore = OrbweaverSettings.ArrangeAnchor;
         try
@@ -125,24 +125,12 @@ public class OrbArrangementAnimationTests
             Assert.Null(GetPrivate<object?>(manager, "_arrangeAnimTargets"));
             Assert.True(manager.IsArranged);
 
-            // A finding, asserted as it behaves rather than as the intent
-            // reads. The completion callback closes over `_arrangeAnimTargets`
-            // — the field, not the `targets` local OnArrangeAnimTick copies
-            // just above it — and OnArrangeAnimTick nulls that field *before*
-            // invoking the callback, so `_arrangeAnimTargets ?? new()` inside
-            // it always sees an empty dictionary and PinAt is never called for
-            // any orb once a glide actually completes for real. The orbs still
-            // land in the right place, because the position itself is set by
-            // the interpolation loop on the same tick, before the field is
-            // cleared — so the visible glide is unaffected — but IsPinned
-            // never becomes true and each orb's "Reset position" flyout item
-            // never becomes visible for an orb arranged this way. Left as it
-            // is rather than fixed here, for the same reason
-            // RemoteScanTests.AnUnansweredColourIsEmptyDespiteTheCommentPromisingAFallback
-            // is: fixing it is a behaviour change (every arranged orb starts
-            // offering "Reset position" it does not today) that belongs in
-            // its own change with its own screenshot, not riding along in a
-            // coverage pass. This test is the record.
+            // The intent since CB-268, no longer a recorded bug. This used to
+            // document that the glide's completion (PinEveryOrbAtItsTarget)
+            // never ran, so nothing was pinned by accident. CB-268 retired it:
+            // an arranged orb is held by its group's anchor, and a pin would
+            // make the next arrange treat it as an exception — the pull-back
+            // plan §B removes. So "not pinned" is now what is meant.
             Assert.All(Windows(manager).Values, w => Assert.False(w.IsPinned));
         }
         finally
@@ -171,9 +159,20 @@ public class OrbArrangementAnimationTests
             manager.ArrangeOrbsInPattern();
             CompleteTheGlide(manager);
 
+            // Forget that the orb was already placed, so this is a real re-fit
+            // rather than CB-161's departure-only shortcut — which is what an
+            // absorb with nobody new would otherwise take, never reaching the
+            // "already where the shape wants it" check this test is named for.
+            // The re-fit has to reproduce the settled layout to the pixel
+            // (ComputeGroups' one path, fed its own saved anchors).
+            GetPrivate<HashSet<string>>(manager, "_arrangedIds").Clear();
+            var before = Windows(manager)["a"].Position;
+
             InvokePrivate(manager, "AbsorbIntoArrangement");
 
             Assert.Null(GetPrivate<object?>(manager, "_arrangeAnimTargets"));
+            Assert.Equal(before, Windows(manager)["a"].Position);
+            Assert.Contains("a", GetPrivate<HashSet<string>>(manager, "_arrangedIds"));
         }
         finally
         {
@@ -525,7 +524,7 @@ public class OrbArrangementAnimationTests
 
             // At least worth asking: nothing has thrown, and the call did not
             // silently decline the way it does while unarranged (that path is
-            // ThereAreNoArrangedSiblingsWhileNothingIsArranged, next door).
+            // SessionScanTests.ReapplyingTheArrangementDoesNothingWhileNothingIsArranged).
             Assert.True(manager.IsArranged);
             Assert.Null(GetPrivate<object?>(manager, "_arrangeAnimTargets"));
             Assert.NotEmpty(Windows(manager));

@@ -79,5 +79,96 @@ namespace Orbweaver.Tests
             Assert.Contains(cases, c => c.Mix is null && c.Size == OrbSizing.Max);
             Assert.Contains(cases, c => c.Mix is { } mix && mix.Build(5).Distinct().Count() > 1);
         }
+
+        // The user-group half (CB-268), which is its own matrix rather than
+        // more rows of Cases() — the floor above guards the first three sweeps
+        // and this guards the fourth, at 162624: 108864 across 1–6 groups ×
+        // six anchor arrangements × every shape, spacing, team shape and
+        // screen at three orb counts and two ways of dealing the orbs, 8064 with
+        // mixed sizes, 40320 beside fixed obstacles (free and arranged), and 5376 with members placed
+        // by hand. Raised to
+        // the real count, not near it.
+        [Fact]
+        public void TheGroupSweepStillCoversTheWholeMatrix()
+        {
+            var cases = ArrangementSweep.GroupCases().ToList();
+
+            Assert.True(
+                cases.Count >= 162624,
+                $"the group sweep is down to {cases.Count} cases from 162624 — "
+                    + "if that was deliberate, raise the floor in this test");
+
+            // Every dimension that earns its keep: from one group to six, each
+            // way of anchoring them (including none, which is the first-draw
+            // route), both ways of dealing the orbs, and mixed sizes.
+            Assert.Equal(new[] { 1, 2, 3, 4, 5, 6 }, cases.Select(c => c.Groups).Distinct().OrderBy(g => g));
+            Assert.Equal(
+                ArrangementSweep.AnchorKinds.OrderBy(k => k),
+                cases.Select(c => c.Anchors).Distinct().OrderBy(k => k));
+            Assert.Equal(2, cases.Select(c => c.Split).Distinct().Count());
+            Assert.Contains(cases, c => c.Mix is not null);
+
+            // Obstacles, in all six kinds (four Free: the stack, pinned orbs, a blocker and
+            // an empty list; two Arranged: the stack, and an empty list that
+            // must change nothing), with the predefined slots both
+            // occupied and empty.
+            Assert.Equal(
+                ArrangementSweep.ObstacleKinds.OrderBy(k => k),
+                cases.Select(c => c.Obstacles).Where(o => o != "none").Distinct().OrderBy(k => k));
+            Assert.Contains(cases, c => c.Obstacles != "none" && c.EmptyPredefined);
+            Assert.Contains(cases, c => c.Obstacles != "none" && !c.EmptyPredefined);
+
+            // Hand-placed members, in all four kinds.
+            Assert.Equal(
+                ArrangementSweep.OffsetKinds.OrderBy(k => k),
+                cases.Select(c => c.Offsets).Where(o => o != "none").Distinct().OrderBy(k => k));
+
+            // T1 is only proven if a team's members are dealt to a different
+            // group from their lead somewhere in it.
+            Assert.Contains(cases, c =>
+            {
+                var leads = c.Team.Build(c.Count);
+                var of = ArrangementSweep.DealTo(c.Split, c.Count, c.Groups);
+                return Enumerable.Range(0, c.Count).Any(i => leads[i] >= 0 && leads[i] < c.Count && of[i] != of[leads[i]]);
+            });
+        }
+
+        // The obstacle invariants are only worth anything if the cases reach
+        // the routes they speak about: a sweep whose "blocker" never took the
+        // fallback, or whose obstacles never pushed a group, would pass
+        // without asserting anything. Checked on one screen to keep it quick.
+        [Fact]
+        public void TheObstacleSweepPushesGroupsAndReachesTheFallback()
+        {
+            var pushed = 0;
+            var fellBack = 0;
+
+            foreach (var c in ArrangementSweep.GroupCases()
+                .Where(c => c.Obstacles is "stack" or "pinned" or "blocker" && c.Screen.Name == "1080p"))
+            {
+                var slotBase = c.EmptyPredefined ? 3 : 0;
+                var leads = c.Team.Build(c.Count);
+                var of = ArrangementSweep.DealTo(c.Split, c.Count, c.Groups).Select(g => g + slotBase).ToArray();
+                var shapes = Enumerable.Repeat("circle", slotBase)
+                    .Concat(ArrangementSweep.ShapesFor(c.Shape).Take(c.Groups)).ToArray();
+                var at = Enumerable.Repeat((Avalonia.PixelPoint?)null, slotBase)
+                    .Concat(ArrangementSweep.AnchorsOf(c.Anchors, c.Groups, c.Screen)).ToArray();
+                var table = shapes.Select((sh, g) => new OrbArrangement.GroupLayout(sh, at[g])).ToList();
+                var layout = new OrbArrangement.Layout(c.Screen.Work, c.Screen.Scale, shapes[slotBase], c.Spacing);
+
+                var with = OrbArrangement.ComputeGroups(
+                    c.Count, leads, of, table, layout, null, OrbArrangement.GroupLayoutMode.Free,
+                    ArrangementSweep.ObstaclesOf(c.Obstacles, c.Screen), out var path);
+                var without = OrbArrangement.ComputeGroups(
+                    c.Count, leads, of, table, layout, null, OrbArrangement.GroupLayoutMode.Free,
+                    Array.Empty<Avalonia.PixelRect>(), out _);
+
+                if (path == OrbArrangement.GroupPath.Fallback) fellBack++;
+                else if (!with.Positions.SequenceEqual(without.Positions)) pushed++;
+            }
+
+            Assert.True(pushed > 0, "no obstacle in the sweep ever moved a group");
+            Assert.True(fellBack > 0, "no obstacle in the sweep ever took the fallback");
+        }
     }
 }

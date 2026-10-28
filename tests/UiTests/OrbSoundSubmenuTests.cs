@@ -357,6 +357,32 @@ public class OrbSoundSubmenuTests : IDisposable
         Assert.Equal("off", OrbweaverSettings.OrbTurnSoundFor(key)?.Finished);
     }
 
+    // CB-268 T2's member offset rides the SoundKey like the size does, so it is carried
+    // by the same rule when the key changes: copied, and never over an offset the new
+    // key already has.
+    [AvaloniaFact]
+    public void RefreshSoundKeyCarriesAMemberOffsetToTheNewKeyWithoutMovingIt()
+    {
+        var orb = new OrbWindow(Guid.NewGuid().ToString());
+        orb.UpdateFrom(new SessionStatus { State = "idle", Cwd = "/Users/user/project", Title = "" });
+        var oldKey = orb.SoundKey;
+        OrbweaverSettings.SetOrbMemberOffset(oldKey, (30.0, -20.0));
+
+        orb.UpdateFrom(new SessionStatus { State = "idle", Cwd = "/Users/user/project", Title = "titled-later" });
+        var newKey = orb.SoundKey;
+        try
+        {
+            Assert.NotEqual(oldKey, newKey);
+            Assert.Equal(((double, double)?)(30.0, -20.0), OrbweaverSettings.OrbMemberOffsetFor(newKey));
+            Assert.Equal(((double, double)?)(30.0, -20.0), OrbweaverSettings.OrbMemberOffsetFor(oldKey));
+        }
+        finally
+        {
+            OrbweaverSettings.SetOrbMemberOffset(oldKey, null);
+            OrbweaverSettings.SetOrbMemberOffset(newKey, null);
+        }
+    }
+
     // The key changes but there was never an override to move — just the
     // key itself updates, and nothing gets written under either key.
     [AvaloniaFact]

@@ -85,7 +85,7 @@ namespace Orbweaver
             "orbColors", "claudeCodeProfileDirs", "codexHomes", "grokHomes", "profiles", "orbPositions",
             "collapsedSettingsSections",
             "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale",
-            "orbSize", "orbSizes", "accountOrbOverrides",
+            "orbSize", "orbSizes", "orbMemberOffsets", "accountOrbOverrides",
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
             "openclawReplyEnabled", "openclawActiveWithinMinutes",
@@ -97,6 +97,10 @@ namespace Orbweaver
             "openclawShowHeartbeats",
             "openclawHeartbeatMode", "openclawHeartbeatShape",
             "openclawCronMode", "openclawCronShape",
+            // CB-268. The legacy shape and anchor keys above stay written next
+            // to orbGroups, so an older build still reads the file.
+            "orbGroups", "groupOutlinesEnabled", "groupNamesVisible", "groupOutlineStroke",
+            "groupOutlineStrokeOpacity", "groupOutlineFill", "groupOutlineFillOpacity",
             "codexChatEnabled", "codexReplyEnabled", "codexAccountUsageEnabled", "autoColorSessions",
             "claudeCodeEnabled", "codexEnabled",
             "grokChatEnabled", "grokReplyEnabled", "grokEnabled", "grokAccountUsageEnabled",
@@ -179,6 +183,14 @@ namespace Orbweaver
         // record leave it null and never write it.
         internal sealed record OrbPlacement(int X, int Y, double? Size = null);
 
+        // CB-268 T2: where a team member sits relative to its lead inside a laid-out
+        // group, CENTRE TO CENTRE: the member's visible centre minus the lead's visible
+        // centre, in DIP (so it survives a display-scale change; S7 computes it). Never
+        // top-left to top-left: members are drawn at MemberScale and a lead can carry its
+        // own size override, so a corner-to-corner offset would change meaning whenever
+        // either orb's size changed. See OrbMemberOffsets on the model.
+        internal sealed record MemberOffset(double Dx, double Dy);
+
         // How big one agent's chat panel is, in DIPs. Doubles rather than the
         // ints above because this is a layout size and not a screen coordinate:
         // a resize drag lands on fractions, and the panel's own Min/MaxWidth are
@@ -225,6 +237,13 @@ namespace Orbweaver
         // schedule is the one thing on screen that really is a sequence.
         public const string DefaultOpenClawHeartbeatShape = "circle";
         public const string DefaultOpenClawCronShape = "line";
+
+        // CB-268's global outline style. Outlines are off by default; these are
+        // what a group inherits for any field it does not override.
+        public const string DefaultGroupOutlineStroke = "#FFFFFF";
+        public const double DefaultGroupOutlineStrokeOpacity = 0.35;
+        public const string DefaultGroupOutlineFill = "#FFFFFF";
+        public const double DefaultGroupOutlineFillOpacity = 0.06;
 
         private sealed class Model
         {
@@ -423,7 +442,16 @@ namespace Orbweaver
             // keeps writing it, so a downgrade still hides what the user hid.
             public ClusterMode OpenClawHeartbeatMode { get; set; } = ClusterMode.WithChats;
 
-            public string OpenClawHeartbeatShape { get; set; } = DefaultOpenClawHeartbeatShape;
+            // CB-268: these four are no longer fields of their own. They are
+            // views over the predefined groups in Groups below, so every caller
+            // that read or wrote them keeps working and the group table stays
+            // the one place a shape lives. See OrbGroupTable.ReadJson for which
+            // copy wins when the file holds both.
+            public string OpenClawHeartbeatShape
+            {
+                get => Groups.Get(OrbGroups.Heartbeats)!.Shape;
+                set => Groups.SetShape(OrbGroups.Heartbeats, value);
+            }
 
             // The same three answers for scheduled jobs, which until now had no
             // setting at all — they always got an orb and it always joined the
@@ -431,7 +459,11 @@ namespace Orbweaver
             // session key's third segment.
             public ClusterMode OpenClawCronMode { get; set; } = ClusterMode.WithChats;
 
-            public string OpenClawCronShape { get; set; } = DefaultOpenClawCronShape;
+            public string OpenClawCronShape
+            {
+                get => Groups.Get(OrbGroups.Crons)!.Shape;
+                set => Groups.SetShape(OrbGroups.Crons, value);
+            }
 
             // Whether to show Claude Code sessions running on *other* machines,
             // reached through a hidden local bridge session that has Remote
@@ -674,6 +706,15 @@ namespace Orbweaver
             public Dictionary<string, double> OrbSizes { get; init; } =
                 new(StringComparer.OrdinalIgnoreCase);
 
+            // CB-268 T2: a member dragged inside a laid-out group keeps its offset
+            // from its lead, and ComputeGroups places it at lead + offset instead
+            // of fanning it out. Keyed by SoundKey, like OrbSizes and for the same
+            // reason: teammates sharing one cwd share a PositionKey, so keying by
+            // it would move every member of a team together. No entry means the
+            // member takes the fan.
+            public Dictionary<string, MemberOffset> OrbMemberOffsets { get; init; } =
+                new(StringComparer.OrdinalIgnoreCase);
+
             // CB-111: which chat panels were pinned when the app last quit,
             // and where each one was — the two things CB-110 deliberately did
             // not persist, because a pin then died with the process. Presence
@@ -749,7 +790,28 @@ namespace Orbweaver
             public Dictionary<string, string> NewChatLastProfiles { get; init; } = new(StringComparer.Ordinal);
 
             // Auto-organize: which shape and how much space between orbs.
-            public string ArrangeShape { get; set; } = DefaultArrangeShape;
+            public string ArrangeShape
+            {
+                get => Groups.Get(OrbGroups.Main)!.Shape;
+                set => Groups.SetShape(OrbGroups.Main, value);
+            }
+
+            // CB-268: every group, and which orb is in which. Built with the
+            // three predefined groups at their default shapes, so a file that
+            // predates groups migrates just by being read: the legacy keys set
+            // those shapes through the properties here.
+            public OrbGroupTable Groups { get; } = new();
+
+            // The global outline style a group inherits field by field, and
+            // whether outlines are drawn at all. Off by default so today's look
+            // is unchanged. Colours are #RRGGBB strings, kept as text so this
+            // file stays free of Avalonia types.
+            public bool GroupOutlinesEnabled { get; set; }
+            public bool GroupNamesVisible { get; set; }
+            public string GroupOutlineStroke { get; set; } = DefaultGroupOutlineStroke;
+            public double GroupOutlineStrokeOpacity { get; set; } = DefaultGroupOutlineStrokeOpacity;
+            public string GroupOutlineFill { get; set; } = DefaultGroupOutlineFill;
+            public double GroupOutlineFillOpacity { get; set; } = DefaultGroupOutlineFillOpacity;
             public double ArrangeSpacing { get; set; } = DefaultArrangeSpacing;
 
             // How much bigger or smaller than shipped the chat panel draws its
@@ -775,7 +837,11 @@ namespace Orbweaver
             // yet"; SessionManager fills it in with the screen's centre the
             // first time and keeps reusing it after, which is what stops the
             // shape recentring every time an orb joins or leaves.
-            public OrbPlacement? ArrangeAnchor { get; set; }
+            public OrbPlacement? ArrangeAnchor
+            {
+                get => Groups.Get(OrbGroups.Main)!.Anchor;
+                set => Groups.SetAnchor(OrbGroups.Main, value);
+            }
         }
 
         // ---- app-wide -------------------------------------------------------
@@ -1043,6 +1109,78 @@ namespace Orbweaver
             {
                 if (size is null) _model.OrbSizes.Remove(key);
                 else _model.OrbSizes[key] = OrbSizing.Clamp(size.Value);
+            }
+
+            Save();
+        }
+
+        // ---- team member offsets (CB-268 T2) ----------------------------------
+
+        // Null when the member has no saved offset and takes the fan.
+        public static (double Dx, double Dy)? OrbMemberOffsetFor(string? soundKey)
+        {
+            if (string.IsNullOrEmpty(soundKey)) return null;
+
+            Load();
+            lock (Gate)
+                return _model.OrbMemberOffsets.TryGetValue(soundKey, out var offset)
+                    ? (offset.Dx, offset.Dy)
+                    : null;
+        }
+
+        // Written once, at the end of a member drag, as member centre minus lead centre
+        // (see MemberOffset). Null clears — what "Reset this
+        // orb's position" means — and a (0, 0) offset is a real one, the member sitting
+        // exactly on its lead's centre, kept distinct from having none. A non-finite
+        // number is not an offset and is ignored, so a bad measurement cannot reach the
+        // file or ComputeGroups.
+        public static void SetOrbMemberOffset(string? soundKey, (double Dx, double Dy)? offset)
+        {
+            if (string.IsNullOrEmpty(soundKey)) return;
+            if (offset is { } o && !(SaneOffset(o.Dx) && SaneOffset(o.Dy))) return;
+
+            Load();
+            lock (Gate)
+            {
+                if (offset is null)
+                {
+                    if (!_model.OrbMemberOffsets.Remove(soundKey)) return;
+                }
+                else
+                {
+                    var next = new MemberOffset(offset.Value.Dx, offset.Value.Dy);
+                    if (_model.OrbMemberOffsets.GetValueOrDefault(soundKey) == next) return;
+                    _model.OrbMemberOffsets[soundKey] = next;
+                }
+            }
+
+            Save();
+        }
+
+        // No display is ten thousand DIP across, so anything beyond that is a
+        // corrupt or hand-edited value, not a place a member was dragged to. Dropped
+        // rather than clamped: a clamped garbage value would still put the member
+        // somewhere nobody chose. Also rejects NaN and infinity.
+        internal const double MaxOffsetDip = 10_000;
+
+        internal static bool SaneOffset(double value) =>
+            double.IsFinite(value) && Math.Abs(value) <= MaxOffsetDip;
+
+        // Called when an orb's SoundKey changes (CB-10: an untitled session is keyed
+        // by its id until a title arrives). Copied, never moved and never over an
+        // offset the new key already has — OrbWindow.RefreshSoundKey's rule, for its
+        // reasons: two orbs can share a key, so clearing the old one would take the
+        // other's offset with it, and an entry under the new key is somebody's choice.
+        internal static void CarryOrbMemberOffset(string? oldKey, string? newKey)
+        {
+            if (string.IsNullOrEmpty(oldKey) || string.IsNullOrEmpty(newKey)) return;
+
+            Load();
+            lock (Gate)
+            {
+                if (!_model.OrbMemberOffsets.TryGetValue(oldKey, out var offset)
+                    || _model.OrbMemberOffsets.ContainsKey(newKey)) return;
+                _model.OrbMemberOffsets[newKey] = offset;
             }
 
             Save();
@@ -1576,6 +1714,203 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.WaitingColor; }
             set { Load(); lock (Gate) _model.WaitingColor = value; SaveSoon(); }
+        }
+
+        // ---- orb groups (CB-268) ---------------------------------------------
+
+        // Every group in slot order: main, heartbeats, crons, then user groups
+        // by id. A snapshot — records are immutable, so the list is safe to hold
+        // after the lock is released.
+        public static IReadOnlyList<OrbGroup> OrbGroupList()
+        {
+            Load();
+            lock (Gate) return _model.Groups.Ordered();
+        }
+
+        public static OrbGroup? OrbGroupFor(string? id)
+        {
+            Load();
+            lock (Gate) return _model.Groups.Get(id);
+        }
+
+        // The group an orb was explicitly put in, or null when nothing was —
+        // OrbGroups.GroupIdFor then lets the CB-14 classification decide.
+        // `fallbackKey` is the bare-directory key, tried when the full key has
+        // no entry, exactly the second chance SessionManager gives
+        // OrbPositionFor for Claude Code orbs; pass null for a CLI that does not
+        // get one.
+        public static string? OrbGroupMembershipFor(string? key, string? fallbackKey = null)
+        {
+            Load();
+            lock (Gate) return _model.Groups.MembershipFor(key, fallbackKey);
+        }
+
+        public static OrbGroup CreateOrbGroup(string? shape = null)
+        {
+            Load();
+            OrbGroup made;
+            lock (Gate) made = _model.Groups.Create(shape);
+
+            Save();
+            return made;
+        }
+
+        // `defer` for a name typed into a box, which changes on every keystroke
+        // (GroupStyleWindow); a one-off rename leaves it false.
+        public static void RenameOrbGroup(string id, string? name, bool defer = false) =>
+            ChangeGroups(groups => groups.Rename(id, name), defer);
+
+        public static void SetOrbGroupShape(string id, string? shape) =>
+            ChangeGroups(groups => groups.SetShape(id, shape));
+
+        // Where the group's shape is centred, in physical pixels — the landed
+        // anchor, saved when it changed. Null forgets it.
+        public static void SetOrbGroupAnchor(string id, OrbPlacement? anchor) =>
+            ChangeGroups(groups => groups.SetAnchor(id, anchor));
+
+        // The per-group outline override. Null, or a style with nothing set,
+        // returns the group to the global one.
+        //
+        // `defer` is for a caller behind a slider or colour picker, which raise
+        // a change on every pointer move: the model updates at once and the file
+        // write waits (SaveSoon), like the global outline setters. Anything that
+        // is one deliberate change — a checkbox, the menu — leaves it false.
+        public static void SetOrbGroupStyle(string id, GroupStyle? style, bool defer = false) =>
+            ChangeGroups(groups => groups.SetStyle(id, style), defer);
+
+        public static void DeleteOrbGroup(string id) =>
+            ChangeGroups(groups => groups.Delete(id));
+
+        // Puts one orb in a group. A group that loses its last member this way
+        // is removed.
+        public static void MoveOrbToGroup(string? key, string groupId) =>
+            ChangeGroups(groups => groups.Move(key, groupId));
+
+        // Snapping a team: the lead's key and every member's, so the team never
+        // splits across groups.
+        public static void AssignTeamToGroup(
+            string? leadKey, IEnumerable<string?> memberKeys, string groupId) =>
+            ChangeGroups(groups => groups.AssignTeam(leadKey, memberKeys, groupId));
+
+        // T3: gives members that have no group the root's. See
+        // OrbGroupTable.EnsureTeamMembership — S7 calls it when a late member
+        // appears under a lead that has an explicit membership.
+        public static void EnsureTeamMembership(
+            string? rootKey, IEnumerable<string?> memberKeys, string? rootFallbackKey = null) =>
+            ChangeGroups(groups => groups.EnsureTeamMembership(rootKey, memberKeys, rootFallbackKey));
+
+        // T1: the group an orb belongs to once its team is considered — the
+        // team root's explicit membership, or null so OrbGroups.GroupIdFor falls
+        // back to the classification. `keys[i]` is orb i's position key and
+        // `leadOf[i]` the index of its lead.
+        public static string? OrbTeamGroupFor(int index, int[] leadOf, IReadOnlyList<string?> keys)
+        {
+            Load();
+            lock (Gate)
+                return OrbGroups.TeamGroupOf(index, leadOf, keys, key => _model.Groups.MembershipFor(key));
+        }
+
+        // Forgets an orb's explicit group, so the classification decides again.
+        // The menu's "Leave group" is MoveOrbToGroup(key, OrbGroups.Main)
+        // instead, which holds even a heartbeat orb in main.
+        public static void UnassignOrbGroup(string? key) =>
+            ChangeGroups(groups => groups.Unassign(key));
+
+        // Called when an orb's position key changes (CB-10: an untitled session
+        // is keyed by its session id until a title arrives). Copies, never
+        // overwrites — see OrbGroupTable.CarryMembership.
+        public static void CarryOrbGroupMembership(string? oldKey, string? newKey) =>
+            ChangeGroups(groups => groups.CarryMembership(oldKey, newKey));
+
+        private static void ChangeGroups(Func<OrbGroupTable, bool> change, bool defer = false)
+        {
+            Load();
+            bool changed;
+            lock (Gate) changed = change(_model.Groups);
+
+            if (!changed) return;
+            if (defer) SaveSoon();
+            else Save();
+        }
+
+        // ---- group outline style (CB-268) -------------------------------------
+
+        // CB-282: a small caption with each group's name above its outline. Off
+        // by default; deferred write like the other outline settings, because it
+        // sits behind a switch that is flipped while looking at the result.
+        public static bool GroupNamesVisible
+        {
+            get { Load(); lock (Gate) return _model.GroupNamesVisible; }
+            set { Load(); lock (Gate) _model.GroupNamesVisible = value; SaveSoon(); }
+        }
+
+        public static bool GroupOutlinesEnabled
+        {
+            get { Load(); lock (Gate) return _model.GroupOutlinesEnabled; }
+            set { Load(); lock (Gate) _model.GroupOutlinesEnabled = value; Save(); }
+        }
+
+        // The four setters below defer their write, like the orb colours above:
+        // they sit behind a colour picker and a slider, which raise a change on
+        // every pointer move. A colour that does not parse is ignored rather
+        // than stored, and an opacity is clamped to 0..1.
+        public static string GroupOutlineStroke
+        {
+            get { Load(); lock (Gate) return _model.GroupOutlineStroke; }
+            set
+            {
+                Load();
+                if (OrbGroups.NormalizeColor(value) is not { } hex) return;
+                lock (Gate) _model.GroupOutlineStroke = hex;
+                SaveSoon();
+            }
+        }
+
+        public static double GroupOutlineStrokeOpacity
+        {
+            get { Load(); lock (Gate) return _model.GroupOutlineStrokeOpacity; }
+            set
+            {
+                Load();
+                if (OrbGroups.ClampOpacity(value) is not { } opacity) return;
+                lock (Gate) _model.GroupOutlineStrokeOpacity = opacity;
+                SaveSoon();
+            }
+        }
+
+        public static string GroupOutlineFill
+        {
+            get { Load(); lock (Gate) return _model.GroupOutlineFill; }
+            set
+            {
+                Load();
+                if (OrbGroups.NormalizeColor(value) is not { } hex) return;
+                lock (Gate) _model.GroupOutlineFill = hex;
+                SaveSoon();
+            }
+        }
+
+        public static double GroupOutlineFillOpacity
+        {
+            get { Load(); lock (Gate) return _model.GroupOutlineFillOpacity; }
+            set
+            {
+                Load();
+                if (OrbGroups.ClampOpacity(value) is not { } opacity) return;
+                lock (Gate) _model.GroupOutlineFillOpacity = opacity;
+                SaveSoon();
+            }
+        }
+
+        // The four globals as the fully populated GroupStyle that
+        // GroupStyle.Resolve takes as its `globals` argument.
+        public static GroupStyle GroupOutlineGlobals()
+        {
+            Load();
+            lock (Gate)
+                return new GroupStyle(
+                    _model.GroupOutlineStroke, _model.GroupOutlineStrokeOpacity,
+                    _model.GroupOutlineFill, _model.GroupOutlineFillOpacity);
         }
 
         // ---- orb positions --------------------------------------------------
@@ -2245,6 +2580,21 @@ namespace Orbweaver
                         }
                     }
 
+                    if (root["orbMemberOffsets"] is JsonObject memberOffsets)
+                    {
+                        foreach (var (key, node) in memberOffsets)
+                        {
+                            if (node is not JsonObject entry) continue;
+
+                            var dx = Number(entry["dx"]);
+                            var dy = Number(entry["dy"]);
+                            if (dx is null || dy is null) continue;
+                            if (!SaneOffset(dx.Value) || !SaneOffset(dy.Value)) continue;
+
+                            model.OrbMemberOffsets[key] = new MemberOffset(dx.Value, dy.Value);
+                        }
+                    }
+
                     if (root["pinnedChatPanels"] is JsonObject pinned)
                     {
                         // Number(), not GetValue<int>() the way orbPositions
@@ -2276,6 +2626,24 @@ namespace Orbweaver
                         if (ax is not null && ay is not null)
                             model.ArrangeAnchor = new OrbPlacement(ax.Value, ay.Value);
                     }
+
+                    // CB-268. After the anchor, so the legacy values are already in
+                    // the predefined groups when the block is overlaid on them.
+                    model.Groups.ReadJson(root["orbGroups"]);
+                    model.GroupOutlinesEnabled = Bool(root["groupOutlinesEnabled"], false);
+                    model.GroupNamesVisible = Bool(root["groupNamesVisible"], false);
+                    model.GroupOutlineStroke =
+                        OrbGroups.NormalizeColor(Text(root["groupOutlineStroke"]))
+                        ?? DefaultGroupOutlineStroke;
+                    model.GroupOutlineStrokeOpacity =
+                        OrbGroups.ClampOpacity(Number(root["groupOutlineStrokeOpacity"]))
+                        ?? DefaultGroupOutlineStrokeOpacity;
+                    model.GroupOutlineFill =
+                        OrbGroups.NormalizeColor(Text(root["groupOutlineFill"]))
+                        ?? DefaultGroupOutlineFill;
+                    model.GroupOutlineFillOpacity =
+                        OrbGroups.ClampOpacity(Number(root["groupOutlineFillOpacity"]))
+                        ?? DefaultGroupOutlineFillOpacity;
 
                     // Anything above this line is a key this build understands.
                     // Whatever is left belongs to a different version and is kept
@@ -2495,6 +2863,10 @@ namespace Orbweaver
                     var orbSizes = new JsonObject();
                     foreach (var (key, size) in _model.OrbSizes) orbSizes[key] = size;
 
+                    var orbMemberOffsets = new JsonObject();
+                    foreach (var (key, offset) in _model.OrbMemberOffsets)
+                        orbMemberOffsets[key] = new JsonObject { ["dx"] = offset.Dx, ["dy"] = offset.Dy };
+
                     var pinnedChatPanels = new JsonObject();
                     foreach (var (key, placement) in _model.PinnedChatPanels)
                     {
@@ -2648,9 +3020,17 @@ namespace Orbweaver
                         ["chatPanelSizes"] = panelSizes,
                         ["orbTurnSounds"] = turnSounds,
                         ["orbSizes"] = orbSizes,
+                        ["orbMemberOffsets"] = orbMemberOffsets,
                         ["accountOrbOverrides"] = accountOverrides,
                         ["pinnedChatPanels"] = pinnedChatPanels,
-                        ["arrangeAnchor"] = arrangeAnchor
+                        ["arrangeAnchor"] = arrangeAnchor,
+                        ["orbGroups"] = _model.Groups.ToJson(),
+                        ["groupOutlinesEnabled"] = _model.GroupOutlinesEnabled,
+                        ["groupNamesVisible"] = _model.GroupNamesVisible,
+                        ["groupOutlineStroke"] = _model.GroupOutlineStroke,
+                        ["groupOutlineStrokeOpacity"] = _model.GroupOutlineStrokeOpacity,
+                        ["groupOutlineFill"] = _model.GroupOutlineFill,
+                        ["groupOutlineFillOpacity"] = _model.GroupOutlineFillOpacity
                     };
 
                     // Keys this build doesn't understand, put back exactly as they

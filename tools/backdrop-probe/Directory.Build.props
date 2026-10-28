@@ -1,0 +1,10 @@
+<Project>
+  <!-- The app's obj/ sits at the repo root and the SDK would otherwise walk up
+       into it, generating a second set of assembly attributes and failing the
+       build with duplicates. Keeping this project's intermediates to itself is
+       enough to keep the two apart. -->
+  <PropertyGroup>
+    <EnableDefaultItems>true</EnableDefaultItems>
+    <BaseIntermediateOutputPath>obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>
