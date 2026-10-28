@@ -391,6 +391,10 @@ public class GroupOutlineTests
     // to its precision — if Iterations were cut, the scale would stop being
     // tight to a hundred-thousandth, which this notices, and cutting the work
     // is the only way the fit gets faster.
+    // Informational, not asserted: measured 2026-10-27 on one Mac in Release, a
+    // 30-disc heart takes about 1.1 ms per Silhouette call and a star about 0.45 ms.
+    // The work per call is exactly Iterations (24) Encloses evaluations, each
+    // stopping at the first disc that fails, so the bound is structural.
     [Fact]
     public void TheScaleIsFoundToWithinAHundredThousandth()
     {
