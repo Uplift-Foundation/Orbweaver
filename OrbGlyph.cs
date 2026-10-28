@@ -84,6 +84,21 @@ namespace Orbweaver
             return first.ToUpperInvariant() + second.ToLowerInvariant();
         }
 
+        // CB-287: a user-chosen override, used verbatim — trimmed and cut to
+        // the first one or two *text elements*, case untouched. Not For(): that
+        // derives letters from a word, and an override is the letters. Text
+        // elements rather than chars so a family emoji (seven code units), a
+        // flag (two) or a letter plus combining accent counts as one.
+        public static string Clip(string? text, bool twoLetter)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+
+            var e = System.Globalization.StringInfo.GetTextElementEnumerator(text.Trim());
+            var sb = new System.Text.StringBuilder();
+            for (var n = 0; n < (twoLetter ? 2 : 1) && e.MoveNext(); n++) sb.Append(e.GetTextElement());
+            return sb.ToString();
+        }
+
         // First letters of the first two words: "Ada Lovelace" gives AL, and a
         // single-word name gives its first two characters rather than one, which
         // fills a 68pt circle better and still reads as a monogram.
