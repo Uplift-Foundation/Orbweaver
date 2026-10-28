@@ -96,8 +96,8 @@ public class OrbWindowDragSnapTests
 
     private sealed class HostScope : IDisposable
     {
-        public HostScope(IOrbDragHost host) => OrbWindow.DragHost = host;
-        public void Dispose() => OrbWindow.DragHost = null;
+        public HostScope(IOrbDragHost host) => OrbDragHost.Current = host;
+        public void Dispose() => OrbDragHost.Current = null;
     }
 
     // A team (lead + member + nested member) in main, and a lone orb in a user
@@ -186,6 +186,7 @@ public class OrbWindowDragSnapTests
         Assert.Equal(new PixelPoint(185, 175), roster.Windows[nested].Position);
         Assert.Equal(new PixelPoint(625, 115), roster.Windows[other].Position);
         Assert.Equal(new[] { (OrbGroups.Main, 25, 15) }, roster.Shifts);
+        Assert.Equal(1, roster.Reapplied);
         Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + member));
     }
 
@@ -222,7 +223,7 @@ public class OrbWindowDragSnapTests
 
         var (arranged, lead2, _, _, _, _) = TeamScene();
         arranged.IsArranged = true;
-        OrbWindow.DragHost = arranged;
+        OrbDragHost.Current = arranged;
         Drag(arranged.Windows[lead2], 10, 10);
         Assert.False(arranged.Windows[lead2].IsPinned);
     }
@@ -231,12 +232,21 @@ public class OrbWindowDragSnapTests
     public void WithoutAHostADragStillMovesTheOrbItself()
     {
         var w = new OrbWindow("solo-" + Uid()) { Position = new PixelPoint(50, 50) };
-        OrbWindow.DragHost = null;
+        OrbDragHost.Current = null;
 
         Drag(w, 30, 40);
 
         Assert.Equal(new PixelPoint(80, 90), w.Position);
         Assert.True(w.IsPinned);
+    }
+
+    [AvaloniaFact]
+    public void UnitsPerDipIsMeasuredFromPointToScreenNotFromRenderScaling()
+    {
+        var w = new OrbWindow("units-" + Uid());
+
+        // Headless PointToScreen is 1:1, so one unit per DIP.
+        Assert.Equal(1.0, OrbWindow.UnitsPerDip(w), 6);
     }
 
     // --- the backdrop's entry point ---
@@ -277,6 +287,7 @@ public class OrbWindowDragSnapTests
         // Not in the group: stays put.
         Assert.Equal(new PixelPoint(600, 100), roster.Windows[other].Position);
         Assert.Equal(new[] { (OrbGroups.Main, 30, 0) }, roster.Shifts);
+        Assert.Equal(1, roster.Reapplied);
     }
 
     [AvaloniaFact]
@@ -292,7 +303,7 @@ public class OrbWindowDragSnapTests
         using (new HostScope(roster))
             OrbWindow.BeginBackdropDrag("g-nobody", Press(), backdrop);
 
-        OrbWindow.DragHost = null;
+        OrbDragHost.Current = null;
         OrbWindow.BeginBackdropDrag(OrbGroups.Main, Press(), backdrop);
         Assert.Empty(roster.Shifts);
 

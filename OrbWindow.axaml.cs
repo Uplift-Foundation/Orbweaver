@@ -2501,14 +2501,12 @@ namespace Orbweaver
         // an orb that joins the team while you are moving it should not jump.
         private OrbDragSession? _session;
 
-        // The seam between a drag and SessionManager; replaceable so a test can
-        // drive a real OrbWindow against a fake roster.
-        private static IOrbDragHost? _dragHost;
-        internal static IOrbDragHost? DragHost
-        {
-            get => _dragHost ?? SessionManager.Instance as IOrbDragHost;
-            set => _dragHost = value;
-        }
+        // How many PointToScreen units one DIP spans, measured rather than read
+        // off RenderScaling: on macOS PointToScreen is already in points, so
+        // RenderScaling (2 on a Retina Mac) would double the drag threshold.
+        // 1 on macOS, the display scaling on Windows. See LinkWindow.Apply.
+        internal static double UnitsPerDip(Visual visual) =>
+            (visual.PointToScreen(new Point(64, 0)).X - visual.PointToScreen(new Point(0, 0)).X) / 64.0;
 
         // The entry point a group backdrop calls (GroupBackdrops.BackdropPressed):
         // dragging empty space inside a group's shape moves the whole group. The
@@ -2521,10 +2519,10 @@ namespace Orbweaver
             string groupId, PointerPressedEventArgs e, Window source)
         {
             if (!e.GetCurrentPoint(source).Properties.IsLeftButtonPressed) return;
-            if (DragHost is not { } host || host.OrbIdsInGroup(groupId).FirstOrDefault() is not { } first)
+            if (OrbDragHost.Current is not { } host || host.OrbIdsInGroup(groupId).FirstOrDefault() is not { } first)
                 return;
 
-            var session = new OrbDragSession(host, first, DragSource.Backdrop, false, source.DesktopScaling);
+            var session = new OrbDragSession(host, first, DragSource.Backdrop, false, UnitsPerDip(source));
             var start = source.PointToScreen(e.GetPosition(source));
             var dragging = false;
             e.Pointer.Capture(source);
@@ -2533,7 +2531,7 @@ namespace Orbweaver
             {
                 var now = source.PointToScreen(m.GetPosition(source));
                 int dx = now.X - start.X, dy = now.Y - start.Y;
-                if (!dragging && !DragPlan.Exceeded(dx, dy, source.DesktopScaling)) return;
+                if (!dragging && !DragPlan.Exceeded(dx, dy, UnitsPerDip(source))) return;
                 dragging = true;
                 session.Move(dx, dy);
             }
@@ -2580,10 +2578,10 @@ namespace Orbweaver
                 _windowStart = Position;
                 _pointerStart = this.PointToScreen(e.GetPosition(this));
 
-                _session = DragHost is { } host
+                _session = OrbDragHost.Current is { } host
                     ? new OrbDragSession(
                         host, SessionId, DragSource.Orb,
-                        e.KeyModifiers.HasFlag(KeyModifiers.Shift), DesktopScaling)
+                        e.KeyModifiers.HasFlag(KeyModifiers.Shift), UnitsPerDip(this))
                     : null;
 
                 e.Pointer.Capture(this);
@@ -2602,7 +2600,7 @@ namespace Orbweaver
             var dx = current.X - _pointerStart.X;
             var dy = current.Y - _pointerStart.Y;
 
-            if (!_dragging && !DragPlan.Exceeded(dx, dy, DesktopScaling)) return;
+            if (!_dragging && !DragPlan.Exceeded(dx, dy, UnitsPerDip(this))) return;
 
             // Only on the transition into dragging, not every move after —
             // a flyout animating toward a stale position underneath a moving

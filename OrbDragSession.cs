@@ -24,11 +24,11 @@ namespace Orbweaver
         // on press: membership can change mid-drag, and an orb that joins the
         // team while you are moving it should not jump.
         internal OrbDragSession(
-            IOrbDragHost host, string pressedId, DragSource source, bool shift, double scaling)
+            IOrbDragHost host, string pressedId, DragSource source, bool shift, double unitsPerDip)
         {
             _host = host;
             _anchorId = pressedId;
-            _scaling = scaling;
+            _scaling = unitsPerDip;
 
             var team = host.TeamIdsOf(pressedId);
             var group = host.OrbIdsInGroup(host.GroupIdOf(pressedId));

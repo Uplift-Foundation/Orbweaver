@@ -13,14 +13,18 @@ namespace Orbweaver
         /// <summary>
         /// How far, in DIP, a pressed pointer must travel before the press is a
         /// drag rather than a click. It used to be an inline 6 compared against
-        /// physical pixels, which made it half the distance on a 2x display.
+        /// screen units, which is half the distance on a Windows display at 200%.
         /// </summary>
         internal const double ThresholdDip = 6;
 
-        /// <summary>True once the pointer has moved far enough to be a drag.</summary>
-        internal static bool Exceeded(double dxPx, double dyPx, double scaling)
+        /// <summary>
+        /// True once the pointer has moved far enough to be a drag. (dx, dy) are
+        /// PointToScreen deltas and <paramref name="unitsPerDip"/> is the measured
+        /// number of those units in one DIP (<see cref="OrbWindow.UnitsPerDip"/>).
+        /// </summary>
+        internal static bool Exceeded(double dxPx, double dyPx, double unitsPerDip)
         {
-            var s = scaling > 0 ? scaling : 1;
+            var s = unitsPerDip > 0 ? unitsPerDip : 1;
             return Math.Abs(dxPx) / s >= ThresholdDip || Math.Abs(dyPx) / s >= ThresholdDip;
         }
 

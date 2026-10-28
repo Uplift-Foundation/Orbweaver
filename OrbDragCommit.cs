@@ -40,15 +40,22 @@ namespace Orbweaver
         void ReapplyArrangement();
     }
 
+    // Where the drag handlers find the roster. Null until SessionManager sets it
+    // (S7), and OrbWindow keeps today's drag behaviour while it is.
+    internal static class OrbDragHost
+    {
+        internal static IOrbDragHost? Current { get; set; }
+    }
+
     // CB-268: what a drag does to groups, as plain calls. OrbWindow's handlers
     // only gather what the pointer did and hand it here.
     internal static class OrbDragCommit
     {
         // During the move: the outcome if the user let go now, with the target
         // group highlighted (and nothing highlighted for any other outcome).
-        internal static SnapOutcome Preview(IOrbDragHost host, string pressedId, double scaling)
+        internal static SnapOutcome Preview(IOrbDragHost host, string pressedId, double unitsPerDip)
         {
-            var outcome = Decide(host, pressedId, scaling);
+            var outcome = Decide(host, pressedId, unitsPerDip);
             host.HighlightGroup(outcome is SnapOutcome.Join join ? join.GroupId : null);
             return outcome;
         }
@@ -65,17 +72,22 @@ namespace Orbweaver
         // was dropped inside its own group's shape would otherwise stay wherever
         // the pointer left it.
         internal static SnapOutcome Release(
-            IOrbDragHost host, string pressedId, bool wholeGroup, int dx, int dy, double scaling)
+            IOrbDragHost host, string pressedId, bool wholeGroup, int dx, int dy, double unitsPerDip)
         {
             host.HighlightGroup(null);
 
             if (wholeGroup)
             {
-                if (host.IsArranged) host.ShiftGroupAnchor(host.GroupIdOf(pressedId), dx, dy);
+                if (host.IsArranged)
+                {
+                    host.ShiftGroupAnchor(host.GroupIdOf(pressedId), dx, dy);
+                    host.ReapplyArrangement();
+                }
+
                 return new SnapOutcome.NoChange();
             }
 
-            var outcome = Decide(host, pressedId, scaling);
+            var outcome = Decide(host, pressedId, unitsPerDip);
             var team = host.TeamIdsOf(pressedId);
             var keys = team.Select(host.PositionKeyOf).ToList();
 
@@ -100,9 +112,9 @@ namespace Orbweaver
             return outcome;
         }
 
-        private static SnapOutcome Decide(IOrbDragHost host, string pressedId, double scaling)
+        private static SnapOutcome Decide(IOrbDragHost host, string pressedId, double unitsPerDip)
         {
-            var s = scaling > 0 ? scaling : 1;
+            var s = unitsPerDip > 0 ? unitsPerDip : 1;
             var team = host.TeamIdsOf(pressedId);
             var moving = team
                 .Select(host.DiscOf)

@@ -183,7 +183,7 @@ public class OrbDragCommitTests
         Assert.IsType<SnapOutcome.NoChange>(outcome);
         Assert.Equal(new[] { ("g-src", 12, -7) }, host.Shifts);
         Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + orb));
-        Assert.Equal(0, host.Reapplied);
+        Assert.Equal(1, host.Reapplied);
     }
 
     [Fact]
@@ -195,5 +195,6 @@ public class OrbDragCommitTests
         OrbDragCommit.Release(host, orb, true, 12, -7, 1);
 
         Assert.Empty(host.Shifts);
+        Assert.Equal(0, host.Reapplied);
     }
 }
