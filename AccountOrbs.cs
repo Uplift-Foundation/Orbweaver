@@ -91,7 +91,16 @@ namespace Orbweaver
 
         // Redraws every orb and open card now, from the readings already held,
         // so a changed override shows without waiting five minutes for a poll.
-        internal void RefreshLooks() => Redraw(DateTimeOffset.UtcNow);
+        internal void RefreshLooks()
+        {
+            RefreshedOnThreadForTests?.Invoke(Environment.CurrentManagedThreadId);
+            Redraw(DateTimeOffset.UtcNow);
+        }
+
+        // Which managed thread each redraw ran on, so a test can assert the
+        // thing that matters (never a pool thread) without depending on when
+        // the dispatcher happens to pump a posted job.
+        internal Action<int>? RefreshedOnThreadForTests { get; set; }
 
         // Opens the editor for one account. Replaceable so a headless test can
         // see the request without constructing a window.

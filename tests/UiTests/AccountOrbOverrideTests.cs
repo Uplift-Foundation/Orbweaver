@@ -307,16 +307,37 @@ public class AccountOrbOverrideTests : IDisposable
         orbs.Apply(new[] { Usage(null, "wt") }, Now);
         var orb = orbs.Orbs[string.Empty];
 
+        var uiThread = Environment.CurrentManagedThreadId;
+        var ranOn = new System.Collections.Concurrent.ConcurrentQueue<int>();
+        orbs.RefreshedOnThreadForTests = ranOn.Enqueue;
+
         try
         {
+            // On-thread control: redraws inline, on this thread.
             AccountOrbCustomization.SetInitials("account:~", "Aa");
-            Assert.Equal("Aa", orb.GlyphText); // on-thread control: inline
+            Assert.Equal("Aa", orb.GlyphText);
+            Assert.Equal(new[] { uiThread }, ranOn.ToArray());
 
-            System.Threading.Tasks.Task.Run(() => AccountOrbCustomization.SetInitials("account:~", "Bb")).GetAwaiter().GetResult();
-            Assert.Equal("Aa", orb.GlyphText); // not redrawn from the pool thread
-
+            // From a pool thread: whenever the dispatcher pumps it, the redraw
+            // must run on the UI thread and never on the writer's.
+            //
+            // A dedicated thread, not Task.Run(...).GetResult(): waiting on a
+            // task that has not started yet lets the waiter run it inline, so
+            // the "pool" write sometimes happened on the UI thread itself —
+            // the flake QA measured at 5 failures in 7 runs.
+            var writer = 0;
+            var thread = new System.Threading.Thread(() =>
+            {
+                writer = Environment.CurrentManagedThreadId;
+                AccountOrbCustomization.SetInitials("account:~", "Bb");
+            });
+            thread.Start();
+            thread.Join();
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            Assert.NotEqual(uiThread, writer);
             Assert.Equal("Bb", orb.GlyphText);
+            Assert.Equal(new[] { uiThread, uiThread }, ranOn.ToArray());
         }
         finally { AccountOrbCustomization.Reset("account:~"); }
     }
