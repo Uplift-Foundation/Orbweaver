@@ -246,6 +246,120 @@ Decisions settled during S5 (Celeste):
 
 The window ordering and the hit-test mechanism follow `docs/cb268-backdrop-spike.md` (S0).
 
+## Free mode (F1–F6, final, Warren 2026-10-27)
+
+Hands-on with `71b55c6e` found that groups did nothing while orbs were free-floating, which is the default, because only an arrangement laid them out. Warren's decision: **user groups (`g-…`) are always live.** This section fixes how each stream does that. T1–T7 are unchanged in both modes (F5). "Free mode" means `!IsArranged`.
+
+### Who is laid out, when
+
+| | free mode | arranged mode |
+| --- | --- | --- |
+| user groups (`g-…`) | laid out at their anchors, with backdrops | the same, untouched by arranging |
+| `main`, `heartbeats`, `crons` | not groups: their orbs float, stack or pin as today | laid out as today |
+
+User groups are laid out by **their own `ComputeGroups` call**, before anything else. Arranging or un-arranging never feeds them into another call, so it cannot move them (F4). When arranged, the predefined groups get a **second call** with the user groups' boxes as obstacles.
+
+- **Free mode**
+  1. `ReflowPositions` stacks and pins the loose orbs (every orb whose root is not in a user group) exactly as today. Grouped orbs are taken out of it, out of the stack and out of free pinning (F2).
+  2. `ComputeGroups` runs with only the user groups' orbs, and with **obstacles** = the window rect of every loose orb, stacked or pinned (F2: never overlap the stack column or a pinned orb).
+- **Arranged mode**
+  1. The same user-groups call, with no obstacles. The stack column does not exist while arranged.
+  2. `ComputeGroups` runs with only the predefined groups' orbs, and obstacles = the user groups' `SlotBounds` from step 1.
+- **Un-arrange** restores `_preArrangeState` only for orbs that are not in a user group. User-group orbs stay where their group is (F4).
+- **CB-211 per group, both modes:** every placed group's `Landed` is saved when it differs from what was asked. A user group pushed off the stack column keeps that spot; it does not ratchet back.
+
+### S2 — `ComputeGroups` and `SeparateGroups` gain obstacles (hana-moriyama)
+
+```csharp
+internal static (PixelRect[] Boxes, bool Separated) SeparateGroups(
+    IReadOnlyList<PixelRect> boxes, PixelRect work, int gap,
+    IReadOnlyList<PixelRect>? obstacles = null);
+
+internal static (PixelPoint[] Positions, GroupPlacement[] Groups) ComputeGroups(
+    int count, int[] leadOf, int[] groupOf, IReadOnlyList<GroupLayout> groups, Layout layout,
+    double[]? sizeOf = null, IReadOnlyList<PixelRect>? obstacles = null);
+```
+
+- **Obstacles are fixed.** They never move, they rank above box 0, and every box is pushed at least `gap` clear of each one, then slid back into `work`. `Separated` covers box↔obstacle pairs as well as box↔box. Units are screen units, like the boxes.
+- **A partial call keeps the full group table.** The caller passes the whole table as `groups`, so slot indices stay stable, and passes only the orbs being laid out in `count`, `leadOf`, `groupOf` and `sizeOf` (indices local to that subset). Slots with no orbs in the call produce no placement, as today.
+- **With obstacles, there is no Bands+Compact fallback.** When groups cannot be separated, each one stays at its best-effort `SeparateGroups` position, with overlap tolerated, and the `out GroupPath` overload reports `Fallback`. Rebanding would throw user groups across the screen (F4), and a group stuck in a corner is better than one teleported.
+- The predefined groups' first draw (no anchors) keeps its band-centre rule; the band is computed over the work area as today.
+- Sweep (F6): stack-column obstacles, meaning a right-edge column of 1–30 slots, plus a few pinned rects, crossed with user groups at colliding and off-screen anchors.
+  - Invariants: no box overlaps an obstacle (when `Separated`); obstacles are never moved; deterministic; re-feeding `Landed` reproduces.
+
+### S4 — snapping in free mode (juno-abernathy)
+
+```csharp
+internal abstract record SnapOutcome
+{
+    internal sealed record NoChange : SnapOutcome;
+    internal sealed record Join(string GroupId) : SnapOutcome;
+    internal sealed record Leave : SnapOutcome;                      // arranged mode only: becomes a one-team group
+    internal sealed record Pair(string RootId) : SnapOutcome;        // free mode: loose onto loose → new group of both teams
+    internal sealed record LeaveToFree : SnapOutcome;                // free mode: out of a user group → loose, dropped in place
+}
+
+// A loose team in free mode: its root and every disc of the team.
+internal readonly record struct LooseCandidate(string RootId, IReadOnlyList<(double X, double Y, double R)> Discs);
+
+SnapOutcome OrbSnap.Decide(
+    IReadOnlyList<(double X, double Y, double R)> team, string currentGroupId,
+    IReadOnlyList<SnapCandidate> candidates, bool free,
+    IReadOnlyList<LooseCandidate>? loose = null,
+    double joinDip = 24, double leaveDip = 72);   // the existing overloads remain, as free: false
+```
+
+- **Arranged mode (`free: false`):** exactly today's rules. `loose` is ignored.
+- **Free mode:**
+  - **Candidates** are user groups only (`main` is never one, F3), plus `loose`, each loose team counted as one target. Gaps are measured as today: the dragged team's edge to the group's outline or discs, or to the loose team's discs.
+  - **Precedence:** the nearest target within `joinDip` wins. A group gives `Join(id)`. A loose team gives `Pair(rootId)`, but **only when the dragged team is itself loose** (`currentGroupId == main`). Ties go to the ordinal-smallest id; a group id ties against a root id by ordinal string compare too.
+  - **`LeaveToFree`:** no target applies, the dragged team is in a user group, and every team disc is more than `leaveDip` from every other disc of that group, edge to edge.
+  - **`NoChange`:** otherwise. That includes a loose team dropped near nothing, which is pinned where it lands, as today.
+- **`DragPlan.Followers`:** in free mode, an orb in `main` has no group to move, so **Shift on a loose orb is a plain team drag**: `(false, teamIds)`. Shift on a grouped orb, or a backdrop drag, moves the whole user group as today.
+- **`OrbDragCommit.Release`** has no `IsArranged` gates any more. Every outcome ends with `host.ReapplyArrangement()`, which now re-lays whatever the current mode lays out (see S7).
+  - **Join:** `AssignTeamToGroup(rootKey, memberKeys, id)`.
+  - **Pair(rootId):** `CreateOrbGroup()`. Then `AssignTeamToGroup` for the dragged team and again for the target team. Then `SetOrbGroupAnchor(new, midpoint)`, where the midpoint is between the two teams' disc centroids in screen units, rounded.
+  - **LeaveToFree:** `UnassignOrbGroup(key)` for every team key, so the team is loose again, and it floats where it was dropped.
+  - **Leave (arranged):** unchanged; it becomes a new one-team group at the drop point.
+  - **Whole-group drag:** `ShiftGroupAnchor(groupId, dx, dy)` in both modes, for a user group. A predefined group is only dragged as a whole while arranged.
+- **`OrbDragSession.End`** pins only what ends up loose. In free mode that means a `NoChange` on a loose team, and `LeaveToFree`. A grouped team is never pinned (F2); its group's layout holds it.
+- **Preview:**
+  - `Join` → `host.HighlightGroup(id)`, as today.
+  - `Pair` → `host.PreviewPair(draggedTeamIds, targetRootId)`.
+  - Anything else → `host.HighlightGroup(null)` and `host.PreviewPair(null, null)`.
+
+### S5 — backdrops (celeste-ngata)
+
+- **Visibility rule, per group:** a backdrop exists for a group exactly when that group is laid out (see "Who is laid out, when").
+  - User groups: always, in both modes, while they have a visible orb.
+  - `main`, `heartbeats` and `crons`: only while arranged.
+  - `Update` already does this if it is handed only those groups, so SessionManager hands it exactly that set. `GroupBackdrops` needs no mode of its own.
+- **New: `GroupBackdrops.PreviewPair(IReadOnlyList<OrbWindow>? orbs)`.** It draws a provisional, highlighted circle outline (`GroupOutline` of the discs, the one-shape case) around both teams while a Pair is the outcome. Null clears it.
+  - It is not a group: it is not hit-tested, it is not in `OutlineOf`, and it goes away on release.
+  - This is the Pair half of F1's "snap highlight".
+- **Screenshot (F6):** one free-mode user group (heart, three orbs) beside a loose stack column of four orbs, with outlines on. The group must not overlap the column.
+
+### S7 — SessionManager (architect)
+
+- **`ReflowPositions` (free mode)** skips every orb whose root is in a user group, both from the stack and from the pinned set. It then lays out the user groups, with obstacles = the loose orbs' window rects after the reflow.
+- **Arranged mode:** `ComputeClusteredPositions` runs the two calls described above, user groups first.
+- **Un-arrange:** restore and unpin only orbs that are not in a user group.
+- **`ReapplyArrangement()`** re-lays what the current mode lays out, in both modes. It used to return early when not arranged; it now lays out the user groups then.
+- **`IOrbDragHost` additions:**
+
+```csharp
+// Free mode: every loose team (root not in a user group) outside excludedIds, with its discs.
+// Empty while arranged.
+IReadOnlyList<LooseCandidate> LooseCandidatesFor(IReadOnlyCollection<string> excludedIds);
+
+// The provisional pair outline: the dragged team plus the target root's team. Both null clears it.
+void PreviewPair(IReadOnlyList<string>? draggedTeamIds, string? targetRootId);
+```
+
+- **`CandidatesFor`** in free mode returns user groups only; arranged mode returns every group, as today. "Free" is `!IsArranged`, so no new flag is needed.
+- **Obstacle rects:** each loose orb's window, `Position` to `Position + OrbPixels`, in screen units.
+- **Tests (F6):** UI drags in free mode (Pair, Join, LeaveToFree, NoChange-then-pin), reflow excluding grouped orbs, F4 (arrange/un-arrange leaves a user group's orbs and anchor unchanged), and obstacles honoured against the real stack column.
+
 ## S7 — integration (architect)
 
 What calls what, as built.
