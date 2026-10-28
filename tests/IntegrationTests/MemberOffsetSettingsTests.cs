@@ -208,7 +208,9 @@ public class MemberOffsetSettingsTests
     [InlineData(double.NaN, 1.0)]
     [InlineData(1.0, double.PositiveInfinity)]
     [InlineData(double.NegativeInfinity, 0.0)]
-    public void ANonFiniteOffsetIsIgnoredAndNeverReachesTheFile(double dx, double dy)
+    [InlineData(1e20, 0.0)]
+    [InlineData(0.0, -100001.0)]
+    public void ANonFiniteOrAbsurdOffsetIsIgnoredAndNeverReachesTheFile(double dx, double dy)
     {
         var dir = Stage();
         OrbweaverSettings.SetOrbMemberOffset("m", (2.0, 3.0));
@@ -220,12 +222,14 @@ public class MemberOffsetSettingsTests
     }
 
     [Fact]
-    public void ANonFiniteOffsetInTheFileIsDroppedOnLoad()
+    public void NonFiniteAndAbsurdOffsetsInTheFileAreDroppedOnLoad()
     {
         // JSON has no NaN, but a huge exponent parses to infinity in a double.
-        Stage("""{ "orbMemberOffsets": { "m": { "dx": 1e999, "dy": 1 }, "ok": { "dx": 1.5, "dy": 2 } } }""");
+        Stage("""{ "orbMemberOffsets": { "m": { "dx": 1e999, "dy": 1 }, "big": { "dx": 1e20, "dy": -1e20 }, "edge": { "dx": 100000, "dy": -100000 }, "ok": { "dx": 1.5, "dy": 2 } } }""");
 
         Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("m"));
+        Assert.Null(OrbweaverSettings.OrbMemberOffsetFor("big"));
+        Assert.Equal(((double, double)?)(100000.0, -100000.0), OrbweaverSettings.OrbMemberOffsetFor("edge"));
         Assert.Equal(((double, double)?)(1.5, 2.0), OrbweaverSettings.OrbMemberOffsetFor("ok"));
     }
 }

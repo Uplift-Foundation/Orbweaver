@@ -1098,7 +1098,7 @@ namespace Orbweaver
         public static void SetOrbMemberOffset(string? soundKey, (double Dx, double Dy)? offset)
         {
             if (string.IsNullOrEmpty(soundKey)) return;
-            if (offset is { } o && (!double.IsFinite(o.Dx) || !double.IsFinite(o.Dy))) return;
+            if (offset is { } o && !(SaneOffset(o.Dx) && SaneOffset(o.Dy))) return;
 
             Load();
             lock (Gate)
@@ -1117,6 +1117,15 @@ namespace Orbweaver
 
             Save();
         }
+
+        // No display is a hundred thousand DIP across, so anything beyond that is a
+        // corrupt or hand-edited value, not a place a member was dragged to. Dropped
+        // rather than clamped: a clamped garbage value would still put the member
+        // somewhere nobody chose. Also rejects NaN and infinity.
+        internal const double MaxOffsetDip = 100_000;
+
+        internal static bool SaneOffset(double value) =>
+            double.IsFinite(value) && Math.Abs(value) <= MaxOffsetDip;
 
         // Called when an orb's SoundKey changes (CB-10: an untitled session is keyed
         // by its id until a title arrives). Copied, never moved and never over an
@@ -2515,7 +2524,7 @@ namespace Orbweaver
                             var dx = Number(entry["dx"]);
                             var dy = Number(entry["dy"]);
                             if (dx is null || dy is null) continue;
-                            if (!double.IsFinite(dx.Value) || !double.IsFinite(dy.Value)) continue;
+                            if (!SaneOffset(dx.Value) || !SaneOffset(dy.Value)) continue;
 
                             model.OrbMemberOffsets[key] = new MemberOffset(dx.Value, dy.Value);
                         }
