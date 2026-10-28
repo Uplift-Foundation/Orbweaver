@@ -232,7 +232,7 @@ namespace Orbweaver
         {
             if (e.Property != TextBox.TextProperty) return;
 
-            OrbweaverSettings.RenameOrbGroup(GroupId, NameBox.Text);
+            OrbweaverSettings.RenameOrbGroup(GroupId, NameBox.Text, defer: true);
             SessionManager.Instance?.ReapplyGroupStyles();
         }
 

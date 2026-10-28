@@ -30,4 +30,23 @@ public class GroupStyleWindowQaTests
         onDisk = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
         Assert.Equal(0.9, onDisk["orbGroups"]!["groups"]![group.Id]!["style"]!["strokeOpacity"]!.GetValue<double>(), 3);
     }
+
+    [AvaloniaFact]
+    public void TypingAGroupNameDefersTheFileWriteUntilAFlush()
+    {
+        using var scope = new ScopedSettingsDir("group-name-defer");
+        var group = OrbweaverSettings.CreateOrbGroup("circle");
+        var window = new GroupStyleWindow(group.Id, focusName: true);
+        var path = Path.Combine(scope.Dir, "settings.json");
+
+        window.NameBox.Text = "Reviewers";
+
+        Assert.Equal("Reviewers", OrbweaverSettings.OrbGroupFor(group.Id)!.Name);
+        var onDisk = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
+        Assert.NotEqual("Reviewers", onDisk["orbGroups"]!["groups"]![group.Id]!["name"]!.GetValue<string>());
+
+        OrbweaverSettings.FlushPendingSave();
+        onDisk = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
+        Assert.Equal("Reviewers", onDisk["orbGroups"]!["groups"]![group.Id]!["name"]!.GetValue<string>());
+    }
 }

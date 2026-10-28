@@ -1627,8 +1627,10 @@ namespace Orbweaver
             return made;
         }
 
-        public static void RenameOrbGroup(string id, string? name) =>
-            ChangeGroups(groups => groups.Rename(id, name));
+        // `defer` for a name typed into a box, which changes on every keystroke
+        // (GroupStyleWindow); a one-off rename leaves it false.
+        public static void RenameOrbGroup(string id, string? name, bool defer = false) =>
+            ChangeGroups(groups => groups.Rename(id, name), defer);
 
         public static void SetOrbGroupShape(string id, string? shape) =>
             ChangeGroups(groups => groups.SetShape(id, shape));
