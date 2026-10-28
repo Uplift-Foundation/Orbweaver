@@ -20,6 +20,7 @@ public class GroupBackdropsMotionTests : IDisposable
     {
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
+        GroupBackdrops.SetNamesVisible(false);
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.SetArranged(true);
         GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
@@ -36,6 +37,7 @@ public class GroupBackdropsMotionTests : IDisposable
     {
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
+        GroupBackdrops.SetNamesVisible(false);
         GroupBackdrops.SetOutlinesVisible(true);
         GroupBackdrops.PreviewPair(null);
         GroupBackdrops.Highlight(null);
@@ -301,6 +303,42 @@ public class GroupBackdropsMotionTests : IDisposable
         GroupBackdrops.Refresh();
 
         Assert.False(GroupBackdrops.PreviewState!.Value.Morphing);        // the preview jumps with the drag
+    }
+
+    // ---- the caption rides the morph (CB-282) -----------------------------------------
+
+    [AvaloniaFact]
+    public void TheGroupNameCaptionRidesTheInterpolatedOutlineAndLandsOnTheFinalOne()
+    {
+        GroupBackdrops.SetNamesVisible(true);
+        var (orbs, joiner) = Joining();
+        var gap = GroupCaption.GapDip;
+
+        orbs.Add(joiner);
+        GroupBackdrops.Update(new[] { Spec("g-m", orbs) });
+
+        foreach (var t in new[] { 0.04, 0.1, 0.2 })
+        {
+            At(t);
+            var window = GroupBackdrops.WindowOf("g-m")!;
+            var drawn = GroupOutline.Bounds(GroupBackdrops.DisplayedOutlineOf("g-m"));
+            var caption = GroupBackdrops.CaptionOf("g-m")!.Value;
+            var origin = GroupBackdrops.StateOf("g-m")!.Value.Position;
+
+            // Centred over the drawn outline's bounds and just above its top, in the
+            // window's own DIP.
+            Assert.Equal(drawn.Center.X - origin.X, caption.Rect.Center.X, 1);
+            Assert.Equal(drawn.Top - origin.Y - gap, caption.Rect.Bottom, 1);
+            Assert.True(caption.Rect.Top >= 0, "the caption stays inside the window while it moves");
+        }
+
+        At(BackdropMotion.MorphSeconds + 0.01);
+        var final = GroupOutline.Bounds(GroupBackdrops.OutlineOf("g-m"));
+        var end = GroupBackdrops.CaptionOf("g-m")!.Value;
+        var pos = GroupBackdrops.StateOf("g-m")!.Value.Position;
+
+        Assert.Equal(final.Center.X - pos.X, end.Rect.Center.X, 1);
+        Assert.Equal(final.Top - pos.Y - gap, end.Rect.Bottom, 1);
     }
 
     // ---- breathing ---------------------------------------------------------------------------------

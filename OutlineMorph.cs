@@ -115,19 +115,21 @@ namespace Orbweaver
             return Math.Abs(a) / 2;
         }
 
-        // Spring progress at `elapsed` seconds: a damped spring from 0 toward 1,
-        // closed form, so any clock can ask for any instant. `damping` below 1
-        // overshoots and wobbles (a leave); near 1 it swells and settles (a join).
-        internal static double SpringProgress(double elapsed, double omega, double damping)
-        {
-            if (elapsed <= 0) return 0;
+        // Spring progress at `elapsed` seconds: Spring.Step (juno's closed-form damped
+        // oscillator) from 0 toward 1, evaluated in one step from rest so any clock can
+        // ask for any instant and a dropped frame changes nothing. `damping` below 1
+        // overshoots and wobbles (a leave); near 1 it swells and settles (a join). Once
+        // within its rest thresholds the spring reports exactly 1.
+        internal static double SpringProgress(double elapsed, double omega, double damping) =>
+            Spring.Step(default, 1, elapsed, Params(omega, damping)).Value;
 
-            var z = Math.Clamp(damping, 0.05, 0.999);
-            var wd = omega * Math.Sqrt(1 - z * z);
-            var decay = Math.Exp(-z * omega * elapsed);
+        // Whether that spring has landed exactly on 1 and stopped.
+        internal static bool AtRest(double elapsed, double omega, double damping) =>
+            Spring.AtRest(Spring.Step(default, 1, elapsed, Params(omega, damping)), 1);
 
-            return 1 - decay * (Math.Cos(wd * elapsed) + z * omega / wd * Math.Sin(wd * elapsed));
-        }
+        // Progress is a fraction of the way, so rest is measured in thousandths of it,
+        // not Spring's default of 0.05 (which suits pixels, not a 0..1 ratio).
+        private static SpringParams Params(double omega, double damping) => new(omega, damping, 0.002, 0.05);
 
         // The breathing scale of a highlighted target at time `t` seconds: a smooth
         // sweep between BreathMin and BreathMax, starting at the minimum so a

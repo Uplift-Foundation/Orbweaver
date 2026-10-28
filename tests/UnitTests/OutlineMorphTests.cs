@@ -188,10 +188,26 @@ public class OutlineMorphTests
     }
 
     [Fact]
-    public void ADampingOutsideTheValidRangeIsClamped()
+    public void ADampingOutsideTheValidRangeStillGivesAFiniteProgress()
     {
         Assert.True(double.IsFinite(OutlineMorph.SpringProgress(0.1, 30, 5)));
         Assert.True(double.IsFinite(OutlineMorph.SpringProgress(0.1, 30, 0)));
+    }
+
+    // The spring is Spring.Step, so it is the same whether it is asked once or in
+    // many steps, and it lands exactly on 1 rather than a hair short.
+    [Fact]
+    public void TheSpringAgreesWithSpringStepAndLandsExactlyOnOne()
+    {
+        var p = new SpringParams(BackdropMotion.JoinOmega, BackdropMotion.JoinDamping, 0.002, 0.05);
+        var stepped = default(SpringState);
+        for (var i = 0; i < 12; i++) stepped = Spring.Step(stepped, 1, 0.01, p);
+
+        Assert.Equal(stepped.Value, OutlineMorph.SpringProgress(0.12, BackdropMotion.JoinOmega, BackdropMotion.JoinDamping), 9);
+
+        Assert.False(OutlineMorph.AtRest(0.05, BackdropMotion.JoinOmega, BackdropMotion.JoinDamping));
+        Assert.Equal(1.0, OutlineMorph.SpringProgress(2.0, BackdropMotion.JoinOmega, BackdropMotion.JoinDamping));
+        Assert.True(OutlineMorph.AtRest(2.0, BackdropMotion.JoinOmega, BackdropMotion.JoinDamping));
     }
 
     // ---- breathing ------------------------------------------------------------------------------

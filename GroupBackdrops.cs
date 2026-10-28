@@ -742,7 +742,11 @@ namespace Orbweaver
                     var elapsed = now - m.Start;
                     var duration = m.Reduced ? BackdropMotion.ReducedSeconds : BackdropMotion.MorphSeconds;
 
-                    if (elapsed >= duration)
+                    var atRest = !m.Reduced && OutlineMorph.AtRest(elapsed,
+                        m.Growing ? BackdropMotion.JoinOmega : BackdropMotion.LeaveOmega,
+                        m.Growing ? BackdropMotion.JoinDamping : BackdropMotion.LeaveDamping);
+
+                    if (elapsed >= duration || atRest)
                     {
                         // Exactly the target, not a resampled copy of it.
                         _morph = null;
