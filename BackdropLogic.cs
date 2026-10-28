@@ -94,6 +94,36 @@ namespace Orbweaver
 
     internal static class BackdropGeometry
     {
+        // The largest window side a backdrop may have, in screen units. Skia
+        // refuses a render target past its own limit (16384 device pixels on
+        // the Metal and GL backends) and Avalonia turns that refusal into an
+        // abort of the whole process on the next paint, so a box beyond this
+        // is never shown. No real group comes near it: the work area of the
+        // biggest display here is under a third of it.
+        internal const double MaxSide = 8192;
+
+        // Whether a window box can be drawn at all: finite, non-empty, and
+        // within MaxSide on both axes.
+        internal static bool Drawable(Rect box) =>
+            double.IsFinite(box.X) && double.IsFinite(box.Y) &&
+            box.Width >= 1 && box.Height >= 1 &&
+            box.Width <= MaxSide && box.Height <= MaxSide;
+
+        // The window a morph needs: both outlines' boxes, plus room for the
+        // spring's overshoot (15% of the larger side, each way). Takes the two
+        // outline boxes, never a box this returned, so it cannot compound.
+        internal static Rect MorphBox(Rect fromBox, Rect toBox)
+        {
+            var union = fromBox.Union(toBox);
+            return union.Inflate(0.15 * Math.Max(union.Width, union.Height));
+        }
+
+        // Whether a refit is a change of membership or shape — the only thing
+        // the outline springs for — rather than the same orbs having moved.
+        // No previous count means nothing was drawn yet.
+        internal static bool MembershipChanged(int? previousCount, string? previousShape, int count, string shape) =>
+            previousCount is not { } before || before != count || !string.Equals(previousShape, shape, StringComparison.Ordinal);
+
         // Cocoa reports the cursor from the bottom-left of the main display;
         // window positions are from the top-left.
         internal static Point CocoaToTopLeft(double x, double y, double mainDisplayHeight) =>

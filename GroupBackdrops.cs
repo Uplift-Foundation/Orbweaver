@@ -173,7 +173,7 @@ namespace Orbweaver
                 _preview.MakeClickThrough();
             }
 
-            _preview.Fit("preview", GroupOutline.MinimumCircleShape, discs, scale, null, null);
+            if (!_preview.Fit("preview", GroupOutline.MinimumCircleShape, discs, scale, null, null)) return;
             _preview.Restyle(GlobalStyle(), highlighted: true, outlines: true);
             _preview.EnsureShown();
 
@@ -225,7 +225,7 @@ namespace Orbweaver
                     added = true;
                 }
 
-                window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve, _names ? CaptionFor(spec.GroupId) : null);
+                if (!window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve, _names ? CaptionFor(spec.GroupId) : null)) continue;
                 window.SyncHoles(looseDiscs);
                 window.Restyle(StyleFor(spec), spec.GroupId == _highlight, _outlines);
                 window.EnsureShown();
@@ -252,6 +252,11 @@ namespace Orbweaver
         // against this so the padding lives only here.
         internal static Point[] OutlineOf(string groupId) =>
             Active.TryGetValue(groupId, out var w) ? w.Outline() : Array.Empty<Point>();
+
+        // What a group's window is drawing this frame — mid-morph, the in-between
+        // polygon rather than the target OutlineOf gives. For tests.
+        internal static Point[] DisplayedOf(string groupId) =>
+            Active.TryGetValue(groupId, out var w) ? w.Displayed() : Array.Empty<Point>();
 
         // Highlight draws the target at full stroke opacity and twice the width —
         // also when outlines are off, since it is the "you will join this" cue.
@@ -616,7 +621,7 @@ namespace Orbweaver
             // Refits the silhouette — or just moves the window when every disc moved
             // by the same whole amount, or springs from the old outline to the new one
             // when an outline that is already on screen changes.
-            internal void Fit(
+            internal bool Fit(
                 string groupId, string shape, List<(double X, double Y, double R)> discs, double scale,
                 GroupOutline.PlacedCurve? curve, string? caption)
             {
@@ -635,12 +640,12 @@ namespace Orbweaver
                         _captionRect = _captionRect.Translate(new Vector(d.Dx, d.Dy));
                         _captionWindow!.Place(_captionRect, scale);
                     }
-                    return;
+                    return true;
                 }
 
                 var hadOutline = _shown && _local.Length > 0;
                 var shownNow = _morph is not null ? CurrentDisplayed() : (hadOutline ? Absolute(_local) : null);
-                var oldBox = new Rect(_origin.X, _origin.Y, Width * _scale, Height * _scale);
+                var membershipChanged = BackdropGeometry.MembershipChanged(_discs?.Count, _drawnShape, discs.Count, shape);
 
                 _curve = curve;
                 _drawnShape = shape;
@@ -655,18 +660,44 @@ namespace Orbweaver
                 // Windows window region clips what it draws as well as what it hits,
                 // and the caption lies outside the silhouette.
                 var box = BoxFor(outlineBounds, scale);
-                if (BackdropMotion.Enabled && Morphs && _visible && shownNow is not null && !SamePolygon(shownNow, outline))
+
+
+                // A backdrop is never bigger than what it surrounds can need, and a
+                // window past Skia's render-target limit aborts the whole app on its
+                // next paint. Such a box means the inputs are wrong for this frame:
+                // hide the backdrop rather than draw it.
+                if (!BackdropGeometry.Drawable(box))
+                {
+                    Park();
+                    return false;
+                }
+
+                // A morph already on its way to this very outline is left to finish.
+                // Every Refresh lands here — each drag frame, each scan — and
+                // restarting the spring from wherever it had got to, toward the same
+                // target, kept re-kicking its overshoot: the outline bounced for as
+                // long as anything was refreshing.
+                if (_morph is { } inFlight && SamePolygon(inFlight.Final, outline) && caption == _captionText)
+                    return true;
+
+                // Only a change of membership or shape springs. Orbs that merely
+                // moved (a member dragged within the group, the glide into new
+                // slots) already animate themselves, and the outline follows them
+                // exactly rather than chasing them with a spring of its own.
+                if (BackdropMotion.Enabled && Morphs && _visible && membershipChanged &&
+                    shownNow is not null && !SamePolygon(shownNow, outline))
                 {
                     // The caption starts where the old outline was and rides the morph.
                     SetCaption(caption, GroupOutline.Bounds(shownNow), scale);
-                    StartMorph(shownNow, oldBox, outline, box);
-                    return;
+                    StartMorph(shownNow, outline, box);
+                    return true;
                 }
 
                 _morph = null;
                 _finalOutline = null;
                 Place(outline, box);
                 SetCaption(caption, outlineBounds, scale);
+                return true;
             }
 
             private static bool SamePolygon(Point[] a, Point[] b)
@@ -724,11 +755,23 @@ namespace Orbweaver
 
             // The window covers the union of the old and new boxes (plus a margin for
             // the spring's overshoot) for the length of the morph, then shrinks.
-            private void StartMorph(Point[] from, Rect oldBox, Point[] to, Rect newBox)
+            //
+            // The old box is the one around the outline as DISPLAYED, never the
+            // window's own box: mid-morph that window is already the inflated union,
+            // and inflating it again on every new morph grew it by 30% a time until
+            // Skia could not draw it and the app aborted.
+            private void StartMorph(Point[] from, Point[] to, Rect newBox)
             {
-                var union = oldBox.Union(newBox);
-                var margin = 0.15 * Math.Max(union.Width, union.Height);
-                SetWindowBox(union.Inflate(margin));
+                var morphBox = BackdropGeometry.MorphBox(BoxFor(GroupOutline.Bounds(from), _scale), newBox);
+                if (!BackdropGeometry.Drawable(morphBox))
+                {
+                    _morph = null;
+                    _finalOutline = null;
+                    Place(to, newBox);
+                    return;
+                }
+
+                SetWindowBox(morphBox);
 
                 _morph = new Morph
                 {

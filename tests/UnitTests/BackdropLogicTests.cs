@@ -370,4 +370,53 @@ public class BackdropLogicTests
         Assert.Equal(Fill, fill);
         Assert.Equal(BackdropStyle.StrokeDip * 2, width);
     }
+
+    // --- Drawable, MorphBox, MembershipChanged (the outline that grew until Skia aborted) ---
+
+    [Theory]
+    [InlineData(0, 0, 100, 100, true)]
+    [InlineData(-500, -500, 8192, 8192, true)]
+    [InlineData(0, 0, 8193, 100, false)]
+    [InlineData(0, 0, 100, 8193, false)]
+    [InlineData(0, 0, 0.5, 100, false)]
+    [InlineData(0, 0, 100, 0, false)]
+    public void ABoxIsDrawableOnlyWithinSkiasLimitAndNonEmpty(double x, double y, double w, double h, bool drawable) =>
+        Assert.Equal(drawable, BackdropGeometry.Drawable(new Rect(x, y, w, h)));
+
+    [Fact]
+    public void ANonFiniteBoxIsNotDrawable()
+    {
+        Assert.False(BackdropGeometry.Drawable(new Rect(double.NaN, 0, 10, 10)));
+        Assert.False(BackdropGeometry.Drawable(new Rect(0, double.PositiveInfinity, 10, 10)));
+    }
+
+    [Fact]
+    public void AMorphBoxIsTheUnionPlusFifteenPercentOfItsLargerSide()
+    {
+        var box = BackdropGeometry.MorphBox(new Rect(0, 0, 100, 50), new Rect(50, 0, 100, 60));
+        Assert.Equal(new Rect(-22.5, -22.5, 195, 105), box);
+    }
+
+    [Fact]
+    public void FeedingAMorphBoxBackInIsWhatCompounded()
+    {
+        // The control for the fix: the old code passed the window's own box as
+        // the "old" box, which is this. Ten restarts grow it about 13.8x.
+        var outline = new Rect(0, 0, 200, 200);
+        var box = outline;
+        for (var i = 0; i < 10; i++) box = BackdropGeometry.MorphBox(box, outline);
+        Assert.True(box.Width > 13 * outline.Width);
+
+        // Built from the outlines alone, as the fix does, it does not move.
+        Assert.Equal(BackdropGeometry.MorphBox(outline, outline), BackdropGeometry.MorphBox(outline, outline));
+    }
+
+    [Theory]
+    [InlineData(null, null, 3, "line", true)]     // nothing drawn yet
+    [InlineData(3, "line", 4, "line", true)]      // join
+    [InlineData(4, "line", 3, "line", true)]      // leave
+    [InlineData(3, "line", 3, "heart", true)]     // shape changed
+    [InlineData(3, "line", 3, "line", false)]     // the same orbs moved
+    public void OnlyMembershipOrShapeCountsAsAChange(int? count, string? shape, int newCount, string newShape, bool changed) =>
+        Assert.Equal(changed, BackdropGeometry.MembershipChanged(count, shape, newCount, newShape));
 }
