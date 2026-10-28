@@ -99,6 +99,20 @@ namespace Orbweaver
             return pts;
         }
 
+        // Whether the placed curve moved along with the discs: both absent, or both
+        // present with the same scale and the centre shifted by the same offset.
+        // Otherwise the outline must be rebuilt even when the discs only translated.
+        internal static bool CurveFollows(
+            GroupOutline.PlacedCurve? prev, GroupOutline.PlacedCurve? next, double dx, double dy,
+            double tolerance = 1e-6)
+        {
+            if (prev is null || next is null) return prev is null && next is null;
+
+            return Math.Abs(next.Value.Scale - prev.Value.Scale) <= tolerance &&
+                   Math.Abs(next.Value.Centre.X - prev.Value.Centre.X - dx) <= tolerance &&
+                   Math.Abs(next.Value.Centre.Y - prev.Value.Centre.Y - dy) <= tolerance;
+        }
+
         // Discs relative to the window's top-left.
         internal static (double X, double Y, double R)[] LocalDiscs(
             IReadOnlyList<(double X, double Y, double R)> discs, Point origin)

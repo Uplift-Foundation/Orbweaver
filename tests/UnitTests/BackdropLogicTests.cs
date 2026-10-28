@@ -168,6 +168,20 @@ public class BackdropLogicTests
             Array.Empty<(double, double, double)>(), Array.Empty<(double, double, double)>()));
     }
 
+    [Fact]
+    public void ACurveFollowsTheDiscsOnlyWhenItMovedByTheSameOffsetAtTheSameScale()
+    {
+        var a = new GroupOutline.PlacedCurve(new Point(100, 200), 5);
+
+        Assert.True(BackdropGeometry.CurveFollows(null, null, 3, 4));
+        Assert.True(BackdropGeometry.CurveFollows(a, new GroupOutline.PlacedCurve(new Point(103, 204), 5), 3, 4));
+        Assert.False(BackdropGeometry.CurveFollows(a, new GroupOutline.PlacedCurve(new Point(103, 204), 6), 3, 4));   // rescaled
+        Assert.False(BackdropGeometry.CurveFollows(a, new GroupOutline.PlacedCurve(new Point(100, 204), 5), 3, 4));   // x stayed
+        Assert.False(BackdropGeometry.CurveFollows(a, new GroupOutline.PlacedCurve(new Point(103, 200), 5), 3, 4));   // y stayed
+        Assert.False(BackdropGeometry.CurveFollows(a, null, 3, 4));
+        Assert.False(BackdropGeometry.CurveFollows(null, a, 3, 4));
+    }
+
     // --- drawing style -------------------------------------------------------
 
     private static readonly Color Stroke = Color.FromArgb(90, 255, 0, 0);

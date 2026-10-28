@@ -89,6 +89,27 @@ public class GroupBackdropScreenshots : IDisposable
         return at.Select((p, i) => Orb($"{prefix}{i}", p.X, p.Y, member: leadOf[i] >= 0)).ToList();
     }
 
+    // The curve ComputeGroups will report as CurveCentre/CurveScale, recovered
+    // here from where Compute put the anchors (least squares against Unit); null
+    // when the arrangement did not draw that shape on a curve.
+    private static GroupOutline.PlacedCurve? CurveOf(string shape, int[] leadOf, IReadOnlyList<OrbWindow> orbs)
+    {
+        var anchors = Enumerable.Range(0, leadOf.Length).Where(i => leadOf[i] < 0).ToArray();
+        if (anchors.Length < 3) return null;
+
+        var unit = OrbArrangement.Unit(shape, anchors.Length);
+        var pts = anchors.Select(i => (X: orbs[i].Position.X + orbs[i].CentreDip, Y: orbs[i].Position.Y + orbs[i].CentreDip)).ToArray();
+        double ux = unit.Average(u => u.X), uy = unit.Average(u => u.Y), px = pts.Average(p => p.X), py = pts.Average(p => p.Y);
+        double num = 0, den = 0;
+        for (var k = 0; k < pts.Length; k++)
+        {
+            num += (unit[k].X - ux) * (pts[k].X - px) + (unit[k].Y - uy) * (pts[k].Y - py);
+            den += Math.Pow(unit[k].X - ux, 2) + Math.Pow(unit[k].Y - uy, 2);
+        }
+        var scale = num / den;
+        return new GroupOutline.PlacedCurve(new Point(px - scale * ux, py - scale * uy), scale);
+    }
+
     private static readonly PixelRect Stage = new(0, 0, 900, 720);
 
     [AvaloniaFact]
@@ -99,8 +120,8 @@ public class GroupBackdropScreenshots : IDisposable
 
         GroupBackdrops.Update(new[]
         {
-            new BackdropSpec("g-heart", "heart", heart, null),
-            new BackdropSpec("g-circle", "circle", ring, null)
+            new BackdropSpec("g-heart", "heart", heart, null, CurveOf("heart", Enumerable.Repeat(-1, 10).ToArray(), heart)),
+            new BackdropSpec("g-circle", "circle", ring, null, CurveOf("circle", Enumerable.Repeat(-1, 8).ToArray(), ring))
         });
 
         ScreenshotHelper.SideBySide(new[] { Dress("g-heart", heart), Dress("g-circle", ring) },
@@ -114,7 +135,7 @@ public class GroupBackdropScreenshots : IDisposable
         var leadOf = new[] { -1, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1, -1 };
         var all = Arranged("t", "heart", leadOf, Stage);
 
-        GroupBackdrops.Update(new[] { new BackdropSpec("g-team", "heart", all, null) });
+        GroupBackdrops.Update(new[] { new BackdropSpec("g-team", "heart", all, null, CurveOf("heart", leadOf, all)) });
 
         ScreenshotHelper.Capture(Dress("g-team", all), "group-backdrops-with-team.png");
     }
@@ -127,8 +148,8 @@ public class GroupBackdropScreenshots : IDisposable
 
         GroupBackdrops.Update(new[]
         {
-            new BackdropSpec("g-default", "circle", left, null),
-            new BackdropSpec("g-custom", "circle", right, new GroupStyle("#FF5A5F", 0.9, "#FF9F1C", 0.25))
+            new BackdropSpec("g-default", "circle", left, null, CurveOf("circle", Enumerable.Repeat(-1, 7).ToArray(), left)),
+            new BackdropSpec("g-custom", "circle", right, new GroupStyle("#FF5A5F", 0.9, "#FF9F1C", 0.25), CurveOf("circle", Enumerable.Repeat(-1, 7).ToArray(), right))
         });
 
         ScreenshotHelper.SideBySide(new[] { Dress("g-default", left), Dress("g-custom", right) },

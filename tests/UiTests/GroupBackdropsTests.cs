@@ -298,6 +298,55 @@ public class GroupBackdropsTests : IDisposable
         Assert.True(members[0].OrbRadius < lead.OrbRadius);
     }
 
+    // Orbs on a heart of known centre and scale, as ComputeGroups will report it.
+    private (List<OrbWindow> Orbs, GroupOutline.PlacedCurve Curve) OnHeart(int n)
+    {
+        var curve = new GroupOutline.PlacedCurve(new Point(600, 500), 9);
+        var orbs = Enumerable.Range(0, n).Select(i =>
+        {
+            var (x, y) = OrbArrangement.HeartAt(2 * Math.PI * (i + 0.37) / n);
+            return Orb($"hh{i}", (int)Math.Round(600 + 9 * x - 28), (int)Math.Round(500 + 9 * y - 28));
+        }).ToList();
+        return (orbs, curve);
+    }
+
+    [AvaloniaFact]
+    public void ThePlacedCurveMakesTheBackdropHugItsOrbsInsteadOfFittingAStandIn()
+    {
+        var (orbs, curve) = OnHeart(10);
+
+        GroupBackdrops.Update(new[] { Spec("g-h", "heart", orbs) });
+        var standIn = GroupBackdrops.StateOf("g-h")!.Value;
+
+        GroupBackdrops.Update(new[] { new BackdropSpec("g-h", "heart", orbs, null, curve) });
+        var hugging = GroupBackdrops.StateOf("g-h")!.Value;
+
+        Assert.True(hugging.Width * hugging.Height < standIn.Width * standIn.Height * 0.8,
+            $"{hugging.Width}x{hugging.Height} vs {standIn.Width}x{standIn.Height}");
+        Assert.Equal(240, hugging.Vertices);
+    }
+
+    [AvaloniaFact]
+    public void ACurveThatMovedWithTheOrbsIsATranslationButARescaledOneRefits()
+    {
+        var (orbs, curve) = OnHeart(10);
+        GroupBackdrops.Update(new[] { new BackdropSpec("g-h", "heart", orbs, null, curve) });
+        var before = GroupBackdrops.StateOf("g-h")!.Value;
+
+        foreach (var o in orbs) o.Position = new PixelPoint(o.Position.X + 25, o.Position.Y + 10);
+        var moved = new GroupOutline.PlacedCurve(new Point(curve.Centre.X + 25, curve.Centre.Y + 10), curve.Scale);
+        GroupBackdrops.Update(new[] { new BackdropSpec("g-h", "heart", orbs, null, moved) });
+        var after = GroupBackdrops.StateOf("g-h")!.Value;
+
+        Assert.Equal(before.Position.X + 25, after.Position.X);
+        Assert.Equal(before.Width, after.Width);
+
+        // Same discs, different curve: the outline is rebuilt around the new one.
+        var bigger = new GroupOutline.PlacedCurve(moved.Centre, moved.Scale * 1.5);
+        GroupBackdrops.Update(new[] { new BackdropSpec("g-h", "heart", orbs, null, bigger) });
+        Assert.NotEqual(after.Width, GroupBackdrops.StateOf("g-h")!.Value.Width);
+    }
+
     [AvaloniaFact]
     public void OutlineOfIsTheDrawnSilhouetteInScreenUnitsAndEmptyWithoutABackdrop()
     {

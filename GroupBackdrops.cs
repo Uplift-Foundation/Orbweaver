@@ -11,7 +11,8 @@ namespace Orbweaver
     // One group with orbs on screen, as SessionManager hands it over on each scan
     // or arrange.
     internal readonly record struct BackdropSpec(
-        string GroupId, string DrawnShape, IReadOnlyList<OrbWindow> Orbs, GroupStyle? Style);
+        string GroupId, string DrawnShape, IReadOnlyList<OrbWindow> Orbs, GroupStyle? Style,
+        GroupOutline.PlacedCurve? Curve = null);
 
     // What a backdrop currently is, for tests and diagnostics.
     internal readonly record struct BackdropState(
@@ -106,7 +107,7 @@ namespace Orbweaver
                     added = true;
                 }
 
-                window.Fit(spec.GroupId, spec.DrawnShape, discs, scale);
+                window.Fit(spec.GroupId, spec.DrawnShape, discs, scale, spec.Curve);
                 window.Restyle(StyleFor(spec), spec.GroupId == _highlight, _outlines);
                 window.EnsureShown();
             }
@@ -300,6 +301,7 @@ namespace Orbweaver
             private (double X, double Y, double R)[] _localDiscs = Array.Empty<(double, double, double)>();
             private double _scale = 1;
             private bool _shown;
+            private GroupOutline.PlacedCurve? _curve;
             private bool _highlighted;
             private Point _origin; // window top-left in screen units
 
@@ -339,21 +341,25 @@ namespace Orbweaver
 
             // Refits the silhouette — or just moves the window when every disc moved
             // by the same whole amount.
-            internal void Fit(string groupId, string shape, List<(double X, double Y, double R)> discs, double scale)
+            internal void Fit(
+                string groupId, string shape, List<(double X, double Y, double R)> discs, double scale,
+                GroupOutline.PlacedCurve? curve)
             {
                 _groupId = groupId;
 
                 if (_discs is not null && scale == _scale &&
                     BackdropGeometry.TryTranslation(_discs, discs) is { } d &&
-                    IsWhole(d.Dx) && IsWhole(d.Dy))
+                    IsWhole(d.Dx) && IsWhole(d.Dy) && BackdropGeometry.CurveFollows(_curve, curve, d.Dx, d.Dy))
                 {
+                    _curve = curve;
                     _origin = new Point(_origin.X + d.Dx, _origin.Y + d.Dy);
                     _discs = discs;
                     Position = new PixelPoint((int)_origin.X, (int)_origin.Y);
                     return;
                 }
 
-                var outline = GroupOutline.Silhouette(shape, discs, PaddingDip * scale);
+                _curve = curve;
+                var outline = GroupOutline.Silhouette(shape, discs, PaddingDip * scale, curve);
                 var box = GroupOutline.Bounds(outline).Inflate(EdgeDip * scale);
 
                 _discs = discs;

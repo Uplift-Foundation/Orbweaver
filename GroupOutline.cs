@@ -54,17 +54,27 @@ internal static class GroupOutline
     // ArgumentException/ArgumentOutOfRangeException rather than producing a
     // plausible-looking polygon of NaNs.
     internal static Point[] Silhouette(
-        string? shape, IReadOnlyList<(double X, double Y, double R)> discs, double padding)
-        => Fit(shape, discs, padding).Polygon;
+        string? shape, IReadOnlyList<(double X, double Y, double R)> discs, double padding,
+        PlacedCurve? placed = null)
+        => Fit(shape, discs, padding, placed).Polygon;
 
     // Silhouette plus how it was got: the unit-sized base, where it was centred
     // and the factor it was scaled by (polygon[i] = centre + base[i] * scale).
     // Exposed so a test can shrink the scale by two percent and watch enclosure
     // fail, which is what "smallest" means, without guessing the centre.
-    internal readonly record struct Fitted(Point[] Polygon, Point[] Base, Point Centre, double Scale);
+    internal readonly record struct Fitted(
+        Point[] Polygon, Point[] Base, Point Centre, double Scale, double Offset = 0);
+
+    // The curve the arrangement actually placed a group's orbs on: where unit
+    // (0,0) of OrbArrangement.CircleAt/DiamondAt/StarAt/HeartAt landed on screen
+    // and how many screen units one unit became (GroupPlacement.CurveCentre and
+    // CurveScale). With it the outline is that very curve pushed outward, rather
+    // than a stand-in fitted around the discs.
+    internal readonly record struct PlacedCurve(Point Centre, double Scale);
 
     internal static Fitted Fit(
-        string? shape, IReadOnlyList<(double X, double Y, double R)> discs, double padding)
+        string? shape, IReadOnlyList<(double X, double Y, double R)> discs, double padding,
+        PlacedCurve? placed = null)
     {
         ArgumentNullException.ThrowIfNull(discs);
 
@@ -96,6 +106,11 @@ internal static class GroupOutline
             }
             return new Fitted(circle, unit, new Point(only.X, only.Y), 1);
         }
+
+        if (placed is { } curve && IsCurveShape(shape) &&
+            double.IsFinite(curve.Centre.X) && double.IsFinite(curve.Centre.Y) &&
+            double.IsFinite(curve.Scale) && curve.Scale > 0)
+            return FitOffset(shape, discs, padding, curve);
 
         double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
         double sumX = 0, sumY = 0, maxR = 0;
@@ -220,6 +235,120 @@ internal static class GroupOutline
             minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
         }
         return new Rect(minX, minY, maxX - minX, maxY - minY);
+    }
+
+    private static bool IsCurveShape(string? shape) => !IsBoxShape(shape);
+
+    private const int RaySamples = 240;
+    private const int OffsetCurveSamples = 160;
+
+    // The curve the orbs were placed on, pushed outward by just enough to hold
+    // every disc, with round joins; where the curve folds in on itself (a heart's
+    // cleft, a star's notches) the outer boundary of the offset is taken, which
+    // fills the fold with a rounded dip instead of following it in.
+    //
+    // The offset region is R_d = { p : dist(p, curve) <= d } plus the curve's own
+    // inside, which is exactly { p : SignedDistanceInside(p, curve) >= -d }. Its
+    // outer boundary is found by walking in from far away along rays from the
+    // curve's middle: that function is 1-Lipschitz, so stepping inward by how far
+    // outside it reads can never skip over the region, and the first hit is the
+    // outermost boundary.
+    //
+    // How far to push is closed-form, not searched: a disc's padded circle lies
+    // inside R_d exactly when SignedDistanceInside(centre) + d >= R + padding (the
+    // nearest point outside R_d is d further out than the curve, straight away
+    // from the nearest curve point), so d = max over discs of
+    // R + padding - SignedDistanceInside(centre). A disc on the curve needs
+    // R + padding; a team member fanned well off it needs more, and the whole
+    // outline swells just enough to hold it.
+    private static Fitted FitOffset(
+        string? shape, IReadOnlyList<(double X, double Y, double R)> discs, double padding, PlacedCurve curve)
+    {
+        var at = CurveFor(shape);
+        var path = new Point[OffsetCurveSamples];
+        for (var i = 0; i < path.Length; i++)
+        {
+            var (x, y) = at(2 * Math.PI * i / path.Length);
+            path[i] = new Point(curve.Centre.X + x * curve.Scale, curve.Centre.Y + y * curve.Scale);
+        }
+
+        var origin = PerimeterCentroid(path);
+
+        var offset = padding;
+        foreach (var d in discs)
+            offset = Math.Max(offset, d.R + padding - SignedDistanceInside(new Point(d.X, d.Y), path));
+
+        // The polygon cuts each arc of the boundary slightly inside it; if that
+        // leaves a disc a hair short, push a little further until it does not.
+        Point[] outline = Array.Empty<Point>();
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            outline = OffsetOutline(path, origin, offset);
+
+            var deficit = 0.0;
+            foreach (var d in discs)
+                deficit = Math.Max(deficit, d.R + padding - SignedDistanceInside(new Point(d.X, d.Y), outline));
+
+            if (deficit <= 1e-6) break;
+            offset += deficit + 1e-6;
+        }
+
+        return new Fitted(outline, outline, default, 1, offset);
+    }
+
+    private static Func<double, (double X, double Y)> CurveFor(string? shape) => shape switch
+    {
+        "circle" => OrbArrangement.CircleAt,
+        "diamond" => OrbArrangement.DiamondAt,
+        "star" => OrbArrangement.StarAt,
+        _ => OrbArrangement.HeartAt
+    };
+
+    private static Point[] OffsetOutline(Point[] path, Point origin, double offset)
+    {
+        double far = 0;
+        foreach (var p in path)
+            far = Math.Max(far, Math.Sqrt((p.X - origin.X) * (p.X - origin.X) + (p.Y - origin.Y) * (p.Y - origin.Y)));
+        far += offset + 1;
+
+        var minStep = Math.Max(offset * 0.05, 1e-3);
+        var outline = new Point[RaySamples];
+
+        for (var k = 0; k < RaySamples; k++)
+        {
+            var a = 2 * Math.PI * k / RaySamples;
+            double ux = Math.Sin(a), uy = -Math.Cos(a);
+
+            double Reach(double r) =>
+                SignedDistanceInside(new Point(origin.X + ux * r, origin.Y + uy * r), path) + offset;
+
+            double outside = far;   // known to be outside the region
+            double r = far;
+            var inside = false;
+
+            for (var step = 0; step < 200 && r > 0; step++)
+            {
+                var f = Reach(r);
+                if (f >= 0) { inside = true; break; }
+                outside = r;
+                r -= Math.Max(-f, minStep);
+            }
+
+            if (!inside) r = 0;
+
+            // r is inside (or the origin) and `outside` is the last point known to be
+            // outside: the boundary is between them.
+            double lo = r, hi = outside;
+            for (var i = 0; i < 8 && hi > lo; i++)
+            {
+                var mid = (lo + hi) / 2;
+                if (Reach(mid) >= 0) lo = mid; else hi = mid;
+            }
+
+            outline[k] = new Point(origin.X + ux * lo, origin.Y + uy * lo);
+        }
+
+        return outline;
     }
 
     private static bool IsBoxShape(string? shape) => shape is "line" or "vline" or "grid";
