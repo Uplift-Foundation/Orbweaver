@@ -122,7 +122,7 @@ public class AccountOrbIconsTests : IDisposable
         var secret = Write("secret.png", Png(new SKColor(255, 0, 255)));
         var r = AccountOrbIcons.Import(
             WriteSvg($"<image width=\"20\" height=\"20\" href=\"file://{secret}\"/>"), "k", Icons);
-        Assert.Equal(IconImportError.NotAnImage, r.Error);
+        Assert.Equal(IconImportError.SvgReferencesExternalContent, r.Error);
         Assert.Null(r.FileName);
         Assert.False(Directory.Exists(Icons) && Directory.GetFiles(Icons).Length > 0);
     }
@@ -148,7 +148,7 @@ public class AccountOrbIconsTests : IDisposable
     public void Import_SvgReachingOutside_IsRefused(string body)
     {
         var r = AccountOrbIcons.Import(WriteSvg(body), "k", Icons);
-        Assert.Equal(IconImportError.NotAnImage, r.Error);
+        Assert.Equal(IconImportError.SvgReferencesExternalContent, r.Error);
     }
 
     [Fact]
@@ -161,6 +161,56 @@ public class AccountOrbIconsTests : IDisposable
         Assert.Equal(Svg.ExternalType.None, Svg.SvgDocument.ResolveExternalElements);
         Assert.Equal(Svg.ExternalType.None, Svg.SvgDocument.ResolveExternalXmlEntites);
         Assert.True(Svg.SvgDocument.DisableDtdProcessing);
+    }
+
+    // The control that shows the switches work and not just the preflight: the
+    // hostile documents go straight to the render step, around IsSelfContained,
+    // and the magenta marker a file:// fetch would draw must not appear.
+    [Theory]
+    [InlineData("<image width=\"20\" height=\"20\" href=\"file://{0}\"/>")]
+    [InlineData("<image width=\"20\" height=\"20\" xlink:href=\"file://{0}\"/>")]
+    [InlineData("<image width=\"20\" height=\"20\" xlink:href=\"{0}\"/>")]
+    [InlineData("<defs><pattern id=\"p\" width=\"20\" height=\"20\" patternUnits=\"userSpaceOnUse\"><image width=\"20\" height=\"20\" href=\"file://{0}\"/></pattern></defs><rect width=\"20\" height=\"20\" fill=\"url(#p)\"/>")]
+    public void RenderStep_AloneNeverFetchesAFile(string template)
+    {
+        var marker = Write("marker.png", Png(new SKColor(255, 0, 255)));
+        var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\">"
+            + string.Format(template, marker) + "</svg>";
+
+        var png = AccountOrbIcons.RenderSvg(svg);
+
+        if (png is null) return; // refusing to render at all is also not fetching
+        using var bmp = SKBitmap.Decode(png);
+        foreach (var px in bmp.Pixels)
+            Assert.False(px.Red == 255 && px.Green == 0 && px.Blue == 255 && px.Alpha == 255,
+                "the file:// marker was drawn: the render step fetched a local file");
+    }
+
+    [Fact]
+    public void RenderStep_ControlDrawsAnEmbeddedImage_SoTheMarkerCheckCanFail()
+    {
+        var b64 = Convert.ToBase64String(Png(new SKColor(255, 0, 255)));
+        var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\">"
+            + $"<image width=\"20\" height=\"20\" href=\"data:image/png;base64,{b64}\"/></svg>";
+        using var bmp = SKBitmap.Decode(AccountOrbIcons.RenderSvg(svg)!);
+        Assert.Contains(bmp.Pixels, px => px.Red == 255 && px.Green == 0 && px.Blue == 255);
+    }
+
+    [Fact]
+    public void Load_DirectoryOnTheMintedName_FallsBackAsMissing()
+    {
+        const string name = "0123456789ab-0123456789abcdef.png";
+        Directory.CreateDirectory(Path.Combine(Icons, name));
+        Assert.Equal(IconLoadOutcome.Missing, AccountOrbIcons.Load(Icons, name).Outcome);
+    }
+
+    [Fact]
+    public void Delete_DirectoryOnTheMintedName_DoesNotThrow()
+    {
+        const string name = "0123456789ab-0123456789abcdef.png";
+        Directory.CreateDirectory(Path.Combine(Icons, name));
+        AccountOrbIcons.Delete(Icons, name);
+        Assert.True(Directory.Exists(Path.Combine(Icons, name)));
     }
 
     [Fact]
@@ -179,7 +229,7 @@ public class AccountOrbIconsTests : IDisposable
         var p = Write("d.svg", Encoding.UTF8.GetBytes(
             "<?xml version=\"1.0\"?><!DOCTYPE svg [<!ENTITY x SYSTEM \"file:///etc/hosts\">]>"
             + "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><text>&x;</text></svg>"));
-        Assert.Equal(IconImportError.NotAnImage, AccountOrbIcons.Import(p, "k", Icons).Error);
+        Assert.Equal(IconImportError.SvgReferencesExternalContent, AccountOrbIcons.Import(p, "k", Icons).Error);
     }
 
     [Fact]

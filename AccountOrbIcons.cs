@@ -47,9 +47,11 @@ namespace Orbweaver
             byte[] bytes;
             try
             {
-                var path = Path.Combine(iconsDir, fileName);
-                if (!File.Exists(path)) return new(IconLoadOutcome.Missing, null);
-                bytes = File.ReadAllBytes(path);
+                // No File.Exists first: ReadAllBytes already says "not there"
+                // (FileNotFound and DirectoryNotFound are IOExceptions), and a
+                // directory squatting on the name throws too, so every way the
+                // file can be unreadable lands in the one arm below.
+                bytes = File.ReadAllBytes(Path.Combine(iconsDir, fileName));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -76,11 +78,12 @@ namespace Orbweaver
             }
 
             byte[]? png;
+            var svgRefused = false;
             if (IsPng(source) || IsJpeg(source)) png = Normalise(source);
-            else if (LooksLikeSvg(sourcePath, source)) png = RasteriseSvg(source);
+            else if (LooksLikeSvg(sourcePath, source)) png = RasteriseSvg(source, out svgRefused);
             else return new(null, Skia(source) ? IconImportError.UnsupportedFormat : IconImportError.NotAnImage);
 
-            if (png is null) return new(null, IconImportError.NotAnImage);
+            if (png is null) return new(null, svgRefused ? IconImportError.SvgReferencesExternalContent : IconImportError.NotAnImage);
 
             var name = NameFor(positionKey, png);
             try
@@ -173,16 +176,38 @@ namespace Orbweaver
         // only as good as a setting this package may not honour; the cost is
         // that an SVG linking an external picture is refused outright rather
         // than drawn without it.
-        private static byte[]? RasteriseSvg(byte[] source)
+        private static byte[]? RasteriseSvg(byte[] source, out bool refusedForReferences)
         {
-            string text;
+            refusedForReferences = false;
+            var text = Encoding.UTF8.GetString(source);
+
+            // A DOCTYPE is an external-content refusal in its own right (it is
+            // how entities reach files), and is named as one rather than as a
+            // parse error.
+            if (text.Contains("<!DOCTYPE", StringComparison.OrdinalIgnoreCase))
+            {
+                refusedForReferences = true;
+                return null;
+            }
+
             try
             {
-                text = Encoding.UTF8.GetString(source);
-                if (!IsSelfContained(text)) return null;
+                if (!IsSelfContained(text))
+                {
+                    refusedForReferences = true;
+                    return null;
+                }
             }
-            catch (Exception e) when (e is XmlException or ArgumentException) { return null; }
+            catch (XmlException) { return null; }
 
+            return RenderSvg(text);
+        }
+
+        // The render step on its own, without the preflight. Separate so a test
+        // can hand it a hostile document directly and prove Svg.Skia's own
+        // switches hold when the preflight does not catch a reference form.
+        internal static byte[]? RenderSvg(string text)
+        {
             try
             {
                 Harden();
@@ -215,7 +240,7 @@ namespace Orbweaver
             new Svg.SvgDocumentLoadOptions
             {
                 ProcessingMode = Svg.SvgProcessingMode.SecureStatic,
-                ExternalResources = Svg.SvgExternalResourcePolicy.Disabled
+                ExternalResources = Svg.SvgExternalResourcePolicy.SameDocumentAndDataOnly
             });
 
         internal static void Harden()
