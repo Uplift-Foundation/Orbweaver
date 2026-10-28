@@ -122,6 +122,11 @@
                      submenus for the same reason — see
                      OrbWindow.RebuildSizeSubmenu. -->
                 <MenuItem x:Name="SizeMenuItem" Header="Size"/>
+                <!-- CB-268's group submenu: which group this orb's team is in,
+                     its shape, moving the team, and the rename and style
+                     dialog. Rebuilt on Opening — see
+                     OrbWindow.RebuildGroupSubmenu. -->
+                <MenuItem x:Name="GroupMenuItem" Header="Group"/>
                 <!-- The `claude agents` roster, for the orbs it lists. Above
                      the two lifecycle items because it is the harmless one of
                      the three, and hidden rather than greyed for the same

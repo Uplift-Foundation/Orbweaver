@@ -3235,6 +3235,7 @@ namespace Orbweaver
             // never made a SessionManager current.
             RebuildSoundSubmenus();
             RebuildSizeSubmenu();
+            RebuildGroupSubmenu();
 
             var manager = CurrentManager();
             if (manager is null) return;
@@ -3423,6 +3424,93 @@ namespace Orbweaver
                 item.Click += (_, _) => SetSizeOverride(preset);
                 SizeMenuItem.Items.Add(item);
             }
+        }
+
+        // CB-268's Group submenu, rebuilt on Opening for the Size submenu's
+        // reason: the group table, this orb's membership and its team can all
+        // have changed since the menu was last shown (a drag-snap, another
+        // orb's menu). Every write goes to the *team* — a team is the unit of
+        // grouping, so moving a member moves its lead and its siblings with it.
+        internal void RebuildGroupSubmenu()
+        {
+            var context = CurrentGroupContext();
+            var group = OrbweaverSettings.OrbGroupFor(context.GroupId) ?? OrbGroups.DefaultFor(context.GroupId);
+
+            GroupMenuItem.Items.Clear();
+
+            GroupMenuItem.Items.Add(new MenuItem { Header = $"In: {group.Name}", IsEnabled = false });
+            GroupMenuItem.Items.Add(new Separator());
+
+            var shape = new MenuItem { Header = "Shape" };
+            foreach (var (label, value) in SettingsWindow.ShapeChoices)
+            {
+                var item = new MenuItem
+                {
+                    Header = label,
+                    ToggleType = MenuItemToggleType.CheckBox,
+                    IsChecked = value == group.Shape
+                };
+                item.Click += (_, _) =>
+                {
+                    OrbweaverSettings.SetOrbGroupShape(group.Id, value);
+                    CurrentManager()?.ReapplyArrangement();
+                };
+                shape.Items.Add(item);
+            }
+            GroupMenuItem.Items.Add(shape);
+
+            var moveTo = new MenuItem { Header = "Move to" };
+            foreach (var other in OrbweaverSettings.OrbGroupList())
+            {
+                if (other.Id == group.Id) continue;
+
+                var target = other.Id;
+                var item = new MenuItem { Header = other.Name };
+                item.Click += (_, _) => MoveTeamToGroup(context, target);
+                moveTo.Items.Add(item);
+            }
+            GroupMenuItem.Items.Add(moveTo);
+
+            var rename = new MenuItem { Header = "Rename…" };
+            rename.Click += (_, _) => GroupStyleWindow.Toggle(group.Id, focusName: true);
+            GroupMenuItem.Items.Add(rename);
+
+            var style = new MenuItem { Header = "Style…" };
+            style.Click += (_, _) => GroupStyleWindow.Toggle(group.Id, focusName: false);
+            GroupMenuItem.Items.Add(style);
+
+            GroupMenuItem.Items.Add(new Separator());
+
+            // Hidden, not greyed, in main: there is nowhere further to leave to,
+            // and a disabled row would suggest something is missing.
+            var leave = new MenuItem { Header = "Leave group", IsVisible = group.Id != OrbGroups.Main };
+            leave.Click += (_, _) => MoveTeamToGroup(context, OrbGroups.Main);
+            GroupMenuItem.Items.Add(leave);
+        }
+
+        // A test seam, the same shape as CurrentManager: the context a manager
+        // would compute from the live statuses, which a menu test has no
+        // manager to supply.
+        internal Func<GroupMenuContext?>? GroupContextOverride { get; set; }
+
+        private GroupMenuContext CurrentGroupContext()
+        {
+            if (GroupContextOverride?.Invoke() is { } overridden) return overridden;
+            if (CurrentManager()?.GroupMenuContextFor(SessionId) is { } fromManager) return fromManager;
+
+            // No manager (a standalone window): this orb alone, in whatever its
+            // own key says.
+            var key = string.IsNullOrEmpty(PositionKey) ? null : PositionKey;
+            var membership = OrbweaverSettings.OrbGroupMembershipFor(key);
+            return new GroupMenuContext(
+                OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats),
+                key, Array.Empty<string>());
+        }
+
+        private void MoveTeamToGroup(GroupMenuContext context, string groupId)
+        {
+            OrbweaverSettings.AssignTeamToGroup(context.LeadKey, context.MemberKeys, groupId);
+            CurrentManager()?.ReapplyArrangement();
         }
 
         internal static string SizeLabel(double size) =>

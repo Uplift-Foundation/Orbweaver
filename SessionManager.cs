@@ -3730,6 +3730,22 @@ namespace Orbweaver
             }
         }
 
+        // CB-268: the Group outlines card and the group style dialog land here
+        // when a stroke or fill changed, the same shape as ReapplyGlyphs. The
+        // backdrops that draw the outlines are S5's and the wiring is S7's, so
+        // until they exist there is nothing to repaint and this is a safe no-op;
+        // S7 fills it in.
+        public void ReapplyGroupStyles()
+        {
+        }
+
+        // What an orb's Group submenu asks for: the group the orb's team is in
+        // and the keys a move has to write. The decision is OrbGroupMenu.Resolve.
+        internal GroupMenuContext GroupMenuContextFor(string sessionId) =>
+            OrbGroupMenu.Resolve(
+                sessionId, AllStatuses,
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode);
+
         // CB-198: the settings slider and the Size menu both land here, the
         // same shape as ReapplyGlyphs — one change, every orb. Each orb takes
         // its own override if it has one, the slider if not; then everything

@@ -690,6 +690,8 @@ namespace Orbweaver
 
             root.Children.Add(Group("auto-organize", "Auto-organize", Card(AutoOrganizeRows())));
 
+            root.Children.Add(Group("group-outlines", "Group outlines", Card(GroupOutlineRows())));
+
             root.Children.Add(Group("orb-colours", "Orb colours", Card(OrbColourRows())));
 
             // Between the orbs and the voice, because that is where the chat
@@ -909,7 +911,7 @@ namespace Orbweaver
                 + "you release, which is what the app has always done.")
         };
 
-        private static readonly (string Label, string Value)[] ShapeChoices =
+        internal static readonly (string Label, string Value)[] ShapeChoices =
         {
             ("Heart", "heart"),
             ("Circle", "circle"),
@@ -1011,6 +1013,38 @@ namespace Orbweaver
                     "How far apart the orbs sit inside the shape. Drag to see them move in real time.")
             };
         }
+
+        // CB-268's global outline style. The same four values a group's own
+        // override can replace field by field (GroupStyleWindow). Every setter
+        // goes through the S1 properties, which defer their write with SaveSoon
+        // for the colour and opacity ones, and then tells the manager so a
+        // backdrop already on screen repaints.
+        internal Control[] GroupOutlineRows() => new[]
+        {
+            Row("Outline groups", Switch(OrbweaverSettings.GroupOutlinesEnabled, on =>
+                {
+                    OrbweaverSettings.GroupOutlinesEnabled = on;
+                    SessionManager.Instance?.ReapplyGroupStyles();
+                }),
+                "Draw each group's shape behind its orbs. Groups can still be grabbed by the "
+                + "empty space inside them when this is off."),
+            ColorRow("Stroke colour",
+                () => GroupStyleControls.ColorOf(OrbweaverSettings.GroupOutlineStroke),
+                color => { OrbweaverSettings.GroupOutlineStroke = OrbColors.ToHex(color); SessionManager.Instance?.ReapplyGroupStyles(); },
+                "The line around a group. A group can override this from its own right-click menu."),
+            Row("Stroke opacity", GroupStyleControls.OpacityControl(
+                    OrbweaverSettings.GroupOutlineStrokeOpacity,
+                    v => { OrbweaverSettings.GroupOutlineStrokeOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
+                "0% hides the line, 100% draws it solid."),
+            ColorRow("Fill colour",
+                () => GroupStyleControls.ColorOf(OrbweaverSettings.GroupOutlineFill),
+                color => { OrbweaverSettings.GroupOutlineFill = OrbColors.ToHex(color); SessionManager.Instance?.ReapplyGroupStyles(); },
+                "The tint inside a group's shape."),
+            Row("Fill opacity", GroupStyleControls.OpacityControl(
+                    OrbweaverSettings.GroupOutlineFillOpacity,
+                    v => { OrbweaverSettings.GroupOutlineFillOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
+                "Keep this low to read the orbs through it.")
+        };
 
         // internal for the same reason the rows above are: a test drives the
         // slider directly rather than hunting for it through whichever theme
@@ -3869,11 +3903,29 @@ namespace Orbweaver
         // internal: the arming guard below is the fix for a bug that wrote three
         // colours nobody chose into settings.json, and it is decided entirely in
         // managed code — no OS call, no window needed.
-        internal Control ColorRow(string label, string state)
+        internal Control ColorRow(string label, string state) =>
+            ColorRow(label, () => OrbColors.For(state), color =>
+            {
+                OrbColors.Set(state, OrbColors.ToHex(color));
+
+                // Nothing observes the settings store, and a colour change isn't a
+                // state change, so the orbs and the tray icon have to be told.
+                SessionManager.Instance?.ReapplyStateColors();
+            });
+
+        // CB-268 generalised the row over a getter and a setter, because the
+        // group outline's stroke and fill are colours too and want exactly this
+        // control, arming guard and all. `set` is only ever called for a change
+        // the user made and that differs from `get()` in RGB; everything below
+        // is what ColorRow(label, state) always did, moved rather than rewritten.
+        internal Control ColorRow(string label, Func<Color> get, Action<Color> set, string? help = null) =>
+            Row(label, ArmedColorPicker(get, set), help);
+
+        internal static ColorPicker ArmedColorPicker(Func<Color> get, Action<Color> set)
         {
             var picker = new ColorPicker
             {
-                Color = OrbColors.For(state),
+                Color = get(),
 
                 // The orb builds its own alphas — the glow's gradient stops are
                 // 150/95/0 over the chosen RGB, and the tray icon's alpha channel
@@ -3915,7 +3967,7 @@ namespace Orbweaver
 
             picker.ColorChanged += (_, e) =>
             {
-                var current = OrbColors.For(state);
+                var current = get();
                 var same = e.NewColor.R == current.R
                            && e.NewColor.G == current.G
                            && e.NewColor.B == current.B;
@@ -3936,14 +3988,10 @@ namespace Orbweaver
                 // nobody chose. Compare RGB only — alpha isn't ours (see above).
                 if (same) return;
 
-                OrbColors.Set(state, OrbColors.ToHex(e.NewColor));
-
-                // Nothing observes the settings store, and a colour change isn't a
-                // state change, so the orbs and the tray icon have to be told.
-                SessionManager.Instance?.ReapplyStateColors();
+                set(e.NewColor);
             };
 
-            return Row(label, picker);
+            return picker;
         }
 
         // One button rather than a reset per row: the rows are narrow already, and
