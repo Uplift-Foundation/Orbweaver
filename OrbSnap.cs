@@ -17,10 +17,10 @@ namespace Orbweaver
         internal sealed record Leave : SnapOutcome;
 
         // Free mode only (F3). Pair: the dragged team dropped within join
-        // distance of another loose team; `OtherId` is that team's candidate
-        // id (its root session id). LeaveToFree: the dragged team left a user
+        // distance of another loose team; `RootId` is that team's root
+        // session id. LeaveToFree: the dragged team left a user
         // group and floats where it was dropped.
-        internal sealed record Pair(string OtherId) : SnapOutcome;
+        internal sealed record Pair(string RootId) : SnapOutcome;
         internal sealed record LeaveToFree : SnapOutcome;
     }
 
@@ -102,7 +102,10 @@ namespace Orbweaver
                 // A loose target exists only in free mode. Arranged mode keeps
                 // today's rule, so a host that offered one anyway cannot make
                 // an arranged drop pair.
-                if (candidate.Loose && !free) continue;
+                //
+                // And a loose team only pairs with a team that is itself loose
+                // (in a predefined group): a grouped team has the Join rule.
+                if (candidate.Loose && (!free || !OrbGroups.IsPredefined(currentGroupId))) continue;
 
                 if (string.Equals(candidate.GroupId, currentGroupId, StringComparison.Ordinal))
                 {
@@ -126,7 +129,9 @@ namespace Orbweaver
                 return bestLoose ? new SnapOutcome.Pair(bestId) : new SnapOutcome.Join(bestId);
 
             if (own is { } mine && mine.Discs.Count > 0 && DiscGap(moving, mine.Discs) > leaveDip)
-                return free ? new SnapOutcome.LeaveToFree() : new SnapOutcome.Leave();
+                return !free ? new SnapOutcome.Leave()
+                    : OrbGroups.IsPredefined(currentGroupId) ? new SnapOutcome.NoChange()
+                    : new SnapOutcome.LeaveToFree();
 
             return new SnapOutcome.NoChange();
         }

@@ -357,6 +357,28 @@ public class OrbSnapTests
     }
 
     [Fact]
+    public void ATeamThatIsAlreadyInAUserGroupDoesNotPairWithALooseOneEvenNextToIt()
+    {
+        // Its own group is far, so it would leave; the loose team beside it is
+        // not a target for a grouped team (only loose onto loose pairs).
+        var candidates = new[] { Group("g-own", (500, 0, 18)), Loose("s-1", (50, 0, 18)) };
+
+        Assert.IsType<SnapOutcome.LeaveToFree>(OrbSnap.Decide(One(), "g-own", candidates, free: true));
+    }
+
+    [Fact]
+    public void ALooseTeamInAHeartbeatGroupStillPairsAndHasNothingToLeave()
+    {
+        Assert.Equal(
+            new SnapOutcome.Pair("s-1"),
+            OrbSnap.Decide(One(), OrbGroups.Heartbeats, new[] { Loose("s-1", (50, 0, 18)) }, free: true));
+
+        // A predefined group the host did offer as "own" is never left to free.
+        Assert.IsType<SnapOutcome.NoChange>(
+            OrbSnap.Decide(One(), OrbGroups.Heartbeats, new[] { Group(OrbGroups.Heartbeats, (500, 0, 18)) }, free: true));
+    }
+
+    [Fact]
     public void ALooseCandidateIsIgnoredOutsideFreeMode()
     {
         Assert.IsType<SnapOutcome.NoChange>(

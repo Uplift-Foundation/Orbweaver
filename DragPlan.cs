@@ -30,14 +30,15 @@ namespace Orbweaver
 
         // teamIds: the pressed orb plus its whole team (root lead, members,
         // nested members). groupIds: every orb in its group.
-        //   Orb, !shift   -> (false, teamIds)  snap/unsnap is decided on release
-        //   Orb, shift    -> (true,  groupIds)
-        //   Backdrop, any -> (true,  groupIds)
+        //   Orb, !shift, root   -> (false, teamIds)    snap/unsnap is decided on release
+        //   Orb, !shift, member -> (false, [pressed])  only that member moves (T2 revised)
+        //   Orb, shift          -> (true,  groupIds)
+        //   Backdrop, any       -> (true,  groupIds)
         internal static (bool WholeGroup, IReadOnlyList<string> Ids) Followers(
-            DragSource source, bool shift,
+            DragSource source, bool shift, bool isRoot, string pressedId,
             IReadOnlyList<string> teamIds, IReadOnlyList<string> groupIds) =>
             source == DragSource.Backdrop || shift
                 ? (true, groupIds)
-                : (false, teamIds);
+                : isRoot ? (false, teamIds) : (false, new[] { pressedId });
     }
 }

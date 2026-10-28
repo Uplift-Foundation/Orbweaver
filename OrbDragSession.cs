@@ -15,6 +15,7 @@ namespace Orbweaver
         private readonly string _anchorId;
         private readonly double _unitsPerDip;
         private readonly List<(OrbWindow Orb, PixelPoint Start)> _moving = new();
+        private readonly bool _leadDrag;
         private int _dx, _dy;
 
         internal bool WholeGroup { get; }
@@ -31,14 +32,16 @@ namespace Orbweaver
             _unitsPerDip = unitsPerDip;
 
             var team = host.TeamIdsOf(pressedId);
-            // In free mode the predefined groups are not groups to the user: their
-            // orbs are loose, and Shift on one moves its own team, not every loose
-            // orb on the screen (F3).
             var groupId = host.GroupIdOf(pressedId);
-            var group = host.IsFree && OrbGroups.IsPredefined(groupId)
-                ? team
-                : host.OrbIdsInGroup(groupId);
-            var (whole, ids) = DragPlan.Followers(source, shift, team, group);
+
+            // In free mode the predefined groups are not groups to the user:
+            // their orbs are loose, so Shift on one is a plain drag of its own
+            // team rather than a move of every loose orb on the screen (F3).
+            if (host.IsFree && OrbGroups.IsPredefined(groupId)) shift = false;
+
+            _leadDrag = source == DragSource.Orb && host.IsRoot(pressedId);
+            var (whole, ids) = DragPlan.Followers(
+                source, shift, host.IsRoot(pressedId), pressedId, team, host.OrbIdsInGroup(groupId));
             WholeGroup = whole;
 
             foreach (var id in ids)
@@ -57,7 +60,8 @@ namespace Orbweaver
             foreach (var (orb, start) in _moving)
                 orb.Position = new PixelPoint(start.X + dx, start.Y + dy);
 
-            if (!WholeGroup) OrbDragCommit.Preview(_host, _anchorId, _unitsPerDip);
+            // Only a lead drag snaps, so only a lead drag previews one.
+            if (!WholeGroup && _leadDrag) OrbDragCommit.Preview(_host, _anchorId, _unitsPerDip);
 
             TeamLinks.Refresh();
             GroupBackdrops.Refresh();

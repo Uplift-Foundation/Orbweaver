@@ -9,31 +9,30 @@ public class DragPlanTests
 {
     private static readonly string[] Group = { "solo", "lead", "m1", "m2", "nested", "other" };
 
-    public static TheoryData<string, string[]> Teams => new()
+    // (pressed, whole team in root-first order, is the pressed orb the root)
+    public static TheoryData<string, string[], bool> Presses => new()
     {
-        { "solo", new[] { "solo" } },
-        { "lead", new[] { "lead", "m1", "m2", "nested" } },
-        // Pressing a member moves the lead and every member too.
-        { "m1", new[] { "lead", "m1", "m2", "nested" } },
-        { "nested", new[] { "lead", "m1", "m2", "nested" } },
+        { "solo", new[] { "solo" }, true },
+        { "lead", new[] { "lead", "m1", "m2", "nested" }, true },
+        { "m1", new[] { "lead", "m1", "m2", "nested" }, false },
+        { "nested", new[] { "lead", "m1", "m2", "nested" }, false },
     };
 
     [Theory]
-    [MemberData(nameof(Teams))]
-    public void APlainOrbDragMovesTheOrbsWholeTeamNotTheGroup(string pressed, string[] team)
+    [MemberData(nameof(Presses))]
+    public void APlainOrbDragMovesTheTeamForARootAndOnlyTheOrbForAMember(string pressed, string[] team, bool isRoot)
     {
-        var (whole, ids) = DragPlan.Followers(DragSource.Orb, false, team, Group);
+        var (whole, ids) = DragPlan.Followers(DragSource.Orb, false, isRoot, pressed, team, Group);
 
         Assert.False(whole);
-        Assert.Equal(team, ids);
-        Assert.Contains(pressed, ids);
+        Assert.Equal(isRoot ? team : new[] { pressed }, ids);
     }
 
     [Theory]
-    [MemberData(nameof(Teams))]
-    public void ShiftOnAnOrbMovesTheWholeGroup(string pressed, string[] team)
+    [MemberData(nameof(Presses))]
+    public void ShiftOnAnOrbMovesTheWholeGroupWhetherItIsARootOrAMember(string pressed, string[] team, bool isRoot)
     {
-        var (whole, ids) = DragPlan.Followers(DragSource.Orb, true, team, Group);
+        var (whole, ids) = DragPlan.Followers(DragSource.Orb, true, isRoot, pressed, team, Group);
 
         Assert.True(whole);
         Assert.Equal(Group, ids);
@@ -41,11 +40,13 @@ public class DragPlanTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ABackdropDragMovesTheWholeGroupWhateverShiftSays(bool shift)
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    public void ABackdropDragMovesTheWholeGroupWhateverShiftOrRootSay(bool shift, bool isRoot)
     {
-        var (whole, ids) = DragPlan.Followers(DragSource.Backdrop, shift, new[] { "lead" }, Group);
+        var (whole, ids) = DragPlan.Followers(DragSource.Backdrop, shift, isRoot, "lead", new[] { "lead" }, Group);
 
         Assert.True(whole);
         Assert.Equal(Group, ids);

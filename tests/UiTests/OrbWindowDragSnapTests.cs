@@ -30,6 +30,10 @@ public class OrbWindowDragSnapTests
         public List<(string, int, int)> Shifts { get; } = new();
         public int Reapplied { get; private set; }
         public bool IsArranged { get; set; }
+        public bool LaidOut { get; set; }
+        public List<string> OffsetsSaved { get; } = new();
+        public bool IsLaidOut(string id) => LaidOut || IsArranged;
+        public void SaveMemberOffset(string id) => OffsetsSaved.Add(id);
 
         public IReadOnlyList<string> TeamIdsOf(string id) => Teams.GetValueOrDefault(id) ?? new[] { id };
         public IReadOnlyList<string> OrbIdsInGroup(string g) => Groups.Where(x => x.Value == g).Select(x => x.Key).ToList();
@@ -120,14 +124,14 @@ public class OrbWindowDragSnapTests
     }
 
     [AvaloniaFact]
-    public void DraggingATeamMemberMovesTheWholeTeamAndJoinsItToTheGroupItLandedBy()
+    public void DraggingATeamLeadMovesTheWholeTeamAndJoinsItToTheGroupItLandedBy()
     {
         var (roster, lead, member, nested, other, target) = TeamScene();
         using var _ = new HostScope(roster);
 
-        // Drag the MEMBER so it lands right beside the other group's orb:
-        // member disc starts at (188,128); other disc is at (628,128).
-        Drag(roster.Windows[member], 410, 0);
+        // Drag the team's LEAD so the team lands beside the other group's orb:
+        // the member's disc ends at (598,128); the other disc is at (628,128).
+        Drag(roster.Windows[lead], 410, 0);
 
         Assert.Equal(new PixelPoint(510, 100), roster.Windows[lead].Position);
         Assert.Equal(new PixelPoint(570, 100), roster.Windows[member].Position);
@@ -139,6 +143,41 @@ public class OrbWindowDragSnapTests
         Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + other));
         Assert.Contains(target, roster.Highlights);
         Assert.Null(roster.Highlights[^1]);
+    }
+
+    [AvaloniaFact]
+    public void DraggingATeamMemberMovesOnlyThatMemberAndChangesNoMembership()
+    {
+        // T2 revised (Warren): a member can be dragged and arranged on its own.
+        var (roster, lead, member, nested, other, target) = TeamScene();
+        using var _ = new HostScope(roster);
+
+        // Right up against the other group, which would join a lead.
+        Drag(roster.Windows[member], 410, 0);
+
+        Assert.Equal(new PixelPoint(100, 100), roster.Windows[lead].Position);
+        Assert.Equal(new PixelPoint(570, 100), roster.Windows[member].Position);
+        Assert.Equal(new PixelPoint(160, 160), roster.Windows[nested].Position);
+        foreach (var id in new[] { lead, member, nested, other })
+            Assert.NotEqual(target, OrbweaverSettings.OrbGroupMembershipFor("key:" + id) ?? "(none)");
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + member));
+        // Nothing lays it out in this roster, so it is pinned where it was dropped.
+        Assert.True(roster.Windows[member].IsPinned);
+        Assert.False(roster.Windows[lead].IsPinned);
+    }
+
+    [AvaloniaFact]
+    public void ADraggedMemberOfALaidOutGroupSavesItsOffsetInsteadOfPinning()
+    {
+        var (roster, lead, member, _, _, _) = TeamScene();
+        roster.LaidOut = true;
+        using var _ = new HostScope(roster);
+
+        Drag(roster.Windows[member], 30, 40);
+
+        Assert.Equal(new[] { member }, roster.OffsetsSaved);
+        Assert.Equal(new PixelPoint(190, 140), roster.Windows[member].Position);
+        Assert.Equal(1, roster.Reapplied);
     }
 
     [AvaloniaFact]
@@ -244,7 +283,7 @@ public class OrbWindowDragSnapTests
         foreach (var t in team) roster.Teams[t] = team;
         using var _ = new HostScope(roster);
 
-        Drag(roster.Windows[b], 10, 10);
+        Drag(roster.Windows[a], 10, 10);
 
         Assert.Equal(new PixelPoint(10, 10), roster.Windows[a].Position);
         Assert.Equal(new PixelPoint(70, 10), roster.Windows[b].Position);

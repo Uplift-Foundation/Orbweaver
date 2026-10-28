@@ -27,7 +27,6 @@ public class OrbWindowFreeModeDragTests
         public Dictionary<string, OrbWindow> Windows { get; } = new();
         public Dictionary<string, string[]> Teams { get; } = new();
         public bool Arranged { get; set; }
-        public int GroupsReapplied { get; private set; }
         public int ArrangementReapplied { get; private set; }
 
         public bool IsArranged => Arranged;
@@ -69,7 +68,6 @@ public class OrbWindowFreeModeDragTests
         public void HighlightGroup(string? groupId) { }
         public void ShiftGroupAnchor(string groupId, int dx, int dy) { }
         public void ReapplyArrangement() => ArrangementReapplied++;
-        public void ReapplyGroups() => GroupsReapplied++;
 
         public OrbWindow Add(string id, int x, int y)
         {
@@ -127,8 +125,7 @@ public class OrbWindowFreeModeDragTests
         Assert.NotNull(OrbweaverSettings.OrbGroupFor(group)!.Anchor);
         // The dragged orb belongs to a group now, so it is not pinned as a loose one.
         Assert.False(roster.Windows[a].IsPinned);
-        Assert.Equal(1, roster.GroupsReapplied);
-        Assert.Equal(0, roster.ArrangementReapplied);
+        Assert.Equal(1, roster.ArrangementReapplied);
 
         // 2. Drop C beside the pair (14 dip from B's disc): it joins that group.
         Drag(roster.Windows[c], -250, -300);
@@ -147,7 +144,7 @@ public class OrbWindowFreeModeDragTests
     }
 
     [AvaloniaFact]
-    public void ATeamMemberDroppedBesideALooseOrbPairsBothWholeTeams()
+    public void ATeamDroppedBesideALooseOrbPairsBothWholeTeams()
     {
         var roster = new FreeRoster();
         var u = Uid();
@@ -158,16 +155,40 @@ public class OrbWindowFreeModeDragTests
         roster.Teams[lead] = new[] { lead, member };
         using var _ = new HostScope(roster);
 
-        // Drag the MEMBER: its disc starts at (188,128); loose is at (628,128).
-        Drag(roster.Windows[member], 410, 0);
+        // Drag the LEAD: the team's member disc ends at (608,128), touching the
+        // loose orb's at (628,128).
+        Drag(roster.Windows[lead], 420, 0);
 
         var group = GroupOf(lead);
         Assert.StartsWith("g-", group);
         Assert.Equal(group, GroupOf(member));
         Assert.Equal(group, GroupOf(loose));
-        // The whole team travelled with the dragged member.
-        Assert.Equal(new PixelPoint(510, 100), roster.Windows[lead].Position);
+        // The whole team travelled with the dragged lead.
+        Assert.Equal(new PixelPoint(520, 100), roster.Windows[lead].Position);
+        Assert.Equal(new PixelPoint(580, 100), roster.Windows[member].Position);
+        Assert.False(roster.Windows[lead].IsPinned);
+    }
+
+    [AvaloniaFact]
+    public void ATeamMemberDroppedBesideALooseOrbMovesAloneAndPairsNothing()
+    {
+        // T2 revised: a member drag never snaps; it is pinned where it lands.
+        var roster = new FreeRoster();
+        var u = Uid();
+        var (lead, member, loose) = ("lead-" + u, "mem-" + u, "loose-" + u);
+        roster.Add(lead, 100, 100);
+        roster.Add(member, 160, 100);
+        roster.Add(loose, 600, 100);
+        roster.Teams[lead] = new[] { lead, member };
+        using var _ = new HostScope(roster);
+
+        Drag(roster.Windows[member], 410, 0);
+
+        Assert.Equal("(loose)", GroupOf(member));
+        Assert.Equal("(loose)", GroupOf(loose));
+        Assert.Equal(new PixelPoint(100, 100), roster.Windows[lead].Position);
         Assert.Equal(new PixelPoint(570, 100), roster.Windows[member].Position);
+        Assert.True(roster.Windows[member].IsPinned);
     }
 
     [AvaloniaFact]
@@ -233,6 +254,5 @@ public class OrbWindowFreeModeDragTests
         Assert.Equal("(loose)", GroupOf(a));
         Assert.Equal("(loose)", GroupOf(b));
         Assert.Equal(1, roster.ArrangementReapplied);
-        Assert.Equal(0, roster.GroupsReapplied);
     }
 }

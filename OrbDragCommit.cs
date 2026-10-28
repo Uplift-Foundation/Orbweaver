@@ -16,6 +16,18 @@ namespace Orbweaver
         /// <summary>Free mode: the orbs are not arranged. User groups are live and the predefined ones are not snap targets (F1, F3).</summary>
         bool IsFree => !IsArranged;
 
+        /// <summary>True when the orb is its team's root (a solo orb is its own root); false for a member.</summary>
+        bool IsRoot(string sessionId) => TeamIdsOf(sessionId)[0] == sessionId;
+
+        /// <summary>The orb's root's group is laid out in this mode: a user group, or any group while arranged.</summary>
+        bool IsLaidOut(string sessionId) => IsArranged || !OrbGroups.IsPredefined(GroupIdOf(sessionId));
+
+        /// <summary>Saves a dragged member's offset from its lead (member centre minus effective lead centre, in DIP, keyed by SoundKey). A no-op until the roster implements it.</summary>
+        void SaveMemberOffset(string memberId) { }
+
+        /// <summary>Provisional outline around a dragged team and the loose team it would pair with; null, null clears it. A no-op until the roster implements it.</summary>
+        void PreviewPair(IReadOnlyList<string>? draggedTeamIds, string? targetRootId) { }
+
         /// <summary>The pressed orb's whole team: root lead first, then every member, nested ones included. Always contains <paramref name="sessionId"/>; a solo orb gives just itself.</summary>
         IReadOnlyList<string> TeamIdsOf(string sessionId);
 
@@ -40,10 +52,8 @@ namespace Orbweaver
         /// <summary>Moves a group's saved anchor by the drag's delta (physical pixels).</summary>
         void ShiftGroupAnchor(string groupId, int dx, int dy);
 
+        /// <summary>Re-lays out whatever the current mode lays out: the user groups always, the predefined groups while arranged.</summary>
         void ReapplyArrangement();
-
-        /// <summary>Re-lays out the user groups; the free-mode counterpart of ReapplyArrangement. Defaults to it until the roster says otherwise.</summary>
-        void ReapplyGroups() => ReapplyArrangement();
     }
 
     // Where the drag handlers find the roster. Null until SessionManager sets it
@@ -57,41 +67,48 @@ namespace Orbweaver
     // only gather what the pointer did and hand it here.
     internal static class OrbDragCommit
     {
-        // During the move: the outcome if the user let go now, with the target
-        // group highlighted (and nothing highlighted for any other outcome).
+        // During the move: the outcome if the user let go now. A Join highlights
+        // the group; a Pair previews the provisional outline around both teams;
+        // anything else clears both.
         internal static SnapOutcome Preview(IOrbDragHost host, string pressedId, double unitsPerDip)
         {
             var outcome = Decide(host, pressedId, unitsPerDip);
             host.HighlightGroup(outcome is SnapOutcome.Join join ? join.GroupId : null);
+            if (outcome is SnapOutcome.Pair pair) host.PreviewPair(host.TeamIdsOf(pressedId), pair.RootId);
+            else host.PreviewPair(null, null);
             return outcome;
         }
 
         // On release of a drag that moved (dx, dy) physical pixels.
         //
         // Whole-group drags change no membership: the group moved, so its saved
-        // anchor moves with it. A plain orb drag moves the team and then snaps
-        // or unsnaps it as one — membership is written under the lead's key and
-        // every member's (T3), so the team is never split across groups. Leaving
-        // makes a new one-orb group anchored at the drop point, which is how a
-        // user builds a group: pull two orbs out and drop them together.
-        // The arrangement is reapplied last in every case, because a team that
-        // was dropped inside its own group's shape would otherwise stay wherever
-        // the pointer left it.
+        // anchor moves with it. A member drag (T2 revised) moves only the member
+        // and never touches membership: in a laid-out group its offset from its
+        // lead is saved so the next layout puts it there, and otherwise it was
+        // simply dropped and stays pinned. A lead drag moves the team and then
+        // snaps or unsnaps it as one — membership is written under the lead's
+        // key and every member's (T3), so the team is never split across groups.
+        // Every path ends by reapplying, because a team dropped inside its own
+        // group's shape would otherwise stay wherever the pointer left it.
         internal static SnapOutcome Release(
             IOrbDragHost host, string pressedId, bool wholeGroup, int dx, int dy, double unitsPerDip)
         {
             host.HighlightGroup(null);
+            host.PreviewPair(null, null);
 
             if (wholeGroup)
             {
-                // A predefined group only has an anchor of its own while the
-                // orbs are arranged; in free mode its orbs are loose and a
-                // whole-group drag has nothing to shift (see OrbDragSession).
-                var groupId = host.GroupIdOf(pressedId);
-                if (host.IsArranged || !OrbGroups.IsPredefined(groupId))
+                host.ShiftGroupAnchor(host.GroupIdOf(pressedId), dx, dy);
+                host.ReapplyArrangement();
+                return new SnapOutcome.NoChange();
+            }
+
+            if (!host.IsRoot(pressedId))
+            {
+                if (host.IsLaidOut(pressedId))
                 {
-                    host.ShiftGroupAnchor(groupId, dx, dy);
-                    Reapply(host);
+                    host.SaveMemberOffset(pressedId);
+                    host.ReapplyArrangement();
                 }
 
                 return new SnapOutcome.NoChange();
@@ -107,7 +124,7 @@ namespace Orbweaver
             // would leave an empty one, with an anchor, in settings.json for
             // good.
             IReadOnlyList<string> otherTeam = Array.Empty<string>();
-            if (outcome is SnapOutcome.Pair pair) otherTeam = host.TeamIdsOf(pair.OtherId);
+            if (outcome is SnapOutcome.Pair pair) otherTeam = host.TeamIdsOf(pair.RootId);
             var otherKeys = otherTeam.Select(host.PositionKeyOf).ToList();
 
             if (outcome is not SnapOutcome.NoChange && keys.All(string.IsNullOrEmpty))
@@ -124,11 +141,15 @@ namespace Orbweaver
 
                 case SnapOutcome.Pair:
                     // A new user group holding both whole teams, anchored at the
-                    // middle of their combined discs.
+                    // midpoint of the two teams' disc centroids.
                     var paired = OrbweaverSettings.CreateOrbGroup();
                     OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1).Concat(otherKeys), paired.Id);
-                    var both = team.Concat(otherTeam).Select(host.DiscOf).ToList();
-                    OrbweaverSettings.SetOrbGroupAnchor(paired.Id, BoundsCentre(both));
+                    var mine = Centroid(team.Select(host.DiscOf).ToList());
+                    var theirs = Centroid(otherTeam.Select(host.DiscOf).ToList());
+                    OrbweaverSettings.SetOrbGroupAnchor(
+                        paired.Id,
+                        new OrbweaverSettings.OrbPlacement(
+                            (int)Math.Round((mine.X + theirs.X) / 2), (int)Math.Round((mine.Y + theirs.Y) / 2)));
                     break;
 
                 case SnapOutcome.LeaveToFree:
@@ -147,17 +168,12 @@ namespace Orbweaver
                     break;
             }
 
-            Reapply(host);
+            host.ReapplyArrangement();
             return outcome;
         }
 
-        // Arranged: the whole arrangement. Free: only the user groups, which
-        // are live in both modes (F1); the loose orbs stay where they were put.
-        private static void Reapply(IOrbDragHost host)
-        {
-            if (host.IsArranged) host.ReapplyArrangement();
-            else host.ReapplyGroups();
-        }
+        private static (double X, double Y) Centroid(IReadOnlyList<(double X, double Y, double R)> discs) =>
+            (discs.Average(d => d.X), discs.Average(d => d.Y));
 
         private static OrbweaverSettings.OrbPlacement BoundsCentre(
             IReadOnlyList<(double X, double Y, double R)> discs)
