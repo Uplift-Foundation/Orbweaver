@@ -184,8 +184,11 @@ namespace Orbweaver
         internal sealed record OrbPlacement(int X, int Y, double? Size = null);
 
         // CB-268 T2: where a team member sits relative to its lead inside a laid-out
-        // group, in DIP from the lead's visible centre (so an offset survives a
-        // display-scale change; S7 computes it). See OrbMemberOffsets on the model.
+        // group, CENTRE TO CENTRE: the member's visible centre minus the lead's visible
+        // centre, in DIP (so it survives a display-scale change; S7 computes it). Never
+        // top-left to top-left: members are drawn at MemberScale and a lead can carry its
+        // own size override, so a corner-to-corner offset would change meaning whenever
+        // either orb's size changed. See OrbMemberOffsets on the model.
         internal sealed record MemberOffset(double Dx, double Dy);
 
         // How big one agent's chat panel is, in DIPs. Doubles rather than the
@@ -1086,7 +1089,8 @@ namespace Orbweaver
                     : null;
         }
 
-        // Written once, at the end of a member drag. Null clears — what "Reset this
+        // Written once, at the end of a member drag, as member centre minus lead centre
+        // (see MemberOffset). Null clears — what "Reset this
         // orb's position" means — and a (0, 0) offset is a real one, the member sitting
         // exactly on its lead's centre, kept distinct from having none. A non-finite
         // number is not an offset and is ignored, so a bad measurement cannot reach the
