@@ -481,42 +481,81 @@ namespace Orbweaver.Tests
         }
 
         [Fact]
-        public void AnObstacleThatLeavesNoRoomKeepsEachGroupWhereItsBestEffortPutIt()
+        public void AnObstacleThatLeavesNoRoomKeepsTheGroupWhereItWasAskedAndSaysSo()
         {
-            // All but a 160 px strip of the screen is an obstacle: two groups
-            // cannot both be clear of it. With obstacles there is no Bands
-            // fallback, which cannot see them and would throw the groups across
-            // the screen; each stays at its best-effort place (F4) and the
-            // route says it did not separate.
-            var blocker = new PixelRect(160, 0, 1760, 1080);
-            var one = new PixelPoint(600, 400);
-            var two = new PixelPoint(900, 400);
-            var table = Table(("heart", one), ("star", two));
+            // Ottilie's repro: obstacles cover all but a 100 px strip in the
+            // middle of the screen, and one user group of six is anchored at
+            // (200, 300), on the left obstacle. Nothing is clear for it. It
+            // must not be thrown to the middle of the screen (that is Bands,
+            // which cannot see obstacles): it stays at its anchor, overlapping,
+            // and the route says Fallback.
+            var left = new PixelRect(0, 0, 910, 1080);
+            var right = new PixelRect(1010, 0, 910, 1080);
+            var asked = new PixelPoint(200, 300);
 
             var (positions, groups) = ComputeGroups(
-                10, NoLeads(10), Dealt(10, 2), table, LayoutAt(), null, new[] { blocker }, out var path);
+                6, NoLeads(6), new int[6], Table(("heart", asked)), LayoutAt(), null, new[] { left, right }, out var path);
 
             Assert.Equal(GroupPath.Fallback, path);
-            Assert.Equal(2, groups.Length);
-            Assert.All(positions, p => Assert.True(p.X >= 0 && p.X + 56 <= 1920 && p.Y >= 0 && p.Y + 56 <= 1080));
 
-            // Landed is what was asked for, so asking again is the same
-            // question and gets the same answer.
-            Assert.Equal(new[] { one, two }, groups.Select(g => g.Landed));
+            // Drawn near the anchor: every orb within a screen-fifth of it.
+            Assert.All(positions, p =>
+            {
+                Assert.InRange(p.X + 28, asked.X - 350, asked.X + 350);
+                Assert.InRange(p.Y + 28, asked.Y - 350, asked.Y + 350);
+            });
 
-            var fed = Table(("heart", groups[0].Landed), ("star", groups[1].Landed));
+            // Landed is where it was drawn, and asking again from there gives
+            // the same picture to the pixel.
+            Assert.InRange(groups[0].Landed.X, asked.X - 1, asked.X + 1);
+            Assert.InRange(groups[0].Landed.Y, asked.Y - 1, asked.Y + 1);
+
             var (again, againGroups) = ComputeGroups(
-                10, NoLeads(10), Dealt(10, 2), fed, LayoutAt(), null, new[] { blocker }, out var againPath);
+                6, NoLeads(6), new int[6], Table(("heart", groups[0].Landed)), LayoutAt(), null, new[] { left, right }, out var againPath);
 
             Assert.Equal(GroupPath.Fallback, againPath);
             Assert.Equal(positions, again);
-            Assert.Equal(groups.Select(g => g.SlotBounds), againGroups.Select(g => g.SlotBounds));
+            Assert.Equal(groups[0].SlotBounds, againGroups[0].SlotBounds);
+        }
 
-            // And a group that does not need to move for the obstacle (this
-            // one's anchor is already in the strip) is exactly where it would
-            // be with no obstacle at all.
-            var (without, _) = ComputeGroups(10, NoLeads(10), Dealt(10, 2), Table(("heart", one), ("star", two)), LayoutAt());
-            Assert.NotEqual(without, positions);
+        [Fact]
+        public void WithTwoGroupsOneFindsRoomAndTheOtherStaysPutAndBothReproduce()
+        {
+            // Obstacles leave a 70x70 corner, room for one single-orb group.
+            // Slot 0 is placed in it; slot 1 has no clear spot and stays at its
+            // anchor.
+            var obstacles = new[] { new PixelRect(70, 0, 1850, 1080), new PixelRect(0, 70, 70, 1010) };
+            var table = Table(("circle", new PixelPoint(900, 500)), ("circle", new PixelPoint(1500, 500)));
+            var of = new[] { 0, 1 };
+
+            var (positions, groups) = ComputeGroups(2, NoLeads(2), of, table, LayoutAt(), null, obstacles, out var path);
+
+            Assert.Equal(GroupPath.Fallback, path);
+            Assert.False(obstacles.Any(o => Overlap(groups[0].SlotBounds, o)));
+            Assert.True(obstacles.Any(o => Overlap(groups[1].SlotBounds, o)));
+
+            var fed = Table(("circle", groups[0].Landed), ("circle", groups[1].Landed));
+            var (again, _) = ComputeGroups(2, NoLeads(2), of, fed, LayoutAt(), null, obstacles, out var againPath);
+
+            Assert.Equal(GroupPath.Fallback, againPath);
+            Assert.Equal(positions, again);
+        }
+
+        [Fact]
+        public void AnEmptyObstacleListIsFreeModeAndNeverRebands()
+        {
+            // Passing a list at all, even an empty one, is free mode: groups
+            // are placed clear of each other and never drawn through Bands.
+            // Two groups asked for the same spot are separated, with nothing
+            // else in the way.
+            var at = new PixelPoint(960, 540);
+            var table = Table(("circle", at), ("circle", at));
+
+            var (_, groups) = ComputeGroups(
+                6, NoLeads(6), Dealt(6, 2), table, LayoutAt(), null, Array.Empty<PixelRect>(), out var path);
+
+            Assert.Equal(GroupPath.Separated, path);
+            Assert.False(Overlap(groups[0].SlotBounds, groups[1].SlotBounds));
         }
 
         // --- members placed by hand (T2) ---

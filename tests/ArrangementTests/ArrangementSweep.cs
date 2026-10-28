@@ -716,7 +716,9 @@ namespace Orbweaver.Tests
         //   pinned   six orbs left where the user dropped them
         //   blocker  all but a narrow strip on the left, which two groups
         //            cannot share: the case that has to take the fallback
-        internal static readonly string[] ObstacleKinds = { "stack", "pinned", "blocker" };
+        //   free     an empty list: free mode with nothing in the way, which is
+        //            not the same as passing none (see ComputeGroups)
+        internal static readonly string[] ObstacleKinds = { "stack", "pinned", "blocker", "free" };
 
         internal static PixelRect[] ObstaclesOf(string kind, Screen screen)
         {
@@ -739,7 +741,7 @@ namespace Orbweaver.Tests
                 {
                     new PixelRect(work.X + (int)Math.Round(160 * s), work.Y, work.Width - (int)Math.Round(160 * s), work.Height),
                 },
-                _ => Array.Empty<PixelRect>(),
+                _ => Array.Empty<PixelRect>(),   // "free" (and "none", which the caller turns into null)
             };
         }
 
@@ -875,7 +877,11 @@ namespace Orbweaver.Tests
                 .Concat(ShapesFor(test.Shape).Take(test.Groups)).ToArray();
             var centres = Enumerable.Repeat((PixelPoint?)null, slotBase)
                 .Concat(AnchorsOf(test.Anchors, test.Groups, screen)).ToArray();
-            var obstacles = ObstaclesOf(test.Obstacles, screen);
+            // "none" is passing no list at all — the layout as it was before
+            // free mode; any other kind, an empty one included, is free mode.
+            var freeMode = test.Obstacles != "none";
+            var obstacleArgument = freeMode ? ObstaclesOf(test.Obstacles, screen) : null;
+            var obstacles = obstacleArgument ?? Array.Empty<PixelRect>();
             var offsets = OffsetsOf(test.Offsets, leads, count);
 
             var sizes = test.Mix?.Build(count) ?? Enumerable.Repeat(1.0, count).ToArray();
@@ -892,7 +898,7 @@ namespace Orbweaver.Tests
             try
             {
                 result = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, test.Offsets == "none" ? null : offsets, out path);
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacleArgument, test.Offsets == "none" ? null : offsets, out path);
             }
             catch (Exception ex)
             {
@@ -996,7 +1002,7 @@ namespace Orbweaver.Tests
             // not (CB-268 F2 — a rebanded group on the stack column is worse).
             var slotOfOrb = new int[count];
             foreach (var group in placed) foreach (var orb in group.Orbs) slotOfOrb[orb] = group.Slot;
-            var crowded = path == OrbArrangement.GroupPath.Fallback && obstacles.Length > 0;
+            var crowded = path == OrbArrangement.GroupPath.Fallback && freeMode;
 
             for (var i = 0; i < count; i++)
             for (var j = i + 1; j < count; j++)
@@ -1135,7 +1141,7 @@ namespace Orbweaver.Tests
 
             // 8. Deterministic.
             var again = OrbArrangement.ComputeGroups(
-                count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, test.Offsets == "none" ? null : offsets, out var againPath);
+                count, leads, groupOf, Table(centres), layout, sizeArgument, obstacleArgument, test.Offsets == "none" ? null : offsets, out var againPath);
 
             if (againPath != path || !pts.SequenceEqual(again.Positions) || !SamePlacements(placed, again.Groups))
                 Fail("not deterministic — two runs disagreed");
@@ -1148,7 +1154,7 @@ namespace Orbweaver.Tests
             if (test.Offsets != "none")
             {
                 var plain = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacles, null, out var plainPath);
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, obstacleArgument, null, out var plainPath);
 
                 if (plainPath != path)
                     Fail($"offsets changed the route from {plainPath} to {path}");
@@ -1185,7 +1191,7 @@ namespace Orbweaver.Tests
                     .ToArray();
 
                 var round = OrbArrangement.ComputeGroups(
-                    count, leads, groupOf, Table(landed), layout, sizeArgument, obstacles, test.Offsets == "none" ? null : offsets, out var roundPath);
+                    count, leads, groupOf, Table(landed), layout, sizeArgument, obstacleArgument, test.Offsets == "none" ? null : offsets, out var roundPath);
 
                 if (roundPath != path)
                     Fail($"feeding Landed back took the {roundPath} route, not {path}");

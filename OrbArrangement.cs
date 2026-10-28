@@ -318,18 +318,20 @@ namespace Orbweaver
         // The same, saying which route it took.
         //
         // `obstacles` are fixed rectangles in physical pixels (the free-mode
-        // stack column, free-pinned orbs) that no group may be drawn on: groups
-        // are separated from them as from each other. When they cannot all be
-        // got apart the route is Fallback, and what that means depends on
-        // whether there are any: with none, the whole set is drawn through
-        // Bands + Compact, as ever; with some, every group stays at its
-        // best-effort position and may overlap an obstacle or another group,
-        // because Bands cannot see obstacles and would throw user groups
-        // across the screen and onto the stack column (CB-268 F2, F4). Landed
-        // is then what was asked for, since SeparateGroups started from the
-        // asked positions and a second run started from its own best effort
-        // would not stop where the first did; asking the same question again
-        // gets the same answer.
+        // stack column, free-pinned orbs) that no group may be drawn on. Passing
+        // a list at all, even an empty one, is free mode: groups are placed by
+        // PlaceClear, in slot order, each at the nearest spot clear of the
+        // obstacles and of the groups before it, or — when there is none —
+        // where it was asked to be, overlapping and reported as Fallback.
+        // There is no Bands + Compact fallback then: it cannot see obstacles
+        // and would throw user groups across the screen and onto the stack
+        // column (CB-268 F2, F4). Landed is where the group was drawn, and
+        // feeding it back reproduces the layout exactly, because a group that
+        // found a clear spot is still clear there and one that found none
+        // stays where it is asked; SeparateGroups' pushing cannot promise that,
+        // since a second run starts from its own best effort and need not stop
+        // where the first did. With no list, the layout is SeparateGroups and
+        // Bands + Compact as before.
         //
         // `memberOffsetOf[i]` is a team member's hand-placed offset from its
         // lead, in DIP, centre to centre (CB-268 T2). Null, a missing entry,
@@ -429,11 +431,12 @@ namespace Orbweaver
             }
 
             var gap = Math.Max(1, (int)Math.Round(WindowFor(layout.Scale, sizes.Max()) * GroupGapWindows));
-            var (moved, separated) = SeparateGroups(boxes, work, gap, obstacles);
+            var free = obstacles is not null;
+            var (moved, separated) = free
+                ? PlaceClear(boxes, work, gap, obstacles!)
+                : SeparateGroups(boxes, work, gap);
 
-            var hasObstacles = obstacles is { Count: > 0 };
-
-            if (!separated && !hasObstacles)
+            if (!separated && !free)
             {
                 path = GroupPath.Fallback;
 
@@ -467,7 +470,7 @@ namespace Orbweaver
 
                 placements[k] = new GroupPlacement(
                     usedSlots[k],
-                    separated ? new PixelPoint(middle.X + dx, middle.Y + dy) : askedOf[usedSlots[k]],
+                    new PixelPoint(middle.X + dx, middle.Y + dy),
                     moved[k],
                     drawn[k],
                     members[k],
@@ -623,6 +626,84 @@ namespace Orbweaver
             }
 
             return (Enumerable.Range(m, n - m).Select(i => new PixelRect(x[i], y[i], w[i], h[i])).ToArray(), separated);
+        }
+
+        // Free mode's placement: in order, each box goes to the nearest spot
+        // inside `work` that is `gap` clear of every obstacle and every box
+        // before it, or stays where it was asked (clamped into `work`) if there
+        // is none. The second return is whether every box found a clear spot.
+        //
+        // The candidates are the flush positions — right of or left of each
+        // rectangle it must avoid, below or above it, and the edges of `work` —
+        // taken as every combination of an x and a y, with the asked position
+        // among them. A box that fits anywhere clear fits at one of them: slide
+        // it left and up until something stops it. Nearest means the least
+        // total movement, and a tie goes to the earlier candidate.
+        //
+        // One pass, no iteration, and that is the point: the answer for a box
+        // depends on where it was asked only through "nearest", so a box put at
+        // a clear spot and asked again from there stays, and one that found no
+        // spot stays too. Feeding the result back as the asked positions
+        // reproduces it exactly, which a loop that pushes boxes around until it
+        // gives up cannot say.
+        internal static (PixelRect[] Boxes, bool Clear) PlaceClear(
+            IReadOnlyList<PixelRect> boxes, PixelRect work, int gap, IReadOnlyList<PixelRect> obstacles)
+        {
+            var placed = new List<PixelRect>(obstacles);
+            var result = new PixelRect[boxes.Count];
+            var allClear = true;
+
+            for (var b = 0; b < boxes.Count; b++)
+            {
+                var w = boxes[b].Width;
+                var h = boxes[b].Height;
+                var stayX = Within(boxes[b].X, w, work.X, work.Right);
+                var stayY = Within(boxes[b].Y, h, work.Y, work.Bottom);
+
+                var xs = new List<int> { stayX, work.X, Math.Max(work.X, work.Right - w) };
+                var ys = new List<int> { stayY, work.Y, Math.Max(work.Y, work.Bottom - h) };
+
+                foreach (var r in placed)
+                {
+                    xs.Add(Within(r.Right + gap, w, work.X, work.Right));
+                    xs.Add(Within(r.X - w - gap, w, work.X, work.Right));
+                    ys.Add(Within(r.Bottom + gap, h, work.Y, work.Bottom));
+                    ys.Add(Within(r.Y - h - gap, h, work.Y, work.Bottom));
+                }
+
+                bool ClearAt(int x, int y)
+                {
+                    foreach (var r in placed)
+                    {
+                        if (x < r.Right + gap && r.X < x + w + gap && y < r.Bottom + gap && r.Y < y + h + gap)
+                            return false;
+                    }
+
+                    return true;
+                }
+
+                var bestX = stayX;
+                var bestY = stayY;
+                var bestCost = int.MaxValue;
+
+                foreach (var x in xs)
+                foreach (var y in ys)
+                {
+                    var cost = Math.Abs(x - stayX) + Math.Abs(y - stayY);
+                    if (cost >= bestCost || !ClearAt(x, y)) continue;
+
+                    bestCost = cost;
+                    bestX = x;
+                    bestY = y;
+                }
+
+                if (bestCost == int.MaxValue) allClear = false;
+
+                result[b] = new PixelRect(bestX, bestY, w, h);
+                placed.Add(result[b]);
+            }
+
+            return (result, allClear);
         }
 
         // `pos` clamped so [pos, pos+size) sits in [lo, hi); the low edge wins

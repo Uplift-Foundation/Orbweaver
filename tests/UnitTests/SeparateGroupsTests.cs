@@ -287,5 +287,82 @@ namespace Orbweaver.Tests
                 OrbArrangement.SeparateGroups(boxes, Work, 8).Boxes,
                 OrbArrangement.SeparateGroups(boxes, Work, 8, Array.Empty<PixelRect>()).Boxes);
         }
+
+        // --- PlaceClear: free mode's one-pass placement ---
+
+        [Fact]
+        public void AClearBoxStaysWhereItWasAsked()
+        {
+            var (placed, clear) = OrbArrangement.PlaceClear(
+                new[] { new PixelRect(100, 100, 100, 100) }, Work, 8, new[] { new PixelRect(800, 100, 100, 100) });
+
+            Assert.True(clear);
+            Assert.Equal(new PixelRect(100, 100, 100, 100), placed[0]);
+        }
+
+        [Fact]
+        public void ABoxOnAnObstacleGoesToTheNearestClearSpot()
+        {
+            var stack = new PixelRect(880, 0, 100, 600);
+
+            var (placed, clear) = OrbArrangement.PlaceClear(
+                new[] { new PixelRect(850, 200, 100, 100) }, Work, 8, new[] { stack });
+
+            Assert.True(clear);
+            Assert.True(Clear(placed[0], stack, 8));
+            // Left of the column, which is nearer than any other way out.
+            Assert.Equal(772, placed[0].X);
+            Assert.Equal(200, placed[0].Y);
+        }
+
+        [Fact]
+        public void ABoxIsAskedAgainFromWhereItEndedUpAndStays()
+        {
+            var obstacles = new[] { new PixelRect(880, 0, 100, 600), new PixelRect(300, 250, 120, 120) };
+            var asked = new[] { new PixelRect(850, 200, 100, 100), new PixelRect(330, 260, 100, 100), new PixelRect(340, 270, 90, 90) };
+
+            var (first, _) = OrbArrangement.PlaceClear(asked, Work, 8, obstacles);
+            var (second, _) = OrbArrangement.PlaceClear(first, Work, 8, obstacles);
+
+            Assert.Equal(first, second);
+        }
+
+        [Fact]
+        public void ABoxWithNoClearSpotStaysAtItsAskedPlaceAndTheAnswerSaysNotClear()
+        {
+            var (placed, clear) = OrbArrangement.PlaceClear(
+                new[] { new PixelRect(100, 100, 100, 100) }, Work, 8, new[] { Work });
+
+            Assert.False(clear);
+            Assert.Equal(new PixelRect(100, 100, 100, 100), placed[0]);
+
+            // ...and is clamped into the work area if it was asked for outside.
+            var (clamped, _) = OrbArrangement.PlaceClear(
+                new[] { new PixelRect(-500, -500, 100, 100) }, Work, 8, new[] { Work });
+
+            Assert.Equal(new PixelRect(0, 0, 100, 100), clamped[0]);
+        }
+
+        [Fact]
+        public void LaterBoxesAvoidEarlierOnesAsWellAsObstacles()
+        {
+            var boxes = Enumerable.Repeat(new PixelRect(450, 250, 120, 120), 4).ToArray();
+
+            var (placed, clear) = OrbArrangement.PlaceClear(boxes, Work, 10, Array.Empty<PixelRect>());
+
+            Assert.True(clear);
+            Assert.Equal(boxes[0], placed[0]);
+            for (var a = 0; a < placed.Length; a++)
+            for (var b = a + 1; b < placed.Length; b++) Assert.True(Clear(placed[a], placed[b], 10));
+        }
+
+        [Fact]
+        public void NoBoxesPlaceCleanly()
+        {
+            var (placed, clear) = OrbArrangement.PlaceClear(Array.Empty<PixelRect>(), Work, 8, Array.Empty<PixelRect>());
+
+            Assert.Empty(placed);
+            Assert.True(clear);
+        }
     }
 }

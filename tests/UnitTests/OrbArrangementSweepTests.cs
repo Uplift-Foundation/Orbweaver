@@ -82,10 +82,10 @@ namespace Orbweaver.Tests
 
         // The user-group half (CB-268), which is its own matrix rather than
         // more rows of Cases() — the floor above guards the first three sweeps
-        // and this guards the fourth, at 142464: 108864 across 1–6 groups ×
+        // and this guards the fourth, at 149184: 108864 across 1–6 groups ×
         // six anchor arrangements × every shape, spacing, team shape and
         // screen at three orb counts and two ways of dealing the orbs, 8064 with
-        // mixed sizes, 20160 beside fixed obstacles (free mode), and 5376 with members placed
+        // mixed sizes, 26880 beside fixed obstacles (free mode), and 5376 with members placed
         // by hand. Raised to
         // the real count, not near it.
         [Fact]
@@ -94,8 +94,8 @@ namespace Orbweaver.Tests
             var cases = ArrangementSweep.GroupCases().ToList();
 
             Assert.True(
-                cases.Count >= 142464,
-                $"the group sweep is down to {cases.Count} cases from 142464 — "
+                cases.Count >= 149184,
+                $"the group sweep is down to {cases.Count} cases from 149184 — "
                     + "if that was deliberate, raise the floor in this test");
 
             // Every dimension that earns its keep: from one group to six, each
@@ -108,7 +108,8 @@ namespace Orbweaver.Tests
             Assert.Equal(2, cases.Select(c => c.Split).Distinct().Count());
             Assert.Contains(cases, c => c.Mix is not null);
 
-            // Obstacles, in all three kinds, with the predefined slots both
+            // Obstacles, in all four kinds (the stack, pinned orbs, a blocker, and an
+            // empty list, which is free mode with nothing in the way), with the predefined slots both
             // occupied and empty.
             Assert.Equal(
                 ArrangementSweep.ObstacleKinds.OrderBy(k => k),
@@ -142,7 +143,7 @@ namespace Orbweaver.Tests
             var fellBack = 0;
 
             foreach (var c in ArrangementSweep.GroupCases()
-                .Where(c => c.Obstacles != "none" && c.Screen.Name == "1080p"))
+                .Where(c => c.Obstacles is "stack" or "pinned" or "blocker" && c.Screen.Name == "1080p"))
             {
                 var slotBase = c.EmptyPredefined ? 3 : 0;
                 var leads = c.Team.Build(c.Count);
@@ -156,7 +157,8 @@ namespace Orbweaver.Tests
 
                 var with = OrbArrangement.ComputeGroups(
                     c.Count, leads, of, table, layout, null, ArrangementSweep.ObstaclesOf(c.Obstacles, c.Screen), out var path);
-                var without = OrbArrangement.ComputeGroups(c.Count, leads, of, table, layout, null, null, out _);
+                var without = OrbArrangement.ComputeGroups(
+                    c.Count, leads, of, table, layout, null, Array.Empty<Avalonia.PixelRect>(), out _);
 
                 if (path == OrbArrangement.GroupPath.Fallback) fellBack++;
                 else if (!with.Positions.SequenceEqual(without.Positions)) pushed++;
