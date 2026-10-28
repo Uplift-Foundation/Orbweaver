@@ -32,6 +32,16 @@ namespace Orbweaver
         internal const double JoinDip = 24;
         internal const double LeaveDip = 72;
 
+        /// <summary>
+        /// The visible radius, in DIP, of an orb at size 1.0. Both thresholds are
+        /// stated for that size and scale with the dragged orb's, because the
+        /// gap S2 leaves between two separated groups scales with orb size too:
+        /// a fixed 24 DIP join distance is wider than that gap on a small orb, and
+        /// releasing an edge orb would join the neighbouring group it was only
+        /// arranged next to.
+        /// </summary>
+        internal const double BaseRadiusDip = 18;
+
         /// <summary>Single-disc form of <see cref="Decide(IReadOnlyList{ValueTuple{double,double,double}}, string, IReadOnlyList{SnapCandidate}, double, double)"/>.</summary>
         internal static SnapOutcome Decide(
             Point centre, double radius, string currentGroupId,

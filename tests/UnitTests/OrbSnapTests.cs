@@ -70,6 +70,18 @@ public class OrbSnapTests
     }
 
     [Fact]
+    public void AFartherGroupListedAfterTheNearestDoesNotReplaceIt()
+    {
+        var outcome = OrbSnap.Decide(Origin, 18, "main", new[]
+        {
+            Group("g-near", (45, 0, 18)),
+            Group("g-far", (60, 0, 18)),
+        });
+
+        Assert.Equal(new SnapOutcome.Join("g-near"), outcome);
+    }
+
+    [Fact]
     public void TheCurrentGroupIsNeverJoined()
     {
         var outcome = OrbSnap.Decide(Origin, 18, "main", new[] { Group("main", (40, 0, 18)) });

@@ -129,7 +129,14 @@ namespace Orbweaver
                 })
                 .ToList();
 
-            return OrbSnap.Decide(moving, host.GroupIdOf(pressedId), candidates);
+            // The lead is the biggest disc of a team (members are drawn smaller),
+            // so the largest radius is the orb size the thresholds scale with.
+            var radius = moving.Count == 0 ? 0 : moving.Max(d => d.R);
+            var size = radius > 0 ? radius / OrbSnap.BaseRadiusDip : 1;
+
+            return OrbSnap.Decide(
+                moving, host.GroupIdOf(pressedId), candidates,
+                OrbSnap.JoinDip * size, OrbSnap.LeaveDip * size);
         }
     }
 }

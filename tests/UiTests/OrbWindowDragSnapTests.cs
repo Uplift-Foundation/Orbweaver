@@ -229,6 +229,29 @@ public class OrbWindowDragSnapTests
     }
 
     [AvaloniaFact]
+    public void OnlyTheFirstOrbOfASharedPositionKeyIsRemembered()
+    {
+        // A team usually runs in one directory, so its orbs share one key; an
+        // orb with no key has nothing to remember. Neither may throw, and the
+        // drag must still move every one of them.
+        var roster = new Roster();
+        var id = Uid();
+        var (a, b, c) = ("a-" + id, "b-" + id, "c-" + id);
+        roster.Add(a, OrbGroups.Main, 0, 0).PositionKey = "shared-" + id;
+        roster.Add(b, OrbGroups.Main, 60, 0).PositionKey = "shared-" + id;
+        roster.Add(c, OrbGroups.Main, 120, 0).PositionKey = "";
+        var team = new[] { a, b, c };
+        foreach (var t in team) roster.Teams[t] = team;
+        using var _ = new HostScope(roster);
+
+        Drag(roster.Windows[b], 10, 10);
+
+        Assert.Equal(new PixelPoint(10, 10), roster.Windows[a].Position);
+        Assert.Equal(new PixelPoint(70, 10), roster.Windows[b].Position);
+        Assert.Equal(new PixelPoint(130, 10), roster.Windows[c].Position);
+    }
+
+    [AvaloniaFact]
     public void WithoutAHostADragStillMovesTheOrbItself()
     {
         var w = new OrbWindow("solo-" + Uid()) { Position = new PixelPoint(50, 50) };

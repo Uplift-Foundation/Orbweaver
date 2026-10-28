@@ -141,19 +141,67 @@ public class OrbDragCommitTests
     }
 
     [Fact]
-    public void ADragOnA2xScreenIsMeasuredInDip()
+    public void TheDecisionDoesNotDependOnHowManyScreenUnitsMakeADip()
     {
-        // Physical: radius 36 each, centres 110 apart. At 1x that is a 38 px gap,
-        // too far to join. At 2x it is 55 DIP between centres and radius 18 each:
-        // a 19 DIP gap, which joins.
-        var (host, orb, target) = Scene(110);
-        host.Discs[orb] = (0, 0, 36);
-        host.Candidates[1] = new SnapCandidate(target, Array.Empty<Point>(), new[] { (110.0, 0.0, 36.0) });
+        // The thresholds scale with the orb's own drawn size, so the same scene
+        // measured in screen units that are 1x or 2x of a DIP gives one answer:
+        // 19 DIP gap against a 24 DIP limit (joins), 38 against 24 (does not).
+        foreach (var (units, gapDip, expectJoin) in new[] { (1.0, 19.0, true), (2.0, 19.0, true), (1.0, 38.0, false), (2.0, 38.0, false) })
+        {
+            var (host, orb, target) = Scene(5000);
+            host.Discs[orb] = (0, 0, 18 * units);
+            host.Candidates[0] = new SnapCandidate(
+                OrbGroups.Main, Array.Empty<Point>(), new[] { (-200 * units, 0.0, 18 * units) });
+            host.Candidates[1] = new SnapCandidate(
+                target, Array.Empty<Point>(),
+                new[] { ((gapDip + 36) * units, 0.0, 18 * units) });
 
+            var outcome = OrbDragCommit.Preview(host, orb, units);
+
+            if (expectJoin) Assert.Equal(new SnapOutcome.Join(target), outcome);
+            else Assert.IsType<SnapOutcome.Leave>(outcome);
+        }
+
+        // A nonsense factor reads as 1.
+        var (h, o, t) = Scene(5000);
+        h.Discs[o] = (0, 0, 18);
+        h.Candidates[1] = new SnapCandidate(t, Array.Empty<Point>(), new[] { (55.0, 0.0, 18.0) });
+        Assert.Equal(new SnapOutcome.Join(t), OrbDragCommit.Preview(h, o, 0));
+    }
+
+    [Fact]
+    public void TheThresholdsScaleWithTheDraggedOrbsSize()
+    {
+        // A 14 DIP gap to the neighbouring group: inside the 24 DIP join
+        // distance of a full-size orb (radius 18), outside the 12 DIP one of a
+        // half-size orb (radius 9) — where S2 leaves a smaller gap too.
+        var (host, orb, target) = Scene(5000);
+        host.Discs[orb] = (0, 0, 18);
+        host.Candidates[1] = new SnapCandidate(target, Array.Empty<Point>(), new[] { (50.0, 0.0, 18.0) });
+        Assert.Equal(new SnapOutcome.Join(target), OrbDragCommit.Preview(host, orb, 1));
+
+        host.Discs[orb] = (0, 0, 9);
+        host.Candidates[1] = new SnapCandidate(target, Array.Empty<Point>(), new[] { (32.0, 0.0, 9.0) });
+        Assert.IsType<SnapOutcome.Leave>(OrbDragCommit.Preview(host, orb, 1));
+
+        // Leave scales the same way: 50 DIP from its own group stays at full
+        // size (limit 72) and leaves at half size (limit 36).
+        host.Candidates[0] = new SnapCandidate(OrbGroups.Main, Array.Empty<Point>(), new[] { (68.0, 0.0, 9.0) });
+        host.Candidates[1] = new SnapCandidate(target, Array.Empty<Point>(), new[] { (5000.0, 0.0, 9.0) });
+        Assert.IsType<SnapOutcome.Leave>(OrbDragCommit.Preview(host, orb, 1));
+        host.Discs[orb] = (0, 0, 18);
+        host.Candidates[0] = new SnapCandidate(OrbGroups.Main, Array.Empty<Point>(), new[] { (86.0, 0.0, 18.0) });
         Assert.IsType<SnapOutcome.NoChange>(OrbDragCommit.Preview(host, orb, 1));
-        Assert.Equal(new SnapOutcome.Join(target), OrbDragCommit.Preview(host, orb, 2));
-        // A nonsense scaling reads as 1.
-        Assert.IsType<SnapOutcome.NoChange>(OrbDragCommit.Preview(host, orb, 0));
+    }
+
+    [Fact]
+    public void AnOrbWithNoRadiusIsMeasuredAtFullSize()
+    {
+        var (host, orb, target) = Scene(5000);
+        host.Discs[orb] = (0, 0, 0);   // what an unknown orb reports
+        host.Candidates[1] = new SnapCandidate(target, Array.Empty<Point>(), new[] { (20.0, 0.0, 0.0) });
+
+        Assert.Equal(new SnapOutcome.Join(target), OrbDragCommit.Preview(host, orb, 1));
     }
 
     [Fact]
