@@ -153,7 +153,7 @@ namespace Orbweaver
         internal static PixelPoint[] Compute(
             int count, int[] leadOf, int[] groupOf, IReadOnlyList<string> shapes, Layout layout,
             double[]? sizeOf = null)
-            => ComputeCore(count, leadOf, groupOf, shapes, layout, sizeOf, out _);
+            => ComputeCore(count, leadOf, groupOf, shapes, layout, sizeOf, out _, out _);
 
         // Compute's body, with one extra answer: whether the grid retry below
         // was taken *and kept*. ComputeGroups needs it to report the shape it
@@ -161,9 +161,10 @@ namespace Orbweaver
         // answer thrown away, so every arrangement it returns is unchanged.
         private static PixelPoint[] ComputeCore(
             int count, int[] leadOf, int[] groupOf, IReadOnlyList<string> shapes, Layout layout,
-            double[]? sizeOf, out bool gridded)
+            double[]? sizeOf, out bool gridded, out bool[] griddedSlots)
         {
             gridded = false;
+            griddedSlots = new bool[Math.Max(1, shapes.Count)];
             if (count <= 0) return Array.Empty<PixelPoint>();
 
             var anchors = new List<int>();
@@ -179,7 +180,7 @@ namespace Orbweaver
 
             var placed = Arrange(
                 count, leadOf, groupOf, shapes, layout, anchors, members, window, circle,
-                gridWhenSqueezed: false, out var squeezed);
+                gridWhenSqueezed: false, out var squeezed, out _);
 
             // Orbs the separation pass could not get apart, in an arrangement
             // the screen had to squeeze, are drawn again with every squeezed
@@ -216,12 +217,13 @@ namespace Orbweaver
             {
                 var retried = Arrange(
                     count, leadOf, groupOf, shapes, layout, anchors, members, window, circle,
-                    gridWhenSqueezed: true, out _);
+                    gridWhenSqueezed: true, out _, out var regridded);
 
                 if (WorstGap(retried, leadOf, circle) > WorstGap(placed, leadOf, circle))
                 {
                     placed = retried;
                     gridded = true;
+                    griddedSlots = regridded;
                 }
             }
 
@@ -387,9 +389,9 @@ namespace Orbweaver
                 path = GroupPath.Fallback;
 
                 var fallback = ComputeCore(
-                    count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _);
+                    count, leadOf, slotOf, shapes, layout with { Center = null }, sizes, out _, out var fallbackGrid);
 
-                return (fallback, Describe(fallback, leadOf, slotOf, shapes, sizes, layout.Scale, askedOf));
+                return (fallback, Describe(fallback, leadOf, slotOf, shapes, sizes, layout.Scale, askedOf, fallbackGrid));
             }
 
             path = GroupPath.Separated;
@@ -612,7 +614,7 @@ namespace Orbweaver
 
             var placed = ComputeCore(
                 orbs.Length, subLead, new int[orbs.Length], new[] { shape },
-                layout with { Shape = shape, Center = middle }, subSize, out var gridded);
+                layout with { Shape = shape, Center = middle }, subSize, out var gridded, out _);
 
             return (placed, SlotBox(placed, subSize, layout.Scale, WindowFor(layout.Scale, subSize.Max())), gridded);
         }
@@ -664,12 +666,9 @@ namespace Orbweaver
         // was asked for, per the note on ComputeGroups: the fallback ignores
         // anchors, so what reproduces it is asking the same thing again.
         //
-        // The shape drawn is the shape asked for: Compute's grid retry is
-        // decided for the set as a whole and cannot be attributed to a group,
-        // and GroupOutline encloses the discs whatever shape it is told.
         private static GroupPlacement[] Describe(
             PixelPoint[] positions, int[] leadOf, int[] slotOf, string[] shapes, double[] sizes, double scale,
-            PixelPoint[] askedOf)
+            PixelPoint[] askedOf, bool[] griddedSlots)
         {
             var window = WindowFor(scale, sizes.Max());
             var result = new List<GroupPlacement>();
@@ -684,9 +683,13 @@ namespace Orbweaver
                     orbs.Select(i => sizes[i]).ToArray(),
                     scale, window);
 
-                var (curveAt, curveScale) = FitCurve(shapes[g], orbs, positions, sizes, scale, leadOf, positions.Length);
+                // Which slots the fallback redrew as a grid is known exactly (the
+                // second pass of Compute's squeeze retry records it), so the
+                // shape reported is the shape drawn.
+                var drawn = griddedSlots[g] ? "grid" : shapes[g];
+                var (curveAt, curveScale) = FitCurve(drawn, orbs, positions, sizes, scale, leadOf, positions.Length);
 
-                result.Add(new GroupPlacement(g, askedOf[g], box, shapes[g], orbs, curveAt, curveScale));
+                result.Add(new GroupPlacement(g, askedOf[g], box, drawn, orbs, curveAt, curveScale));
             }
 
             return result.ToArray();
@@ -781,9 +784,10 @@ namespace Orbweaver
         private static PixelPoint[] Arrange(
             int count, int[] leadOf, int[] groupOf, IReadOnlyList<string> shapes, Layout layout,
             List<int> anchors, Dictionary<int, List<int>> members, int window, double circle,
-            bool gridWhenSqueezed, out bool squeezed)
+            bool gridWhenSqueezed, out bool squeezed, out bool[] regridded)
         {
             squeezed = false;
+            regridded = new bool[Math.Max(1, shapes.Count)];
 
             var minGap = MinGap(circle, layout.Spacing);
 
@@ -831,6 +835,7 @@ namespace Orbweaver
                 if (tight && gridWhenSqueezed && at.Shape != "grid")
                 {
                     drawn[g] = Fit(ShapeFor(counts[g], window, at with { Shape = "grid" }), band, window, minGap, out _);
+                    regridded[g] = true;
                 }
             }
 

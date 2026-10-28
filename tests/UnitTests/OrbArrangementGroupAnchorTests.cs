@@ -538,6 +538,37 @@ namespace Orbweaver.Tests
         }
 
         [Fact]
+        public void TheFallbackReportsGridForTheGroupsItRedrewAsOneAndTheAskedShapeForTheRest()
+        {
+            var small = new PixelRect(0, 0, 1280, 800);
+            var at = new PixelPoint(640, 400);
+            var sizes = Enumerable.Repeat(2.0, 60).ToArray();
+            var table = Table(("circle", at), ("circle", at), ("circle", at));
+
+            var (positions, groups, path) = Run(60, NoLeads(60), Dealt(60, 3), table, LayoutAt(work: small), sizes);
+
+            Assert.Equal(GroupPath.Fallback, path);
+
+            // Twenty 200% orbs in a ring each are squeezed on this screen, so
+            // the retry draws them as grids and the placements say so — with
+            // no curve, since there is none to offset.
+            Assert.All(groups, g =>
+            {
+                Assert.Equal("grid", g.DrawnShape);
+                Assert.Equal(0, g.CurveScale);
+            });
+
+            // Two single orbs that cannot be set apart on a 100x60 screen fall back
+            // too, but nothing is squeezed, so the asked shapes are reported.
+            var roomy = Run(2, NoLeads(2), Dealt(2, 2),
+                Table(("circle", new PixelPoint(50, 30)), ("heart", new PixelPoint(50, 30))),
+                LayoutAt(work: new PixelRect(0, 0, 100, 60)));
+
+            Assert.Equal(GroupPath.Fallback, roomy.Path);
+            Assert.Equal(new[] { "circle", "heart" }, roomy.Groups.Select(g => g.DrawnShape));
+        }
+
+        [Fact]
         public void TheSameInputsGiveTheSameAnswer()
         {
             var table = Table(("heart", new PixelPoint(300, 300)), ("star", new PixelPoint(320, 310)));
