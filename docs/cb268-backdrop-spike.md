@@ -90,9 +90,37 @@ These are single samples with the cursor mostly still (3 toggles). The jump from
 
 Groups living on a second monitor would be new scope, not part of CB-268's decisions, and this note does not reopen them.
 
+## 5. T6 — team arrows above the backdrop; orbs never covered
+
+T6 was added to the requirement after the first spike. The probe now has an arrow stand-in built the way `TeamLinks.LinkWindow` builds one: topmost, 40×20 DIP over a point inside the silhouette, and made click-through the way `MakeClickThrough` does it. On Windows that sets `WS_EX_TRANSPARENT | WS_EX_LAYERED`; on macOS it sends `setIgnoresMouseEvents:YES`. Readings were taken 2026-10-27, after the contracts revision `b6d4ce2d`.
+
+**Confirmed (MacBook):**
+
+- The arrow sits at level 3, above the level-2 backdrop.
+- **Control:** before click-through, the point under the arrow hits the **arrow**. After it, the same point hits the **backdrop**, so a press on an arrow inside a group is a group drag.
+- The arrow stays above the backdrop and stays click-through after the pool's `Hide()`/`Show()` and after the backdrop's own `Hide()`/`Show()`.
+- **`Opened` fires again on every re-`Show()`** (it counted 1, then 2). That is managed Avalonia code, so it holds on both platforms.
+
+**Confirmed (Windows box, disconnected session):**
+
+- The arrow is shown after the backdrop is placed, and it lands above it.
+- Same **control** as macOS: arrow before click-through, backdrop after.
+- **Avalonia rewrites the window's ex-style on `Show()`.** When click-through was set once by hand, a pooled `Hide()`/`Show()` dropped the style from `0x280028` (`LAYERED|TRANSPARENT`) back to `0x200008`, and the arrow caught the point again.
+  - Applied from `Opened` instead, as `LinkWindow` actually does it, the style **survives** every re-`Show()` (t3b and t3c). So the shipped arrows are fine and there is no bug to file.
+  - The lesson for S5 is that **any ex-style the backdrop sets must be applied from `Opened`, not once**. The window region is not affected: it survived hide/show (§3).
+- `PlaceBehindAll`'s rule (behind the lowest of the orb and the arrow) leaves the backdrop behind both.
+- **A backdrop shown for the first time after the orbs exist lands in front of the orb and the arrow** (`back2.z=3`, `arrow.z=4`, `orb.z=5`). This settles the case §3 left open: `PlaceBehindAll` on first show is required, not optional.
+- **The orb hole works on its own.**
+  - With the orb's disc cut out of the region (`CombineRgn(…, RGN_DIFF)` with `CreateEllipticRgn`) and the backdrop deliberately **forced in front**, the orb's centre still resolves to the **orb**.
+  - The corner still passes through, and the inside still hits the backdrop.
+  - Without the hole, the same forced order gave the orb's centre to the backdrop (§3, `hc`).
+  - So T6's "never covers an orb" holds even during the moment before `PlaceBehindAll` runs.
+
+**macOS orbs:** nothing to measure. The poll's `ShouldCatch` is pure, and it returns false inside any orb disc. The orbs' level 3 is a second, structural guarantee on top of that (§1).
+
 ## Recommendation for S5 (`GroupBackdrops`)
 
-**Construction:** copy `LinkWindow`'s constructor with **`Topmost = false`**. In `Opened`, call `ShowOnAllSpaces()`, then apply the platform order below. Never assign `Topmost` afterwards.
+**Construction:** copy `LinkWindow`'s constructor with **`Topmost = false`**. In `Opened`, which fires on **every** `Show()` (§5), call `ShowOnAllSpaces()`, then apply the platform order below. Never assign `Topmost` afterwards. Anything that sets native window style belongs in `Opened`, because Avalonia rewrites the Windows ex-style on each `Show()`.
 
 **macOS order:** `setLevel:` to `NSFloatingWindowLevel - 1` (= 2), as a named constant whose comment cites this doc, via `objc_msgSend`. Do it once in `Opened`, and again after anything that assigns `Topmost`. Hide/Show and moves keep it (confirmed). Put the call in `MacOSWindowExtensions` beside `ShowOnAllSpaces`.
 
@@ -113,18 +141,18 @@ Groups living on a second monitor would be new scope, not part of CB-268's decis
 
 **Windows hit-test:**
 
-- On every silhouette change, `SetWindowRgn(hwnd, CreatePolygonRgn(points × RenderScaling, window-relative), true)`.
+- On every silhouette change, `SetWindowRgn(hwnd, CreatePolygonRgn(points × RenderScaling, window-relative), true)`, minus an elliptic region per orb disc (`CombineRgn` `RGN_DIFF`; T6, §5).
 - Don't delete the region after a successful call, because the system owns it.
 - No timer is needed.
 
 **Keep the decisions pure, so the 100%-of-added-lines rule can reach them.** The native calls above go in `[ExcludeFromCodeCoverage]` members, named in the PR as the uncovered lines, in the same way `TeamLinks`, `MacOSWindowExtensions` and `WindowsWindowOrder` already are. Everything they decide lives in pure functions with unit tests:
 
-- `BackdropHitTest.ShouldCatch(cursor, bounds, polygon, buttonsDown, previous) → bool?`, where null means "leave it alone".
+- `BackdropHitTest.ShouldCatch(cursor, bounds, polygon, orbDiscs, buttonsDown, previous) → bool?`, where null means "leave it alone". It is false inside any orb disc (T6).
 - `BackdropOrder.LowestOf(IReadOnlyList<IntPtr> zOrder, ISet<IntPtr> ours, ISet<IntPtr> backdrops) → IntPtr?`
 - The Cocoa→top-left conversion.
 - The region's point scaling.
 
-**Team arrows** stay at level 3 / topmost. They are among the windows the backdrop goes behind, which is what the plan asks for.
+**Team arrows** stay at level 3 / topmost and click-through, as shipped. They are among the windows the backdrop goes behind, and a press on an arrow inside a group falls through to the backdrop, which makes it a group drag (confirmed, §5). T6 needs no change to `TeamLinks`.
 
 ## For a human: 30-second checks only someone at the screen can do
 

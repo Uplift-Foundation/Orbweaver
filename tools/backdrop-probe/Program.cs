@@ -137,6 +137,34 @@ namespace BackdropProbe
         }
     }
 
+    // A team arrow, as TeamLinks.LinkWindow builds one: topmost, and made
+    // click-through by MakeClickThrough once it exists. Sits over Probe.Inside,
+    // between the orb and the silhouette's edge, where a real arrow would.
+    internal sealed class ArrowStandIn : Window
+    {
+        public ArrowStandIn()
+        {
+            WindowDecorations = WindowDecorations.None;
+            Background = Brushes.Transparent;
+            TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+            Topmost = true;
+            ShowInTaskbar = false;
+            ShowActivated = false;
+            CanResize = false;
+            Width = 40;
+            Height = 20;
+            Content = new Rectangle { Fill = new SolidColorBrush(Color.FromArgb(140, 255, 255, 255)) };
+
+            // LinkWindow applies click-through in Opened. Whether that fires
+            // again on a pooled re-Show decides whether the app re-applies it.
+            Opened += (_, _) => OpenedCount++;
+        }
+
+        public int OpenedCount { get; private set; }
+
+        internal static readonly Point Offset = new(Probe.Inside.X - 20, Probe.Inside.Y - 10);
+    }
+
     internal sealed class Backdrop : Window
     {
         private readonly Path _path;
@@ -244,13 +272,16 @@ namespace BackdropProbe
         // Which window a mouse-down at this DIP point of the backdrop would hit,
         // by AppKit's own answer: +[NSWindow windowNumberAtPoint:belowWindowWithWindowNumber:]
         // takes Cocoa coordinates (origin bottom-left of the main display).
+        private static Window? _arrow;
+
         private static string HitAt(Window back, Point local, Window orb)
         {
             var mainH = CGDisplayBounds(CGMainDisplayID()).H;
             var p = back.Position;   // points on macOS
             var cocoa = new CGPoint(p.X + local.X, mainH - (p.Y + local.Y));
             var n = MsgWindowAt(objc_getClass("NSWindow"), sel_registerName("windowNumberAtPoint:belowWindowWithWindowNumber:"), cocoa, 0);
-            return n == Number(back) ? "backdrop" : n == Number(orb) ? "orb" : $"other({n})";
+            return n == Number(back) ? "backdrop" : n == Number(orb) ? "orb"
+                : _arrow is not null && n == Number(_arrow) ? "arrow" : $"other({n})";
         }
 
         private static void HitReport(string stage, Window back, Window orb) =>
@@ -338,10 +369,48 @@ namespace BackdropProbe
             await Probe.Pause();
             HitReport("h4-ignoresMouse=NO", back, orb);
 
+            await TeamArrow(at, back, orb);
+
             if (cpu) await CpuCost(back);
 
             back.Close();
             orb.Close();
+        }
+
+        // T6: a team arrow stays above the backdrop and click-through, through
+        // the pool's Hide()/Show() as well as the backdrop's.
+        private static async Task TeamArrow(PixelPoint at, Window back, Window orb)
+        {
+            MsgSetBool(NS(back), sel_registerName("setIgnoresMouseEvents:"), false);
+            var arrow = new ArrowStandIn
+            {
+                Position = new PixelPoint(at.X + (int)ArrowStandIn.Offset.X, at.Y + (int)ArrowStandIn.Offset.Y)
+            };
+            _arrow = arrow;
+            arrow.Show();
+            await Probe.Pause();
+
+            void Arrow(string stage) => Console.WriteLine(
+                $"{stage}: arrow.level={Level(arrow)} back.level={Level(back)} " +
+                $"arrowAboveBack={GlobalIndex(Number(arrow)) < GlobalIndex(Number(back))} " +
+                $"arrow.ignoresMouse={MsgBool(NS(arrow), sel_registerName("ignoresMouseEvents"))} " +
+                $"hitUnderArrow={HitAt(back, Probe.Inside, orb)} arrow.opened={arrow.OpenedCount}");
+
+            // Control: before MakeClickThrough, the point under the arrow must
+            // resolve to the arrow, or "backdrop" below proves nothing.
+            Arrow("t0-CONTROL-arrow-not-click-through");
+            MsgSetBool(NS(arrow), sel_registerName("setIgnoresMouseEvents:"), true);
+            await Probe.Pause();
+            Arrow("t1-arrow-click-through");
+
+            arrow.Hide(); await Probe.Pause(200); arrow.Show(); await Probe.Pause();
+            Arrow("t2-after-arrow-pool-hide-show");
+
+            back.Hide(); await Probe.Pause(200); back.Show(); await Probe.Pause();
+            Arrow("t3-after-backdrop-hide-show");
+
+            arrow.Close();
+            _arrow = null;
         }
 
         // What the "toggle ignoresMouseEvents from a cursor poll" design costs.
@@ -415,6 +484,10 @@ namespace BackdropProbe
         [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
         [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr o);
         [DllImport("user32.dll")] private static extern IntPtr GetDesktopWindow();
+        [DllImport("user32.dll")] private static extern long SetWindowLongPtrW(IntPtr h, int index, long value);
+        [DllImport("gdi32.dll")] private static extern IntPtr CreateEllipticRgn(int l, int t, int r, int b);
+        [DllImport("gdi32.dll")] private static extern int CombineRgn(IntPtr dest, IntPtr a, IntPtr b, int mode);
+        private static IntPtr _arrowH;
 
         private const uint SwpNoSize = 1, SwpNoMove = 2, SwpNoActivate = 0x10;
         private const int GwlExStyle = -20;
@@ -471,7 +544,8 @@ namespace BackdropProbe
         {
             var px = back.PointToScreen(local);
             var h = GetAncestor(WindowFromPoint(new POINT { X = px.X, Y = px.Y }), 2 /* GA_ROOT */);
-            return h == H(back) ? "backdrop" : h == H(orb) ? "orb" : h == GetDesktopWindow() ? "desktop" : $"other(0x{h:X})";
+            return h == H(back) ? "backdrop" : h == H(orb) ? "orb" : h != IntPtr.Zero && h == _arrowH ? "arrow"
+                : h == GetDesktopWindow() ? "desktop" : $"other(0x{h:X})";
         }
 
         private static void HitReport(string stage, Window back, Window orb) =>
@@ -480,13 +554,24 @@ namespace BackdropProbe
         private static void PlaceBehind(Window back, Window orb) =>
             SetWindowPos(H(back), H(orb), 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
 
-        private static void ApplyRegion(Window back)
+        private static void ApplyRegion(Window back, Window? holeFor = null)
         {
             var scale = back.RenderScaling;
             var pts = Probe.Silhouette()
                 .Select(p => new POINT { X = (int)Math.Round(p.X * scale), Y = (int)Math.Round(p.Y * scale) })
                 .ToArray();
             var rgn = CreatePolygonRgn(pts, pts.Length, 2 /* WINDING */);
+            if (holeFor is not null)
+            {
+                // T6: the orb's disc cut out of the region, so the backdrop can
+                // never take an orb's click even if the z-order were wrong.
+                var o = holeFor.PointToScreen(new Point(0, 0));
+                var b = back.PointToScreen(new Point(0, 0));
+                var d = (int)Math.Round(Probe.OrbSize * scale);
+                var hole = CreateEllipticRgn(o.X - b.X, o.Y - b.Y, o.X - b.X + d, o.Y - b.Y + d);
+                Console.WriteLine($"  CombineRgn(DIFF) -> {CombineRgn(rgn, rgn, hole, 4 /* RGN_DIFF */)}");
+                DeleteObject(hole);
+            }
             // The system owns the region after a successful SetWindowRgn; do not delete it.
             Console.WriteLine($"  SetWindowRgn -> {SetWindowRgn(H(back), rgn, true)} (scale={scale})");
         }
@@ -560,6 +645,68 @@ namespace BackdropProbe
             await Probe.Pause();
             Console.WriteLine($"w9-new-orb-after: orb2.z={ZIndex(H(orb2))} back.z={ZIndex(H(back))} backBehindOrb2={ZIndex(H(back)) > ZIndex(H(orb2))}");
             orb2.Close();
+
+            // T6: a team arrow. Shown after the backdrop was placed, made
+            // click-through the way LinkWindow.MakeClickThrough does it.
+            var arrow = new ArrowStandIn();
+            arrow.Position = new PixelPoint(
+                at.X + (int)(ArrowStandIn.Offset.X * scale), at.Y + (int)(ArrowStandIn.Offset.Y * scale));
+            arrow.Show();
+            await Probe.Pause();
+            _arrowH = H(arrow);
+
+            void Arrow(string stage) => Console.WriteLine(
+                $"{stage}: arrow.z={ZIndex(_arrowH)} back.z={ZIndex(H(back))} arrowAboveBack={ZIndex(_arrowH) < ZIndex(H(back))} " +
+                $"arrow.ex={Ex(_arrowH)} hitUnderArrow={HitAt(back, Probe.Inside, orb)} arrow.opened={arrow.OpenedCount}");
+
+            Arrow("t0-CONTROL-arrow-not-click-through");
+            SetWindowLongPtrW(_arrowH, GwlExStyle, GetWindowLongPtrW(_arrowH, GwlExStyle) | WsExTransparent | WsExLayered);
+            await Probe.Pause();
+            Arrow("t1-arrow-click-through");
+
+            arrow.Hide(); await Probe.Pause(200); arrow.Show(); await Probe.Pause();
+            Arrow("t2-after-arrow-pool-hide-show");
+
+            back.Hide(); await Probe.Pause(200); back.Show(); await Probe.Pause();
+            Arrow("t3-after-backdrop-hide-show");
+
+            // What LinkWindow actually does: MakeClickThrough from Opened, which
+            // fires on every Show. Does it run after Avalonia rewrites the
+            // ex-style, so the pooled arrow comes back click-through?
+            arrow.Opened += (_, _) =>
+                SetWindowLongPtrW(_arrowH, GwlExStyle, GetWindowLongPtrW(_arrowH, GwlExStyle) | WsExTransparent | WsExLayered);
+            arrow.Hide(); await Probe.Pause(200); arrow.Show(); await Probe.Pause();
+            Arrow("t3b-pool-hide-show-with-Opened-handler");
+            arrow.Hide(); await Probe.Pause(200); arrow.Show(); await Probe.Pause();
+            Arrow("t3c-again");
+
+            // PlaceBehindAll's rule: behind the lowest of our own topmost,
+            // non-backdrop windows (orb and arrow here).
+            var lowest = ZIndex(H(orb)) > ZIndex(_arrowH) ? H(orb) : _arrowH;
+            SetWindowPos(H(back), lowest, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+            await Probe.Pause();
+            Arrow("t4-PlaceBehindAll(orb,arrow)");
+            Console.WriteLine($"t4b: orb.z={ZIndex(H(orb))} backBehindOrb={ZIndex(H(back)) > ZIndex(H(orb))}");
+
+            // A backdrop shown for the first time after the orbs exist — the
+            // case w0 did not isolate.
+            var back2 = new Backdrop(topmost: true) { Position = new PixelPoint(at.X + 20, at.Y + 20) };
+            back2.Show();
+            await Probe.Pause();
+            Console.WriteLine($"t5-new-backdrop-first-show: back2.z={ZIndex(H(back2))} orb.z={ZIndex(H(orb))} arrow.z={ZIndex(_arrowH)} back2InFrontOfOrb={ZIndex(H(back2)) < ZIndex(H(orb))}");
+            back2.Close();
+
+            // T6: the orb's disc cut out of the region. Forced in front (the
+            // wrong z-order), a plain region takes the orb's centre (hc above);
+            // with the hole, the orb keeps it.
+            ApplyRegion(back, holeFor: orb);
+            SetWindowPos(H(back), new IntPtr(-1), 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+            await Probe.Pause();
+            Report("t6-hole-and-forced-front", orb, back);
+            HitReport("h5-hole-forced-front", back, orb);
+
+            arrow.Close();
+            _arrowH = IntPtr.Zero;
 
             back.Close();
             orb.Close();
