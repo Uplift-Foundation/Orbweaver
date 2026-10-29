@@ -147,6 +147,30 @@ public class TurnSummarySpeechTests : IDisposable
         }
     }
 
+    // CB-298: muted, the turn-summary path utters nothing, asks the
+    // summariser nothing and never raises the hourglass.
+    [AvaloniaFact]
+    public void WhileMutedTheTurnSummaryUttersNothingAndNeverEntersPreparing()
+    {
+        OrbweaverSettings.SpeakScope = SpeakScope.Full;
+        var uttered = 0;
+        var asked = 0;
+        SpeechRequest.UtteranceForTests = (_, _, _) => uttered++;
+        SpeechSummary.SummarizerForTests = _ => { asked++; return Task.FromResult<string?>("x"); };
+
+        try
+        {
+            AudioMute.Set(true);
+            SpeechRequest.SpeakTurnSummary(LongReply(), "session-x");
+            SpeechRequest.SpeakTurnSummary("A short reply.", "session-x");
+
+            Assert.Equal(0, uttered);
+            Assert.Equal(0, asked);
+            Assert.NotEqual(TextToSpeech.SpeakState.Preparing, TextToSpeech.State);
+        }
+        finally { AudioMute.Set(false); }
+    }
+
     // --- OrbWindow.SpeakTurnSummary ------------------------------------------
 
     private static string WriteTranscript(string content)
