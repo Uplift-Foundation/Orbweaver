@@ -85,6 +85,10 @@ namespace Orbweaver
         // would mean fetching a reply in order to discover it was not wanted.
         internal static void Speak(string? reply, string? sessionId)
         {
+            // CB-298: before the plan, so a muted reply spends no summariser
+            // round trip and raises no hourglass for speech nobody will hear.
+            if (AudioMute.IsMuted) return;
+
             var plan = SpeechPlan.For(reply, OrbweaverSettings.SpeakScope);
             if (plan.Silent) return;
 
@@ -117,6 +121,9 @@ namespace Orbweaver
         // sent on a round trip that would buy nothing.
         internal static void SpeakTurnSummary(string? reply, string? sessionId)
         {
+            // CB-298: as in Speak — decided before any work is spent.
+            if (AudioMute.IsMuted) return;
+
             var plan = SpeechPlan.For(reply, SpeakScope.Summary);
             if (plan.Silent) return;
 

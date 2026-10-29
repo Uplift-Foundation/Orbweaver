@@ -552,7 +552,8 @@ namespace Orbweaver
                 ResolveFinishedSound: setting => SystemSoundCatalog.Resolve(
                     setting ?? SystemSoundCatalog.DefaultFinishedSoundName, directory, extensions),
                 ResolveAttentionSound: setting => SystemSoundCatalog.Resolve(
-                    setting ?? SystemSoundCatalog.DefaultAttentionSoundName, directory, extensions));
+                    setting ?? SystemSoundCatalog.DefaultAttentionSoundName, directory, extensions),
+                Muted: AudioMute.IsMuted);
         }
     }
 }

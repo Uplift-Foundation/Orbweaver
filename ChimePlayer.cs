@@ -193,7 +193,9 @@ namespace Orbweaver
             var factory = ProcessFactoryForTests;
             if (factory is not null) return factory(path);
 
-            if (SilenceForTests) return null;
+            // CB-298: the mute, after the factory check for the reason the
+            // comment on SilenceForTests gives — a fake process makes no sound.
+            if (SilenceForTests || AudioMute.IsMuted) return null;
 
             var proc = BuildProcess(path);
             if (proc is null) return null;

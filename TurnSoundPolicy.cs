@@ -52,7 +52,12 @@ namespace Orbweaver
         string? DefaultAttentionSetting,
         Func<string, OrbweaverSettings.OrbTurnSound?> OverrideFor,
         Func<string?, string?> ResolveFinishedSound,
-        Func<string?, string?> ResolveAttentionSound);
+        Func<string?, string?> ResolveAttentionSound,
+        // CB-298. Trailing with a default so every existing construction
+        // keeps compiling. Checked beside MasterEnabled, and in ResolveOne as
+        // well, because a deferred chime is resolved again when it fires and a
+        // mute that lands during the deferral has to silence it too.
+        bool Muted = false);
 
     // What actually happens for one scan's worth of signals: no process, no
     // settings file, no clock but the one it is handed. Every rule the plan
@@ -80,7 +85,7 @@ namespace Orbweaver
             bool speechBusy)
         {
             if (signals.Count == 0) return SoundAction.Silent;
-            if (!settings.MasterEnabled) return SoundAction.Silent;
+            if (!settings.MasterEnabled || settings.Muted) return SoundAction.Silent;
 
             // QA (CB-167) found the bug in doing this the other way around:
             // an earlier version picked the highest-ranked *signal* first
@@ -155,6 +160,8 @@ namespace Orbweaver
         // trusted from when it was first deferred.
         internal static SoundAction ResolveOne(TurnSoundEvent ev, SoundSettingsSnapshot settings, bool speechBusy)
         {
+            if (settings.Muted) return SoundAction.Silent;
+
             var isAttention = ev.Signal == TurnSignal.NeedsAttention;
             var over = settings.OverrideFor(ev.SoundKey);
             var setting = isAttention
