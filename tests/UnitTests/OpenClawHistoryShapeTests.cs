@@ -80,9 +80,40 @@ public class OpenClawHistoryShapeTests
     public void TwoToolRunsBackToBackEachDropTheirOwnRollup() =>
         Assert.Equal(new[] { 2, 5 }, Dropped(User, Step, Rollup, User, Step, Rollup));
 
+    // A rollup closes the run it summarises, so one with no text step before it
+    // is a run of its own and is kept; the steps after it are the next run's.
     [Fact]
-    public void ARollupBeforeItsStepsInTheSpanStillDrops() =>
-        Assert.Equal(new[] { 1 }, Dropped(User, Rollup, Step));
+    public void ARollupWithNoTextStepBeforeItIsKeptEvenIfStepsFollow() =>
+        Assert.Empty(Dropped(User, Rollup, Step));
+
+    // ---- runs with no user turn between them (CB-270 QA) ----------------
+    // Constructed from the captured shapes (the fixture's step and `cli`
+    // rollup messages), not captured as such: the gateway does produce runs
+    // with no user turn between them (heartbeat and cron injection into a main
+    // session), but no such page was in the Phase 0 captures.
+
+    [Fact]
+    public void AToolRunThenANoToolRunWithNoUserBetweenKeepsRunBsReply() =>
+        // step, rollup A (dropped); lone rollup B (kept).
+        Assert.Equal(new[] { 2 }, Dropped(User, Step, Rollup, Rollup));
+
+    [Fact]
+    public void ANoToolRunThenAToolRunWithNoUserBetweenKeepsBoth() =>
+        // lone rollup A (kept); step, rollup B (dropped).
+        Assert.Equal(new[] { 4 }, Dropped(User, Rollup, ToolOnlyStep, Step, Rollup));
+
+    [Fact]
+    public void TwoToolRunsWithNoUserBetweenDropEachOwnRollup() =>
+        Assert.Equal(new[] { 2, 5 }, Dropped(User, Step, Rollup, ToolOnlyStep, Step, Rollup));
+
+    [Fact]
+    public void AHeartbeatShapedMainPageJudgesEachInjectedRunOnItsOwn() =>
+        // No user turns at all: a no-tool run, a tool run, a no-tool run.
+        Assert.Equal(new[] { 3 }, Dropped(Rollup, Step, Step, Rollup, Rollup));
+
+    [Fact]
+    public void StepsAfterTheLastRollupAreARunInFlightAndAreLeftAlone() =>
+        Assert.Equal(new[] { 2 }, Dropped(User, Step, Rollup, Step));
 
     [Fact]
     public void AWhatsAppShapedPageOfLoneRollupsKeepsEveryOne() =>

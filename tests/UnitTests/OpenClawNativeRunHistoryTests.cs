@@ -125,4 +125,34 @@ public class OpenClawNativeRunHistoryTests
 
         Assert.Equal("· exec  ls", turn.Text);
     }
+
+    // Constructed from the captured message shapes (not itself a capture): the
+    // gateway injects runs into a main session with no user turn between them,
+    // and a rollup closes the run it summarises, so every reply must survive
+    // once and the tool lines must stay in order.
+    [Fact]
+    public void RunsWithNoUserTurnBetweenThemEachDrawTheirReplyOnceInOrder()
+    {
+        const string page = """
+            [{"role":"user","content":"go"},
+             {"role":"assistant","api":"anthropic-messages","content":[{"type":"text","text":"first start"}]},
+             {"role":"assistant","api":"anthropic-messages","content":[{"type":"toolcall","id":"a","name":"exec","arguments":{"command":"one"}}]},
+             {"role":"assistant","api":"anthropic-messages","content":[{"type":"text","text":"first done"}]},
+             {"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r1","content":[{"type":"text","text":"first start\n\nfirst done"}]},
+             {"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r2","content":[{"type":"text","text":"second, no tools"}]},
+             {"role":"assistant","api":"anthropic-messages","content":[{"type":"text","text":"third start"}]},
+             {"role":"assistant","api":"anthropic-messages","content":[{"type":"toolcall","id":"b","name":"exec","arguments":{"command":"two"}}]},
+             {"role":"assistant","api":"anthropic-messages","content":[{"type":"text","text":"third done"}]},
+             {"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r3","content":[{"type":"text","text":"third start\n\nthird done"}]}]
+            """;
+
+        var texts = Turns(page).Select(t => t.Text).ToArray();
+
+        Assert.Equal(new[]
+        {
+            "go", "first start", "· exec  one", "first done",
+            "second, no tools",
+            "third start", "· exec  two", "third done"
+        }, texts);
+    }
 }

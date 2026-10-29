@@ -33,19 +33,22 @@ namespace Orbweaver
         // The pairing is by position, and by position only. No id links a
         // rollup to its steps (measured), and comparing texts would let a gateway
         // that changed its join silently start doubling the reply. A *span* is
-        // the maximal run of consecutive non-user messages; a user message ends
-        // one and starts the next, and the page's two ends are boundaries too.
-        // A rollup is dropped iff its span holds at least one step — an assistant
-        // message that is not a rollup — with a non-empty text block. A rollup
-        // alone in its span (a run with no tools, which is every message of a
-        // WhatsApp-shaped page), one whose steps carry only tool blocks (there is
-        // no step text to double), and a page with no rollups at all are all kept.
+        // the messages since the last boundary, and a boundary is a user message,
+        // a rollup, or the page's start: a rollup closes the run it summarises, so
+        // two runs with no user turn between them (a heartbeat or cron job
+        // injecting into a main session, back-to-back agent-initiated runs) are
+        // judged separately. A rollup is dropped iff the span before it holds at
+        // least one step — an assistant message that is not a rollup — with a
+        // non-empty text block. A rollup with no text step before it (a run with
+        // no tools, which is every message of a WhatsApp-shaped page; or steps
+        // that carry only tool blocks, so there is no step text to double) is
+        // kept, as is a page with no rollups at all. Steps after the last rollup
+        // belong to a run still in flight and are left alone.
         internal static HashSet<int> RollupsToDrop(JsonElement messages)
         {
             var drop = new HashSet<int>();
             if (messages.ValueKind != JsonValueKind.Array) return drop;
 
-            var rollups = new List<int>();
             var spanHasStepText = false;
             var index = 0;
 
@@ -53,13 +56,12 @@ namespace Orbweaver
             {
                 if (Str(message, "role") == "user")
                 {
-                    Close(rollups, spanHasStepText, drop);
-                    rollups.Clear();
                     spanHasStepText = false;
                 }
                 else if (IsRollup(message))
                 {
-                    rollups.Add(index);
+                    if (spanHasStepText) drop.Add(index);
+                    spanHasStepText = false;
                 }
                 else if (Str(message, "role") == "assistant" && HasText(message))
                 {
@@ -69,14 +71,7 @@ namespace Orbweaver
                 index++;
             }
 
-            Close(rollups, spanHasStepText, drop);
             return drop;
-        }
-
-        private static void Close(List<int> rollups, bool spanHasStepText, HashSet<int> drop)
-        {
-            if (!spanHasStepText) return;
-            foreach (var r in rollups) drop.Add(r);
         }
 
         // Every `toolcall` block in an assistant content array, with whether a
