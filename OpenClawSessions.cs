@@ -1391,7 +1391,7 @@ namespace Orbweaver
                 var pinned = Bool(s, "pinned") == true;
                 if (state != "generating"
                     && !OpenClawRetention.KeptRegardlessOfAge(pinned, native)
-                    && within is not null && asOf - activity > within) continue;
+                    && within is { } limit && asOf - activity > limit) continue;
 
                 // Timer-driven sessions the user has asked not to see —
                 // heartbeats, scheduled jobs, or both. Deliberately below the
