@@ -524,5 +524,79 @@ public class OpenClawRunReconcileTests : IDisposable
         Assert.Equal(1, texts.Count(t => t == "typed after the run"));
         Assert.DoesNotContain(ToolLine(), texts);
     }
+
+    // QA's mid-run typing with the page placing the typed message after the whole
+    // run: the panel joins partway through a run, the person types at once, and the
+    // run's end page lists the typed message last. The typed message was taken as
+    // the turn the run began after, so the turns between the first turn and it
+    // never appeared. A message typed while the run was already streaming is never
+    // that turn, wherever a page places it.
+    [Theory]
+    [InlineData(14)]
+    [InlineData(30)]
+    [InlineData(48)]
+    public async Task AMessageTypedJustAfterAMidRunJoinIsNotTheTurnTheRunBeganAfter(int joinAt)
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+
+        Feed(session, events.Take(joinAt));
+        session.SetHistory(Full().Take(1).ToList());
+        await TypeAsync(session, "typed mid-run");
+        Feed(session, events.Skip(joinAt));
+
+        var page = Full().ToList();
+        page.Add(new HistoryTurn(ChatRole.User, "typed mid-run", null, "", DateTime.UtcNow, null, null));
+        session.ApplyFetchedTail(page);
+
+        Assert.Equal(Full().Select(t => t.Text).Append("typed mid-run"), TextsSansNote(session));
+    }
+
+    // A chat delta alone says a run is going, before anything has drawn: a panel
+    // joined partway through can be typed into at that moment, and the message
+    // still comes after the run began.
+    [Fact]
+    public async Task AMessageTypedAfterOnlyAChatDeltaWasSeenIsStillMidRun()
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+        var firstDraw = events.FindIndex(e => e.Name == "agent");
+
+        session.SetHistory(Full().Take(1).ToList());
+        session.OnAgentEvent("chat", Json("""{"runId":"run-tools-0001","state":"delta"}"""));
+        await TypeAsync(session, "typed mid-run");
+        Feed(session, events.Skip(firstDraw));
+
+        var page = Full().ToList();
+        page.Add(new HistoryTurn(ChatRole.User, "typed mid-run", null, "", DateTime.UtcNow, null, null));
+        session.ApplyFetchedTail(page);
+
+        Assert.Equal(Full().Select(t => t.Text).Append("typed mid-run"), TextsSansNote(session));
+    }
+
+    // KNOWN LIMITATION, named: a message typed before this panel has seen a single
+    // event of a run that was already going cannot be told from one typed before
+    // the run began, and a page that places it after the whole run then makes it the
+    // anchor. In practice the gateway persists a message where it arrived, so a
+    // page does not usually show it after a run it preceded; this pins what the
+    // panel does when it does.
+    [Fact]
+    public async Task AMessageTypedBeforeAnyEventOfARunWasSeenIsTakenAsWhatTheRunBeganAfter()
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+
+        session.SetHistory(Full().Take(1).ToList());
+        await TypeAsync(session, "typed mid-run");
+        Feed(session, events);
+
+        var page = Full().ToList();
+        page.Add(new HistoryTurn(ChatRole.User, "typed mid-run", null, "", DateTime.UtcNow, null, null));
+        session.ApplyFetchedTail(page);
+
+        var texts = TextsSansNote(session);
+        Assert.Equal(1, texts.Count(t => t == "typed mid-run"));
+        Assert.DoesNotContain(ToolLine(), texts);
+    }
 }
 

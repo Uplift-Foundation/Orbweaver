@@ -393,6 +393,7 @@ namespace Orbweaver
                 ImageBytes = thumbnail
             };
             _sent.Add(mine);
+            if (_liveRunActive) _typedMidRun.Add(mine);
             Add(mine);
 
             if (!OrbweaverSettings.OpenClawReplyEnabled)
@@ -447,6 +448,17 @@ namespace Orbweaver
         // append can tell one a page has not shown yet from one it has.
         private readonly HashSet<ChatTurn> _sent = new();
 
+        // Those of them typed while a run was already streaming. Such a message is
+        // not what the run began after, wherever a page happens to place it, so a
+        // reconciliation never takes it as the anchor: the run began before it.
+        private readonly HashSet<ChatTurn> _typedMidRun = new();
+
+        // Whether the stream says a run is going right now: any event of one since
+        // the last end. Wider than "has drawn something", because a panel opened
+        // partway through a run can be typed into before the next word draws, and
+        // that message still comes after the run began.
+        private bool _liveRunActive;
+
         private void Note(string text)
         {
             var note = new ChatTurn
@@ -483,13 +495,19 @@ namespace Orbweaver
                     {
                         EndRun();
                     }
+                    else
+                    {
+                        _liveRunActive = true;
+                    }
                     break;
 
                 case "agent":
+                    _liveRunActive = true;
                     OnAgentText(payload);
                     break;
 
                 case "session.tool":
+                    _liveRunActive = true;
                     OnTool(payload);
                     break;
 
@@ -525,6 +543,11 @@ namespace Orbweaver
                 case "chat" when Str(payload, "state") is "final" or "error" or "aborted":
                     EndRun();
                     RefreshTailAsync();
+                    break;
+
+                // Any other state of a run (a delta, a status) says one is going.
+                case "chat":
+                    _liveRunActive = true;
                     break;
 
                 case "session.message":
@@ -635,6 +658,7 @@ namespace Orbweaver
 
         private void EndRun()
         {
+            _liveRunActive = false;
             _runEnded = true;
             Complete();
         }
@@ -690,7 +714,7 @@ namespace Orbweaver
 
             for (var u = before - 1; u >= 0 && at < 0; u--)
             {
-                if (_history[u].Role != ChatRole.User) continue;
+                if (_history[u].Role != ChatRole.User || _typedMidRun.Contains(_history[u])) continue;
 
                 for (var i = page.Count - 1; i >= 0; i--)
                 {
