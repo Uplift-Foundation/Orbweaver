@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace Orbweaver.Tests;
@@ -13,6 +14,7 @@ namespace Orbweaver.Tests;
 // prefix (288 combinations) and 148 ended differently from the full history.
 // These are the same shapes on the scrubbed capture, and a control for the
 // deferral and the fallbacks.
+[Collection("Settings")]
 public class OpenClawRunReconcileTests : IDisposable
 {
     public void Dispose() => OpenClawSessions.SetGatewayForTests(null);
@@ -248,5 +250,98 @@ public class OpenClawRunReconcileTests : IDisposable
 
         Assert.Equal(0, removed);
         Assert.Equal(Full().Select(t => t.Text), Texts(session));
+    }
+
+    // --- typing while the reply streams ---
+    //
+    // A message typed mid-run is added at once and becomes the last user turn,
+    // which the page may not hold yet and which sits after the truncated bubble a
+    // mid-run join leaves. The run still has to reconcile, and what was typed
+    // must be on screen once, throughout and after.
+
+    private static async Task TypeAsync(OpenClawChatSession session, string text)
+    {
+        // Replying off: the message is added and a note says why nothing was
+        // sent, which is all that matters here (the turn and where it lands).
+        OrbweaverSettings.OpenClawReplyEnabled = false;
+        await session.SendAsync(text);
+    }
+
+    [Fact]
+    public async Task AMessageTypedMidRunNotYetOnThePageIsKeptOnceAfterTheFullReply()
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+
+        Feed(session, events.Take(14));
+        session.SetHistory(Page((ChatRole.User, "go")));
+        Feed(session, events.Skip(14).Take(8));
+        await TypeAsync(session, "and one more thing");
+        Feed(session, events.Skip(22));
+
+        session.ApplyFetchedTail(Full());
+
+        Assert.Equal(Full().Select(t => t.Text).Append("and one more thing"), Texts(session));
+    }
+
+    // The page already holds it, in the middle of the run: the page's copy is
+    // the one drawn, once.
+    [Fact]
+    public async Task AMessageTypedMidRunThatThePageNowHoldsIsDrawnOnce()
+    {
+        var (step1, step3) = Steps();
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+
+        Feed(session, events.Take(14));
+        session.SetHistory(Page((ChatRole.User, "go")));
+        Feed(session, events.Skip(14).Take(8));
+        await TypeAsync(session, "and one more thing");
+        Feed(session, events.Skip(22));
+
+        var page = Page((ChatRole.User, "go"), (ChatRole.Assistant, step1), (ChatRole.User, "and one more thing"),
+            (ChatRole.System, ToolLine()), (ChatRole.Assistant, step3));
+        session.ApplyFetchedTail(page);
+
+        Assert.Equal(page.Select(t => t.Text), Texts(session));
+    }
+
+    // Typed after the page landed and before anything more was drawn, so there is
+    // no live row to mark where the run began.
+    [Fact]
+    public async Task AMessageTypedWhenNothingMoreWasDrawnIsKeptAndTheReplyReconciles()
+    {
+        var (step1, _) = Steps();
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+
+        Feed(session, events.Take(30));
+        session.SetHistory(Page((ChatRole.User, "go"), (ChatRole.Assistant, step1)));
+        await TypeAsync(session, "and one more thing");
+        Feed(session, events.Where(e => e.Name == "chat" && e.Payload.GetProperty("state").GetString() == "final"));
+
+        session.ApplyFetchedTail(Full());
+
+        Assert.Equal(Full().Select(t => t.Text).Append("and one more thing"), Texts(session));
+    }
+
+    // The same message typed twice is two messages: a page that shows one of them
+    // accounts for one, and the other is kept.
+    [Fact]
+    public async Task TwoIdenticalMessagesTypedMidRunAreEachAccountedFor()
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+
+        Feed(session, events.Take(14));
+        session.SetHistory(Page((ChatRole.User, "go")));
+        Feed(session, events.Skip(14).Take(8));
+        await TypeAsync(session, "ok");
+        await TypeAsync(session, "ok");
+        Feed(session, events.Skip(22));
+
+        session.ApplyFetchedTail(Full().Append(new HistoryTurn(ChatRole.User, "ok", null, "", DateTime.UtcNow, null, null)).ToList());
+
+        Assert.Equal(Full().Select(t => t.Text).Concat(new[] { "ok", "ok" }), Texts(session));
     }
 }

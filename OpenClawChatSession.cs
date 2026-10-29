@@ -512,8 +512,15 @@ namespace Orbweaver
         private bool _runDirty;
         private bool _runEnded;
 
+        // The first row the live run drew in this transcript, by reference so a
+        // prepend or the cap cannot shift it. The run's user turn is before it,
+        // however much of the run was already on the page when the panel opened.
+        // Null until something is drawn after a wholesale replace.
+        private ChatTurn? _runFirst;
+
         private void RunSeen()
         {
+            if (!_runDirty) _runFirst = null;
             _runDirty = true;
             _runEnded = false;
         }
@@ -546,24 +553,42 @@ namespace Orbweaver
             ReconcileRun(page);
         }
 
-        // The run is everything after the conversation's last user turn. That is
-        // found on the page too, and the live tail is swapped for the page's.
-        // Not an index recorded when the run began, which a panel opened midway
-        // through has no way to know. If either side has no user turn, or the
-        // page does not reach back to it (a long run), the append is all that can
-        // be said safely.
+        // The run is everything after the user turn that started it, and the live
+        // tail is swapped for the page's after that same turn.
+        //
+        // That turn is the last user turn before the first row the run drew, not
+        // simply the last user turn: a message typed while the reply streams is
+        // added at once and would otherwise become the anchor, which a page may
+        // not hold yet and which sits after a truncated first bubble that
+        // reconciling from it would never reach. Candidates are tried latest
+        // first and the first one the page also holds wins, so a message typed
+        // here that the page does not show yet is passed over rather than
+        // trusted. Not an index recorded when the run began, which a panel opened
+        // midway through has no way to know.
+        //
+        // Your own messages in the replaced range are kept: one the page now
+        // shows is the page's copy and is drawn once, one it does not show yet is
+        // put back after the page's turns until a page does. If no candidate is on
+        // the page (a run too long for it to reach back) the append is all that
+        // can be said safely.
         private void ReconcileRun(IReadOnlyList<HistoryTurn> page)
         {
-            var user = _history.FindLastIndex(t => t.Role == ChatRole.User);
+            var first = _runFirst is null ? -1 : _history.IndexOf(_runFirst);
+            var before = first >= 0 ? first : _history.Count;
+
+            var user = -1;
             var at = -1;
 
-            if (user >= 0)
+            for (var u = before - 1; u >= 0 && at < 0; u--)
             {
+                if (_history[u].Role != ChatRole.User) continue;
+
                 for (var i = page.Count - 1; i >= 0; i--)
                 {
                     if (page[i].Role == ChatRole.User
-                        && string.Equals(page[i].Text, _history[user].Text, StringComparison.Ordinal))
+                        && string.Equals(page[i].Text, _history[u].Text, StringComparison.Ordinal))
                     {
+                        user = u;
                         at = i;
                         break;
                     }
@@ -578,6 +603,15 @@ namespace Orbweaver
 
             var from = user + 1;
             var count = _history.Count - from;
+
+            // Sent here and not on the page yet: each page copy accounts for one.
+            var shown = page.Skip(at + 1).Where(t => t.Role == ChatRole.User).Select(t => t.Text).ToList();
+            var unconfirmed = new List<ChatTurn>();
+            foreach (var turn in _history.Skip(from).Where(t => t.Role == ChatRole.User))
+            {
+                if (!shown.Remove(turn.Text)) unconfirmed.Add(turn);
+            }
+
             if (count > 0)
             {
                 _history.RemoveRange(from, count);
@@ -585,6 +619,7 @@ namespace Orbweaver
             }
 
             AppendFrom(page, at + 1);
+            foreach (var turn in unconfirmed) Add(turn);
         }
 
         // The actual live-update fix, and the half of it that is pure enough
@@ -716,6 +751,7 @@ namespace Orbweaver
                 };
                 _streamingKind = kind;
                 Add(_streaming);
+                _runFirst ??= _streaming;
             }
             else
             {
@@ -1072,6 +1108,7 @@ namespace Orbweaver
 
             RunSeen();
             Add(turn);
+            _runFirst ??= turn;
             return turn;
         }
 
@@ -1259,6 +1296,7 @@ namespace Orbweaver
             _history.Clear();
             _streaming = null;
             _streamingKind = null;
+            _runFirst = null;
 
             // _runDirty is left alone: the page that just landed may be older than
             // the run (a slow first load) or hold only part of it, and the run's
