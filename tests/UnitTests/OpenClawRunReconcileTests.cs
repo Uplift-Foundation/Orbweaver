@@ -498,5 +498,31 @@ public class OpenClawRunReconcileTests : IDisposable
         Assert.DoesNotContain(session.History, t => t.Text.Contains("10 minutes"));
         Assert.Contains(session.History, t => t.Text == "The run's time limit was reached, so the run was stopped.");
     }
+
+    // KNOWN LIMITATION, named as a follow-up: the confirmed arm of typed-after-lag
+    // when this panel saw no run at all, so nothing reconciles and the plain
+    // append is all there is. The page already shows the typed message, which
+    // becomes the anchor, and the turns the lagging first page was missing sit
+    // *before* it: appending after the anchor cannot add them, and they stay
+    // missing until the panel is reopened. Closing it means inserting page turns
+    // before the anchor, which is a larger change than the narrow case justifies
+    // here. This pins today's behaviour so that closing it is a visible change to
+    // this test. (With a run drawn, as in the cases above, the reconciliation
+    // converges: only the no-run path is affected.)
+    [Fact]
+    public async Task WhenNoRunWasSeenAPageShowingTheTypedMessageStillLeavesTheEarlierTurnsMissing()
+    {
+        var session = Session();
+        session.SetHistory(Full().Take(2).ToList());
+        await TypeAsync(session, "typed after the run");
+
+        var page = Full().ToList();
+        page.Add(new HistoryTurn(ChatRole.User, "typed after the run", null, "", DateTime.UtcNow, null, null));
+        session.ApplyFetchedTail(page);
+
+        var texts = TextsSansNote(session);
+        Assert.Equal(1, texts.Count(t => t == "typed after the run"));
+        Assert.DoesNotContain(ToolLine(), texts);
+    }
 }
 
