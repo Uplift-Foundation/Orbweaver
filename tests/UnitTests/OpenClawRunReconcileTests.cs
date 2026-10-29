@@ -439,5 +439,64 @@ public class OpenClawRunReconcileTests : IDisposable
 
         Assert.Equal(1, Texts(session).Count(t => t == ToolLine()));
     }
+
+    // --- QA's typed-after-lag case (CB-270 Stage 3, found on S3's replays) ---
+    //
+    // The panel joins just after the run's chat final, with a page that lags and
+    // holds only k of the run's turns. The person types before it catches up, and
+    // the next page holds the run's remaining turns and, once the gateway has it,
+    // the typed message. The remaining turns must appear and the typed message
+    // must show once. Anchoring on the typed message, which sits after the run,
+    // left the remaining turns out until the panel was reopened.
+
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    [InlineData(3, false)]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    public async Task ATypedMessageAfterALaggingJoinDoesNotHideTheRunsRemainingTurns(int k, bool pageHoldsTyped)
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+        var finalAt = events.FindIndex(e => e.Name == "chat"
+            && e.Payload.GetProperty("state").GetString() == "final");
+
+        Feed(session, events.Take(finalAt + 1));
+        session.SetHistory(Full().Take(k).ToList());
+        await TypeAsync(session, "typed after the run");
+
+        var page = Full().ToList();
+        if (pageHoldsTyped)
+        {
+            page.Add(new HistoryTurn(ChatRole.User, "typed after the run", null, "", DateTime.UtcNow, null, null));
+        }
+
+        session.ApplyFetchedTail(page);
+
+        var texts = TextsSansNote(session);
+        Assert.Equal(Full().Select(t => t.Text).Append("typed after the run"), texts);
+    }
+
+    // --- a limit belongs to the run its send started ---
+
+    // Send with 10 minutes, the run ends done, and then another client's run times
+    // out: no note may name this send's 10 minutes.
+    [Fact]
+    public async Task AnotherClientsTimeoutIsNotAnnouncedWithThisSendsLimit()
+    {
+        var session = Session();
+        session.TimeoutMinutes = 10;
+        await TypeAsync(session, "go");
+        session.OnAgentEvent("agent", Json("""{"runId":"mine","stream":"assistant","data":{"text":"working"}}"""));
+        session.OnRunStatus("done");
+
+        session.OnAgentEvent("agent", Json("""{"runId":"theirs","stream":"assistant","data":{"text":"someone else"}}"""));
+        session.OnRunStatus("timeout");
+
+        Assert.DoesNotContain(session.History, t => t.Text.Contains("10 minutes"));
+        Assert.Contains(session.History, t => t.Text == "The run's time limit was reached, so the run was stopped.");
+    }
 }
 

@@ -386,7 +386,7 @@ namespace Orbweaver
             // says why nothing happened, exactly like a room whose channel
             // has nobody to carry a message to.
             Observe(OpenClawSessions.NativeOf(GatewayKey));
-            _limitMinutesOfLastSend = Route == OpenClawSendRoute.Native ? TimeoutMinutes : null;
+            _pendingLimitMinutes = Route == OpenClawSendRoute.Native ? TimeoutMinutes : null;
             var mine = new ChatTurn
             {
                 Role = ChatRole.User, Text = text, IsComplete = true, Mine = true,
@@ -581,7 +581,13 @@ namespace Orbweaver
             new(StringComparer.Ordinal) { "done", "failed", "error", "killed", "aborted", "timeout" };
 
         private bool _awaitingStatus;
-        private int? _limitMinutesOfLastSend;
+
+        // The limit a send asked for belongs to the run that send starts, and to no
+        // other: it is pending from the send until the next run begins drawing, and
+        // that run keeps it. A run another client started has none, so its timeout
+        // is announced without a number rather than with this send's.
+        private int? _pendingLimitMinutes;
+        private int? _runLimitMinutes;
 
         internal void OnRunStatus(string? status)
         {
@@ -595,7 +601,7 @@ namespace Orbweaver
             _awaitingStatus = false;
             if (status != "timeout") return;
 
-            Note(_limitMinutesOfLastSend is { } minutes
+            Note(_runLimitMinutes is { } minutes
                 ? $"The time limit ({minutes} minutes) was reached, so the run was stopped."
                 : "The run's time limit was reached, so the run was stopped.");
         }
@@ -606,8 +612,21 @@ namespace Orbweaver
         // Null until something is drawn after a wholesale replace.
         private ChatTurn? _runFirst;
 
+        // The last row of the page SetHistory installed, by reference. Everything
+        // after it was added later, a message typed after the page landed among
+        // it, and none of it can be the user turn a run began after.
+        private ChatTurn? _pageLast;
+
         private void RunSeen()
         {
+            // A run beginning: it takes the limit the last send asked for, if one
+            // is waiting, and nothing otherwise.
+            if (!_awaitingStatus)
+            {
+                _runLimitMinutes = _pendingLimitMinutes;
+                _pendingLimitMinutes = null;
+            }
+
             _awaitingStatus = true;
             if (!_runDirty) _runFirst = null;
             _runDirty = true;
@@ -663,7 +682,8 @@ namespace Orbweaver
         private void ReconcileRun(IReadOnlyList<HistoryTurn> page)
         {
             var first = _runFirst is null ? -1 : _history.IndexOf(_runFirst);
-            var before = first >= 0 ? first : _history.Count;
+            var afterPage = _pageLast is null ? -1 : _history.IndexOf(_pageLast) + 1;
+            var before = first >= 0 ? first : afterPage > 0 ? afterPage : _history.Count;
 
             var user = -1;
             var at = -1;
@@ -1580,6 +1600,7 @@ namespace Orbweaver
                 });
             }
 
+            _pageLast = _history[^1];
             HistoryReplaced?.Invoke();
         }
 
