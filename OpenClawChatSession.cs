@@ -392,6 +392,7 @@ namespace Orbweaver
                 Role = ChatRole.User, Text = text, IsComplete = true, Mine = true,
                 ImageBytes = thumbnail
             };
+            _sent.Add(mine);
             Add(mine);
 
             if (!OrbweaverSettings.OpenClawReplyEnabled)
@@ -441,6 +442,10 @@ namespace Orbweaver
         // Both are System turns, and a reconciliation has to tell them apart: a
         // note about a send belongs to the message it follows and is kept with it.
         private readonly HashSet<ChatTurn> _notes = new();
+
+        // The messages this session added for the person who typed them, so an
+        // append can tell one a page has not shown yet from one it has.
+        private readonly HashSet<ChatTurn> _sent = new();
 
         private void Note(string text)
         {
@@ -572,14 +577,24 @@ namespace Orbweaver
         // a timed-out run otherwise just stops, and the reply looks cut off for no
         // reason. Only a run this panel saw counts, so a conversation opened on an
         // old timeout does not announce it.
+        private static readonly HashSet<string> TerminalStatuses =
+            new(StringComparer.Ordinal) { "done", "failed", "error", "killed", "aborted", "timeout" };
+
         private bool _awaitingStatus;
         private int? _limitMinutesOfLastSend;
 
         internal void OnRunStatus(string? status)
         {
-            if (!_awaitingStatus || status != "timeout") return;
+            // Only a status that says the run is over settles it. One that says it is
+            // still going ("running", read on the first poll after a send) leaves it
+            // waiting, and so does anything not recognised.
+            if (!_awaitingStatus || status is null || !TerminalStatuses.Contains(status)) return;
 
+            // So a later timeout (another client's run, say) is not announced with
+            // this send's limit.
             _awaitingStatus = false;
+            if (status != "timeout") return;
+
             Note(_limitMinutesOfLastSend is { } minutes
                 ? $"The time limit ({minutes} minutes) was reached, so the run was stopped."
                 : "The run's time limit was reached, so the run was stopped.");
@@ -755,10 +770,20 @@ namespace Orbweaver
 
             int startIndex;
 
-            // Without this session's own notes, which no page has: a note at the
-            // tail (a send that failed, a run that timed out) would otherwise be
-            // the anchor, match nothing, and stop every later delivery appearing.
-            var live = _history.Where(t => !_notes.Contains(t)).ToList();
+            // Without this session's own notes, and the messages it sent that no
+            // page shows yet: neither is on a page, so at the tail either would be
+            // the anchor, match nothing, and stop every later delivery appearing (a
+            // send that failed leaves both). Each copy a page does show accounts for
+            // one sent message, which is then ordinary again. They stay in the
+            // transcript; only the search for where the page joins looks past them.
+            var shown = freshTurns.Where(t => t.Role == ChatRole.User).Select(t => t.Text).ToList();
+            var live = new List<ChatTurn>();
+            foreach (var turn in _history)
+            {
+                if (_notes.Contains(turn)) continue;
+                if (_sent.Contains(turn) && !shown.Remove(turn.Text)) continue;
+                live.Add(turn);
+            }
 
             if (live.Count == 0)
             {

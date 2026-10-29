@@ -825,6 +825,79 @@ public class OpenClawRunControlsTests : IDisposable
         Assert.DoesNotContain(done.History, t => t.Text.Contains("time limit"));
     }
 
+    // QA's repro: a refused send leaves the typed message at the tail with its note,
+    // and a delivery from another client then did not appear until reopen, because
+    // the typed message, which no page has, became the anchor. It stays visible
+    // once; only the search for where the page joins looks past it.
+    [Fact]
+    public async Task ADeliveryAppearsAfterARefusedSendLeftATypedMessageAtTheTail()
+    {
+        OrbweaverSettings.OpenClawReplyEnabled = false;
+        var chat = Chat(NativeKey);
+        chat.SetHistory(new[]
+        {
+            new HistoryTurn(ChatRole.User, "hello", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, "hi there", null, "", DateTimeOffset.UtcNow, null, null),
+        });
+        await chat.SendAsync("typed while disconnected");
+
+        chat.AppendNewTail(new[]
+        {
+            new HistoryTurn(ChatRole.User, "hello", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, "hi there", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, "a delivery from elsewhere", null, "", DateTimeOffset.UtcNow, null, null),
+        });
+
+        var texts = chat.History.Select(t => t.Text).ToList();
+        Assert.Equal(1, texts.Count(t => t == "a delivery from elsewhere"));
+        Assert.Equal(1, texts.Count(t => t == "typed while disconnected"));
+    }
+
+    // Once a page shows the typed message it is ordinary again: it is the anchor,
+    // and what follows it on the page is appended.
+    [Fact]
+    public async Task ASentMessageThePageNowShowsAnchorsTheAppendAgain()
+    {
+        OrbweaverSettings.OpenClawReplyEnabled = false;
+        var chat = Chat(NativeKey);
+        chat.SetHistory(new[]
+        {
+            new HistoryTurn(ChatRole.User, "hello", null, "", DateTimeOffset.UtcNow, null, null),
+        });
+        await chat.SendAsync("typed");
+
+        chat.AppendNewTail(new[]
+        {
+            new HistoryTurn(ChatRole.User, "hello", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.User, "typed", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, "the reply", null, "", DateTimeOffset.UtcNow, null, null),
+        });
+
+        var texts = chat.History.Select(t => t.Text).ToList();
+        Assert.Equal(1, texts.Count(t => t == "typed"));
+        Assert.Contains("the reply", texts);
+    }
+
+    // A status that says the run is still going, or one nobody recognises, leaves
+    // the run waiting; one that says it ended settles it, so a later timeout from
+    // somewhere else is not announced with this send's limit.
+    [Fact]
+    public void OnlyAnEndedStatusSettlesTheRunAndAStillRunningOneDoesNot()
+    {
+        var waiting = Chat(NativeKey);
+        DrawARun(waiting);
+        waiting.OnRunStatus("running");
+        waiting.OnRunStatus("something-new");
+        waiting.OnRunStatus("timeout");
+        Assert.Contains(waiting.History, t => t.Text.Contains("time limit"));
+
+        var settled = Chat(NativeKey);
+        DrawARun(settled);
+        settled.OnRunStatus("done");
+        settled.OnRunStatus("timeout");
+        Assert.DoesNotContain(settled.History, t => t.Text.Contains("time limit"));
+    }
+
     // A note at the tail is no anchor: it matches nothing on a page, and used to
     // stop every later delivery appearing. Here the note is the one a send leaves
     // when replying is off, straight after the message that was typed.
