@@ -214,6 +214,36 @@ public class OpenClawHistoryShapeTests
         Assert.True(OpenClawHistoryShape.RollupIsCoveredBy("", new[] { "x" }));
     }
 
+    // ---- TextOf's arms, reached through a rollup's own text (CB-270 gate) ----
+    // A rollup's text is what RollupsToDrop compares to the steps, so a rollup
+    // whose content is absent, not an array, or a bare string drives each
+    // return in TextOf. A rollup with no text is covered by any step.
+
+    [Fact]
+    public void ARollupWithNoContentAtAllHasNoTextAndIsCoveredByItsStep() =>
+        Assert.Equal(new[] { 2 }, Dropped(User, Text("assistant", "step"),
+            """{"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r"}"""));
+
+    [Fact]
+    public void ARollupWhoseContentIsANumberHasNoTextAndIsCoveredByItsStep() =>
+        Assert.Equal(new[] { 2 }, Dropped(User, Text("assistant", "step"),
+            """{"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r","content":5}"""));
+
+    [Fact]
+    public void ARollupWhoseContentIsAnObjectHasNoTextAndIsCoveredByItsStep() =>
+        Assert.Equal(new[] { 2 }, Dropped(User, Text("assistant", "step"),
+            """{"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r","content":{"text":"step"}}"""));
+
+    [Fact]
+    public void ARollupWhoseContentIsABareStringIsItsOwnText()
+    {
+        // Covered when the string repeats the step, kept when it adds text.
+        Assert.Equal(new[] { 2 }, Dropped(User, Text("assistant", "step"),
+            """{"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r","content":"step"}"""));
+        Assert.Empty(Dropped(User, Text("assistant", "step"),
+            """{"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r","content":"step and more"}"""));
+    }
+
     // ---- ToolCalls ------------------------------------------------------
 
     private static (string? Id, string? Name, JsonElement Args, bool IsError)[] Calls(string content) =>
