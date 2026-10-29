@@ -706,6 +706,27 @@ namespace Orbweaver
             lock (Gate) _models = models;
         }
 
+        // How the conversation's last run ended, as the row's own `status` says
+        // ("done", "timeout", ...), for every listed row. Replaced whole per poll.
+        private static Dictionary<string, string> _runStatuses = new(StringComparer.Ordinal);
+
+        internal static string? RunStatusOf(string key)
+        {
+            lock (Gate)
+                return _runStatuses.TryGetValue(key, out var status) ? status : null;
+        }
+
+        // After a poll: every open chat is told how its conversation's last run
+        // ended, on the UI thread. The chat decides whether that is news.
+        internal static void NotifyRunStatuses(IEnumerable<OpenClawChatSession> chats)
+        {
+            foreach (var chat in chats)
+            {
+                var status = RunStatusOf(chat.GatewayKey);
+                Dispatcher.UIThread.Post(() => chat.OnRunStatus(status));
+            }
+        }
+
         internal static IReadOnlyDictionary<string, OpenClawRunState> RunStatesSnapshot()
         {
             lock (Gate) return new Dictionary<string, OpenClawRunState>(_runStates, StringComparer.Ordinal);
@@ -1341,6 +1362,7 @@ namespace Orbweaver
                 var before = RunStatesSnapshot();
                 var (sessions, total) = Parse(res);
                 NotifyRunOptions(ChatsWithChangedRunState(before, RunStatesSnapshot(), OpenChats()));
+                NotifyRunStatuses(OpenChats());
 
                 _snapshot = sessions;
                 Report(total == sessions.Count
@@ -1394,6 +1416,7 @@ namespace Orbweaver
             var deliveries = new Dictionary<string, Delivery?>(StringComparer.Ordinal);
             var natives = new Dictionary<string, OpenClawNativeKind>(StringComparer.Ordinal);
             var runStates = new Dictionary<string, OpenClawRunState>(StringComparer.Ordinal);
+            var runStatuses = new Dictionary<string, string>(StringComparer.Ordinal);
 
             // Every agent the gateway knows of, filtered or not, so that a
             // colour is reserved for one whose orb isn't drawn — their messages
@@ -1464,6 +1487,7 @@ namespace Orbweaver
 
                 // ...and what it is running on, likewise.
                 if (OpenClawRunState.From(s) is { } runState) runStates[key] = runState;
+                if (Str(s, "status") is { Length: > 0 } runStatus) runStatuses[key] = runStatus;
 
                 everyAgent.Add(AgentIdOf(key) ?? key);
 
@@ -1576,6 +1600,7 @@ namespace Orbweaver
                 _deliveries = deliveries;
                 _natives = natives;
                 _runStates = runStates;
+                _runStatuses = runStatuses;
             }
 
             return (result, list.GetArrayLength());

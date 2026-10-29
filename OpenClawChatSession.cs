@@ -385,6 +385,8 @@ namespace Orbweaver
             // read the same: your message is on screen, and the note under it
             // says why nothing happened, exactly like a room whose channel
             // has nobody to carry a message to.
+            Observe(OpenClawSessions.NativeOf(GatewayKey));
+            _limitMinutesOfLastSend = Route == OpenClawSendRoute.Native ? TimeoutMinutes : null;
             var mine = new ChatTurn
             {
                 Role = ChatRole.User, Text = text, IsComplete = true, Mine = true,
@@ -564,6 +566,25 @@ namespace Orbweaver
         private bool _runDirty;
         private bool _runEnded;
 
+        // CB-270 Stage 4. A run this session drew is waiting to be told how it
+        // ended, and the limit the last send asked for is what a timeout names.
+        // The row's status arrives with the next poll, so the note is written then:
+        // a timed-out run otherwise just stops, and the reply looks cut off for no
+        // reason. Only a run this panel saw counts, so a conversation opened on an
+        // old timeout does not announce it.
+        private bool _awaitingStatus;
+        private int? _limitMinutesOfLastSend;
+
+        internal void OnRunStatus(string? status)
+        {
+            if (!_awaitingStatus || status != "timeout") return;
+
+            _awaitingStatus = false;
+            Note(_limitMinutesOfLastSend is { } minutes
+                ? $"The time limit ({minutes} minutes) was reached, so the run was stopped."
+                : "The run's time limit was reached, so the run was stopped.");
+        }
+
         // The first row the live run drew in this transcript, by reference so a
         // prepend or the cap cannot shift it. The run's user turn is before it,
         // however much of the run was already on the page when the panel opened.
@@ -572,6 +593,7 @@ namespace Orbweaver
 
         private void RunSeen()
         {
+            _awaitingStatus = true;
             if (!_runDirty) _runFirst = null;
             _runDirty = true;
             _runEnded = false;
@@ -733,7 +755,12 @@ namespace Orbweaver
 
             int startIndex;
 
-            if (_history.Count == 0)
+            // Without this session's own notes, which no page has: a note at the
+            // tail (a send that failed, a run that timed out) would otherwise be
+            // the anchor, match nothing, and stop every later delivery appearing.
+            var live = _history.Where(t => !_notes.Contains(t)).ToList();
+
+            if (live.Count == 0)
             {
                 startIndex = 0;
             }
@@ -751,9 +778,9 @@ namespace Orbweaver
                 for (var i = freshTurns.Count - 1; i >= 0; i--)
                 {
                     var matched = 0;
-                    while (matched <= i && matched < _history.Count
-                           && freshTurns[i - matched].Role == _history[^(matched + 1)].Role
-                           && string.Equals(freshTurns[i - matched].Text, _history[^(matched + 1)].Text,
+                    while (matched <= i && matched < live.Count
+                           && freshTurns[i - matched].Role == live[^(matched + 1)].Role
+                           && string.Equals(freshTurns[i - matched].Text, live[^(matched + 1)].Text,
                                StringComparison.Ordinal))
                     {
                         matched++;

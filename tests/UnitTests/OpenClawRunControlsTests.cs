@@ -755,4 +755,101 @@ public class OpenClawRunControlsTests : IDisposable
         Assert.Equal("Couldn't change fast mode: nope",
             OpenClawActionText.For(OpenClawActionOutcome.Refused, "nope", OpenClawAction.Fast));
     }
+
+    // --- a run that stopped at its time limit says so (P7) ---
+
+    [Fact]
+    public void TheRowsRunStatusIsKeptForEveryListedRow()
+    {
+        var now = new DateTimeOffset(Now.AddSeconds(-5)).ToUnixTimeMilliseconds();
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+        OpenClawSessions.Parse(Json(
+            "{\"sessions\":[{\"key\":\"" + NativeKey + "\",\"classification\":\"dashboard\",\"lastActivityAt\":" + now + ",\"status\":\"timeout\"},"
+            + "{\"key\":\"agent:main:dashboard:fine\",\"classification\":\"dashboard\",\"lastActivityAt\":" + now + ",\"status\":\"done\"},"
+            + "{\"key\":\"agent:main:dashboard:blank\",\"classification\":\"dashboard\",\"lastActivityAt\":" + now + ",\"status\":\"\"}]}"), Now);
+
+        Assert.Equal("timeout", OpenClawSessions.RunStatusOf(NativeKey));
+        Assert.Equal("done", OpenClawSessions.RunStatusOf("agent:main:dashboard:fine"));
+        Assert.Null(OpenClawSessions.RunStatusOf("agent:main:dashboard:blank"));
+        Assert.Null(OpenClawSessions.RunStatusOf("agent:unlisted"));
+    }
+
+    private static void DrawARun(OpenClawChatSession chat) =>
+        chat.OnAgentEvent("agent", Json("""{"runId":"r","stream":"assistant","data":{"text":"working on it"}}"""));
+
+    [Fact]
+    public async Task ARunThatTimedOutSaysSoAndNamesTheLimitOnce()
+    {
+        ParseRows();
+        OrbweaverSettings.OpenClawReplyEnabled = false;
+        var chat = Chat(NativeKey);
+        chat.TimeoutMinutes = 10;
+        await chat.SendAsync("go");
+        DrawARun(chat);
+
+        chat.OnRunStatus("timeout");
+        chat.OnRunStatus("timeout");
+
+        var notes = chat.History.Where(t => t.Text.StartsWith("The time limit")).ToList();
+        var note = Assert.Single(notes);
+        Assert.Equal("The time limit (10 minutes) was reached, so the run was stopped.", note.Text);
+        Assert.Equal(ChatRole.System, note.Role);
+    }
+
+    // With no limit chosen the gateway's own was the one that applied.
+    [Fact]
+    public void ATimeoutWithNoLimitChosenSaysSoWithoutANumber()
+    {
+        var chat = Chat(NativeKey);
+        DrawARun(chat);
+
+        chat.OnRunStatus("timeout");
+
+        Assert.Contains(chat.History, t => t.Text == "The run's time limit was reached, so the run was stopped.");
+    }
+
+    // A conversation opened on an old timeout does not announce it, and a run
+    // that ended any other way says nothing.
+    [Fact]
+    public void NoNoteWithoutARunThisPanelSawOrForAnyOtherEnd()
+    {
+        var unseen = Chat(NativeKey);
+        unseen.OnRunStatus("timeout");
+        Assert.Empty(unseen.History);
+
+        var done = Chat(NativeKey);
+        DrawARun(done);
+        done.OnRunStatus("done");
+        done.OnRunStatus(null);
+        Assert.DoesNotContain(done.History, t => t.Text.Contains("time limit"));
+    }
+
+    // A note at the tail is no anchor: it matches nothing on a page, and used to
+    // stop every later delivery appearing. Here the note is the one a send leaves
+    // when replying is off, straight after the message that was typed.
+    [Fact]
+    public async Task ADeliveryStillAppendsPastANoteAtTheTail()
+    {
+        OrbweaverSettings.OpenClawReplyEnabled = false;
+        var chat = Chat(NativeKey);
+        chat.SetHistory(new[]
+        {
+            new HistoryTurn(ChatRole.User, "go", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, "done", null, "", DateTimeOffset.UtcNow, null, null),
+        });
+        await chat.SendAsync("one more");
+        Assert.StartsWith("Replying is off", chat.History[^1].Text);
+
+        chat.AppendNewTail(new[]
+        {
+            new HistoryTurn(ChatRole.User, "go", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, "done", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.User, "one more", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, "later delivery", null, "", DateTimeOffset.UtcNow, null, null),
+        });
+
+        Assert.Contains(chat.History, t => t.Text == "later delivery");
+    }
 }
+
