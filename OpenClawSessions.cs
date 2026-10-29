@@ -1972,7 +1972,7 @@ namespace Orbweaver
             try
             {
                 var res = await gateway.RequestAsync(
-                    OpenClawOrbActions.PatchMethod, new Dictionary<string, object>(patch.Params), ct);
+                    OpenClawOrbActions.PatchMethod, new Dictionary<string, object?>(patch.Params), ct);
 
                 return OpenClawOrbActions.ParsePatchResult(res, unconfirmed);
             }

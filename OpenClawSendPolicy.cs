@@ -94,7 +94,7 @@ internal static class OpenClawSendPolicy
     // is allowed to mean.
     internal static Dictionary<string, object> ChatSendRequest(
         string sessionKey, string text, OpenClawSendRoute route, string idempotencyKey,
-        int? timeoutMs = null)
+        int? timeoutMs = null, IReadOnlyList<OpenClawOutgoingImage>? attachments = null)
     {
         if (timeoutMs is <= 0) throw new ArgumentOutOfRangeException(nameof(timeoutMs), "must be positive");
 
@@ -107,6 +107,10 @@ internal static class OpenClawSendPolicy
         };
 
         if (timeoutMs is { } limit) request["timeoutMs"] = limit;
+
+        // Pictures ride last, as the wire shape the probe measured, and only when
+        // there are any: an empty list is no attachments, not an empty field.
+        if (attachments is { Count: > 0 }) request["attachments"] = attachments.Select(a => a.ToWire()).ToList();
 
         return request;
     }

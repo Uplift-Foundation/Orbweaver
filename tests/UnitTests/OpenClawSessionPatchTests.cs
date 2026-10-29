@@ -152,5 +152,42 @@ public class OpenClawSessionPatchTests
             OpenClawSessionPatch.Fields.Except(new[] { "key", "expectedSessionId", "archived", "pinned", "label" })
                 .OrderBy(f => f, StringComparer.Ordinal));
     }
+
+    // --- back to the default (Stage 4, probe P2) ---
+
+    [Theory]
+    [InlineData("model")]
+    [InlineData("thinkingLevel")]
+    [InlineData("fastMode")]
+    public void EachClearSendsAJsonNullForItsOneField(string field)
+    {
+        var patch = field switch
+        {
+            "model" => OpenClawSessionPatch.ClearModel("k", "sid"),
+            "thinkingLevel" => OpenClawSessionPatch.ClearThinking("k", "sid"),
+            _ => OpenClawSessionPatch.ClearFast("k", "sid"),
+        };
+
+        Assert.Equal(new[] { "key", field, "expectedSessionId" }, Keys(patch));
+        Assert.Null(patch.Params[field]);
+
+        // On the wire the key is there with a null, not dropped.
+        Assert.Equal(
+            "{\"key\":\"k\",\"" + field + "\":null,\"expectedSessionId\":\"sid\"}",
+            System.Text.Json.JsonSerializer.Serialize(patch.Params));
+    }
+
+    [Fact]
+    public void TheClearFactoriesStayInsideTheDeclaredFields()
+    {
+        var all = new[]
+        {
+            OpenClawSessionPatch.ClearModel("k", "s"),
+            OpenClawSessionPatch.ClearThinking("k", "s"),
+            OpenClawSessionPatch.ClearFast("k", "s"),
+        };
+
+        Assert.Subset(OpenClawSessionPatch.Fields.ToHashSet(), all.SelectMany(Keys).ToHashSet());
+    }
 }
 

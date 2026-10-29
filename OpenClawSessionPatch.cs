@@ -34,15 +34,15 @@ namespace Orbweaver
             "model", "thinkingLevel", "fastMode"
         };
 
-        private OpenClawSessionPatch(IReadOnlyDictionary<string, object> parameters) =>
+        private OpenClawSessionPatch(IReadOnlyDictionary<string, object?> parameters) =>
             Params = parameters;
 
         // Insertion order is the order on the wire, which is what the existing
         // archive request has always sent: key, the change, then expectedSessionId.
-        internal IReadOnlyDictionary<string, object> Params { get; }
+        internal IReadOnlyDictionary<string, object?> Params { get; }
 
         internal static OpenClawSessionPatch Archive(string key, string sessionId) =>
-            new(new Dictionary<string, object>
+            new(new Dictionary<string, object?>
             {
                 ["key"] = key,
                 ["archived"] = true,
@@ -50,7 +50,7 @@ namespace Orbweaver
             });
 
         internal static OpenClawSessionPatch Pin(string key, string sessionId, bool pinned) =>
-            new(new Dictionary<string, object>
+            new(new Dictionary<string, object?>
             {
                 ["key"] = key,
                 ["pinned"] = pinned,
@@ -58,7 +58,7 @@ namespace Orbweaver
             });
 
         internal static OpenClawSessionPatch Rename(string key, string sessionId, string label) =>
-            new(new Dictionary<string, object>
+            new(new Dictionary<string, object?>
             {
                 ["key"] = key,
                 ["label"] = label,
@@ -69,9 +69,9 @@ namespace Orbweaver
         // value the picker chose by id. A blank value is refused here, not at the
         // gateway: a blank model or level is never what anyone meant, and an empty
         // string on the wire is a different request from "reset to default",
-        // which these deliberately cannot express (clearing is unmeasured).
+        // which is not how a field is cleared (see ClearModel, ClearThinking and ClearFast).
         internal static OpenClawSessionPatch Model(string key, string sessionId, string model) =>
-            new(new Dictionary<string, object>
+            new(new Dictionary<string, object?>
             {
                 ["key"] = key,
                 ["model"] = NotBlank(model, nameof(model)),
@@ -79,7 +79,7 @@ namespace Orbweaver
             });
 
         internal static OpenClawSessionPatch Thinking(string key, string sessionId, string level) =>
-            new(new Dictionary<string, object>
+            new(new Dictionary<string, object?>
             {
                 ["key"] = key,
                 ["thinkingLevel"] = NotBlank(level, nameof(level)),
@@ -87,10 +87,32 @@ namespace Orbweaver
             });
 
         internal static OpenClawSessionPatch Fast(string key, string sessionId, bool on) =>
-            new(new Dictionary<string, object>
+            new(new Dictionary<string, object?>
             {
                 ["key"] = key,
                 ["fastMode"] = on,
+                ["expectedSessionId"] = sessionId
+            });
+
+        // Back to the default, by sending JSON null: measured on 2026.10.5 to clear
+        // each of these three, after which the row reads back as it did before
+        // anything was chosen. An override and a chosen value that happens to equal
+        // the default are different facts, and this is the only way to get back to
+        // the first. Null on the wire is the point, so Params carries a real null
+        // here and not a missing key.
+        internal static OpenClawSessionPatch ClearModel(string key, string sessionId) => Clear(key, sessionId, "model");
+
+        internal static OpenClawSessionPatch ClearThinking(string key, string sessionId) =>
+            Clear(key, sessionId, "thinkingLevel");
+
+        internal static OpenClawSessionPatch ClearFast(string key, string sessionId) =>
+            Clear(key, sessionId, "fastMode");
+
+        private static OpenClawSessionPatch Clear(string key, string sessionId, string field) =>
+            new(new Dictionary<string, object?>
+            {
+                ["key"] = key,
+                [field] = null,
                 ["expectedSessionId"] = sessionId
             });
 
