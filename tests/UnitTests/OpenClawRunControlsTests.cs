@@ -722,6 +722,21 @@ public class OpenClawRunControlsTests : IDisposable
         Assert.False(picture.Mine);
     }
 
+    // A turn the gateway labels as its own machinery is not a person's picture,
+    // the same rule the text of such a turn is held to.
+    [Fact]
+    public void AGatewayInjectedTurnsPictureIsNotDrawnAsAPersons()
+    {
+        var messages = Json("""
+            [{"role":"user","content":"Exec completed (id 1)","provenance":{"kind":"internal_system"},
+              "__openclaw":{"media":[{"url":"media://inbound/x.png","kind":"image","fileName":"x.png"}]}}]
+            """);
+
+        var turns = OpenClawSessions.TurnsFromHistory(messages, "agent:main:dashboard:abc");
+
+        Assert.DoesNotContain(turns, t => t.ImageUrl is not null);
+    }
+
     // Not an owner's own message and not an array: nothing to read.
     [Theory]
     [InlineData("""{"role":"user","content":"hi","__openclaw":{"media":"nope"}}""")]

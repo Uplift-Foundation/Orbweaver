@@ -2681,15 +2681,26 @@ namespace Orbweaver
                     && mediaOwner.TryGetProperty("media", out var mediaList)
                     && mediaList.ValueKind == JsonValueKind.Array)
                 {
-                    var pictureMine = OpenClawSender.Classify(
+                    var pictureSender = OpenClawSender.Classify(
                         Bool(mediaOwner, "senderIsOwner"),
                         Str(mediaOwner, "senderName"),
                         Str(message, "idempotencyKey") ?? Str(mediaOwner, "idempotencyKey"),
-                        "").Kind == OpenClawSender.SenderKind.Mine;
+                        "",
+                        // The same provenance the text below is classified with: a
+                        // turn the gateway labels as its own machinery is not a
+                        // person's picture.
+                        Str(
+                            message.TryGetProperty("provenance", out var pictureProvenance)
+                            && pictureProvenance.ValueKind == JsonValueKind.Object
+                                ? pictureProvenance
+                                : default,
+                            "kind"));
+                    var pictureMine = pictureSender.Kind == OpenClawSender.SenderKind.Mine;
                     var pictureMs = Num(message, "timestamp");
 
                     foreach (var item in mediaList.EnumerateArray())
                     {
+                        if (pictureSender.Kind == OpenClawSender.SenderKind.Machine) break;
                         if (Str(item, "kind") != "image") continue;
 
                         var pictureUrl = CleanUrl(Str(item, "url"));
