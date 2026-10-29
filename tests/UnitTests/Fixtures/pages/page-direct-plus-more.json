@@ -1,0 +1,1077 @@
+{
+ "messages": [
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294437341,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S3"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294438055,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc1_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a1"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc1_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result1"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294447653,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S4"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294448363,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc3_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a3"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc3_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result3"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294457646,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc4_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a4"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc4_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result4"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294468196,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc5_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a5"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc5_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result5"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294477613,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc6_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a6"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc6_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result6"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294487570,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc7_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a7"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc7_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result7"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294497845,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc8_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a8"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc8_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result8"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294507525,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc9_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a9"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc9_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result9"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294518021,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc10_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a10"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc10_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result10"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294527762,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc11_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a11"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc11_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result11"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294537664,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc12_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a12"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc12_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result12"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294547593,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc13_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a13"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc13_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result13"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294558118,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc14_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a14"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc14_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result14"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294567841,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc15_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a15"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc15_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result15"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294578232,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc16_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a16"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc16_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result16"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294587878,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc17_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a17"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc17_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result17"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294589463,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc18_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a18"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc18_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result18"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294598125,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc19_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a19"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc19_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result19"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294607777,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc20_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a20"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc20_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result20"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294617989,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc21_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a21"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc21_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result21"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294628090,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc22_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a22"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc22_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result22"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294638192,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc23_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a23"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc23_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result23"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294648015,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc24_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a24"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc24_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result24"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294658396,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc25_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a25"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc25_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result25"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294668184,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc26_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a26"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc26_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result26"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294678991,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc27_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a27"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc27_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result27"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294688238,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc28_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a28"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc28_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result28"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294698001,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc29_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a29"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc29_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result29"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294708153,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc30_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a30"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc30_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result30"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294718281,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc31_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a31"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc31_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result31"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294728624,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S5"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294729269,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc33_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a33"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc33_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result33"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793294738134,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc34_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a34"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc34_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result34"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "timestamp": 1793294801747,
+   "idempotencyKey": "msg35:user",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U6"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793294825987,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U7"
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "end_turn",
+   "timestamp": 1793294830669,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S1"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "timestamp": 1793294831054,
+   "idempotencyKey": "cli-assistant:run38",
+   "content": [
+    {
+     "type": "text",
+     "text": "S1\n\nEXTRA38"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "timestamp": 1793294835172,
+   "idempotencyKey": "cli-assistant:run39",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "LONE2"
+    }
+   ]
+  }
+ ],
+ "totalMessages": 3283
+}

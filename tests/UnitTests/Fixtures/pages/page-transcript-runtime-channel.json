@@ -1,0 +1,383 @@
+{
+ "messages": [
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1789142694955,
+   "idempotencyKey": "msg0:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S1"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1789401755068,
+   "idempotencyKey": "msg1:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S2"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1789488048319,
+   "idempotencyKey": "msg2:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S3"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1789574535514,
+   "idempotencyKey": "msg3:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S4"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1789660910126,
+   "idempotencyKey": "msg4:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S5"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1789747498120,
+   "idempotencyKey": "msg5:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S6"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1790006600459,
+   "idempotencyKey": "msg6:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S7"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1790619042942,
+   "idempotencyKey": "msg7:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S8"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1790697820946,
+   "idempotencyKey": "msg8:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S9"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1790784019938,
+   "idempotencyKey": "msg9:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S10"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1790871093989,
+   "idempotencyKey": "msg10:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S11"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1790956894442,
+   "idempotencyKey": "msg11:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S12"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1791216444875,
+   "idempotencyKey": "msg12:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S13"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1791389333973,
+   "idempotencyKey": "msg13:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S14"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1791475223820,
+   "idempotencyKey": "msg14:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S15"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1791562216699,
+   "idempotencyKey": "msg15:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S16"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1791821183366,
+   "idempotencyKey": "msg16:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S17"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1791994174506,
+   "idempotencyKey": "msg17:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S18"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1792425743998,
+   "idempotencyKey": "msg18:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S19"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1792512285789,
+   "idempotencyKey": "msg19:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S20"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1792598812408,
+   "idempotencyKey": "msg20:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S21"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1792685892442,
+   "idempotencyKey": "msg21:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S22"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1792771451238,
+   "idempotencyKey": "msg22:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S23"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1793030759737,
+   "idempotencyKey": "msg23:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S24"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1793117468881,
+   "idempotencyKey": "msg24:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S25"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1793203920756,
+   "idempotencyKey": "msg25:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S26"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "openclaw-transcript",
+   "provider": "openclaw",
+   "stopReason": "stop",
+   "timestamp": 1793289697307,
+   "idempotencyKey": "msg26:user",
+   "content": [
+    {
+     "type": "text",
+     "text": "S27"
+    }
+   ]
+  }
+ ],
+ "totalMessages": 27
+}
