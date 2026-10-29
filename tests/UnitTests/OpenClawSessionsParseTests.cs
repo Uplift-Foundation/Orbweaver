@@ -100,13 +100,14 @@ namespace Orbweaver.Tests
 
         // Recorded before the recency filter, like the delivery map: a send to a
         // conversation that has gone quiet still has to be routed. Two days old
-        // against a 60 minute window, so every row is dropped from the result.
+        // against a 60 minute window, so every row is dropped from the result
+        // except the dashboard one, which retention keeps (OpenClawRetention).
         [Fact]
         public void NativeOfAnswersForRowsTheRecencyFilterDropped()
         {
             var (sessions, total) = Parse(NativeFixture(Ms(Now.AddDays(-2))), withinMinutes: 60);
 
-            Assert.Empty(sessions);
+            Assert.Equal(OpenClawNativeKind.Dashboard, Assert.Single(sessions).Native);
             Assert.Equal(5, total);
             Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:alpha:main"));
             Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf("agent:beta:main"));
@@ -135,6 +136,69 @@ namespace Orbweaver.Tests
 
             Assert.Null(OpenClawSessions.NativeOf("agent:alpha:main"));
             Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:other:main"));
+        }
+
+        // --- CB-270: retention, pinned rows, and the native-mode filter ---
+
+        private static readonly long TwoDaysAgo = Ms(Now.AddDays(-2));
+
+        // Two days quiet against a 60 minute window. The dashboard row survives
+        // because a New Chat is a durable conversation, not a clock; the old
+        // unpinned DM is the negative control (today's behaviour); the pinned DM
+        // survives because the gateway says keep it; the archived pinned row is
+        // dropped because archived is checked first.
+        [Fact]
+        public void OnlyDashboardAndPinnedRowsSurviveTheRecencyWindow()
+        {
+            var json = $$"""
+                {"sessions":[
+                  {"key":"agent:a:dashboard:u1","classification":"dashboard","label":"Scratch pad","lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000001","classification":"direct","chatType":"direct","lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000002","classification":"direct","chatType":"direct","pinned":true,"lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000003","classification":"direct","chatType":"direct","pinned":true,"archived":true,"lastActivityAt":{{TwoDaysAgo}}}
+                ]}
+                """;
+
+            var (sessions, _) = Parse(json, withinMinutes: 60);
+
+            Assert.Equal(2, sessions.Count);
+
+            var dash = sessions.Single(s => s.Key == "agent:a:dashboard:u1");
+            Assert.Equal(SessionKind.Main, dash.Kind);
+            Assert.Equal(OpenClawNativeKind.Dashboard, dash.Native);
+            Assert.True(dash.KeptRegardlessOfAge);
+            Assert.False(dash.GatewayPinned);
+            Assert.Equal("Scratch pad", dash.Label);
+
+            var pinned = sessions.Single(s => s.Key.EndsWith("0002"));
+            Assert.True(pinned.GatewayPinned);
+            Assert.True(pinned.KeptRegardlessOfAge);
+            Assert.Null(pinned.Label);
+
+            Assert.DoesNotContain(sessions, s => s.Key.EndsWith("0001") || s.Key.EndsWith("0003"));
+        }
+
+        // pinned of the wrong type is not pinned.
+        [Fact]
+        public void AMalformedPinnedFlagIsNotPinned()
+        {
+            var json = $$"""
+                {"sessions":[{"key":"agent:a:discord:direct:1","chatType":"direct","pinned":"yes","lastActivityAt":{{TwoDaysAgo}}}]}
+                """;
+
+            Assert.Empty(Parse(json, withinMinutes: 60).Sessions);
+        }
+
+        // A native main is not kept past the window: only dashboard sessions
+        // and pinned ones are.
+        [Fact]
+        public void AnOldNativeMainIsStillDroppedByTheWindow()
+        {
+            var json = $$"""
+                {"sessions":[{"key":"agent:a:main","classification":"main","lastActivityAt":{{TwoDaysAgo}}}]}
+                """;
+
+            Assert.Empty(Parse(json, withinMinutes: 60).Sessions);
         }
 
         // --- CB-170: what the orb's Interrupt and End rows read off a row ---

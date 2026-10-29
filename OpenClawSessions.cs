@@ -519,7 +519,18 @@ namespace Orbweaver
             // beside Kind and Heartbeat rather than folded into either, for the
             // reason Heartbeat is: a native main is still Main, a WhatsApp main
             // is too, and only this tells them apart. See OpenClawNative.
-            OpenClawNativeKind Native = OpenClawNativeKind.None);
+            OpenClawNativeKind Native = OpenClawNativeKind.None,
+
+            // CB-270: the gateway's own `pinned` flag and the row's `label`. A
+            // pinned session, like a dashboard one, is exempt from the recency
+            // rules (see OpenClawRetention); the label is what Rename shows as
+            // the current name.
+            bool GatewayPinned = false,
+            string? Label = null)
+        {
+            public bool KeptRegardlessOfAge =>
+                OpenClawRetention.KeptRegardlessOfAge(GatewayPinned, Native);
+        }
 
         // Where a reply in this session is supposed to end up. The gateway
         // resolves this itself when asked to deliver an agent's answer, but a
@@ -1373,7 +1384,13 @@ namespace Orbweaver
                 // A session mid-run is current whatever its timestamps say —
                 // it is the one thing an orb is most worth showing.
                 var within = ActiveWithin;
-                if (state != "generating" && within is not null && asOf - activity > within) continue;
+                //
+                // CB-270: a pinned session or a dashboard one is exempt, however
+                // quiet. See OpenClawRetention for why those two and no others.
+                var pinned = Bool(s, "pinned") == true;
+                if (state != "generating"
+                    && !OpenClawRetention.KeptRegardlessOfAge(pinned, native)
+                    && within is not null && asOf - activity > within) continue;
 
                 // Timer-driven sessions the user has asked not to see —
                 // heartbeats, scheduled jobs, or both. Deliberately below the
@@ -1435,7 +1452,9 @@ namespace Orbweaver
                     heartbeat,
                     Str(s, "sessionId"),
                     Bool(s, "isMain") == true,
-                    native));
+                    native,
+                    pinned,
+                    Str(s, "label")));
             }
 
             AssignColours(everyAgent);

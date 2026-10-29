@@ -864,4 +864,53 @@ public class GatewayScanTests
             PublishNothing();
         }
     }
+
+    // --- CB-270: pinned and dashboard sessions outlive "Keep orbs for" ---
+
+    // Three days quiet against the shortest lifetime the picker offers, so nothing
+    // longer can be what carried the orb. Parse is given the "all" window by
+    // Publish, so these rows reach the scan, which is where the lifetime clock
+    // lives.
+    private static readonly long ThreeDaysAgo =
+        new DateTimeOffset(DateTime.UtcNow.AddDays(-3)).ToUnixTimeMilliseconds();
+
+    private static HashSet<string> ScanOldRows(string rows)
+    {
+        using var scratch = new Scratch();
+        var wasLifetime = OrbweaverSettings.OrbLifetimeMinutes;
+        try
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = 1;
+            Publish("{\"sessions\":[" + rows + "]}");
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+            // Twice: surviving one scan and expiring on the next is a different
+            // bug from never getting an orb.
+            manager.ScanAndUpdate();
+
+            return new HashSet<string>(Orbs(manager).Keys);
+        }
+        finally
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = wasLifetime;
+            PublishNothing();
+        }
+    }
+
+    // One scan holds all three, which is what makes the control mean something:
+    // the exemption is a clause too wide the moment the unpinned DM survives too.
+    [AvaloniaFact]
+    public void ADashboardAndAPinnedDmSurviveWhileAnUnpinnedDmOfTheSameAgeExpires()
+    {
+        var orbs = ScanOldRows($$"""
+            {"key":"agent:a:dashboard:u1","classification":"dashboard","lastActivityAt":{{ThreeDaysAgo}}},
+            {"key":"agent:a:discord:direct:1","classification":"direct","chatType":"direct","pinned":true,"lastActivityAt":{{ThreeDaysAgo}}},
+            {"key":"agent:a:discord:direct:2","classification":"direct","chatType":"direct","lastActivityAt":{{ThreeDaysAgo}}}
+            """);
+
+        Assert.Contains("openclaw:agent:a:dashboard:u1", orbs);
+        Assert.Contains("openclaw:agent:a:discord:direct:1", orbs);
+        Assert.DoesNotContain("openclaw:agent:a:discord:direct:2", orbs);
+    }
 }

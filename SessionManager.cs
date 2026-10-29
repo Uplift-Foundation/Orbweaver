@@ -167,6 +167,20 @@ namespace Orbweaver
         [JsonIgnore]
         public bool Heartbeat { get; set; }
 
+        // CB-270: whether the gateway lists this session with no chat surface
+        // behind it. [JsonIgnore] for the same reason Heartbeat is — derived
+        // during the scan, and ResetSessionToIdle rewrites a status file from
+        // this object. Rides beside Kind and Heartbeat rather than inside either:
+        // a native main is still Main, and still a heartbeat target.
+        [JsonIgnore]
+        public OpenClawNativeKind Native { get; set; }
+
+        // Whether this OpenClaw session is exempt from the age rules: pinned on
+        // the gateway, or a dashboard session. See OpenClawRetention. [JsonIgnore]
+        // for the same reason Heartbeat is.
+        [JsonIgnore]
+        public bool KeptRegardlessOfAge { get; set; }
+
         // A stand-in orb for a channel, invented by this app rather than
         // reported by anything. It has no conversation of its own — it is the
         // thing the agents in that channel point at, so a room reads as one
@@ -1368,6 +1382,12 @@ namespace Orbweaver
                 && status.Source != SessionSource.ClaudeCloud
                 && status.State != "waiting"
                 && !(status.Source == SessionSource.OpenClaw && status.State == "generating")
+
+                // CB-270: a pinned gateway session, or a dashboard one, is a
+                // durable conversation whose lifecycle is the gateway's archived
+                // flag, not a clock — CB-182's argument above, for the same
+                // reason. OpenClawRetention says which sessions qualify.
+                && !(status.Source == SessionSource.OpenClaw && status.KeptRegardlessOfAge)
                 && now - written > staleAfter)
             {
                 return ScanVerdict.Expired;
@@ -2395,6 +2415,8 @@ namespace Orbweaver
                         OpenClawSessions.AgentIdOf(session.Key) ?? session.Key),
                     Kind = session.Kind,
                     Heartbeat = session.Heartbeat,
+                    Native = session.Native,
+                    KeptRegardlessOfAge = session.KeptRegardlessOfAge,
                 };
 
                 // Namespaced because these ids share a dictionary with Claude
