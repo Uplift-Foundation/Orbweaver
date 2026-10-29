@@ -44,6 +44,15 @@
     <Compile Include="../../OpenClawIdentity.cs" />
     <Compile Include="../../OpenClawSocket.cs" />
     <Compile Include="../../OpenClawGateway.cs" />
+    <!-- The orb-group table and the account-orb overrides, which the settings
+         now hold (CB-270 found the probe broken by them). All pure; the one
+         thing OrbGroupTable reaches for that is not, OrbArrangement, is
+         stubbed in Shims.cs. -->
+    <Compile Include="../../OrbGroupTable.cs" />
+    <Compile Include="../../OrbGroups.cs" />
+    <Compile Include="../../AccountOrbOverride.cs" />
+    <Compile Include="../../AccountUsage.cs" />
+    <Compile Include="../../OrbGlyph.cs" />
   </ItemGroup>
 
 </Project>
