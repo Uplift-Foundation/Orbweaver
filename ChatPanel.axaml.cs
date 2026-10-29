@@ -3217,6 +3217,18 @@ namespace Orbweaver
                         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Body)));
                     }
 
+                    // CB-270: a tool line learns it failed only when the result
+                    // arrives, after its row is drawn. The body is rebuilt because
+                    // its runs carry the ink they were made with.
+                    if (e.PropertyName == nameof(ChatTurn.IsError))
+                    {
+                        _body = null;
+                        foreach (var name in new[] { nameof(Body), nameof(Ink), nameof(ErrorTip) })
+                        {
+                            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                        }
+                    }
+
                     // A live turn can start with no picture and gain one once
                     // OpenClawChatSession.TryResolveLiveImage resolves it
                     // against the gateway's own history — this row already
@@ -4129,7 +4141,15 @@ namespace Orbweaver
                     ? new SolidColorBrush(Color.FromArgb(0x3D, c.R, c.G, c.B))
                     : IsUser ? UserBubble : AgentBubble;
 
-            public IBrush Ink => IsSystem ? SystemInk : BubbleInk;
+            // A tool line whose result reported an error is the same row in the
+            // red the panel already uses for trouble; nothing else about it moves.
+            private bool IsToolError => IsSystem && _turn.IsError;
+
+            public IBrush Ink => IsToolError ? ErrorInk : IsSystem ? SystemInk : BubbleInk;
+
+            public string? ErrorTip => IsToolError ? "The tool reported an error" : null;
+
+            private static readonly IBrush ErrorInk = new SolidColorBrush(Color.Parse("#E0D93B3B"));
 
             // The corner nearest the speaker is squared off. It is the one
             // detail that makes a column of bubbles read as two people talking

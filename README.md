@@ -994,6 +994,8 @@ the panel. And sending from the panel types into the session's tmux pane, so
 anything you send from the orb shows up in the terminal too, exactly as if you
 had typed it there. There is no second conversation to get out of step.
 
+**A conversation on an OpenClaw gateway is live while its panel is open (CB-270).** The app holds that conversation's own message stream for as long as a panel is open on it and lets go when the last one closes, so a run streams into the panel word by word instead of freezing at its first few. The reply is drawn the way history draws it: each tool the agent reached for is one line in the transcript (`· name  argument`, the same idiom Claude Code's own transcripts use), between the part of the reply before it and the part after, and a tool that reported an error turns its line red, with the reason on hover. A tool-using run appears once, not as its steps and then the gateway's rollup of them. This applies to every chat surface, Discord and WhatsApp included, in history as well as live; with no panel open nothing is held, and a gateway that refuses the stream leaves a one-line note in that conversation and carries on without it.
+
 **The header says which conversation this is, and where it is happening.** The
 name and the picture on the first line, the room or the place on the second,
 and under those the facts that are true whether or not anybody has named the
