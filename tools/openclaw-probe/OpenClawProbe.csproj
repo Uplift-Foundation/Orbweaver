@@ -48,6 +48,9 @@
          now hold (CB-270 found the probe broken by them). All pure; the one
          thing OrbGroupTable reaches for that is not, OrbArrangement, is
          stubbed in Shims.cs. -->
+    <!-- OrbGroupTable names the native group from these words (CB-270). Pure
+         constants. -->
+    <Compile Include="../../OpenClawNativeText.cs" />
     <Compile Include="../../OrbGroupTable.cs" />
     <Compile Include="../../OrbGroups.cs" />
     <Compile Include="../../AccountOrbOverride.cs" />
