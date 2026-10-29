@@ -148,20 +148,30 @@ namespace Orbweaver
 
         // Every account to ask, this app's own first.
         //
-        // null leads, meaning "leave the environment alone", which is how
-        // whichever account this app itself runs under is read — the default
-        // one on nearly every machine, but not always: see the comment on
-        // BackgroundJobs.ExtraAccountDirs (CB-114). The rest come from that same
-        // function rather than being re-derived here, both so a settings list
-        // naming an account explicitly does not ask it twice and so the default
-        // account still gets its orb when it wasn't the one the null read
-        // reached. `inheritedConfigDir` is CLAUDE_CONFIG_DIR as this app's own
-        // process sees it, passed straight through.
+        // null leads, meaning "reach the default account" — and for the usage
+        // poll that is always literally true, because UsageProcess removes
+        // CLAUDE_CONFIG_DIR from the child's environment on a null read (CB-113)
+        // rather than letting it inherit. The rest come from
+        // BackgroundJobs.ExtraAccountDirs rather than being re-derived here, so a
+        // settings list naming an account explicitly does not ask it twice.
+        //
+        // **This deliberately does not pass the inherited CLAUDE_CONFIG_DIR on,
+        // unlike BackgroundJobs (CB-114).** There the null read inherits the
+        // variable, so the enumeration has to know which account that reached.
+        // Here the null read never inherits it, so telling ExtraAccountDirs the
+        // null read reached `~/.claude-board` was wrong twice over (CB-295): it
+        // added `~/.claude` explicitly, and `CLAUDE_CONFIG_DIR=~/.claude` reads
+        // the un-onboarded `~/.claude/.claude.json` and answers
+        // rate_limits_available:false — a phantom "claude" orb saying "No
+        // subscription limits on this account" — while holding the inherited
+        // dir out of the list as already asked, which the poll never did. The
+        // two rules are one pair: if UsageProcess ever goes back to inheriting
+        // on a null read, this has to pass the inherited value again.
         internal static List<string?> ConfigDirs(
-            string home, IReadOnlyList<string> extras, string? inheritedConfigDir = null)
+            string home, IReadOnlyList<string> extras)
         {
             var dirs = new List<string?> { null };
-            foreach (var dir in BackgroundJobs.ExtraAccountDirs(home, extras, inheritedConfigDir))
+            foreach (var dir in BackgroundJobs.ExtraAccountDirs(home, extras))
             {
                 dirs.Add(dir);
             }
@@ -259,11 +269,10 @@ namespace Orbweaver
             if (claude is null) return Array.Empty<AccountUsage>();
 
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var inherited = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
             var readings = new List<AccountUsage>();
 
             foreach (var configDir in
-                     UsageAccounts.ConfigDirs(home, OrbweaverSettings.ClaudeCodeProfileDirs, inherited))
+                     UsageAccounts.ConfigDirs(home, OrbweaverSettings.ClaudeCodeProfileDirs))
             {
                 var label = UsageAccounts.LabelFrom(
                     ReadAccountFile(home, configDir), configDir);
