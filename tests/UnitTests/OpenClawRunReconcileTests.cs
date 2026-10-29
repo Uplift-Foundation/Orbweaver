@@ -574,12 +574,14 @@ public class OpenClawRunReconcileTests : IDisposable
         Assert.Equal(Full().Select(t => t.Text).Append("typed mid-run"), TextsSansNote(session));
     }
 
-    // KNOWN LIMITATION, named: a message typed before this panel has seen a single
-    // event of a run that was already going cannot be told from one typed before
-    // the run began, and a page that places it after the whole run then makes it the
-    // anchor. In practice the gateway persists a message where it arrived, so a
-    // page does not usually show it after a run it preceded; this pins what the
-    // panel does when it does.
+    // The layout this guards is not the measured one. A message typed mid-run is
+    // queued and runs afterwards as its own run, and history places it in the
+    // middle of the first run's steps (see the findings), not after the whole run.
+    // This pins what the panel does with the unmeasured layout where a page lists
+    // it last, for a message typed before this panel saw a single event of a run
+    // that was already going: that cannot be told from typing before the run
+    // began, so it is taken as what the run began after. Nothing real is known to
+    // produce it; the test makes closing it, if ever needed, a visible change.
     [Fact]
     public async Task AMessageTypedBeforeAnyEventOfARunWasSeenIsTakenAsWhatTheRunBeganAfter()
     {
