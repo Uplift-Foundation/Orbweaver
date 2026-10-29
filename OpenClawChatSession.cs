@@ -502,8 +502,13 @@ namespace Orbweaver
         // start, has nothing to defer for. While it is set and the run has not ended, a doorbell
         // does nothing: a page fetched mid-run holds a half-persisted run, and
         // appending it would only add to what the end is about to replace.
-        // Known cost: a run whose end this session never sees (a dropped
-        // connection) defers doorbells until the next run's end.
+        // The deferral is bounded by the run state the app already trusts for the
+        // orb (OpenClawSessions.StateFor): a run that state no longer calls
+        // generating, because its end arrived on another signal, RunIdle passed
+        // after its last streaming event, RunCeiling after a start, or the
+        // connection dropped and cleared every run, is over for this purpose too.
+        // A missed lifecycle end or chat final therefore cannot stop the panel
+        // refreshing.
         private bool _runDirty;
         private bool _runEnded;
 
@@ -528,7 +533,8 @@ namespace Orbweaver
         // append for a delivery that is not part of a run.
         internal void ApplyFetchedTail(IReadOnlyList<HistoryTurn> page)
         {
-            if (_runDirty && !_runEnded) return;
+            if (_runDirty && !_runEnded
+                && OpenClawSessions.StateFor(GatewayKey) == "generating") return;
 
             if (!_runDirty)
             {

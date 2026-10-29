@@ -17,10 +17,15 @@ public class OpenClawRunReconcileTests : IDisposable
 {
     public void Dispose() => OpenClawSessions.SetGatewayForTests(null);
 
+    private const string FixtureKey = "agent:main:dashboard:0a1b2c3d-0000-4000-8000-000000000001";
+
+    // A unique key per session: what is running is recorded process-wide, and
+    // two cases sharing a key would answer each other's question.
     private static OpenClawChatSession Session()
     {
         OpenClawSessions.SetGatewayForTests(null);
-        return new("openclaw:agent:main:dashboard:one", "agent:main:dashboard:one", "main");
+        var key = $"agent:main:dashboard:{Guid.NewGuid()}";
+        return new("openclaw:" + key, key, "main");
     }
 
     private static JsonElement Json(string text) => JsonDocument.Parse(text).RootElement;
@@ -56,9 +61,18 @@ public class OpenClawRunReconcileTests : IDisposable
             (ChatRole.System, ToolLine()), (ChatRole.Assistant, step3));
     }
 
-    private static void Feed(OpenClawChatSession session, IEnumerable<(string Name, JsonElement Payload)> events)
+    // Each event goes to the app's own run record, as OnEvent does for every
+    // event, and to the chat. The deferral reads the record, so a chat fed alone
+    // would never look like it was mid-run.
+    private static void Feed(
+        OpenClawChatSession session, IEnumerable<(string Name, JsonElement Payload)> events, DateTime? at = null)
     {
-        foreach (var (name, payload) in events) session.OnAgentEvent(name, payload);
+        foreach (var (name, original) in events)
+        {
+            var payload = Json(original.GetRawText().Replace(FixtureKey, session.GatewayKey));
+            OpenClawSessions.OnEvent(name, payload, at ?? DateTime.UtcNow);
+            session.OnAgentEvent(name, payload);
+        }
     }
 
     private static string[] Texts(OpenClawChatSession s) => s.History.Select(t => t.Text).ToArray();
@@ -166,6 +180,33 @@ public class OpenClawRunReconcileTests : IDisposable
         session.ApplyFetchedTail(Full());
 
         Assert.Equal(before, Texts(session));
+    }
+
+    // A run that starts, draws and never sends its end (a dropped broadcast, a
+    // socket that went quiet) must not stop the panel refreshing: once the app's
+    // own record no longer calls it generating, the doorbell reconciles. The
+    // control is the same run seen as live a moment ago, which defers.
+    [Fact]
+    public void ARunWhoseEndNeverArrivesStopsDeferringOnceItGoesQuiet()
+    {
+        var quiet = Session();
+        quiet.SetHistory(Page((ChatRole.User, "go")));
+        Feed(quiet, Run().Where(e => e.Name is "agent").Take(12), DateTime.UtcNow - OpenClawRunSignal.RunIdle - TimeSpan.FromSeconds(30));
+        var drawn = Texts(quiet);
+        Assert.True(drawn.Length > 1);
+
+        quiet.ApplyFetchedTail(Full());
+
+        Assert.Equal(Full().Select(t => t.Text), Texts(quiet));
+
+        var live = Session();
+        live.SetHistory(Page((ChatRole.User, "go")));
+        Feed(live, Run().Where(e => e.Name is "agent").Take(12));
+        var before = Texts(live);
+
+        live.ApplyFetchedTail(Full());
+
+        Assert.Equal(before, Texts(live));
     }
 
     // A run that has drawn nothing, a bare lifecycle start, has nothing to defer

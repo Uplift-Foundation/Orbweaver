@@ -233,6 +233,7 @@ namespace Orbweaver
             chat.TurnUpdated += OnMemberChanged;
             chat.HistoryReplaced += ScheduleRebuild;
             chat.HistoryPrepended += OnMemberPrepended;
+            chat.TurnsRemoved += OnMemberRemoved;
         }
 
         private void Unsubscribe(OpenClawChatSession chat)
@@ -241,9 +242,15 @@ namespace Orbweaver
             chat.TurnUpdated -= OnMemberChanged;
             chat.HistoryReplaced -= ScheduleRebuild;
             chat.HistoryPrepended -= OnMemberPrepended;
+            chat.TurnsRemoved -= OnMemberRemoved;
         }
 
         private void OnMemberChanged(ChatTurn _) => ScheduleRebuild();
+
+        // CB-270: a member's live rows replaced by history at the end of a run.
+        // The turns that take their place raise TurnAdded, but a replacement that
+        // only removes would otherwise leave the merge showing what is gone.
+        private void OnMemberRemoved(int _, int __) => ScheduleRebuild();
 
         private bool _rebuildQueued;
 

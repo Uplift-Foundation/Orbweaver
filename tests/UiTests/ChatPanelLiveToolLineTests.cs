@@ -198,6 +198,37 @@ public class ChatPanelLiveToolLineTests : IDisposable
         Assert.Contains(final[1], BodyText(Rows(panel)[3]));
     }
 
+    // CB-270: a room merges its members' transcripts and rebuilds when one
+    // changes. A reconciliation that only removes (the page holds less than the
+    // live drawing did) raises no TurnAdded, so the room has to hear the removal
+    // itself or keep showing a row that is gone.
+    [AvaloniaFact]
+    public void ARoomRebuildsWhenAMembersLiveRowsAreRemoved()
+    {
+        OpenClawSessions.SetGatewayForTests(null);
+        var member = new OpenClawChatSession(
+            "openclaw:agent:quill:discord:channel:900", "agent:quill:discord:channel:900", "Quill");
+        member.HasMore = false;
+        member.SetHistory(new[] { new HistoryTurn(ChatRole.User, "go", null, "", DateTimeOffset.UtcNow, null, null, true) });
+
+        var room = new OpenClawRoomChatSession("openclaw:room:discord:900:" + Guid.NewGuid().ToString("N")[..8], "#lobby");
+        room.SetMembers(new[] { (member, "Quill", "#7f7") }.ToList());
+        room.Rebuild();
+
+        member.OnAgentEvent("agent", Json("""{"runId":"r","stream":"assistant","data":{"text":"a partial live reply"}}"""));
+        FlushRender();
+        Assert.Contains(room.History, t => t.Text.Contains("a partial live reply"));
+
+        // The end is settled first, so the rebuild its own change queues has run and
+        // the removal below is the only thing left that could prompt another.
+        member.OnAgentEvent("chat", Json("""{"state":"final"}"""));
+        FlushRender();
+        member.ApplyFetchedTail(new[] { new HistoryTurn(ChatRole.User, "go", null, "", DateTimeOffset.UtcNow, null, null, true) });
+        FlushRender();
+
+        Assert.DoesNotContain(room.History, t => t.Text.Contains("a partial live reply"));
+    }
+
     // --- the subscription, from the panel's own open and close ---
 
     private static async Task<FakeGatewaySocket> ConnectedAsync(string? refuse = null)
