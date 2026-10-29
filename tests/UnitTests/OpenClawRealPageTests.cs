@@ -105,7 +105,10 @@ public class OpenClawRealPageTests
         var keptRollups = Enumerable.Range(0, all.Count)
             .Where(i => OpenClawHistoryShape.IsRollup(all[i]) && !drop.Contains(i) && TextOf(all[i]).Trim().Length > 0)
             .ToList();
-        Assert.Equal(keptRollups.Count, turns.Count(t => t.FromRollup));
+        // On a real page every kept rollup is one turn. On the synthetic page a
+        // dropped rollup still yields its picture turns, so there can be more.
+        if (file == SyntheticPage) Assert.True(turns.Count(t => t.FromRollup) >= keptRollups.Count);
+        else Assert.Equal(keptRollups.Count, turns.Count(t => t.FromRollup));
     }
 
     // ---- pages without rollups are today's parse ------------------------
@@ -220,6 +223,41 @@ public class OpenClawRealPageTests
     // rollup twice, a named-path rollup (equal and plus-more), a delivered
     // attachment, an attachment_error rollup plus more, an inline-image rollup,
     // a back-to-back tool run then a lone rollup, and steps still in flight.
+    // The page's own cases field names rollups whose *text* is dropped. It
+    // predates the rule that a dropped rollup keeps its picture and attachment
+    // turns (a loss is worse than a picture shown twice), so the indices are
+    // unchanged but index 52, the inline-image rollup, now still yields its
+    // picture turn: asserted below.
+    [Fact]
+    public void ADroppedRollupOnTheSyntheticPageKeepsItsPictureAndLosesOnlyItsText()
+    {
+        var turns = OpenClawSessions.TurnsFromHistory(Load(SyntheticPage), "k");
+
+        var picture = Assert.Single(turns, t => t.ImageBytes is not null);
+        Assert.True(picture.FromRollup);
+        Assert.Equal(1, turns.Count(t => t.Text == "S50 look"));
+    }
+
+    // On the seven real pages no dropped rollup carries a picture or an
+    // attachment, so dropping only the text is the same as dropping the whole
+    // message there, and the counts above did not move.
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public void NoRollupDroppedOnARealPageCarriesAPictureOrAnAttachment(string file)
+    {
+        if (file == SyntheticPage) return;
+
+        var all = Messages(file);
+        foreach (var i in OpenClawHistoryShape.RollupsToDrop(Load(file)))
+        {
+            var types = all[i].GetProperty("content").ValueKind == JsonValueKind.Array
+                ? all[i].GetProperty("content").EnumerateArray().Select(b => b.GetProperty("type").GetString()).ToList()
+                : new List<string?>();
+
+            Assert.All(types, ty => Assert.Equal("text", ty));
+        }
+    }
+
     [Fact]
     public void TheSyntheticPageDropsExactlyTheRollupsItsCasesSay()
     {

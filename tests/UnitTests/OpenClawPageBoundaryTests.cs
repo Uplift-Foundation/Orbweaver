@@ -210,11 +210,12 @@ public class OpenClawPageBoundaryTests
         Assert.Equal(-1, session.DroppedRollupIndex);
     }
 
-    // A rollup that yields a picture turn ahead of its text turn: both are the
-    // rollup, both are removed, exactly as the full-page parse drops the whole
-    // message (CB-270 review).
+    // A rollup that yields a picture turn ahead of its text turn: only the text
+    // turn is dropped (the steps cover its words); the picture stays, because
+    // nothing else shows it. A picture drawn twice is acceptable, a lost one is
+    // not.
     [Fact]
-    public void AHeadRollupsPictureAndTextTurnsAreBothDropped()
+    public void AHeadRollupsTextTurnIsDroppedAndItsPictureTurnStays()
     {
         var session = Session();
         session.SetHistory(new List<HistoryTurn>
@@ -227,9 +228,26 @@ public class OpenClawPageBoundaryTests
             H(ChatRole.User, "go"), H(ChatRole.Assistant, "look"), H(ChatRole.System, "· exec")
         }, olderEndsInOpenTextStep: true);
 
-        Assert.Equal(new[] { "go", "look", "· exec", "next" }, session.History.Select(t => t.Text).ToArray());
-        Assert.Equal(0, session.DroppedRollupIndex);
-        Assert.Equal(2, session.DroppedRollupCount);
+        Assert.Equal(new[] { "go", "look", "· exec", "", "next" }, session.History.Select(t => t.Text).ToArray());
+        Assert.Equal(1, session.DroppedRollupIndex);
+    }
+
+    // A rollup turn that is not pure text (it carries a picture url) is never
+    // the one removed, even when its caption is covered.
+    [Fact]
+    public void ARollupTurnCarryingAPictureIsNeverTheOneRemoved()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            new(ChatRole.Assistant, "look", "/route", "p.png",
+                new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero), null, null, FromRollup: true)
+        });
+
+        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "look") }, olderEndsInOpenTextStep: true);
+
+        Assert.Equal(2, session.History.Count);
+        Assert.Equal(-1, session.DroppedRollupIndex);
     }
 
     [Fact]

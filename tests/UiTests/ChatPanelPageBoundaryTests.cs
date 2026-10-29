@@ -110,9 +110,9 @@ public class ChatPanelPageBoundaryTests : IDisposable
         Assert.Contains("next", rows[4]);
     }
 
-    // A rollup that was two rows (picture, then text) loses both when dropped.
+    // A rollup that was two rows (picture, then text) loses only its text row.
     [AvaloniaFact]
-    public void ScrollingBackRemovesEveryRowOfAMultiTurnRollup()
+    public void ScrollingBackRemovesOnlyTheTextRowOfAMultiTurnRollup()
     {
         var session = Session();
         session.SetHistory(new List<HistoryTurn>
@@ -130,7 +130,8 @@ public class ChatPanelPageBoundaryTests : IDisposable
         var rows = RowTexts(panel);
 
         Assert.Equal(session.History.Count, rows.Length);
-        Assert.Equal(4, rows.Length);
+        Assert.Equal(5, rows.Length);
+        Assert.Equal(1, rows.Count(r => r.Contains("look")));
         Assert.Contains("next", rows[^1]);
     }
 

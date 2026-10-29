@@ -2321,7 +2321,12 @@ namespace Orbweaver
             {
                 MarkRollupTurns();
                 messageIndex++;
-                if (drop.Contains(messageIndex)) continue;
+
+                // A dropped rollup loses its *text* turn only. Its text is
+                // covered by the steps, but a picture or attachment it carries
+                // is not shown by anything else, and a loss is worse than a
+                // picture drawn twice when a step showed it too.
+                var dropText = drop.Contains(messageIndex);
                 if (OpenClawHistoryShape.IsRollup(message)) rollupFrom = turns.Count;
 
                 var role = Str(message, "role") == "user" ? ChatRole.User : ChatRole.Assistant;
@@ -2719,9 +2724,12 @@ namespace Orbweaver
                 // same automation-based tier is set here too rather than left
                 // at the default. See that method's own Confidence: High for
                 // why a recovered path does not need to re-derive this.
-                turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
-                    speaker, colour, mine, Automation: cronAutomation,
-                    Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
+                if (!dropText)
+                {
+                    turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
+                        speaker, colour, mine, Automation: cronAutomation,
+                        Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
+                }
             }
 
             MarkRollupTurns();

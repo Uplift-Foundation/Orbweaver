@@ -1150,8 +1150,8 @@ namespace Orbweaver
         {
             if (turns.Count == 0) return;
 
-            (DroppedRollupIndex, DroppedRollupCount) = olderEndsInOpenTextStep ? RollupSplitFromItsSteps(turns) : (-1, 0);
-            if (DroppedRollupIndex >= 0) _history.RemoveRange(DroppedRollupIndex, DroppedRollupCount);
+            DroppedRollupIndex = olderEndsInOpenTextStep ? RollupSplitFromItsSteps(turns) : -1;
+            if (DroppedRollupIndex >= 0) _history.RemoveAt(DroppedRollupIndex);
 
             var older = turns.Select(t => new ChatTurn
             {
@@ -1185,18 +1185,20 @@ namespace Orbweaver
             HistoryPrepended?.Invoke(older.Count);
         }
 
-        // Where the transcript's first rollup starts and how many turns it
-        // produced, when it is the rollup of the run the older page ends in and
-        // its text is covered by that run's steps (older trailing steps plus this
-        // transcript's turns before it); (-1, 0) otherwise. A rollup can yield
-        // more than one turn (picture turns ahead of its text turn), all marked
-        // FromRollup, and all of them go: that is what the full-page parse does
-        // with a dropped rollup, so a split page reads the same as the whole one.
-        // Residual, constructed and unmeasured: a picture-only rollup directly
-        // followed by another rollup cannot be told apart from one rollup with
-        // text, since FromRollup is a flag and not an identity. Step texts come from turns rather than the raw
-        // page so both sides of the comparison went through the same processing.
-        private (int Start, int Count) RollupSplitFromItsSteps(IReadOnlyList<HistoryTurn> older)
+        // The index of the transcript's first rollup *text* turn when it is the
+        // rollup of the run the older page ends in and its text is covered by that
+        // run's steps (older trailing steps plus this transcript's turns before
+        // it); -1 otherwise. Only a pure text turn is ever removed: a picture or
+        // an attachment the rollup carries stays, exactly as the full-page parse
+        // keeps it, because the steps cover the rollup's words and show nothing
+        // of its pictures. Step texts come from turns rather than the raw page so
+        // both sides of the comparison went through the same text processing.
+        //
+        // Residual, constructed: a picture-only rollup directly followed by
+        // another rollup leaves this scan judging the second one's text against
+        // the steps before the first. That can only drop text the visible steps
+        // already carry, never lose any.
+        private int RollupSplitFromItsSteps(IReadOnlyList<HistoryTurn> older)
         {
             var steps = new List<string>();
 
@@ -1210,32 +1212,28 @@ namespace Orbweaver
             for (var k = 0; k < _history.Count; k++)
             {
                 var t = _history[k];
-                if (t.Role == ChatRole.User) return (-1, 0);
+                if (t.Role == ChatRole.User) return -1;
 
                 if (t.FromRollup)
                 {
-                    // One rollup message's turns: leading picture turns (no
-                    // text) and then its one text turn. Not "every contiguous
-                    // FromRollup turn", because two rollups back to back (a
-                    // heartbeat's runs with no user turn between) would read
-                    // as one and never be covered.
-                    var end = k;
-                    while (end < _history.Count && _history[end].FromRollup
-                           && string.IsNullOrWhiteSpace(_history[end].Text))
-                        end++;
+                    // A picture or attachment turn of the rollup: not compared,
+                    // not removed. Keep looking for its text turn.
+                    if (!IsPureText(t)) continue;
 
-                    var text = "";
-                    if (end < _history.Count && _history[end].FromRollup)
-                        text = _history[end++].Text;
-
-                    return OpenClawHistoryShape.RollupIsCoveredBy(text, steps) ? (k, end - k) : (-1, 0);
+                    return OpenClawHistoryShape.RollupIsCoveredBy(t.Text, steps) ? k : -1;
                 }
 
                 if (t.Role == ChatRole.Assistant) steps.Add(t.Text);
             }
 
-            return (-1, 0);
+            return -1;
         }
+
+        private static bool IsPureText(ChatTurn t) =>
+            !string.IsNullOrWhiteSpace(t.Text)
+            && string.IsNullOrWhiteSpace(t.ImageUrl)
+            && t.ImageBytes is null
+            && t.Attachment is null;
 
         public event Action<int>? HistoryPrepended;
 
@@ -1247,9 +1245,6 @@ namespace Orbweaver
         // count: IRemoteChatSession's contract is "this many rows were inserted
         // at the front", which stays true.
         public int DroppedRollupIndex { get; private set; } = -1;
-
-        // How many consecutive turns that rollup was (see RollupSplitFromItsSteps).
-        public int DroppedRollupCount { get; private set; }
 
         public void SetHistory(IReadOnlyList<HistoryTurn> turns)
         {

@@ -110,9 +110,11 @@ public class OpenClawRollupArmTests
     }
 
     // End to end: a picture-naming rollup at the page head, under an older page
-    // ending in the steps whose text it repeats, is dropped on prepend.
+    // ending in the steps whose text it repeats. Its one turn carries the
+    // picture, so it is never the turn removed on scroll-back: a picture drawn
+    // twice is acceptable, a lost one is not.
     [Fact]
-    public void ANamedPathRollupAtThePageHeadIsDroppedUnderItsStepsOnScrollBack()
+    public void ANamedPathRollupAtThePageHeadKeepsItsPictureTurnOnScrollBack()
     {
         var newer = JsonDocument.Parse("[" + Rollup(NamedContent) + "]").RootElement;
         var headText = OpenClawSessions.TurnsFromHistory(newer, Key)[0].Text;
@@ -125,7 +127,7 @@ public class OpenClawRollupArmTests
         session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, Key),
             OpenClawHistoryShape.EndsInOpenTextStep(older));
 
-        Assert.Equal(0, session.DroppedRollupIndex);
-        Assert.Equal(1, session.History.Count(t => t.Text.Contains("here you go")));
+        Assert.Equal(-1, session.DroppedRollupIndex);
+        Assert.Contains(session.History, t => t.ImageUrl is not null);
     }
 }
