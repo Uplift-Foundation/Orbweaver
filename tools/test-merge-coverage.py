@@ -39,6 +39,34 @@ def merged(coverlet_lines, coverlet_branches, mtp_lines, mtp_branches, keep):
     return lines, branches
 
 
+class PartialBranchReport(unittest.TestCase):
+    """--base used to print only lines that never ran, so an added line that ran
+    with some of its arms untaken (lines 100%, branches under 100%) could not be
+    located. PARTIAL BRANCHES is that list."""
+
+    def test_a_partly_taken_point_is_listed_and_a_fully_taken_one_is_not(self):
+        branches = {"A.cs": {10: (1, 2), 11: (2, 2), 12: (0, 4)}}
+
+        report = merge_coverage.partial_branch_report("A.cs", [10, 11, 12], branches)
+
+        self.assertEqual("  PARTIAL BRANCHES A.cs: [10(1/2), 12(0/4)]", report)
+        self.assertNotIn("11(", report)          # the control: fully taken
+
+    def test_only_the_added_lines_it_is_given_are_considered(self):
+        branches = {"A.cs": {10: (1, 2), 99: (0, 2)}}
+
+        self.assertEqual(
+            "  PARTIAL BRANCHES A.cs: [10(1/2)]",
+            merge_coverage.partial_branch_report("A.cs", [10], branches))
+
+    def test_nothing_partial_prints_nothing(self):
+        self.assertIsNone(merge_coverage.partial_branch_report(
+            "A.cs", [10, 11], {"A.cs": {10: (2, 2)}}))      # 11 has no branch point
+
+    def test_a_file_with_no_branch_data_prints_nothing(self):
+        self.assertIsNone(merge_coverage.partial_branch_report("B.cs", [1, 2], {}))
+
+
 class BranchAuthority(unittest.TestCase):
     """coverlet decides which branch points exist; MTP only fills in hits."""
 
