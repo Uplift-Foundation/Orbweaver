@@ -1,0 +1,619 @@
+{
+ "messages": [
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289814523,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S1"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289815575,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc1_0",
+     "name": "Read",
+     "arguments": {
+      "arg": "a1"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc1_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result1"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289816219,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc2_0",
+     "name": "Read",
+     "arguments": {
+      "arg": "a2"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc2_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result2"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289838375,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S2"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289839634,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc4_0",
+     "name": "Glob",
+     "arguments": {
+      "arg": "a4"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc4_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result4"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289840564,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc5_0",
+     "name": "Glob",
+     "arguments": {
+      "arg": "a5"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc5_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result5"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289841188,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc6_0",
+     "name": "Glob",
+     "arguments": {
+      "arg": "a6"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc6_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result6"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289847481,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S3"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289849117,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc8_0",
+     "name": "Write",
+     "arguments": {
+      "arg": "a8"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc8_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result8"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289850121,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc9_0",
+     "name": "Write",
+     "arguments": {
+      "arg": "a9"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc9_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result9"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289851057,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc10_0",
+     "name": "Write",
+     "arguments": {
+      "arg": "a10"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc10_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result10"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289853715,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc11_0",
+     "name": "Edit",
+     "arguments": {
+      "arg": "a11"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc11_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result11"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289860552,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc12_0",
+     "name": "mcp__openclaw__exec",
+     "arguments": {
+      "arg": "a12"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc12_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result12"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289872661,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc13_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a13"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc13_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result13"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "timestamp": 1793289881955,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc14_0",
+     "name": "mcp__openclaw__process",
+     "arguments": {
+      "arg": "a14"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc14_0",
+     "content": [
+      {
+       "type": "text",
+       "text": "result14"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "timestamp": 1793289884879,
+   "idempotencyKey": "cli-assistant:run15",
+   "content": [
+    {
+     "type": "text",
+     "text": "S1\n\nS2\n\nS3\n\nEXTRA15"
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "timestamp": 1793290103461,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U4"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793290404259,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U5"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793290703241,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U6"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793291003859,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U7"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793291303350,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U8"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793291603846,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U9"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793291903462,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U10"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793292203872,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U11"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793292503560,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U12"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793292803836,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U13"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793293103435,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U14"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793293403949,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U15"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793293704321,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U16"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793294006042,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U17"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793294304133,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U18"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793294604510,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U19"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793294642036,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U20"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793294903716,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U21"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793295204173,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U22"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793295503772,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U23"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793295804330,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U24"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793296104995,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U25"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793296404506,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U26"
+  },
+  {
+   "role": "user",
+   "timestamp": 1793296441862,
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": "U20"
+  }
+ ],
+ "totalMessages": 34911
+}

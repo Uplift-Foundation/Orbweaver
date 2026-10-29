@@ -67,4 +67,28 @@ public class ChatTurnTests
 
         Assert.Empty(names);
     }
+
+    // CB-270: a live tool line learns it failed only when the result arrives.
+    [Fact]
+    public void SettingIsErrorRaisesPropertyChanged()
+    {
+        var turn = new ChatTurn();
+        var names = Names(turn);
+
+        turn.IsError = true;
+
+        Assert.True(turn.IsError);
+        Assert.Equal(new[] { nameof(ChatTurn.IsError) }, names);
+    }
+
+    [Fact]
+    public void SettingIsErrorToTheSameValueRaisesNothing()
+    {
+        var turn = new ChatTurn();
+        var names = Names(turn);
+
+        turn.IsError = false;
+
+        Assert.Empty(names);
+    }
 }

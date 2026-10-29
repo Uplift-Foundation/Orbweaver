@@ -21,8 +21,10 @@ namespace Orbweaver
     //  2. TurnUpdated carries the whole turn, already mutated — not a delta. A
     //     dropped or coalesced event then costs nothing, because the panel
     //     re-reads Text. Deltas make the view desyncable with no way to notice.
-    //     (The gateway obliges: its `agent` events carry data.text as a full
-    //     snapshot alongside data.delta.)
+    //     (The gateway does not oblige: on 2026.10.5 only the first and last
+    //     assistant events of a run carry data.text, and the rest carry
+    //     data.delta alone, so an implementation reassembles the deltas itself
+    //     and hands the panel the whole turn.)
     //  3. SendAsync raises TurnAdded for the user's own turn. The panel never
     //     inserts optimistically, so exactly one thing owns the transcript and a
     //     failed send leaves no ghost behind.
@@ -112,6 +114,27 @@ namespace Orbweaver
         }
 
         public bool IsComplete { get; set; }
+
+        // CB-270: drawn from a gateway rollup message; see HistoryTurn.FromRollup.
+        public bool FromRollup { get; init; }
+
+        private bool _isError;
+
+        // CB-270: a tool line whose result reported an error. Mutable and
+        // notifying, like Text, because a live tool line learns it failed only
+        // when the result arrives, after the row is already on screen. It never
+        // changes Text: AppendNewTail anchors on (Role, Text), and a line that
+        // reworded itself on failure would no longer match its history twin.
+        public bool IsError
+        {
+            get => _isError;
+            set
+            {
+                if (_isError == value) return;
+                _isError = value;
+                Raise();
+            }
+        }
 
         // When this turn happened, in local time. The gateway records a
         // timestamp per message and the panel shows it, so a conversation that

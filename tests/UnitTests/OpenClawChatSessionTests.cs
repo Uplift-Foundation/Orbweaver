@@ -235,21 +235,38 @@ namespace Orbweaver.Tests
             Assert.Empty(session.History);
         }
 
-        // A tool line does not interrupt the turn in flight: the agent is still
-        // mid-reply, and the next snapshot has to keep updating the same bubble
-        // rather than starting a third.
+        // A tool line ends the bubble it follows (CB-270 Stage 3): what the agent
+        // said before the tool is one step and what it says after is the next,
+        // which is what history draws for the same run. The run itself carries on,
+        // so the text after the tool opens a bubble of its own and the stream's
+        // blank-line joiner never shows.
         [Fact]
-        public void AToolLineDoesNotEndTheTurnInFlight()
+        public void AToolLineSplitsTheReplyIntoTheStepsOnEitherSideOfIt()
         {
             var session = Session();
 
             session.OnAgentEvent("agent", AgentText("Looking"));
             session.OnAgentEvent("session.tool", Event("""{"data":{"phase":"start","name":"Grep"}}"""));
-            session.OnAgentEvent("agent", AgentText("Looking, found it"));
+            session.OnAgentEvent("agent", AgentText("Looking\n\nFound it"));
 
-            Assert.Equal(2, session.History.Count);
-            Assert.Equal("Looking, found it", session.History[0].Text);
-            Assert.Equal("· Grep", session.History[1].Text);
+            Assert.Equal(new[] { "Looking", "· Grep", "Found it" }, session.History.Select(t => t.Text));
+            Assert.True(session.History[0].IsComplete);
+        }
+
+        // The tool line does not end the *run*: a later delta still lands in the
+        // bubble that opened after it.
+        [Fact]
+        public void AToolLineDoesNotEndTheRun()
+        {
+            var session = Session();
+
+            session.OnAgentEvent("agent", AgentText("Looking"));
+            session.OnAgentEvent("session.tool", Event("""{"data":{"phase":"start","name":"Grep"}}"""));
+            session.OnAgentEvent("agent", Event("""{"data":{"delta":"\n\nFound"}}"""));
+            session.OnAgentEvent("agent", Event("""{"data":{"delta":" it"}}"""));
+
+            Assert.Equal(new[] { "Looking", "· Grep", "Found it" }, session.History.Select(t => t.Text));
+            Assert.False(session.History[2].IsComplete);
         }
 
         // An event name this app does not know is ignored rather than mishandled.
@@ -497,17 +514,18 @@ namespace Orbweaver.Tests
             Assert.Equal(1, replaced);
         }
 
-        // The turn in flight is dropped with the rest, so a snapshot arriving
-        // afterwards starts a fresh bubble rather than updating one that is no
-        // longer in the list.
+        // The turn in flight is dropped with the rest, so the next run's first
+        // text starts a fresh bubble rather than updating one that is no longer
+        // in the list. A second run, since the first run's own text up to here is
+        // closed by the page that replaced it (CB-270).
         [Fact]
         public void ReplacingHistoryClearsTheTurnInFlight()
         {
             var session = Session();
 
-            session.OnAgentEvent("agent", AgentText("live"));
+            session.OnAgentEvent("agent", Event("""{"runId":"a","data":{"text":"live"}}"""));
             session.SetHistory(Turns("loaded"));
-            session.OnAgentEvent("agent", AgentText("after"));
+            session.OnAgentEvent("agent", Event("""{"runId":"b","data":{"text":"after"}}"""));
 
             Assert.Equal(new[] { "loaded", "after" }, session.History.Select(t => t.Text));
         }

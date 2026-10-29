@@ -1047,6 +1047,7 @@ namespace Orbweaver
 
                     await LoadAgentNamesAsync(gateway, ct);
                     await SubscribeAsync(gateway, ct);
+                    await ResubscribeOpenPanelsAsync(gateway, OpenChats(), ct);
                     await PollAsync(gateway, ct);
                     }
                 }
@@ -1391,7 +1392,7 @@ namespace Orbweaver
                 var pinned = Bool(s, "pinned") == true;
                 if (state != "generating"
                     && !OpenClawRetention.KeptRegardlessOfAge(pinned, native)
-                    && within is not null && asOf - activity > within) continue;
+                    && within is { } limit && asOf - activity > limit) continue;
 
                 // Timer-driven sessions the user has asked not to see —
                 // heartbeats, scheduled jobs, or both. Deliberately below the
@@ -2295,13 +2296,45 @@ namespace Orbweaver
             var namedIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
             var mirrorDrawn = new List<(int Index, string Source)>();
 
+            // CB-270: a tool-using run is stored as its steps and then a rollup
+            // repeating their text. Decided once, over the whole page, because
+            // the rule is positional — see OpenClawHistoryShape.RollupsToDrop.
+            var drop = OpenClawHistoryShape.RollupsToDrop(messages);
+            var messageIndex = -1;
+
+            // CB-270: the turns a rollup message produced, whichever arm built
+            // them (plain text, a named picture, an attachment, an inline
+            // image), carry FromRollup so a scroll-back can find the one that
+            // doubles a split run. Marked at the top of the next iteration and
+            // after the loop rather than at each of the arms' `continue`s.
+            var rollupFrom = -1;
+
+            void MarkRollupTurns()
+            {
+                if (rollupFrom < 0) return;
+                for (var i = rollupFrom; i < turns.Count; i++)
+                    turns[i] = turns[i] with { FromRollup = true };
+                rollupFrom = -1;
+            }
+
             foreach (var message in messages.EnumerateArray())
             {
+                MarkRollupTurns();
+                messageIndex++;
+
+                // A dropped rollup loses its *text* turn only. Its text is
+                // covered by the steps, but a picture or attachment it carries
+                // is not shown by anything else, and a loss is worse than a
+                // picture drawn twice when a step showed it too.
+                var dropText = drop.Contains(messageIndex);
+                if (OpenClawHistoryShape.IsRollup(message)) rollupFrom = turns.Count;
+
                 var role = Str(message, "role") == "user" ? ChatRole.User : ChatRole.Assistant;
 
-                // content is a list of blocks; only the text ones are worth
-                // showing. Tool calls arrive live as their own turns, and a
-                // replayed tool_use block would be a wall of JSON.
+                // content is a list of blocks; the text ones are the message and
+                // the `toolcall` ones are drawn as one line each below. A
+                // tool_result's body is never drawn: it is the wall of output the
+                // line exists to stand in for.
                 if (!message.TryGetProperty("content", out var content)) continue;
 
                 // The two roles are shaped differently, which is easy to miss
@@ -2370,6 +2403,23 @@ namespace Orbweaver
                             // on.
                             Arm: bytes is { Length: > 0 } ? MediaSourceArm.Inline : MediaSourceArm.None));
                     }
+                }
+
+                // One System line per tool call, in `· name  arg` — built by the
+                // same ToolSummary the live session uses, from the same
+                // `{command, title}` object, so AppendNewTail can match the two.
+                // Before TextOf so the line falls where the call happened: a
+                // toolcall message has no text of its own, and one that does has
+                // spoken before it acted.
+                foreach (var call in OpenClawHistoryShape.ToolCalls(content))
+                {
+                    var callMs = Num(message, "timestamp");
+                    turns.Add(new HistoryTurn(ChatRole.System,
+                        ChatTranscript.ToolSummary(call.Name, call.Args), null, "",
+                        callMs > 0
+                            ? DateTimeOffset.FromUnixTimeMilliseconds(callMs).ToLocalTime()
+                            : DateTimeOffset.Now,
+                        null, null, IsError: call.IsError));
                 }
 
                 var text = TextOf(content);
@@ -2463,7 +2513,9 @@ namespace Orbweaver
                 // would stop matching a turn it produced a page earlier.
                 if (attachment is { } a)
                 {
-                    var caption = text.Trim();
+                    // A covered rollup's words are on screen as its steps; the
+                    // attachment is not, so it stays as a caption-less turn.
+                    var caption = dropText ? "" : text.Trim();
 
                     if (a.Fetchable)
                     {
@@ -2654,7 +2706,7 @@ namespace Orbweaver
                     // decides what identity goes on it.
                     var namedMedia = MediaSourceFor(named, sessionKey, ownerIndex);
 
-                    turns.Add(new HistoryTurn(role, text.Trim(), namedMedia.Route,
+                    turns.Add(new HistoryTurn(role, dropText ? "" : text.Trim(), namedMedia.Route,
                         named[(named.LastIndexOf('/') + 1)..],
                         at, speaker, colour, mine, null, namedMedia.Path,
                         Automation: cronAutomation, Confidence: confidence));
@@ -2674,10 +2726,15 @@ namespace Orbweaver
                 // same automation-based tier is set here too rather than left
                 // at the default. See that method's own Confidence: High for
                 // why a recovered path does not need to re-derive this.
-                turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
-                    speaker, colour, mine, Automation: cronAutomation,
-                    Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
+                if (!dropText)
+                {
+                    turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
+                        speaker, colour, mine, Automation: cronAutomation,
+                        Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
+                }
             }
+
+            MarkRollupTurns();
 
             // One delivery, two arms, one bubble — CB-98's cross-arm case,
             // which turned out to be live rather than latent.
@@ -4374,6 +4431,76 @@ namespace Orbweaver
             }
         }
 
+        // CB-270 Stage 3: a conversation's own message stream is held for exactly
+        // as long as a panel is open on it. The roster subscription says a
+        // session changed and, for a run on anything but a cron session, nothing
+        // else; the session's own subscription is what carries its text and tool
+        // calls (measured, see docs/openclaw-findings.md).
+        //
+        // Two call sites and no others: a chat's panel count going 0 to 1 or 1 to
+        // 0, and the reconnect loop re-subscribing the chats that are open. Never
+        // across the roster, which would hold a stream per conversation whether
+        // anyone was looking or not.
+        //
+        // Not excluded from coverage, on the SendAsync precedent: the gateway is
+        // a constructor argument, so an in-memory socket reaches every arm.
+        internal static void MessagesWanted(OpenClawChatSession chat, bool wanted)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            // No connection: nothing to ask. A panel opened while disconnected is
+            // caught by the reconnect, which subscribes every open one.
+            if (gateway is null) return;
+
+            _ = Task.Run(async () =>
+            {
+                var failure = await MessagesRequestAsync(gateway, chat.GatewayKey, wanted, CancellationToken.None);
+                if (failure is null) return;
+
+                Dispatcher.UIThread.Post(() => chat.NoteLiveUnavailable(failure));
+            });
+        }
+
+        // Returns why a *subscribe* failed, or null. An unsubscribe that fails is
+        // not reported at all: the panel is gone, and the gateway drops a
+        // connection's subscriptions with the connection anyway.
+        internal static async Task<string?> MessagesRequestAsync(
+            OpenClawGateway gateway, string key, bool wanted, CancellationToken ct)
+        {
+            try
+            {
+                await gateway.RequestAsync(
+                    wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe",
+                    new Dictionary<string, object> { ["key"] = key }, ct);
+                return null;
+            }
+            catch (Exception ex) when (wanted)
+            {
+                return ex.Message;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        // The keys that deserve a subscription: those with a panel open.
+        internal static IReadOnlyList<string> MessageSubscriptionsFor(IEnumerable<OpenClawChatSession> chats) =>
+            chats.Where(c => c.HasOpenPanel).Select(c => c.GatewayKey).ToList();
+
+        // Subscriptions belong to the connection, so a reconnect has dropped every
+        // one of them and the open panels have to ask again. Without this a panel
+        // that was streaming goes quiet after a gateway restart and nothing says so.
+        internal static async Task ResubscribeOpenPanelsAsync(
+            OpenClawGateway gateway, IEnumerable<OpenClawChatSession> chats, CancellationToken ct)
+        {
+            foreach (var key in MessageSubscriptionsFor(chats))
+            {
+                await MessagesRequestAsync(gateway, key, true, ct);
+            }
+        }
+
         // The panel telling us it has bound, or let go of, a conversation.
         //
         // Here rather than in ChatPanel so the panel does not have to know
@@ -4425,7 +4552,7 @@ namespace Orbweaver
             var page = await FetchPageAsync(chat, chat.LoadedMessages, ct);
             if (page is null) return false;
 
-            var (turns, messages) = page.Value;
+            var (turns, messages, endsOpen) = page.Value;
 
             // Nothing came back, so there is nothing behind this. Asked once and
             // remembered, rather than re-asking every time the user reaches the
@@ -4441,7 +4568,7 @@ namespace Orbweaver
             if (messages < PageSize) chat.HasMore = false;
 
             chat.LoadedMessages += messages;
-            chat.PrependHistory(turns);
+            chat.PrependHistory(turns, endsOpen);
             return turns.Count > 0;
         }
 
@@ -4453,7 +4580,7 @@ namespace Orbweaver
             var first = await FetchPageAsync(chat, 0, ct);
             if (first is null) return;
 
-            var (initial, count) = first.Value;
+            var (initial, count, _) = first.Value;
 
             chat.LoadedMessages = count;
             chat.HasMore = count >= PageSize;
@@ -4472,7 +4599,7 @@ namespace Orbweaver
         // reaches for an older one, rather than opening a second request shape
         // for the same "one page of chat.history" idea.
         [ExcludeFromCodeCoverage]
-        internal static async Task<(List<HistoryTurn> Turns, int Messages)?>
+        internal static async Task<(List<HistoryTurn> Turns, int Messages, bool EndsInOpenTextStep)?>
             FetchPageAsync(OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             OpenClawGateway? gateway;
@@ -4492,7 +4619,7 @@ namespace Orbweaver
         // fetched is not a reason to refuse the conversation, because the panel
         // still works forward from whatever happens next.
         [ExcludeFromCodeCoverage]
-        private static async Task<(List<HistoryTurn> Turns, int Count)?> FetchHistoryPageAsync(
+        private static async Task<(List<HistoryTurn> Turns, int Count, bool EndsInOpenTextStep)?> FetchHistoryPageAsync(
             OpenClawGateway gateway, OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             try
@@ -4621,7 +4748,7 @@ namespace Orbweaver
                 // The message count, not the turn count: it is what the next
                 // page's offset is measured in, and one message can produce
                 // several turns or none.
-                return (turns, messages.GetArrayLength());
+                return (turns, messages.GetArrayLength(), OpenClawHistoryShape.EndsInOpenTextStep(messages));
             }
             catch
             {

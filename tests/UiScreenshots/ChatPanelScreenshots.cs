@@ -247,6 +247,30 @@ public class ChatPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-parked-attach.png");
     }
 
+    // CB-270 Stage 3: a gateway chat in which an agent ran two tools between the
+    // two halves of its reply, the second of which failed. One tool line in the
+    // quiet system ink and one in the panel's red, with the reply split around
+    // them the way the live view and history now agree on. Captured because the
+    // tint is a new visible surface and the thing worth judging is whether a
+    // failed tool is noticeable without being loud.
+    [AvaloniaFact]
+    public void AToolLineAndAFailedToolLineInAGatewayChat()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Count the files, then tidy the scratch folder." },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "On it, counting first." },
+            new ChatTurn { Role = ChatRole.System, IsComplete = true, Text = "· mcp__openclaw__exec  ls | wc -l" },
+            new ChatTurn { Role = ChatRole.System, IsComplete = true, IsError = true, Text = "· mcp__openclaw__exec  rm -r scratch" },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "18 files. The tidy failed: the folder is read-only." },
+        }, displayName: "main");
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-tool-lines.png");
+    }
+
     // A session Claude Desktop hosts (CB-265): the transcript reads like any
     // other, and where the composer would be there is a sentence saying how to
     // send from here (CB-266: turn on Remote Control for the chat). A real

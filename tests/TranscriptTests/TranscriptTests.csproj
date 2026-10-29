@@ -26,6 +26,7 @@
     <Compile Include="../../AgentPalette.cs" />
     <Compile Include="../../OpenClawSessionKind.cs" />
     <Compile Include="../../OpenClawHeartbeat.cs" />
+    <Compile Include="../../OpenClawHistoryShape.cs" />
     <Compile Include="../../OpenClawVideoKind.cs" />
     <Compile Include="../../OpenClawAttachmentKind.cs" />
     <Compile Include="../../OpenClawAudioKind.cs" />

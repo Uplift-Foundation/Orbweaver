@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Orbweaver;
 
 namespace Orbweaver.Tests
@@ -1096,6 +1097,46 @@ namespace Orbweaver.Tests
                 codexDialog?.Title == "$ touch $HOME/cb-approval-probe",
                 codexDialog?.Title ?? "null");
 
+            // --- OpenClaw native run history (CB-270) ---
+
+            // The messages of a real tool-using run, scrubbed from the Phase 0
+            // capture and reduced to the fields read here: a user turn, a step,
+            // a message holding the toolcall and its tool_result, the closing
+            // step, the `cli` rollup repeating both step texts, then a second
+            // user turn answered by a lone rollup.
+            const string NativeRun =
+                """
+                [{"role":"user","content":"Please run one shell command"},
+                 {"role":"assistant","api":"anthropic-messages","content":[{"type":"text","text":"Hey Boss!"}]},
+                 {"role":"assistant","api":"anthropic-messages","content":[{"type":"toolcall","id":"toolu_1","name":"mcp__openclaw__exec","arguments":{"command":"ls /home/op/workspace | wc -l","title":"Count workspace files"}},{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"18"}],"name":"mcp__openclaw__exec"}]},
+                 {"role":"assistant","api":"anthropic-messages","content":[{"type":"text","text":"probe ok, 18 files"}]},
+                 {"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:run-1","content":[{"type":"text","text":"Hey Boss!\n\nprobe ok, 18 files"}]},
+                 {"role":"user","content":"Reply with exactly: probe ok, deliver true"},
+                 {"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:run-2","content":[{"type":"text","text":"probe ok, deliver true"}]}]
+                """;
+
+            using (var runDoc = JsonDocument.Parse(NativeRun))
+            {
+                var run = runDoc.RootElement;
+                var dropped = OpenClawHistoryShape.RollupsToDrop(run);
+
+                Check("the rollup repeating a run's steps is dropped",
+                    dropped.Count == 1 && dropped.Contains(4),
+                    string.Join(",", dropped));
+
+                Check("a lone rollup, a run with no tools, is kept", !dropped.Contains(6));
+
+                var calls = OpenClawHistoryShape.ToolCalls(run[2].GetProperty("content")).ToList();
+                var line = calls.Count == 1 ? ChatTranscript.ToolSummary(calls[0].Name, calls[0].Args) : "";
+
+                Check("the toolcall is read as one call with no error",
+                    calls.Count == 1 && !calls[0].IsError, calls.Count.ToString());
+
+                Check("the toolcall becomes the one-line tool row",
+                    line == "· mcp__openclaw__exec  ls /home/op/workspace | wc -l", line);
+
+                Check("the tool_result body is in no produced string", !line.Contains("18"));
+            }
 
             return failures;
 

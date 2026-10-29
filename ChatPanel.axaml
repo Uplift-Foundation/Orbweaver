@@ -350,6 +350,7 @@
                                          is a small stack of paragraphs, lists
                                          and code blocks — see BuildBody. -->
                                     <ContentControl Content="{Binding Body}"
+                                                    ToolTip.Tip="{Binding ErrorTip}"
                                                     IsVisible="{Binding HasText}"/>
                                     <!-- A picture sent in the conversation.
                                          Width-constrained and free in height so

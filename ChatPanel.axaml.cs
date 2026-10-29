@@ -674,6 +674,7 @@ namespace Orbweaver
             _session.TurnAdded -= OnTurnAdded;
             _session.TurnUpdated -= OnTurnUpdated;
             _session.StateChanged -= OnStateChanged;
+            if (_session is OpenClawChatSession gatewayChat) gatewayChat.TurnsRemoved -= OnTurnsRemoved;
 
             if (_session is IRemoteChatBacklog previous)
             {
@@ -785,6 +786,7 @@ namespace Orbweaver
 
             session.TurnAdded += OnTurnAdded;
             session.TurnUpdated += OnTurnUpdated;
+            if (session is OpenClawChatSession gateway) gateway.TurnsRemoved += OnTurnsRemoved;
             session.StateChanged += OnStateChanged;
 
             if (session is RemoteControlChatSession remote)
@@ -2667,6 +2669,13 @@ namespace Orbweaver
             {
                 _turns.Insert(i, new TurnView(_session.History[i], _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
             }
+
+            // CB-270: the prepend also removed a rollup's text turn, whose steps
+            // just arrived above it. Its row is now behind the `count` rows
+            // inserted above.
+            if (_session is OpenClawChatSession { DroppedRollupIndex: >= 0 and var dropped }
+                && count + dropped < _turns.Count)
+                _turns.RemoveAt(count + dropped);
         }
 
         private void OnHistoryReplaced()
@@ -2706,6 +2715,13 @@ namespace Orbweaver
             }
 
             ScrollToEndIfPinned();
+        }
+
+        // CB-270: a run's live rows replaced by what history says at its end.
+        // The rows that take their place arrive as ordinary TurnAdded.
+        private void OnTurnsRemoved(int from, int count)
+        {
+            for (var i = 0; i < count && from < _turns.Count; i++) _turns.RemoveAt(from);
         }
 
         private void OnTurnUpdated(ChatTurn turn)
@@ -3215,6 +3231,18 @@ namespace Orbweaver
                     {
                         _body = null;
                         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Body)));
+                    }
+
+                    // CB-270: a tool line learns it failed only when the result
+                    // arrives, after its row is drawn. The body is rebuilt because
+                    // its runs carry the ink they were made with.
+                    if (e.PropertyName == nameof(ChatTurn.IsError))
+                    {
+                        _body = null;
+                        foreach (var name in new[] { nameof(Body), nameof(Ink), nameof(ErrorTip) })
+                        {
+                            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                        }
                     }
 
                     // A live turn can start with no picture and gain one once
@@ -4129,7 +4157,15 @@ namespace Orbweaver
                     ? new SolidColorBrush(Color.FromArgb(0x3D, c.R, c.G, c.B))
                     : IsUser ? UserBubble : AgentBubble;
 
-            public IBrush Ink => IsSystem ? SystemInk : BubbleInk;
+            // A tool line whose result reported an error is the same row in the
+            // red the panel already uses for trouble; nothing else about it moves.
+            private bool IsToolError => IsSystem && _turn.IsError;
+
+            public IBrush Ink => IsToolError ? ErrorInk : IsSystem ? SystemInk : BubbleInk;
+
+            public string? ErrorTip => IsToolError ? "The tool reported an error" : null;
+
+            private static readonly IBrush ErrorInk = new SolidColorBrush(Color.Parse("#E0D93B3B"));
 
             // The corner nearest the speaker is squared off. It is the one
             // detail that makes a column of bubbles read as two people talking
