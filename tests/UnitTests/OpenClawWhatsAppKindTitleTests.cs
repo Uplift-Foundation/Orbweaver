@@ -204,5 +204,39 @@ namespace Orbweaver.Tests
         [InlineData("{\"groupChannel\":\"#general\",\"subject\":\"Studio Crew\"}", "#general")]
         public void AGroupIsNamedByItsGroupChannelThenItsSubject(string row, string? expected) =>
             Assert.Equal(expected, OpenClawSessions.Group(JsonDocument.Parse(row).RootElement));
+
+        // The identifier rule is not WhatsApp's alone: a Discord row whose
+        // origin.label is only a bare id (live: slash-command and a channel row on
+        // a few agents) had the digit run in its title, and now shows the surface
+        // word, the same fallback a Discord row with no label already got. A
+        // label with words in it is kept. Discord kinds, badges and attribution
+        // are untouched; only titles that were a bare id change.
+        [Fact]
+        public void ADiscordRowWhoseLabelIsABareIdShowsTheSurfaceWordAndALabelWithWordsIsKept()
+        {
+            var json = $$"""
+                {"sessions":[
+                  {"key":"agent:alpha:discord:slash:1900000000000000001","chatType":"direct",
+                   "origin":{"provider":"discord","chatType":"direct","label":"1900000000000000001"},
+                   "lastActivityAt":{{JustNow}}},
+                  {"key":"agent:alpha:discord:channel:1900000000000000002","chatType":"channel",
+                   "origin":{"provider":"discord","chatType":"channel","label":"1900000000000000002"},
+                   "lastActivityAt":{{JustNow}}},
+                  {"key":"agent:alpha:discord:direct:1900000000000000003","chatType":"direct",
+                   "origin":{"provider":"discord","chatType":"direct","label":"riverbend user id:1900000000000000003"},
+                   "lastActivityAt":{{JustNow}}}
+                ]}
+                """;
+
+            var sessions = Parse(json);
+
+            Assert.Equal("alpha — discord", sessions.Single(s => s.Key.Contains(":slash:")).Title);
+            Assert.Equal("alpha — discord", sessions.Single(s => s.Key.Contains(":channel:")).Title);
+            Assert.Equal("alpha — riverbend", sessions.Single(s => s.Key.Contains(":direct:")).Title);
+
+            // Kinds are exactly what they were.
+            Assert.Equal(SessionKind.Channel, sessions.Single(s => s.Key.Contains(":channel:")).Kind);
+            Assert.Equal(SessionKind.Direct, sessions.Single(s => s.Key.Contains(":direct:")).Kind);
+        }
 }
 }
