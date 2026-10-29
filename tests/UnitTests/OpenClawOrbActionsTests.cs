@@ -317,4 +317,92 @@ public class OpenClawOrbActionsTests
             SessionPid = 0
         }));
     }
+
+    // --- CB-270: Keep on screen, Rename conversation ---
+
+    [Theory]
+    [InlineData(OpenClawAction.KeepOnScreen, "Keep on screen")]
+    [InlineData(OpenClawAction.StopKeeping, "Keep on screen")]
+    [InlineData(OpenClawAction.Rename, "Rename conversation…")]
+    public void TheNewHeaders(OpenClawAction action, string expected) =>
+        Assert.Equal(expected, OpenClawActionText.Header(action));
+
+    [Fact]
+    public void TheNewTipsAndWorkingTexts()
+    {
+        Assert.Equal(
+            "Pins this conversation on the gateway, so it stays on screen however long it has been quiet — in every client.",
+            OpenClawActionText.Tip(OpenClawAction.KeepOnScreen));
+        Assert.Equal(OpenClawActionText.Tip(OpenClawAction.KeepOnScreen),
+            OpenClawActionText.Tip(OpenClawAction.StopKeeping));
+        Assert.Contains("name", OpenClawActionText.Tip(OpenClawAction.Rename));
+
+        Assert.Equal("Keeping…", OpenClawActionText.Working(OpenClawAction.KeepOnScreen));
+        Assert.Equal("Releasing…", OpenClawActionText.Working(OpenClawAction.StopKeeping));
+        Assert.Equal("Renaming…", OpenClawActionText.Working(OpenClawAction.Rename));
+    }
+
+    [Theory]
+    [InlineData(OpenClawActionOutcome.Done, OpenClawAction.KeepOnScreen, null, "Kept on screen")]
+    [InlineData(OpenClawActionOutcome.Done, OpenClawAction.StopKeeping, null, "No longer kept on screen")]
+    [InlineData(OpenClawActionOutcome.Done, OpenClawAction.Rename, null, "Renamed")]
+    [InlineData(OpenClawActionOutcome.Refused, OpenClawAction.KeepOnScreen, "nope", "Couldn't keep it on screen: nope")]
+    [InlineData(OpenClawActionOutcome.Refused, OpenClawAction.StopKeeping, "nope", "Couldn't release it: nope")]
+    [InlineData(OpenClawActionOutcome.Refused, OpenClawAction.Rename, "nope", "Couldn't rename: nope")]
+    [InlineData(OpenClawActionOutcome.NotConnected, OpenClawAction.Rename, null,
+        "Couldn't rename: not connected to the gateway")]
+    [InlineData(OpenClawActionOutcome.OtherDevice, OpenClawAction.KeepOnScreen, null,
+        "Couldn't keep it on screen: the gateway said unauthorized")]
+    public void TheNewActionsSayWhatHappened(
+        OpenClawActionOutcome outcome, OpenClawAction action, string? detail, string expected) =>
+        Assert.Equal(expected, OpenClawActionText.For(outcome, detail, action));
+
+    // The two existing actions' words are asserted unchanged by the cases above;
+    // this pins the ones the switch rewrite could most easily have disturbed.
+    [Fact]
+    public void TheExistingActionsKeepTheirExactWords()
+    {
+        Assert.Equal("Couldn't end: a run started from another device is still going",
+            OpenClawActionText.For(OpenClawActionOutcome.OtherDevice, null, OpenClawAction.End));
+        Assert.Equal("Started from another device",
+            OpenClawActionText.For(OpenClawActionOutcome.OtherDevice, null, OpenClawAction.Interrupt));
+        Assert.Equal("Ended", OpenClawActionText.For(OpenClawActionOutcome.Done, null, OpenClawAction.End));
+        Assert.Equal("Interrupted",
+            OpenClawActionText.For(OpenClawActionOutcome.Done, null, OpenClawAction.Interrupt));
+    }
+
+    [Fact]
+    public void AnUnconfirmedPatchSaysWhatTheCallerAskedItTo()
+    {
+        var (outcome, detail) = OpenClawOrbActions.ParsePatchResult(
+            Json("""{"ok":false}"""), "the gateway didn't confirm the change");
+
+        Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+        Assert.Equal("the gateway didn't confirm the change", detail);
+    }
+
+    // CanPatchOpenClaw: true with everything present, false for each missing
+    // conjunct. Unlike End it needs neither the abort method nor a non-main
+    // session.
+    private static readonly string[] PatchOnly = { "sessions.patch" };
+
+    [Fact]
+    public void KeepAndRenameAreOfferedWhereverAPatchWillWork()
+    {
+        Assert.True(SessionPresence.CanPatchOpenClaw(Status(), Context()));
+        Assert.True(SessionPresence.CanPatchOpenClaw(Status(), Context(methods: PatchOnly)));
+        Assert.True(SessionPresence.CanPatchOpenClaw(Status(), Context(isMain: true)));
+    }
+
+    [Fact]
+    public void KeepAndRenameAreHiddenForEachMissingPiece()
+    {
+        Assert.False(SessionPresence.CanPatchOpenClaw(Status(SessionSource.ClaudeCode), Context()));
+        Assert.False(SessionPresence.CanPatchOpenClaw(Status(room: true), Context()));
+        Assert.False(SessionPresence.CanPatchOpenClaw(Status(), Context(connected: false)));
+        Assert.False(SessionPresence.CanPatchOpenClaw(Status(), Context(key: null)));
+        Assert.False(SessionPresence.CanPatchOpenClaw(Status(), Context(sessionId: null)));
+        Assert.False(SessionPresence.CanPatchOpenClaw(Status(), Context(methods: new[] { "chat.abort" })));
+        Assert.False(SessionPresence.CanPatchOpenClaw(Status(), Context(scopes: new[] { "operator.read" })));
+    }
 }

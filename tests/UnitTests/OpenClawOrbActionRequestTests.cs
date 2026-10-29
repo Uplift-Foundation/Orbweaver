@@ -433,4 +433,198 @@ public class OpenClawOrbActionRequestTests : IDisposable
 
         Assert.Equal(OpenClawActionOutcome.NotConnected, outcome);
     }
+
+    // --- CB-270: Keep on screen and Rename conversation ---
+
+    private static string[] ParamKeys(FakeGatewaySocket.Request r) =>
+        r.Params.EnumerateObject().Select(p => p.Name).ToArray();
+
+    private static object Patched(FakeGatewaySocket.Request r) =>
+        FakeGatewaySocket.Ok(r.Id, new { ok = true, key = Key, entry = new { } });
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PinSendsExactlyKeyPinnedAndTheSessionId(bool pinned)
+    {
+        var (socket, gateway) = await ConnectedAsync(Patched);
+        using (gateway)
+        {
+            var (outcome, _) = await OpenClawSessions.SetGatewayPinnedAsync(Orb, pinned, CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Done, outcome);
+
+            var sent = Assert.Single(Sent(socket));
+            Assert.Equal("sessions.patch", sent.Method);
+            Assert.Equal(new[] { "key", "pinned", "expectedSessionId" }, ParamKeys(sent));
+            Assert.Equal(pinned, sent.Params.GetProperty("pinned").GetBoolean());
+            Assert.Equal("sid-1", sent.Params.GetProperty("expectedSessionId").GetString());
+        }
+    }
+
+    // The list catching up with the fact: the checkbox and the age exemption
+    // hold before the next poll, and the session stays listed.
+    [Fact]
+    public async Task ADonePinFlipsWhatTheOrbReadsBack()
+    {
+        var (_, gateway) = await ConnectedAsync(Patched);
+        using (gateway)
+        {
+            Assert.False(OpenClawSessions.CapabilitiesFor(Orb).GatewayPinned);
+
+            await OpenClawSessions.SetGatewayPinnedAsync(Orb, true, CancellationToken.None);
+            Assert.True(OpenClawSessions.CapabilitiesFor(Orb).GatewayPinned);
+
+            await OpenClawSessions.SetGatewayPinnedAsync(Orb, false, CancellationToken.None);
+            Assert.False(OpenClawSessions.CapabilitiesFor(Orb).GatewayPinned);
+            Assert.Equal("sid-1", OpenClawSessions.CapabilitiesFor(Orb).SessionId);
+        }
+    }
+
+    // A refusal comes back in the gateway's own words and nothing changes.
+    [Fact]
+    public async Task ARefusedPinIsReturnedVerbatimAndLeavesTheSnapshotAlone()
+    {
+        var (_, gateway) = await ConnectedAsync(r => Refuse(r, "INVALID_REQUEST", "missing scope: operator.write"));
+        using (gateway)
+        {
+            var (outcome, detail) = await OpenClawSessions.SetGatewayPinnedAsync(Orb, true, CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+            Assert.Equal("missing scope: operator.write", detail);
+            Assert.False(OpenClawSessions.CapabilitiesFor(Orb).GatewayPinned);
+        }
+    }
+
+    [Fact]
+    public async Task AnUnconfirmedPinIsNotAPin()
+    {
+        var (_, gateway) = await ConnectedAsync(r => FakeGatewaySocket.Ok(r.Id, new { ok = false }));
+        using (gateway)
+        {
+            var (outcome, detail) = await OpenClawSessions.SetGatewayPinnedAsync(Orb, true, CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+            Assert.Equal("the gateway didn't confirm the change", detail);
+            Assert.False(OpenClawSessions.CapabilitiesFor(Orb).GatewayPinned);
+        }
+    }
+
+    [Fact]
+    public async Task PinningWithNoSessionIdSendsNothing()
+    {
+        var (socket, gateway) = await ConnectedAsync(session: Session(sessionId: null));
+        using (gateway)
+        {
+            var (outcome, detail) = await OpenClawSessions.SetGatewayPinnedAsync(Orb, true, CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+            Assert.Equal("the gateway hasn't listed this conversation", detail);
+            Assert.Empty(Sent(socket));
+        }
+    }
+
+    [Theory]
+    [InlineData("not-an-orb")]
+    [InlineData("openclaw:")]
+    public async Task PinningOrRenamingAnIdWithNoKeyIsNotConnected(string orb)
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            Assert.Equal(OpenClawActionOutcome.NotConnected,
+                (await OpenClawSessions.SetGatewayPinnedAsync(orb, true, CancellationToken.None)).Outcome);
+            Assert.Equal(OpenClawActionOutcome.NotConnected,
+                (await OpenClawSessions.RenameAsync(orb, "x", CancellationToken.None)).Outcome);
+            Assert.Empty(Sent(socket));
+        }
+    }
+
+    [Fact]
+    public async Task PinningOrRenamingWhileDisconnectedSendsNothing()
+    {
+        OpenClawSessions.SetGatewayForTests(null);
+
+        Assert.Equal(OpenClawActionOutcome.NotConnected,
+            (await OpenClawSessions.SetGatewayPinnedAsync(Orb, true, CancellationToken.None)).Outcome);
+        Assert.Equal(OpenClawActionOutcome.NotConnected,
+            (await OpenClawSessions.RenameAsync(Orb, "x", CancellationToken.None)).Outcome);
+    }
+
+    [Fact]
+    public async Task RenameSendsExactlyKeyLabelAndTheSessionIdWithTheLabelTrimmed()
+    {
+        var (socket, gateway) = await ConnectedAsync(Patched);
+        using (gateway)
+        {
+            var (outcome, _) = await OpenClawSessions.RenameAsync(Orb, "  Planning notes \t", CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Done, outcome);
+
+            var sent = Assert.Single(Sent(socket));
+            Assert.Equal("sessions.patch", sent.Method);
+            Assert.Equal(new[] { "key", "label", "expectedSessionId" }, ParamKeys(sent));
+            Assert.Equal("Planning notes", sent.Params.GetProperty("label").GetString());
+            Assert.Equal("sid-1", sent.Params.GetProperty("expectedSessionId").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public async Task ABlankNameIsRefusedAndNothingIsSent(string? label)
+    {
+        var (socket, gateway) = await ConnectedAsync(Patched);
+        using (gateway)
+        {
+            var (outcome, detail) = await OpenClawSessions.RenameAsync(Orb, label!, CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+            Assert.Equal("a name can't be blank", detail);
+            Assert.Empty(Sent(socket));
+        }
+    }
+
+    [Fact]
+    public async Task RenamingWithNoSessionIdSendsNothing()
+    {
+        var (socket, gateway) = await ConnectedAsync(session: Session(sessionId: null));
+        using (gateway)
+        {
+            var (outcome, detail) = await OpenClawSessions.RenameAsync(Orb, "x", CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+            Assert.Equal("the gateway hasn't listed this conversation", detail);
+            Assert.Empty(Sent(socket));
+        }
+    }
+
+    [Fact]
+    public async Task ARefusedRenameIsReturnedVerbatim()
+    {
+        var (_, gateway) = await ConnectedAsync(r => Refuse(r, "INVALID_REQUEST", "label too long"));
+        using (gateway)
+        {
+            var (outcome, detail) = await OpenClawSessions.RenameAsync(Orb, "x", CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+            Assert.Equal("label too long", detail);
+        }
+    }
+
+    // The context carries what the Rename window prefills from.
+    [Fact]
+    public async Task TheContextCarriesTheLabelAndThePin()
+    {
+        var session = Session() with { Label = "Scratch pad", GatewayPinned = true };
+        var (_, gateway) = await ConnectedAsync(session: session);
+        using (gateway)
+        {
+            var context = OpenClawSessions.CapabilitiesFor(Orb);
+
+            Assert.Equal("Scratch pad", context.Label);
+            Assert.True(context.GatewayPinned);
+        }
+    }
 }
