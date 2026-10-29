@@ -176,5 +176,33 @@ namespace Orbweaver.Tests
             Assert.Equal(room, OpenClawSessionKind.RoomOf(GroupB));
             Assert.Null(OpenClawSessionKind.RoomOf(Dm));
         }
-    }
+    
+        // What counts as a bare identifier, and what does not.
+        [Theory]
+        [InlineData("+15550000001", true)]
+        [InlineData("15550000001", true)]
+        [InlineData(" +15550000001 ", true)]
+        [InlineData("12345", true)]
+        [InlineData("120000000000000001@g.us", true)]
+        [InlineData("1234", false)]
+        [InlineData("+1234", false)]
+        [InlineData("Room 12345 Standup", false)]
+        [InlineData("riverbend", false)]
+        [InlineData("120000000000000001@example.com", false)]
+        [InlineData("my@g.us", false)]
+        [InlineData("", false)]
+        public void OnlyANumberOrAGroupIdIsABareIdentifier(string label, bool expected) =>
+            Assert.Equal(expected, OpenClawSessions.IsBareIdentifier(label));
+
+        // A subject is a name only when it says something.
+        [Theory]
+        [InlineData("{\"subject\":\"Studio Crew\"}", "Studio Crew")]
+        [InlineData("{\"subject\":\"  Studio Crew \"}", "Studio Crew")]
+        [InlineData("{\"subject\":\"   \"}", null)]
+        [InlineData("{\"subject\":7}", null)]
+        [InlineData("{}", null)]
+        [InlineData("{\"groupChannel\":\"#general\",\"subject\":\"Studio Crew\"}", "#general")]
+        public void AGroupIsNamedByItsGroupChannelThenItsSubject(string row, string? expected) =>
+            Assert.Equal(expected, OpenClawSessions.Group(JsonDocument.Parse(row).RootElement));
+}
 }

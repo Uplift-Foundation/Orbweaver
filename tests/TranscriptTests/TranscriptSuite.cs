@@ -623,6 +623,14 @@ namespace Orbweaver.Tests
                 Kind("agent:main:dashboard:9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b") == SessionKind.Main
                 && Kind("agent:main:dashboard:9f1c2a3b", "direct") == SessionKind.Main);
 
+            // CB-270: a WhatsApp group whose chatType contradicts its classification.
+            // The gateway's classification is a second opinion in one direction only.
+            Check("a WhatsApp group that says chatType direct is still a Channel",
+                OpenClawSessionKind.From(
+                    "agent:a:whatsapp:group:120000000000000001@g.us", "direct", "group") == SessionKind.Channel
+                && OpenClawSessionKind.From(
+                    "agent:a:whatsapp:direct:+15550000001", "direct", "direct") == SessionKind.Direct);
+
             Check("a DM is Direct",
                 Kind("agent:main:discord:direct:200000000000000001") == SessionKind.Direct);
 
