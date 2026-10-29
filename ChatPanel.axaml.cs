@@ -674,6 +674,7 @@ namespace Orbweaver
             _session.TurnAdded -= OnTurnAdded;
             _session.TurnUpdated -= OnTurnUpdated;
             _session.StateChanged -= OnStateChanged;
+            if (_session is OpenClawChatSession gatewayChat) gatewayChat.TurnsRemoved -= OnTurnsRemoved;
 
             if (_session is IRemoteChatBacklog previous)
             {
@@ -785,6 +786,7 @@ namespace Orbweaver
 
             session.TurnAdded += OnTurnAdded;
             session.TurnUpdated += OnTurnUpdated;
+            if (session is OpenClawChatSession gateway) gateway.TurnsRemoved += OnTurnsRemoved;
             session.StateChanged += OnStateChanged;
 
             if (session is RemoteControlChatSession remote)
@@ -2715,6 +2717,13 @@ namespace Orbweaver
             }
 
             ScrollToEndIfPinned();
+        }
+
+        // CB-270: a run's live rows replaced by what history says at its end.
+        // The rows that take their place arrive as ordinary TurnAdded.
+        private void OnTurnsRemoved(int from, int count)
+        {
+            for (var i = 0; i < count && from < _turns.Count; i++) _turns.RemoveAt(from);
         }
 
         private void OnTurnUpdated(ChatTurn turn)

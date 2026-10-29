@@ -156,6 +156,48 @@ public class ChatPanelLiveToolLineTests : IDisposable
             ToolTip.GetTip(row.GetVisualDescendants().OfType<ContentControl>().First()));
     }
 
+    // CB-270: at the end of a run the live rows are replaced by what history
+    // says, and the panel has to drop the same rows or it would show both. A
+    // panel joined partway through the run holds a truncated first bubble; after
+    // the reconciliation its rows are the model's, one for one.
+    [AvaloniaFact]
+    public void ARunsLiveRowsAreReplacedByHistoryAndThePanelFollows()
+    {
+        OpenClawSessions.SetGatewayForTests(null);
+        var session = Session();
+        var panel = Open(session);
+        session.SetHistory(new[] { new HistoryTurn(ChatRole.User, "go", null, "", DateTimeOffset.UtcNow, null, null) });
+        FlushRender();
+
+        var events = Run("run-tools-0001").ToList();
+        foreach (var (name, payload) in events.Skip(8)) session.OnAgentEvent(name, payload);
+        FlushRender();
+        var live = Rows(panel).Count;
+        Assert.True(live >= 2);
+
+        var final = events.Where(e => e.Name == "agent")
+            .Select(e => e.Payload.GetProperty("data"))
+            .Last(d => d.TryGetProperty("text", out var t) && t.GetString()!.Length > 100)
+            .GetProperty("text").GetString()!.Split("\n\n");
+        var toolLine = ChatTranscript.ToolSummary("mcp__openclaw__exec",
+            Json("""{"command":"ls /home/op/workspace | wc -l","title":"Count workspace files"}"""));
+
+        session.ApplyFetchedTail(new[]
+        {
+            new HistoryTurn(ChatRole.User, "go", null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, final[0], null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.System, toolLine, null, "", DateTimeOffset.UtcNow, null, null),
+            new HistoryTurn(ChatRole.Assistant, final[1], null, "", DateTimeOffset.UtcNow, null, null),
+        });
+        FlushRender();
+
+        Assert.Equal(4, session.History.Count);
+        Assert.Equal(4, Rows(panel).Count);
+        Assert.Contains(final[0], BodyText(Rows(panel)[1]));
+        Assert.Contains(toolLine, BodyText(Rows(panel)[2]));
+        Assert.Contains(final[1], BodyText(Rows(panel)[3]));
+    }
+
     // --- the subscription, from the panel's own open and close ---
 
     private static async Task<FakeGatewaySocket> ConnectedAsync(string? refuse = null)

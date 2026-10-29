@@ -422,7 +422,7 @@ namespace Orbweaver
                     if (payload.TryGetProperty("data", out var life)
                         && Str(life, "phase") is "end" or "error")
                     {
-                        Complete();
+                        EndRun();
                     }
                     break;
 
@@ -436,7 +436,7 @@ namespace Orbweaver
 
                 case "cron" when Str(payload, "action") == "finished":
                 case "task" when Str(payload, "action") == "upserted":
-                    Complete();
+                    EndRun();
                     break;
 
                 // CB-95: what the gateway calls a *delivery* rather than a
@@ -464,7 +464,7 @@ namespace Orbweaver
                 // has already arrived on the agent stream, and treating every one
                 // as a reason to refetch history cost 25 round trips for one run.
                 case "chat" when Str(payload, "state") is "final" or "error" or "aborted":
-                    Complete();
+                    EndRun();
                     RefreshTailAsync();
                     break;
 
@@ -488,7 +488,97 @@ namespace Orbweaver
             var page = await OpenClawSessions.FetchPageAsync(this, 0, CancellationToken.None);
             if (page is null) return;
 
-            AppendNewTail(page.Value.Turns);
+            ApplyFetchedTail(page.Value.Turns);
+        }
+
+        // CB-270. Live text is a best-effort drawing of a run: a panel opened
+        // partway through it holds a truncated first bubble and none of the tool
+        // lines that came before it, and no amount of appending repairs that. So
+        // a run the stream has drawn is replaced by what history says at its end,
+        // which makes the two agree under whatever rule TurnsFromHistory applies.
+        //
+        // Set when a run's event draws something and cleared by the reconciliation
+        // that follows its end. A run that has drawn nothing, a bare lifecycle
+        // start, has nothing to defer for. While it is set and the run has not ended, a doorbell
+        // does nothing: a page fetched mid-run holds a half-persisted run, and
+        // appending it would only add to what the end is about to replace.
+        // Known cost: a run whose end this session never sees (a dropped
+        // connection) defers doorbells until the next run's end.
+        private bool _runDirty;
+        private bool _runEnded;
+
+        private void RunSeen()
+        {
+            _runDirty = true;
+            _runEnded = false;
+        }
+
+        private void EndRun()
+        {
+            _runEnded = true;
+            Complete();
+        }
+
+        // Removed from the transcript: the index of the first, and how many. The
+        // panel drops the same rows; what replaces them arrives as TurnAdded.
+        internal event Action<int, int>? TurnsRemoved;
+
+        // What to do with a freshly fetched newest page: nothing mid-run, a
+        // reconciliation once a run the stream drew has ended, and the ordinary
+        // append for a delivery that is not part of a run.
+        internal void ApplyFetchedTail(IReadOnlyList<HistoryTurn> page)
+        {
+            if (_runDirty && !_runEnded) return;
+
+            if (!_runDirty)
+            {
+                AppendNewTail(page);
+                return;
+            }
+
+            _runDirty = false;
+            ReconcileRun(page);
+        }
+
+        // The run is everything after the conversation's last user turn. That is
+        // found on the page too, and the live tail is swapped for the page's.
+        // Not an index recorded when the run began, which a panel opened midway
+        // through has no way to know. If either side has no user turn, or the
+        // page does not reach back to it (a long run), the append is all that can
+        // be said safely.
+        private void ReconcileRun(IReadOnlyList<HistoryTurn> page)
+        {
+            var user = _history.FindLastIndex(t => t.Role == ChatRole.User);
+            var at = -1;
+
+            if (user >= 0)
+            {
+                for (var i = page.Count - 1; i >= 0; i--)
+                {
+                    if (page[i].Role == ChatRole.User
+                        && string.Equals(page[i].Text, _history[user].Text, StringComparison.Ordinal))
+                    {
+                        at = i;
+                        break;
+                    }
+                }
+            }
+
+            if (at < 0)
+            {
+                AppendNewTail(page);
+                return;
+            }
+
+            var from = user + 1;
+            var count = _history.Count - from;
+            if (count > 0)
+            {
+                _history.RemoveRange(from, count);
+                TurnsRemoved?.Invoke(from, count);
+            }
+
+            AppendFrom(page, at + 1);
         }
 
         // The actual live-update fix, and the half of it that is pure enough
@@ -526,16 +616,31 @@ namespace Orbweaver
             }
             else
             {
-                var anchor = _history[^1];
+                // The page position whose turns before it also match this
+                // transcript's tail, best first and latest on a tie. Matching the
+                // last turn alone is ambiguous whenever two turns read the same,
+                // which two tool lines do once the summary's length cap has cut
+                // them to the same text: the later twin would be taken for the
+                // earlier and everything between them skipped.
                 var anchorIndex = -1;
+                var best = 0;
 
                 for (var i = freshTurns.Count - 1; i >= 0; i--)
                 {
-                    if (freshTurns[i].Role != anchor.Role) continue;
-                    if (!string.Equals(freshTurns[i].Text, anchor.Text, StringComparison.Ordinal)) continue;
+                    var matched = 0;
+                    while (matched <= i && matched < _history.Count
+                           && freshTurns[i - matched].Role == _history[^(matched + 1)].Role
+                           && string.Equals(freshTurns[i - matched].Text, _history[^(matched + 1)].Text,
+                               StringComparison.Ordinal))
+                    {
+                        matched++;
+                    }
 
-                    anchorIndex = i;
-                    break;
+                    if (matched > best)
+                    {
+                        best = matched;
+                        anchorIndex = i;
+                    }
                 }
 
                 if (anchorIndex < 0) return;
@@ -543,6 +648,11 @@ namespace Orbweaver
                 startIndex = anchorIndex + 1;
             }
 
+            AppendFrom(freshTurns, startIndex);
+        }
+
+        private void AppendFrom(IReadOnlyList<HistoryTurn> freshTurns, int startIndex)
+        {
             for (var i = startIndex; i < freshTurns.Count; i++)
             {
                 var turn = freshTurns[i];
@@ -588,6 +698,8 @@ namespace Orbweaver
             // keeps the old snapshot-only reading.
             var text = kind == "assistant" ? AssistantBubble(payload, data) : Str(data, "text");
             if (string.IsNullOrEmpty(text)) return;
+
+            RunSeen();
 
             if (_streaming is null || _streaming.IsComplete || _streamingKind != kind)
             {
@@ -952,6 +1064,7 @@ namespace Orbweaver
                 Text = ChatTranscript.ToolSummary(tool, args)
             };
 
+            RunSeen();
             Add(turn);
             return turn;
         }
@@ -1145,6 +1258,10 @@ namespace Orbweaver
             _history.Clear();
             _streaming = null;
             _streamingKind = null;
+
+            // _runDirty is left alone: the page that just landed may be older than
+            // the run (a slow first load) or hold only part of it, and the run's
+            // end reconciles against a fresh page either way.
 
             // Whatever the run had streamed in before the page landed is in the
             // page or is not coming back by itself, so it is closed rather than
