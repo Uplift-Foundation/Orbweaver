@@ -151,7 +151,7 @@ namespace Orbweaver
     // A send is routed by OpenClawSendPolicy: a conversation on a chat surface
     // is delivered back to that surface with the typed message mirrored into
     // it, and a native session, which has no surface, is answered in place.
-    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey
+    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -323,7 +323,47 @@ namespace Orbweaver
         public event Action<ChatTurn>? TurnUpdated;
         public event Action<RemoteChatState>? StateChanged;
 
-        public async Task<ChatSendOutcome> SendAsync(string text)
+        public Task<ChatSendOutcome> SendAsync(string text) => SendCoreAsync(text, null, null);
+
+        // CB-270 Stage 4: a native conversation takes pictures with its message.
+        // The panel hands over files it already saved to disk; only the images
+        // among them are sent, by name and content, and the first one is drawn on
+        // the message's own bubble so it is not text-only until the gateway's
+        // copy comes back.
+        public async Task<ChatSendOutcome> SendWithImagesAsync(string text, IReadOnlyList<string> imagePaths)
+        {
+            var images = new List<OpenClawOutgoingImage>();
+            byte[]? thumbnail = null;
+
+            foreach (var path in imagePaths)
+            {
+                byte[] bytes;
+                try { bytes = await File.ReadAllBytesAsync(path); }
+                catch { continue; }
+
+                if (OpenClawOutgoingImage.From(path, bytes) is not { } image) continue;
+
+                images.Add(image);
+                thumbnail ??= bytes;
+            }
+
+            return await SendCoreAsync(text, images, thumbnail);
+        }
+
+        // Pictures go only to a conversation answered in place, and only when
+        // replying is allowed: anywhere else a pasted picture stays the ordinary
+        // paste it would have been, rather than becoming a message that then fails.
+        public bool CanSendImages
+        {
+            get
+            {
+                Observe(OpenClawSessions.NativeOf(GatewayKey));
+                return Route == OpenClawSendRoute.Native && OrbweaverSettings.OpenClawReplyEnabled;
+            }
+        }
+
+        private async Task<ChatSendOutcome> SendCoreAsync(
+            string text, IReadOnlyList<OpenClawOutgoingImage>? images, byte[]? thumbnail)
         {
             // The user's own turn is added here rather than by the panel, so one
             // thing owns the transcript and a send that fails leaves a message
@@ -347,7 +387,8 @@ namespace Orbweaver
             // has nobody to carry a message to.
             var mine = new ChatTurn
             {
-                Role = ChatRole.User, Text = text, IsComplete = true, Mine = true
+                Role = ChatRole.User, Text = text, IsComplete = true, Mine = true,
+                ImageBytes = thumbnail
             };
             Add(mine);
 
@@ -361,7 +402,7 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            var failure = await SendOrFailureAsync(text);
+            var failure = await SendOrFailureAsync(text, images);
             if (failure is not null)
             {
                 Note("Couldn't send: " + failure);
@@ -381,11 +422,11 @@ namespace Orbweaver
         // completes, and the decision that reads it — say so in the transcript —
         // is measured where it belongs.
         [ExcludeFromCodeCoverage]
-        private async Task<string?> SendOrFailureAsync(string text)
+        private async Task<string?> SendOrFailureAsync(string text, IReadOnlyList<OpenClawOutgoingImage>? images)
         {
             try
             {
-                await OpenClawSessions.SendAsync(this, text, CancellationToken.None);
+                await OpenClawSessions.SendAsync(this, text, CancellationToken.None, images);
                 return null;
             }
             catch (Exception ex)
@@ -1209,6 +1250,99 @@ namespace Orbweaver
         // not have to know that a page comes from a gateway rather than a file.
         public Task<bool> LoadOlderAsync(CancellationToken ct) =>
             OpenClawSessions.LoadOlderAsync(this, ct);
+
+        // --- run controls (CB-270 Stage 4) -----------------------------------
+
+        public event Action? RunOptionsChanged;
+
+        public int? TimeoutMinutes { get; set; }
+
+        // Called on the UI thread when the run state or the model catalogue moved.
+        internal void OnRunOptionsChanged() => RunOptionsChanged?.Invoke();
+
+        // Null unless every one of these holds, so the panel hides the picker
+        // rather than showing one that would be refused:
+        //   - the conversation is answered in place. A surface chat's model is the
+        //     channel's configuration, and patching it would change how the agent
+        //     answers everyone else there. This is the same predicate that decides
+        //     whether a reply is delivered, so the two cannot disagree.
+        //   - replying is allowed, which is what grants the write scope;
+        //   - the gateway granted write and lists sessions.patch (read through
+        //     CapabilitiesFor, the one source), and has listed this conversation;
+        //   - the gateway told us what it is running on, and which models it has.
+        public RemoteRunOptions? RunOptions
+        {
+            get
+            {
+                // What the gateway last said this conversation is, read now: a panel
+                // is opened before any send has asked, and Route is Surface until it
+                // has been told.
+                Observe(OpenClawSessions.NativeOf(GatewayKey));
+
+                if (Route != OpenClawSendRoute.Native) return null;
+                if (!OrbweaverSettings.OpenClawReplyEnabled) return null;
+
+                var context = OpenClawSessions.CapabilitiesFor(SessionId);
+                if (!context.Connected || context.SessionId is null
+                    || !context.Methods.Contains(OpenClawOrbActions.PatchMethod)
+                    || !context.Scopes.Contains(OpenClawOrbActions.WriteScope))
+                {
+                    return null;
+                }
+
+                if (OpenClawSessions.RunStateOf(GatewayKey) is not { Model: { } modelId } state) return null;
+
+                var catalogue = OpenClawSessions.OfferedModels;
+                if (catalogue.Count == 0) return null;
+
+                var models = catalogue.Select(m => new RemoteRunChoice(m.Id, m.Name)).ToList();
+
+                // The model in force may not be one that is offered (the gateway's
+                // default can be a model it will not let a patch choose): it is still
+                // what the chip must name, so it is listed rather than left out.
+                if (models.All(m => m.Id != modelId)) models.Insert(0, new RemoteRunChoice(modelId, modelId));
+
+                // The levels the gateway reports for this conversation's own model,
+                // else the catalogue's entry for it. Never the refusal text.
+                var levels = state.ThinkingLevels.Count > 0
+                    ? state.ThinkingLevels
+                    : catalogue.FirstOrDefault(m => m.Id == modelId)?.ThinkingLevels
+                      ?? Array.Empty<OpenClawRunOption>();
+
+                var modelName = models.First(m => m.Id == modelId).Label;
+                var defaultLabel = state.ThinkingDefault is { } d
+                    ? levels.FirstOrDefault(o => o.Id == d)?.Label ?? d
+                    : null;
+
+                return new RemoteRunOptions(
+                    modelId,
+                    models,
+                    state.ThinkingLevel,
+                    defaultLabel,
+                    levels.Select(o => new RemoteRunChoice(o.Id, o.Label)).ToList(),
+                    state.EffectiveFastMode,
+                    state.FastMode is not null,
+                    state.SelectionLocked,
+                    // Measured accepted on all three fields.
+                    true,
+                    OpenClawRunText.Chip(modelName, state.EffectiveThinkingLabel, state.EffectiveFastMode));
+            }
+        }
+
+        public async Task<string?> SetModelAsync(string? id) =>
+            Describe(await OpenClawSessions.SetModelAsync(SessionId, id, CancellationToken.None), OpenClawAction.Model);
+
+        public async Task<string?> SetThinkingAsync(string? id) =>
+            Describe(await OpenClawSessions.SetThinkingAsync(SessionId, id, CancellationToken.None), OpenClawAction.Thinking);
+
+        public async Task<string?> SetFastModeAsync(bool? on) =>
+            Describe(await OpenClawSessions.SetFastModeAsync(SessionId, on, CancellationToken.None), OpenClawAction.Fast);
+
+        // Null on success, otherwise the sentence the flyout shows.
+        private static string? Describe((OpenClawActionOutcome Outcome, string? Detail) result, OpenClawAction action) =>
+            result.Outcome == OpenClawActionOutcome.Done
+                ? null
+                : OpenClawActionText.For(result.Outcome, result.Detail, action);
 
         public string ComposerHint => OrbweaverSettings.OpenClawReplyEnabled
             ? "Message…"

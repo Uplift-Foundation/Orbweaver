@@ -150,6 +150,26 @@
                                            Text="heartbeat"/>
                             </StackPanel>
                         </Border>
+                        <!-- CB-270 Stage 4: the model, thinking level and fast
+                             mode a native conversation is running on. Shown only
+                             when the session offers run controls at all (see
+                             IRemoteChatRunOptions), and a click opens the flyout
+                             that changes them. A chip and a flyout rather than
+                             three controls in the header row, which already holds
+                             the title column and four buttons. -->
+                        <Border x:Name="RunOptionsChip"
+                                IsVisible="False"
+                                CornerRadius="4" Padding="4,1"
+                                VerticalAlignment="Center"
+                                Cursor="Hand"
+                                Background="#26FFFFFF">
+                            <TextBlock x:Name="RunOptionsChipText"
+                                       FontSize="9.5"
+                                       MaxWidth="190"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"
+                                       Foreground="#CCFFFFFF"/>
+                        </Border>
                         <TextBlock x:Name="SubtitleText"
                                    FontSize="11"
                                    VerticalAlignment="Center"
