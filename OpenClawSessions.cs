@@ -513,7 +513,13 @@ namespace Orbweaver
             // test, a fixture) is an ordinary non-main one with no id, which
             // offers Interrupt and not End.
             string? SessionId = null,
-            bool IsMain = false);
+            bool IsMain = false,
+
+            // CB-270: whether this session has no chat surface behind it. Carried
+            // beside Kind and Heartbeat rather than folded into either, for the
+            // reason Heartbeat is: a native main is still Main, a WhatsApp main
+            // is too, and only this tells them apart. See OpenClawNative.
+            OpenClawNativeKind Native = OpenClawNativeKind.None);
 
         // Where a reply in this session is supposed to end up. The gateway
         // resolves this itself when asked to deliver an agent's answer, but a
@@ -659,6 +665,22 @@ namespace Orbweaver
         // stopped listing has no address any more, and holding the last one
         // known would be inventing a destination.
         private static Dictionary<string, Delivery?> _deliveries = new(StringComparer.Ordinal);
+
+        // CB-270: every listed session's native kind, recency filter or not, for
+        // the same reason _deliveries is: "is this conversation native" is a
+        // fact about the conversation, and a send to one the filter dropped still
+        // has to be routed. Replaced whole per poll.
+        private static Dictionary<string, OpenClawNativeKind> _natives = new(StringComparer.Ordinal);
+
+        // Null means "the gateway has not listed this key", which is a different
+        // answer from None ("listed, and not native"): a caller that is about to
+        // decide how to send must be able to tell an unknown session from a
+        // known surface one.
+        internal static OpenClawNativeKind? NativeOf(string key)
+        {
+            lock (Gate)
+                return _natives.TryGetValue(key, out var native) ? native : null;
+        }
 
         public static IReadOnlyList<string> MembersOfRoom(string roomKey)
         {
@@ -1277,6 +1299,7 @@ namespace Orbweaver
                 StringComparer.Ordinal);
 
             var deliveries = new Dictionary<string, Delivery?>(StringComparer.Ordinal);
+            var natives = new Dictionary<string, OpenClawNativeKind>(StringComparer.Ordinal);
 
             // Every agent the gateway knows of, filtered or not, so that a
             // colour is reserved for one whose orb isn't drawn — their messages
@@ -1336,6 +1359,14 @@ namespace Orbweaver
                 // address, and the mirror on an ordinary send has been quietly
                 // skipping exactly those.
                 deliveries[key] = DeliveryFor(s);
+
+                // ...and its native kind, before the filter, for the same reason.
+                var native = OpenClawNative.Of(
+                    Str(s, "classification"),
+                    Str(origin, "provider"),
+                    s.TryGetProperty("deliveryContext", out var dc) && dc.ValueKind == JsonValueKind.Object,
+                    Str(s, "lastChannel"));
+                natives[key] = native;
 
                 everyAgent.Add(AgentIdOf(key) ?? key);
 
@@ -1403,7 +1434,8 @@ namespace Orbweaver
                     kind,
                     heartbeat,
                     Str(s, "sessionId"),
-                    Bool(s, "isMain") == true));
+                    Bool(s, "isMain") == true,
+                    native));
             }
 
             AssignColours(everyAgent);
@@ -1436,6 +1468,7 @@ namespace Orbweaver
                 _roomMembers = Ordered(roomMembers);
                 _roomColours = roomColours;
                 _deliveries = deliveries;
+                _natives = natives;
             }
 
             return (result, list.GetArrayLength());

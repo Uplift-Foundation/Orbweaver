@@ -49,6 +49,94 @@ namespace Orbweaver.Tests
             return OpenClawSessions.Parse(Json(json), Now);
         }
 
+        // --- CB-270: which rows have no chat surface behind them ---
+
+        // Rows shaped like the live ones (2026.10.5), values invented. By
+        // category, what each carried: a native main had classification main
+        // and no origin, deliveryContext or lastChannel at all (3 of the 5
+        // main rows measured); a WhatsApp main had classification main with a
+        // provider, a deliveryContext and a lastChannel (the other 2); a
+        // Discord DM had classification direct with all three; a cron had
+        // classification cron and none. The dashboard row follows the key
+        // shape the findings record for a New Chat, since the live gateway had
+        // none at the time.
+        private static string NativeFixture(long when) => $$"""
+            {"sessions":[
+              {"key":"agent:alpha:main","classification":"main","isMain":true,"pinned":false,"lastActivityAt":{{when}}},
+              {"key":"agent:beta:main","classification":"main","isMain":true,"chatType":"direct",
+               "origin":{"provider":"whatsapp","to":"+15550000001"},
+               "deliveryContext":{"channel":"whatsapp","to":"+15550000001"},
+               "lastChannel":"whatsapp","lastActivityAt":{{when}}},
+              {"key":"agent:alpha:dashboard:11111111-2222-3333-4444-555555555555","classification":"dashboard","lastActivityAt":{{when}}},
+              {"key":"agent:alpha:discord:direct:1900000000000000001","classification":"direct","chatType":"direct",
+               "origin":{"provider":"discord"},"deliveryContext":{"channel":"discord","to":"user:1900000000000000001"},
+               "lastChannel":"discord","lastActivityAt":{{when}}},
+              {"key":"agent:alpha:cron:job-1","classification":"cron","label":"Cron: sweep","lastActivityAt":{{when}}}
+            ]}
+            """;
+
+        [Fact]
+        public void EachRowCarriesItsNativeKind()
+        {
+            var (sessions, _) = Parse(NativeFixture(JustNow));
+
+            Assert.Equal(OpenClawNativeKind.Main, sessions.Single(s => s.Key == "agent:alpha:main").Native);
+            Assert.Equal(OpenClawNativeKind.None, sessions.Single(s => s.Key == "agent:beta:main").Native);
+            Assert.Equal(OpenClawNativeKind.Dashboard,
+                sessions.Single(s => s.Key.Contains(":dashboard:")).Native);
+            Assert.Equal(OpenClawNativeKind.None, sessions.Single(s => s.Key.Contains(":discord:")).Native);
+            Assert.Equal(OpenClawNativeKind.None, sessions.Single(s => s.Key.Contains(":cron:")).Native);
+        }
+
+        // A row built by hand, or one the gateway sent with no classification,
+        // is not native: the default is today's behaviour.
+        [Fact]
+        public void ARowWithNoClassificationIsNone()
+        {
+            var json = $$"""{"sessions":[{"key":"agent:alpha:main","lastActivityAt":{{JustNow}}}]}""";
+
+            Assert.Equal(OpenClawNativeKind.None, Assert.Single(Parse(json).Sessions).Native);
+        }
+
+        // Recorded before the recency filter, like the delivery map: a send to a
+        // conversation that has gone quiet still has to be routed. Two days old
+        // against a 60 minute window, so every row is dropped from the result.
+        [Fact]
+        public void NativeOfAnswersForRowsTheRecencyFilterDropped()
+        {
+            var (sessions, total) = Parse(NativeFixture(Ms(Now.AddDays(-2))), withinMinutes: 60);
+
+            Assert.Empty(sessions);
+            Assert.Equal(5, total);
+            Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:alpha:main"));
+            Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf("agent:beta:main"));
+            Assert.Equal(OpenClawNativeKind.Dashboard,
+                OpenClawSessions.NativeOf("agent:alpha:dashboard:11111111-2222-3333-4444-555555555555"));
+        }
+
+        // Null, not None: "the gateway never listed this" and "listed, and not
+        // native" are different answers and a sender needs both.
+        [Fact]
+        public void NativeOfAnUnlistedKeyIsNullNotNone()
+        {
+            Parse(NativeFixture(JustNow));
+
+            Assert.Null(OpenClawSessions.NativeOf("agent:nobody:main"));
+            Assert.NotNull(OpenClawSessions.NativeOf("agent:beta:main"));
+        }
+
+        // The map is replaced whole per poll: a key the gateway stops listing
+        // stops being known rather than keeping its last answer.
+        [Fact]
+        public void NativeOfForgetsAKeyThePollNoLongerLists()
+        {
+            Parse(NativeFixture(JustNow));
+            Parse($$"""{"sessions":[{"key":"agent:other:main","classification":"main","lastActivityAt":{{JustNow}}}]}""");
+
+            Assert.Null(OpenClawSessions.NativeOf("agent:alpha:main"));
+            Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:other:main"));
+        }
+
         // --- CB-170: what the orb's Interrupt and End rows read off a row ---
 
         // The two fields the End row needs, off the row the gateway sent: the
