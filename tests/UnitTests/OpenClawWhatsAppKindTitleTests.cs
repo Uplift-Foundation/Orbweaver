@@ -127,7 +127,11 @@ namespace Orbweaver.Tests
             }
         }
 
-        // --- controls: Discord is untouched ---
+        // --- controls: Discord rows that already had a name keep it ---
+        //
+        // Not "Discord is untouched": a Discord row whose label was only a bare id
+        // does change, and that change has its own case further down. What these
+        // pin is that a labelled channel and a labelled DM are exactly as before.
 
         [Fact]
         public void ADiscordChannelWithAGroupChannelAndADiscordDmKeepTheirTitles()
@@ -232,6 +236,11 @@ namespace Orbweaver.Tests
 
             Assert.Equal("alpha — discord", sessions.Single(s => s.Key.Contains(":slash:")).Title);
             Assert.Equal("alpha — discord", sessions.Single(s => s.Key.Contains(":channel:")).Title);
+
+            // The point of the change: neither bare-id row's title carries a digit
+            // run any more, and the sibling with words keeps its label.
+            foreach (var bare in sessions.Where(s => !s.Key.Contains(":direct:")))
+                Assert.DoesNotMatch("[0-9]{5,}", bare.Title);
             Assert.Equal("alpha — riverbend", sessions.Single(s => s.Key.Contains(":direct:")).Title);
 
             // Kinds are exactly what they were.
