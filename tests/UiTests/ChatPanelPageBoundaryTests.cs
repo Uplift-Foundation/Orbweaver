@@ -110,6 +110,30 @@ public class ChatPanelPageBoundaryTests : IDisposable
         Assert.Contains("next", rows[4]);
     }
 
+    // A rollup that was two rows (picture, then text) loses both when dropped.
+    [AvaloniaFact]
+    public void ScrollingBackRemovesEveryRowOfAMultiTurnRollup()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.Assistant, "", fromRollup: true), H(ChatRole.Assistant, "look", fromRollup: true), H(ChatRole.User, "next")
+        });
+        var panel = Open(session);
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"), H(ChatRole.Assistant, "look"), H(ChatRole.System, "· exec  ls")
+        }, olderEndsInOpenTextStep: true);
+        FlushRender();
+
+        var rows = RowTexts(panel);
+
+        Assert.Equal(session.History.Count, rows.Length);
+        Assert.Equal(4, rows.Length);
+        Assert.Contains("next", rows[^1]);
+    }
+
     // Control: nothing dropped, so no row is removed and rows still match.
     [AvaloniaFact]
     public void ScrollingBackWhenTheOlderPageEndsInAUserTurnRemovesNoRow()

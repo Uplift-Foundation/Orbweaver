@@ -21,6 +21,10 @@ namespace Orbweaver.UnitTests;
 // untouched, and a page split at any index reads the same as the whole.
 public class OpenClawRealPageTests
 {
+    // Built from the captured message shapes, not captured itself; carries its
+    // own expected drop and keep sets in a "cases" field. The other seven are real.
+    private const string SyntheticPage = "page-synthetic-shapes.json";
+
     private readonly ITestOutputHelper _out;
 
     public OpenClawRealPageTests(ITestOutputHelper output) => _out = output;
@@ -179,7 +183,7 @@ public class OpenClawRealPageTests
         var perPage = new Dictionary<string, int>();
 
         foreach (var file in Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "Fixtures", "pages"), "*.json")
-                     .Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal))
+                     .Select(Path.GetFileName).Where(f => f != SyntheticPage).OrderBy(f => f, StringComparer.Ordinal))
         {
             var all = Messages(file!);
             var drop = OpenClawHistoryShape.RollupsToDrop(Load(file!));
@@ -207,5 +211,27 @@ public class OpenClawRealPageTests
         Assert.Equal(3, perPage["page-main-plus-more.json"]);
         Assert.Equal(1, perPage["page-direct-plus-more.json"]);
         Assert.Equal(1, perPage["page-main-equal-join-and-plus-more.json"]);
+    }
+
+    // ---- the synthetic page: one message per shape ------------------------
+
+    // equal join, whitespace-only difference, last step plus more, unrelated
+    // text, the same text twice (rollup twice / once), a step once with the
+    // rollup twice, a named-path rollup (equal and plus-more), a delivered
+    // attachment, an attachment_error rollup plus more, an inline-image rollup,
+    // a back-to-back tool run then a lone rollup, and steps still in flight.
+    [Fact]
+    public void TheSyntheticPageDropsExactlyTheRollupsItsCasesSay()
+    {
+        var doc = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "pages", SyntheticPage)));
+        var cases = doc.RootElement.GetProperty("cases");
+        var wantDrop = cases.GetProperty("drop").EnumerateArray().Select(e => e.GetInt32()).OrderBy(i => i).ToArray();
+        var wantKeep = cases.GetProperty("keep").EnumerateArray().Select(e => e.GetInt32()).ToArray();
+
+        var drop = OpenClawHistoryShape.RollupsToDrop(Load(SyntheticPage));
+
+        Assert.Equal(wantDrop, drop.OrderBy(i => i).ToArray());
+        Assert.DoesNotContain(wantKeep, drop.Contains);
     }
 }

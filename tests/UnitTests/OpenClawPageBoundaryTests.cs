@@ -210,6 +210,28 @@ public class OpenClawPageBoundaryTests
         Assert.Equal(-1, session.DroppedRollupIndex);
     }
 
+    // A rollup that yields a picture turn ahead of its text turn: both are the
+    // rollup, both are removed, exactly as the full-page parse drops the whole
+    // message (CB-270 review).
+    [Fact]
+    public void AHeadRollupsPictureAndTextTurnsAreBothDropped()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.Assistant, "", fromRollup: true), H(ChatRole.Assistant, "look", fromRollup: true), H(ChatRole.User, "next")
+        });
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"), H(ChatRole.Assistant, "look"), H(ChatRole.System, "· exec")
+        }, olderEndsInOpenTextStep: true);
+
+        Assert.Equal(new[] { "go", "look", "· exec", "next" }, session.History.Select(t => t.Text).ToArray());
+        Assert.Equal(0, session.DroppedRollupIndex);
+        Assert.Equal(2, session.DroppedRollupCount);
+    }
+
     [Fact]
     public void ANonRollupHeadIsKeptEvenWhenTheOlderPageEndsOpen()
     {
