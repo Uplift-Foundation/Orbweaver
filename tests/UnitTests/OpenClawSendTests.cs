@@ -228,6 +228,28 @@ public class OpenClawSendTests : IDisposable
         Assert.Equal("not connected to the gateway", ex.Message);
     }
 
+    // QA's addition to (d), kept as its own case so (a)-(e) stay untouched: the
+    // chat.send that follows a refused mirror is today's payload, not merely a
+    // request of the right method.
+    [Fact]
+    public async Task TheMessageSentAfterARefusedMirrorIsTodaysPayload()
+    {
+        var (socket, gateway) = await ConnectedAsync(refuse: "send");
+        using (gateway)
+        {
+            var chat = Chat("agent:quill:discord:direct:2000000000000000001",
+                new OpenClawSessions.Delivery("discord", "user:2000000000000000001", "quillbot"));
+
+            await OpenClawSessions.SendAsync(chat, "hi", CancellationToken.None);
+
+            AssertParams(Sent(socket)[1],
+                ("sessionKey", "agent:quill:discord:direct:2000000000000000001"),
+                ("message", "hi"),
+                ("deliver", "true"),
+                ("idempotencyKey", "<guid>"));
+        }
+    }
+
     // --- native sessions (CB-270) ---
     //
     // Rows reach the policy the way they do in production: through Parse, which
