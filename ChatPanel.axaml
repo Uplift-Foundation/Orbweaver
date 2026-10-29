@@ -59,7 +59,7 @@
                  offered only while pinned. -->
             <Grid x:Name="HeaderRow" Grid.Row="0"
                   Background="Transparent"
-                  ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="10">
+                  ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="10">
                 <Grid x:Name="AvatarBox" Grid.Column="0" Width="68" Height="68"
                       VerticalAlignment="Center" Cursor="Hand"
                       Background="Transparent">
@@ -231,7 +231,19 @@
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                IsHitTestVisible="False"/>
                 </Grid>
-                <Grid x:Name="SpeakButton" Grid.Column="3" Width="24" Height="24"
+                <!-- Global mute (CB-298): the output switch, beside the output
+                     button it silences. Glyph, fill and tooltip are applied by
+                     ApplyMuted from SymbolMarks.MuteLook / MuteTip; the tooltip
+                     is set in code because it names whichever chord is
+                     really bound. -->
+                <Grid x:Name="MuteButton" Grid.Column="3" Width="24" Height="24"
+                      VerticalAlignment="Center" Cursor="Hand">
+                    <Ellipse x:Name="MuteFill" Fill="#E0202024" Stroke="#80FFFFFF" StrokeThickness="1.5"/>
+                    <TextBlock x:Name="MuteGlyph" Text="&#128266;" FontSize="11"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Grid>
+                <Grid x:Name="SpeakButton" Grid.Column="4" Width="24" Height="24"
                       VerticalAlignment="Center" Cursor="Hand">
                     <Ellipse x:Name="SpeakFill" Fill="#E0202024" Stroke="#80FFFFFF" StrokeThickness="1.5"/>
                     <TextBlock x:Name="SpeakGlyph" Text="&#128264;" FontSize="11"
@@ -246,7 +258,7 @@
                           HorizontalAlignment="Center" VerticalAlignment="Center"
                           IsHitTestVisible="False"/>
                 </Grid>
-                <Grid x:Name="CloseButton" Grid.Column="4" Width="24" Height="24"
+                <Grid x:Name="CloseButton" Grid.Column="5" Width="24" Height="24"
                       VerticalAlignment="Center" Cursor="Hand">
                     <Ellipse Fill="#E0202024" Stroke="#80FFFFFF" StrokeThickness="1.5"/>
                     <TextBlock Text="&#10005;" FontSize="10" Foreground="#DDFFFFFF"

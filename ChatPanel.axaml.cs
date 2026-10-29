@@ -340,6 +340,7 @@ namespace Orbweaver
             };
             MicButton.PointerPressed += (_, e) => { e.Handled = true; _owner?.ToggleRecording(); };
             SpeakButton.PointerPressed += (_, e) => { e.Handled = true; SpeakLatest(); };
+            MuteButton.PointerPressed += (_, e) => { e.Handled = true; AudioMute.Toggle(); };
 
             // Tunnel, not bubble. TextBox handles Return in a class handler that
             // runs before any instance handler on the same element, so a plain
@@ -476,7 +477,14 @@ namespace Orbweaver
             // stale entry is not a visible bug — it is Transient or PanelFor
             // handing out a panel whose window is gone, which shows up later
             // and somewhere else.
-            Closed += (_, _) => Panels.Remove(this);
+            Closed += (_, _) => { Panels.Remove(this); AudioMute.Changed -= ApplyMuted; };
+
+            // Every open panel mirrors the one global flag, so the tray, the
+            // hotkey and a click on any panel's button all leave every header
+            // saying the same thing. Unsubscribed beside Panels.Remove: a
+            // closed panel left on a static event is a leak that also keeps
+            // repainting a window that is gone.
+            AudioMute.Changed += ApplyMuted;
 
             ApplyPinAffordance();
 
@@ -878,6 +886,7 @@ namespace Orbweaver
             Input.Text = Drafts.GetValueOrDefault(session.SessionId, "");
             MicButton.IsVisible = OrbweaverSettings.VoiceInputEnabled;
             ApplySpeakState(TextToSpeech.State);
+            ApplyMuted(AudioMute.IsMuted);
 
             // The box stays enabled even when sending won't work, and says why
             // on itself instead. A disabled box can't be pasted into or drafted
@@ -2593,6 +2602,18 @@ namespace Orbweaver
             SpeakStopMark.IsVisible = mark is not null;
         }
 
+        private static readonly IBrush MuteActiveFill = new SolidColorBrush(Color.Parse("#E0A04040"));
+
+        // The mute button's whole look, from the one flag: glyph, a desaturated
+        // red fill while muted (readable beside the amber Preparing and blue
+        // Speaking fills), and a tooltip naming the chord that is really bound.
+        private void ApplyMuted(bool muted)
+        {
+            MuteGlyph.Text = SymbolMarks.MuteLook(muted);
+            MuteFill.Fill = muted ? MuteActiveFill : IdleFill;
+            ToolTip.SetTip(MuteButton, SymbolMarks.MuteTip(muted, HotkeyActions.Bound(HotkeyAction.ToggleMute)));
+        }
+
         private bool _loadingOlder;
 
         // Older messages, fetched when the transcript is scrolled to its top.
@@ -3114,6 +3135,7 @@ namespace Orbweaver
             // reads Transient on the very next line sees the truth even if the
             // platform defers the event.
             Panels.Remove(this);
+            AudioMute.Changed -= ApplyMuted;
             Close();
         }
 
