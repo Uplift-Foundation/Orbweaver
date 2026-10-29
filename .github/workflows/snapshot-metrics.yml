@@ -1,0 +1,87 @@
+name: Snapshot metrics
+
+# CB-296. GitHub keeps repository traffic for only 14 days and a release
+# asset's download_count is a running total, so a trend only exists if
+# somebody writes the numbers down. This does, daily, to CSV files on a
+# dedicated `metrics` branch (tools/snapshot-metrics.py has the row rules).
+#
+# Scheduled workflows run from the DEFAULT branch, which is still `main`, so
+# this does nothing until it reaches main in a release. Until then, run it
+# from the Actions tab (workflow_dispatch) against a branch that has it.
+#
+# Token: the traffic endpoints need push access to the repo. This reads the
+# METRICS_TOKEN secret if set and otherwise the job's own GITHUB_TOKEN, which
+# has contents: write below. Whether GITHUB_TOKEN alone is enough for the
+# traffic endpoints has NOT been confirmed here; the first run says so
+# (a 403 on /traffic/views fails the job with a message naming the secret).
+# Only this branch is pushed; nothing here touches main or develop.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot-metrics
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.METRICS_TOKEN || github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Check out the tooling
+        uses: actions/checkout@v4
+
+      - name: Fetch numbers
+        run: |
+          set -euo pipefail
+          mkdir -p raw
+          fetch() {
+            gh api "$2" > "raw/$1.json" || {
+              echo "::error::GET $2 failed. Traffic endpoints need push access: set a METRICS_TOKEN repository secret (a token with that access) if GITHUB_TOKEN is refused."
+              exit 1
+            }
+          }
+          fetch repo "repos/$REPO"
+          fetch views "repos/$REPO/traffic/views"
+          fetch clones "repos/$REPO/traffic/clones"
+          fetch referrers "repos/$REPO/traffic/popular/referrers"
+          fetch paths "repos/$REPO/traffic/popular/paths"
+          gh api --paginate "repos/$REPO/releases?per_page=100" | jq -s 'add' > raw/releases.json
+
+      - name: Get the metrics branch
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin metrics >/dev/null 2>&1; then
+            git fetch origin metrics
+            git worktree add metrics origin/metrics
+          else
+            git worktree add --orphan -b metrics metrics
+          fi
+
+      - name: Fold in today's numbers
+        run: |
+          python3 tools/snapshot-metrics.py --out metrics --date "$(date -u +%F)" \
+            --repo raw/repo.json --views raw/views.json --clones raw/clones.json \
+            --referrers raw/referrers.json --paths raw/paths.json \
+            --releases raw/releases.json
+
+      - name: Commit and push the metrics branch
+        working-directory: metrics
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No change."
+            exit 0
+          fi
+          git commit -m "Metrics snapshot $(date -u +%F)"
+          git push origin HEAD:metrics

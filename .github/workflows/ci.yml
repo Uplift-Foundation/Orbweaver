@@ -120,6 +120,11 @@ jobs:
       - name: Unit tests (build-macos-app.sh install tail)
         run: python tools/test-build-macos-app.py
 
+      # CB-296: snapshot-metrics.py's upsert rules (no duplicate rows on a re-run
+      # or an overlapping 14-day traffic window). Pure stdlib, both legs.
+      - name: Unit tests (snapshot-metrics.py)
+        run: python tools/test-snapshot-metrics.py
+
       # Everything added after those three is xUnit, in tests/Tests.sln. Run
       # as separate `dotnet test` invocations rather than one pass over the
       # whole solution, so a red run in one attributes to a suite by its own
