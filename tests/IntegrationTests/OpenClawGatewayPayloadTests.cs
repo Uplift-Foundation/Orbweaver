@@ -1125,4 +1125,54 @@ public class OpenClawGatewayPayloadTests
         Assert.Equal(1042813, clip.SizeBytes);
         Assert.Equal("0:13", clip.Duration);
     }
+
+    // CB-270: the send policy reads NativeOf, so every conversation on a chat
+    // surface in a real-shaped sessions.list must come out as not native —
+    // otherwise its reply would stop being delivered to its channel. The
+    // fixture's channel rows carry no classification at all, which is the
+    // fail-safe case: absent means today's behaviour.
+    [Fact]
+    public void EveryChannelRowInTheListIsClassifiedAsNotNative()
+    {
+        Parse(withinMinutes: 60);
+
+        var members = OpenClawSessions.MembersOfRoom(Room);
+        Assert.Equal(9, members.Count);
+        Assert.All(members, key =>
+            Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf(key)));
+    }
+
+    // The control for the test above: the same envelope with a native main, a
+    // dashboard session and the two surface shapes that look closest to them
+    // (a WhatsApp main, a Discord DM) does classify the first two as native and
+    // the others not, so the previous result is not just "nothing is ever
+    // native". Invented values on the structure measured in CB-270.
+    [Fact]
+    public void OnlyTheNativeRowsOfAMixedPageAreClassifiedAsNative()
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+
+        var at = new DateTimeOffset(Now.AddSeconds(-5)).ToUnixTimeMilliseconds();
+        OpenClawSessions.Parse(Json($$"""
+        {"sessions":[
+          {"key":"agent:alpha:main","classification":"main","isMain":true,"lastActivityAt":{{at}}},
+          {"key":"agent:alpha:dashboard:11111111-2222-3333-4444-555555555555","classification":"dashboard","lastActivityAt":{{at}}},
+          {"key":"agent:beta:main","classification":"main","isMain":true,"chatType":"direct",
+           "origin":{"provider":"whatsapp","to":"+15550000001"},
+           "deliveryContext":{"channel":"whatsapp","to":"+15550000001"},"lastChannel":"whatsapp","lastActivityAt":{{at}}},
+          {"key":"agent:alpha:discord:direct:1900000000000000001","classification":"direct","chatType":"direct",
+           "origin":{"provider":"discord"},"deliveryContext":{"channel":"discord","to":"user:1900000000000000001"},
+           "lastChannel":"discord","lastActivityAt":{{at}}}
+        ]}
+        """), Now);
+
+        Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:alpha:main"));
+        Assert.Equal(OpenClawNativeKind.Dashboard,
+            OpenClawSessions.NativeOf("agent:alpha:dashboard:11111111-2222-3333-4444-555555555555"));
+        Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf("agent:beta:main"));
+        Assert.Equal(OpenClawNativeKind.None,
+            OpenClawSessions.NativeOf("agent:alpha:discord:direct:1900000000000000001"));
+    }
 }
+
