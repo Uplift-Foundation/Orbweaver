@@ -618,6 +618,26 @@ namespace Orbweaver
                 TurnsRemoved?.Invoke(from, count);
             }
 
+            // On the normal end path Complete() has already let go of the bubble
+            // in flight and the tool lines awaiting results. On the idle bound a
+            // doorbell reconciles while the stream may still be going, so they
+            // are let go of here: a delta would otherwise update a turn with no
+            // row and a result would mark one, and the reply would be invisible
+            // until the real end. _runText and _closed are left as they are, since
+            // the step in flight is not persisted until it ends: the page cannot
+            // hold it, and the next delta opens a fresh bubble from what follows
+            // _closed.
+            if (_streaming is not null && !_history.Contains(_streaming))
+            {
+                _streaming = null;
+                _streamingKind = null;
+            }
+
+            foreach (var id in _tools.Where(t => !_history.Contains(t.Value)).Select(t => t.Key).ToList())
+            {
+                _tools.Remove(id);
+            }
+
             AppendFrom(page, at + 1);
             foreach (var turn in unconfirmed) Add(turn);
         }

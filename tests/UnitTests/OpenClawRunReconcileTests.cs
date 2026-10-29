@@ -344,4 +344,49 @@ public class OpenClawRunReconcileTests : IDisposable
 
         Assert.Equal(Full().Select(t => t.Text).Concat(new[] { "ok", "ok" }), Texts(session));
     }
+
+    // --- a reconciliation mid-run, on the idle bound ---
+    //
+    // Once the run record calls a run quiet, a doorbell reconciles it while its
+    // stream may still be going. The bubble in flight is then removed from the
+    // transcript, and the session must let go of it: otherwise every later delta
+    // updates a turn with no row and the reply is invisible until the real end.
+
+    private static readonly TimeSpan LongAgo = OpenClawRunSignal.RunIdle + TimeSpan.FromSeconds(30);
+
+    [Fact]
+    public void TextStreamedAfterAMidRunReconciliationOpensAFreshRow()
+    {
+        var (step1, _) = Steps();
+        var session = Session();
+        session.SetHistory(Page((ChatRole.User, "go")));
+        var events = Run().Where(e => e.Name is "agent").ToList();
+        Feed(session, events.Take(12), DateTime.UtcNow - LongAgo);
+        session.ApplyFetchedTail(Page((ChatRole.User, "go"), (ChatRole.Assistant, step1)));
+        var added = new List<ChatTurn>();
+        session.TurnAdded += added.Add;
+
+        session.OnAgentEvent("agent", Json("""{"runId":"run-tools-0001","stream":"assistant","data":{"delta":" and more words"}}"""));
+
+        var row = Assert.Single(added);
+        Assert.Contains("and more words", row.Text);
+        Assert.Contains(row, session.History);
+    }
+
+    [Fact]
+    public void AToolResultAfterAMidRunReconciliationLandsOnARowThatExists()
+    {
+        var session = Session();
+        session.SetHistory(Page((ChatRole.User, "go")));
+        Feed(session, new[] { ("session.tool", Json(
+            """{"runId":"run-tools-0001","sessionKey":"k","data":{"phase":"start","name":"Bash","toolCallId":"t1"}}""")) },
+            DateTime.UtcNow - LongAgo);
+        session.ApplyFetchedTail(Page((ChatRole.User, "go"), (ChatRole.System, "· Bash")));
+
+        session.OnAgentEvent("session.tool", Json(
+            """{"data":{"phase":"result","name":"Bash","toolCallId":"t1","isError":true}}"""));
+
+        Assert.Contains(session.History, t => t.IsError);
+    }
 }
+
