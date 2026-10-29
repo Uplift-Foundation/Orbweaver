@@ -695,6 +695,10 @@ namespace Orbweaver
             if (_session is IRemoteChatReadOnly wasReadOnly) wasReadOnly.ReadOnlyChanged -= OnReadOnlyChanged;
             if (_session is IRemoteChatInterrupt wasInterruptible) wasInterruptible.InterruptChanged -= OnInterruptChanged;
             if (_session is IRemoteChatRunOptions wasRunnable) wasRunnable.RunOptionsChanged -= OnRunOptionsChanged;
+
+            // The flyout belongs to the conversation it was built for.
+            _runFlyout?.Hide();
+            _runFlyout = null;
             if (_session is IRemoteChatPeerInbound wasInbound) wasInbound.InboundChanged -= OnInboundChanged;
 
             // Nobody is looking any more, so its live loop stops.
@@ -1089,14 +1093,16 @@ namespace Orbweaver
                 RunModelBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
                 if (options.CanResetToDefault) RunModelBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.DefaultLabel, Tag = null });
                 foreach (var m in options.Models) RunModelBox.Items.Add(new ComboBoxItem { Content = m.Label, Tag = m.Id });
-                RunModelBox.SelectedIndex = IndexOfTag(RunModelBox, options.ModelId);
                 RunModelBox.IsEnabled = !options.Locked;
                 if (options.Locked) ToolTip.SetTip(RunModelBox, OpenClawRunText.LockedModelTip);
+                // The handler before the selection, so setting the selection from
+                // the options is held off by _runApplying like any other.
                 RunModelBox.SelectionChanged += async (_, _) =>
                 {
                     if (_runApplying || RunModelBox.SelectedItem is not ComboBoxItem item) return;
                     await ChangeAsync(RunModelBox, () => run.SetModelAsync((string?)item.Tag));
                 };
+                RunModelBox.SelectedIndex = IndexOfTag(RunModelBox, options.ModelId);
                 panel.Children.Add(Labelled(OpenClawRunText.ModelLabel, RunModelBox));
 
                 // Thinking: the model's own levels, id sent and label shown.
@@ -1113,12 +1119,12 @@ namespace Orbweaver
                     }
 
                     foreach (var t in options.ThinkingChoices) RunThinkingBox.Items.Add(new ComboBoxItem { Content = t.Label, Tag = t.Id });
-                    RunThinkingBox.SelectedIndex = IndexOfTag(RunThinkingBox, options.ThinkingId);
                     RunThinkingBox.SelectionChanged += async (_, _) =>
                     {
                         if (_runApplying || RunThinkingBox.SelectedItem is not ComboBoxItem item) return;
                         await ChangeAsync(RunThinkingBox, () => run.SetThinkingAsync((string?)item.Tag));
                     };
+                    RunThinkingBox.SelectedIndex = IndexOfTag(RunThinkingBox, options.ThinkingId);
                     panel.Children.Add(Labelled(OpenClawRunText.ThinkingLabel, RunThinkingBox));
                 }
 
@@ -1150,12 +1156,12 @@ namespace Orbweaver
                     RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(minutes), Tag = minutes });
                 }
 
-                RunLimitBox.SelectedIndex = IndexOfTag(RunLimitBox, run.TimeoutMinutes);
                 RunLimitBox.SelectionChanged += (_, _) =>
                 {
                     if (_runApplying || RunLimitBox.SelectedItem is not ComboBoxItem item) return;
                     run.TimeoutMinutes = (int?)item.Tag;
                 };
+                RunLimitBox.SelectedIndex = IndexOfTag(RunLimitBox, run.TimeoutMinutes);
                 panel.Children.Add(Labelled(OpenClawRunText.TimeLimitLabel, RunLimitBox));
 
                 RunStatus = new TextBlock
@@ -1175,9 +1181,10 @@ namespace Orbweaver
 
         private static int IndexOfTag(ComboBox box, object? tag)
         {
+            // Every item is one this panel added, so each is a ComboBoxItem.
             for (var i = 0; i < box.Items.Count; i++)
             {
-                if (box.Items[i] is ComboBoxItem item && Equals(item.Tag, tag)) return i;
+                if (Equals(((ComboBoxItem)box.Items[i]!).Tag, tag)) return i;
             }
 
             return -1;
@@ -1197,33 +1204,30 @@ namespace Orbweaver
         // chip and rebuilds the flyout from what really happened.
         private async Task ChangeAsync(Control control, Func<Task<string?>> change)
         {
+            // Always built by the time a control can be changed: the handlers that
+            // call this belong to the flyout that builds it.
+            var status = RunStatus!;
+
             control.IsEnabled = false;
-            var status = RunStatus;
-            if (status is not null) status.IsVisible = false;
+            status.IsVisible = false;
 
             var failure = await change();
 
             control.IsEnabled = true;
 
-            // A refusal changed nothing, so put the control back to what is true.
-            if (failure is not null)
-            {
-                if (status is not null)
-                {
-                    status.Text = failure;
-                    status.IsVisible = true;
-                }
+            if (failure is null) return;
 
-                if (_session is IRemoteChatRunOptions run && run.RunOptions is { } options && _runFlyout is not null)
-                {
-                    var keep = (status?.Text, true);
-                    _runFlyout.Content = BuildRunFlyout(run, options);
-                    if (RunStatus is not null)
-                    {
-                        RunStatus.Text = keep.Text;
-                        RunStatus.IsVisible = true;
-                    }
-                }
+            status.Text = failure;
+            status.IsVisible = true;
+
+            // A refusal changed nothing, so put the controls back to what is true.
+            // The panel may have been rebound, or the options gone, while the
+            // request was out, and then there is nothing to put back.
+            if (_session is IRemoteChatRunOptions run && run.RunOptions is { } options && _runFlyout is not null)
+            {
+                _runFlyout.Content = BuildRunFlyout(run, options);
+                RunStatus!.Text = failure;
+                RunStatus.IsVisible = true;
             }
         }
 

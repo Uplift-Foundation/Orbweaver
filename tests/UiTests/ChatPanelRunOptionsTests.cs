@@ -458,5 +458,103 @@ public class ChatPanelRunOptionsTests : IDisposable
 
         Assert.True(await PastePictureAsync(Open(session)));
     }
+
+    // --- the chip's own click, and what the flyout does when the ground moves ---
+
+    [AvaloniaFact]
+    public void ClickingTheChipOpensTheFlyout()
+    {
+        var panel = Open(Fake(Options()));
+        var before = panel.RunModelBox;
+
+        Chip(panel).RaiseEvent(new Avalonia.Input.PointerPressedEventArgs(
+            Chip(panel), new Avalonia.Input.Pointer(1, Avalonia.Input.PointerType.Mouse, true), Chip(panel), default, 0,
+            new Avalonia.Input.PointerPointProperties(Avalonia.Input.RawInputModifiers.LeftMouseButton,
+                Avalonia.Input.PointerUpdateKind.LeftButtonPressed),
+            Avalonia.Input.KeyModifiers.None));
+
+        // Built from the options, so a new box stands where there was none or a
+        // different one.
+        Assert.NotNull(panel.RunModelBox);
+        Assert.NotSame(before, panel.RunModelBox);
+    }
+
+    [AvaloniaFact]
+    public void OpeningTheFlyoutOnASessionWithNoRunOptionsInterfaceDoesNothing()
+    {
+        var plain = new PlainSession();
+        _toClean.Add(plain.SessionId);
+        ChatPanel.OpenFor(NewOrb(), plain);
+        FlushRender();
+        var panel = ChatPanelTestAccess.Instance!;
+        var before = panel.RunModelBox;
+
+        panel.OpenRunOptions();
+
+        Assert.Same(before, panel.RunModelBox);
+    }
+
+    // No selection is no choice: clearing a box asks for nothing.
+    [AvaloniaFact]
+    public void ClearingASelectionAsksForNothing()
+    {
+        var session = Fake(Options());
+        session.TimeoutMinutes = 10;
+        var panel = Open(session);
+        panel.OpenRunOptions();
+
+        panel.RunModelBox!.SelectedIndex = -1;
+        panel.RunThinkingBox!.SelectedIndex = -1;
+        panel.RunLimitBox!.SelectedIndex = -1;
+
+        Assert.Empty(session.ModelRequests);
+        Assert.Empty(session.ThinkingRequests);
+        Assert.Equal(10, session.TimeoutMinutes);
+    }
+
+    // A refusal can come back after the panel has moved on. Each of these leaves
+    // nothing to put back and must not fail.
+    private async Task RefusalAfterAsync(Action<FakeChatSession> moveOn)
+    {
+        var gated = Fake(Options());
+        gated.RunChangeGate = new TaskCompletionSource<string?>();
+        var panel = Open(gated);
+        panel.OpenRunOptions();
+
+        panel.RunModelBox!.SelectedIndex = 2;
+        await SettleAsync(() => gated.ModelRequests.Count > 0);
+
+        moveOn(gated);
+        gated.RunChangeGate.SetResult("Couldn't change the model: nope");
+        await SettleAsync(() => false);
+    }
+
+    [AvaloniaFact]
+    public async Task ARefusalAfterThePanelWasReboundToASessionWithoutOptionsIsHarmless() =>
+        await RefusalAfterAsync(_ =>
+        {
+            var plain = new PlainSession();
+            _toClean.Add(plain.SessionId);
+            ChatPanel.OpenFor(NewOrb(), plain);
+            FlushRender();
+        });
+
+    [AvaloniaFact]
+    public async Task ARefusalAfterThePanelWasReboundToASessionWhoseOptionsWentIsHarmless() =>
+        await RefusalAfterAsync(_ =>
+        {
+            ChatPanel.OpenFor(NewOrb(), Fake(null));
+            FlushRender();
+        });
+
+    // Rebound to one with options but whose flyout was never opened: there is no
+    // flyout to refresh.
+    [AvaloniaFact]
+    public async Task ARefusalAfterThePanelWasReboundToAClosedFlyoutIsHarmless() =>
+        await RefusalAfterAsync(_ =>
+        {
+            ChatPanel.OpenFor(NewOrb(), Fake(Options()));
+            FlushRender();
+        });
 }
 

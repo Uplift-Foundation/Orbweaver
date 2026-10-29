@@ -95,10 +95,14 @@ internal sealed class FakeChatSession :
     public string? ReplyToRunChange { get; set; }
     public int? TimeoutMinutes { get; set; }
 
+    // When set, a change waits for it before answering, so a test can rebind the
+    // panel or take the options away while the request is out.
+    public TaskCompletionSource<string?>? RunChangeGate { get; set; }
+
     public Task<string?> SetModelAsync(string? id)
     {
         ModelRequests.Add(id);
-        return Task.FromResult(ReplyToRunChange);
+        return RunChangeGate?.Task ?? Task.FromResult(ReplyToRunChange);
     }
 
     public Task<string?> SetThinkingAsync(string? id)

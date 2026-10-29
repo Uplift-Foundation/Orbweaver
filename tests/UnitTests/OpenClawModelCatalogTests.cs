@@ -66,6 +66,10 @@ public class OpenClawModelCatalogTests
             Parsed().Single(m => m.Id == "local-model").ThinkingLevels.Select(o => o.Id));
 
     [Fact]
+    public void TheProviderIsKept() =>
+        Assert.Equal("openrouter", Parsed().Single(m => m.Id == "qwen/qwen3.6-plus").Provider);
+
+    [Fact]
     public void TheNameFallsBackToTheId() =>
         Assert.Equal("local-model", Parsed().Single(m => m.Id == "local-model").Name);
 

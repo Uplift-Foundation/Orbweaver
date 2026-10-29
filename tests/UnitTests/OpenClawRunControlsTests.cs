@@ -939,5 +939,36 @@ public class OpenClawRunControlsTests : IDisposable
 
         Assert.Contains(chat.History, t => t.Text == "later delivery");
     }
+
+    // The snapshot the poll takes before it parses: what the run states were.
+    [Fact]
+    public void TheRunStatesSnapshotIsACopyOfWhatParseKept()
+    {
+        ParseRows();
+
+        var snapshot = OpenClawSessions.RunStatesSnapshot();
+
+        Assert.Equal("claude-opus-4-6", snapshot[NativeKey].Model);
+        Assert.Equal(2, snapshot.Count);
+    }
+
+    // Nobody listening is fine.
+    [Fact]
+    public void ARunOptionsChangeWithNoSubscriberIsHarmless() => Chat(NativeKey).OnRunOptionsChanged();
+
+    // A default the model's own list does not carry is shown as its id.
+    [Fact]
+    public async Task ADefaultThinkingIdMissingFromTheLevelsIsShownAsItself()
+    {
+        await ConnectedAsync();
+        var now = new DateTimeOffset(Now.AddSeconds(-5)).ToUnixTimeMilliseconds();
+        OpenClawSessions.SetSnapshotForTests(OpenClawSessions.Parse(Json(
+            "{\"sessions\":[{\"key\":\"" + NativeKey + "\",\"sessionId\":\"sid-n\",\"classification\":\"dashboard\",\"lastActivityAt\":" + now
+            + ",\"model\":\"claude-opus-4-6\",\"thinkingDefault\":\"xhigh\",\"thinkingLevels\":[{\"id\":\"off\",\"label\":\"off\"}]}]}"),
+            Now).Sessions);
+        OpenClawSessions.SetModelsForTests(Catalogue());
+
+        Assert.Equal("xhigh", Chat(NativeKey).RunOptions!.ThinkingDefaultLabel);
+    }
 }
 

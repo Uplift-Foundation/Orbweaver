@@ -153,4 +153,13 @@ public class OpenClawRunStateTests
     {
         Assert.Empty(OpenClawRunState.LevelsOf(Json("[]"), "thinkingLevels"));
     }
+
+    // The flag reader is safe on anything it is handed.
+    [Fact]
+    public void AFlagOnANonObjectIsNull()
+    {
+        Assert.Null(OpenClawRunState.Flag(Json("[]"), "fastMode"));
+        Assert.Null(OpenClawRunState.Flag(Json("7"), "fastMode"));
+    }
 }
+

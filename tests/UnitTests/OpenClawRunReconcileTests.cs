@@ -600,5 +600,26 @@ public class OpenClawRunReconcileTests : IDisposable
         Assert.Equal(1, texts.Count(t => t == "typed mid-run"));
         Assert.DoesNotContain(ToolLine(), texts);
     }
+
+    // The row the run began at can be gone by the time it ends: the transcript's
+    // cap drops the oldest rows once it is full, and with no page installed there
+    // is nothing else to mark where the run began. Every user turn is then a
+    // candidate, none is on the page, and the append is all that is left.
+    [Fact]
+    public async Task ARunWhoseFirstRowWasTrimmedAwayFallsBackToAppending()
+    {
+        var session = Session();
+        Feed(session, Run().Where(e => e.Name is "agent").Take(3));
+
+        // More than the cap's worth of rows added after it, so it is the first to go.
+        for (var n = 0; n < 260; n++) await TypeAsync(session, "filler " + n);
+        Feed(session, new[] { ("chat", Json("""{"state":"final"}""")) });
+        var removed = 0;
+        session.TurnsRemoved += (_, c) => removed += c;
+
+        session.ApplyFetchedTail(Page((ChatRole.User, "elsewhere"), (ChatRole.Assistant, "a reply")));
+
+        Assert.Equal(0, removed);
+    }
 }
 
