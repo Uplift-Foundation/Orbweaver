@@ -591,5 +591,35 @@ public class OpenClawLiveRunTests : IDisposable
 
         Assert.Equal(new[] { "go", step1, ToolLine(), step3 }, Texts(session));
     }
+
+    // --- the two ?.Invoke arms that had only ever run one way ---
+
+    // Marking a line as failed with nobody listening for updates still marks it.
+    [Fact]
+    public void AnErrorResultMarksTheLineWithNoUpdateSubscriber()
+    {
+        var session = Session();
+        session.OnAgentEvent("session.tool", Tool("start"));
+
+        session.OnAgentEvent("session.tool", Tool("result", extra: "\"isError\":true"));
+
+        Assert.True(session.History[0].IsError);
+    }
+
+    // A tool starting closes the bubble in flight and tells whoever is listening.
+    [Fact]
+    public void AToolStartClosingTheBubbleRaisesTurnUpdatedForIt()
+    {
+        var session = Session();
+        session.OnAgentEvent("agent", Snapshot("Step one"));
+        var updated = new List<ChatTurn>();
+        session.TurnUpdated += updated.Add;
+
+        session.OnAgentEvent("session.tool", Tool("start"));
+
+        var closed = Assert.Single(updated);
+        Assert.Equal("Step one", closed.Text);
+        Assert.True(closed.IsComplete);
+    }
 }
 
