@@ -445,7 +445,7 @@ namespace Orbweaver
         //
         // The three PNGs are single-colour alpha masks and always have been:
         // make-icons.py's tray_shader returns one constant RGB and varies only
-        // alpha (opaque in the ring, 0.30 in the core, nothing outside), so every
+        // alpha (opaque on the orb, 0.7 on the web threads, nothing outside), so every
         // pixel with any alpha in tray-idle.png carries exactly #5B7A94.
         // Substituting the RGB and keeping the alpha therefore reproduces the
         // icon *exactly*, down to the supersampled rim — which redrawing the
