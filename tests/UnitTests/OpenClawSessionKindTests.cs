@@ -41,6 +41,25 @@ namespace Orbweaver.Tests
             Assert.Equal(SessionKind.Main, OpenClawSessionKind.From(key, chatType));
         }
 
+        // CB-270: a New Chat's session is the agent's own, reached through no
+        // surface, so it is Main too. The key is structural, so a chatType on the
+        // row (the gateway sends "direct" on these) must not override it.
+        [Theory]
+        [InlineData("agent:main:dashboard:9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b", null)]
+        [InlineData("agent:alexis:dashboard:9f1c2a3b", "direct")]
+        [InlineData("agent:alexis:DASHBOARD:9f1c2a3b", "channel")]
+        public void ADashboardKeyIsMainWhateverTheChatTypeSays(string key, string? chatType)
+        {
+            Assert.Equal(SessionKind.Main, OpenClawSessionKind.From(key, chatType));
+        }
+
+        // A dashboard session is not a room member, whatever else it carries.
+        [Fact]
+        public void ADashboardKeyBelongsToNoRoom()
+        {
+            Assert.Null(OpenClawSessionKind.RoomOf("agent:main:dashboard:9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b"));
+        }
+
         // --- From: chatType decides where the key is uninformative ---
 
         [Theory]

@@ -88,6 +88,14 @@ namespace Orbweaver
                 // TUI rather than any chat surface, so it is its own kind rather
                 // than a direct message.
                 if (Is(parts[2], "main")) return SessionKind.Main;
+
+                // CB-270: a New Chat's session, "agent:<id>:dashboard:<uuid>", is
+                // the same thing by the same description — the agent's own session,
+                // reached through no chat surface. Structural, so a chatType on the
+                // row cannot turn it into a direct message. Nothing visible changes:
+                // Main and Unknown both wear no badge and both cluster as Chats.
+                // What changes is that the kind is now true.
+                if (Is(parts[2], "dashboard")) return SessionKind.Main;
             }
 
             // The key's fourth segment carries the same word when origin is

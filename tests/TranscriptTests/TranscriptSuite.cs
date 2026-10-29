@@ -618,6 +618,10 @@ namespace Orbweaver.Tests
             Check("an agent's own session is Main",
                 Kind("agent:alexis:main") == SessionKind.Main);
 
+            Check("a dashboard session is Main",
+                Kind("agent:main:dashboard:9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b") == SessionKind.Main
+                && Kind("agent:main:dashboard:9f1c2a3b", "direct") == SessionKind.Main);
+
             Check("a DM is Direct",
                 Kind("agent:main:discord:direct:200000000000000001") == SessionKind.Direct);
 
