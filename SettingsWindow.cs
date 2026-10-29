@@ -1860,8 +1860,9 @@ namespace Orbweaver
                 Row("Show OpenClaw agents (experimental)",
                     Switch(OrbweaverSettings.OpenClawEnabled, OnOpenClawToggled),
                     "Shows an orb for each recently active session on an OpenClaw gateway, "
-                    + $"alongside your Claude Code ones. Read-only: {Brand.DisplayName} can see what "
-                    + "your agents are doing, and cannot ask them to do anything.")
+                    + $"alongside your Claude Code ones. Read-only unless \"Allow replying to agents\" "
+                    + $"below is on: {Brand.DisplayName} can see what your agents are doing, and "
+                    + "can only ask them to do something once you allow it.")
             };
 
             if (!OrbweaverSettings.OpenClawEnabled) return rows.ToArray();
