@@ -1046,7 +1046,9 @@ namespace Orbweaver
             }
 
             RunOptionsChipText.Text = options.ChipText;
-            ToolTip.SetTip(RunOptionsChip, OpenClawRunText.ChipTip);
+            // The whole text in the tip as well, since a long model name can be cut
+            // by the column's width.
+            ToolTip.SetTip(RunOptionsChip, options.ChipText + "\n" + OpenClawRunText.ChipTip);
 
             if (_runFlyout is not null) _runFlyout.Content = BuildRunFlyout((IRemoteChatRunOptions)session!, options);
         }
@@ -1064,7 +1066,9 @@ namespace Orbweaver
         internal TextBlock? RunStatus { get; private set; }
         private bool _runApplying;
 
-        private void RunOptionsChip_PointerPressed(object? sender, PointerPressedEventArgs e)
+        private void RunOptionsChip_PointerPressed(object? sender, PointerPressedEventArgs e) => OpenRunOptions();
+
+        internal void OpenRunOptions()
         {
             if (_session is not IRemoteChatRunOptions run || run.RunOptions is not { } options) return;
 
@@ -1073,7 +1077,7 @@ namespace Orbweaver
             _runFlyout.ShowAt(RunOptionsChip);
         }
 
-        private Control BuildRunFlyout(IRemoteChatRunOptions run, RemoteRunOptions options)
+        internal Control BuildRunFlyout(IRemoteChatRunOptions run, RemoteRunOptions options)
         {
             _runApplying = true;
             try

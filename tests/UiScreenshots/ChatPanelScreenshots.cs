@@ -271,6 +271,60 @@ public class ChatPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-tool-lines.png");
     }
 
+    // CB-270 Stage 4: the run controls of a native conversation. The chip in the
+    // header says what it is running on; the flyout, drawn here in a window of
+    // its own because a popup is not part of the panel's visual tree, is what a
+    // click opens. The locked variant is a model the gateway will not let be
+    // changed, with thinking and fast still open.
+    private static RemoteRunOptions RunOptions(bool locked = false) => new(
+        "claude-opus-4-6",
+        new[] { new RemoteRunChoice("claude-opus-4-6", "Claude Opus 4.6"), new RemoteRunChoice("claude-haiku-4-5", "Claude Haiku 4.5") },
+        "high", "adaptive",
+        new[] { new RemoteRunChoice("off", "off"), new RemoteRunChoice("adaptive", "adaptive"), new RemoteRunChoice("high", "high") },
+        true, true, locked, true,
+        "Claude Opus 4.6 · high · fast");
+
+    [AvaloniaFact]
+    public void ANativeChatsHeaderShowsTheRunControlsChip()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Summarise the open tickets." },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "Three are open; two are waiting on review." },
+        }, displayName: "main");
+        fake.RunOptions = RunOptions();
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, "chat-panel-run-chip.png");
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false, "chat-panel-run-flyout.png")]
+    [InlineData(true, "chat-panel-run-flyout-locked.png")]
+    public void TheRunControlsFlyout(bool locked, string name)
+    {
+        var fake = NewFake(displayName: "main");
+        fake.RunOptions = RunOptions(locked);
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+
+        var content = ChatPanelTestAccess.Instance!.BuildRunFlyout(fake, fake.RunOptions);
+        var window = new Window
+        {
+            Width = 300,
+            SizeToContent = SizeToContent.Height,
+            Content = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#FF2B2B30")),
+                Padding = new Thickness(12),
+                Child = content
+            }
+        };
+
+        ScreenshotHelper.Capture(window, name);
+    }
+
     // A session Claude Desktop hosts (CB-265): the transcript reads like any
     // other, and where the composer would be there is a sentence saying how to
     // send from here (CB-266: turn on Remote Control for the chat). A real

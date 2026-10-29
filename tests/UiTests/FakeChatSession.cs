@@ -16,7 +16,8 @@ namespace Orbweaver.Tests;
 internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatImages, IRemoteChatSlashCommands,
     IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatFetchWait, IRemoteChatRoom,
-    IRemoteChatReadOnly, IRemoteChatInterrupt, IRemoteChatPeerInbound, IRemoteChatGatewayKey
+    IRemoteChatReadOnly, IRemoteChatInterrupt, IRemoteChatPeerInbound, IRemoteChatGatewayKey,
+    IRemoteChatRunOptions
 {
     public string SessionId { get; init; } = "fake-session";
     public string DisplayName { get; init; } = "Fake Session";
@@ -73,6 +74,44 @@ internal sealed class FakeChatSession :
     // IRemoteChatInterrupt. False by default, which is what every session that
     // predates CB-199 answered by not implementing it at all.
     public bool CanInterrupt { get; set; }
+
+    // CB-270 Stage 4: run controls. Null by default, which is a session with none
+    // to show; a test sets it, then raises RunOptionsChanged the way a real session
+    // does once the gateway has said something new. Each Set records what the panel
+    // asked for and answers with ReplyToRunChange, null meaning success.
+    public RemoteRunOptions? RunOptions { get; set; }
+
+    public event Action? RunOptionsChanged;
+
+    public void RaiseRunOptionsChanged(RemoteRunOptions? options)
+    {
+        RunOptions = options;
+        RunOptionsChanged?.Invoke();
+    }
+
+    public List<string?> ModelRequests { get; } = new();
+    public List<string?> ThinkingRequests { get; } = new();
+    public List<bool?> FastRequests { get; } = new();
+    public string? ReplyToRunChange { get; set; }
+    public int? TimeoutMinutes { get; set; }
+
+    public Task<string?> SetModelAsync(string? id)
+    {
+        ModelRequests.Add(id);
+        return Task.FromResult(ReplyToRunChange);
+    }
+
+    public Task<string?> SetThinkingAsync(string? id)
+    {
+        ThinkingRequests.Add(id);
+        return Task.FromResult(ReplyToRunChange);
+    }
+
+    public Task<string?> SetFastModeAsync(bool? on)
+    {
+        FastRequests.Add(on);
+        return Task.FromResult(ReplyToRunChange);
+    }
 
     public event Action? InterruptChanged;
 
@@ -137,6 +176,12 @@ internal sealed class FakeChatSession :
     // path takes this route instead of SendAsync whenever it is holding at
     // least one pending picture (see IRemoteChatImages).
     public List<(string Text, List<string> ImagePaths)> SentWithImages { get; } = new();
+
+    // CB-270 Stage 4: whether a paste of a picture is taken as one. True by
+    // default, which is what an implementation of the interface meant before it
+    // had the question; a test sets it false to be a session that has the
+    // interface and no use for it right now.
+    public bool CanSendImages { get; set; } = true;
 
     public Task<ChatSendOutcome> SendWithImagesAsync(string text, IReadOnlyList<string> imagePaths)
     {

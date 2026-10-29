@@ -150,26 +150,6 @@
                                            Text="heartbeat"/>
                             </StackPanel>
                         </Border>
-                        <!-- CB-270 Stage 4: the model, thinking level and fast
-                             mode a native conversation is running on. Shown only
-                             when the session offers run controls at all (see
-                             IRemoteChatRunOptions), and a click opens the flyout
-                             that changes them. A chip and a flyout rather than
-                             three controls in the header row, which already holds
-                             the title column and four buttons. -->
-                        <Border x:Name="RunOptionsChip"
-                                IsVisible="False"
-                                CornerRadius="4" Padding="4,1"
-                                VerticalAlignment="Center"
-                                Cursor="Hand"
-                                Background="#26FFFFFF">
-                            <TextBlock x:Name="RunOptionsChipText"
-                                       FontSize="9.5"
-                                       MaxWidth="190"
-                                       TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center"
-                                       Foreground="#CCFFFFFF"/>
-                        </Border>
                         <TextBlock x:Name="SubtitleText"
                                    FontSize="11"
                                    VerticalAlignment="Center"
@@ -535,7 +515,32 @@
                  a healthy transfer look stuck. Elapsed time is the honest
                  number, and the hint underneath is what stops three minutes
                  reading as a fault. See CB-58. -->
-            <Border x:Name="FetchWaitBox" Grid.Row="1" IsVisible="False"
+            <StackPanel Grid.Row="1" Spacing="6">
+            <!-- CB-270 Stage 4: the model, thinking level and fast
+                     mode a native conversation is running on. Shown only
+                     when the session offers run controls at all (see
+                     IRemoteChatRunOptions), and a click opens the flyout
+                     that changes them. A chip and a flyout rather than
+                     three controls in the header row, which already holds
+                     the title column and four buttons, and on its own strip
+                     below it rather than in the title column, which the
+                     buttons leave about a hundred and fifty points wide: a
+                     model name and two more words do not fit there. -->
+                    <Border x:Name="RunOptionsChip"
+                            IsVisible="False"
+                            HorizontalAlignment="Left"
+                            CornerRadius="4" Padding="4,1"
+                            VerticalAlignment="Center"
+                            Cursor="Hand"
+                            Background="#26FFFFFF">
+                        <TextBlock x:Name="RunOptionsChipText"
+                                   FontSize="9.5"
+                                   MaxWidth="300"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"
+                                   Foreground="#CCFFFFFF"/>
+                    </Border>
+            <Border x:Name="FetchWaitBox" IsVisible="False"
                     Padding="10,7" CornerRadius="8"
                     Background="#FF2C2C31"
                     BorderBrush="#33FFFFFF" BorderThickness="1">
@@ -548,6 +553,7 @@
                                  Height="3" MinWidth="0" />
                 </StackPanel>
             </Border>
+            </StackPanel>
 
             <!-- A dialog the session has stopped on, almost always a permission
                  prompt. It sits between the transcript and the input because
