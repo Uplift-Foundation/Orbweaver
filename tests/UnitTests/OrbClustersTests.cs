@@ -20,11 +20,11 @@ namespace Orbweaver.Tests
         [InlineData(SessionKind.Channel)]
         [InlineData(SessionKind.Remote)]
         public void EverySessionKindThatIsNotACronIsAChat(SessionKind kind)
-            => Assert.Equal(OrbCluster.Chats, OrbClusters.Of(heartbeat: false, kind));
+            => Assert.Equal(OrbCluster.Chats, OrbClusters.Of(heartbeat: false, kind, native: false));
 
         [Fact]
         public void ACronIsACron()
-            => Assert.Equal(OrbCluster.Crons, OrbClusters.Of(heartbeat: false, SessionKind.Cron));
+            => Assert.Equal(OrbCluster.Crons, OrbClusters.Of(heartbeat: false, SessionKind.Cron, native: false));
 
         // Main in particular, because that is the kind a heartbeat session
         // actually has — OpenClawHeartbeat's whole rule is "the heartbeat lands
@@ -33,8 +33,8 @@ namespace Orbweaver.Tests
         [Fact]
         public void AHeartbeatIsAHeartbeatAndNotItsUnderlyingKind()
         {
-            Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Main));
-            Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Unknown));
+            Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Main, native: false));
+            Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Unknown, native: false));
         }
 
         // The real payload behind the precedence rule: the gateway's own
@@ -43,7 +43,7 @@ namespace Orbweaver.Tests
         // count as one thing, and the heartbeat is the more specific answer.
         [Fact]
         public void ASessionThatIsBothACronAndTheHeartbeatCountsAsAHeartbeat()
-            => Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Cron));
+            => Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Cron, native: false));
 
         // Read straight off the two detectors rather than through hand-made
         // booleans, so the precedence above is asserted against the strings a
@@ -58,7 +58,8 @@ namespace Orbweaver.Tests
             OrbCluster Classify(string key, string? label = null)
                 => OrbClusters.Of(
                     OpenClawHeartbeat.Is(key, label),
-                    OpenClawSessionKind.From(key, null));
+                    OpenClawSessionKind.From(key, null),
+                    native: false);
 
             Assert.Equal(OrbCluster.Crons, Classify(cronKey));
             Assert.Equal(OrbCluster.Heartbeats, Classify(mainKey));
@@ -72,6 +73,54 @@ namespace Orbweaver.Tests
             Assert.Equal(OrbCluster.Crons, Classify(cronKey, "Cron: nightly-report"));
         }
 
+        // --- CB-270: native sessions ---
+
+        [Fact]
+        public void ANativeSessionIsNative()
+            => Assert.Equal(OrbCluster.Native, OrbClusters.Of(heartbeat: false, SessionKind.Main, native: true));
+
+        // The ruling: native beats heartbeat, for native sessions only. A native
+        // main is a heartbeat target by key, and must still be governed by the
+        // setting made for it...
+        [Fact]
+        public void ANativeMainIsGovernedByTheNativeSettingNotTheHeartbeatOne()
+            => Assert.Equal(OrbCluster.Native, OrbClusters.Of(heartbeat: true, SessionKind.Main, native: true));
+
+        // ...while a main with WhatsApp origin or delivery is not native
+        // (OpenClawNative says None for it) and stays a heartbeat as before.
+        [Fact]
+        public void AMainWithASurfaceStaysAHeartbeat()
+        {
+            var native = OpenClawNative.Of("main", "whatsapp", true, "whatsapp") != OpenClawNativeKind.None;
+
+            Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Main, native));
+        }
+
+        [Fact]
+        public void EachClusterReadsItsOwnModeIncludingNative()
+        {
+            Assert.Equal(ClusterMode.Hidden, OrbClusters.ModeOf(
+                OrbCluster.Native, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.Hidden));
+            Assert.False(OrbClusters.Visible(
+                OrbCluster.Native, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.Hidden));
+            Assert.True(OrbClusters.Visible(
+                OrbCluster.Heartbeats, ClusterMode.WithChats, ClusterMode.Hidden, ClusterMode.Hidden));
+        }
+
+        [Fact]
+        public void NativeIsSlotThreeUnderOwnShapeAndTheChatsOtherwise()
+        {
+            const ClusterMode own = ClusterMode.OwnShape;
+
+            Assert.Equal(3, OrbClusters.GroupOf(OrbCluster.Native, own, own, own));
+            Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Native, own, own, ClusterMode.WithChats));
+            Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Native, own, own, ClusterMode.Hidden));
+
+            // The existing slots do not move.
+            Assert.Equal(1, OrbClusters.GroupOf(OrbCluster.Heartbeats, own, own, own));
+            Assert.Equal(2, OrbClusters.GroupOf(OrbCluster.Crons, own, own, own));
+        }
+
         // --- the mode, and whether an orb exists ---
 
         [Theory]
@@ -83,9 +132,9 @@ namespace Orbweaver.Tests
             // Whatever the two timer settings say, a conversation is a
             // conversation: there is no setting that hides every orb, and the
             // shape chats join is the main ArrangeShape rather than one of these.
-            Assert.Equal(ClusterMode.WithChats, OrbClusters.ModeOf(OrbCluster.Chats, both, both));
-            Assert.True(OrbClusters.Visible(OrbCluster.Chats, both, both));
-            Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Chats, both, both));
+            Assert.Equal(ClusterMode.WithChats, OrbClusters.ModeOf(OrbCluster.Chats, both, both, both));
+            Assert.True(OrbClusters.Visible(OrbCluster.Chats, both, both, both));
+            Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Chats, both, both, both));
         }
 
         [Fact]
@@ -94,11 +143,11 @@ namespace Orbweaver.Tests
             const ClusterMode hb = ClusterMode.Hidden;
             const ClusterMode cron = ClusterMode.OwnShape;
 
-            Assert.Equal(hb, OrbClusters.ModeOf(OrbCluster.Heartbeats, hb, cron));
-            Assert.Equal(cron, OrbClusters.ModeOf(OrbCluster.Crons, hb, cron));
+            Assert.Equal(hb, OrbClusters.ModeOf(OrbCluster.Heartbeats, hb, cron, ClusterMode.WithChats));
+            Assert.Equal(cron, OrbClusters.ModeOf(OrbCluster.Crons, hb, cron, ClusterMode.WithChats));
 
-            Assert.False(OrbClusters.Visible(OrbCluster.Heartbeats, hb, cron));
-            Assert.True(OrbClusters.Visible(OrbCluster.Crons, hb, cron));
+            Assert.False(OrbClusters.Visible(OrbCluster.Heartbeats, hb, cron, ClusterMode.WithChats));
+            Assert.True(OrbClusters.Visible(OrbCluster.Crons, hb, cron, ClusterMode.WithChats));
         }
 
         [Theory]
@@ -107,8 +156,8 @@ namespace Orbweaver.Tests
         [InlineData(ClusterMode.OwnShape, true)]
         public void OnlyHiddenTakesAnOrbOffTheScreen(ClusterMode mode, bool visible)
         {
-            Assert.Equal(visible, OrbClusters.Visible(OrbCluster.Heartbeats, mode, mode));
-            Assert.Equal(visible, OrbClusters.Visible(OrbCluster.Crons, mode, mode));
+            Assert.Equal(visible, OrbClusters.Visible(OrbCluster.Heartbeats, mode, mode, ClusterMode.WithChats));
+            Assert.Equal(visible, OrbClusters.Visible(OrbCluster.Crons, mode, mode, ClusterMode.WithChats));
         }
 
         // --- which group ---
@@ -118,13 +167,13 @@ namespace Orbweaver.Tests
         {
             foreach (var mode in new[] { ClusterMode.Hidden, ClusterMode.WithChats })
             {
-                Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Heartbeats, mode, mode));
-                Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Crons, mode, mode));
+                Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Heartbeats, mode, mode, ClusterMode.WithChats));
+                Assert.Equal(0, OrbClusters.GroupOf(OrbCluster.Crons, mode, mode, ClusterMode.WithChats));
             }
 
             const ClusterMode own = ClusterMode.OwnShape;
-            Assert.Equal(1, OrbClusters.GroupOf(OrbCluster.Heartbeats, own, own));
-            Assert.Equal(2, OrbClusters.GroupOf(OrbCluster.Crons, own, own));
+            Assert.Equal(1, OrbClusters.GroupOf(OrbCluster.Heartbeats, own, own, ClusterMode.WithChats));
+            Assert.Equal(2, OrbClusters.GroupOf(OrbCluster.Crons, own, own, ClusterMode.WithChats));
         }
 
         // Fixed slots, not a dense count of the groups in use. The alternative
@@ -137,12 +186,12 @@ namespace Orbweaver.Tests
         public void ACronsGroupIndexDoesNotDependOnWhetherHeartbeatsAreOnScreen()
         {
             Assert.Equal(
-                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape),
-                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.Hidden, ClusterMode.OwnShape));
+                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats),
+                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.Hidden, ClusterMode.OwnShape, ClusterMode.WithChats));
 
             Assert.Equal(
-                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape),
-                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.WithChats, ClusterMode.OwnShape));
+                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats),
+                OrbClusters.GroupOf(OrbCluster.Crons, ClusterMode.WithChats, ClusterMode.OwnShape, ClusterMode.WithChats));
         }
 
         // --- the wire format ---

@@ -26,6 +26,9 @@ namespace Orbweaver
 
         /// <summary>CB-14's cron cluster, folded in as a predefined group. Slot 2.</summary>
         internal const string Crons = "crons";
+
+        /// <summary>CB-270's native-sessions cluster (an agent's own sessions). Slot 3; user groups follow.</summary>
+        internal const string Native = "native";
     }
 
     /// <summary>

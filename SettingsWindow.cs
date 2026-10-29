@@ -1890,7 +1890,9 @@ namespace Orbweaver
                 + "every few minutes with nobody on the other end. They wear a beating "
                 + "heart. Hidden takes them off the screen; Own shape keeps them, arranged "
                 + "beside your conversations instead of among them. The agents keep their "
-                + "colours in any channel they are in whichever you pick."));
+                + "colours in any channel they are in whichever you pick. A main session "
+                + "no chat app is behind is governed by \"" + OpenClawNativeText.SettingLabel
+                + "\" below instead."));
 
             if (OrbweaverSettings.OpenClawHeartbeatMode == ClusterMode.OwnShape)
             {
@@ -1914,8 +1916,24 @@ namespace Orbweaver
                         () => OrbweaverSettings.OpenClawCronShape,
                         v => OrbweaverSettings.OpenClawCronShape = v),
                     "The pattern the cron orbs arrange into. Set both of these to Own shape "
-                    + "and the arrange button draws three patterns — your chats, the "
-                    + "heartbeats, and these — side by side rather than one."));
+                    + "and the arrange button draws up to four patterns — your chats, the "
+                    + "heartbeats, these and your agents' own sessions — side by side rather than one."));
+            }
+
+            // CB-270. After the cron rows because it is the same kind of setting;
+            // the label and tip live in OpenClawNativeText, which says why it is
+            // not called "Direct sessions".
+            rows.Add(Row(OpenClawNativeText.SettingLabel, ClusterModePicker(
+                    () => OrbweaverSettings.OpenClawNativeMode,
+                    OnOpenClawNativeModeChanged),
+                OpenClawNativeText.SettingTip));
+
+            if (OrbweaverSettings.OpenClawNativeMode == ClusterMode.OwnShape)
+            {
+                rows.Add(Row(OpenClawNativeText.ShapeLabel, ShapePicker(
+                        () => OrbweaverSettings.OpenClawNativeShape,
+                        v => OrbweaverSettings.OpenClawNativeShape = v),
+                    OpenClawNativeText.ShapeTip));
             }
 
             rows.Add(Row("Allow replying to agents",
@@ -2265,6 +2283,13 @@ namespace Orbweaver
         internal void OnOpenClawCronModeChanged(ClusterMode mode)
         {
             OrbweaverSettings.OpenClawCronMode = mode;
+            SessionManager.Instance?.ReapplyArrangement();
+        }
+
+        // CB-270: the same, for an agent's own sessions.
+        internal void OnOpenClawNativeModeChanged(ClusterMode mode)
+        {
+            OrbweaverSettings.OpenClawNativeMode = mode;
             SessionManager.Instance?.ReapplyArrangement();
         }
 

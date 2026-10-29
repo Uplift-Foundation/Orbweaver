@@ -59,7 +59,7 @@ public class OrbGroupMenuTests : IDisposable
         rows.ToDictionary(r => r.Id, r => r.Status, StringComparer.Ordinal);
 
     private static GroupMenuContext Resolve(IReadOnlyDictionary<string, SessionStatus> statuses, string id) =>
-        OrbGroupMenu.Resolve(id, statuses, ClusterMode.WithChats, ClusterMode.WithChats);
+        OrbGroupMenu.Resolve(id, statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats);
 
     [Fact]
     public void ASoloOrbIsInMainWithItsOwnKeyAndNoMembers()
@@ -182,7 +182,7 @@ public class OrbGroupMenuTests : IDisposable
 
         var context = OrbGroupMenu.ContextFor(
             "root", new[] { "root", "m1", "m1", "root", "m2" }, statuses,
-            ClusterMode.WithChats, ClusterMode.WithChats);
+            ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats);
 
         Assert.Equal(group.Id, context.GroupId);
         Assert.Equal(SessionManager.PositionKeyFor(statuses["root"], "root"), context.LeadKey);
@@ -245,9 +245,28 @@ public class OrbGroupMenuTests : IDisposable
             Heartbeat = true
         }));
 
-        var context = OrbGroupMenu.Resolve("hb", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape);
+        var context = OrbGroupMenu.Resolve("hb", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats);
 
         Assert.Equal(OrbGroups.Heartbeats, context.GroupId);
+    }
+
+    // CB-270: a native root (a dashboard session, or a main with no surface) is in
+    // the native group under Own shape and in main under WithChats. The same
+    // status is also a heartbeat by key; native wins, which is the point.
+    [Fact]
+    public void ANativeRootIsInTheNativeGroupOnlyUnderOwnShape()
+    {
+        var statuses = Of(("n", new SessionStatus
+        {
+            Source = SessionSource.OpenClaw,
+            Heartbeat = true,
+            Native = OpenClawNativeKind.Main
+        }));
+
+        Assert.Equal(OrbGroups.Native, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape).GroupId);
+        Assert.Equal(OrbGroups.Main, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats).GroupId);
     }
 
     // Value equality on the key list, which a record's default does not give.

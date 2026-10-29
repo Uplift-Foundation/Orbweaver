@@ -40,10 +40,12 @@ namespace Orbweaver.Tests
         // because another case had turned heartbeats off, and `agent:<id>:main`
         // is a heartbeat key.
         private static (IReadOnlyList<OpenClawSessions.Session> Sessions, int Total) Parse(
-            string json, bool heartbeats = true, int withinMinutes = OrbweaverSettings.OpenClawActiveWithinAll)
+            string json, bool heartbeats = true, int withinMinutes = OrbweaverSettings.OpenClawActiveWithinAll,
+            ClusterMode native = ClusterMode.WithChats)
         {
             OrbweaverSettings.OpenClawHeartbeatMode =
                 heartbeats ? ClusterMode.WithChats : ClusterMode.Hidden;
+            OrbweaverSettings.OpenClawNativeMode = native;
             OrbweaverSettings.OpenClawActiveWithinMinutes = withinMinutes;
 
             return OpenClawSessions.Parse(Json(json), Now);
@@ -199,6 +201,35 @@ namespace Orbweaver.Tests
                 """;
 
             Assert.Empty(Parse(json, withinMinutes: 60).Sessions);
+        }
+
+        // Hidden drops exactly the native rows: the dashboard session and the
+        // native main (which is also a heartbeat by key; native wins). The Discord
+        // DM, the WhatsApp main (still a heartbeat) and the cron stay. Then the
+        // control: WithChats keeps all five.
+        [Fact]
+        public void HidingNativeSessionsDropsOnlyTheNativeRows()
+        {
+            var (hidden, _) = Parse(NativeFixture(JustNow), native: ClusterMode.Hidden);
+
+            Assert.Equal(
+                new[] { "agent:alpha:cron:job-1", "agent:alpha:discord:direct:1900000000000000001", "agent:beta:main" },
+                hidden.Select(s => s.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+            Assert.True(hidden.Single(s => s.Key == "agent:beta:main").Heartbeat);
+
+            Assert.Equal(5, Parse(NativeFixture(JustNow), native: ClusterMode.WithChats).Sessions.Count);
+            Assert.Equal(5, Parse(NativeFixture(JustNow), native: ClusterMode.OwnShape).Sessions.Count);
+        }
+
+        // Hiding heartbeats no longer hides a native main (native is checked
+        // first), but it still hides the WhatsApp main.
+        [Fact]
+        public void HidingHeartbeatsHidesTheWhatsAppMainAndNotTheNativeOne()
+        {
+            var (sessions, _) = Parse(NativeFixture(JustNow), heartbeats: false);
+
+            Assert.Contains(sessions, s => s.Key == "agent:alpha:main");
+            Assert.DoesNotContain(sessions, s => s.Key == "agent:beta:main");
         }
 
         // --- CB-170: what the orb's Interrupt and End rows read off a row ---

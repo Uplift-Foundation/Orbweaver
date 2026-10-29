@@ -53,7 +53,7 @@ public class OrbGroupTableQaTests
     {
         var table = Read(json);
 
-        Assert.Equal(3, table.Ordered().Count);
+        Assert.Equal(OrbGroups.PredefinedIds.Length, table.Ordered().Count);
         Assert.Equal("main", table.Ordered()[0].Id);
     }
 

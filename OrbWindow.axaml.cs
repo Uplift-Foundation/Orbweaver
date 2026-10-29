@@ -3595,7 +3595,8 @@ namespace Orbweaver
             var key = string.IsNullOrEmpty(PositionKey) ? null : PositionKey;
             var membership = OrbweaverSettings.OrbGroupMembershipFor(key);
             return new GroupMenuContext(
-                OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats),
+                OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats,
+                    ClusterMode.WithChats),
                 key, Array.Empty<string>());
         }
 

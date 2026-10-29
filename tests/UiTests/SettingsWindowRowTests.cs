@@ -193,6 +193,11 @@ public class SettingsWindowRowTests : IDisposable
         (w, v) => w.OnOpenClawCronModeChanged(v),
         () => OrbweaverSettings.OpenClawCronMode);
 
+    [AvaloniaFact]
+    public void TheNativeModeRowWritesItsOwnSetting() => Cycles(
+        (w, v) => w.OnOpenClawNativeModeChanged(v),
+        () => OrbweaverSettings.OpenClawNativeMode);
+
     // The colour switch deliberately does *not* re-wire anything, and that is
     // worth a test of its own rather than only a comment. An earlier version
     // baked a flag into the hook command, so every toggle rewrote Codex's
@@ -247,6 +252,7 @@ public class SettingsWindowRowTests : IDisposable
             window.OnCodexReplyToggled(on);
             window.OnOpenClawHeartbeatModeChanged(on ? ClusterMode.OwnShape : ClusterMode.Hidden);
             window.OnOpenClawCronModeChanged(on ? ClusterMode.Hidden : ClusterMode.OwnShape);
+            window.OnOpenClawNativeModeChanged(on ? ClusterMode.OwnShape : ClusterMode.Hidden);
             window.OnAutoColorToggled(on);
         }
 
@@ -254,6 +260,7 @@ public class SettingsWindowRowTests : IDisposable
         // takes orbs off the screen for whatever runs next in the collection.
         window.OnOpenClawHeartbeatModeChanged(ClusterMode.WithChats);
         window.OnOpenClawCronModeChanged(ClusterMode.WithChats);
+        window.OnOpenClawNativeModeChanged(ClusterMode.WithChats);
 
         // Nothing to assert beyond having got here: a rebuild that threw would
         // have taken the settings window down in the user's face, which is the

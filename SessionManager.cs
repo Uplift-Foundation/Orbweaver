@@ -3782,7 +3782,8 @@ namespace Orbweaver
             var tree = Teams();
             return OrbGroupMenu.ContextFor(
                 tree.RootOf(sessionId), tree.TeamOf(sessionId), AllStatuses,
-                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode);
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode);
         }
 
         // CB-287: an override was written elsewhere (the editor, a Settings
@@ -5306,7 +5307,8 @@ namespace Orbweaver
         private string GroupIdOf(TeamTree tree, string id) =>
             OrbGroupMenu.ContextFor(
                 tree.RootOf(id), Array.Empty<string>(), _statuses,
-                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode).GroupId;
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode).GroupId;
 
         // What every scan does for groups, before it lays anything out:
         //  - remembers this scan's leads and forgets ones nothing descends from;

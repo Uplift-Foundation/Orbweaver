@@ -50,7 +50,8 @@ namespace Orbweaver
             string sessionId,
             IReadOnlyDictionary<string, SessionStatus> statuses,
             ClusterMode heartbeats,
-            ClusterMode crons)
+            ClusterMode crons,
+            ClusterMode native)
         {
             var rootId = RootOf(sessionId, statuses);
 
@@ -61,7 +62,7 @@ namespace Orbweaver
                 if (ids[i] != rootId && ids[OrbGroups.RootOf(i, leadOf, ids.Length)] == rootId) team.Add(ids[i]);
             }
 
-            return ContextFor(rootId, team, statuses, heartbeats, crons);
+            return ContextFor(rootId, team, statuses, heartbeats, crons, native);
         }
 
         // The same answer for a root and team someone else already resolved.
@@ -75,13 +76,14 @@ namespace Orbweaver
             IEnumerable<string> team,
             IReadOnlyDictionary<string, SessionStatus> statuses,
             ClusterMode heartbeats,
-            ClusterMode crons)
+            ClusterMode crons,
+            ClusterMode native)
         {
             statuses.TryGetValue(rootId, out var root);
 
             var rootKey = KeyOf(rootId, statuses);
-            var cluster = root is null ? OrbCluster.Chats : OrbClusters.Of(root.Heartbeat, root.Kind);
-            var groupId = OrbGroups.GroupIdFor(MembershipOf(rootId, statuses), cluster, heartbeats, crons);
+            var cluster = root is null ? OrbCluster.Chats : OrbClusters.Of(root.Heartbeat, root.Kind, root.Native != OpenClawNativeKind.None);
+            var groupId = OrbGroups.GroupIdFor(MembershipOf(rootId, statuses), cluster, heartbeats, crons, native);
 
             var members = new List<string>();
             foreach (var id in team)

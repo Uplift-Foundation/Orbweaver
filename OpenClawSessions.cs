@@ -485,6 +485,7 @@ namespace Orbweaver
         // in Settings should take effect on the next poll.
         private static ClusterMode HeartbeatMode => OrbweaverSettings.OpenClawHeartbeatMode;
         private static ClusterMode CronMode => OrbweaverSettings.OpenClawCronMode;
+        private static ClusterMode NativeMode => OrbweaverSettings.OpenClawNativeMode;
 
         internal sealed record Session(
             string Key,
@@ -1417,7 +1418,8 @@ namespace Orbweaver
                 var kind = KindFor(s, origin, key);
 
                 if (!OrbClusters.Visible(
-                        OrbClusters.Of(heartbeat, kind), HeartbeatMode, CronMode))
+                        OrbClusters.Of(heartbeat, kind, native != OpenClawNativeKind.None),
+                        HeartbeatMode, CronMode, NativeMode))
                     continue;
 
                 // Recorded here, past every filter above, rather than beside
