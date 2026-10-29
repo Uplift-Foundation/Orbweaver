@@ -1950,8 +1950,9 @@ namespace Orbweaver
         // panel puts whatever comes back in front of the person who typed it,
         // because a message that didn't arrive and didn't say so is the worst
         // outcome a chat window can produce.
-        // Excluded from coverage: sends a message to a real gateway.
-        [ExcludeFromCodeCoverage]
+        //
+        // Not excluded from coverage: the gateway is a constructor argument, so
+        // SetGatewayForTests drives every path over an in-memory socket (CB-270).
         public static async Task SendAsync(OpenClawChatSession chat, string text, CancellationToken ct)
         {
             OpenClawGateway? gateway;
@@ -1970,28 +1971,18 @@ namespace Orbweaver
             // Ordering matters and is why this is awaited: the reply can come
             // back fast, and a mirror that lands after it puts the question
             // below its own answer.
-            if (chat.Delivery is { } delivery)
+            // Where this goes is decided by OpenClawSendPolicy, which fails toward
+            // the surface payload on any doubt. The classification is looked at
+            // here, at send time, rather than held from when the panel opened.
+            chat.Observe(NativeOf(chat.GatewayKey));
+            var route = chat.Route;
+
+            if (route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
             {
                 try
                 {
-                    var mirror = new Dictionary<string, object>
-                    {
-                        ["to"] = delivery.To,
-                        // The same constant the recognizer reads back, not a
-                        // second literal saying the same thing. Two of them is
-                        // how a mirror stops being recognisable as ours — which
-                        // it silently was, for one release.
-                        ["message"] = OpenClawSender.MirrorPrefix + text,
-                        ["channel"] = delivery.Channel,
-                        ["idempotencyKey"] = Guid.NewGuid().ToString()
-                    };
-
-                    if (!string.IsNullOrWhiteSpace(delivery.AccountId))
-                    {
-                        mirror["accountId"] = delivery.AccountId!;
-                    }
-
-                    await gateway.RequestAsync("send", mirror, ct);
+                    await gateway.RequestAsync("send",
+                        OpenClawSendPolicy.MirrorRequest(delivery, text, Guid.NewGuid().ToString()), ct);
                 }
                 catch
                 {
@@ -2002,33 +1993,9 @@ namespace Orbweaver
                 }
             }
 
-            await gateway.RequestAsync("chat.send", new Dictionary<string, object>
-            {
-                ["sessionKey"] = chat.GatewayKey,
-                ["message"] = text,
-
-                // Without this the gateway routes the reply to its internal
-                // channel — the agent answers, the transcript records it, and
-                // nothing ever reaches Discord. Its own routing reads:
-                //
-                //   if (!(params.deliver === true)) return { originatingChannel: INTERNAL_MESSAGE_CHANNEL, … }
-                //   const sessionDeliveryContext = deliveryContextFromSession(entry)
-                //
-                // so `true` is what makes it look up where this conversation
-                // actually lives and deliver there. We don't have to carry the
-                // channel or recipient ourselves; the session already knows, and
-                // the gateway is connected to Discord whether or not anything is
-                // open on this machine.
-                //
-                // Always on rather than a choice: a reply typed into a Discord
-                // conversation is a reply *to* that conversation. Anything else
-                // would be a message that looked sent and wasn't.
-                ["deliver"] = true,
-
-                // Side-effecting methods want one of these; a fresh id per send
-                // means a retry after a timeout can't post the message twice.
-                ["idempotencyKey"] = Guid.NewGuid().ToString()
-            }, ct);
+            await gateway.RequestAsync("chat.send",
+                OpenClawSendPolicy.ChatSendRequest(
+                    chat.GatewayKey, text, route, Guid.NewGuid().ToString()), ct);
         }
 
         // --- posting to a room -------------------------------------------
@@ -2119,20 +2086,8 @@ namespace Orbweaver
 
             try
             {
-                var mirror = new Dictionary<string, object>
-                {
-                    ["to"] = delivery.To,
-                    ["message"] = OpenClawSender.MirrorPrefix + text,
-                    ["channel"] = delivery.Channel,
-                    ["idempotencyKey"] = Guid.NewGuid().ToString()
-                };
-
-                if (!string.IsNullOrWhiteSpace(delivery.AccountId))
-                {
-                    mirror["accountId"] = delivery.AccountId!;
-                }
-
-                await gateway.RequestAsync("send", mirror, ct);
+                await gateway.RequestAsync("send",
+                    OpenClawSendPolicy.MirrorRequest(delivery, text, Guid.NewGuid().ToString()), ct);
             }
             catch (Exception ex)
             {
@@ -2141,13 +2096,12 @@ namespace Orbweaver
 
             try
             {
-                await gateway.RequestAsync("chat.send", new Dictionary<string, object>
-                {
-                    ["sessionKey"] = carrier.GatewayKey,
-                    ["message"] = text,
-                    ["deliver"] = true,
-                    ["idempotencyKey"] = Guid.NewGuid().ToString()
-                }, ct);
+                // A room's carrier is a channel member, never a native session,
+                // so the route is a constant rather than a lookup.
+                await gateway.RequestAsync("chat.send",
+                    OpenClawSendPolicy.ChatSendRequest(
+                        carrier.GatewayKey, text, OpenClawSendRoute.Surface,
+                        Guid.NewGuid().ToString()), ct);
             }
             catch (Exception ex)
             {

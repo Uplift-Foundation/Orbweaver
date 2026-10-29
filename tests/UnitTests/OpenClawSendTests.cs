@@ -227,4 +227,137 @@ public class OpenClawSendTests : IDisposable
 
         Assert.Equal("not connected to the gateway", ex.Message);
     }
+
+    // --- native sessions (CB-270) ---
+    //
+    // Rows reach the policy the way they do in production: through Parse, which
+    // records each listed key's classification. Shapes follow the scrubbed rows
+    // in OpenClawSessionsParseTests, values invented.
+
+    private const string DashboardKey = "agent:alpha:dashboard:11111111-2222-3333-4444-555555555555";
+    private const string DiscordKey = "agent:alpha:discord:direct:1900000000000000001";
+    private static readonly DateTime Now = new(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc);
+
+    private static void List(string rows)
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+
+        var at = new DateTimeOffset(Now.AddSeconds(-5)).ToUnixTimeMilliseconds();
+        var json = "{\"sessions\":[" + rows.Replace("{AT}", at.ToString()) + "]}";
+        OpenClawSessions.Parse(JsonDocument.Parse(json).RootElement, Now);
+    }
+
+    private const string DashboardRow =
+        "{\"key\":\"" + DashboardKey + "\",\"classification\":\"dashboard\",\"lastActivityAt\":{AT}}";
+
+    private const string DiscordRow =
+        "{\"key\":\"" + DiscordKey + "\",\"classification\":\"direct\",\"chatType\":\"direct\"," +
+        "\"origin\":{\"provider\":\"discord\"},\"deliveryContext\":{\"channel\":\"discord\",\"to\":\"user:1900000000000000001\"}," +
+        "\"lastChannel\":\"discord\",\"lastActivityAt\":{AT}}";
+
+    // The WhatsApp-main shape: classification main, but a provider, a delivery
+    // context and a last channel behind it, so it is a surface conversation.
+    private const string WhatsAppMainRow =
+        "{\"key\":\"agent:beta:main\",\"classification\":\"main\",\"isMain\":true,\"chatType\":\"direct\"," +
+        "\"origin\":{\"provider\":\"whatsapp\",\"to\":\"+15550000001\"}," +
+        "\"deliveryContext\":{\"channel\":\"whatsapp\",\"to\":\"+15550000001\"}," +
+        "\"lastChannel\":\"whatsapp\",\"lastActivityAt\":{AT}}";
+
+    // (f) A dashboard session: chat.send only, deliver:false, never a mirror.
+    [Fact]
+    public async Task ADashboardSessionSendsChatSendWithoutDeliveryAndNoMirror()
+    {
+        List(DashboardRow);
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            await OpenClawSessions.SendAsync(Chat(DashboardKey, null), "hi", CancellationToken.None);
+
+            var sent = Sent(socket);
+            Assert.Single(sent);
+            Assert.Equal("chat.send", sent[0].Method);
+            AssertParams(sent[0],
+                ("sessionKey", DashboardKey),
+                ("message", "hi"),
+                ("deliver", "false"),
+                ("idempotencyKey", "<guid>"));
+        }
+    }
+
+    // (g) Sticky: once a key has been listed as a surface conversation, a later
+    // listing as native does not move it.
+    [Fact]
+    public async Task AKeyOnceListedAsASurfaceStaysOnTheSurfaceRoute()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var chat = Chat(DashboardKey, null);
+
+            List(DiscordRow.Replace(DiscordKey, DashboardKey));
+            await OpenClawSessions.SendAsync(chat, "one", CancellationToken.None);
+
+            List(DashboardRow);
+            await OpenClawSessions.SendAsync(chat, "two", CancellationToken.None);
+
+            var chatSends = Sent(socket).Where(r => r.Method == "chat.send").ToList();
+            Assert.Equal(2, chatSends.Count);
+            Assert.All(chatSends, r => Assert.Equal("true", Normalised(r).Single(p => p.Key == "deliver").Value));
+        }
+    }
+
+    // (h) A native key that nonetheless carries a delivery address gets the
+    // surface payload, mirror included.
+    [Fact]
+    public async Task ANativeKeyHoldingAStaleDeliveryGetsTheSurfacePayload()
+    {
+        List(DashboardRow);
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var chat = Chat(DashboardKey, new OpenClawSessions.Delivery("discord", "user:1900000000000000001", null));
+
+            await OpenClawSessions.SendAsync(chat, "hi", CancellationToken.None);
+
+            Assert.Equal(new[] { "send", "chat.send" }, Sent(socket).Select(r => r.Method).ToArray());
+            Assert.Equal("true", Normalised(Sent(socket)[1]).Single(p => p.Key == "deliver").Value);
+        }
+    }
+
+    // (i) Accepted behaviour, pinned: a first send before any poll has listed
+    // the key goes out on the surface route, which is today's payload.
+    [Fact]
+    public async Task AKeyNoPollHasListedYetGetsTheSurfacePayload()
+    {
+        List("");
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            await OpenClawSessions.SendAsync(Chat(DashboardKey, null), "hi", CancellationToken.None);
+
+            var sent = Sent(socket);
+            Assert.Single(sent);
+            Assert.Equal("true", Normalised(sent[0]).Single(p => p.Key == "deliver").Value);
+        }
+    }
+
+    // (j) The WhatsApp-main shape, listed with its delivery context, is not
+    // native and gets the surface payload with the mirror.
+    [Fact]
+    public async Task AWhatsAppMainListedWithItsDeliveryContextGetsTheSurfacePayload()
+    {
+        List(WhatsAppMainRow);
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var chat = Chat("agent:beta:main", new OpenClawSessions.Delivery("whatsapp", "+15550000001", null));
+
+            await OpenClawSessions.SendAsync(chat, "hi", CancellationToken.None);
+
+            Assert.Equal(new[] { "send", "chat.send" }, Sent(socket).Select(r => r.Method).ToArray());
+            Assert.Equal("true", Normalised(Sent(socket)[1]).Single(p => p.Key == "deliver").Value);
+        }
+    }
 }
+

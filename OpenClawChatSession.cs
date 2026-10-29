@@ -130,13 +130,14 @@ namespace Orbweaver
 
     // One OpenClaw session, as something the chat panel can talk to.
     //
-    // Reading works today. **Sending does not**, and says so rather than
-    // failing quietly: the app pairs itself with `operator.read` and nothing
-    // else, so `chat.send` would be refused by the gateway. Widening that is a
-    // deliberate act — it means re-pairing this device with `operator.write`,
-    // which a person has to approve on the gateway — and it is not something
-    // opening a window should do on their behalf. Until then this is a reader
-    // with an input box that explains itself.
+    // Reading always works. Sending works when "Allow replying to agents" is on,
+    // which re-pairs this device with `operator.write` — a deliberate act a
+    // person approves on the gateway, never something opening a window does on
+    // their behalf. Without it, sending says so rather than failing quietly.
+    //
+    // A send is routed by OpenClawSendPolicy: a conversation on a chat surface
+    // is delivered back to that surface with the typed message mirrored into
+    // it, and a native session, which has no surface, is answered in place.
     internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey
     {
         private readonly List<ChatTurn> _history = new();
@@ -240,6 +241,25 @@ namespace Orbweaver
         // a channel. Null for a session with no channel behind it, which is the
         // signal not to mirror anything anywhere.
         public OpenClawSessions.Delivery? Delivery { get; set; }
+
+        // What the gateway last said this conversation is, and whether it has
+        // ever said it is a chat-surface one. Null Native is "never listed",
+        // which is not the same as listed-and-not-native. SeenAsSurface is
+        // sticky on purpose: a session that was a Discord DM a poll ago does not
+        // become native on a transient classification. See OpenClawSendPolicy.
+        internal OpenClawNativeKind? Native { get; private set; }
+        internal bool SeenAsSurface { get; private set; }
+
+        internal void Observe(OpenClawNativeKind? native)
+        {
+            if (native is null) return;
+
+            Native = native;
+            SeenAsSurface |= native == OpenClawNativeKind.None;
+        }
+
+        internal OpenClawSendRoute Route =>
+            OpenClawSendPolicy.RouteFor(Native, SeenAsSurface, Delivery);
 
         public IReadOnlyList<ChatTurn> History => _history;
 
