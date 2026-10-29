@@ -171,6 +171,48 @@ public class AudioMuteTests : IDisposable
         finally { AudioMute.Changed -= Handler; }
     }
 
+    // The null-subscriber arms of `Changed?.Invoke`, on the UI thread and in
+    // the posted lambda. Other tests' controllers and panels subscribe to this
+    // static event and are never unsubscribed, so the invocation list is taken
+    // off for the duration and put back after.
+    private static Action<bool>? DetachAllSubscribers()
+    {
+        var field = typeof(AudioMute).GetField(
+            "Changed", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var all = (Action<bool>?)field.GetValue(null);
+        field.SetValue(null, null);
+        return all;
+    }
+
+    private static void Reattach(Action<bool>? all) =>
+        typeof(AudioMute).GetField("Changed", BindingFlags.NonPublic | BindingFlags.Static)!
+            .SetValue(null, all);
+
+    [AvaloniaFact]
+    public void SetWithNoSubscriberOnTheUiThreadStillFlipsTheState()
+    {
+        var all = DetachAllSubscribers();
+        try
+        {
+            AudioMute.Set(true);
+            Assert.True(AudioMute.IsMuted);
+        }
+        finally { Reattach(all); }
+    }
+
+    [AvaloniaFact]
+    public async Task SetWithNoSubscriberFromAPoolThreadStillFlipsTheState()
+    {
+        var all = DetachAllSubscribers();
+        try
+        {
+            await Task.Run(() => AudioMute.Set(true));
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(AudioMute.IsMuted);
+        }
+        finally { Reattach(all); }
+    }
+
     // --- the process boundary ---
 
     [Fact]
