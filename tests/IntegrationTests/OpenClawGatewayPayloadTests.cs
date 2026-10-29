@@ -629,9 +629,143 @@ public class OpenClawGatewayPayloadTests
     {
         OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
         OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.WithChats;
         OrbweaverSettings.OpenClawActiveWithinMinutes = withinMinutes;
 
         return OpenClawSessions.Parse(Json(SessionsList), Now);
+    }
+
+    // CB-270: one page in the gateway's envelope, the field structure of the rows
+    // measured on a live 2026.10.5 gateway and every value invented (phone numbers
+    // are +1555000000N, Discord ids are 190000000000000000N, names are made up).
+    // By category, what each row carried:
+    //   native main      classification main; no origin, deliveryContext or
+    //                    lastChannel (3 of the 5 main rows measured)
+    //   whatsapp main    classification main; origin.provider, deliveryContext
+    //                    and lastChannel all whatsapp (the other 2)
+    //   whatsapp direct  classification direct; all three present
+    //   whatsapp group   classification group; all three present
+    //   discord dm       classification direct; all three present
+    //   discord channel  classification channel; all three present
+    //   cron             classification cron; none of the three
+    //   dashboard        a New Chat; the live gateway had none, so its shape is
+    //                    the sessions.create result the findings record
+    //   pinned dm        a Discord DM with pinned:true
+    // Every row is two days old so the recency window has something to decide.
+    private static string NativePage()
+    {
+        var old = new DateTimeOffset(Now.AddDays(-2)).ToUnixTimeMilliseconds();
+
+        static string Surface(string provider, string to, string classification, string chatType) =>
+            $$"""
+              "classification":"{{classification}}","chatType":"{{chatType}}",
+              "origin":{"provider":"{{provider}}","to":"{{to}}"},
+              "deliveryContext":{"channel":"{{provider}}","to":"{{to}}"},
+              "lastChannel":"{{provider}}","lastTo":"{{to}}"
+              """;
+
+        return $$"""
+            {"ts":1700000000000,"path":"/x/sessions.json","count":9,"totalCount":9,"hasMore":false,
+             "sessions":[
+              {"key":"agent:alpha:main","kind":"direct","isMain":true,"classification":"main","pinned":false,
+               "sessionId":"sid-n1","lastActivityAt":{{old}}},
+              {"key":"agent:beta:main","kind":"direct","isMain":true,"pinned":false,"sessionId":"sid-n2",
+               {{Surface("whatsapp", "+15550000001", "main", "direct")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:whatsapp:direct:+15550000002","pinned":false,"sessionId":"sid-n3",
+               {{Surface("whatsapp", "+15550000002", "direct", "direct")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:whatsapp:group:1555000000300000003@g.us","pinned":false,"sessionId":"sid-n4",
+               {{Surface("whatsapp", "1555000000300000003@g.us", "group", "group")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:discord:direct:1900000000000000001","pinned":false,"sessionId":"sid-n5",
+               {{Surface("discord", "user:1900000000000000001", "direct", "direct")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:discord:channel:1900000000000000002","pinned":false,"sessionId":"sid-n6",
+               {{Surface("discord", "channel:1900000000000000002", "channel", "channel")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:cron:job-0001","classification":"cron","pinned":false,"sessionId":"sid-n7",
+               "label":"Cron: sweep","lastActivityAt":{{old}}},
+              {"key":"agent:alpha:dashboard:11111111-2222-3333-4444-555555555555","classification":"dashboard",
+               "pinned":false,"sessionId":"sid-n8","label":"Scratch pad","lastActivityAt":{{old}}},
+              {"key":"agent:alpha:discord:direct:1900000000000000003","pinned":true,"sessionId":"sid-n9",
+               {{Surface("discord", "user:1900000000000000003", "direct", "direct")}},"lastActivityAt":{{old}}}
+             ]}
+            """;
+    }
+
+    private static (IReadOnlyList<OpenClawSessions.Session> Sessions, int Total) ParseNative(
+        ClusterMode native = ClusterMode.WithChats)
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawNativeMode = native;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = 60;
+
+        return OpenClawSessions.Parse(Json(NativePage()), Now);
+    }
+
+    // The whole exchange. Nine rows two days old against a 60 minute window:
+    // exactly the dashboard row (retention) and the pinned DM (the gateway's own
+    // signal) survive, and each row's native kind, heartbeat flag and pin are what
+    // the category above says. A format someone else defines, so this is the
+    // seam test the unit cases cannot replace.
+    [Fact]
+    public void ANativePageSurvivesTheWindowOnlyWhereRetentionSaysSo()
+    {
+        var (sessions, total) = ParseNative();
+
+        Assert.Equal(9, total);
+        Assert.Equal(
+            new[]
+            {
+                "agent:alpha:dashboard:11111111-2222-3333-4444-555555555555",
+                "agent:alpha:discord:direct:1900000000000000003",
+            },
+            sessions.Select(s => s.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+
+        var dashboard = sessions.Single(s => s.Key.Contains(":dashboard:"));
+        Assert.Equal(SessionKind.Main, dashboard.Kind);
+        Assert.Equal(OpenClawNativeKind.Dashboard, dashboard.Native);
+        Assert.False(dashboard.Heartbeat);
+        Assert.False(dashboard.GatewayPinned);
+        Assert.Equal("Scratch pad", dashboard.Label);
+
+        var pinned = sessions.Single(s => s.Key.EndsWith("0003"));
+        Assert.Equal(SessionKind.Direct, pinned.Kind);
+        Assert.Equal(OpenClawNativeKind.None, pinned.Native);
+        Assert.True(pinned.GatewayPinned);
+    }
+
+    // Every row's native verdict, read through NativeOf because the recency
+    // filter dropped most of them from the result. Only the dashboard row and the
+    // native main are native; every Discord and WhatsApp row, the WhatsApp main
+    // included, is None, which is the negative control this classifier lives on.
+    [Fact]
+    public void OnlyTheDashboardAndTheNativeMainAreNative()
+    {
+        ParseNative();
+
+        var verdicts = new Dictionary<string, OpenClawNativeKind?>
+        {
+            ["agent:alpha:main"] = OpenClawNativeKind.Main,
+            ["agent:beta:main"] = OpenClawNativeKind.None,
+            ["agent:alpha:whatsapp:direct:+15550000002"] = OpenClawNativeKind.None,
+            ["agent:alpha:whatsapp:group:1555000000300000003@g.us"] = OpenClawNativeKind.None,
+            ["agent:alpha:discord:direct:1900000000000000001"] = OpenClawNativeKind.None,
+            ["agent:alpha:discord:channel:1900000000000000002"] = OpenClawNativeKind.None,
+            ["agent:alpha:cron:job-0001"] = OpenClawNativeKind.None,
+            ["agent:alpha:dashboard:11111111-2222-3333-4444-555555555555"] = OpenClawNativeKind.Dashboard,
+            ["agent:alpha:discord:direct:1900000000000000003"] = OpenClawNativeKind.None,
+        };
+
+        foreach (var (key, expected) in verdicts)
+            Assert.Equal(expected, OpenClawSessions.NativeOf(key));
+    }
+
+    // Hiding native sessions on the same page takes the dashboard row away and
+    // leaves the pinned Discord DM, which no native setting governs.
+    [Fact]
+    public void HidingNativeSessionsLeavesTheSurfaceRowsAlone()
+    {
+        var (sessions, _) = ParseNative(ClusterMode.Hidden);
+
+        Assert.Equal("agent:alpha:discord:direct:1900000000000000003", Assert.Single(sessions).Key);
     }
 
     // --- sessions.list, all the way to an address --------------------------
