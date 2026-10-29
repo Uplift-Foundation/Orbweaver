@@ -676,26 +676,33 @@ public class OpenClawRunControlsTests : IDisposable
 
     // --- history: a picture on a user turn is under __openclaw.media ---
 
+    // The route the assistant-media fetch takes: the media:// string as the escaped
+    // source, and this conversation's key. A bare media:// url as a request path
+    // answers nothing (measured), which is why it is never handed over as one.
+    private static string Route(string source) =>
+        OpenClawSessions.AssistantMediaRoute + Uri.EscapeDataString(source)
+        + "&sessionKey=" + Uri.EscapeDataString("agent:main:dashboard:abc");
+
     [Fact]
     public void AUserTurnsPictureIsReadFromItsMediaListBeforeItsText()
     {
         var messages = Json("""
             [{"role":"user","content":"what is this","timestamp":1790000000000,"idempotencyKey":"k1:user",
               "__openclaw":{"senderIsOwner":true,"media":[
-                {"url":"/media/inbound/abc","contentType":"image/png","kind":"image","fileName":"probe.png","sizeBytes":70},
-                {"url":"/media/inbound/def","contentType":"audio/ogg","kind":"audio","fileName":"v.ogg"},
+                {"url":"media://inbound/abc.png","contentType":"image/png","kind":"image","fileName":"probe.png","sizeBytes":70},
+                {"url":"media://inbound/def.ogg","contentType":"audio/ogg","kind":"audio","fileName":"v.ogg"},
                 {"url":"","kind":"image","fileName":"empty.png"},
-                {"url":"/media/inbound/ghi","kind":"image"}]}}]
+                {"url":"media://inbound/ghi.png","kind":"image"}]}}]
             """);
 
         var turns = OpenClawSessions.TurnsFromHistory(messages, "agent:main:dashboard:abc");
 
         Assert.Equal(3, turns.Count);
-        Assert.Equal("/media/inbound/abc", turns[0].ImageUrl);
+        Assert.Equal(Route("media://inbound/abc.png"), turns[0].ImageUrl);
         Assert.Equal("probe.png", turns[0].ImageAlt);
         Assert.Equal("", turns[0].Text);
         Assert.True(turns[0].Mine);
-        Assert.Equal("/media/inbound/ghi", turns[1].ImageUrl);
+        Assert.Equal(Route("media://inbound/ghi.png"), turns[1].ImageUrl);
         Assert.Equal("", turns[1].ImageAlt);
         Assert.Equal("what is this", turns[2].Text);
     }
@@ -705,13 +712,13 @@ public class OpenClawRunControlsTests : IDisposable
     public void APictureOnlyUserTurnStillDrawsThePicture()
     {
         var messages = Json("""
-            [{"role":"user","content":"","__openclaw":{"media":[{"url":"/media/inbound/abc","kind":"image","fileName":"p.png"}]}}]
+            [{"role":"user","content":"","__openclaw":{"media":[{"url":"media://inbound/abc.png","kind":"image","fileName":"p.png"}]}}]
             """);
 
         var turns = OpenClawSessions.TurnsFromHistory(messages, "agent:main:dashboard:abc");
 
         var picture = Assert.Single(turns);
-        Assert.Equal("/media/inbound/abc", picture.ImageUrl);
+        Assert.Equal(Route("media://inbound/abc.png"), picture.ImageUrl);
         Assert.False(picture.Mine);
     }
 

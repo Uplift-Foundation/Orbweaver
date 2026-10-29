@@ -2643,11 +2643,13 @@ namespace Orbweaver
                 // CB-270 Stage 4: a picture sent with a user turn is not a content
                 // block. Measured on 2026.10.5: the turn's `content` is the message
                 // text alone and the picture is under `__openclaw.media`, as
-                // `{url, contentType, kind, fileName, sizeBytes}`. One bubble per
-                // image, before the text, in the url form the branch above already
-                // knows how to fetch. Whether that url serves the bytes back was not
-                // measured; a picture that will not load goes through the panel's
-                // existing note for one that failed to.
+                // `{url, contentType, kind, fileName, sizeBytes}`, where url is
+                // `media://inbound/<name>`: not something that can be requested as a
+                // path (every plain http form of it was measured to answer nothing).
+                // The same file is served by the assistant-media route, which takes
+                // that `media://` string as its `source`, asked with this
+                // conversation's key like every other picture it serves (CB-109).
+                // One bubble per image, before the text.
                 if (role == ChatRole.User
                     && message.TryGetProperty("__openclaw", out var mediaOwner)
                     && mediaOwner.ValueKind == JsonValueKind.Object
@@ -2668,7 +2670,9 @@ namespace Orbweaver
                         var pictureUrl = CleanUrl(Str(item, "url"));
                         if (pictureUrl is null) continue;
 
-                        turns.Add(new HistoryTurn(role, "", pictureUrl, Str(item, "fileName") ?? "",
+                        turns.Add(new HistoryTurn(role, "",
+                            new OpenClawMediaSource(pictureUrl, sessionKey).Route,
+                            Str(item, "fileName") ?? "",
                             pictureMs <= 0
                                 ? DateTimeOffset.Now
                                 : DateTimeOffset.FromUnixTimeMilliseconds(pictureMs).ToLocalTime(),
