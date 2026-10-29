@@ -117,7 +117,13 @@ namespace Orbweaver
         // by every site that copies a history turn into a live one, because a
         // copy that dropped it would send a clip or a pdf to the bitmap
         // decoder, which does not throw on rubbish.
-        ChatAttachment? Attachment = null);
+        ChatAttachment? Attachment = null,
+
+        // CB-270: whether this is a tool line whose result reported an error,
+        // so the panel can tint it. Only a `toolcall` turn from
+        // TurnsFromHistory ever sets it; defaulted and trailing for the same
+        // reason every field above it is.
+        bool IsError = false);
 
     // See HistoryTurn.Arm. Internal and small on purpose: this exists only to
     // let the post-parse dedup pass in OpenClawSessions tell an inline image
@@ -491,6 +497,7 @@ namespace Orbweaver
                     Speaker = turn.Speaker,
                     SpeakerColor = turn.SpeakerColor,
                     Mine = turn.Mine,
+                    IsError = turn.IsError,
                     IsComplete = true
                 });
             }
@@ -880,6 +887,7 @@ namespace Orbweaver
                 Speaker = t.Speaker,
                 SpeakerColor = t.SpeakerColor,
                 Mine = t.Mine,
+                IsError = t.IsError,
                 IsComplete = true
             }).ToList();
 
@@ -917,6 +925,7 @@ namespace Orbweaver
                     Speaker = turn.Speaker,
                     SpeakerColor = turn.SpeakerColor,
                     Mine = turn.Mine,
+                    IsError = turn.IsError,
                     IsComplete = true
                 });
             }

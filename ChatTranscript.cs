@@ -359,9 +359,22 @@ namespace Orbweaver
 
         public static string ToolSummary(JsonElement block)
         {
-            var name = Str(block, "name") ?? "tool";
+            var name = Str(block, "name");
 
-            if (!block.TryGetProperty("input", out var input) || input.ValueKind != JsonValueKind.Object)
+            return block.TryGetProperty("input", out var input)
+                ? ToolSummary(name, input)
+                : ToolSummary(name, default);
+        }
+
+        // The same line from a name and an arguments object, for producers whose
+        // shape is not a Claude Code tool_use block: OpenClaw's `toolcall`
+        // history block and its live `session.tool` event both carry
+        // `{name, args}` and must draw the identical line (CB-270).
+        public static string ToolSummary(string? name, JsonElement input)
+        {
+            name ??= "tool";
+
+            if (input.ValueKind != JsonValueKind.Object)
                 return "· " + name;
 
             foreach (var key in ArgKeys)

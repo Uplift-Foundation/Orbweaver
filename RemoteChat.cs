@@ -113,6 +113,24 @@ namespace Orbweaver
 
         public bool IsComplete { get; set; }
 
+        private bool _isError;
+
+        // CB-270: a tool line whose result reported an error. Mutable and
+        // notifying, like Text, because a live tool line learns it failed only
+        // when the result arrives, after the row is already on screen. It never
+        // changes Text: AppendNewTail anchors on (Role, Text), and a line that
+        // reworded itself on failure would no longer match its history twin.
+        public bool IsError
+        {
+            get => _isError;
+            set
+            {
+                if (_isError == value) return;
+                _isError = value;
+                Raise();
+            }
+        }
+
         // When this turn happened, in local time. The gateway records a
         // timestamp per message and the panel shows it, so a conversation that
         // has been going on across Discord and a terminal all day reads as
