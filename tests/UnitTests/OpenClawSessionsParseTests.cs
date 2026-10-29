@@ -1030,5 +1030,32 @@ namespace Orbweaver.Tests
 
             Assert.Equal(expected, Assert.Single(Parse(json).Sessions).Native);
         }
-    }
+    
+        // A session mid-run is current whatever its timestamps say, so the window
+        // never drops it; this is the arm of the retention condition a quiet row
+        // cannot reach. The control is the same old row not generating, dropped.
+        [Fact]
+        public void AnOldGeneratingSessionSurvivesTheWindowAndAnIdleOneDoesNot()
+        {
+            var json = $$"""
+                {"sessions":[
+                  {"key":"agent:a:discord:direct:1900000000000000001","chatType":"direct","lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000002","chatType":"direct","lastActivityAt":{{TwoDaysAgo}}}
+                ]}
+                """;
+            OpenClawSessions.SetRunningForTests(
+                "agent:a:discord:direct:1900000000000000001", DateTime.UtcNow, open: true);
+            try
+            {
+                var (sessions, _) = Parse(json, withinMinutes: 60);
+
+                Assert.Equal(
+                    "agent:a:discord:direct:1900000000000000001", Assert.Single(sessions).Key);
+            }
+            finally
+            {
+                OpenClawSessions.ForgetRunningForTests();
+            }
+        }
+}
 }
