@@ -172,6 +172,27 @@ public class ChatPanelScreenshots : IDisposable
         }
     }
 
+    // CB-298. The header's mute button in both looks, so the crossed-out
+    // speaker and the red fill are reviewed as pixels, not as a property.
+    [AvaloniaTheory]
+    [InlineData(true, "chat-panel-header-muted.png")]
+    [InlineData(false, "chat-panel-header-unmuted.png")]
+    public void ThePanelsMuteButton(bool muted, string file)
+    {
+        ChatPanel.OpenFor(KindOrb(SessionKind.Channel), NewFake());
+
+        try
+        {
+            AudioMute.Set(muted);
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, file);
+        }
+        finally
+        {
+            AudioMute.Set(false);
+        }
+    }
+
     private static OrbWindow KindOrb(SessionKind kind)
     {
         var orb = NewOrb();
