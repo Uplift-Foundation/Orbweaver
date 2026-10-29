@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/orbweaver-icon.svg" width="112" alt="The Orbweaver logo: a spiderweb with a violet orb at its hub"></p>
+
 # Orbweaver
 
 *Formerly Claude Buddy.* If you are looking for Claude Buddy, this is it: same app, new name.
