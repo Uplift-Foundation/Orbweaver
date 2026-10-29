@@ -158,6 +158,22 @@ namespace Orbweaver
         // paragraph that says the same thing twice in different voices.
         private string? _streamingKind;
 
+        // CB-270 Stage 3: a run is rebuilt from the gateway's deltas, because on
+        // 2026.10.5 only the first and last assistant events of a run carry
+        // data.text and the rest carry data.delta alone (96 of 102 measured).
+        // _runText is the run so far; _closed is the part of it already drawn as
+        // finished bubbles, which a tool starting sets to everything so far. The
+        // bubble on screen is what follows it, so the text after a tool is a
+        // bubble of its own. That is what makes the live view equal history's
+        // [step, tool line, step] for the same run.
+        private string? _runId;
+        private string _runText = "";
+        private string _closed = "";
+
+        // Tool lines awaiting their result, by toolCallId, so the result can mark
+        // the line it belongs to as an error.
+        private readonly Dictionary<string, ChatTurn> _tools = new();
+
         // Turns already asked about, or being asked about — so a streaming
         // snapshot that still carries the marker on its next delta doesn't
         // fire a second gateway round trip for the same picture.
@@ -385,6 +401,17 @@ namespace Orbweaver
         {
             switch (name)
             {
+                case "agent" when Str(payload, "stream") == "lifecycle":
+                    // The run's own end. Nothing else completes a native run's
+                    // bubble: without this the next run's first words overwrote
+                    // the previous reply in place.
+                    if (payload.TryGetProperty("data", out var life)
+                        && Str(life, "phase") is "end" or "error")
+                    {
+                        Complete();
+                    }
+                    break;
+
                 case "agent":
                     OnAgentText(payload);
                     break;
@@ -418,7 +445,15 @@ namespace Orbweaver
                 // history on a delivery signal". Appending only the turns the
                 // fetched page adds past what this transcript already has
                 // keeps a read position exactly where it was.
-                case "chat":
+                //
+                // A "chat" delta is not one of those doorbells (CB-270). Its text
+                // has already arrived on the agent stream, and treating every one
+                // as a reason to refetch history cost 25 round trips for one run.
+                case "chat" when Str(payload, "state") is "final" or "error" or "aborted":
+                    Complete();
+                    RefreshTailAsync();
+                    break;
+
                 case "session.message":
                     RefreshTailAsync();
                     break;
@@ -527,18 +562,17 @@ namespace Orbweaver
         {
             if (!payload.TryGetProperty("data", out var data)) return;
 
-            // data.text is a full snapshot of the turn so far, alongside a
-            // data.delta. Using the snapshot means a dropped or coalesced event
-            // costs nothing — which is exactly the property the panel is written
-            // against, so it is worth taking even though the delta is right
-            // there and looks cheaper.
-            var text = Str(data, "text");
-            if (string.IsNullOrEmpty(text)) return;
-
             // Thinking is shown — watching an agent think is most of the value
             // of an orb that pulses — but kept as its own turn rather than
             // mixed into the reply it will eventually give.
             var kind = Str(payload, "stream") ?? "assistant";
+
+            // The reply is rebuilt from deltas, with data.text taken as a full
+            // snapshot whenever one arrives (the first and last events of a run).
+            // A thinking event carries only progressTokens, never text, so it
+            // keeps the old snapshot-only reading.
+            var text = kind == "assistant" ? AssistantBubble(payload, data) : Str(data, "text");
+            if (string.IsNullOrEmpty(text)) return;
 
             if (_streaming is null || _streaming.IsComplete || _streamingKind != kind)
             {
@@ -804,26 +838,110 @@ namespace Orbweaver
             TurnUpdated?.Invoke(turn);
         }
 
+        // The text of the bubble the run is in now, or null when there is none.
+        private string? AssistantBubble(JsonElement payload, JsonElement data)
+        {
+            // A different run never continues the previous one's bubble. Today's
+            // overwrite of run 1's reply by run 2's first words is what this is.
+            var runId = Str(payload, "runId");
+            if (!string.IsNullOrEmpty(runId) && runId != _runId)
+            {
+                Complete();
+                _runId = runId;
+            }
+
+            var snapshot = Str(data, "text");
+            var delta = Str(data, "delta");
+
+            // A snapshot is trusted only where it agrees with what has already
+            // been drawn as finished bubbles. One that does not (never measured)
+            // cannot say where the current bubble starts, and guessing would
+            // either repeat a step or cut one short, so it is ignored.
+            if (!string.IsNullOrEmpty(snapshot))
+            {
+                if (snapshot.StartsWith(_closed, StringComparison.Ordinal)) _runText = snapshot;
+            }
+            else if (!string.IsNullOrEmpty(delta)) _runText += delta;
+            else return null;
+
+            return _runText[_closed.Length..].Trim();
+        }
+
         private void OnTool(JsonElement payload)
         {
             if (!payload.TryGetProperty("data", out var data)) return;
-            if (Str(data, "phase") != "start") return;
 
+            var phase = Str(data, "phase");
             var tool = Str(data, "name");
-            if (string.IsNullOrEmpty(tool)) return;
+            var id = Str(data, "toolCallId");
 
-            // One line per tool call, in the transcript rather than in a status
-            // area: what an agent reached for is part of what it said.
-            Add(new ChatTurn
+            if (phase == "result")
+            {
+                if (id is not null && _tools.Remove(id, out var line))
+                {
+                    // The flag, never the text: AppendNewTail anchors on text, and
+                    // a line that reworded itself when its tool finished would not
+                    // match its history twin.
+                    if (Bool(data, "isError") == true)
+                    {
+                        line.IsError = true;
+                        TurnUpdated?.Invoke(line);
+                    }
+
+                    return;
+                }
+
+                // A result for a start this client never saw. If it says what the
+                // tool was, draw the line now rather than lose the call.
+                if (string.IsNullOrEmpty(tool)) return;
+                AddToolLine(tool, data, Bool(data, "isError") == true);
+                return;
+            }
+
+            if (phase != "start" || string.IsNullOrEmpty(tool)) return;
+
+            // The text so far is a step, and what comes after the tool is the
+            // next: close the bubble here so the tool line lands between them.
+            if (_streaming is { IsComplete: false } && _streamingKind == "assistant")
+            {
+                _streaming.IsComplete = true;
+                TurnUpdated?.Invoke(_streaming);
+                _streaming = null;
+                _streamingKind = null;
+                _closed = _runText;
+            }
+
+            var added = AddToolLine(tool, data, false);
+            if (id is not null) _tools[id] = added;
+        }
+
+        // One line per tool call, in the transcript rather than in a status
+        // area: what an agent reached for is part of what it said. The same
+        // summariser history uses, fed the same arguments object, so the two
+        // paths produce the identical line.
+        private ChatTurn AddToolLine(string tool, JsonElement data, bool isError)
+        {
+            var args = data.TryGetProperty("args", out var a) ? a : default;
+            var turn = new ChatTurn
             {
                 Role = ChatRole.System,
                 IsComplete = true,
-                Text = "· " + tool
-            });
+                IsError = isError,
+                Text = ChatTranscript.ToolSummary(tool, args)
+            };
+
+            Add(turn);
+            return turn;
         }
 
         private void Complete()
         {
+            // A run is over whether or not a bubble was open for it.
+            _tools.Clear();
+            _runText = "";
+            _closed = "";
+            _runId = null;
+
             if (_streaming is null) return;
 
             _streaming.IsComplete = true;
@@ -966,6 +1084,13 @@ namespace Orbweaver
             State = state;
             StateChanged?.Invoke(state);
         }
+
+        private static bool? Bool(JsonElement e, string name) =>
+            e.ValueKind == JsonValueKind.Object
+            && e.TryGetProperty(name, out var v)
+            && v.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? v.GetBoolean()
+                : null;
 
         private static string? Str(JsonElement e, string name) =>
             e.ValueKind == JsonValueKind.Object
