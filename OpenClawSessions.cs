@@ -513,7 +513,13 @@ namespace Orbweaver
             // test, a fixture) is an ordinary non-main one with no id, which
             // offers Interrupt and not End.
             string? SessionId = null,
-            bool IsMain = false);
+            bool IsMain = false,
+
+            // CB-270: whether this session has no chat surface behind it. Carried
+            // beside Kind and Heartbeat rather than folded into either, for the
+            // reason Heartbeat is: a native main is still Main, a WhatsApp main
+            // is too, and only this tells them apart. See OpenClawNative.
+            OpenClawNativeKind Native = OpenClawNativeKind.None);
 
         // Where a reply in this session is supposed to end up. The gateway
         // resolves this itself when asked to deliver an agent's answer, but a
@@ -659,6 +665,22 @@ namespace Orbweaver
         // stopped listing has no address any more, and holding the last one
         // known would be inventing a destination.
         private static Dictionary<string, Delivery?> _deliveries = new(StringComparer.Ordinal);
+
+        // CB-270: every listed session's native kind, recency filter or not, for
+        // the same reason _deliveries is: "is this conversation native" is a
+        // fact about the conversation, and a send to one the filter dropped still
+        // has to be routed. Replaced whole per poll.
+        private static Dictionary<string, OpenClawNativeKind> _natives = new(StringComparer.Ordinal);
+
+        // Null means "the gateway has not listed this key", which is a different
+        // answer from None ("listed, and not native"): a caller that is about to
+        // decide how to send must be able to tell an unknown session from a
+        // known surface one.
+        internal static OpenClawNativeKind? NativeOf(string key)
+        {
+            lock (Gate)
+                return _natives.TryGetValue(key, out var native) ? native : null;
+        }
 
         public static IReadOnlyList<string> MembersOfRoom(string roomKey)
         {
@@ -1277,6 +1299,7 @@ namespace Orbweaver
                 StringComparer.Ordinal);
 
             var deliveries = new Dictionary<string, Delivery?>(StringComparer.Ordinal);
+            var natives = new Dictionary<string, OpenClawNativeKind>(StringComparer.Ordinal);
 
             // Every agent the gateway knows of, filtered or not, so that a
             // colour is reserved for one whose orb isn't drawn — their messages
@@ -1336,6 +1359,14 @@ namespace Orbweaver
                 // address, and the mirror on an ordinary send has been quietly
                 // skipping exactly those.
                 deliveries[key] = DeliveryFor(s);
+
+                // ...and its native kind, before the filter, for the same reason.
+                var native = OpenClawNative.Of(
+                    Str(s, "classification"),
+                    Str(origin, "provider"),
+                    s.TryGetProperty("deliveryContext", out var dc) && dc.ValueKind == JsonValueKind.Object,
+                    Str(s, "lastChannel"));
+                natives[key] = native;
 
                 everyAgent.Add(AgentIdOf(key) ?? key);
 
@@ -1403,7 +1434,8 @@ namespace Orbweaver
                     kind,
                     heartbeat,
                     Str(s, "sessionId"),
-                    Bool(s, "isMain") == true));
+                    Bool(s, "isMain") == true,
+                    native));
             }
 
             AssignColours(everyAgent);
@@ -1436,6 +1468,7 @@ namespace Orbweaver
                 _roomMembers = Ordered(roomMembers);
                 _roomColours = roomColours;
                 _deliveries = deliveries;
+                _natives = natives;
             }
 
             return (result, list.GetArrayLength());
@@ -1917,8 +1950,9 @@ namespace Orbweaver
         // panel puts whatever comes back in front of the person who typed it,
         // because a message that didn't arrive and didn't say so is the worst
         // outcome a chat window can produce.
-        // Excluded from coverage: sends a message to a real gateway.
-        [ExcludeFromCodeCoverage]
+        //
+        // Not excluded from coverage: the gateway is a constructor argument, so
+        // SetGatewayForTests drives every path over an in-memory socket (CB-270).
         public static async Task SendAsync(OpenClawChatSession chat, string text, CancellationToken ct)
         {
             OpenClawGateway? gateway;
@@ -1937,28 +1971,18 @@ namespace Orbweaver
             // Ordering matters and is why this is awaited: the reply can come
             // back fast, and a mirror that lands after it puts the question
             // below its own answer.
-            if (chat.Delivery is { } delivery)
+            // Where this goes is decided by OpenClawSendPolicy, which fails toward
+            // the surface payload on any doubt. The classification is looked at
+            // here, at send time, rather than held from when the panel opened.
+            chat.Observe(NativeOf(chat.GatewayKey));
+            var route = chat.Route;
+
+            if (route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
             {
                 try
                 {
-                    var mirror = new Dictionary<string, object>
-                    {
-                        ["to"] = delivery.To,
-                        // The same constant the recognizer reads back, not a
-                        // second literal saying the same thing. Two of them is
-                        // how a mirror stops being recognisable as ours — which
-                        // it silently was, for one release.
-                        ["message"] = OpenClawSender.MirrorPrefix + text,
-                        ["channel"] = delivery.Channel,
-                        ["idempotencyKey"] = Guid.NewGuid().ToString()
-                    };
-
-                    if (!string.IsNullOrWhiteSpace(delivery.AccountId))
-                    {
-                        mirror["accountId"] = delivery.AccountId!;
-                    }
-
-                    await gateway.RequestAsync("send", mirror, ct);
+                    await gateway.RequestAsync("send",
+                        OpenClawSendPolicy.MirrorRequest(delivery, text, Guid.NewGuid().ToString()), ct);
                 }
                 catch
                 {
@@ -1969,33 +1993,9 @@ namespace Orbweaver
                 }
             }
 
-            await gateway.RequestAsync("chat.send", new Dictionary<string, object>
-            {
-                ["sessionKey"] = chat.GatewayKey,
-                ["message"] = text,
-
-                // Without this the gateway routes the reply to its internal
-                // channel — the agent answers, the transcript records it, and
-                // nothing ever reaches Discord. Its own routing reads:
-                //
-                //   if (!(params.deliver === true)) return { originatingChannel: INTERNAL_MESSAGE_CHANNEL, … }
-                //   const sessionDeliveryContext = deliveryContextFromSession(entry)
-                //
-                // so `true` is what makes it look up where this conversation
-                // actually lives and deliver there. We don't have to carry the
-                // channel or recipient ourselves; the session already knows, and
-                // the gateway is connected to Discord whether or not anything is
-                // open on this machine.
-                //
-                // Always on rather than a choice: a reply typed into a Discord
-                // conversation is a reply *to* that conversation. Anything else
-                // would be a message that looked sent and wasn't.
-                ["deliver"] = true,
-
-                // Side-effecting methods want one of these; a fresh id per send
-                // means a retry after a timeout can't post the message twice.
-                ["idempotencyKey"] = Guid.NewGuid().ToString()
-            }, ct);
+            await gateway.RequestAsync("chat.send",
+                OpenClawSendPolicy.ChatSendRequest(
+                    chat.GatewayKey, text, route, Guid.NewGuid().ToString()), ct);
         }
 
         // --- posting to a room -------------------------------------------
@@ -2086,20 +2086,8 @@ namespace Orbweaver
 
             try
             {
-                var mirror = new Dictionary<string, object>
-                {
-                    ["to"] = delivery.To,
-                    ["message"] = OpenClawSender.MirrorPrefix + text,
-                    ["channel"] = delivery.Channel,
-                    ["idempotencyKey"] = Guid.NewGuid().ToString()
-                };
-
-                if (!string.IsNullOrWhiteSpace(delivery.AccountId))
-                {
-                    mirror["accountId"] = delivery.AccountId!;
-                }
-
-                await gateway.RequestAsync("send", mirror, ct);
+                await gateway.RequestAsync("send",
+                    OpenClawSendPolicy.MirrorRequest(delivery, text, Guid.NewGuid().ToString()), ct);
             }
             catch (Exception ex)
             {
@@ -2108,13 +2096,12 @@ namespace Orbweaver
 
             try
             {
-                await gateway.RequestAsync("chat.send", new Dictionary<string, object>
-                {
-                    ["sessionKey"] = carrier.GatewayKey,
-                    ["message"] = text,
-                    ["deliver"] = true,
-                    ["idempotencyKey"] = Guid.NewGuid().ToString()
-                }, ct);
+                // A room's carrier is a channel member, never a native session,
+                // so the route is a constant rather than a lookup.
+                await gateway.RequestAsync("chat.send",
+                    OpenClawSendPolicy.ChatSendRequest(
+                        carrier.GatewayKey, text, OpenClawSendRoute.Surface,
+                        Guid.NewGuid().ToString()), ct);
             }
             catch (Exception ex)
             {
