@@ -1601,11 +1601,30 @@ orbs do, and there are three answers rather than two:
 | **With the chats** | An orb, gathered into the same shape as everything else when you press the arrange button. The default, and what the app has always done. |
 | **Own shape** | An orb, gathered into a shape of its own, drawn beside your conversations rather than among them. |
 
-Set both to *Own shape* and the arrange button draws three patterns side by side
-— your chats, the heartbeats, the crons — each with its own entry in Settings
-picking from the same six shapes. Leave both alone and it is one shape, exactly
-as before. The agents keep their colours in any channel they are in whichever you
-pick.
+Set them all to *Own shape* and the arrange button draws up to four patterns side
+by side — your chats, the heartbeats, the crons and your agents' own sessions
+(below) — each with its own entry in Settings picking from the same shapes. Leave
+them alone and it is one shape, exactly as before. The agents keep their colours
+in any channel they are in whichever you pick.
+
+**Agents' own sessions** takes the same three answers for the conversations that
+have no chat app behind them: an agent's main session when nobody reached it
+through Discord or WhatsApp, and any chat you start from Orbweaver's New Chat. It
+does not touch an agent's Discord or WhatsApp conversations, direct messages
+included. It is a main session with *no* chat-app origin or delivery that counts;
+a main session that a WhatsApp conversation is routed into stays a heartbeat, as
+before. One consequence worth knowing: an agent's native main session no longer
+follows the heartbeat setting, so if you had hidden heartbeats, those orbs now
+show until you hide *Agents' own sessions* as well. The default is *With the
+chats*, and the shape, when you give it one, is a diamond.
+
+Two things keep a conversation on screen however long it has been quiet, and both
+are the gateway's own: a chat started from New Chat (which ends only when you
+**End the conversation**), and anything pinned. An orb's menu has **Keep on
+screen** to pin or unpin a conversation on the gateway, so it is pinned in every
+client, and **Rename conversation…** to change its name there. Both need "Allow
+replying to agents", and a conversation pinned from another client is kept here
+too — a pinned Discord DM stops timing out.
 
 The shapes sit beside each other rather than anywhere you place them
 individually: each gets a share of the screen in proportion to how many orbs it
