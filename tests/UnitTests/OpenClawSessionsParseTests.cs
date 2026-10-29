@@ -1016,5 +1016,19 @@ namespace Orbweaver.Tests
         {
             Assert.Equal(Array.Empty<byte>(), OpenClawSessions.DecodeDataUri("data:image/png;base64,"));
         }
+
+        // A deliveryContext that is not an object (null, a string) is no delivery
+        // evidence: the row is still native. A present *object* is evidence, even an
+        // empty one, which is the other arm.
+        [Theory]
+        [InlineData("\"deliveryContext\":null", OpenClawNativeKind.Main)]
+        [InlineData("\"deliveryContext\":\"discord\"", OpenClawNativeKind.Main)]
+        [InlineData("\"deliveryContext\":{}", OpenClawNativeKind.None)]
+        public void OnlyAnObjectDeliveryContextCountsAsSurfaceEvidence(string field, OpenClawNativeKind expected)
+        {
+            var json = $$"""{"sessions":[{"key":"agent:a:main","classification":"main",{{field}},"lastActivityAt":{{JustNow}}}]}""";
+
+            Assert.Equal(expected, Assert.Single(Parse(json).Sessions).Native);
+        }
     }
 }

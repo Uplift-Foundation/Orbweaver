@@ -235,4 +235,31 @@ public class OpenClawRenameWindowTests : IDisposable
         Assert.False(window.StatusText.IsVisible);
         Assert.True(window.SaveButton.IsEnabled);
     }
+
+    // A window retargeted at a conversation with no name starts with an empty box,
+    // and a box whose text is null is a blank name: no request, window closes.
+    [AvaloniaFact]
+    public async Task RetargetingAtAnUnnamedConversationEmptiesTheBoxAndANullTextIsBlank()
+    {
+        var presented = new List<OpenClawRenameWindow>();
+        OpenClawRenameWindow.PresentForTests = presented.Add;
+        OpenClawRenameWindow.BringForwardForTests = _ => { };
+        var calls = new List<string>();
+        OpenClawRenameWindow.RenameFunc rename = (id, name, _) =>
+        {
+            calls.Add(name);
+            return Task.FromResult((OpenClawActionOutcome.Done, (string?)null));
+        };
+
+        OpenClawRenameWindow.Toggle("openclaw:one", "One", rename);
+        OpenClawRenameWindow.Toggle("openclaw:two", null, rename);
+        var window = presented[0];
+        Assert.Equal("", window.NameBox.Text);
+
+        window.Show();
+        window.NameBox.Text = null;
+        await window.SaveAsync();
+
+        Assert.Empty(calls);
+    }
 }

@@ -627,4 +627,39 @@ public class OpenClawOrbActionRequestTests : IDisposable
             Assert.True(context.GatewayPinned);
         }
     }
+
+    // PatchAsync rethrows a retryable refusal only for the archive, which asks
+    // again. A pin that is refused as UNAVAILABLE is not retried: it is classified
+    // and shown like any other refusal, never thrown out of the request.
+    [Fact]
+    public async Task ARetryableRefusalOnAPinIsShownNotThrown()
+    {
+        var (socket, gateway) = await ConnectedAsync(r => Refuse(r, "UNAVAILABLE", "try again later"));
+        using (gateway)
+        {
+            var (outcome, detail) = await OpenClawSessions.SetGatewayPinnedAsync(Orb, true, CancellationToken.None);
+
+            Assert.Equal(OpenClawActionOutcome.Refused, outcome);
+            Assert.Equal("try again later", detail);
+            Assert.Single(Sent(socket));
+        }
+    }
+
+    // A pin changes the one session it names and leaves every other one in the
+    // snapshot as it was.
+    [Fact]
+    public async Task APinChangesOnlyTheNamedSession()
+    {
+        var other = Session() with { Key = "agent:main:dashboard:other", SessionId = "sid-2" };
+        var (_, gateway) = await ConnectedAsync(Patched, Session());
+        using (gateway)
+        {
+            OpenClawSessions.SetSnapshotForTests(new[] { Session(), other });
+
+            await OpenClawSessions.SetGatewayPinnedAsync(Orb, true, CancellationToken.None);
+
+            Assert.True(OpenClawSessions.CapabilitiesFor(Orb).GatewayPinned);
+            Assert.False(OpenClawSessions.CapabilitiesFor("openclaw:agent:main:dashboard:other").GatewayPinned);
+        }
+    }
 }
