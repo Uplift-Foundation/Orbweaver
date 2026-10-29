@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 
 namespace Orbweaver
@@ -82,6 +83,150 @@ namespace Orbweaver
             }
 
             return drop;
+        }
+
+        // CB-270 stage 3b: the rule for one span, in one place. Given the text
+        // steps S1..Sk of a span (in order) and the rollup R that closes it:
+        //
+        //   (a) k == 0: nothing to decide, keep R.
+        //   (b) R is covered by the steps (RollupIsCoveredBy): drop R, keep every
+        //       step. Exactly the stage-3 coverage rule.
+        //   (c) otherwise keep R and drop every step whose collapsed text occurs
+        //       in R's collapsed text (StepsCoveredBy); uncovered steps stay.
+        //
+        // (c) is what removes the repeat (b) alone leaves: a rollup that holds
+        // every step plus more is kept whole, so nothing is lost, and its covered
+        // steps would otherwise be drawn a second time. Dropping a step is safe
+        // by construction because its text is inside the rollup that stays.
+        internal readonly record struct SpanDecision(bool DropRollup, IReadOnlyList<int> DropSteps);
+
+        internal static SpanDecision ResolveSpan(IReadOnlyList<string> stepTexts, string rollupText)
+        {
+            if (stepTexts.Count == 0) return new SpanDecision(false, System.Array.Empty<int>());
+
+            if (RollupIsCoveredBy(rollupText, stepTexts))
+                return new SpanDecision(true, System.Array.Empty<int>());
+
+            return new SpanDecision(false, StepsCoveredBy(rollupText, stepTexts));
+        }
+
+        // The whole page: the same spans as RollupsToDrop (a boundary is a user
+        // message, a rollup, or the page start), with the set holding steps as
+        // well as rollups. Tool lines are not text, so a dropped step message still
+        // carries its toolcall blocks and the caller emits them: tool lines never
+        // drop or move. Steps after the last rollup are a run in flight.
+        //
+        // startsMidRun: this page does not begin at the start of a run, because an
+        // older page exists. Its first span, up to the first user turn or rollup,
+        // may then be missing steps that sit on the older page, so (c) cannot be
+        // decided from this page alone and is left to the boundary, which sees
+        // both halves (ResolveSpan over the combined span). (b) is safe on a cut
+        // span: covered by some of the steps means covered by all of them.
+        internal static HashSet<int> TextsToDrop(JsonElement messages, bool startsMidRun = false)
+        {
+            var drop = new HashSet<int>();
+            if (messages.ValueKind != JsonValueKind.Array) return drop;
+
+            var steps = new List<(int Index, string Text)>();
+            var seenBoundary = false;
+            var index = 0;
+
+            foreach (var message in messages.EnumerateArray())
+            {
+                if (Str(message, "role") == "user")
+                {
+                    steps.Clear();
+                    seenBoundary = true;
+                }
+                else if (IsRollup(message))
+                {
+                    var decision = ResolveSpan(steps.Select(x => x.Text).ToList(), TextOf(message));
+                    var cut = startsMidRun && !seenBoundary;
+
+                    if (decision.DropRollup)
+                        drop.Add(index);
+                    else if (!cut)
+                        foreach (var covered in decision.DropSteps)
+                            drop.Add(steps[covered].Index);
+
+                    steps.Clear();
+                    seenBoundary = true;
+                }
+                else if (Str(message, "role") == "assistant" && HasText(message))
+                {
+                    steps.Add((index, TextOf(message)));
+                }
+
+                index++;
+            }
+
+            return drop;
+        }
+
+        internal readonly record struct SpanStep(int Index, string Text);
+
+        // The text steps of the page's last span when no rollup closes it: the run
+        // an older page ends in. Empty when the page ends at a user turn or a
+        // rollup.
+        internal static List<SpanStep> OpenTailSteps(JsonElement messages)
+        {
+            var steps = new List<SpanStep>();
+            if (messages.ValueKind != JsonValueKind.Array) return steps;
+
+            var index = 0;
+            foreach (var message in messages.EnumerateArray())
+            {
+                if (Str(message, "role") == "user" || IsRollup(message))
+                    steps.Clear();
+                else if (Str(message, "role") == "assistant" && HasText(message))
+                    steps.Add(new SpanStep(index, TextOf(message)));
+
+                index++;
+            }
+
+            return steps;
+        }
+
+        // The head of a newer page: the text steps before its first rollup, and
+        // that rollup's index, provided no user turn comes first (otherwise the
+        // span started on this page and there is nothing to join). RollupIndex is
+        // -1 when there is no such rollup.
+        internal static (List<SpanStep> LeadSteps, int RollupIndex) HeadSpan(JsonElement messages)
+        {
+            var lead = new List<SpanStep>();
+            if (messages.ValueKind != JsonValueKind.Array) return (lead, -1);
+
+            var index = 0;
+            foreach (var message in messages.EnumerateArray())
+            {
+                if (Str(message, "role") == "user") return (lead, -1);
+                if (IsRollup(message)) return (lead, index);
+                if (Str(message, "role") == "assistant" && HasText(message))
+                    lead.Add(new SpanStep(index, TextOf(message)));
+
+                index++;
+            }
+
+            return (lead, -1);
+        }
+
+        // Which of the steps a (kept) rollup contains: the positions in
+        // `stepTexts` whose whitespace-collapsed, non-empty text is an ordinal
+        // substring of the rollup's collapsed text. The one place both TextsToDrop
+        // and the page-boundary path decide this, so they cannot disagree.
+        internal static List<int> StepsCoveredBy(string rollupText, IReadOnlyList<string> stepTexts)
+        {
+            var rollup = Collapse(rollupText);
+            var covered = new List<int>();
+
+            for (var i = 0; i < stepTexts.Count; i++)
+            {
+                var text = Collapse(stepTexts[i]);
+                if (text.Length > 0 && rollup.Contains(text, System.StringComparison.Ordinal))
+                    covered.Add(i);
+            }
+
+            return covered;
         }
 
         private static readonly System.Text.RegularExpressions.Regex Whitespace =
