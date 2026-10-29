@@ -1308,5 +1308,135 @@ public class OpenClawGatewayPayloadTests
         Assert.Equal(OpenClawNativeKind.None,
             OpenClawSessions.NativeOf("agent:alpha:discord:direct:1900000000000000001"));
     }
+
+    // CB-270 S5: a WhatsApp sessions.list page in the gateway's envelope, the
+    // field structure of the live WhatsApp rows (2026.10.5) with every value
+    // invented: numbers are +1555000000N, group ids are 12000000000000000N@g.us,
+    // subjects are made up. By category: a native main (no origin at all), a
+    // WhatsApp-routed main with a channel-only deliveryContext, a DM, a group two
+    // agents are in, a group one agent is in whose chatType contradicts its
+    // classification, and a second DM peer. All recent, so the window is not
+    // what is under test.
+    private static string WhatsAppPage()
+    {
+        var recent = new DateTimeOffset(Now.AddSeconds(-5)).ToUnixTimeMilliseconds();
+
+        static string Group(string agent, string id, string subject, string chatType) =>
+            $$"""
+              {"key":"agent:{{agent}}:whatsapp:group:{{id}}","classification":"group","kind":"group",
+               "chatType":"{{chatType}}","peerKind":"group","subject":"{{subject}}","displayName":"{{subject}}",
+               "origin":{"provider":"whatsapp","chatType":"{{chatType}}","label":"{{id}}","from":"{{id}}",
+                         "to":"{{id}}","surface":"whatsapp","accountId":"default"},
+               "deliveryContext":{"channel":"whatsapp","to":"{{id}}","accountId":"default"},
+               "lastChannel":"whatsapp","lastTo":"{{id}}","lastAccountId":"default","lastActivityAt":RECENT}
+              """;
+
+        string Dm(string agent, string number) =>
+            $$"""
+              {"key":"agent:{{agent}}:whatsapp:direct:{{number}}","classification":"direct","kind":"direct",
+               "chatType":"direct","peerKind":"direct",
+               "origin":{"provider":"whatsapp","chatType":"direct","label":"{{number}}","from":"{{number}}",
+                         "to":"{{number}}","surface":"whatsapp","nativeDirectUserId":"{{number}}"},
+               "deliveryContext":{"channel":"whatsapp","to":"{{number}}"},
+               "lastChannel":"whatsapp","lastTo":"{{number}}","lastActivityAt":RECENT}
+              """;
+
+        var rows = new[]
+        {
+            // A native main: no origin, no delivery context, no last channel.
+            """{"key":"agent:nativeone:main","classification":"main","kind":"direct","chatType":"direct","isMain":true,"lastActivityAt":RECENT}""",
+
+            // A WhatsApp-routed main: a provider, a channel-only context, no address.
+            """{"key":"agent:alpha:main","classification":"main","kind":"direct","chatType":"direct","isMain":true,"origin":{"provider":"whatsapp"},"deliveryContext":{"channel":"whatsapp"},"lastChannel":"whatsapp","lastActivityAt":RECENT}""",
+
+            Dm("alpha", "+15550000001"),
+            Dm("beta", "+15550000002"),
+            Group("alpha", "120000000000000001@g.us", "Studio Crew", "group"),
+            Group("beta", "120000000000000001@g.us", "Studio Crew", "group"),
+            Group("gamma", "120000000000000002@g.us", "Night Shift", "direct"),
+        };
+
+        return "{\"count\":" + rows.Length + ",\"sessions\":[" + string.Join(",", rows).Replace("RECENT", recent.ToString()) + "]}";
+    }
+
+    private static IReadOnlyList<OpenClawSessions.Session> ParseWhatsApp()
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+
+        return OpenClawSessions.Parse(Json(WhatsAppPage()), Now).Sessions;
+    }
+
+    // Kinds, from the whole payload. The group whose chatType contradicts its
+    // classification is a Channel; every DM is Direct; both mains are Main.
+    [Fact]
+    public void AWhatsAppPageGivesGroupsAsChannelsDmsAsDirectAndMainsAsMain()
+    {
+        var sessions = ParseWhatsApp();
+
+        Assert.Equal(7, sessions.Count);
+        Assert.All(sessions.Where(s => s.Key.Contains(":group:")), s => Assert.Equal(SessionKind.Channel, s.Kind));
+        Assert.All(sessions.Where(s => s.Key.Contains(":direct:")), s => Assert.Equal(SessionKind.Direct, s.Kind));
+        Assert.All(sessions.Where(s => s.Key.EndsWith(":main")), s => Assert.Equal(SessionKind.Main, s.Kind));
+
+        // The contradicting row in particular, by name.
+        Assert.Equal(SessionKind.Channel, sessions.Single(s => s.Key.Contains("gamma")).Kind);
+    }
+
+    // The privacy pin over the whole page: no title carries five digits in a row,
+    // and the names the gateway does hold, the subjects, are what is shown.
+    [Fact]
+    public void NoWhatsAppTitleOnTheWholePageCarriesARunOfFiveOrMoreDigits()
+    {
+        var sessions = ParseWhatsApp();
+
+        foreach (var session in sessions)
+        {
+            Assert.False(
+                System.Text.RegularExpressions.Regex.IsMatch(session.Title, "[0-9]{5,}"),
+                $"a title carries an identifier: {session.Title}");
+        }
+
+        Assert.Equal("alpha — Studio Crew", sessions.Single(s => s.Key.StartsWith("agent:alpha:whatsapp:group")).Title);
+        Assert.Equal("alpha — whatsapp", sessions.Single(s => s.Key.StartsWith("agent:alpha:whatsapp:direct")).Title);
+    }
+
+    // S2's guarantee, re-pinned on the new fixture: every WhatsApp row has a
+    // provider, so none is native. Only the main with no origin at all is.
+    [Fact]
+    public void EveryWhatsAppRowIsNotNativeAndOnlyTheBareMainIs()
+    {
+        var sessions = ParseWhatsApp();
+
+        foreach (var session in sessions.Where(s => s.Key != "agent:nativeone:main"))
+            Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf(session.Key));
+
+        Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:nativeone:main"));
+    }
+
+    // Two agents in one group are one room; the other group is a different room;
+    // a DM is in none. Exactly one room key is shared by two agents.
+    [Fact]
+    public void TwoAgentsInOneWhatsAppGroupShareExactlyOneRoom()
+    {
+        var sessions = ParseWhatsApp();
+
+        var rooms = sessions
+            .Select(s => OpenClawSessionKind.RoomOf(s.Key))
+            .Where(r => r is not null)
+            .GroupBy(r => r!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        Assert.Equal(2, rooms.Count);
+        Assert.Equal(2, rooms["whatsapp:120000000000000001@g.us"]);
+        Assert.Equal(1, rooms["whatsapp:120000000000000002@g.us"]);
+        Assert.Equal(
+            1,
+            rooms.Count(r => r.Value == 2));
+
+        Assert.Equal(2, OpenClawSessions.MembersOfRoom("whatsapp:120000000000000001@g.us").Count);
+    }
 }
 

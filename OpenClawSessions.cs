@@ -1516,7 +1516,8 @@ namespace Orbweaver
         // from and is absent on 12 of the 70 sessions this was measured against,
         // while chatType is the gateway's own answer to the question being asked.
         internal static SessionKind KindFor(JsonElement session, JsonElement origin, string key) =>
-            OpenClawSessionKind.From(key, Str(session, "chatType") ?? Str(origin, "chatType"));
+            OpenClawSessionKind.From(
+                key, Str(session, "chatType") ?? Str(origin, "chatType"), Str(session, "classification"));
 
         // What to call a session. Two halves: who is talking, and where.
         //
@@ -1575,11 +1576,29 @@ namespace Orbweaver
         // necessary before anyone looked at what else sessions.list carries.
         // This field needs none of that and cannot be thrown off by a label
         // whose shape changes, so it is asked first and Where is the fallback.
+        //
+        // CB-270: a WhatsApp group has no groupChannel, and its name is in
+        // `subject`, so that is asked next. Discord rows carry no subject, so
+        // Discord titles are unchanged.
         internal static string? Group(JsonElement session)
         {
             var group = Str(session, "groupChannel");
-            return string.IsNullOrWhiteSpace(group) ? null : group!.Trim();
+            if (!string.IsNullOrWhiteSpace(group)) return group!.Trim();
+
+            var subject = Str(session, "subject");
+            return string.IsNullOrWhiteSpace(subject) ? null : subject!.Trim();
         }
+
+        // CB-270: whether a label is nothing but an identifier: a phone number,
+        // or a raw WhatsApp group id. On every WhatsApp row origin.label is
+        // exactly that, and a number in an orb title lands in every screenshot
+        // and screen share. A label that is a number plus words is a name.
+        // The trade is that two WhatsApp DMs with two people would then share a
+        // title; today's gateway has one DM peer, and a partial number is still
+        // an identifier in a screenshot.
+        internal static bool IsBareIdentifier(string label) =>
+            System.Text.RegularExpressions.Regex.IsMatch(label.Trim(), @"^\+?[0-9]{5,}$")
+            || System.Text.RegularExpressions.Regex.IsMatch(label.Trim(), @"^[0-9]+@g\.us$");
 
         // origin.label is written for a log, not for a person: "#general channel
         // id:1900000000000000001", "riverbend user id:200000000000000001",
@@ -1591,6 +1610,11 @@ namespace Orbweaver
 
             var label = Str(origin, "label");
             if (string.IsNullOrWhiteSpace(label)) return null;
+
+            // A bare number or group id is not a name; the title falls back to
+            // the surface word, the same fallback a Discord row with no label
+            // already gets.
+            if (IsBareIdentifier(label!)) return null;
 
             var text = label!;
 
@@ -2469,10 +2493,47 @@ namespace Orbweaver
                         // first because __openclaw is the undocumented half and
                         // the one likelier to move.
                         Str(message, "idempotencyKey") ?? Str(meta, "idempotencyKey"),
-                        text);
+                        text,
+
+                        // CB-270: provenance is an object on the message itself,
+                        // not inside __openclaw, so Str(message, "provenance")
+                        // would answer null: read the object, then its kind.
+                        Str(
+                            message.TryGetProperty("provenance", out var provenance)
+                            && provenance.ValueKind == JsonValueKind.Object
+                                ? provenance
+                                : default,
+                            "kind"));
 
                     text = sender.Text;
                     mine = sender.Kind == OpenClawSender.SenderKind.Mine;
+
+                    // CB-270: the gateway's own machinery is not a person. A turn it
+                    // labels internal_system, or one of its two plain-text
+                    // injections (a reminder, a System: line) that arrives with no
+                    // attribution at all, is drawn as the dim note the panel already
+                    // has for System turns, and the room merge already drops those.
+                    //
+                    // The plain-text check runs only when nobody is named: a turn
+                    // the gateway attributed to the operator or to a named sender is
+                    // trusted over what it happens to start with, so a person who
+                    // types the sentence is still themselves.
+                    //
+                    // **Deliberately not done: attributing a bare user turn to the
+                    // WhatsApp peer.** Every user turn read off the two mains a
+                    // WhatsApp DM is routed into (2026.10.5) was machine output and
+                    // none a person's message, so the shape of a real inbound DM is
+                    // unknown. Naming the peer on a reminder would draw a reminder
+                    // as somebody's words. Revisit when one is captured.
+                    if (sender.Kind == OpenClawSender.SenderKind.Machine
+                        || (sender.Kind == OpenClawSender.SenderKind.Unknown
+                            && OpenClawSender.IsGatewayInjected(text)))
+                    {
+                        role = ChatRole.System;
+                        mine = false;
+                        speaker = null;
+                        colour = null;
+                    }
 
                     // A name only where Readable did not already find a better
                     // one. Its answer is an agent *id*, which resolves to the

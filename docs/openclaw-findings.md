@@ -1039,9 +1039,31 @@ The same shape is in real conversations. In 5 recent sessions (4 Discord channel
 ### Sender identity on WhatsApp
 
 - **A WhatsApp group** (`agent:<id>:whatsapp:group:…`): all 4 user messages carry `senderName`, `senderId`, `senderIdentity` and `senderIsOwner: false`. That is the shape `OpenClawSender.Classify` already reads as `Named`.
-- **A WhatsApp DM routed into an agent's main session**: all 40 user messages carry only `importedFrom: "claude-cli"`, `cliSessionId`, `externalId`, `turnBoundary` (and on 5, `cliImageTurnKey`/`truncated`/`reason`). There is no `senderIsOwner`, no `senderName` and no `:user` idempotency key, so every one classifies as `Unknown`.
+- **A WhatsApp-routed main session: 40 user messages with only `importedFrom: "claude-cli"`, `cliSessionId`, `externalId`, `turnBoundary` (and on 5, `cliImageTurnKey`/`truncated`/`reason`).** There is no `senderIsOwner`, no `senderName` and no `:user` idempotency key, so every one classifies as `Unknown`. **This bullet used to call those 40 messages a DM's. That reading was wrong:** they are not a person's WhatsApp messages. See *WhatsApp, re-measured (S5)* below, which measured every user turn on this and the other WhatsApp-routed main as machine output.
 - No mirror-prefixed message appeared in either.
 - A user message typed through `chat.send` by this device carries `senderId: "gateway-owner"`, `senderName` set to **the agent's** display name, and the `:user` idempotency suffix. `Classify` reaches `Mine` on the suffix before it reaches `Named`, which is why this reads correctly today. Any reordering of that precedence would label the user's own messages with the agent's name.
+
+### WhatsApp, re-measured (S5)
+
+Read-only against openclaw 2026.10.5, through `tools/openclaw-probe` (`sessions.list` and `chat.history`), by the S5 architect. The row shapes (the group row whose `chatType` contradicts its `classification`, the raw-identifier labels, the channel-only delivery context) were checked against an independent read-only `sessions.list` taken earlier in CB-270 and agree; the machine-turn counts and the paging overlap are the architect's alone. Nothing was sent, patched or created, and nothing was ever sent into a WhatsApp conversation. Every value below is reported by category: no phone number, group id or name appears here, and the test fixtures that follow these shapes use invented ones.
+
+- **The user turns on the two WhatsApp-routed mains are all machine output, not a person's messages.** Every user turn the gateway returned for both (`agent:main:main` and `agent:alexis:main`, the newest pages, up to about 200 messages each) was one of:
+  - "A scheduled reminder has been triggered…" injections, by far the commonest: 131 in the pages read for one main and 126 for the other;
+  - "OpenClaw resumed this CLI session…" notices, which `Readable` already drops;
+  - `System: [<timestamp>]` lines;
+  - `tool_result` blocks in the user role;
+  - "Exec completed (…)" notices, which carry `provenance: {kind: "internal_system", sourceTool: "exec"}`.
+
+  The 40 messages the previous section described as a DM's were these. Both `agent:*:whatsapp:direct:*` sessions hold a single outbound assistant message each and no user turn at all.
+- **The bound on that negative.** `chat.history`'s `offset` returned overlapping pages for one of the mains, so "no human turn" is bounded to what came back and is not proven for the whole transcript. **Attributing a bare user turn to the WhatsApp peer is therefore a non-goal until a real inbound WhatsApp DM is captured.** Doing it on this evidence would draw a reminder as a person's words. One way to capture one without sending anything from the app or an agent: the owner sends a single WhatsApp DM from his own phone and the main and direct sessions are read back with `probe history`; if it arrives with `senderName` or `senderIsOwner`, `Classify` already handles it, and if it arrives bare it becomes a follow-up with the shape.
+- **The exec notices wear the operator's suffix.** On one main they carry the `:user` idempotency suffix with `senderIsOwner: false`. `Classify` checked the suffix first, so they were drawn as the operator's own words, blue and right-aligned. Nothing in the app read `provenance`, and this affects every OpenClaw session that receives exec notices, not only WhatsApp ones. Fixed by asking the provenance first.
+- **`provenance` is an object on the message itself**, beside `role` and `content`, not inside `__openclaw`, so a string read of it answers null.
+- **One WhatsApp group row disagrees with itself.** Of the three WhatsApp group rows, one carries `chatType: "direct"` both top-level and in `origin`, while its `classification`, `kind` and `peerKind` all say group. `KindFor` preferred `chatType`, so that orb was badged "direct message", a room other people read labelled private. Across all 71 rows this was the only disagreement with the gateway's `classification`, apart from two subagent rows reading `Unknown`, which is acceptable. Fixed in one direction only: a classification of group or channel corrects a Direct answer; a classification of direct never turns a channel into a DM.
+- **`origin.label` is the raw identifier on every WhatsApp row**: the peer's phone number on a DM and the raw `<id>@g.us` on a group. There is no `groupChannel`, and the group's real name is in `subject`. A DM orb was titled with a phone number and a group with its id. A phone number in an orb title lands in every screenshot and screen share.
+- **Not changed, recorded: two delivery shapes.**
+  - `agent:alexis:main`'s `deliveryContext` has a channel and no `to`, and there is no `lastTo`, so `DeliveryFor` returns no address and a reply typed there goes `chat.send` with `deliver: true` and no mirror. What the gateway does with a channel-only context is **not measured**, and cannot be without sending into a real conversation.
+  - `agent:main:main` is a surface conversation with a full WhatsApp address, so a reply typed into its panel is mirrored into the WhatsApp DM as `**(via Orbweaver)** <text>`, sent as the agent. That is the send policy's surface behaviour, unchanged.
+- **Not measured: whether WhatsApp renders the mirror prefix's `**…**` as bold or as literal asterisks.** Cosmetic. The prefix is not changed because `Classify` reads it back.
 
 ### Approvals: declared only
 

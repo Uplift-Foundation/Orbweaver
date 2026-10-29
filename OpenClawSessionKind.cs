@@ -115,6 +115,32 @@ namespace Orbweaver
             return SessionKind.Unknown;
         }
 
+        // CB-270: the same answer, with the gateway's own classification as a
+        // second opinion on the one mistake that matters.
+        //
+        // A WhatsApp group was measured carrying chatType "direct", top-level and
+        // in origin, while its classification, kind and peerKind all said group.
+        // chatType decides wherever the key is uninformative, so that row came out
+        // Direct, and Direct wears the "direct message" badge: a room other people
+        // read, labelled private.
+        //
+        // Overridden in that one direction only. A Direct answer where the
+        // classification says group or channel becomes Channel; nothing else
+        // changes, and in particular a classification of "direct" never turns a
+        // Channel into Direct. Calling a DM a room is the safe error and calling a
+        // room private is the dangerous one, which is the whole reason this does
+        // not simply trust classification both ways. A null or unrecognised
+        // classification gives exactly the two-argument answer.
+        public static SessionKind From(string? key, string? chatType, string? classification)
+        {
+            var kind = From(key, chatType);
+
+            return kind == SessionKind.Direct
+                   && (Is(classification ?? "", "group") || Is(classification ?? "", "channel"))
+                ? SessionKind.Channel
+                : kind;
+        }
+
         // Which room a channel session is in, as a key stable across restarts
         // and shared by every agent in it: "<surface>:<channel id>".
         //
