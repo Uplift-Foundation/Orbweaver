@@ -57,4 +57,39 @@ public class OpenClawToolErrorCarryTests
         Assert.True(session.History[1].IsError);
         Assert.False(session.History[0].IsError);
     }
+
+    // Pins why the room merge does not carry IsError: it keeps only assistant
+    // turns and the reader's own, so a System tool line never reaches a room.
+    // If System turns are ever let in, this fails and IsError needs carrying in
+    // OpenClawRoomChat's merge copies.
+    [Fact]
+    public void ARoomBuiltFromAgentsWithToolLinesShowsNoToolLine()
+    {
+        OpenClawChatSession Member(string agent, params HistoryTurn[] turns)
+        {
+            var chat = new OpenClawChatSession($"openclaw:agent:{agent}:discord:channel:1",
+                $"agent:{agent}:discord:channel:1", agent);
+            chat.SetHistory(turns);
+            chat.HasMore = false;
+            return chat;
+        }
+
+        var nova = Member("nova",
+            new HistoryTurn(ChatRole.Assistant, "step", null, "", T0, null, null),
+            Tool("· exec  false", true),
+            new HistoryTurn(ChatRole.Assistant, "done", null, "", T0, null, null));
+        var rex = Member("rex", new HistoryTurn(ChatRole.Assistant, "hi", null, "", T0, null, null));
+
+        var room = new OpenClawRoomChatSession("openclaw:room:discord:1", "#general");
+        room.SetMembers(new List<(OpenClawChatSession, string, string)>
+        {
+            (nova, "Nova", "#7f7"), (rex, "Rex", "#77f")
+        });
+        room.Rebuild();
+
+        Assert.DoesNotContain(room.History, t => t.Role == ChatRole.System);
+        Assert.DoesNotContain(room.History, t => t.IsError);
+        Assert.DoesNotContain(room.History, t => t.Text.StartsWith("· "));
+        Assert.Equal(3, room.History.Count);
+    }
 }
