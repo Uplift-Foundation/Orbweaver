@@ -394,12 +394,23 @@ namespace Orbweaver
             }
         }
 
-        private void Note(string text) => Add(new ChatTurn
+        // The notes this session wrote itself, as against a tool line the run drew.
+        // Both are System turns, and a reconciliation has to tell them apart: a
+        // note about a send belongs to the message it follows and is kept with it.
+        private readonly HashSet<ChatTurn> _notes = new();
+
+        private void Note(string text)
         {
-            Role = ChatRole.System,
-            IsComplete = true,
-            Text = text
-        });
+            var note = new ChatTurn
+            {
+                Role = ChatRole.System,
+                IsComplete = true,
+                Text = text
+            };
+
+            _notes.Add(note);
+            Add(note);
+        }
 
         public void Cancel()
         {
@@ -606,10 +617,20 @@ namespace Orbweaver
 
             // Sent here and not on the page yet: each page copy accounts for one.
             var shown = page.Skip(at + 1).Where(t => t.Role == ChatRole.User).Select(t => t.Text).ToList();
+            // A note this session wrote straight after one of them, "Couldn't send"
+            // or "Replying is off", goes with it: the reason belongs to the message
+            // and the message is staying.
             var unconfirmed = new List<ChatTurn>();
-            foreach (var turn in _history.Skip(from).Where(t => t.Role == ChatRole.User))
+            for (var i = from; i < _history.Count; i++)
             {
-                if (!shown.Remove(turn.Text)) unconfirmed.Add(turn);
+                var turn = _history[i];
+                if (turn.Role != ChatRole.User || shown.Remove(turn.Text)) continue;
+
+                unconfirmed.Add(turn);
+                while (i + 1 < _history.Count && _notes.Contains(_history[i + 1]))
+                {
+                    unconfirmed.Add(_history[++i]);
+                }
             }
 
             if (count > 0)

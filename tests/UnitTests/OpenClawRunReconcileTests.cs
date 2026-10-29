@@ -79,6 +79,11 @@ public class OpenClawRunReconcileTests : IDisposable
 
     private static string[] Texts(OpenClawChatSession s) => s.History.Select(t => t.Text).ToArray();
 
+    // The same without the note typing adds when replying is off, for the cases
+    // about where the typed message lands and not about its note.
+    private static string[] TextsSansNote(OpenClawChatSession s) =>
+        Texts(s).Where(t => !t.StartsWith("Replying is off", StringComparison.Ordinal)).ToArray();
+
     // The whole run, with the panel's history landing at the given event: what the
     // stream drew before it is gone, what it draws after is partial.
     private static OpenClawChatSession JoinedAt(int eventIndex, params (ChatRole, string)[] persisted)
@@ -281,7 +286,7 @@ public class OpenClawRunReconcileTests : IDisposable
 
         session.ApplyFetchedTail(Full());
 
-        Assert.Equal(Full().Select(t => t.Text).Append("and one more thing"), Texts(session));
+        Assert.Equal(Full().Select(t => t.Text).Append("and one more thing"), TextsSansNote(session));
     }
 
     // The page already holds it, in the middle of the run: the page's copy is
@@ -303,7 +308,7 @@ public class OpenClawRunReconcileTests : IDisposable
             (ChatRole.System, ToolLine()), (ChatRole.Assistant, step3));
         session.ApplyFetchedTail(page);
 
-        Assert.Equal(page.Select(t => t.Text), Texts(session));
+        Assert.Equal(page.Select(t => t.Text), TextsSansNote(session));
     }
 
     // Typed after the page landed and before anything more was drawn, so there is
@@ -322,7 +327,7 @@ public class OpenClawRunReconcileTests : IDisposable
 
         session.ApplyFetchedTail(Full());
 
-        Assert.Equal(Full().Select(t => t.Text).Append("and one more thing"), Texts(session));
+        Assert.Equal(Full().Select(t => t.Text).Append("and one more thing"), TextsSansNote(session));
     }
 
     // The same message typed twice is two messages: a page that shows one of them
@@ -342,7 +347,7 @@ public class OpenClawRunReconcileTests : IDisposable
 
         session.ApplyFetchedTail(Full().Append(new HistoryTurn(ChatRole.User, "ok", null, "", DateTime.UtcNow, null, null)).ToList());
 
-        Assert.Equal(Full().Select(t => t.Text).Concat(new[] { "ok", "ok" }), Texts(session));
+        Assert.Equal(Full().Select(t => t.Text).Concat(new[] { "ok", "ok" }), TextsSansNote(session));
     }
 
     // --- a reconciliation mid-run, on the idle bound ---
@@ -387,6 +392,52 @@ public class OpenClawRunReconcileTests : IDisposable
             """{"data":{"phase":"result","name":"Bash","toolCallId":"t1","isError":true}}"""));
 
         Assert.Contains(session.History, t => t.IsError);
+    }
+
+    // --- a failed send's note stays with the message ---
+
+    // Replying is off, so typing mid-run adds the message and a note saying why
+    // nothing was sent. Both survive the run's end, once each.
+    [Fact]
+    public async Task AFailedSendsNoteIsKeptWithItsMessageAtTheRunsEnd()
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+
+        Feed(session, events.Take(14));
+        session.SetHistory(Page((ChatRole.User, "go")));
+        Feed(session, events.Skip(14).Take(8));
+        await TypeAsync(session, "and one more thing");
+        Feed(session, events.Skip(22));
+
+        session.ApplyFetchedTail(Full());
+
+        var texts = Texts(session);
+        Assert.Equal(1, texts.Count(t => t == "and one more thing"));
+        Assert.Equal(1, texts.Count(t => t.StartsWith("Replying is off")));
+        Assert.Equal("and one more thing", texts[^2]);
+        Assert.StartsWith("Replying is off", texts[^1]);
+        Assert.Equal(Full().Select(t => t.Text), texts.Take(Full().Count));
+    }
+
+    // The control: the run's own System lines, its tool lines, are still replaced
+    // from the page, and a tool line sitting straight after the typed message is
+    // not mistaken for a note.
+    [Fact]
+    public async Task ARunsOwnToolLineAfterATypedMessageIsStillReplacedFromThePage()
+    {
+        var session = Session();
+        var events = Run().Where(e => e.Name is "agent" or "session.tool" or "chat").ToList();
+        var toolAt = events.FindIndex(e => e.Name == "session.tool");
+
+        Feed(session, events.Take(toolAt - 1));
+        session.SetHistory(Page((ChatRole.User, "go")));
+        await TypeAsync(session, "and one more thing");
+        Feed(session, events.Skip(toolAt - 1));
+
+        session.ApplyFetchedTail(Full());
+
+        Assert.Equal(1, Texts(session).Count(t => t == ToolLine()));
     }
 }
 
