@@ -514,17 +514,18 @@ namespace Orbweaver.Tests
             Assert.Equal(1, replaced);
         }
 
-        // The turn in flight is dropped with the rest, so a snapshot arriving
-        // afterwards starts a fresh bubble rather than updating one that is no
-        // longer in the list.
+        // The turn in flight is dropped with the rest, so the next run's first
+        // text starts a fresh bubble rather than updating one that is no longer
+        // in the list. A second run, since the first run's own text up to here is
+        // closed by the page that replaced it (CB-270).
         [Fact]
         public void ReplacingHistoryClearsTheTurnInFlight()
         {
             var session = Session();
 
-            session.OnAgentEvent("agent", AgentText("live"));
+            session.OnAgentEvent("agent", Event("""{"runId":"a","data":{"text":"live"}}"""));
             session.SetHistory(Turns("loaded"));
-            session.OnAgentEvent("agent", AgentText("after"));
+            session.OnAgentEvent("agent", Event("""{"runId":"b","data":{"text":"after"}}"""));
 
             Assert.Equal(new[] { "loaded", "after" }, session.History.Select(t => t.Text));
         }

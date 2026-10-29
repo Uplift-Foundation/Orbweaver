@@ -170,6 +170,13 @@ namespace Orbweaver
         private string _runText = "";
         private string _closed = "";
 
+        // Whether this session saw the run from its first event, which carries
+        // the text so far. A panel opened partway through sees a delta first, and
+        // then the final snapshot (the whole rollup, earlier steps included) would
+        // put steps the panel never drew, or history already holds, back into the
+        // last bubble. So a run joined late is built from its deltas alone.
+        private bool _sawRunStart = true;
+
         // Tool lines awaiting their result, by toolCallId, so the result can mark
         // the line it belongs to as an error.
         private readonly Dictionary<string, ChatTurn> _tools = new();
@@ -854,14 +861,21 @@ namespace Orbweaver
             var delta = Str(data, "delta");
 
             // A snapshot is trusted only where it agrees with what has already
-            // been drawn as finished bubbles. One that does not (never measured)
-            // cannot say where the current bubble starts, and guessing would
-            // either repeat a step or cut one short, so it is ignored.
+            // been drawn as finished bubbles, and only for a run seen from its
+            // start. One that does not agree (never measured) cannot say where the
+            // current bubble starts, and guessing would either repeat a step or
+            // cut one short, so it is ignored.
             if (!string.IsNullOrEmpty(snapshot))
             {
-                if (snapshot.StartsWith(_closed, StringComparison.Ordinal)) _runText = snapshot;
+                if (_sawRunStart && snapshot.StartsWith(_closed, StringComparison.Ordinal)) _runText = snapshot;
             }
-            else if (!string.IsNullOrEmpty(delta)) _runText += delta;
+            else if (!string.IsNullOrEmpty(delta))
+            {
+                // A run's first event carries text; a delta with nothing before it
+                // means this session joined partway.
+                if (_runText.Length == 0) _sawRunStart = false;
+                _runText += delta;
+            }
             else return null;
 
             return _runText[_closed.Length..].Trim();
@@ -941,6 +955,7 @@ namespace Orbweaver
             _runText = "";
             _closed = "";
             _runId = null;
+            _sawRunStart = true;
 
             if (_streaming is null) return;
 
@@ -1042,6 +1057,12 @@ namespace Orbweaver
             _history.Clear();
             _streaming = null;
             _streamingKind = null;
+
+            // Whatever the run had streamed in before the page landed is in the
+            // page or is not coming back by itself, so it is closed rather than
+            // drawn a second time as the start of a fresh bubble. The refetch at
+            // the run's end appends what the page did not hold.
+            _closed = _runText;
             HasMore = true;
 
             foreach (var turn in turns)

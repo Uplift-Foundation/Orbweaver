@@ -489,4 +489,84 @@ public class OpenClawLiveRunTests : IDisposable
         Assert.Empty(added);
         Assert.Equal(3, session.History.Count);
     }
+
+    // --- a panel opened mid-run (QA: Ines) ---
+    //
+    // The final history of the captured run, as a page would hold it: the user's
+    // turn, step one, the tool line, step three. Step one is the final
+    // snapshot's own text, which is what the gateway persisted.
+    private static (string Step1, string Step3) Steps()
+    {
+        var final = Events()
+            .Where(e => e.Name == "agent" && e.Payload.GetProperty("runId").GetString() == "run-tools-0001")
+            .Select(e => e.Payload.GetProperty("data"))
+            .Last(d => d.TryGetProperty("text", out var t) && t.GetString()!.Length > 100)
+            .GetProperty("text").GetString()!;
+
+        var parts = final.Split("\n\n");
+        return (parts[0], parts[1]);
+    }
+
+    private static string ToolLine() =>
+        ChatTranscript.ToolSummary("mcp__openclaw__exec",
+            Json("""{"command":"ls /home/op/workspace | wc -l","title":"Count workspace files"}"""));
+
+    private static IReadOnlyList<HistoryTurn> Page(params (ChatRole Role, string Text)[] turns) =>
+        turns.Select(t => new HistoryTurn(t.Role, t.Text, null, "", DateTime.UtcNow, null, null)).ToList();
+
+    private static List<(string Name, JsonElement Payload)> ToolRunEvents() =>
+        Events().Where(e => e.Payload.TryGetProperty("runId", out var r)
+                            && r.GetString() == "run-tools-0001"
+                            && e.Name is "agent" or "session.tool").ToList();
+
+    // The case QA raised: the panel opens once step one has been persisted, so
+    // history already holds it and the stream carries on from the tool. The
+    // final snapshot is the whole rollup, and must not put step one back on
+    // screen as part of the last bubble.
+    [Fact]
+    public void APanelOpenedAfterStepOneWasPersistedDrawsEachStepOnce()
+    {
+        OpenClawSessions.SetGatewayForTests(null);
+        var (step1, step3) = Steps();
+        var session = Session();
+        session.SetHistory(Page((ChatRole.User, "go"), (ChatRole.Assistant, step1)));
+
+        var events = ToolRunEvents();
+        foreach (var (name, payload) in events.Skip(events.FindIndex(e => e.Name == "session.tool")))
+        {
+            session.OnAgentEvent(name, payload);
+        }
+
+        Assert.Equal(new[] { "go", step1, ToolLine(), step3 }, Texts(session));
+
+        // And the refetch that follows the run finds nothing to add.
+        var added = new List<ChatTurn>();
+        session.TurnAdded += added.Add;
+        session.AppendNewTail(Page((ChatRole.User, "go"), (ChatRole.Assistant, step1),
+            (ChatRole.System, ToolLine()), (ChatRole.Assistant, step3)));
+
+        Assert.Empty(added);
+    }
+
+    // The other way round: the panel is bound and the stream is already
+    // arriving when the history page lands. What came in before the page is in
+    // it or is not coming back, so it is not drawn a second time.
+    [Fact]
+    public void StreamTextReceivedBeforeTheHistoryPageLandsIsNotDrawnAgain()
+    {
+        OpenClawSessions.SetGatewayForTests(null);
+        var (step1, step3) = Steps();
+        var session = Session();
+
+        var events = ToolRunEvents();
+        var toolAt = events.FindIndex(e => e.Name == "session.tool");
+
+        // Joined partway through step one, so the first event seen is a delta.
+        foreach (var (name, payload) in events.Skip(5).Take(toolAt - 5)) session.OnAgentEvent(name, payload);
+        session.SetHistory(Page((ChatRole.User, "go"), (ChatRole.Assistant, step1)));
+        foreach (var (name, payload) in events.Skip(toolAt)) session.OnAgentEvent(name, payload);
+
+        Assert.Equal(new[] { "go", step1, ToolLine(), step3 }, Texts(session));
+    }
 }
+
