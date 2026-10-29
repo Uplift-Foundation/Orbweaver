@@ -8,6 +8,9 @@ Outputs (PNG, RGBA, straight alpha — except the .ico, noted below):
   Assets/tray-idle.png        menu-bar / notification-area icon, one per state
   Assets/tray-generating.png
   Assets/tray-waiting.png
+  Assets/tray-idle-muted.png  the same three with a slash through them, shown
+  Assets/tray-generating-muted.png  while the global mute is on (CB-298)
+  Assets/tray-waiting-muted.png
   Assets/appicon-1024.png     source art for the .app bundle's .icns
   Assets/Orbweaver.ico        multi-size Windows icon: the .exe's embedded icon
                               (csproj ApplicationIcon) and the installer's
@@ -143,15 +146,30 @@ def render(size, shade):
     return pixels
 
 
-def tray_shader(color):
+def tray_shader(color, muted=False):
     """A ring, not a disc: reads as a distinct shape at 16-22pt on both light
-    and dark menu bars, where a solid blob just looks like a smudge."""
+    and dark menu bars, where a solid blob just looks like a smudge.
+
+    muted=True draws the 🚫 shape — a diagonal bar from upper left to lower
+    right, with a transparent gap either side of it so it reads as a slash over
+    the ring rather than merging into it. It is still one constant RGB with
+    only alpha varying, which is the invariant TrayController.Tinted depends
+    on: the re-tint reproduces the muted icon exactly, slash and all."""
     r, g, b = color
     outer = 0.86
     inner = 0.44
+    bar = 0.13
+    gap = 0.22
+    reach = 0.95
 
     def shade(u, v):
         d = math.hypot(u, v)
+        if muted and d <= reach:
+            across = abs(u - v) / math.sqrt(2)
+            if across < bar:
+                return (r, g, b, 1.0)
+            if across < gap:
+                return (0, 0, 0, 0.0)
         if d > outer or d < inner:
             # faint core so the middle isn't a hole at tiny sizes
             if d < inner:
@@ -194,6 +212,10 @@ def main():
     for name, color in (("idle", IDLE), ("generating", GENERATING), ("waiting", WAITING)):
         path = os.path.join(ASSETS, f"tray-{name}.png")
         write_png(path, 64, render(64, tray_shader(color)))
+        print("wrote", os.path.relpath(path, HERE))
+
+        path = os.path.join(ASSETS, f"tray-{name}-muted.png")
+        write_png(path, 64, render(64, tray_shader(color, muted=True)))
         print("wrote", os.path.relpath(path, HERE))
 
     path = os.path.join(ASSETS, "appicon-1024.png")
