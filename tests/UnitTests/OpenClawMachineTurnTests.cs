@@ -99,4 +99,63 @@ public class OpenClawMachineTurnTests
         Assert.Equal(ChatRole.User, turn.Role);
         Assert.Equal("Marlowe Vance", turn.Speaker);
     }
+
+    // The plain-text injections are only recognised where nobody is attributed.
+    // A turn the gateway says the operator typed, or names a sender for, is
+    // trusted over what it happens to start with.
+    [Fact]
+    public void AnInjectionLookingTurnTheOperatorTypedIsStillTheirs()
+    {
+        var turn = Assert.Single(Turns("""
+        [{"role":"user","content":"System: [2026-10-29 09:15:02 PDT] testing the parser",
+          "timestamp":1787000005000,
+          "idempotencyKey":"7a4d19e0-0c52-4b8e-a6d3-91f0c4ba7d58:user"}]
+        """));
+
+        Assert.True(turn.Mine);
+        Assert.Equal(ChatRole.User, turn.Role);
+    }
+
+    [Fact]
+    public void AnInjectionLookingTurnFromANamedSenderStaysNamed()
+    {
+        var turn = Assert.Single(Turns("""
+        [{"role":"user","content":"A scheduled reminder has been triggered, said somebody",
+          "timestamp":1787000006000,
+          "__openclaw":{"senderIsOwner":false,"senderName":"Marlowe Vance"}}]
+        """));
+
+        Assert.Equal(ChatRole.User, turn.Role);
+        Assert.Equal("Marlowe Vance", turn.Speaker);
+    }
+
+    // provenance that is not an object, or names another kind, is no provenance.
+    [Theory]
+    [InlineData("\"provenance\":\"internal_system\"")]
+    [InlineData("\"provenance\":null")]
+    [InlineData("\"provenance\":{\"kind\":\"user_input\"}")]
+    [InlineData("\"provenance\":{\"kind\":7}")]
+    public void ProvenanceThatIsNotInternalSystemDoesNotDemoteATurn(string field)
+    {
+        var turn = Assert.Single(Turns($$"""
+        [{"role":"user","content":"anyone free to look at the build?",{{field}},
+          "timestamp":1787000007000,
+          "idempotencyKey":"3f1c8ad2-59b7-4e06-9c31-8ab7205de164:user"}]
+        """));
+
+        Assert.True(turn.Mine);
+        Assert.Equal(ChatRole.User, turn.Role);
+    }
+
+    // A machine turn keeps its text, so the note says what happened.
+    [Fact]
+    public void ADemotedTurnKeepsItsText()
+    {
+        var turn = Assert.Single(Turns("""
+        [{"role":"user","content":"Exec completed (calm-otter, code 0) :: ok",
+          "provenance":{"kind":"internal_system","sourceTool":"exec"}}]
+        """));
+
+        Assert.Equal("Exec completed (calm-otter, code 0) :: ok", turn.Text);
+    }
 }

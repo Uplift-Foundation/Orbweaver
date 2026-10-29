@@ -2493,10 +2493,47 @@ namespace Orbweaver
                         // first because __openclaw is the undocumented half and
                         // the one likelier to move.
                         Str(message, "idempotencyKey") ?? Str(meta, "idempotencyKey"),
-                        text);
+                        text,
+
+                        // CB-270: provenance is an object on the message itself,
+                        // not inside __openclaw, so Str(message, "provenance")
+                        // would answer null: read the object, then its kind.
+                        Str(
+                            message.TryGetProperty("provenance", out var provenance)
+                            && provenance.ValueKind == JsonValueKind.Object
+                                ? provenance
+                                : default,
+                            "kind"));
 
                     text = sender.Text;
                     mine = sender.Kind == OpenClawSender.SenderKind.Mine;
+
+                    // CB-270: the gateway's own machinery is not a person. A turn it
+                    // labels internal_system, or one of its two plain-text
+                    // injections (a reminder, a System: line) that arrives with no
+                    // attribution at all, is drawn as the dim note the panel already
+                    // has for System turns, and the room merge already drops those.
+                    //
+                    // The plain-text check runs only when nobody is named: a turn
+                    // the gateway attributed to the operator or to a named sender is
+                    // trusted over what it happens to start with, so a person who
+                    // types the sentence is still themselves.
+                    //
+                    // **Deliberately not done: attributing a bare user turn to the
+                    // WhatsApp peer.** Every user turn read off the two mains a
+                    // WhatsApp DM is routed into (2026.10.5) was machine output and
+                    // none a person's message, so the shape of a real inbound DM is
+                    // unknown. Naming the peer on a reminder would draw a reminder
+                    // as somebody's words. Revisit when one is captured.
+                    if (sender.Kind == OpenClawSender.SenderKind.Machine
+                        || (sender.Kind == OpenClawSender.SenderKind.Unknown
+                            && OpenClawSender.IsGatewayInjected(text)))
+                    {
+                        role = ChatRole.System;
+                        mine = false;
+                        speaker = null;
+                        colour = null;
+                    }
 
                     // A name only where Readable did not already find a better
                     // one. Its answer is an agent *id*, which resolves to the
