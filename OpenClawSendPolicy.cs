@@ -84,13 +84,30 @@ internal static class OpenClawSendPolicy
     // The key comes in from the call site so production keeps a bare
     // Guid.ToString() and tests can hand in a fixed one. A fresh id per send
     // means a retry after a timeout can't post the message twice.
+    //
+    // timeoutMs (Stage 4) is the person's own limit on how long the agent may run
+    // for this send, and is appended after idempotencyKey only when one was
+    // chosen: with none the request is byte-for-byte what it always was. The
+    // gateway reads 0 as "no timeout at all" and a negative value as "use the
+    // default", so neither is ever sent: this refuses them rather than trust
+    // every caller, since "no limit" is never something a time-limit choice here
+    // is allowed to mean.
     internal static Dictionary<string, object> ChatSendRequest(
-        string sessionKey, string text, OpenClawSendRoute route, string idempotencyKey) =>
-        new()
+        string sessionKey, string text, OpenClawSendRoute route, string idempotencyKey,
+        int? timeoutMs = null)
+    {
+        if (timeoutMs is <= 0) throw new ArgumentOutOfRangeException(nameof(timeoutMs), "must be positive");
+
+        var request = new Dictionary<string, object>
         {
             ["sessionKey"] = sessionKey,
             ["message"] = text,
             ["deliver"] = route == OpenClawSendRoute.Surface,
             ["idempotencyKey"] = idempotencyKey
         };
+
+        if (timeoutMs is { } limit) request["timeoutMs"] = limit;
+
+        return request;
+    }
 }

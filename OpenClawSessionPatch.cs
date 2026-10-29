@@ -10,7 +10,8 @@ namespace Orbweaver
     // plus an envelope (key, agentId, expectedSessionId, ...), and it demands
     // admin for `permissionMode: "full"` or any `sandboxMode`.
     //
-    // This app uses three of those fields: archived, pinned and label.
+    // This app uses six of those fields: archived, pinned and label, and, for a
+    // native session's run controls (Stage 4), model, thinkingLevel and fastMode.
     // `permissionMode` is *in* the write-scope set and is deliberately left out
     // here: "full" needs admin, and nothing in this app has a reason to send any
     // value of it. `sandboxMode` is out of the write-scope set altogether. The
@@ -29,7 +30,8 @@ namespace Orbweaver
         // grows a sandbox or permission field.
         internal static readonly IReadOnlySet<string> Fields = new HashSet<string>(StringComparer.Ordinal)
         {
-            "key", "expectedSessionId", "archived", "pinned", "label"
+            "key", "expectedSessionId", "archived", "pinned", "label",
+            "model", "thinkingLevel", "fastMode"
         };
 
         private OpenClawSessionPatch(IReadOnlyDictionary<string, object> parameters) =>
@@ -62,5 +64,39 @@ namespace Orbweaver
                 ["label"] = label,
                 ["expectedSessionId"] = sessionId
             });
+
+        // Run controls for a native session (Stage 4). Each sends one field and the
+        // value the picker chose by id. A blank value is refused here, not at the
+        // gateway: a blank model or level is never what anyone meant, and an empty
+        // string on the wire is a different request from "reset to default",
+        // which these deliberately cannot express (clearing is unmeasured).
+        internal static OpenClawSessionPatch Model(string key, string sessionId, string model) =>
+            new(new Dictionary<string, object>
+            {
+                ["key"] = key,
+                ["model"] = NotBlank(model, nameof(model)),
+                ["expectedSessionId"] = sessionId
+            });
+
+        internal static OpenClawSessionPatch Thinking(string key, string sessionId, string level) =>
+            new(new Dictionary<string, object>
+            {
+                ["key"] = key,
+                ["thinkingLevel"] = NotBlank(level, nameof(level)),
+                ["expectedSessionId"] = sessionId
+            });
+
+        internal static OpenClawSessionPatch Fast(string key, string sessionId, bool on) =>
+            new(new Dictionary<string, object>
+            {
+                ["key"] = key,
+                ["fastMode"] = on,
+                ["expectedSessionId"] = sessionId
+            });
+
+        private static string NotBlank(string value, string name) =>
+            string.IsNullOrWhiteSpace(value)
+                ? throw new ArgumentException("a value is required", name)
+                : value;
     }
 }

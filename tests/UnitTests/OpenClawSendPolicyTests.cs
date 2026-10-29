@@ -145,5 +145,36 @@ public class OpenClawSendPolicyTests
 
         Assert.Equal(OpenClawSendRoute.Surface, chat.Route);
     }
+
+    // --- timeoutMs (Stage 4) ---
+
+    [Fact]
+    public void ATimeoutIsAppendedAfterTheIdempotencyKey()
+    {
+        var request = OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1", 600_000);
+
+        Assert.Equal(new[] { "sessionKey", "message", "deliver", "idempotencyKey", "timeoutMs" }, request.Keys.ToArray());
+        Assert.Equal(600_000, request["timeoutMs"]);
+    }
+
+    // With none chosen the request is exactly what it always was.
+    [Fact]
+    public void WithNoTimeoutTheRequestIsUnchanged()
+    {
+        var plain = OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1");
+        var explicitNull = OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1", null);
+
+        Assert.Equal(new[] { "sessionKey", "message", "deliver", "idempotencyKey" }, plain.Keys.ToArray());
+        Assert.Equal(plain.Keys.ToArray(), explicitNull.Keys.ToArray());
+    }
+
+    // The gateway reads 0 as no timeout at all and a negative value as the
+    // default; neither may be asked for.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ANonPositiveTimeoutIsRefused(int ms) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1", ms));
 }
 
