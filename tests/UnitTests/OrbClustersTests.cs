@@ -79,15 +79,27 @@ namespace Orbweaver.Tests
         public void ANativeSessionIsNative()
             => Assert.Equal(OrbCluster.Native, OrbClusters.Of(heartbeat: false, SessionKind.Main, native: true));
 
-        // The ruling: native beats heartbeat, for native sessions only. A native
-        // main is a heartbeat target by key, and must still be governed by the
-        // setting made for it...
+        // Warren's ruling (it replaced CB-270's first one): the heartbeat setting
+        // wins. A native main is a heartbeat target by key, and the gateway's
+        // heartbeat job wakes it every few minutes, so it follows "Heartbeat
+        // sessions". Putting native first made a hidden heartbeat's own main
+        // session keep coming back...
         [Fact]
-        public void ANativeMainIsGovernedByTheNativeSettingNotTheHeartbeatOne()
-            => Assert.Equal(OrbCluster.Native, OrbClusters.Of(heartbeat: true, SessionKind.Main, native: true));
+        public void ANativeHeartbeatMainIsGovernedByTheHeartbeatSetting()
+            => Assert.Equal(OrbCluster.Heartbeats, OrbClusters.Of(heartbeat: true, SessionKind.Main, native: true));
 
-        // ...while a main with WhatsApp origin or delivery is not native
-        // (OpenClawNative says None for it) and stays a heartbeat as before.
+        // ...and "Agents' own sessions" governs the native sessions that are not
+        // heartbeats, in practice a New Chat.
+        [Fact]
+        public void ANativeSessionThatIsNotAHeartbeatIsGovernedByTheNativeSetting()
+        {
+            Assert.Equal(OrbCluster.Native, OrbClusters.Of(heartbeat: false, SessionKind.Main, native: true));
+            Assert.Equal(ClusterMode.OwnShape, OrbClusters.ModeOf(
+                OrbCluster.Native, ClusterMode.Hidden, ClusterMode.Hidden, ClusterMode.OwnShape));
+        }
+
+        // A main with WhatsApp origin or delivery is not native
+        // (OpenClawNative says None for it) and is a heartbeat as it always was.
         [Fact]
         public void AMainWithASurfaceStaysAHeartbeat()
         {

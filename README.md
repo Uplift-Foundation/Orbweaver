@@ -1612,16 +1612,16 @@ by side — your chats, the heartbeats, the crons and your agents' own sessions
 them alone and it is one shape, exactly as before. The agents keep their colours
 in any channel they are in whichever you pick.
 
-**Agents' own sessions** takes the same three answers for the conversations that
-have no chat app behind them: an agent's main session when nobody reached it
-through Discord or WhatsApp, and any chat you start from Orbweaver's New Chat. It
-does not touch an agent's Discord or WhatsApp conversations, direct messages
-included. It is a main session with *no* chat-app origin or delivery that counts;
-a main session that a WhatsApp conversation is routed into stays a heartbeat, as
-before. One consequence worth knowing: an agent's native main session no longer
-follows the heartbeat setting, so if you had hidden heartbeats, those orbs now
-show until you hide *Agents' own sessions* as well. The default is *With the
-chats*, and the shape, when you give it one, is a diamond.
+**Agents' own sessions** takes the same three answers for chats that have no chat
+app behind them: any chat you start from Orbweaver's New Chat. It does not touch
+an agent's Discord or WhatsApp conversations, direct messages included, and it
+does not govern an agent's *main* session. That is the one the gateway's
+heartbeat keeps waking, so it follows **Heartbeat sessions**: hide heartbeats and
+the main sessions go with them, and they stay gone. To keep one anyway, pin it
+with **Keep on screen** (below): a pinned session is shown even when its setting
+is *Hidden*, sitting with your chats, or in its own shape if that setting is *Own
+shape*. The default is *With the chats*, and the shape, when you give it one, is
+a diamond.
 
 Two things keep a conversation on screen however long it has been quiet, and both
 are the gateway's own: a chat started from New Chat (which ends only when you

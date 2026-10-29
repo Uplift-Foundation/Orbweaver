@@ -83,20 +83,23 @@ namespace Orbweaver
         // heartbeats is what they asked for; showing it among the crons they
         // wanted separated is a surprise.
         //
-        // CB-270: a native session comes first, ahead of heartbeat, and only a
-        // native one. An agent's main session is a heartbeat target by
-        // OpenClawHeartbeat's structural rule, so with heartbeat first the
-        // native mains could never be governed by the setting made for them. A
-        // main with WhatsApp origin or delivery is not native (OpenClawNative
-        // resolves every doubt to None) and stays a heartbeat exactly as before.
-        // The cost is that a native main no longer follows the heartbeat mode:
-        // someone who had hidden heartbeats now sees it, until they hide native
-        // sessions as well.
+        // CB-270: native comes last of the three. An agent's own main session is a
+        // heartbeat target by OpenClawHeartbeat's structural rule, and the
+        // gateway's heartbeat job wakes it every few minutes, so it is a heartbeat
+        // first and native only if it is not one. CB-270's first version put
+        // native ahead of heartbeat so the native setting could govern those
+        // mains, and the result was the opposite of what a person who hid
+        // heartbeats wanted: the main session kept coming back because the very
+        // timer they had hidden kept waking it. So "Heartbeat sessions" governs an
+        // agent's main sessions, and "Agents' own sessions" governs the native
+        // sessions that are not heartbeats, in practice a New Chat. A session the
+        // gateway reports pinned is shown whatever its cluster says; see
+        // OpenClawSessions.Parse.
         public static OrbCluster Of(bool heartbeat, SessionKind kind, bool native)
         {
-            if (native) return OrbCluster.Native;
             if (heartbeat) return OrbCluster.Heartbeats;
             if (kind == SessionKind.Cron) return OrbCluster.Crons;
+            if (native) return OrbCluster.Native;
 
             return OrbCluster.Chats;
         }

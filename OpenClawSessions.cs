@@ -1526,7 +1526,15 @@ namespace Orbweaver
                 var heartbeat = OpenClawHeartbeat.Is(key, Str(s, "label"));
                 var kind = KindFor(s, origin, key);
 
-                if (!OrbClusters.Visible(
+                // A pinned session is shown even when its cluster is Hidden,
+                // heartbeat or cron. Pinning is the person's own explicit "keep
+                // this" (OpenClawRetention), and it is how an agent's main
+                // session is kept as a chat while heartbeats are hidden. It joins
+                // the chats' shape unless its cluster has a shape of its own:
+                // OrbClusters.GroupOf answers 0 for a Hidden cluster, so nothing
+                // here has to place it.
+                if (!pinned
+                    && !OrbClusters.Visible(
                         OrbClusters.Of(heartbeat, kind, native != OpenClawNativeKind.None),
                         HeartbeatMode, CronMode, NativeMode))
                     continue;

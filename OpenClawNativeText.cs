@@ -16,7 +16,7 @@ namespace Orbweaver
         internal const string GroupName = "Agents' own sessions";
 
         internal const string SettingTip =
-            "An agent's main session and chats started from Orbweaver — not its Discord or WhatsApp conversations.";
+            "Chats you start from Orbweaver. An agent's own main session follows “Heartbeat sessions” instead; pin it with Keep on screen to show it even when those are hidden. Discord and WhatsApp conversations are not affected.";
 
         internal const string ShapeTip =
             "The shape these orbs gather into when they are drawn on their own. Discord and WhatsApp conversations, DMs included, are not affected.";
