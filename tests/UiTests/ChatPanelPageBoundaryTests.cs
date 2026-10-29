@@ -135,6 +135,32 @@ public class ChatPanelPageBoundaryTests : IDisposable
         Assert.Contains("next", rows[^1]);
     }
 
+    // A covered rollup turn that carries a picture keeps its row and loses only
+    // its caption, in place; the row count does not change.
+    [AvaloniaFact]
+    public void ScrollingBackBlanksTheCaptionOfACoveredPictureRowWithoutRemovingIt()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            new(ChatRole.Assistant, "look at this", "/route", "p.png",
+                new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero), null, null, FromRollup: true)
+        });
+        var panel = Open(session);
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"), H(ChatRole.Assistant, "look at this")
+        }, olderEndsInOpenTextStep: true);
+        FlushRender();
+
+        var rows = RowTexts(panel);
+
+        Assert.Equal(session.History.Count, rows.Length);
+        Assert.Equal(3, rows.Length);
+        Assert.Equal(1, rows.Count(r => r.Contains("look at this")));
+    }
+
     // Control: nothing dropped, so no row is removed and rows still match.
     [AvaloniaFact]
     public void ScrollingBackWhenTheOlderPageEndsInAUserTurnRemovesNoRow()

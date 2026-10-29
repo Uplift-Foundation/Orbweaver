@@ -232,10 +232,10 @@ public class OpenClawPageBoundaryTests
         Assert.Equal(1, session.DroppedRollupIndex);
     }
 
-    // A rollup turn that is not pure text (it carries a picture url) is never
-    // the one removed, even when its caption is covered.
+    // A rollup turn that carries a picture is never removed. When the steps cover
+    // its caption it loses the caption, in place, and the picture stays.
     [Fact]
-    public void ARollupTurnCarryingAPictureIsNeverTheOneRemoved()
+    public void ACoveredRollupTurnCarryingAPictureKeepsThePictureAndLosesItsCaption()
     {
         var session = Session();
         session.SetHistory(new List<HistoryTurn>
@@ -243,11 +243,35 @@ public class OpenClawPageBoundaryTests
             new(ChatRole.Assistant, "look", "/route", "p.png",
                 new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero), null, null, FromRollup: true)
         });
+        var changed = new List<string?>();
+        session.History[0].PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        var updated = 0;
+        session.TurnUpdated += _ => updated++;
 
         session.PrependHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "look") }, olderEndsInOpenTextStep: true);
 
         Assert.Equal(2, session.History.Count);
         Assert.Equal(-1, session.DroppedRollupIndex);
+        Assert.Equal("", session.History[1].Text);
+        Assert.Equal("/route", session.History[1].ImageUrl);
+        Assert.Contains("Text", changed);
+        Assert.Equal(1, updated);
+    }
+
+    // The caption is only blanked when it is covered.
+    [Fact]
+    public void AnUncoveredRollupCaptionOnAPictureTurnIsLeftAlone()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            new(ChatRole.Assistant, "something new", "/route", "p.png",
+                new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero), null, null, FromRollup: true)
+        });
+
+        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "look") }, olderEndsInOpenTextStep: true);
+
+        Assert.Equal("something new", session.History[1].Text);
     }
 
     [Fact]

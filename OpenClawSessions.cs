@@ -2513,7 +2513,9 @@ namespace Orbweaver
                 // would stop matching a turn it produced a page earlier.
                 if (attachment is { } a)
                 {
-                    var caption = text.Trim();
+                    // A covered rollup's words are on screen as its steps; the
+                    // attachment is not, so it stays as a caption-less turn.
+                    var caption = dropText ? "" : text.Trim();
 
                     if (a.Fetchable)
                     {
@@ -2704,7 +2706,7 @@ namespace Orbweaver
                     // decides what identity goes on it.
                     var namedMedia = MediaSourceFor(named, sessionKey, ownerIndex);
 
-                    turns.Add(new HistoryTurn(role, text.Trim(), namedMedia.Route,
+                    turns.Add(new HistoryTurn(role, dropText ? "" : text.Trim(), namedMedia.Route,
                         named[(named.LastIndexOf('/') + 1)..],
                         at, speaker, colour, mine, null, namedMedia.Path,
                         Automation: cronAutomation, Confidence: confidence));

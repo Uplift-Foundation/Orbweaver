@@ -1193,8 +1193,26 @@ namespace Orbweaver
         {
             if (turns.Count == 0) return;
 
-            DroppedRollupIndex = olderEndsInOpenTextStep ? RollupSplitFromItsSteps(turns) : -1;
-            if (DroppedRollupIndex >= 0) _history.RemoveAt(DroppedRollupIndex);
+            DroppedRollupIndex = -1;
+            var covered = olderEndsInOpenTextStep ? RollupSplitFromItsSteps(turns) : -1;
+            if (covered >= 0)
+            {
+                // A covered rollup's words are shown by the steps. A pure text
+                // turn goes; a turn that also carries a picture or attachment
+                // stays and loses only its caption, in place; its row picks the
+                // change up through PropertyChanged and TurnUpdated tells the
+                // panel and any room that merged it.
+                if (IsPureText(_history[covered]))
+                {
+                    DroppedRollupIndex = covered;
+                    _history.RemoveAt(covered);
+                }
+                else
+                {
+                    _history[covered].Text = "";
+                    TurnUpdated?.Invoke(_history[covered]);
+                }
+            }
 
             var older = turns.Select(t => new ChatTurn
             {
@@ -1228,14 +1246,15 @@ namespace Orbweaver
             HistoryPrepended?.Invoke(older.Count);
         }
 
-        // The index of the transcript's first rollup *text* turn when it is the
-        // rollup of the run the older page ends in and its text is covered by that
-        // run's steps (older trailing steps plus this transcript's turns before
-        // it); -1 otherwise. Only a pure text turn is ever removed: a picture or
-        // an attachment the rollup carries stays, exactly as the full-page parse
-        // keeps it, because the steps cover the rollup's words and show nothing
-        // of its pictures. Step texts come from turns rather than the raw page so
-        // both sides of the comparison went through the same text processing.
+        // The index of the transcript's first rollup turn that has text, when it
+        // is the rollup of the run the older page ends in and its text is covered
+        // by that run's steps (older trailing steps plus this transcript's turns
+        // before it); -1 otherwise. The caller removes it if it is pure text and
+        // blanks its caption if it also carries a picture or attachment, exactly
+        // as the full-page parse does with a covered rollup: the steps cover the
+        // rollup's words and show nothing of its pictures. Step texts come from
+        // turns rather than the raw page so both sides of the comparison went
+        // through the same text processing.
         //
         // Residual, constructed: a picture-only rollup directly followed by
         // another rollup leaves this scan judging the second one's text against
@@ -1259,9 +1278,9 @@ namespace Orbweaver
 
                 if (t.FromRollup)
                 {
-                    // A picture or attachment turn of the rollup: not compared,
-                    // not removed. Keep looking for its text turn.
-                    if (!IsPureText(t)) continue;
+                    // A caption-less picture turn of the rollup: nothing to
+                    // compare. Keep looking for its text.
+                    if (string.IsNullOrWhiteSpace(t.Text)) continue;
 
                     return OpenClawHistoryShape.RollupIsCoveredBy(t.Text, steps) ? k : -1;
                 }

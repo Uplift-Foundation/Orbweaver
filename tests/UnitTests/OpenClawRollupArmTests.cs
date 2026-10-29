@@ -35,7 +35,7 @@ public class OpenClawRollupArmTests
         JsonDocument.Parse(Video).RootElement.GetProperty("content").GetRawText();
 
     private const string FailedAttachmentContent =
-        """[{"type":"text","text":"a clip for you"},{"type":"attachment_error","fileName":"sample_clip.mp4","mimeType":"video/mp4","reason":"delivery-failed"}]""";
+        """[{"type":"text","text":"a clip for you"},{"type":"attachment_error","attachment":{"code":"delivery-failed","kind":"video","label":"sample_clip.mp4","mimeType":"video/mp4"}}]""";
 
     private const string InlineImageContent =
         """[{"type":"text","text":"look"},{"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}]""";
@@ -111,10 +111,9 @@ public class OpenClawRollupArmTests
 
     // End to end: a picture-naming rollup at the page head, under an older page
     // ending in the steps whose text it repeats. Its one turn carries the
-    // picture, so it is never the turn removed on scroll-back: a picture drawn
-    // twice is acceptable, a lost one is not.
+    // picture, so it stays, but it loses its caption: the steps already say it.
     [Fact]
-    public void ANamedPathRollupAtThePageHeadKeepsItsPictureTurnOnScrollBack()
+    public void ANamedPathRollupAtThePageHeadKeepsItsPictureAndLosesItsCaptionOnScrollBack()
     {
         var newer = JsonDocument.Parse("[" + Rollup(NamedContent) + "]").RootElement;
         var headText = OpenClawSessions.TurnsFromHistory(newer, Key)[0].Text;
@@ -128,6 +127,57 @@ public class OpenClawRollupArmTests
             OpenClawHistoryShape.EndsInOpenTextStep(older));
 
         Assert.Equal(-1, session.DroppedRollupIndex);
-        Assert.Contains(session.History, t => t.ImageUrl is not null);
+        // The step's own named-path turn also carries a picture; the rollup's is
+        // the FromRollup one, and it is the one that lost its caption.
+        var picture = Assert.Single(session.History, t => t.FromRollup && t.ImageUrl is not null);
+        Assert.Equal("", picture.Text);
+        Assert.Equal(1, session.History.Count(t => t.Text.Contains("here you go")));
+    }
+
+    // ---- a covered rollup's picture survives caption-less, on every arm ----
+    // (CB-270 review: the text-only drop only guarded the plain-text arm, so a
+    // covered rollup reaching a picture or attachment arm drew its words twice.)
+
+    private static string Step(string text) =>
+        "{\"role\":\"assistant\",\"api\":\"anthropic-messages\",\"content\":[{\"type\":\"text\",\"text\":"
+        + JsonSerializer.Serialize(text) + "}]}";
+
+    private static List<HistoryTurn> CoveredPage(string stepText, string rollupContent) =>
+        OpenClawSessions.TurnsFromHistory(
+            JsonDocument.Parse("[{\"role\":\"user\",\"content\":\"go\"}," + Step(stepText) + "," + Rollup(rollupContent) + "]").RootElement,
+            Key);
+
+    [Fact]
+    public void ACoveredNamedPathRollupKeepsItsPictureWithNoCaption()
+    {
+        var raw = "here you go\nMEDIA:" + Path + "\nenjoy";
+        var turns = CoveredPage(raw, "[{\"type\":\"text\",\"text\":" + JsonSerializer.Serialize(raw) + "}]");
+
+        var rollupTurn = Assert.Single(turns, t => t.FromRollup);
+        Assert.NotNull(rollupTurn.ImageUrl);
+        Assert.Equal("", rollupTurn.Text);
+        Assert.Equal(1, turns.Count(t => t.Text.Contains("here you go")));
+    }
+
+    [Fact]
+    public void ACoveredDeliveredAttachmentRollupKeepsItsAttachmentWithNoCaption()
+    {
+        var turns = CoveredPage("a clip for you", VideoContent);
+
+        var rollupTurn = Assert.Single(turns, t => t.FromRollup);
+        Assert.NotNull(rollupTurn.Attachment);
+        Assert.Equal("", rollupTurn.Text);
+        Assert.Equal(1, turns.Count(t => t.Text == "a clip for you"));
+    }
+
+    [Fact]
+    public void ACoveredFailedAttachmentRollupKeepsItsAttachmentWithNoCaption()
+    {
+        var turns = CoveredPage("a clip for you", FailedAttachmentContent);
+
+        var rollupTurn = Assert.Single(turns, t => t.FromRollup);
+        Assert.NotNull(rollupTurn.Attachment);
+        Assert.Equal("", rollupTurn.Text);
+        Assert.Equal(1, turns.Count(t => t.Text == "a clip for you"));
     }
 }
