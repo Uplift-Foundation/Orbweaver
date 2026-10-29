@@ -123,7 +123,14 @@ namespace Orbweaver
         // so the panel can tint it. Only a `toolcall` turn from
         // TurnsFromHistory ever sets it; defaulted and trailing for the same
         // reason every field above it is.
-        bool IsError = false);
+        bool IsError = false,
+
+        // CB-270: this turn was drawn from a `cli` rollup message, which
+        // repeats the text of the run's steps. Needed only so a scroll-back
+        // can tell, when an older page ends in the steps of the run whose
+        // rollup is the head of the transcript, that the rollup is the double
+        // and must go (see PrependHistory).
+        bool FromRollup = false);
 
     // See HistoryTurn.Arm. Internal and small on purpose: this exists only to
     // let the post-parse dedup pass in OpenClawSessions tell an inline image
@@ -560,6 +567,7 @@ namespace Orbweaver
                     SpeakerColor = turn.SpeakerColor,
                     Mine = turn.Mine,
                     IsError = turn.IsError,
+                    FromRollup = turn.FromRollup,
                     IsComplete = true
                 });
             }
@@ -1013,9 +1021,20 @@ namespace Orbweaver
         // raising its own event, because the panel has to put the scroll
         // position back afterwards — content appearing above where you are
         // reading would otherwise throw you down the page.
-        public void PrependHistory(IReadOnlyList<HistoryTurn> turns)
+        //
+        // olderEndsInOpenTextStep (CB-270): the older page ended in a run's text
+        // steps with no rollup after them. If the transcript's first turn is a
+        // rollup, it is the rollup of exactly that run, split from its steps by
+        // the page boundary, and the steps being prepended already say what it
+        // says. It is removed so the reply is drawn once. HistoryPrepended still
+        // reports the rows inserted; the panel drops the stale row itself, see
+        // HistoryHeadDropped.
+        public void PrependHistory(IReadOnlyList<HistoryTurn> turns, bool olderEndsInOpenTextStep = false)
         {
             if (turns.Count == 0) return;
+
+            HistoryHeadDropped = olderEndsInOpenTextStep && _history.Count > 0 && _history[0].FromRollup;
+            if (HistoryHeadDropped) _history.RemoveAt(0);
 
             var older = turns.Select(t => new ChatTurn
             {
@@ -1041,6 +1060,7 @@ namespace Orbweaver
                 SpeakerColor = t.SpeakerColor,
                 Mine = t.Mine,
                 IsError = t.IsError,
+                FromRollup = t.FromRollup,
                 IsComplete = true
             }).ToList();
 
@@ -1049,6 +1069,13 @@ namespace Orbweaver
         }
 
         public event Action<int>? HistoryPrepended;
+
+        // True while HistoryPrepended is being raised for a prepend that also
+        // removed the transcript's old first turn (the rollup double), so the
+        // panel can remove the matching row. A property rather than a second
+        // event or a changed count: IRemoteChatSession's contract is "this
+        // many rows were inserted at the front", which stays true.
+        public bool HistoryHeadDropped { get; private set; }
 
         public void SetHistory(IReadOnlyList<HistoryTurn> turns)
         {
@@ -1085,6 +1112,7 @@ namespace Orbweaver
                     SpeakerColor = turn.SpeakerColor,
                     Mine = turn.Mine,
                     IsError = turn.IsError,
+                    FromRollup = turn.FromRollup,
                     IsComplete = true
                 });
             }

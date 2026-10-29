@@ -2704,7 +2704,8 @@ namespace Orbweaver
                 // why a recovered path does not need to re-derive this.
                 turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
                     speaker, colour, mine, Automation: cronAutomation,
-                    Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
+                    Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low,
+                    FromRollup: OpenClawHistoryShape.IsRollup(message)));
             }
 
             // One delivery, two arms, one bubble — CB-98's cross-arm case,
@@ -4523,7 +4524,7 @@ namespace Orbweaver
             var page = await FetchPageAsync(chat, chat.LoadedMessages, ct);
             if (page is null) return false;
 
-            var (turns, messages) = page.Value;
+            var (turns, messages, endsOpen) = page.Value;
 
             // Nothing came back, so there is nothing behind this. Asked once and
             // remembered, rather than re-asking every time the user reaches the
@@ -4539,7 +4540,7 @@ namespace Orbweaver
             if (messages < PageSize) chat.HasMore = false;
 
             chat.LoadedMessages += messages;
-            chat.PrependHistory(turns);
+            chat.PrependHistory(turns, endsOpen);
             return turns.Count > 0;
         }
 
@@ -4551,7 +4552,7 @@ namespace Orbweaver
             var first = await FetchPageAsync(chat, 0, ct);
             if (first is null) return;
 
-            var (initial, count) = first.Value;
+            var (initial, count, _) = first.Value;
 
             chat.LoadedMessages = count;
             chat.HasMore = count >= PageSize;
@@ -4570,7 +4571,7 @@ namespace Orbweaver
         // reaches for an older one, rather than opening a second request shape
         // for the same "one page of chat.history" idea.
         [ExcludeFromCodeCoverage]
-        internal static async Task<(List<HistoryTurn> Turns, int Messages)?>
+        internal static async Task<(List<HistoryTurn> Turns, int Messages, bool EndsInOpenTextStep)?>
             FetchPageAsync(OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             OpenClawGateway? gateway;
@@ -4590,7 +4591,7 @@ namespace Orbweaver
         // fetched is not a reason to refuse the conversation, because the panel
         // still works forward from whatever happens next.
         [ExcludeFromCodeCoverage]
-        private static async Task<(List<HistoryTurn> Turns, int Count)?> FetchHistoryPageAsync(
+        private static async Task<(List<HistoryTurn> Turns, int Count, bool EndsInOpenTextStep)?> FetchHistoryPageAsync(
             OpenClawGateway gateway, OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             try
@@ -4719,7 +4720,7 @@ namespace Orbweaver
                 // The message count, not the turn count: it is what the next
                 // page's offset is measured in, and one message can produce
                 // several turns or none.
-                return (turns, messages.GetArrayLength());
+                return (turns, messages.GetArrayLength(), OpenClawHistoryShape.EndsInOpenTextStep(messages));
             }
             catch
             {

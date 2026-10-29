@@ -74,6 +74,28 @@ namespace Orbweaver
             return drop;
         }
 
+        // Whether the page ends in a run that has text steps and no rollup after
+        // them: the last span (since the last user turn or rollup) holds a text
+        // step. For an *older* page that means the run's rollup is on the
+        // newer page, split from its steps by the page boundary, and the
+        // caller has to remove it when it prepends this page (CB-270).
+        internal static bool EndsInOpenTextStep(JsonElement messages)
+        {
+            if (messages.ValueKind != JsonValueKind.Array) return false;
+
+            var spanHasStepText = false;
+
+            foreach (var message in messages.EnumerateArray())
+            {
+                if (Str(message, "role") == "user" || IsRollup(message))
+                    spanHasStepText = false;
+                else if (Str(message, "role") == "assistant" && HasText(message))
+                    spanHasStepText = true;
+            }
+
+            return spanHasStepText;
+        }
+
         // Every `toolcall` block in an assistant content array, with whether a
         // `tool_result` in the same array answers it with an error.
         //

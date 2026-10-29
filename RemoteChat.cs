@@ -115,6 +115,9 @@ namespace Orbweaver
 
         public bool IsComplete { get; set; }
 
+        // CB-270: drawn from a gateway rollup message; see HistoryTurn.FromRollup.
+        public bool FromRollup { get; init; }
+
         private bool _isError;
 
         // CB-270: a tool line whose result reported an error. Mutable and
