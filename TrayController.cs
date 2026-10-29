@@ -303,6 +303,12 @@ namespace Orbweaver
         internal static void ToggleUsageOrbsVisible() =>
             SessionManager.Instance?.SetUsageOrbsVisible(!SessionManager.Instance.UsageOrbsVisible);
 
+        // The hotkey and the tray item both land here, as do the chat panel's
+        // button and anything else that mutes (CB-298). Unlike the toggles
+        // above it needs no SessionManager, so it works — and is tested — in
+        // a headless run.
+        internal static void ToggleMute() => AudioMute.Toggle();
+
         internal static void ResetAllSessions() =>
             SessionManager.Instance?.ResetAllSessionsToIdle();
 

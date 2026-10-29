@@ -778,6 +778,11 @@ namespace Orbweaver
         // to KillEverythingLive.
         internal static void KillCurrentlyPlayingForCancellableShutdown() => KillEverythingLive();
 
+        // CB-298: the mute's stop. Same kill as the shutdown path above, under
+        // a name that says what it is for — and, like it, non-sticky: StopAll
+        // would leave the app deaf after the user unmutes.
+        internal static void StopPlaying() => KillEverythingLive();
+
         // CB-168: no longer mentions KillTree — that method's real-OS half
         // moved onto RealChimeProcess.Kill (excluded there); the
         // snapshot-and-clear-and-call-Kill sequence here is ordinary code,

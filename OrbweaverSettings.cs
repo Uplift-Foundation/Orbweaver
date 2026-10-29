@@ -81,7 +81,7 @@ namespace Orbweaver
             "speakCommand", "speakCommandArgs",
             "speakVoicesCommand", "speakVoicesCommandArgs", "speakCommandVoice", "speakEngine",
             "speakScope",
-            "turnSoundsEnabled", "turnFinishedSound", "needsAttentionSound", "orbTurnSounds",
+            "muted", "turnSoundsEnabled", "turnFinishedSound", "needsAttentionSound", "orbTurnSounds",
             "orbColors", "claudeCodeProfileDirs", "codexHomes", "grokHomes", "profiles", "orbPositions",
             "collapsedSettingsSections",
             "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale",
@@ -116,7 +116,7 @@ namespace Orbweaver
             // list from CB-155 until the new-chat hotkey was added beside it;
             // Save's ContainsKey guard kept that from throwing, but it meant
             // the value was carried in _unknownKeys as well as the model.
-            "toggleOrbsHotkey", "newChatHotkey", "toggleUsageOrbsHotkey"
+            "toggleOrbsHotkey", "newChatHotkey", "toggleUsageOrbsHotkey", "toggleMuteHotkey"
         };
 
         // JsonNode.ToJsonString(options) needs a TypeInfoResolver on the
@@ -510,6 +510,10 @@ namespace Orbweaver
             // same terms again: null or unparseable means Ctrl+Alt+U.
             public string? ToggleUsageOrbsHotkey { get; set; }
 
+            // Overrides HotkeyRegistry.Default(ToggleMute), on the same
+            // terms again: null or unparseable means Ctrl+Alt+M.
+            public string? ToggleMuteHotkey { get; set; }
+
             // Which port to listen on. Zero means "let the operating system
             // choose", which is the sensible default because discovery
             // announces whatever was chosen — a fixed port only matters to
@@ -632,6 +636,13 @@ namespace Orbweaver
             // setting would miss the entire point of an ambient cue, which is
             // to tell you something before you go looking.
             public bool TurnSoundsEnabled { get; set; } = true;
+
+            // CB-298: the global mute. One flag that silences every sound
+            // the app makes, kept apart from the two volumes and the turn
+            // sounds switch on purpose — unmuting must put back exactly what
+            // was there, and a mute that rewrote those would lose them to a
+            // crash between mute and unmute. Off on a fresh install.
+            public bool Muted { get; set; }
 
             // null = the platform default (Glass / Windows Notify Messaging),
             // "off", "summary", a system-sound name, or an absolute path. See
@@ -1001,6 +1012,14 @@ namespace Orbweaver
         }
 
         // ---- turn sounds (CB-167) --------------------------------------------
+
+        // The persisted half of AudioMute (CB-298). Everything else goes
+        // through AudioMute, which also stops what is already playing.
+        public static bool Muted
+        {
+            get { Load(); lock (Gate) return _model.Muted; }
+            set { Load(); lock (Gate) _model.Muted = value; Save(); }
+        }
 
         public static bool TurnSoundsEnabled
         {
@@ -1455,6 +1474,12 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.NewChatHotkey; }
             set { Load(); lock (Gate) _model.NewChatHotkey = value; Save(); }
+        }
+
+        public static string? ToggleMuteHotkey
+        {
+            get { Load(); lock (Gate) return _model.ToggleMuteHotkey; }
+            set { Load(); lock (Gate) _model.ToggleMuteHotkey = value; Save(); }
         }
 
         public static string? ToggleUsageOrbsHotkey
@@ -2298,6 +2323,7 @@ namespace Orbweaver
                         ToggleOrbsHotkey = Text(root["toggleOrbsHotkey"]),
                         NewChatHotkey = Text(root["newChatHotkey"]),
                         ToggleUsageOrbsHotkey = Text(root["toggleUsageOrbsHotkey"]),
+                        ToggleMuteHotkey = Text(root["toggleMuteHotkey"]),
                         ClaudeCodeChatEnabled = root["claudeCodeChatEnabled"]?.GetValue<bool>() ?? true,
                         ClaudeCodeReplyEnabled = root["claudeCodeReplyEnabled"]?.GetValue<bool>() ?? false,
                         CodexChatEnabled = root["codexChatEnabled"]?.GetValue<bool>() ?? true,
@@ -2358,6 +2384,7 @@ namespace Orbweaver
                         SpeakEngine = Text(root["speakEngine"]),
                         SpeakScope = Text(root["speakScope"]),
                         TurnSoundsEnabled = Bool(root["turnSoundsEnabled"], true),
+                        Muted = Bool(root["muted"], false),
                         TurnFinishedSound = Text(root["turnFinishedSound"]),
                         NeedsAttentionSound = Text(root["needsAttentionSound"]),
                         NewChatLastCli = Text(root["newChatLastCli"])
@@ -2957,6 +2984,7 @@ namespace Orbweaver
                         ["toggleOrbsHotkey"] = _model.ToggleOrbsHotkey,
                         ["newChatHotkey"] = _model.NewChatHotkey,
                         ["toggleUsageOrbsHotkey"] = _model.ToggleUsageOrbsHotkey,
+                        ["toggleMuteHotkey"] = _model.ToggleMuteHotkey,
                         // Null when never chosen rather than a copy of the
                         // current default, the same as speakVoice below — so
                         // changing which profile ships as the default still
@@ -3006,6 +3034,7 @@ namespace Orbweaver
                         ["speakEngine"] = _model.SpeakEngine,
                         ["speakScope"] = _model.SpeakScope,
                         ["turnSoundsEnabled"] = _model.TurnSoundsEnabled,
+                        ["muted"] = _model.Muted,
                         ["turnFinishedSound"] = _model.TurnFinishedSound,
                         ["needsAttentionSound"] = _model.NeedsAttentionSound,
                         ["newChatRecentFolders"] = newChatRecentFolders,
