@@ -2296,13 +2296,23 @@ namespace Orbweaver
             var namedIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
             var mirrorDrawn = new List<(int Index, string Source)>();
 
+            // CB-270: a tool-using run is stored as its steps and then a rollup
+            // repeating their text. Decided once, over the whole page, because
+            // the rule is positional — see OpenClawHistoryShape.RollupsToDrop.
+            var drop = OpenClawHistoryShape.RollupsToDrop(messages);
+            var messageIndex = -1;
+
             foreach (var message in messages.EnumerateArray())
             {
+                messageIndex++;
+                if (drop.Contains(messageIndex)) continue;
+
                 var role = Str(message, "role") == "user" ? ChatRole.User : ChatRole.Assistant;
 
-                // content is a list of blocks; only the text ones are worth
-                // showing. Tool calls arrive live as their own turns, and a
-                // replayed tool_use block would be a wall of JSON.
+                // content is a list of blocks; the text ones are the message and
+                // the `toolcall` ones are drawn as one line each below. A
+                // tool_result's body is never drawn: it is the wall of output the
+                // line exists to stand in for.
                 if (!message.TryGetProperty("content", out var content)) continue;
 
                 // The two roles are shaped differently, which is easy to miss
@@ -2371,6 +2381,23 @@ namespace Orbweaver
                             // on.
                             Arm: bytes is { Length: > 0 } ? MediaSourceArm.Inline : MediaSourceArm.None));
                     }
+                }
+
+                // One System line per tool call, in `· name  arg` — built by the
+                // same ToolSummary the live session uses, from the same
+                // `{command, title}` object, so AppendNewTail can match the two.
+                // Before TextOf so the line falls where the call happened: a
+                // toolcall message has no text of its own, and one that does has
+                // spoken before it acted.
+                foreach (var call in OpenClawHistoryShape.ToolCalls(content))
+                {
+                    var callMs = Num(message, "timestamp");
+                    turns.Add(new HistoryTurn(ChatRole.System,
+                        ChatTranscript.ToolSummary(call.Name, call.Args), null, "",
+                        callMs > 0
+                            ? DateTimeOffset.FromUnixTimeMilliseconds(callMs).ToLocalTime()
+                            : DateTimeOffset.Now,
+                        null, null, IsError: call.IsError));
                 }
 
                 var text = TextOf(content);
