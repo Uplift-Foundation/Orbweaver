@@ -1047,6 +1047,7 @@ namespace Orbweaver
 
                     await LoadAgentNamesAsync(gateway, ct);
                     await SubscribeAsync(gateway, ct);
+                    await ResubscribeOpenPanelsAsync(gateway, OpenChats(), ct);
                     await PollAsync(gateway, ct);
                     }
                 }
@@ -4371,6 +4372,76 @@ namespace Orbweaver
                 foreach (var key in plan.Release) freed += Chats[key].ReleaseImages();
 
                 return new SweepResult(plan.Evict, plan.Release, freed);
+            }
+        }
+
+        // CB-270 Stage 3: a conversation's own message stream is held for exactly
+        // as long as a panel is open on it. The roster subscription says a
+        // session changed and, for a run on anything but a cron session, nothing
+        // else; the session's own subscription is what carries its text and tool
+        // calls (measured, see docs/openclaw-findings.md).
+        //
+        // Two call sites and no others: a chat's panel count going 0 to 1 or 1 to
+        // 0, and the reconnect loop re-subscribing the chats that are open. Never
+        // across the roster, which would hold a stream per conversation whether
+        // anyone was looking or not.
+        //
+        // Not excluded from coverage, on the SendAsync precedent: the gateway is
+        // a constructor argument, so an in-memory socket reaches every arm.
+        internal static void MessagesWanted(OpenClawChatSession chat, bool wanted)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            // No connection: nothing to ask. A panel opened while disconnected is
+            // caught by the reconnect, which subscribes every open one.
+            if (gateway is null) return;
+
+            _ = Task.Run(async () =>
+            {
+                var failure = await MessagesRequestAsync(gateway, chat.GatewayKey, wanted, CancellationToken.None);
+                if (failure is null) return;
+
+                Dispatcher.UIThread.Post(() => chat.NoteLiveUnavailable(failure));
+            });
+        }
+
+        // Returns why a *subscribe* failed, or null. An unsubscribe that fails is
+        // not reported at all: the panel is gone, and the gateway drops a
+        // connection's subscriptions with the connection anyway.
+        internal static async Task<string?> MessagesRequestAsync(
+            OpenClawGateway gateway, string key, bool wanted, CancellationToken ct)
+        {
+            try
+            {
+                await gateway.RequestAsync(
+                    wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe",
+                    new Dictionary<string, object> { ["key"] = key }, ct);
+                return null;
+            }
+            catch (Exception ex) when (wanted)
+            {
+                return ex.Message;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        // The keys that deserve a subscription: those with a panel open.
+        internal static IReadOnlyList<string> MessageSubscriptionsFor(IEnumerable<OpenClawChatSession> chats) =>
+            chats.Where(c => c.HasOpenPanel).Select(c => c.GatewayKey).ToList();
+
+        // Subscriptions belong to the connection, so a reconnect has dropped every
+        // one of them and the open panels have to ask again. Without this a panel
+        // that was streaming goes quiet after a gateway restart and nothing says so.
+        internal static async Task ResubscribeOpenPanelsAsync(
+            OpenClawGateway gateway, IEnumerable<OpenClawChatSession> chats, CancellationToken ct)
+        {
+            foreach (var key in MessageSubscriptionsFor(chats))
+            {
+                await MessagesRequestAsync(gateway, key, true, ct);
             }
         }
 

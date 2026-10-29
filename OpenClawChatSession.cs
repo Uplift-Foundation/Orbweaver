@@ -192,13 +192,33 @@ namespace Orbweaver
 
         internal bool HasOpenPanel => _panels > 0;
 
-        internal void PanelOpened() => _panels++;
+        // The message subscription follows the count: held from the first panel
+        // to the last, asked for by this chat itself so that a room's members,
+        // which the room fans PanelOpened out to, each hold their own.
+        internal void PanelOpened()
+        {
+            if (_panels++ == 0) OpenClawSessions.MessagesWanted(this, true);
+        }
 
         internal void PanelClosed()
         {
-            if (_panels > 0) _panels--;
-            if (_panels == 0) IdleSince = DateTime.UtcNow;
+            var held = _panels > 0;
+            if (held) _panels--;
+            if (_panels == 0)
+            {
+                IdleSince = DateTime.UtcNow;
+
+                // Only the real 1 to 0 transition: a stray extra close has
+                // nothing to release.
+                if (held) OpenClawSessions.MessagesWanted(this, false);
+            }
         }
+
+        // A subscribe the gateway refused is a fact about this one conversation,
+        // not about the connection, so it is said here and not through the
+        // settings pane's connection line.
+        internal void NoteLiveUnavailable(string reason) =>
+            Note("Live updates aren't available for this conversation: " + reason);
 
         // What this transcript's decoded pictures are costing.
         internal long ResidentImageBytes => OpenClawChatMemory.ResidentBytes(_history);
