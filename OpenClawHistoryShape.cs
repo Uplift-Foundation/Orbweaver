@@ -155,11 +155,11 @@ namespace Orbweaver
         // Every `toolcall` block in an assistant content array, with whether a
         // `tool_result` in the same array answers it with an error.
         //
-        // IsError is read from `is_error` or `isError` — **assumed names**. The
-        // one captured result carries neither key (tool_use_id, content, name,
-        // type only), so a failed tool read back from history has never been
-        // observed; the live `session.tool` result does carry `isError`, which is
-        // where the second spelling comes from.
+        // IsError is read from `is_error` or `isError`. Measured on openclaw
+        // 2026.10.5 with a deliberately failing tool: a chat.history tool_result
+        // carries `is_error: true` (a success has no error key), and the live
+        // `session.tool` result carries `isError: true`. Both spellings are
+        // read here so either shape marks the call.
         internal static IEnumerable<(string? Id, string? Name, JsonElement Args, bool IsError)> ToolCalls(
             JsonElement content)
         {
