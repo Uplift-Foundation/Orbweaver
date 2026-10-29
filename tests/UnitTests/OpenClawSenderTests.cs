@@ -212,4 +212,75 @@ public class OpenClawSenderTests
 
         Assert.Equal(OpenClawSender.SenderKind.Unknown, sender.Kind);
     }
+
+    // --- CB-270: a turn the gateway wrote itself is not a person ---------------
+
+    private const string Suffix = "8f2a41c0-1d3e-4b77-9a05-6c1e2f0b8d34:user";
+
+    // The measured case: an exec notice on a WhatsApp-routed main carrying the
+    // ":user" suffix with senderIsOwner false. Checked after the suffix it was the
+    // operator's own words; the provenance has to be asked first.
+    [Fact]
+    public void AnInternalSystemTurnIsAMachineEvenWithTheUserSuffix()
+    {
+        var sender = OpenClawSender.Classify(
+            false, null, Suffix, "Exec completed (calm-otter, code 0)", "internal_system");
+
+        Assert.Equal(OpenClawSender.SenderKind.Machine, sender.Kind);
+        Assert.Null(sender.Name);
+        Assert.Equal("Exec completed (calm-otter, code 0)", sender.Text);
+    }
+
+    // The order pins: every other signal, each one separately, loses to it.
+    [Fact]
+    public void ProvenanceOutranksTheOwnerFlagTheMirrorPrefixAndASenderName()
+    {
+        Assert.Equal(OpenClawSender.SenderKind.Machine,
+            OpenClawSender.Classify(true, null, null, "x", "internal_system").Kind);
+        Assert.Equal(OpenClawSender.SenderKind.Machine,
+            OpenClawSender.Classify(null, null, null, Prefix + "x", "internal_system").Kind);
+        Assert.Equal(OpenClawSender.SenderKind.Machine,
+            OpenClawSender.Classify(false, "quillfeather", null, "x", "internal_system").Kind);
+
+        // The prefix is not stripped from a machine turn: it was never ours.
+        Assert.Equal(Prefix + "x",
+            OpenClawSender.Classify(null, null, null, Prefix + "x", "internal_system").Text);
+    }
+
+    // The controls: no provenance, or a provenance that is not internal_system,
+    // changes nothing. S2's own sends carry the suffix and no provenance.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("user_input")]
+    [InlineData("INTERNAL_SYSTEM")]
+    public void AnythingButInternalSystemLeavesTheOldRuleInForce(string? provenance)
+    {
+        var sender = OpenClawSender.Classify(null, null, Suffix, "any thoughts?", provenance);
+
+        Assert.Equal(OpenClawSender.SenderKind.Mine, sender.Kind);
+    }
+
+    // --- IsGatewayInjected ---
+
+    [Theory]
+    [InlineData("A scheduled reminder has been triggered. The reminder content is: stretch")]
+    [InlineData("System: [2026-10-29 09:15:02] Node connected")]
+    [InlineData("System: [2026-10-29 09:15:02 PDT] Node connected")]
+    [InlineData("System: [2026-10-29 09:15:02 UTC]")]
+    public void TheMeasuredInjectionsAreRecognised(string text) =>
+        Assert.True(OpenClawSender.IsGatewayInjected(text));
+
+    // Anchored and case-sensitive: a person typing the sentence is not swallowed.
+    [Theory]
+    [InlineData("System: hello")]
+    [InlineData("System: [not a timestamp] hello")]
+    [InlineData("System: [2026-10-29 09:15] too short")]
+    [InlineData("System: [2026-10-29 09:15:02 pacific] zone too long")]
+    [InlineData("fyi: A scheduled reminder has been triggered")]
+    [InlineData("a scheduled reminder has been triggered")]
+    [InlineData("")]
+    [InlineData("what time is the standup?")]
+    public void ANearMissIsNotInjected(string text) =>
+        Assert.False(OpenClawSender.IsGatewayInjected(text));
 }
