@@ -568,5 +568,28 @@ public class OpenClawLiveRunTests : IDisposable
 
         Assert.Equal(new[] { "go", step1, ToolLine(), step3 }, Texts(session));
     }
+
+    // Juno's trace of the same hole, with the tool line already in the page: the
+    // panel opens on [user, step one, tool line] and only the deltas after the
+    // tool and the final snapshot arrive. The snapshot is "step1\n\nstep3" and
+    // must leave step one alone.
+    [Fact]
+    public void APanelOpenedOnThePageThroughTheToolLineGetsOnlyStepThreeFromTheTail()
+    {
+        OpenClawSessions.SetGatewayForTests(null);
+        var (step1, step3) = Steps();
+        var session = Session();
+        session.SetHistory(Page((ChatRole.User, "go"), (ChatRole.Assistant, step1),
+            (ChatRole.System, ToolLine())));
+
+        var events = ToolRunEvents();
+        var afterTool = events.FindIndex(e => e.Name == "agent"
+            && e.Payload.GetProperty("data").TryGetProperty("delta", out var d)
+            && d.GetString()!.StartsWith("\n\nprobe"));
+
+        foreach (var (name, payload) in events.Skip(afterTool)) session.OnAgentEvent(name, payload);
+
+        Assert.Equal(new[] { "go", step1, ToolLine(), step3 }, Texts(session));
+    }
 }
 
