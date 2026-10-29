@@ -40,10 +40,12 @@ namespace Orbweaver.Tests
         // because another case had turned heartbeats off, and `agent:<id>:main`
         // is a heartbeat key.
         private static (IReadOnlyList<OpenClawSessions.Session> Sessions, int Total) Parse(
-            string json, bool heartbeats = true, int withinMinutes = OrbweaverSettings.OpenClawActiveWithinAll)
+            string json, bool heartbeats = true, int withinMinutes = OrbweaverSettings.OpenClawActiveWithinAll,
+            ClusterMode native = ClusterMode.WithChats)
         {
             OrbweaverSettings.OpenClawHeartbeatMode =
                 heartbeats ? ClusterMode.WithChats : ClusterMode.Hidden;
+            OrbweaverSettings.OpenClawNativeMode = native;
             OrbweaverSettings.OpenClawActiveWithinMinutes = withinMinutes;
 
             return OpenClawSessions.Parse(Json(json), Now);
@@ -100,13 +102,14 @@ namespace Orbweaver.Tests
 
         // Recorded before the recency filter, like the delivery map: a send to a
         // conversation that has gone quiet still has to be routed. Two days old
-        // against a 60 minute window, so every row is dropped from the result.
+        // against a 60 minute window, so every row is dropped from the result
+        // except the dashboard one, which retention keeps (OpenClawRetention).
         [Fact]
         public void NativeOfAnswersForRowsTheRecencyFilterDropped()
         {
             var (sessions, total) = Parse(NativeFixture(Ms(Now.AddDays(-2))), withinMinutes: 60);
 
-            Assert.Empty(sessions);
+            Assert.Equal(OpenClawNativeKind.Dashboard, Assert.Single(sessions).Native);
             Assert.Equal(5, total);
             Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:alpha:main"));
             Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf("agent:beta:main"));
@@ -135,6 +138,98 @@ namespace Orbweaver.Tests
 
             Assert.Null(OpenClawSessions.NativeOf("agent:alpha:main"));
             Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:other:main"));
+        }
+
+        // --- CB-270: retention, pinned rows, and the native-mode filter ---
+
+        private static readonly long TwoDaysAgo = Ms(Now.AddDays(-2));
+
+        // Two days quiet against a 60 minute window. The dashboard row survives
+        // because a New Chat is a durable conversation, not a clock; the old
+        // unpinned DM is the negative control (today's behaviour); the pinned DM
+        // survives because the gateway says keep it; the archived pinned row is
+        // dropped because archived is checked first.
+        [Fact]
+        public void OnlyDashboardAndPinnedRowsSurviveTheRecencyWindow()
+        {
+            var json = $$"""
+                {"sessions":[
+                  {"key":"agent:a:dashboard:u1","classification":"dashboard","label":"Scratch pad","lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000001","classification":"direct","chatType":"direct","lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000002","classification":"direct","chatType":"direct","pinned":true,"lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000003","classification":"direct","chatType":"direct","pinned":true,"archived":true,"lastActivityAt":{{TwoDaysAgo}}}
+                ]}
+                """;
+
+            var (sessions, _) = Parse(json, withinMinutes: 60);
+
+            Assert.Equal(2, sessions.Count);
+
+            var dash = sessions.Single(s => s.Key == "agent:a:dashboard:u1");
+            Assert.Equal(SessionKind.Main, dash.Kind);
+            Assert.Equal(OpenClawNativeKind.Dashboard, dash.Native);
+            Assert.True(dash.KeptRegardlessOfAge);
+            Assert.False(dash.GatewayPinned);
+            Assert.Equal("Scratch pad", dash.Label);
+
+            var pinned = sessions.Single(s => s.Key.EndsWith("0002"));
+            Assert.True(pinned.GatewayPinned);
+            Assert.True(pinned.KeptRegardlessOfAge);
+            Assert.Null(pinned.Label);
+
+            Assert.DoesNotContain(sessions, s => s.Key.EndsWith("0001") || s.Key.EndsWith("0003"));
+        }
+
+        // pinned of the wrong type is not pinned.
+        [Fact]
+        public void AMalformedPinnedFlagIsNotPinned()
+        {
+            var json = $$"""
+                {"sessions":[{"key":"agent:a:discord:direct:1","chatType":"direct","pinned":"yes","lastActivityAt":{{TwoDaysAgo}}}]}
+                """;
+
+            Assert.Empty(Parse(json, withinMinutes: 60).Sessions);
+        }
+
+        // A native main is not kept past the window: only dashboard sessions
+        // and pinned ones are.
+        [Fact]
+        public void AnOldNativeMainIsStillDroppedByTheWindow()
+        {
+            var json = $$"""
+                {"sessions":[{"key":"agent:a:main","classification":"main","lastActivityAt":{{TwoDaysAgo}}}]}
+                """;
+
+            Assert.Empty(Parse(json, withinMinutes: 60).Sessions);
+        }
+
+        // Hidden drops exactly the native rows: the dashboard session and the
+        // native main (which is also a heartbeat by key; native wins). The Discord
+        // DM, the WhatsApp main (still a heartbeat) and the cron stay. Then the
+        // control: WithChats keeps all five.
+        [Fact]
+        public void HidingNativeSessionsDropsOnlyTheNativeRows()
+        {
+            var (hidden, _) = Parse(NativeFixture(JustNow), native: ClusterMode.Hidden);
+
+            Assert.Equal(
+                new[] { "agent:alpha:cron:job-1", "agent:alpha:discord:direct:1900000000000000001", "agent:beta:main" },
+                hidden.Select(s => s.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+            Assert.True(hidden.Single(s => s.Key == "agent:beta:main").Heartbeat);
+
+            Assert.Equal(5, Parse(NativeFixture(JustNow), native: ClusterMode.WithChats).Sessions.Count);
+            Assert.Equal(5, Parse(NativeFixture(JustNow), native: ClusterMode.OwnShape).Sessions.Count);
+        }
+
+        // Hiding heartbeats no longer hides a native main (native is checked
+        // first), but it still hides the WhatsApp main.
+        [Fact]
+        public void HidingHeartbeatsHidesTheWhatsAppMainAndNotTheNativeOne()
+        {
+            var (sessions, _) = Parse(NativeFixture(JustNow), heartbeats: false);
+
+            Assert.Contains(sessions, s => s.Key == "agent:alpha:main");
+            Assert.DoesNotContain(sessions, s => s.Key == "agent:beta:main");
         }
 
         // --- CB-170: what the orb's Interrupt and End rows read off a row ---
@@ -921,5 +1016,46 @@ namespace Orbweaver.Tests
         {
             Assert.Equal(Array.Empty<byte>(), OpenClawSessions.DecodeDataUri("data:image/png;base64,"));
         }
-    }
+
+        // A deliveryContext that is not an object (null, a string) is no delivery
+        // evidence: the row is still native. A present *object* is evidence, even an
+        // empty one, which is the other arm.
+        [Theory]
+        [InlineData("\"deliveryContext\":null", OpenClawNativeKind.Main)]
+        [InlineData("\"deliveryContext\":\"discord\"", OpenClawNativeKind.Main)]
+        [InlineData("\"deliveryContext\":{}", OpenClawNativeKind.None)]
+        public void OnlyAnObjectDeliveryContextCountsAsSurfaceEvidence(string field, OpenClawNativeKind expected)
+        {
+            var json = $$"""{"sessions":[{"key":"agent:a:main","classification":"main",{{field}},"lastActivityAt":{{JustNow}}}]}""";
+
+            Assert.Equal(expected, Assert.Single(Parse(json).Sessions).Native);
+        }
+    
+        // A session mid-run is current whatever its timestamps say, so the window
+        // never drops it; this is the arm of the retention condition a quiet row
+        // cannot reach. The control is the same old row not generating, dropped.
+        [Fact]
+        public void AnOldGeneratingSessionSurvivesTheWindowAndAnIdleOneDoesNot()
+        {
+            var json = $$"""
+                {"sessions":[
+                  {"key":"agent:a:discord:direct:1900000000000000001","chatType":"direct","lastActivityAt":{{TwoDaysAgo}}},
+                  {"key":"agent:a:discord:direct:1900000000000000002","chatType":"direct","lastActivityAt":{{TwoDaysAgo}}}
+                ]}
+                """;
+            OpenClawSessions.SetRunningForTests(
+                "agent:a:discord:direct:1900000000000000001", DateTime.UtcNow, open: true);
+            try
+            {
+                var (sessions, _) = Parse(json, withinMinutes: 60);
+
+                Assert.Equal(
+                    "agent:a:discord:direct:1900000000000000001", Assert.Single(sessions).Key);
+            }
+            finally
+            {
+                OpenClawSessions.ForgetRunningForTests();
+            }
+        }
+}
 }

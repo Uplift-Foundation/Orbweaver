@@ -90,6 +90,50 @@ public class SettingsRoundTripTests
         Assert.Equal("star", OrbweaverSettings.OpenClawCronShape);
     }
 
+    // CB-270. WithChats and a diamond by default, and Hidden then OwnShape
+    // written and read back, since a missing key also reads as WithChats and only
+    // a non-default value proves the write happened.
+    [Fact]
+    public void NativeMode_AndShape_DefaultAndRoundTrip()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        Assert.Equal(ClusterMode.WithChats, OrbweaverSettings.OpenClawNativeMode);
+        Assert.Equal("diamond", OrbweaverSettings.OpenClawNativeShape);
+
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.OwnShape;
+        OrbweaverSettings.OpenClawNativeShape = "star";
+
+        var root = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json"))) as JsonObject;
+        Assert.Equal("own", root!["openclawNativeMode"]!.GetValue<string>());
+        Assert.Equal("star", root["openclawNativeShape"]!.GetValue<string>());
+
+        PointSettingsAt(dir);
+        Assert.Equal(ClusterMode.OwnShape, OrbweaverSettings.OpenClawNativeMode);
+        Assert.Equal("star", OrbweaverSettings.OpenClawNativeShape);
+
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.Hidden;
+        PointSettingsAt(dir);
+        Assert.Equal(ClusterMode.Hidden, OrbweaverSettings.OpenClawNativeMode);
+    }
+
+    [Theory]
+    [InlineData("sideways")]
+    [InlineData(7)]
+    public void NativeMode_SurvivesAGarbageValue(object garbage)
+    {
+        var dir = NewSettingsDir();
+        var json = new JsonObject { ["version"] = 1, ["twoLetterGlyphs"] = true };
+        json["openclawNativeMode"] = garbage is int n ? JsonValue.Create(n) : JsonValue.Create((string)garbage);
+        File.WriteAllText(Path.Combine(dir, "settings.json"), json.ToJsonString());
+
+        PointSettingsAt(dir);
+
+        Assert.Equal(ClusterMode.WithChats, OrbweaverSettings.OpenClawNativeMode);
+        Assert.True(OrbweaverSettings.TwoLetterGlyphs);
+    }
+
     [Theory]
     [InlineData(false, ClusterMode.Hidden)]
     [InlineData(true, ClusterMode.WithChats)]
@@ -180,6 +224,7 @@ public class SettingsRoundTripTests
         var dir = NewSettingsDir();
         PointSettingsAt(dir);
         OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.Hidden;
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.Hidden;
 
         PointSettingsAt(dir);
         OrbweaverSettings.TwoLetterGlyphs = true;   // any Save at all
@@ -195,7 +240,8 @@ public class SettingsRoundTripTests
         foreach (var key in new[]
                  {
                      "openclawShowHeartbeats", "openclawHeartbeatMode",
-                     "openclawHeartbeatShape", "openclawCronMode", "openclawCronShape"
+                     "openclawHeartbeatShape", "openclawCronMode", "openclawCronShape",
+                     "openclawNativeMode", "openclawNativeShape"
                  })
         {
             Assert.Equal(1, text.Split($"\"{key}\"").Length - 1);

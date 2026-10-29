@@ -612,6 +612,7 @@ def main():
               f"{len(result.untracked)} untracked .cs file(s))")
     new_hit = new_total = new_taken = new_arcs = 0
     uncovered = []
+    partials = []
     for path in sorted(added):
         if not is_app_file(path):
             continue
@@ -632,6 +633,9 @@ def main():
               f" {len(covered)} covered ({rate(len(covered), len(instrumented))}){tag}")
         if missed:
             uncovered.append((path, missed))
+        partial = partial_branch_report(path, instrumented, branches)
+        if partial:
+            partials.append(partial)
 
     print(f"\n  NEW CODE  lines {new_hit}/{new_total} = {rate(new_hit, new_total)}"
           f"   branches {new_taken}/{new_arcs} = {rate(new_taken, new_arcs)}")
@@ -639,6 +643,27 @@ def main():
         print("  " + why_not_applicable(added, lines, result.merge_base, base))
     for path, missed in uncovered:
         print(f"  UNCOVERED {path}: {missed}")
+    for line in partials:
+        print(line)
+
+
+def partial_branch_report(path, instrumented, branches):
+    """The `PARTIAL BRANCHES` line for one file, or None when every added branch
+    point was fully taken.
+
+    UNCOVERED lists lines that never ran, so a line that ran with only some of
+    its arms taken, which is exactly what keeps the added-branches figure under
+    100% while the lines figure sits at 100%, was invisible: the tool reported a
+    gap it could not locate. Each entry is `line(got/want)`, restricted to the
+    added, instrumented lines it is handed, and a fully-taken point is not listed.
+    """
+    partial = [
+        f"{n}({got}/{want})"
+        for n in instrumented
+        for got, want in [branches.get(path, {}).get(n, (0, 0))]
+        if got < want
+    ]
+    return f"  PARTIAL BRANCHES {path}: [{', '.join(partial)}]" if partial else None
 
 
 def why_not_applicable(added, lines, merge_base, base):

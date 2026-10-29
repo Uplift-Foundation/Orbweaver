@@ -870,10 +870,13 @@ namespace Orbweaver.Tests
             void Fail(string what) => failures.Add($"{where}: {what}");
 
             var leads = test.Team.Build(count);
-            // With EmptyPredefined the table is the three predefined slots,
-            // none of which holds an orb, then the user groups: slot numbers
-            // are the table's, so the user groups start at 3.
-            var slotBase = test.EmptyPredefined ? 3 : 0;
+            // With EmptyPredefined the table is the four predefined slots (main,
+            // heartbeats, crons and CB-270's native), none of which holds an
+            // orb, then the user groups: slot numbers are the table's, so the
+            // user groups start at 4. A literal rather than
+            // OrbGroups.PredefinedIds.Length because this exe does not compile
+            // OrbGroupTable.cs in; UnitTests pins the table at four.
+            var slotBase = test.EmptyPredefined ? 4 : 0;
             var total = slotBase + test.Groups;
 
             var groupOf = DealTo(test.Split, count, test.Groups).Select(g => g + slotBase).ToArray();

@@ -38,7 +38,13 @@ namespace Orbweaver
 
         // The gateway's key for the conversation, without the app's
         // "openclaw:" prefix.
-        string? Key)
+        string? Key,
+
+        // CB-270: the gateway's pin and the conversation's current name, for
+        // the Keep on screen checkbox and the Rename window. Defaulted so every
+        // construction that predates them is unchanged.
+        bool GatewayPinned = false,
+        string? Label = null)
     {
         public static readonly OpenClawActionContext None = new(
             false, new HashSet<string>(), Array.Empty<string>(), false, null, null);
@@ -48,6 +54,12 @@ namespace Orbweaver
     {
         Interrupt,
         End,
+
+        // CB-270. Pin and unpin are two actions rather than one with a flag
+        // because the row's wording differs for each outcome.
+        KeepOnScreen,
+        StopKeeping,
+        Rename,
     }
 
     public enum OpenClawActionOutcome
@@ -98,12 +110,17 @@ namespace Orbweaver
 
         // sessions.patch's answer. The gateway sends ok:true with the updated
         // row; anything else is not a confirmed archive, whatever it is.
-        internal static (OpenClawActionOutcome Outcome, string? Detail) ParsePatchResult(JsonElement res) =>
+        //
+        // `unconfirmed` is what the row says when it was not confirmed: the
+        // default is the archive's, so End's wording is unchanged, and pin and
+        // rename pass "the gateway didn't confirm the change".
+        internal static (OpenClawActionOutcome Outcome, string? Detail) ParsePatchResult(
+            JsonElement res, string unconfirmed = "the gateway didn't confirm the archive") =>
             res.ValueKind == JsonValueKind.Object
             && res.TryGetProperty("ok", out var ok)
             && ok.ValueKind == JsonValueKind.True
                 ? (OpenClawActionOutcome.Done, null)
-                : (OpenClawActionOutcome.Refused, "the gateway didn't confirm the archive");
+                : (OpenClawActionOutcome.Refused, unconfirmed);
 
         // A request that threw. "unauthorized" is matched exactly, on the
         // message, because that is the whole of what the gateway sends for it —
@@ -128,29 +145,59 @@ namespace Orbweaver
         // permanent it would be a warning about something that isn't true.
         public const string Armed = "End it? Click again (can be restored on the gateway)";
 
-        public static string Header(OpenClawAction action) => action == OpenClawAction.Interrupt
-            ? "Interrupt the current run"
-            : "End the conversation";
+        public static string Header(OpenClawAction action) => action switch
+        {
+            OpenClawAction.Interrupt => "Interrupt the current run",
+            OpenClawAction.End => "End the conversation",
+            OpenClawAction.Rename => "Rename conversation…",
+            _ => "Keep on screen",
+        };
 
-        public static string Tip(OpenClawAction action) => action == OpenClawAction.Interrupt
-            ? "Stops the agent generating. The conversation stays."
-            : "Archives this conversation on the gateway, so every client stops showing it. It can be restored from OpenClaw.";
+        public static string Tip(OpenClawAction action) => action switch
+        {
+            OpenClawAction.Interrupt => "Stops the agent generating. The conversation stays.",
+            OpenClawAction.End => "Archives this conversation on the gateway, so every client stops showing it. It can be restored from OpenClaw.",
+            OpenClawAction.Rename => "Changes this conversation's name on the gateway, so every client shows the new one.",
+            _ => "Pins this conversation on the gateway, so it stays on screen however long it has been quiet — in every client.",
+        };
 
-        public static string Working(OpenClawAction action) => action == OpenClawAction.Interrupt
-            ? "Interrupting…"
-            : "Ending…";
+        public static string Working(OpenClawAction action) => action switch
+        {
+            OpenClawAction.Interrupt => "Interrupting…",
+            OpenClawAction.End => "Ending…",
+            OpenClawAction.KeepOnScreen => "Keeping…",
+            OpenClawAction.StopKeeping => "Releasing…",
+            _ => "Renaming…",
+        };
 
         public static string For(OpenClawActionOutcome outcome, string? detail, OpenClawAction action)
         {
-            var verb = action == OpenClawAction.Interrupt ? "interrupt" : "end";
+            var verb = action switch
+            {
+                OpenClawAction.Interrupt => "interrupt",
+                OpenClawAction.End => "end",
+                OpenClawAction.KeepOnScreen => "keep it on screen",
+                OpenClawAction.StopKeeping => "release it",
+                _ => "rename",
+            };
 
             return outcome switch
             {
-                OpenClawActionOutcome.Done => action == OpenClawAction.Interrupt ? "Interrupted" : "Ended",
+                OpenClawActionOutcome.Done => action switch
+                {
+                    OpenClawAction.Interrupt => "Interrupted",
+                    OpenClawAction.End => "Ended",
+                    OpenClawAction.KeepOnScreen => "Kept on screen",
+                    OpenClawAction.StopKeeping => "No longer kept on screen",
+                    _ => "Renamed",
+                },
                 OpenClawActionOutcome.NothingRunning => "Nothing was running",
-                OpenClawActionOutcome.OtherDevice => action == OpenClawAction.Interrupt
-                    ? "Started from another device"
-                    : "Couldn't end: a run started from another device is still going",
+                OpenClawActionOutcome.OtherDevice => action switch
+                {
+                    OpenClawAction.Interrupt => "Started from another device",
+                    OpenClawAction.End => "Couldn't end: a run started from another device is still going",
+                    _ => $"Couldn't {verb}: the gateway said unauthorized",
+                },
                 OpenClawActionOutcome.NotConnected => $"Couldn't {verb}: not connected to the gateway",
                 _ => $"Couldn't {verb}: {detail}",
             };

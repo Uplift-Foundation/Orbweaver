@@ -485,6 +485,7 @@ namespace Orbweaver
         // in Settings should take effect on the next poll.
         private static ClusterMode HeartbeatMode => OrbweaverSettings.OpenClawHeartbeatMode;
         private static ClusterMode CronMode => OrbweaverSettings.OpenClawCronMode;
+        private static ClusterMode NativeMode => OrbweaverSettings.OpenClawNativeMode;
 
         internal sealed record Session(
             string Key,
@@ -519,7 +520,18 @@ namespace Orbweaver
             // beside Kind and Heartbeat rather than folded into either, for the
             // reason Heartbeat is: a native main is still Main, a WhatsApp main
             // is too, and only this tells them apart. See OpenClawNative.
-            OpenClawNativeKind Native = OpenClawNativeKind.None);
+            OpenClawNativeKind Native = OpenClawNativeKind.None,
+
+            // CB-270: the gateway's own `pinned` flag and the row's `label`. A
+            // pinned session, like a dashboard one, is exempt from the recency
+            // rules (see OpenClawRetention); the label is what Rename shows as
+            // the current name.
+            bool GatewayPinned = false,
+            string? Label = null)
+        {
+            public bool KeptRegardlessOfAge =>
+                OpenClawRetention.KeptRegardlessOfAge(GatewayPinned, Native);
+        }
 
         // Where a reply in this session is supposed to end up. The gateway
         // resolves this itself when asked to deliver an agent's answer, but a
@@ -1373,7 +1385,13 @@ namespace Orbweaver
                 // A session mid-run is current whatever its timestamps say —
                 // it is the one thing an orb is most worth showing.
                 var within = ActiveWithin;
-                if (state != "generating" && within is not null && asOf - activity > within) continue;
+                //
+                // CB-270: a pinned session or a dashboard one is exempt, however
+                // quiet. See OpenClawRetention for why those two and no others.
+                var pinned = Bool(s, "pinned") == true;
+                if (state != "generating"
+                    && !OpenClawRetention.KeptRegardlessOfAge(pinned, native)
+                    && within is not null && asOf - activity > within) continue;
 
                 // Timer-driven sessions the user has asked not to see —
                 // heartbeats, scheduled jobs, or both. Deliberately below the
@@ -1400,7 +1418,8 @@ namespace Orbweaver
                 var kind = KindFor(s, origin, key);
 
                 if (!OrbClusters.Visible(
-                        OrbClusters.Of(heartbeat, kind), HeartbeatMode, CronMode))
+                        OrbClusters.Of(heartbeat, kind, native != OpenClawNativeKind.None),
+                        HeartbeatMode, CronMode, NativeMode))
                     continue;
 
                 // Recorded here, past every filter above, rather than beside
@@ -1435,7 +1454,9 @@ namespace Orbweaver
                     heartbeat,
                     Str(s, "sessionId"),
                     Bool(s, "isMain") == true,
-                    native));
+                    native,
+                    pinned,
+                    Str(s, "label")));
             }
 
             AssignColours(everyAgent);
@@ -1831,7 +1852,8 @@ namespace Orbweaver
             var session = _snapshot.FirstOrDefault(s => s.Key == key);
             return new OpenClawActionContext(
                 true, gateway.Methods, gateway.GrantedScopes,
-                session?.IsMain ?? false, session?.SessionId, key);
+                session?.IsMain ?? false, session?.SessionId, key,
+                session?.GatewayPinned ?? false, session?.Label);
         }
 
         private static string? KeyOfOrb(string orbSessionId)
@@ -1899,14 +1921,10 @@ namespace Orbweaver
             {
                 try
                 {
-                    var res = await gateway.RequestAsync(OpenClawOrbActions.PatchMethod, new Dictionary<string, object>
-                    {
-                        ["key"] = key,
-                        ["archived"] = true,
-                        ["expectedSessionId"] = sessionId
-                    }, ct);
-
-                    var result = OpenClawOrbActions.ParsePatchResult(res);
+                    var result = await PatchAsync(
+                        gateway, OpenClawSessionPatch.Archive(key, sessionId),
+                        "the gateway didn't confirm the archive", ct,
+                        retry: attempt < ArchiveAttempts);
                     if (result.Outcome == OpenClawActionOutcome.Done) Forget(key);
                     return result;
                 }
@@ -1914,11 +1932,88 @@ namespace Orbweaver
                 {
                     await Task.Delay(retryDelay ?? ArchiveRetryDelay, ct);
                 }
-                catch (Exception ex)
-                {
-                    return OpenClawOrbActions.ClassifyFailure(ex);
-                }
             }
+        }
+
+        // The one place in the app that sends sessions.patch. Takes a built
+        // OpenClawSessionPatch, never loose fields, so what can be patched is
+        // decided in that file. A retryable refusal is rethrown when `retry` is
+        // set so the archive loop above can ask again; every other failure is
+        // classified here into the outcome the row shows.
+        private static async Task<(OpenClawActionOutcome Outcome, string? Detail)> PatchAsync(
+            OpenClawGateway gateway, OpenClawSessionPatch patch, string unconfirmed,
+            CancellationToken ct, bool retry = false)
+        {
+            try
+            {
+                var res = await gateway.RequestAsync(
+                    OpenClawOrbActions.PatchMethod, new Dictionary<string, object>(patch.Params), ct);
+
+                return OpenClawOrbActions.ParsePatchResult(res, unconfirmed);
+            }
+            catch (Exception ex) when (retry && OpenClawOrbActions.IsRetryable(ex))
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return OpenClawOrbActions.ClassifyFailure(ex);
+            }
+        }
+
+        // CB-270: pins or unpins a conversation on the gateway. The pin lives
+        // there, so every client sees it, and it is what keeps a session past the
+        // age rules (OpenClawRetention). Never throws; the orb's row shows what
+        // this returns.
+        internal static async Task<(OpenClawActionOutcome Outcome, string? Detail)> SetGatewayPinnedAsync(
+            string orbSessionId, bool pinned, CancellationToken ct)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            var key = KeyOfOrb(orbSessionId);
+            if (gateway is null || key is null) return (OpenClawActionOutcome.NotConnected, null);
+
+            var sessionId = _snapshot.FirstOrDefault(s => s.Key == key)?.SessionId;
+            if (sessionId is null)
+                return (OpenClawActionOutcome.Refused, "the gateway hasn't listed this conversation");
+
+            var result = await PatchAsync(
+                gateway, OpenClawSessionPatch.Pin(key, sessionId, pinned),
+                "the gateway didn't confirm the change", ct);
+
+            // The list catching up with a fact, as Forget puts it: the checkbox
+            // and the age exemption hold before the next poll says the same.
+            if (result.Outcome == OpenClawActionOutcome.Done)
+                _snapshot = _snapshot.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
+
+            return result;
+        }
+
+        // CB-270: renames a conversation (its `label`). The new title appears on
+        // the next poll, because the title is TitleFor's "Agent — label" and
+        // needs the agents table. A blank name is refused here and nothing is
+        // sent: the gateway would accept it and the conversation would lose its
+        // name.
+        internal static async Task<(OpenClawActionOutcome Outcome, string? Detail)> RenameAsync(
+            string orbSessionId, string label, CancellationToken ct)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            var key = KeyOfOrb(orbSessionId);
+            if (gateway is null || key is null) return (OpenClawActionOutcome.NotConnected, null);
+
+            var trimmed = (label ?? "").Trim();
+            if (trimmed.Length == 0) return (OpenClawActionOutcome.Refused, "a name can't be blank");
+
+            var sessionId = _snapshot.FirstOrDefault(s => s.Key == key)?.SessionId;
+            if (sessionId is null)
+                return (OpenClawActionOutcome.Refused, "the gateway hasn't listed this conversation");
+
+            return await PatchAsync(
+                gateway, OpenClawSessionPatch.Rename(key, sessionId, trimmed),
+                "the gateway didn't confirm the change", ct);
         }
 
         private static async Task<(OpenClawActionOutcome Outcome, string? Detail)> AbortAsync(

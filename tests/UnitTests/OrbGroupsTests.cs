@@ -22,7 +22,8 @@ public class OrbGroupsTests
         // A heartbeat orb the user dragged into main is in main, even though
         // OrbClusters would put it in the heartbeats slot.
         var id = OrbGroups.GroupIdFor(
-            OrbGroups.Main, OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape);
+            OrbGroups.Main, OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape,
+            ClusterMode.WithChats);
 
         Assert.Equal(OrbGroups.Main, id);
     }
@@ -32,7 +33,7 @@ public class OrbGroupsTests
     {
         Assert.Equal(
             "g-0a1b2c3d",
-            OrbGroups.GroupIdFor("g-0a1b2c3d", OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats));
+            OrbGroups.GroupIdFor("g-0a1b2c3d", OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats));
     }
 
     [Theory]
@@ -44,7 +45,36 @@ public class OrbGroupsTests
     public void WithoutAMembershipTheClusterClassificationDecides(
         OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons, string expected)
     {
-        Assert.Equal(expected, OrbGroups.GroupIdFor(null, cluster, heartbeats, crons));
+        Assert.Equal(expected, OrbGroups.GroupIdFor(null, cluster, heartbeats, crons, ClusterMode.WithChats));
+    }
+
+    // CB-270: native is the fourth predefined group, slot 3, and only Own shape
+    // moves a native orb there. With WithChats it is main's; with an explicit
+    // membership the membership wins as it does for every other cluster.
+    [Fact]
+    public void ANativeOrbIsInTheNativeGroupOnlyUnderOwnShape()
+    {
+        Assert.Equal(OrbGroups.Native, OrbGroups.GroupIdFor(
+            null, OrbCluster.Native, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape));
+        Assert.Equal(OrbGroups.Main, OrbGroups.GroupIdFor(
+            null, OrbCluster.Native, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats));
+        Assert.Equal(OrbGroups.Main, OrbGroups.GroupIdFor(
+            OrbGroups.Main, OrbCluster.Native, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape));
+    }
+
+    [Fact]
+    public void NativeIsPredefinedUndeletableAndDefaultsToADiamond()
+    {
+        Assert.True(OrbGroups.IsPredefined("native"));
+        Assert.Contains("native", OrbGroups.PredefinedIds);
+
+        var table = new OrbGroupTable();
+        Assert.False(table.Delete(OrbGroups.Native));
+
+        var native = OrbGroups.DefaultFor(OrbGroups.Native);
+        Assert.Equal("diamond", native.Shape);
+        Assert.Equal(OpenClawNativeText.GroupName, native.Name);
+        Assert.Equal(OrbweaverSettings.DefaultOpenClawNativeShape, native.Shape);
     }
 
     [Theory]
@@ -54,7 +84,7 @@ public class OrbGroupsTests
     {
         Assert.Equal(
             OrbGroups.Crons,
-            OrbGroups.GroupIdFor(blank, OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape));
+            OrbGroups.GroupIdFor(blank, OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats));
     }
 
     // ---- slot order and ids ---------------------------------------------------
@@ -70,7 +100,7 @@ public class OrbGroupsTests
         var ids = table.Ordered().Select(group => group.Id).ToArray();
 
         Assert.Equal(
-            new[] { "main", "heartbeats", "crons", "g-00000001", "g-0000000a", "g-ffffffff" }, ids);
+            new[] { "main", "heartbeats", "crons", "native", "g-00000001", "g-0000000a", "g-ffffffff" }, ids);
     }
 
     [Fact]
@@ -83,11 +113,14 @@ public class OrbGroupsTests
 
         var ordered = OrbGroups.Ordered(onlyUser);
 
-        Assert.Equal(new[] { "main", "heartbeats", "crons", "g-12345678" }, ordered.Select(g => g.Id));
+        Assert.Equal(new[] { "main", "heartbeats", "crons", "native", "g-12345678" }, ordered.Select(g => g.Id));
         Assert.Equal(OrbweaverSettings.DefaultArrangeShape, ordered[0].Shape);
         Assert.Equal(OrbweaverSettings.DefaultOpenClawHeartbeatShape, ordered[1].Shape);
         Assert.Equal(OrbweaverSettings.DefaultOpenClawCronShape, ordered[2].Shape);
-        Assert.Equal(new[] { "Main", "Heartbeats", "Crons" }, ordered.Take(3).Select(g => g.Name));
+        Assert.Equal(OrbweaverSettings.DefaultOpenClawNativeShape, ordered[3].Shape);
+        Assert.Equal(
+            new[] { "Main", "Heartbeats", "Crons", OpenClawNativeText.GroupName },
+            ordered.Take(4).Select(g => g.Name));
     }
 
     [Fact]
@@ -105,11 +138,13 @@ public class OrbGroupsTests
     }
 
     [Fact]
-    public void ANewTableHoldsExactlyTheThreePredefinedGroups()
+    public void ANewTableHoldsExactlyTheFourPredefinedGroups()
     {
         var table = new OrbGroupTable();
 
-        Assert.Equal(new[] { "main", "heartbeats", "crons" }, table.Groups.Keys.OrderBy(k => k == "main" ? 0 : k == "heartbeats" ? 1 : 2));
+        Assert.Equal(
+            new[] { "main", "heartbeats", "crons", "native" },
+            table.Groups.Keys.OrderBy(k => Array.IndexOf(OrbGroups.PredefinedIds, k)));
         Assert.True(OrbGroups.IsPredefined("crons"));
         Assert.False(OrbGroups.IsPredefined("g-00000000"));
         Assert.False(OrbGroups.IsPredefined(null));
@@ -336,7 +371,8 @@ public class OrbGroupsTests
         table.Move("hb", OrbGroups.Main);
 
         var id = OrbGroups.GroupIdFor(
-            table.MembershipFor("hb"), OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape);
+            table.MembershipFor("hb"), OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape,
+            ClusterMode.WithChats);
 
         Assert.Equal(OrbGroups.Main, id);
     }
@@ -355,7 +391,8 @@ public class OrbGroupsTests
         Assert.Equal(
             OrbGroups.Heartbeats,
             OrbGroups.GroupIdFor(
-                table.MembershipFor("hb"), OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape));
+                table.MembershipFor("hb"), OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape,
+                ClusterMode.WithChats));
     }
 
     // ---- last-member removal --------------------------------------------------
@@ -637,7 +674,7 @@ public class OrbGroupsTests
         var table = new OrbGroupTable();
         table.ReadJson(JsonNode.Parse(json));
 
-        Assert.Equal(3, table.Groups.Count);
+        Assert.Equal(OrbGroups.PredefinedIds.Length, table.Groups.Count);
         Assert.Empty(table.Members);
     }
 

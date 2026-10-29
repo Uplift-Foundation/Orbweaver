@@ -971,3 +971,91 @@ Once a token is stored, the next connect sends it back as `auth.deviceToken`, wh
 Two alternatives were rejected. A gateway-minted media ticket is derived from the meta call's bearer and carries its scopes, so with the shared secret it is an admin-scoped capability that only takes the bearer off the byte fetch. It would also add a meta round trip to every picture and a five-minute expiry to cached urls. Documenting the shared secret as acceptable cost more to justify than the fix.
 
 Not measured: whether a connect would fall back to the device token if the shared secret were rotated, and any gateway other than 2026.10.5.
+
+## CB-270: native sessions, measured before building
+
+CB-270 makes Orbweaver a first-tier client for the gateway's own sessions. Every chat surface keeps its orb exactly as now, and the native sessions become an option. Everything below was measured on 2026-10-29 against **openclaw 2026.10.5** from this Mac's paired device (`operator.read` + `operator.write`), through `tools/openclaw-probe` (`raw`, `history`, `events`). The probe did not build on develop again (`OrbweaverSettings` now reaches the orb-group and account-orb types), and the same commit fixes that. Declarations were read from the gateway host's own `dist/`. The scope table now lives in `dist/native-hook-relay/call-*.mjs`, not the `method-scopes-*.js` the sections above name: same table, moved.
+
+Every write went into **one throwaway session the run created** (`sessions.create {agentId:"main", label:"CB-270 probe — please ignore"}`). It was archived (`sessions.patch {archived:true, expectedSessionId}`) and then deleted (`sessions.delete {archivedOnly:true}`), both accepted. A second `sessions.list` afterwards held 71 rows, the same count as before the run, and none labelled CB-270 or classified `dashboard`. Nothing was sent into a real conversation.
+
+### The gateway classifies sessions itself, and "main" is not "native"
+
+`sessions.list` rows now carry `classification`. Across 71 rows: `main` 5, `cron` 15, `channel` 40, `direct` 5, `group` 3, `subagent` 3. The throwaway created through `sessions.create` came back as `classification: "dashboard"`, `createdVia: "operator"`, with no `origin`, no `deliveryContext`, no `lastChannel`, and `delivery: {kind: "none"}` on the create result. That is the shape a CB-168 New Chat produces. `OpenClawSessionKind.From` reads the key and calls it `Unknown`, because its third segment is `dashboard`.
+
+**Two of the five `agent:<id>:main` sessions are WhatsApp DMs.** They have `isMain: true`, `classification: "main"`, `origin.provider: "whatsapp"` and a `deliveryContext`: the agent's DMs routed into its main session. So neither the key's `main` segment nor `classification: "main"` means "native" by itself. A native session is one the gateway classifies `main` or `dashboard` **and** that has no chat-surface `origin.provider` and no `deliveryContext`. The other three `main` rows meet that rule, and so does the throwaway.
+
+Surfaces present on this gateway: Discord (45 rows) and **WhatsApp (8 rows: 5 direct, 2 group, 1 untyped)**. Key shapes are `agent:<id>:whatsapp:direct:+<number>` and `agent:<id>:whatsapp:group:<id>@g.us`, besides the main-session DMs above. A WhatsApp group row has `chatType: "group"`, `classification: "group"`, `kind: "group"` and a `subject`, but no `groupChannel`.
+
+### `sessions.patch` at write scope: the pairs
+
+Each was sent on the throwaway with only `key` beside the field:
+
+| Params | Result |
+| --- | --- |
+| `label` | accepted, and read back on `sessions.list` as both `label` and `displayName` |
+| `pinned: true` | accepted, read back `pinned: true` |
+| `thinkingLevel: "low"` | accepted, read back |
+| `fastMode: true` | accepted, read back with `effectiveFastMode: true` |
+| `model: "claude-sonnet-4-6"` | accepted, read back with `modelOverrideSource: "user"` |
+| `sandboxMode: "off"` | **refused**: `missing scope: operator.admin` |
+| `permissionMode: "full"` | **refused**: `missing scope: operator.admin` |
+| `thinkingLevel: "bogus-level"` | refused: `invalid thinkingLevel (use off\|minimal\|low\|medium\|adaptive\|high\|max\|ultra)` |
+
+Those are the accepted calls and paired refusals the declared policy predicts. `resolveSessionsPatchRequiredScope` allows write scope only for fields in `SESSIONS_PATCH_WRITE_SCOPE_MUTATIONS` (`label, autoLabel, icon, color, category, boardFace, boardPresentation, pinned, archived, snoozedUntil, unread, model, agentRuntime, thinkingLevel, fastMode, permissionMode`) plus the envelope (`key, agentId, expectedSessionId, …`), and it demands admin for `permissionMode: "full"` or any `sandboxMode`. So rename, a gateway-held pin and run controls all work at the scope "Allow replying" already grants. **The pin lives on the gateway**, so every client sees it.
+
+`models.list` is declared `operator.read` and returns 20 models, each with `id`, `name`, `provider`, `available`, `reasoning`, `thinkingDefault` and its own `thinkingLevels`. Every `sessions.list` row also carries `thinkingLevels`/`thinkingOptions`, `thinkingDefault`, `model`, `modelProvider` and `fastMode`, so a picker needs no second source.
+
+### `deliver` on a native session
+
+`chat.send` into the throwaway with `deliver: false` returned `{status: "started", messageSeq: 1}`. With `deliver: true` it returned `{status: "started"}`. Both runs completed normally (`status: "done"`, no `lastRunError`). After the `deliver: true` run, the row still had no `deliveryContext`, `lastChannel` or `lastTo`. Neither capture contained any outbound or delivery event. So for a session with nothing to deliver to, `deliver: true` was observed to do nothing extra. That is a bound from the event stream and the session row, not a proof that nothing left the gateway. `deliver: false` says the intent and is what a native session should send.
+
+### `sessions.messages.subscribe` carries a native run (answers CB-169's open question)
+
+With `events 300 - <out> <key>` (it subscribes to `sessions.subscribe` plus `sessions.messages.subscribe {key}`), the tool-using `deliver:false` run on the throwaway streamed:
+
+```
+agent  stream=assistant        x23   (with chat state=delta x23 alongside)
+agent  stream=item phase=start        +2.75s
+session.tool stream=tool phase=start  +2.75s
+session.tool stream=tool phase=result +4.05s
+agent  stream=item phase=end          +4.05s
+agent  stream=lifecycle phase=model / phase=end   +5.75s
+chat   state=final                    +5.75s
+session.message, sessions.changed x5
+```
+
+The no-tool `deliver:true` run added `agent stream=run_status phase=starting_model`, `stream=lifecycle phase=start` and `chat state=status`. **So a run on a non-cron native session does stream its deltas and tool calls, but only to a per-session message subscription.** That is the question CB-169 left open. No `stream=thinking` arrived at `thinkingLevel: "low"`. This was one short run, so the absence says nothing general about thinking.
+
+### History: `toolcall`, not `tool_use`, and a rollup that repeats the reply
+
+`chat.history` on the throwaway after both runs held 7 messages (`totalMessages` 10, `hasMore` false):
+
+- The tool call is **`type: "toolcall"`** (`id`, `name: "mcp__openclaw__exec"`), followed by `type: "tool_result"` (`tool_use_id`, `name`). Both blocks are inside an `assistant` message with `stopReason: "tool_use"`. Nothing in this history has the block type `tool_use`, which is the name the section "Reading and writing a conversation" uses.
+- A user message's `content` is a plain string, not a block list.
+- **A tool-using run is recorded twice.** First come the per-step turns: `api: "anthropic-messages"`, with `__openclaw.importedFrom: "claude-cli"` and a `cliSessionId` but no `runId`. Then comes a rollup turn, `api: "cli"`, `idempotencyKey: "cli-assistant:<runId>"`, `__openclaw.runId`. Its text is the step turns' text joined with a blank line. A run with no tools has only the rollup. The rollup sits after its steps and before the next user turn. No id links the two halves; only their position does.
+
+The same shape is in real conversations. In 5 recent sessions (4 Discord channels and DMs, 1 Discord DM to `main`) there were 16–34 step turns, 0–7 rollups and 7–22 `toolcall` blocks per 40-message page. A history reader that keeps every text block would draw a tool-using reply twice. Whether `TurnsFromHistory` does so on develop is for Stage 3 to establish by running it on this fixture, not by reading it.
+
+### Sender identity on WhatsApp
+
+- **A WhatsApp group** (`agent:<id>:whatsapp:group:…`): all 4 user messages carry `senderName`, `senderId`, `senderIdentity` and `senderIsOwner: false`. That is the shape `OpenClawSender.Classify` already reads as `Named`.
+- **A WhatsApp DM routed into an agent's main session**: all 40 user messages carry only `importedFrom: "claude-cli"`, `cliSessionId`, `externalId`, `turnBoundary` (and on 5, `cliImageTurnKey`/`truncated`/`reason`). There is no `senderIsOwner`, no `senderName` and no `:user` idempotency key, so every one classifies as `Unknown`.
+- No mirror-prefixed message appeared in either.
+- A user message typed through `chat.send` by this device carries `senderId: "gateway-owner"`, `senderName` set to **the agent's** display name, and the `:user` idempotency suffix. `Classify` reaches `Mine` on the suffix before it reaches `Named`, which is why this reads correctly today. Any reordering of that precedence would label the user's own messages with the agent's name.
+
+### Approvals: declared only
+
+Nothing approval-related was called, because this device does not hold `operator.approvals`. From `dist/`:
+
+- **Declared scopes:** `approval.get`, `approval.history` and `approval.resolve` are `operator.approvals`, and so are `exec.approval.list`/`resolve`, `plugin.approval.resolve` and `openclaw.approval.list`.
+- **`approval.resolve`** takes `{id, kind: "exec"|"plugin"|"system-agent", decision: "allow-once"|"allow-always"|"deny"}`, plus an optional `reviewer {channel, accountId, senderId}` that must be all three or none. The legacy `exec.approval.resolve`/`plugin.approval.resolve` take `{id, decision}`.
+- **`sessions.messages.subscribe {includeApprovals: true}`** is refused without the scope with `requires a paired device and gateway scope: operator.approvals`. That refusal was measured live in the CB-169 section above. With the scope it replays the session's pending approvals on subscribe.
+- **Approvals are also broadcast gateway-wide** as `exec.approval.requested`/`resolved`, `plugin.approval.requested`/`resolved` and `openclaw.approval.requested`/`resolved`. Whether a non-admin `operator.approvals` client receives those broadcasts is not established.
+
+### Not measured
+
+- Thinking deltas on a native run.
+- A thinking or fast change's effect on a live run.
+- Attachments on `chat.send` at write scope.
+- Whether a WhatsApp DM run streams the same way.
+- Any gateway other than 2026.10.5.

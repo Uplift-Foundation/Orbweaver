@@ -437,6 +437,15 @@ namespace Orbweaver
             InterruptRunItem.IsVisible = SessionPresence.CanInterruptOpenClaw(status, openClaw);
             EndConversationItem.IsVisible = SessionPresence.CanEndOpenClawConversation(status, openClaw);
 
+            // CB-270. Both are sessions.patch. The label is cached for the Rename
+            // window to prefill from; the checkbox mirrors the gateway's pin, but
+            // not while a click on it is in flight or showing its answer.
+            var canPatch = SessionPresence.CanPatchOpenClaw(status, openClaw);
+            KeepOnScreenItem.IsVisible = canPatch;
+            RenameConversationItem.IsVisible = canPatch;
+            _openClawLabel = openClaw.Label;
+            if (!_openClawRowsHeld) KeepOnScreenItem.IsChecked = openClaw.GatewayPinned;
+
             // Left alone while a row is armed, in flight or showing what the
             // gateway said. This runs every couple of seconds, and resetting the
             // wording here would erase "Couldn't end: …" before anyone had read
@@ -2972,6 +2981,14 @@ namespace Orbweaver
         internal Func<string, CancellationToken, Task<(OpenClawActionOutcome Outcome, string? Detail)>>
             EndAction { get; set; } = (id, ct) => OpenClawSessions.EndConversationAsync(id, ct);
 
+        // CB-270: Keep on screen's request, and the one behind the Rename window.
+        internal Func<string, bool, CancellationToken, Task<(OpenClawActionOutcome Outcome, string? Detail)>>
+            PinAction { get; set; } = OpenClawSessions.SetGatewayPinnedAsync;
+
+        internal OpenClawRenameWindow.RenameFunc RenameAction { get; set; } = OpenClawSessions.RenameAsync;
+
+        private string? _openClawLabel;
+
         // How long an armed End waits for its second click. The same six
         // seconds the settings window's profile delete gives — the one confirm
         // this app already has, and the shape this row copies: the row says
@@ -2999,6 +3016,10 @@ namespace Orbweaver
                 OpenClawActionText.Tip(OpenClawAction.Interrupt), enabled: true);
             SetRow(EndConversationItem, OpenClawActionText.Header(OpenClawAction.End),
                 OpenClawActionText.Tip(OpenClawAction.End), enabled: true);
+            SetRow(KeepOnScreenItem, OpenClawActionText.Header(OpenClawAction.KeepOnScreen),
+                OpenClawActionText.Tip(OpenClawAction.KeepOnScreen), enabled: true);
+            SetRow(RenameConversationItem, OpenClawActionText.Header(OpenClawAction.Rename),
+                OpenClawActionText.Tip(OpenClawAction.Rename), enabled: true);
         }
 
         private static void SetRow(MenuItem item, string header, string tip, bool enabled)
@@ -3015,6 +3036,37 @@ namespace Orbweaver
 
         internal async void EndConversation_Click(object? sender, RoutedEventArgs e) =>
             await EndConversationClickAsync();
+
+        internal async void KeepOnScreen_Click(object? sender, RoutedEventArgs e) =>
+            await KeepOnScreenAsync();
+
+        // CB-270: opens the Rename window on this conversation, prefilled with
+        // its current label.
+        internal void RenameConversation_Click(object? sender, RoutedEventArgs e) =>
+            OpenClawRenameWindow.Toggle(SessionId, _openClawLabel, RenameAction);
+
+        // Pins or unpins on the gateway. The target is the opposite of what the
+        // gateway last said, read from the context rather than from the
+        // checkbox: Avalonia may already have flipped the box by the time Click
+        // is raised, so the box is the one thing here that cannot be trusted
+        // about which way this click goes. It is rewritten from the context
+        // after the answer, so a refusal leaves it where it was.
+        internal async Task KeepOnScreenAsync()
+        {
+            if (_openClawBusy) return;
+
+            var pin = !OpenClawCapabilities(SessionId).GatewayPinned;
+            var action = pin ? OpenClawAction.KeepOnScreen : OpenClawAction.StopKeeping;
+
+            _openClawBusy = true;
+            _openClawRowsHeld = true;
+            SetRow(KeepOnScreenItem, OpenClawActionText.Working(action),
+                OpenClawActionText.Tip(OpenClawAction.KeepOnScreen), enabled: false);
+
+            var (outcome, detail) = await PinAction(SessionId, pin, CancellationToken.None);
+            Report(KeepOnScreenItem, action, outcome, detail);
+            KeepOnScreenItem.IsChecked = OpenClawCapabilities(SessionId).GatewayPinned;
+        }
 
         // No arm step: stopping a run loses nothing but the rest of the reply,
         // and is a no-op when nothing is running.
@@ -3595,7 +3647,8 @@ namespace Orbweaver
             var key = string.IsNullOrEmpty(PositionKey) ? null : PositionKey;
             var membership = OrbweaverSettings.OrbGroupMembershipFor(key);
             return new GroupMenuContext(
-                OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats),
+                OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats,
+                    ClusterMode.WithChats),
                 key, Array.Empty<string>());
         }
 

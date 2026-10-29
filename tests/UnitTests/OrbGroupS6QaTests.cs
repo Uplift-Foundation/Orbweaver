@@ -46,8 +46,8 @@ public class OrbGroupS6QaTests : IDisposable
             ["codex-orb"] = codex
         };
 
-        var forClaude = OrbGroupMenu.Resolve("claude-orb", statuses, ClusterMode.WithChats, ClusterMode.WithChats);
-        var forCodex = OrbGroupMenu.Resolve("codex-orb", statuses, ClusterMode.WithChats, ClusterMode.WithChats);
+        var forClaude = OrbGroupMenu.Resolve("claude-orb", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats);
+        var forCodex = OrbGroupMenu.Resolve("codex-orb", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats);
 
         Assert.Equal(group.Id, forClaude.GroupId);          // positive control: fallback works for Claude Code
         Assert.Equal(OrbGroups.Main, forCodex.GroupId);      // the rule under test

@@ -372,6 +372,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # The probe is what every live OpenClaw check runs through, and its compile
+      # list is kept by hand: a dependency added to any file in it breaks this
+      # build and nothing else, so the break stayed invisible until somebody
+      # next needed the probe (three times so far). Building it here turns that
+      # into a red build.
+      - name: Build (openclaw-probe)
+        run: dotnet build tools/openclaw-probe -c Release --nologo
+
       - name: Build
         run: dotnet publish Orbweaver.csproj -c Release -r ${{ matrix.rid }} -p:DebugType=none --nologo
 

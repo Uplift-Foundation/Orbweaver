@@ -97,6 +97,7 @@ namespace Orbweaver
             "openclawShowHeartbeats",
             "openclawHeartbeatMode", "openclawHeartbeatShape",
             "openclawCronMode", "openclawCronShape",
+            "openclawNativeMode", "openclawNativeShape",
             // CB-268. The legacy shape and anchor keys above stay written next
             // to orbGroups, so an older build still reads the file.
             "orbGroups", "groupOutlinesEnabled", "groupNamesVisible", "groupOutlineStroke",
@@ -238,6 +239,10 @@ namespace Orbweaver
         // schedule is the one thing on screen that really is a sequence.
         public const string DefaultOpenClawHeartbeatShape = "circle";
         public const string DefaultOpenClawCronShape = "line";
+
+        // CB-270: a diamond for an agent's own sessions, the only one of the
+        // seven shapes no other group uses by default.
+        public const string DefaultOpenClawNativeShape = "diamond";
 
         // CB-268's global outline style. Outlines are off by default; these are
         // what a group inherits for any field it does not override.
@@ -464,6 +469,18 @@ namespace Orbweaver
             {
                 get => Groups.Get(OrbGroups.Crons)!.Shape;
                 set => Groups.SetShape(OrbGroups.Crons, value);
+            }
+
+            // CB-270: the same three answers for an agent's own sessions — its
+            // main session and chats started from Orbweaver. See OpenClawNative.
+            // WithChats by default, so nothing moves for anyone who does not
+            // touch it.
+            public ClusterMode OpenClawNativeMode { get; set; } = ClusterMode.WithChats;
+
+            public string OpenClawNativeShape
+            {
+                get => Groups.Get(OrbGroups.Native)!.Shape;
+                set => Groups.SetShape(OrbGroups.Native, value);
             }
 
             // Whether to show Claude Code sessions running on *other* machines,
@@ -1279,6 +1296,18 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.OpenClawCronShape; }
             set { Load(); lock (Gate) _model.OpenClawCronShape = value; Save(); }
+        }
+
+        public static ClusterMode OpenClawNativeMode
+        {
+            get { Load(); lock (Gate) return _model.OpenClawNativeMode; }
+            set { Load(); lock (Gate) _model.OpenClawNativeMode = value; Save(); }
+        }
+
+        public static string OpenClawNativeShape
+        {
+            get { Load(); lock (Gate) return _model.OpenClawNativeShape; }
+            set { Load(); lock (Gate) _model.OpenClawNativeShape = value; Save(); }
         }
 
         public static bool RemoteControlEnabled
@@ -2311,6 +2340,9 @@ namespace Orbweaver
                         OpenClawCronMode = ClusterModeFrom(root["openclawCronMode"], null),
                         OpenClawCronShape = Shape(
                             root["openclawCronShape"], DefaultOpenClawCronShape),
+                        OpenClawNativeMode = ClusterModeFrom(root["openclawNativeMode"], null),
+                        OpenClawNativeShape = Shape(
+                            root["openclawNativeShape"], DefaultOpenClawNativeShape),
                         RemoteControlEnabled = root["remoteControlEnabled"]?.GetValue<bool>() ?? false,
                         PersonaPoolDir = Text(root["personaPoolDir"]),
                         RemoteControlProfileDir = Text(root["remoteControlProfileDir"]),
@@ -2978,6 +3010,8 @@ namespace Orbweaver
                         ["openclawHeartbeatShape"] = _model.OpenClawHeartbeatShape,
                         ["openclawCronMode"] = OrbClusters.Name(_model.OpenClawCronMode),
                         ["openclawCronShape"] = _model.OpenClawCronShape,
+                        ["openclawNativeMode"] = OrbClusters.Name(_model.OpenClawNativeMode),
+                        ["openclawNativeShape"] = _model.OpenClawNativeShape,
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,

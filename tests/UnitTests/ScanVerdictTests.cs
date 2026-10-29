@@ -209,6 +209,38 @@ public class ScanVerdictTests
             Liveness(Healthy(SessionSource.OpenClaw, pid: 0), staleAfter, old));
     }
 
+    // --- JudgeLiveness: pinned and dashboard gateway sessions (CB-270) ------
+
+    // The flag is derived from the gateway's pin or a dashboard session; here it
+    // is simply set, since OpenClawRetentionTests owns what sets it. The control
+    // is the same session without the flag, which expires: without it this test
+    // would pass on any fixture that was merely recent.
+    [Fact]
+    public void AnIdleKeptGatewaySessionNeverExpires()
+    {
+        var shortest = TimeSpan.FromMinutes(1);
+        var old = Now - TimeSpan.FromDays(3);
+
+        var kept = Healthy(SessionSource.OpenClaw, pid: 0);
+        kept.KeptRegardlessOfAge = true;
+
+        Assert.Equal(SessionManager.ScanVerdict.Keep, Liveness(kept, shortest, written: old));
+        Assert.Equal(SessionManager.ScanVerdict.Expired,
+            Liveness(Healthy(SessionSource.OpenClaw, pid: 0), shortest, written: old));
+    }
+
+    // The flag only means something to OpenClaw: a Claude Code status file that
+    // somehow carried it still expires.
+    [Fact]
+    public void TheKeptFlagDoesNothingForAnotherSource()
+    {
+        var status = Healthy(SessionSource.ClaudeCode);
+        status.KeptRegardlessOfAge = true;
+
+        Assert.Equal(SessionManager.ScanVerdict.Expired,
+            Liveness(status, TimeSpan.FromMinutes(1), written: Now - TimeSpan.FromDays(3)));
+    }
+
     // --- JudgeLiveness: cloud sessions never expire (CB-182) -----------------
 
     // The bug in one case. A cloud session sitting `idle` was exempt from
