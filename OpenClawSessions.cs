@@ -2302,10 +2302,27 @@ namespace Orbweaver
             var drop = OpenClawHistoryShape.RollupsToDrop(messages);
             var messageIndex = -1;
 
+            // CB-270: the turns a rollup message produced, whichever arm built
+            // them (plain text, a named picture, an attachment, an inline
+            // image), carry FromRollup so a scroll-back can find the one that
+            // doubles a split run. Marked at the top of the next iteration and
+            // after the loop rather than at each of the arms' `continue`s.
+            var rollupFrom = -1;
+
+            void MarkRollupTurns()
+            {
+                if (rollupFrom < 0) return;
+                for (var i = rollupFrom; i < turns.Count; i++)
+                    turns[i] = turns[i] with { FromRollup = true };
+                rollupFrom = -1;
+            }
+
             foreach (var message in messages.EnumerateArray())
             {
+                MarkRollupTurns();
                 messageIndex++;
                 if (drop.Contains(messageIndex)) continue;
+                if (OpenClawHistoryShape.IsRollup(message)) rollupFrom = turns.Count;
 
                 var role = Str(message, "role") == "user" ? ChatRole.User : ChatRole.Assistant;
 
@@ -2704,9 +2721,10 @@ namespace Orbweaver
                 // why a recovered path does not need to re-derive this.
                 turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
                     speaker, colour, mine, Automation: cronAutomation,
-                    Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low,
-                    FromRollup: OpenClawHistoryShape.IsRollup(message)));
+                    Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
             }
+
+            MarkRollupTurns();
 
             // One delivery, two arms, one bubble — CB-98's cross-arm case,
             // which turned out to be live rather than latent.

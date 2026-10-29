@@ -121,7 +121,7 @@ public class OpenClawPageBoundaryTests
 
         Assert.Equal(new[] { "go", "step1", "· exec", "step3", "next" }, session.History.Select(t => t.Text).ToArray());
         Assert.Equal(4, reported);
-        Assert.True(session.HistoryHeadDropped);
+        Assert.Equal(0, session.DroppedRollupIndex);
     }
 
     // Control: the older page ends in a user turn, so the head rollup is a run
@@ -135,7 +135,79 @@ public class OpenClawPageBoundaryTests
         session.PrependHistory(new List<HistoryTurn> { H(ChatRole.User, "go") }, olderEndsInOpenTextStep: false);
 
         Assert.Equal(new[] { "go", "reply" }, session.History.Select(t => t.Text).ToArray());
-        Assert.False(session.HistoryHeadDropped);
+        Assert.Equal(-1, session.DroppedRollupIndex);
+    }
+
+    // The boundary can fall mid-run: the newer page holds a later step and the
+    // rollup, which carries text from steps on the older page too. The rollup is
+    // not the first turn, and is covered only by steps on both sides.
+    [Fact]
+    public void ARollupBehindALaterStepIsDroppedWhenBothPagesStepsCoverIt()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.Assistant, "step3"), H(ChatRole.Assistant, "step1\n\nstep3", fromRollup: true), H(ChatRole.User, "next")
+        });
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"), H(ChatRole.Assistant, "step1"), H(ChatRole.System, "· exec")
+        }, olderEndsInOpenTextStep: true);
+
+        Assert.Equal(new[] { "go", "step1", "· exec", "step3", "next" }, session.History.Select(t => t.Text).ToArray());
+        Assert.Equal(1, session.DroppedRollupIndex);
+    }
+
+    [Fact]
+    public void ARollupBehindAUserTurnIsNotTheOlderRunsRollup()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "q"), H(ChatRole.Assistant, "step1", fromRollup: true)
+        });
+
+        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "step1") }, olderEndsInOpenTextStep: true);
+
+        Assert.Equal(3, session.History.Count);
+        Assert.Equal(-1, session.DroppedRollupIndex);
+    }
+
+    // The head rollup carries text the older page's steps do not: it is the
+    // reply itself and must survive the prepend (CB-270 QA).
+    [Fact]
+    public void AHeadRollupCarryingTextTheStepsLackIsKeptEvenWhenTheOlderPageEndsOpen()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "the real final answer", fromRollup: true) });
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"), H(ChatRole.Assistant, "let me look"), H(ChatRole.System, "· exec")
+        }, olderEndsInOpenTextStep: true);
+
+        Assert.Equal(new[] { "go", "let me look", "· exec", "the real final answer" },
+            session.History.Select(t => t.Text).ToArray());
+        Assert.Equal(-1, session.DroppedRollupIndex);
+    }
+
+    // The trailing walk stops at a user turn and at an earlier kept rollup, so
+    // steps from before them cannot make a head rollup look covered.
+    [Fact]
+    public void TheTrailingStepWalkStopsAtAUserTurnAndAtAKeptRollup()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "alpha beta", fromRollup: true) });
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.Assistant, "alpha"), H(ChatRole.User, "q"),
+            H(ChatRole.Assistant, "beta", fromRollup: true), H(ChatRole.Assistant, "gamma")
+        }, olderEndsInOpenTextStep: true);
+
+        Assert.Equal(5, session.History.Count);
+        Assert.Equal(-1, session.DroppedRollupIndex);
     }
 
     [Fact]
@@ -147,7 +219,7 @@ public class OpenClawPageBoundaryTests
         session.PrependHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "step1") }, olderEndsInOpenTextStep: true);
 
         Assert.Equal(new[] { "step1", "step3" }, session.History.Select(t => t.Text).ToArray());
-        Assert.False(session.HistoryHeadDropped);
+        Assert.Equal(-1, session.DroppedRollupIndex);
     }
 
     [Fact]
@@ -158,7 +230,7 @@ public class OpenClawPageBoundaryTests
         session.PrependHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "step1") }, olderEndsInOpenTextStep: true);
 
         Assert.Single(session.History);
-        Assert.False(session.HistoryHeadDropped);
+        Assert.Equal(-1, session.DroppedRollupIndex);
     }
 
     [Fact]

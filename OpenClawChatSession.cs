@@ -1023,18 +1023,22 @@ namespace Orbweaver
         // reading would otherwise throw you down the page.
         //
         // olderEndsInOpenTextStep (CB-270): the older page ended in a run's text
-        // steps with no rollup after them. If the transcript's first turn is a
-        // rollup, it is the rollup of exactly that run, split from its steps by
-        // the page boundary, and the steps being prepended already say what it
-        // says. It is removed so the reply is drawn once. HistoryPrepended still
-        // reports the rows inserted; the panel drops the stale row itself, see
-        // HistoryHeadDropped.
+        // steps with no rollup after them. The first rollup in the transcript,
+        // with no user turn before it, is then the rollup of exactly that run,
+        // split from its steps by the page boundary. It is removed — so the
+        // reply is drawn once — only if its text is covered by the steps now
+        // on both sides of the boundary: the older page's trailing steps plus
+        // the transcript's own turns ahead of it. A rollup carrying text none of
+        // them has is the reply itself (the final reply is sometimes never
+        // persisted as a step) and stays. HistoryPrepended still reports the
+        // rows inserted; the panel drops the stale row itself, see
+        // DroppedRollupIndex.
         public void PrependHistory(IReadOnlyList<HistoryTurn> turns, bool olderEndsInOpenTextStep = false)
         {
             if (turns.Count == 0) return;
 
-            HistoryHeadDropped = olderEndsInOpenTextStep && _history.Count > 0 && _history[0].FromRollup;
-            if (HistoryHeadDropped) _history.RemoveAt(0);
+            DroppedRollupIndex = olderEndsInOpenTextStep ? RollupSplitFromItsSteps(turns) : -1;
+            if (DroppedRollupIndex >= 0) _history.RemoveAt(DroppedRollupIndex);
 
             var older = turns.Select(t => new ChatTurn
             {
@@ -1068,14 +1072,46 @@ namespace Orbweaver
             HistoryPrepended?.Invoke(older.Count);
         }
 
+        // The index of the transcript's first rollup when it is the rollup of the
+        // run the older page ends in and its text is covered by that run's steps
+        // (older trailing steps plus this transcript's turns before it); -1
+        // otherwise. Step texts come from turns rather than the raw page so both
+        // sides of the comparison went through the same text processing.
+        private int RollupSplitFromItsSteps(IReadOnlyList<HistoryTurn> older)
+        {
+            var steps = new List<string>();
+
+            for (var i = older.Count - 1; i >= 0; i--)
+            {
+                var t = older[i];
+                if (t.Role == ChatRole.User || t.FromRollup) break;
+                if (t.Role == ChatRole.Assistant) steps.Add(t.Text);
+            }
+
+            for (var k = 0; k < _history.Count; k++)
+            {
+                var t = _history[k];
+                if (t.Role == ChatRole.User) return -1;
+
+                if (t.FromRollup)
+                    return OpenClawHistoryShape.RollupIsCoveredBy(t.Text, steps) ? k : -1;
+
+                if (t.Role == ChatRole.Assistant) steps.Add(t.Text);
+            }
+
+            return -1;
+        }
+
         public event Action<int>? HistoryPrepended;
 
-        // True while HistoryPrepended is being raised for a prepend that also
-        // removed the transcript's old first turn (the rollup double), so the
-        // panel can remove the matching row. A property rather than a second
-        // event or a changed count: IRemoteChatSession's contract is "this
-        // many rows were inserted at the front", which stays true.
-        public bool HistoryHeadDropped { get; private set; }
+        // Where, in the transcript as it stood before the rows were inserted,
+        // PrependHistory removed a rollup that repeated the steps it was
+        // prepending; -1 when it removed nothing. The panel reads it while
+        // HistoryPrepended is being raised so it can remove the matching row
+        // (at count + this). A property rather than a second event or a changed
+        // count: IRemoteChatSession's contract is "this many rows were inserted
+        // at the front", which stays true.
+        public int DroppedRollupIndex { get; private set; } = -1;
 
         public void SetHistory(IReadOnlyList<HistoryTurn> turns)
         {

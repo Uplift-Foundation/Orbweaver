@@ -84,6 +84,32 @@ public class ChatPanelPageBoundaryTests : IDisposable
         Assert.Contains("next", rows[^1]);
     }
 
+    // The dropped rollup is not the first row: a later step sits above it.
+    [AvaloniaFact]
+    public void ScrollingBackRemovesTheRightRowWhenTheRollupIsBehindALaterStep()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.Assistant, "step3"), H(ChatRole.Assistant, "step1\n\nstep3", fromRollup: true), H(ChatRole.User, "next")
+        });
+        var panel = Open(session);
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"), H(ChatRole.Assistant, "step1"), H(ChatRole.System, "· exec  ls")
+        }, olderEndsInOpenTextStep: true);
+        FlushRender();
+
+        var rows = RowTexts(panel);
+
+        Assert.Equal(session.History.Count, rows.Length);
+        Assert.Equal(5, rows.Length);
+        Assert.DoesNotContain(rows, r => r.Contains("step1\n\nstep3"));
+        Assert.Contains("step3", rows[3]);
+        Assert.Contains("next", rows[4]);
+    }
+
     // Control: nothing dropped, so no row is removed and rows still match.
     [AvaloniaFact]
     public void ScrollingBackWhenTheOlderPageEndsInAUserTurnRemovesNoRow()

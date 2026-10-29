@@ -130,7 +130,7 @@ public class OpenClawHistoryShapeTests
 
     [Fact]
     public void AnAssistantStepWithStringContentCounts() =>
-        Assert.Equal(new[] { 2 }, Dropped(User, """{"role":"assistant","content":"hello"}""", Rollup));
+        Assert.Equal(new[] { 2 }, Dropped(User, """{"role":"assistant","content":"hello"}""", RollupOf("hello")));
 
     [Fact]
     public void AnAssistantStepWithBlankStringContentDoesNotCount() =>
@@ -159,6 +159,59 @@ public class OpenClawHistoryShapeTests
 
         // 0 user, 1 step, 2 toolcall step, 3 step, 4 rollup, 5 user, 6 lone rollup.
         Assert.Equal(new[] { 4 }, drop.OrderBy(i => i).ToArray());
+    }
+
+    // ---- a rollup that carries text no step does is the reply (CB-270 QA) ----
+    // Constructed from the three data-loss shapes measured on real Discord and
+    // main-session pages (those pages carry real channel messages and are not
+    // checked in): the final reply was never persisted as a step, so the
+    // rollup is the only copy and must be kept.
+
+    private static string Text(string role, string text, string api = "anthropic-messages") =>
+        $$"""{"role":"{{role}}","api":"{{api}}","content":[{"type":"text","text":"{{text}}"}]}""";
+
+    private static string RollupOf(string text) =>
+        $$"""{"role":"assistant","api":"cli","idempotencyKey":"cli-assistant:r","content":[{"type":"text","text":"{{text}}"}]}""";
+
+    [Fact]
+    public void ARollupAfterATextStepAndAToolCallThatCarriesADifferentFinalReplyIsKept() =>
+        Assert.Empty(Dropped(User, Text("assistant", "let me look"), ToolOnlyStep,
+            RollupOf("Here is the real answer, which no step ever carried.")));
+
+    [Fact]
+    public void ARollupAfterASingleTextStepWithDifferentTextIsKept() =>
+        Assert.Empty(Dropped(User, Text("assistant", "on it"), RollupOf("done, found 3 files")));
+
+    [Fact]
+    public void ARollupAfterTextToolTextToolWithDifferentTextIsKept() =>
+        Assert.Empty(Dropped(User, Text("assistant", "first"), ToolOnlyStep,
+            Text("assistant", "second"), ToolOnlyStep, RollupOf("a long final answer nobody stored as a step")));
+
+    [Fact]
+    public void ARollupHoldingTheLastStepPlusOtherTextIsKept() =>
+        Assert.Empty(Dropped(User, Text("assistant", "first"), Text("assistant", "last"),
+            RollupOf("first\\n\\nlast\\n\\nand then some more")));
+
+    [Fact]
+    public void ARollupEqualToTheJoinOfItsStepsIsDropped() =>
+        Assert.Equal(new[] { 3 }, Dropped(User, Text("assistant", "first"), Text("assistant", "last"),
+            RollupOf("first\\n\\nlast")));
+
+    [Fact]
+    public void ARollupThatReflowsTheWhitespaceOfItsStepsIsStillDropped() =>
+        Assert.Equal(new[] { 2 }, Dropped(User, Text("assistant", "a  b\\n c"), RollupOf("a b c")));
+
+    [Fact]
+    public void ARollupThatRepeatsOnlyOneOfTwoStepsIsDropped() =>
+        Assert.Equal(new[] { 3 }, Dropped(User, Text("assistant", "first"), Text("assistant", "last"),
+            RollupOf("last")));
+
+    [Fact]
+    public void RollupIsCoveredByIgnoresEmptyStepsAndStepsItDoesNotContain()
+    {
+        Assert.True(OpenClawHistoryShape.RollupIsCoveredBy("x y", new[] { "  ", "x", "y", "absent" }));
+        Assert.False(OpenClawHistoryShape.RollupIsCoveredBy("x y z", new[] { "x", "y" }));
+        Assert.True(OpenClawHistoryShape.RollupIsCoveredBy("", new[] { "x" }));
     }
 
     // ---- ToolCalls ------------------------------------------------------

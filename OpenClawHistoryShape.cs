@@ -28,50 +28,106 @@ namespace Orbweaver
                 || (Str(message, "idempotencyKey")?.StartsWith("cli-assistant:", System.StringComparison.Ordinal) ?? false);
         }
 
-        // The indices of rollups that repeat steps already on the page.
+        // The indices of rollups that only repeat steps already on the page.
         //
-        // The pairing is by position, and by position only. No id links a
-        // rollup to its steps (measured), and comparing texts would let a gateway
-        // that changed its join silently start doubling the reply. A *span* is
-        // the messages since the last boundary, and a boundary is a user message,
-        // a rollup, or the page's start: a rollup closes the run it summarises, so
-        // two runs with no user turn between them (a heartbeat or cron job
-        // injecting into a main session, back-to-back agent-initiated runs) are
-        // judged separately. A rollup is dropped iff the span before it holds at
-        // least one step — an assistant message that is not a rollup — with a
-        // non-empty text block. A rollup with no text step before it (a run with
-        // no tools, which is every message of a WhatsApp-shaped page; or steps
-        // that carry only tool blocks, so there is no step text to double) is
-        // kept, as is a page with no rollups at all. Steps after the last rollup
-        // belong to a run still in flight and are left alone.
+        // A *span* is the messages since the last boundary — a user message, a
+        // rollup, or the page start — so a rollup closes the run it summarises
+        // and runs with no user turn between them are judged separately. A
+        // rollup is dropped iff a text step precedes it in its span AND its text
+        // is covered by those steps' texts (see RollupIsCoveredBy). Everything
+        // else is kept: a lone rollup (a run with no tools), one whose steps
+        // carry only tool blocks, and — the case position alone got wrong — one
+        // that carries text no step does.
+        //
+        // That last arm is a data-loss fix (CB-270 QA, measured on real Discord
+        // and main-session pages): in runs where the final reply was never
+        // persisted as a step, the rollup *is* the reply, and "a text step
+        // precedes it" held anyway, so the user's answer vanished. Of the seven
+        // rollups with text steps before them on four real 40-message pages,
+        // one equalled the join of its steps (the shape Phase 0 captured), three
+        // held the last step plus text found in no step, and three shared none
+        // of their text with any step. A repeated line is the cost of the keep
+        // arm; a lost reply is the cost of getting it wrong the other way.
+        //
+        // This replaces the plan's earlier "position only" rule, which argued
+        // that comparing texts would let a changed join double the reply. That
+        // is still true of a changed join, and is now the cheaper failure.
         internal static HashSet<int> RollupsToDrop(JsonElement messages)
         {
             var drop = new HashSet<int>();
             if (messages.ValueKind != JsonValueKind.Array) return drop;
 
-            var spanHasStepText = false;
+            var stepTexts = new List<string>();
             var index = 0;
 
             foreach (var message in messages.EnumerateArray())
             {
                 if (Str(message, "role") == "user")
                 {
-                    spanHasStepText = false;
+                    stepTexts.Clear();
                 }
                 else if (IsRollup(message))
                 {
-                    if (spanHasStepText) drop.Add(index);
-                    spanHasStepText = false;
+                    if (stepTexts.Count > 0 && RollupIsCoveredBy(TextOf(message), stepTexts))
+                        drop.Add(index);
+
+                    stepTexts.Clear();
                 }
                 else if (Str(message, "role") == "assistant" && HasText(message))
                 {
-                    spanHasStepText = true;
+                    stepTexts.Add(TextOf(message));
                 }
 
                 index++;
             }
 
             return drop;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex Whitespace =
+            new(@"\s+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string Collapse(string s) => Whitespace.Replace(s, " ").Trim();
+
+        // Whether every word of the rollup is accounted for by the steps: each
+        // step's text (whitespace collapsed) is removed from the rollup once,
+        // and what is left must be empty. Equal to the join of the steps, or to
+        // any subset of them, is covered; anything extra is not. Steps the
+        // rollup does not contain are simply not removed — only text the rollup
+        // adds matters, because only that can be lost.
+        internal static bool RollupIsCoveredBy(string rollupText, IEnumerable<string> stepTexts)
+        {
+            var remaining = Collapse(rollupText);
+
+            foreach (var step in stepTexts)
+            {
+                var text = Collapse(step);
+                if (text.Length == 0) continue;
+
+                var at = remaining.IndexOf(text, System.StringComparison.Ordinal);
+                if (at >= 0) remaining = remaining.Remove(at, text.Length);
+            }
+
+            return Collapse(remaining).Length == 0;
+        }
+
+        // The text blocks of a message, joined by a blank line (a string content
+        // is its own text).
+        private static string TextOf(JsonElement message)
+        {
+            if (!message.TryGetProperty("content", out var content)) return "";
+
+            if (content.ValueKind == JsonValueKind.String) return content.GetString() ?? "";
+            if (content.ValueKind != JsonValueKind.Array) return "";
+
+            var parts = new List<string>();
+            foreach (var block in content.EnumerateArray())
+            {
+                if (Str(block, "type") == "text" && Str(block, "text") is { } t && !string.IsNullOrWhiteSpace(t))
+                    parts.Add(t);
+            }
+
+            return string.Join("\n\n", parts);
         }
 
         // Whether the page ends in a run that has text steps and no rollup after
