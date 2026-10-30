@@ -123,10 +123,8 @@ public class OpenClawRollupArmTests
 
         var session = new OpenClawChatSession("openclaw:" + Key, Key, "main") { HasMore = false };
         session.SetHistory(OpenClawSessions.TurnsFromHistory(newer, Key));
-        session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, Key),
-            OpenClawHistoryShape.EndsInOpenTextStep(older));
+        session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, Key));
 
-        Assert.Equal(-1, session.DroppedRollupIndex);
         // The step's own named-path turn also carries a picture; the rollup's is
         // the FromRollup one, and it is the one that lost its caption.
         var picture = Assert.Single(session.History, t => t.FromRollup && t.ImageUrl is not null);

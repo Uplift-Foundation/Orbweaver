@@ -2528,8 +2528,13 @@ namespace Orbweaver
         // (FetchHistoryPageAsync, which has chat.GatewayKey in hand). Nullable
         // so a fixture or a caller with genuinely no session gets exactly the
         // routes this built before.
+        //
+        // startsMidRun (CB-270): an older page exists, so this page's first run
+        // may be missing steps that sit on it. The decision about which of that
+        // run's steps a rollup repeats is then left to the page boundary
+        // (PrependHistory), which sees both halves. See TextsToDrop.
         internal static List<HistoryTurn> TurnsFromHistory(
-            JsonElement messages, string? sessionKey, OwnerIndex? owners = null)
+            JsonElement messages, string? sessionKey, OwnerIndex? owners = null, bool startsMidRun = false)
         {
             // CB-277: null keeps every route exactly as it was built before —
             // the asking key — so a caller or fixture that does not know the
@@ -2566,8 +2571,10 @@ namespace Orbweaver
 
             // CB-270: a tool-using run is stored as its steps and then a rollup
             // repeating their text. Decided once, over the whole page, because
-            // the rule is positional — see OpenClawHistoryShape.RollupsToDrop.
-            var drop = OpenClawHistoryShape.RollupsToDrop(messages);
+            // the rule is positional: a rollup its steps cover is dropped, and a
+            // rollup that holds more is kept and the steps it contains are
+            // dropped instead — see OpenClawHistoryShape.TextsToDrop.
+            var drop = OpenClawHistoryShape.TextsToDrop(messages, startsMidRun);
             var messageIndex = -1;
 
             // CB-270: the turns a rollup message produced, whichever arm built
@@ -2590,10 +2597,11 @@ namespace Orbweaver
                 MarkRollupTurns();
                 messageIndex++;
 
-                // A dropped rollup loses its *text* turn only. Its text is
-                // covered by the steps, but a picture or attachment it carries
-                // is not shown by anything else, and a loss is worse than a
-                // picture drawn twice when a step showed it too.
+                // A dropped message (a covered rollup, or a step a kept rollup
+                // contains) loses its *text* turn only. Its words are shown by
+                // the other half, but a picture or attachment it carries is not
+                // shown by anything else, and a loss is worse than a picture
+                // drawn twice. Its tool lines are emitted regardless.
                 var dropText = drop.Contains(messageIndex);
                 if (OpenClawHistoryShape.IsRollup(message)) rollupFrom = turns.Count;
 
@@ -4908,7 +4916,7 @@ namespace Orbweaver
             var page = await FetchPageAsync(chat, chat.LoadedMessages, ct);
             if (page is null) return false;
 
-            var (turns, messages, endsOpen) = page.Value;
+            var (turns, messages) = page.Value;
 
             // Nothing came back, so there is nothing behind this. Asked once and
             // remembered, rather than re-asking every time the user reaches the
@@ -4924,7 +4932,7 @@ namespace Orbweaver
             if (messages < PageSize) chat.HasMore = false;
 
             chat.LoadedMessages += messages;
-            chat.PrependHistory(turns, endsOpen);
+            chat.PrependHistory(turns);
             return turns.Count > 0;
         }
 
@@ -4936,7 +4944,7 @@ namespace Orbweaver
             var first = await FetchPageAsync(chat, 0, ct);
             if (first is null) return;
 
-            var (initial, count, _) = first.Value;
+            var (initial, count) = first.Value;
 
             chat.LoadedMessages = count;
             chat.HasMore = count >= PageSize;
@@ -4955,7 +4963,7 @@ namespace Orbweaver
         // reaches for an older one, rather than opening a second request shape
         // for the same "one page of chat.history" idea.
         [ExcludeFromCodeCoverage]
-        internal static async Task<(List<HistoryTurn> Turns, int Messages, bool EndsInOpenTextStep)?>
+        internal static async Task<(List<HistoryTurn> Turns, int Messages)?>
             FetchPageAsync(OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             OpenClawGateway? gateway;
@@ -4975,7 +4983,7 @@ namespace Orbweaver
         // fetched is not a reason to refuse the conversation, because the panel
         // still works forward from whatever happens next.
         [ExcludeFromCodeCoverage]
-        private static async Task<(List<HistoryTurn> Turns, int Count, bool EndsInOpenTextStep)?> FetchHistoryPageAsync(
+        private static async Task<(List<HistoryTurn> Turns, int Count)?> FetchHistoryPageAsync(
             OpenClawGateway gateway, OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             try
@@ -4998,7 +5006,10 @@ namespace Orbweaver
                 // be told whose conversation they belong to (CB-109), and
                 // this is the one place that knows.
                 var owners = OwnerIndexSnapshot();
-                var turns = TurnsFromHistory(messages, chat.GatewayKey, owners);
+                // A full page means an older one may exist, so the page's first run
+                // may be cut (CB-270): a short page is the start of the conversation.
+                var turns = TurnsFromHistory(messages, chat.GatewayKey, owners,
+                    startsMidRun: messages.GetArrayLength() >= PageSize);
 
                 // CB-115: recover a cron-delivered picture whose transcript
                 // lost its directory. Only turns TurnsFromHistory tagged with
@@ -5104,7 +5115,7 @@ namespace Orbweaver
                 // The message count, not the turn count: it is what the next
                 // page's offset is measured in, and one message can produce
                 // several turns or none.
-                return (turns, messages.GetArrayLength(), OpenClawHistoryShape.EndsInOpenTextStep(messages));
+                return (turns, messages.GetArrayLength());
             }
             catch
             {

@@ -2878,13 +2878,6 @@ namespace Orbweaver
             {
                 _turns.Insert(i, new TurnView(_session.History[i], _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
             }
-
-            // CB-270: the prepend also removed a rollup's text turn, whose steps
-            // just arrived above it. Its row is now behind the `count` rows
-            // inserted above.
-            if (_session is OpenClawChatSession { DroppedRollupIndex: >= 0 and var dropped }
-                && count + dropped < _turns.Count)
-                _turns.RemoveAt(count + dropped);
         }
 
         private void OnHistoryReplaced()

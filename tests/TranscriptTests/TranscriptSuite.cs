@@ -1126,7 +1126,7 @@ namespace Orbweaver.Tests
             using (var runDoc = JsonDocument.Parse(NativeRun))
             {
                 var run = runDoc.RootElement;
-                var dropped = OpenClawHistoryShape.RollupsToDrop(run);
+                var dropped = OpenClawHistoryShape.TextsToDrop(run);
 
                 Check("the rollup repeating a run's steps is dropped",
                     dropped.Count == 1 && dropped.Contains(4),

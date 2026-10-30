@@ -21,7 +21,7 @@ public class OpenClawHistoryShapeTests
     private static JsonElement Page(params string[] messages) => Json("[" + string.Join(",", messages) + "]");
 
     private static int[] Dropped(params string[] messages) =>
-        OpenClawHistoryShape.RollupsToDrop(Page(messages)).OrderBy(i => i).ToArray();
+        HistoryShapeTestHelpers.RollupsToDrop(Page(messages)).OrderBy(i => i).ToArray();
 
     // ---- IsRollup -------------------------------------------------------
 
@@ -148,14 +148,14 @@ public class OpenClawHistoryShapeTests
     [Fact]
     public void AnEmptyPageAndANonArrayDropNothing()
     {
-        Assert.Empty(OpenClawHistoryShape.RollupsToDrop(Json("[]")));
-        Assert.Empty(OpenClawHistoryShape.RollupsToDrop(Json("{}")));
+        Assert.Empty(HistoryShapeTestHelpers.RollupsToDrop(Json("[]")));
+        Assert.Empty(HistoryShapeTestHelpers.RollupsToDrop(Json("{}")));
     }
 
     [Fact]
     public void TheRealFixtureDropsTheToolRunsRollupAndKeepsTheOtherOne()
     {
-        var drop = OpenClawHistoryShape.RollupsToDrop(Json(OpenClawNativeRunFixtures.ToolRunPage));
+        var drop = HistoryShapeTestHelpers.RollupsToDrop(Json(OpenClawNativeRunFixtures.ToolRunPage));
 
         // 0 user, 1 step, 2 toolcall step, 3 step, 4 rollup, 5 user, 6 lone rollup.
         Assert.Equal(new[] { 4 }, drop.OrderBy(i => i).ToArray());

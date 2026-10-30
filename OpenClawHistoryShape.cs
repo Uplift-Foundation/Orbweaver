@@ -29,62 +29,6 @@ namespace Orbweaver
                 || (Str(message, "idempotencyKey")?.StartsWith("cli-assistant:", System.StringComparison.Ordinal) ?? false);
         }
 
-        // The indices of rollups that only repeat steps already on the page.
-        //
-        // A *span* is the messages since the last boundary — a user message, a
-        // rollup, or the page start — so a rollup closes the run it summarises
-        // and runs with no user turn between them are judged separately. A
-        // rollup is dropped iff a text step precedes it in its span AND its text
-        // is covered by those steps' texts (see RollupIsCoveredBy). Everything
-        // else is kept: a lone rollup (a run with no tools), one whose steps
-        // carry only tool blocks, and — the case position alone got wrong — one
-        // that carries text no step does.
-        //
-        // That last arm is a data-loss fix (CB-270 QA, measured on real Discord
-        // and main-session pages): in runs where the final reply was never
-        // persisted as a step, the rollup *is* the reply, and "a text step
-        // precedes it" held anyway, so the user's answer vanished. Of the seven
-        // rollups with text steps before them on four real 40-message pages,
-        // one equalled the join of its steps (the shape Phase 0 captured), three
-        // held the last step plus text found in no step, and three shared none
-        // of their text with any step. A repeated line is the cost of the keep
-        // arm; a lost reply is the cost of getting it wrong the other way.
-        //
-        // This replaces the plan's earlier "position only" rule, which argued
-        // that comparing texts would let a changed join double the reply. That
-        // is still true of a changed join, and is now the cheaper failure.
-        internal static HashSet<int> RollupsToDrop(JsonElement messages)
-        {
-            var drop = new HashSet<int>();
-            if (messages.ValueKind != JsonValueKind.Array) return drop;
-
-            var stepTexts = new List<string>();
-            var index = 0;
-
-            foreach (var message in messages.EnumerateArray())
-            {
-                if (Str(message, "role") == "user")
-                {
-                    stepTexts.Clear();
-                }
-                else if (IsRollup(message))
-                {
-                    if (stepTexts.Count > 0 && RollupIsCoveredBy(TextOf(message), stepTexts))
-                        drop.Add(index);
-
-                    stepTexts.Clear();
-                }
-                else if (Str(message, "role") == "assistant" && HasText(message))
-                {
-                    stepTexts.Add(TextOf(message));
-                }
-
-                index++;
-            }
-
-            return drop;
-        }
-
         // CB-270 stage 3b: the rule for one span, in one place. Given the text
         // steps S1..Sk of a span (in order) and the rollup R that closes it:
         //
@@ -163,53 +107,6 @@ namespace Orbweaver
             return drop;
         }
 
-        internal readonly record struct SpanStep(int Index, string Text);
-
-        // The text steps of the page's last span when no rollup closes it: the run
-        // an older page ends in. Empty when the page ends at a user turn or a
-        // rollup.
-        internal static List<SpanStep> OpenTailSteps(JsonElement messages)
-        {
-            var steps = new List<SpanStep>();
-            if (messages.ValueKind != JsonValueKind.Array) return steps;
-
-            var index = 0;
-            foreach (var message in messages.EnumerateArray())
-            {
-                if (Str(message, "role") == "user" || IsRollup(message))
-                    steps.Clear();
-                else if (Str(message, "role") == "assistant" && HasText(message))
-                    steps.Add(new SpanStep(index, TextOf(message)));
-
-                index++;
-            }
-
-            return steps;
-        }
-
-        // The head of a newer page: the text steps before its first rollup, and
-        // that rollup's index, provided no user turn comes first (otherwise the
-        // span started on this page and there is nothing to join). RollupIndex is
-        // -1 when there is no such rollup.
-        internal static (List<SpanStep> LeadSteps, int RollupIndex) HeadSpan(JsonElement messages)
-        {
-            var lead = new List<SpanStep>();
-            if (messages.ValueKind != JsonValueKind.Array) return (lead, -1);
-
-            var index = 0;
-            foreach (var message in messages.EnumerateArray())
-            {
-                if (Str(message, "role") == "user") return (lead, -1);
-                if (IsRollup(message)) return (lead, index);
-                if (Str(message, "role") == "assistant" && HasText(message))
-                    lead.Add(new SpanStep(index, TextOf(message)));
-
-                index++;
-            }
-
-            return (lead, -1);
-        }
-
         // Which of the steps a (kept) rollup contains: the positions in
         // `stepTexts` whose whitespace-collapsed, non-empty text is an ordinal
         // substring of the rollup's collapsed text. The one place both TextsToDrop
@@ -273,28 +170,6 @@ namespace Orbweaver
             }
 
             return string.Join("\n\n", parts);
-        }
-
-        // Whether the page ends in a run that has text steps and no rollup after
-        // them: the last span (since the last user turn or rollup) holds a text
-        // step. For an *older* page that means the run's rollup is on the
-        // newer page, split from its steps by the page boundary, and the
-        // caller has to remove it when it prepends this page (CB-270).
-        internal static bool EndsInOpenTextStep(JsonElement messages)
-        {
-            if (messages.ValueKind != JsonValueKind.Array) return false;
-
-            var spanHasStepText = false;
-
-            foreach (var message in messages.EnumerateArray())
-            {
-                if (Str(message, "role") == "user" || IsRollup(message))
-                    spanHasStepText = false;
-                else if (Str(message, "role") == "assistant" && HasText(message))
-                    spanHasStepText = true;
-            }
-
-            return spanHasStepText;
         }
 
         // Every `toolcall` block in an assistant content array, with whether a

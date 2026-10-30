@@ -70,7 +70,7 @@ public class OpenClawTextsToDropTests
         var texts = OpenClawHistoryShape.TextsToDrop(Load(file));
 
         Assert.Equal(
-            Sorted(OpenClawHistoryShape.RollupsToDrop(Load(file))),
+            Sorted(HistoryShapeTestHelpers.RollupsToDrop(Load(file))),
             Sorted(texts.Where(i => OpenClawHistoryShape.IsRollup(all[i])).ToHashSet()));
     }
 
@@ -246,8 +246,8 @@ public class OpenClawTextsToDropTests
         var drop = OpenClawHistoryShape.TextsToDrop(older);
         foreach (var i in OpenClawHistoryShape.TextsToDrop(newer, startsMidRun: true)) drop.Add(i + split);
 
-        var tail = OpenClawHistoryShape.OpenTailSteps(older);
-        var (lead, rollup) = OpenClawHistoryShape.HeadSpan(newer);
+        var tail = HistoryShapeTestHelpers.OpenTailSteps(older);
+        var (lead, rollup) = HistoryShapeTestHelpers.HeadSpan(newer);
 
         if ((tail.Count > 0 || lead.Count > 0) && rollup >= 0)
         {
@@ -319,28 +319,6 @@ public class OpenClawTextsToDropTests
         var newer = Json("[" + User + "," + Step("a") + "," + Rollup("a more") + "]");
 
         Assert.Equal(new[] { 1 }, Sorted(OpenClawHistoryShape.TextsToDrop(newer, startsMidRun: true)));
-    }
-
-    [Fact]
-    public void OpenTailStepsAreTheTextStepsOfAnUnclosedLastSpan()
-    {
-        Assert.Equal(new[] { 1, 3 }, OpenClawHistoryShape.OpenTailSteps(
-            Json("[" + User + "," + Step("a") + "," + ToolStep + "," + Step("b") + "]")).Select(t => t.Index).ToArray());
-        Assert.Empty(OpenClawHistoryShape.OpenTailSteps(Json("[" + User + "," + Step("a") + "," + Rollup("a") + "]")));
-        Assert.Empty(OpenClawHistoryShape.OpenTailSteps(Json("[" + Step("a") + "," + User + "]")));
-        Assert.Empty(OpenClawHistoryShape.OpenTailSteps(Json("{}")));
-    }
-
-    [Fact]
-    public void HeadSpanIsTheLeadStepsAndTheFirstRollupWithNoUserBeforeIt()
-    {
-        var (lead, rollup) = OpenClawHistoryShape.HeadSpan(Json("[" + Step("a") + "," + ToolStep + "," + Step("b") + "," + Rollup("a b") + "]"));
-        Assert.Equal(new[] { 0, 2 }, lead.Select(t => t.Index).ToArray());
-        Assert.Equal(3, rollup);
-
-        Assert.Equal(-1, OpenClawHistoryShape.HeadSpan(Json("[" + Step("a") + "," + User + "," + Rollup("a") + "]")).RollupIndex);
-        Assert.Equal(-1, OpenClawHistoryShape.HeadSpan(Json("[" + Step("a") + "," + Step("b") + "]")).RollupIndex);
-        Assert.Equal(-1, OpenClawHistoryShape.HeadSpan(Json("{}")).RollupIndex);
     }
 
     [Fact]

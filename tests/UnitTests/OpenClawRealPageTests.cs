@@ -85,7 +85,7 @@ public class OpenClawRealPageTests
     public void NoDroppedRollupHasTextOutsideItsStepsAndEveryOtherRollupSurvives(string file)
     {
         var all = Messages(file);
-        var drop = OpenClawHistoryShape.RollupsToDrop(Load(file));
+        var drop = HistoryShapeTestHelpers.RollupsToDrop(Load(file));
 
         // Independent of RollupIsCoveredBy: a token-multiset check.
         foreach (var i in drop)
@@ -123,7 +123,7 @@ public class OpenClawRealPageTests
         var all = Messages(file);
         if (all.Any(OpenClawHistoryShape.IsRollup)) return;
 
-        Assert.Empty(OpenClawHistoryShape.RollupsToDrop(Load(file)));
+        Assert.Empty(HistoryShapeTestHelpers.RollupsToDrop(Load(file)));
 
         var full = OpenClawSessions.TurnsFromHistory(Load(file), "k");
         Assert.DoesNotContain(full, t => t.FromRollup);
@@ -160,10 +160,12 @@ public class OpenClawRealPageTests
             var older = Array(all.Take(split));
             var newer = Array(all.Skip(split));
 
+            // As the panel loads them: the newer page first, cut at its start
+            // because an older one exists; the older page is the conversation's
+            // start.
             var session = new OpenClawChatSession("openclaw:k", "k", "main");
-            session.SetHistory(OpenClawSessions.TurnsFromHistory(newer, "k"));
-            session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, "k"),
-                OpenClawHistoryShape.EndsInOpenTextStep(older));
+            session.SetHistory(OpenClawSessions.TurnsFromHistory(newer, "k", startsMidRun: true));
+            session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, "k"));
 
             if (!Seq(session.History.Select(h => new HistoryTurn(h.Role, h.Text, null, "", h.At, null, null))).SequenceEqual(want))
                 differ.Add(split);
@@ -172,48 +174,41 @@ public class OpenClawRealPageTests
         Assert.True(differ.Count == 0, $"{file}: splits differing from the full parse: {string.Join(",", differ)}");
     }
 
-    // ---- what this rule still repeats -----------------------------------
+    // ---- what is still repeated -------------------------------------------
 
-    // A kept rollup that holds text from steps before it draws that text twice:
-    // once as the steps, once inside the rollup. This is the cost of never
-    // dropping a rollup that carries more than its steps, and the same repeat
-    // develop shows today. Counted here so the number is on record; the
-    // step-dropping refinement removes it.
+    // Stage 3 kept a rollup that holds every step plus more, which drew the steps'
+    // narration twice: 5 step texts on the seven real pages. Stage 3b drops the
+    // covered steps instead. Measured on the wired parse (not on the rule): for
+    // each kept rollup turn, the shown step turns of its run whose text it contains.
     [Fact]
-    public void TheRepeatedNarrationOnTheRealPagesIsCounted()
+    public void NoRealPageRepeatsAStepsNarrationInsideAKeptRollupAnyMore()
     {
-        var total = 0;
-        var perPage = new Dictionary<string, int>();
-
         foreach (var file in Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "Fixtures", "pages"), "*.json")
                      .Select(Path.GetFileName).Where(f => f != SyntheticPage).OrderBy(f => f, StringComparer.Ordinal))
         {
-            var all = Messages(file!);
-            var drop = OpenClawHistoryShape.RollupsToDrop(Load(file!));
+            var turns = OpenClawSessions.TurnsFromHistory(Load(file!), "k");
             var repeated = 0;
+            var steps = new List<string>();
 
-            for (var i = 0; i < all.Count; i++)
+            foreach (var t in turns)
             {
-                if (!OpenClawHistoryShape.IsRollup(all[i]) || drop.Contains(i)) continue;
+                if (t.Role == ChatRole.User) { steps.Clear(); continue; }
 
-                var rollup = Norm(TextOf(all[i]));
-                repeated += SpanSteps(all, i).Count(s => Norm(s).Length > 0 && rollup.Contains(Norm(s), StringComparison.Ordinal));
+                if (t.FromRollup && t.Text.Length > 0)
+                {
+                    var rollup = Norm(t.Text);
+                    repeated += steps.Count(x => x.Length > 0 && rollup.Contains(x, StringComparison.Ordinal));
+                    steps.Clear();
+                }
+                else if (t.Role == ChatRole.Assistant && !t.FromRollup)
+                {
+                    steps.Add(Norm(t.Text));
+                }
             }
 
             _out.WriteLine($"{file}: repeated step texts = {repeated}");
-            perPage[file!] = repeated;
-            total += repeated;
+            Assert.Equal(0, repeated);
         }
-
-        _out.WriteLine($"total repeated step texts = {total}");
-
-        // Measured: 3 on main-plus-more, 1 on direct-plus-more and 1 on
-        // main-equal-join-and-plus-more, none elsewhere. A change here means
-        // the rule (or the fixtures) moved and the PR's stated cost with it.
-        Assert.Equal(5, total);
-        Assert.Equal(3, perPage["page-main-plus-more.json"]);
-        Assert.Equal(1, perPage["page-direct-plus-more.json"]);
-        Assert.Equal(1, perPage["page-main-equal-join-and-plus-more.json"]);
     }
 
     // ---- the synthetic page: one message per shape ------------------------
@@ -267,7 +262,7 @@ public class OpenClawRealPageTests
         if (file == SyntheticPage) return;
 
         var all = Messages(file);
-        foreach (var i in OpenClawHistoryShape.RollupsToDrop(Load(file)))
+        foreach (var i in HistoryShapeTestHelpers.RollupsToDrop(Load(file)))
         {
             var types = all[i].GetProperty("content").ValueKind == JsonValueKind.Array
                 ? all[i].GetProperty("content").EnumerateArray().Select(b => b.GetProperty("type").GetString()).ToList()
@@ -286,7 +281,7 @@ public class OpenClawRealPageTests
         var wantDrop = cases.GetProperty("drop").EnumerateArray().Select(e => e.GetInt32()).OrderBy(i => i).ToArray();
         var wantKeep = cases.GetProperty("keep").EnumerateArray().Select(e => e.GetInt32()).ToArray();
 
-        var drop = OpenClawHistoryShape.RollupsToDrop(Load(SyntheticPage));
+        var drop = HistoryShapeTestHelpers.RollupsToDrop(Load(SyntheticPage));
 
         Assert.Equal(wantDrop, drop.OrderBy(i => i).ToArray());
         Assert.DoesNotContain(wantKeep, drop.Contains);

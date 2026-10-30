@@ -1449,41 +1449,29 @@ namespace Orbweaver
         // position back afterwards — content appearing above where you are
         // reading would otherwise throw you down the page.
         //
-        // olderEndsInOpenTextStep (CB-270): the older page ended in a run's text
-        // steps with no rollup after them. The first rollup in the transcript,
-        // with no user turn before it, is then the rollup of exactly that run,
-        // split from its steps by the page boundary. It is removed — so the
-        // reply is drawn once — only if its text is covered by the steps now
-        // on both sides of the boundary: the older page's trailing steps plus
-        // the transcript's own turns ahead of it. A rollup carrying text none of
-        // them has is the reply itself (the final reply is sometimes never
-        // persisted as a step) and stays. HistoryPrepended still reports the
-        // rows inserted; the panel drops the stale row itself, see
-        // DroppedRollupIndex.
-        public void PrependHistory(IReadOnlyList<HistoryTurn> turns, bool olderEndsInOpenTextStep = false)
+        // CB-270 stage 3b: a run's steps and its rollup can sit on two pages. Each
+        // page decided what it could alone, and a page whose first run is cut
+        // deferred the choice of which steps a kept rollup repeats (TextsToDrop,
+        // startsMidRun), so this is where it is made, over the combined span: the
+        // older page's trailing steps plus this transcript's lead steps, against
+        // the transcript's first rollup. The rule is OpenClawHistoryShape's
+        // ResolveSpan, the same one a whole page uses, so a split page reads as
+        // the whole one does: a covered rollup is dropped, otherwise the steps it
+        // contains are, on either side of the seam.
+        //
+        // Rows already on screen are removed highest first, one TurnsRemoved per
+        // contiguous run, before the older turns are inserted, so the indices are
+        // the transcript's as it stood and the panel mirrors them as it already
+        // does. A turn that also carries a picture or attachment is never
+        // removed: it keeps its row and loses only its caption, in place. The
+        // older page's covered steps are filtered out of the turns before they
+        // become rows, so nothing there moves. HistoryPrepended still reports the
+        // rows inserted.
+        public void PrependHistory(IReadOnlyList<HistoryTurn> turns)
         {
             if (turns.Count == 0) return;
 
-            DroppedRollupIndex = -1;
-            var covered = olderEndsInOpenTextStep ? RollupSplitFromItsSteps(turns) : -1;
-            if (covered >= 0)
-            {
-                // A covered rollup's words are shown by the steps. A pure text
-                // turn goes; a turn that also carries a picture or attachment
-                // stays and loses only its caption, in place; its row picks the
-                // change up through PropertyChanged and TurnUpdated tells the
-                // panel and any room that merged it.
-                if (IsPureText(_history[covered]))
-                {
-                    DroppedRollupIndex = covered;
-                    _history.RemoveAt(covered);
-                }
-                else
-                {
-                    _history[covered].Text = "";
-                    TurnUpdated?.Invoke(_history[covered]);
-                }
-            }
+            turns = ResolveSplitSpan(turns);
 
             var older = turns.Select(t => new ChatTurn
             {
@@ -1514,52 +1502,129 @@ namespace Orbweaver
             }).ToList();
 
             _history.InsertRange(0, older);
-            HistoryPrepended?.Invoke(older.Count);
+
+            if (older.Count > 0) HistoryPrepended?.Invoke(older.Count);
         }
 
-        // The index of the transcript's first rollup turn that has text, when it
-        // is the rollup of the run the older page ends in and its text is covered
-        // by that run's steps (older trailing steps plus this transcript's turns
-        // before it); -1 otherwise. The caller removes it if it is pure text and
-        // blanks its caption if it also carries a picture or attachment, exactly
-        // as the full-page parse does with a covered rollup: the steps cover the
-        // rollup's words and show nothing of its pictures. Step texts come from
-        // turns rather than the raw page so both sides of the comparison went
-        // through the same text processing.
-        //
-        // Residual, constructed: a picture-only rollup directly followed by
-        // another rollup leaves this scan judging the second one's text against
-        // the steps before the first. That can only drop text the visible steps
-        // already carry, never lose any.
-        private int RollupSplitFromItsSteps(IReadOnlyList<HistoryTurn> older)
+        // Judges the combined span at the seam and applies it: removes or blanks
+        // rows of this transcript, and returns the older turns to prepend with
+        // the covered trailing steps taken out (or their captions blanked).
+        private IReadOnlyList<HistoryTurn> ResolveSplitSpan(IReadOnlyList<HistoryTurn> older)
         {
-            var steps = new List<string>();
-
-            for (var i = older.Count - 1; i >= 0; i--)
-            {
-                var t = older[i];
-                if (t.Role == ChatRole.User || t.FromRollup) break;
-                if (t.Role == ChatRole.Assistant) steps.Add(t.Text);
-            }
+            // The transcript's head span: assistant text turns before its first
+            // rollup, with no user turn first. A caption-less picture turn of the
+            // rollup is passed over; the text turn is the rollup.
+            var lead = new List<int>();
+            var rollup = -1;
 
             for (var k = 0; k < _history.Count; k++)
             {
                 var t = _history[k];
-                if (t.Role == ChatRole.User) return -1;
+                if (t.Role == ChatRole.User) break;
 
                 if (t.FromRollup)
                 {
-                    // A caption-less picture turn of the rollup: nothing to
-                    // compare. Keep looking for its text.
                     if (string.IsNullOrWhiteSpace(t.Text)) continue;
 
-                    return OpenClawHistoryShape.RollupIsCoveredBy(t.Text, steps) ? k : -1;
+                    rollup = k;
+                    break;
                 }
 
-                if (t.Role == ChatRole.Assistant) steps.Add(t.Text);
+                if (t.Role == ChatRole.Assistant && !string.IsNullOrWhiteSpace(t.Text))
+                    lead.Add(k);
             }
 
-            return -1;
+            if (rollup < 0) return older;
+
+            // The older page's trailing steps: back from its end to a user turn or
+            // a rollup, text turns only (tool lines are System).
+            var tail = new List<int>();
+            for (var i = older.Count - 1; i >= 0; i--)
+            {
+                var t = older[i];
+                if (t.Role == ChatRole.User || t.FromRollup) break;
+                if (t.Role == ChatRole.Assistant && !string.IsNullOrWhiteSpace(t.Text)) tail.Insert(0, i);
+            }
+
+            var texts = tail.Select(i => older[i].Text).Concat(lead.Select(k => _history[k].Text)).ToList();
+            if (texts.Count == 0) return older;
+
+            var decision = OpenClawHistoryShape.ResolveSpan(texts, _history[rollup].Text);
+            if (!decision.DropRollup && decision.DropSteps.Count == 0) return older;
+
+            // The page's last row is held by reference (ReconcileRun anchors on
+            // it); if it is removed it is replaced by the nearest row before it.
+            var pageLastAt = _pageLast is null ? -1 : _history.IndexOf(_pageLast);
+            var removals = new SortedSet<int>();
+
+            void Drop(int at)
+            {
+                if (IsPureText(_history[at]))
+                {
+                    removals.Add(at);
+                }
+                else
+                {
+                    _history[at].Text = "";
+                    TurnUpdated?.Invoke(_history[at]);
+                }
+            }
+
+            var filtered = older.ToList();
+            var gone = new HashSet<int>();
+
+            if (decision.DropRollup)
+            {
+                Drop(rollup);
+            }
+            else
+            {
+                foreach (var j in decision.DropSteps)
+                {
+                    if (j < tail.Count)
+                    {
+                        // An older step is not a row yet: a pure text one is left
+                        // out, one that carries a picture keeps it and loses its
+                        // caption.
+                        var at = tail[j];
+                        var step = older[at];
+
+                        if (step.ImageUrl is null && step.ImageBytes is null && step.Attachment is null)
+                            gone.Add(at);
+                        else
+                            filtered[at] = step with { Text = "" };
+                    }
+                    else
+                    {
+                        Drop(lead[j - tail.Count]);
+                    }
+                }
+
+                filtered = filtered.Where((_, i) => !gone.Contains(i)).ToList();
+            }
+
+            // Highest first, one event per contiguous run.
+            var ordered = removals.Reverse().ToList();
+            var n = 0;
+            while (n < ordered.Count)
+            {
+                var top = ordered[n];
+                var run = 1;
+                while (n + run < ordered.Count && ordered[n + run] == top - run) run++;
+
+                var from = top - run + 1;
+                _history.RemoveRange(from, run);
+                TurnsRemoved?.Invoke(from, run);
+                n += run;
+            }
+
+            if (pageLastAt >= 0 && removals.Contains(pageLastAt))
+            {
+                var before = pageLastAt - removals.Count(r => r < pageLastAt) - 1;
+                _pageLast = before >= 0 ? _history[before] : null;
+            }
+
+            return filtered;
         }
 
         private static bool IsPureText(ChatTurn t) =>
@@ -1569,15 +1634,6 @@ namespace Orbweaver
             && t.Attachment is null;
 
         public event Action<int>? HistoryPrepended;
-
-        // Where, in the transcript as it stood before the rows were inserted,
-        // PrependHistory removed a rollup that repeated the steps it was
-        // prepending; -1 when it removed nothing. The panel reads it while
-        // HistoryPrepended is being raised so it can remove the matching row
-        // (at count + this). A property rather than a second event or a changed
-        // count: IRemoteChatSession's contract is "this many rows were inserted
-        // at the front", which stays true.
-        public int DroppedRollupIndex { get; private set; } = -1;
 
         public void SetHistory(IReadOnlyList<HistoryTurn> turns)
         {

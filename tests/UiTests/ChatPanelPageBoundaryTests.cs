@@ -72,7 +72,7 @@ public class ChatPanelPageBoundaryTests : IDisposable
         session.PrependHistory(new List<HistoryTurn>
         {
             H(ChatRole.User, "go"), H(ChatRole.Assistant, "step1"), H(ChatRole.System, "· exec  ls"), H(ChatRole.Assistant, "step3")
-        }, olderEndsInOpenTextStep: true);
+        });
         FlushRender();
 
         var rows = RowTexts(panel);
@@ -98,7 +98,7 @@ public class ChatPanelPageBoundaryTests : IDisposable
         session.PrependHistory(new List<HistoryTurn>
         {
             H(ChatRole.User, "go"), H(ChatRole.Assistant, "step1"), H(ChatRole.System, "· exec  ls")
-        }, olderEndsInOpenTextStep: true);
+        });
         FlushRender();
 
         var rows = RowTexts(panel);
@@ -124,7 +124,7 @@ public class ChatPanelPageBoundaryTests : IDisposable
         session.PrependHistory(new List<HistoryTurn>
         {
             H(ChatRole.User, "go"), H(ChatRole.Assistant, "look"), H(ChatRole.System, "· exec  ls")
-        }, olderEndsInOpenTextStep: true);
+        });
         FlushRender();
 
         var rows = RowTexts(panel);
@@ -151,7 +151,7 @@ public class ChatPanelPageBoundaryTests : IDisposable
         session.PrependHistory(new List<HistoryTurn>
         {
             H(ChatRole.User, "go"), H(ChatRole.Assistant, "look at this")
-        }, olderEndsInOpenTextStep: true);
+        });
         FlushRender();
 
         var rows = RowTexts(panel);
@@ -159,6 +159,35 @@ public class ChatPanelPageBoundaryTests : IDisposable
         Assert.Equal(session.History.Count, rows.Length);
         Assert.Equal(3, rows.Length);
         Assert.Equal(1, rows.Count(r => r.Contains("look at this")));
+    }
+
+    // Stage 3b: a kept rollup that holds more than its steps drops the steps it
+    // contains on both sides of the seam. The older ones are never rows; the lead
+    // ones are, and the panel mirrors their removal through TurnsRemoved, highest
+    // run first, so its rows stay equal to the model's.
+    [AvaloniaFact]
+    public void ScrollingBackRemovesTheCoveredLeadRowsOfAKeptRollupAndKeepsRowsInStep()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.Assistant, "x"), H(ChatRole.System, "· tool"), H(ChatRole.Assistant, "y"),
+            H(ChatRole.Assistant, "w\n\nx\n\ny\n\nmore", fromRollup: true), H(ChatRole.User, "next")
+        });
+        var panel = Open(session);
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"), H(ChatRole.Assistant, "w"), H(ChatRole.System, "· first")
+        });
+        FlushRender();
+
+        var rows = RowTexts(panel);
+
+        Assert.Equal(session.History.Count, rows.Length);
+        Assert.Equal(new[] { "go", "· first", "· tool", "w\n\nx\n\ny\n\nmore", "next" }, session.History.Select(t => t.Text).ToArray());
+        Assert.Equal(1, rows.Count(r => r.Contains("more")));
+        Assert.DoesNotContain(rows, r => r == "x" || r == "y" || r == "w");
     }
 
     // Control: nothing dropped, so no row is removed and rows still match.
@@ -169,7 +198,7 @@ public class ChatPanelPageBoundaryTests : IDisposable
         session.SetHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "reply", fromRollup: true) });
         var panel = Open(session);
 
-        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.User, "go") }, olderEndsInOpenTextStep: false);
+        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.User, "go") });
         FlushRender();
 
         var rows = RowTexts(panel);
