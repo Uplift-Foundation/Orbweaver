@@ -199,6 +199,22 @@ public class ChatPanelApprovalTests : IDisposable
         Assert.Equal(0, title.LineHeight % 1);
     }
 
+    // A request whose command carries any other control character is drawn as the
+    // unsafe prompt: Deny only, none of the command on screen.
+    [AvaloniaFact]
+    public void ACommandWithABellIsDrawnAsTheUnsafePromptWithDenyOnly()
+    {
+        var (panel, _) = Open();
+
+        Request("a1", "echo \u0007EVIL");
+        Flush();
+
+        var title = panel.FindControl<TextBlock>("PromptTitle")!.Text!;
+        Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, title);
+        Assert.DoesNotContain("EVIL", title);
+        Assert.Single(panel.FindControl<ItemsControl>("PromptOptions")!.ItemsPanelRoot!.Children);
+    }
+
     // --- one click, one frame, the decision the option names ---
 
     [AvaloniaTheory]

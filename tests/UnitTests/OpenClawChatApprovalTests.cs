@@ -133,6 +133,34 @@ public class OpenClawChatApprovalTests : IDisposable
         Assert.Equal("deny", Assert.Single(prompt.Options).Key);
     }
 
+    // A record the parser judged unsafe has its command blanked and is Deny only:
+    // the prompt says so and shows nothing of the request but its id.
+    [Fact]
+    public void AnUnsafeRecordShowsOnlyDenyAndNoneOfItsCommand()
+    {
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("a1", "echo \u0007EVIL")), Now);
+
+        var prompt = Chat().Prompt!;
+
+        Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, prompt.Title);
+        Assert.DoesNotContain("EVIL", prompt.Title);
+        Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+        Assert.Equal("a1", prompt.Options[0].ApprovalId);
+    }
+
+    // A command cut by the parser says how much was left, from the length the
+    // gateway sent.
+    [Fact]
+    public void ACutCommandSaysHowManyCharactersTheGatewaySentBeyondWhatIsShown()
+    {
+        Request("a1", new string('x', 4500));
+
+        var prompt = Chat().Prompt!;
+
+        Assert.Contains("(500 more characters)", prompt.Title);
+        Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+    }
+
     // The queue: losing one shows the next.
     [Fact]
     public void ResolvingTheFirstShowsTheNext()
@@ -370,7 +398,7 @@ public class OpenClawChatApprovalTests : IDisposable
     public async Task ARequestTheGatewayNoLongerKnowsIsNoLongerPending()
     {
         var (_, gateway) = await ConnectedAsync(r => r.Method == "approval.resolve"
-            ? FakeGatewaySocket.Error(r.Id, "NOT_FOUND", "approval not found", null)
+            ? FakeGatewaySocket.Error(r.Id, "INVALID_REQUEST", "approval expired or not found", null)
             : null);
         using (gateway)
         {
