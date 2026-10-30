@@ -59,7 +59,8 @@ public class OpenClawApprovalTextTests
     // The command is the one thing that must not be reworded for display, so text
     // that cannot be shown as it is is not shown at all.
     [Theory]
-    [InlineData("echo hi\n&& rm -rf /")]    // Cc newline
+    [InlineData("echo hi\r&& rm")]          // Cc lone carriage return
+    [InlineData("echo\u000Bhi")]            // Cc vertical tab
     [InlineData("echo hi\u0007")]           // Cc bell
     [InlineData("echo hi\u202E esab")]      // Cf bidi override
     [InlineData("echo\u200Bhi")]            // Cf zero-width space
@@ -295,4 +296,55 @@ public class OpenClawApprovalTextTests
     [Fact]
     public void TheOffSwitchNoteSaysWhatToTurnOn() =>
         Assert.Contains("Allow approving agent actions", OpenClawApprovalText.ApprovingOff);
+
+    // A real command is written over lines and with tabs: those two, in the command
+    // only, are shown as they are; CRLF reads as one break.
+    [Fact]
+    public void ACommandMayCarryLineBreaksAndTabsAndKeepsBothOptions()
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "cat <<EOF\r\n\tone\ntwo\nEOF", null, null);
+
+        Assert.Equal("Nova wants to run: cat <<EOF\n\tone\ntwo\nEOF", prompt.Title);
+        Assert.Equal(2, prompt.Options.Count);
+    }
+
+    // Other fields get no such allowance.
+    [Theory]
+    [InlineData("a\nb", "/tmp", "box", null)]
+    [InlineData("Nova", "/t\tmp", "box", null)]
+    [InlineData("Nova", "/tmp", "bo\nx", null)]
+    [InlineData("Nova", "/tmp", "box", "careful\nnow")]
+    public void NoOtherFieldMayCarryLineBreaksOrTabs(string agent, string cwd, string host, string? warning)
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", agent, "true", cwd, host, warning: warning);
+
+        Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, prompt.Title);
+        Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+    }
+
+    // Allow once is offered only where the gateway lists it, or said nothing.
+    [Theory]
+    [InlineData(null, 2)]
+    [InlineData(new[] { "deny", "allow-once" }, 2)]
+    [InlineData(new[] { "deny" }, 1)]
+    [InlineData(new string[0], 1)]
+    public void AllowOnceIsOfferedOnlyWhenTheGatewayAllowsIt(string[]? allowed, int options)
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "true", null, null, allowedDecisions: allowed);
+
+        Assert.Equal(options, prompt.Options.Count);
+        Assert.Equal("deny", prompt.Options[0].Key);
+        Assert.DoesNotContain(prompt.Options, o => o.Key == "allow-always");
+    }
+
+    [Fact]
+    public void TheGatewaysWarningIsShownAsPlainText() =>
+        Assert.Equal("Nova wants to run: true\nin /tmp\nruns as root",
+            OpenClawApprovalText.Prompt("ap-1", "Nova", "true", "/tmp", null, warning: "runs as root").Title);
+
+    [Theory]
+    [InlineData("expired", null, "Expired unanswered")]
+    [InlineData("cancelled", null, "Cancelled")]
+    public void TheTerminalStatusesHaveTheirOwnLines(string status, string? reason, string line) =>
+        Assert.Equal(line, OpenClawApprovalText.Ended(status, reason));
 }

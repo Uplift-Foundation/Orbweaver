@@ -24,6 +24,7 @@ public class OpenClawRoomApprovalLineTests : IDisposable
     public void Dispose()
     {
         Reset();
+        OpenClawSessions.ForgetApprovalsForTests();
         OrbweaverSettings.OpenClawApproveEnabled = _approve;
     }
 

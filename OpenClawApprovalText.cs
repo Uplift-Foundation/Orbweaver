@@ -67,9 +67,16 @@ namespace Orbweaver
         // judges, since neither should be trusted to be the only check.
         internal static ChatPrompt Prompt(
             string approvalId, string agent, string command, string? cwd, string? host,
-            bool unsafeToShow = false, bool commandTruncated = false, int? commandLength = null)
+            bool unsafeToShow = false, bool commandTruncated = false, int? commandLength = null,
+            IReadOnlyList<string>? allowedDecisions = null, string? warning = null)
         {
-            if (unsafeToShow || HasUnsafe(agent) || HasUnsafe(command) || HasUnsafe(cwd) || HasUnsafe(host))
+            // Line breaks and tabs are how a real command is written, so the command
+            // alone may carry them (a CRLF is read as one break); every other field,
+            // and every other control or format character, makes the request unsafe.
+            command = command.Replace("\r\n", "\n");
+
+            if (unsafeToShow || HasUnsafe(agent) || HasUnsafe(command, allowLayout: true)
+                || HasUnsafe(cwd) || HasUnsafe(host) || HasUnsafe(warning))
             {
                 return new ChatPrompt(
                     UnsafeRequest + "\nRequest id: " + QuoteId(approvalId),
@@ -91,9 +98,14 @@ namespace Orbweaver
             if (Cap(host, MaxName) is { Length: > 0 } machine) where.Add("on " + machine);
             if (where.Count > 0) title += "\n" + string.Join(" ", where);
 
+            if (Cap(warning, MaxLocation) is { Length: > 0 } caution) title += "\n" + caution;
+
             if (tooLong) title += "\n" + TooLongToAllow;
 
-            return new ChatPrompt(title, Options(approvalId, denyOnly: tooLong), ArmedActivation: true, ElsewhereLabel: ElsewhereLabel);
+            // Allow once only where the gateway lists it (or said nothing); Deny always.
+            var mayAllow = allowedDecisions is null || allowedDecisions.Contains(AllowOnceKey);
+
+            return new ChatPrompt(title, Options(approvalId, denyOnly: tooLong || !mayAllow), ArmedActivation: true, ElsewhereLabel: ElsewhereLabel);
         }
 
         // What our own answer reads as once the gateway has applied it.
@@ -127,6 +139,8 @@ namespace Orbweaver
 
             return status switch
             {
+                "expired" => "Expired unanswered",
+                "cancelled" => "Cancelled",
                 "allowed" => "Allowed by another reviewer",
                 "denied" => "Denied by another reviewer",
                 _ => "Dropped by the gateway" + (Safe(reason, MaxReason) is { Length: > 0 } r ? " (" + r + ")" : "")
@@ -196,12 +210,13 @@ namespace Orbweaver
 
         // A control (Cc), format (Cf), line-separator (Zl) or paragraph-separator
         // (Zp) character anywhere in it. Such text is not shown.
-        internal static bool HasUnsafe(string? text)
+        internal static bool HasUnsafe(string? text, bool allowLayout = false)
         {
             if (string.IsNullOrEmpty(text)) return false;
 
             foreach (var rune in text.EnumerateRunes())
             {
+                if (allowLayout && rune.Value is '\n' or '\t') continue;
                 if (IsUnsafe(rune)) return true;
             }
 

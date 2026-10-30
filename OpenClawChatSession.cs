@@ -1438,7 +1438,8 @@ namespace Orbweaver
         private ChatPrompt PromptFor(OpenClawApproval approval) =>
             OpenClawApprovalText.Prompt(
                 approval.Id, DisplayName, approval.Command, approval.Cwd, approval.Host,
-                commandTruncated: approval.CommandTruncated);
+                commandTruncated: approval.CommandTruncated,
+                allowedDecisions: approval.AllowedDecisions, warning: approval.Warning);
 
         // Remembers what it handed out, so PromptChanged is raised only when the bar
         // would differ from what the panel last drew.

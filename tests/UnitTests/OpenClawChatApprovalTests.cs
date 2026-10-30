@@ -32,6 +32,7 @@ public class OpenClawChatApprovalTests : IDisposable
     public void Dispose()
     {
         Reset();
+        OpenClawSessions.ForgetApprovalsForTests();
         OrbweaverSettings.OpenClawApproveEnabled = _approve;
         OpenClawSessions.SetGatewayForTests(null);
     }
@@ -116,6 +117,20 @@ public class OpenClawChatApprovalTests : IDisposable
         Assert.Equal(new[] { "deny", "allow-once" }, prompt.Options.Select(o => o.Key));
         Assert.All(prompt.Options, o => Assert.Equal("a1", o.ApprovalId));
         Assert.True(prompt.ArmedActivation);
+    }
+
+    // The gateway says which answers it accepts (declared in its schemas, not
+    // measured): a record without allow-once in the list is Deny only, and the
+    // click for allow-once is refused with nothing sent.
+    [Fact]
+    public void ARecordWithoutAllowOnceInItsAllowedDecisionsShowsDenyOnly()
+    {
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(
+            Row("a1").Replace("\"request\":{", "\"request\":{\"allowedDecisions\":[\"deny\"],")), Now);
+
+        var prompt = Chat().Prompt!;
+
+        Assert.Equal("deny", Assert.Single(prompt.Options).Key);
     }
 
     // The queue: losing one shows the next.

@@ -80,6 +80,14 @@ public class ChatPanelApprovalScreenshots : IDisposable
             "chat-panel-approval-long-command.png",
             panel => panel.FindControl<ScrollViewer>("PromptTitleScroll")!.ScrollToEnd());
 
+    // A multi-line command (a heredoc) with tabs: line breaks and tabs are shown as
+    // they are, in the command only.
+    [AvaloniaFact]
+    public void AMultiLineCommandShowsItsLinesAndTabs() =>
+        Capture(
+            OpenClawApprovalText.Prompt("ap-6", "Nova", "cat > notes.txt <<'EOF'\r\n\tfirst line\r\n\tsecond line\r\nEOF\nwc -l notes.txt", "/tmp", "gateway"),
+            "chat-panel-approval-multiline.png");
+
     // Past the bound the end cannot be read here, so it can only be denied.
     [AvaloniaFact]
     public void ACommandPastTheBoundOffersOnlyDeny() =>

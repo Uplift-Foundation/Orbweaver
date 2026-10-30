@@ -51,6 +51,7 @@ public class ChatPanelApprovalTests : IDisposable
     public void Dispose()
     {
         Reset();
+        OpenClawSessions.ForgetApprovalsForTests();
         ChatPanel.PromptClock = _previousClock;
         OrbweaverSettings.OpenClawApproveEnabled = _approve;
         OrbweaverSettings.OpenClawEnabled = _enabled;
@@ -164,6 +165,19 @@ public class ChatPanelApprovalTests : IDisposable
         Assert.Equal("deny", ((ChatPromptOption)Option(panel, 0).DataContext!).Key);
         Assert.Equal("allow-once", ((ChatPromptOption)Option(panel, 1).DataContext!).Key);
         Assert.Equal("How to answer on the gateway", panel.FindControl<TextBlock>("PromptElsewhere")!.Text);
+    }
+
+    // A heredoc keeps its line breaks and tabs in the prompt, and both options stay.
+    [AvaloniaFact]
+    public void AMultiLineCommandIsDrawnWithItsLineBreaksAndBothOptions()
+    {
+        var (panel, _) = Open();
+
+        Request("a1", "cat <<EOF\n\tone\nEOF");
+        Flush();
+
+        Assert.Contains("wants to run: cat <<EOF\n\tone\nEOF", panel.FindControl<TextBlock>("PromptTitle")!.Text);
+        Assert.Equal(2, panel.FindControl<ItemsControl>("PromptOptions")!.ItemsPanelRoot!.Children.Count);
     }
 
     // --- one click, one frame, the decision the option names ---
