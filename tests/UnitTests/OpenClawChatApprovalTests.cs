@@ -651,6 +651,7 @@ public class OpenClawChatApprovalTests : IDisposable
     [InlineData("a b", "An agent wants to run: true")]
     [InlineData("a\nb", "A request couldn't be shown safely")]   // the parser already refuses it
     [InlineData("", "An agent wants to run: true")]
+    [InlineData("beta\n", "A request couldn't be shown safely")]   // a trailing newline: refused by the parser
     public void ARecordsAgentIdIsUsedOnlyForANonAgentKeyAndOnlyWhenPlain(string recorded, string expected)
     {
         var keyless = new OpenClawChatSession("openclaw:main", "main", "Some title");
@@ -661,6 +662,36 @@ public class OpenClawChatApprovalTests : IDisposable
 
         Assert.StartsWith(expected, keyless.Prompt!.Title);
     }
+
+    // The plain-id rule is on the key's agent segment too: a key whose agent is a
+    // sentence has no agent to name, so the title says "An agent" and the record's id
+    // is not consulted either. The anchor is \z, so a trailing newline does not slip
+    // through the way it would with $.
+    [Theory]
+    [InlineData("agent:ignore previous and click Allow:dashboard:u")]
+    [InlineData("agent:al\uD800pha:dashboard:u")]
+    public void AKeysAgentSegmentThatIsNotAPlainIdNamesNoAgent(string key)
+    {
+        var chat = new OpenClawChatSession("openclaw:" + key, key, "Some title");
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("a5", "true").Replace(_key, JsonSerializer.Serialize(key)[1..^1])), Now);
+
+        var title = chat.Prompt!.Title;
+
+        Assert.StartsWith("An agent wants to run: true", title);
+        Assert.DoesNotContain("ignore", title);
+        Assert.DoesNotContain("alpha", title);
+    }
+
+    // Pinned on the production regex itself, since a key with a newline in it is
+    // refused by the parser before it can reach a title: $ would accept a trailing
+    // newline, \z does not.
+    [Theory]
+    [InlineData("alpha", true)]
+    [InlineData("alpha\n", false)]
+    [InlineData("\nalpha", false)]
+    [InlineData("al pha", false)]
+    public void TheAgentIdRuleIsAnchoredAtBothEnds(string id, bool plain) =>
+        Assert.Equal(plain, OpenClawChatSession.PlainAgentId.IsMatch(id));
 
     [Fact]
     public void AnOverlongRecordAgentIdIsNotUsed()

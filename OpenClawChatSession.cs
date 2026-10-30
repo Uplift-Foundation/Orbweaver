@@ -1448,14 +1448,20 @@ namespace Orbweaver
         // used only if it is a plain id (letters, digits, dot, underscore, hyphen,
         // 1 to 64): anything else is treated as absent, so an odd character from the
         // gateway cannot reach the title.
-        private static readonly System.Text.RegularExpressions.Regex PlainAgentId =
-            new("^[A-Za-z0-9._-]{1,64}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        internal static readonly System.Text.RegularExpressions.Regex PlainAgentId =
+            new(@"\A[A-Za-z0-9._-]{1,64}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
         private string AgentNameFor(OpenClawApproval approval)
         {
-            var id = OpenClawSessions.AgentIdOf(GatewayKey)
-                     ?? (approval.AgentId is { } recorded && PlainAgentId.IsMatch(recorded) ? recorded : null);
-            return id is null ? "" : OpenClawSessions.AgentNameOf(id);
+            // The key's agent is held to the same plain-id rule as the record's: a key
+            // whose agent segment is a sentence has no agent to name, and neither
+            // falls through to the record nor goes to the listed-name lookup.
+            var keyed = OpenClawSessions.AgentIdOf(GatewayKey);
+            if (keyed is not null) return PlainAgentId.IsMatch(keyed) ? OpenClawSessions.AgentNameOf(keyed) : "";
+
+            return approval.AgentId is { } recorded && PlainAgentId.IsMatch(recorded)
+                ? OpenClawSessions.AgentNameOf(recorded)
+                : "";
         }
 
         private ChatPrompt PromptFor(OpenClawApproval approval) =>
