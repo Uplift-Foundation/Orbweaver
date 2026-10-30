@@ -72,6 +72,36 @@ namespace Orbweaver
 
         private const int MaxEndedPerSession = 20;
 
+        // The sessions an approval event stamped as recently active. A session that
+        // just had an approval raised is exactly one worth keeping on screen, which
+        // is why the event moves LastSeen at all; remembered here so a test can undo
+        // it, since LastSeen is a process-wide static that survives a reconnect on
+        // purpose and nothing else forgets it.
+        private static readonly HashSet<string> ApprovalSeen = new(StringComparer.Ordinal);
+
+        private static void SeenByApproval(string key, DateTime now)
+        {
+            LastSeen[key] = now;
+            ApprovalSeen.Add(key);
+        }
+
+        // A test seam: forgets every approval-related thing this class holds,
+        // including the recent-activity stamps approval events left, so one test's
+        // approvals cannot make another's session look recent. Restart forgets the
+        // pending set but, deliberately, not LastSeen.
+        internal static void ForgetApprovalsForTests()
+        {
+            lock (Gate)
+            {
+                Pending.Clear();
+                Ended.Clear();
+                Answered.Clear();
+                SessionSourced.Clear();
+                foreach (var key in ApprovalSeen) LastSeen.Remove(key);
+                ApprovalSeen.Clear();
+            }
+        }
+
         // The pending approvals for one session, oldest first, expired ones left
         // out. Expiry is enforced here as well as by the gateway so a prompt cannot
         // outlive its record if every signal is missed.
@@ -138,7 +168,7 @@ namespace Orbweaver
                 lock (Gate)
                 {
                     added = AddLocked(requested);
-                    if (added) LastSeen[requested.SessionKey] = now;
+                    if (added) SeenByApproval(requested.SessionKey, now);
                 }
 
                 if (added) NotifyApprovals(requested.SessionKey);
@@ -163,7 +193,7 @@ namespace Orbweaver
                 lock (Gate)
                 {
                     added = AddLocked(pending, sessionSourced: true);
-                    if (added) LastSeen[pending.SessionKey] = now;
+                    if (added) SeenByApproval(pending.SessionKey, now);
                 }
 
                 if (added) NotifyApprovals(pending.SessionKey);
@@ -186,7 +216,7 @@ namespace Orbweaver
                 // ending for something this app was not holding.
                 if (approval is null) return;
 
-                LastSeen[approval.SessionKey] = now;
+                SeenByApproval(approval.SessionKey, now);
                 RecordEndedLocked(new OpenClawApprovalEnded(
                     approval, "resolved", resolved.Decision, resolved.Reason, resolved.ResolvedBy));
             }

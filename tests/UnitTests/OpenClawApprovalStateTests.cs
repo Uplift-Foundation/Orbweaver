@@ -52,6 +52,7 @@ public class OpenClawApprovalStateTests : IDisposable
         OrbweaverSettings.OpenClawEnabled = false;
         OpenClawSessions.Restart();
         OpenClawSessions.ForgetRunningForTests();
+        OpenClawSessions.ForgetApprovalsForTests();
     }
 
     private static JsonElement Json(string text) => JsonDocument.Parse(text).RootElement;
@@ -1098,6 +1099,36 @@ public class OpenClawApprovalStateTests : IDisposable
             var allowed = await OpenClawSessions.ResolveApprovalAsync(Chat(), denyOnly, "deny");
             Assert.Equal(OpenClawApprovalResult.Answered, allowed.Result);
             Assert.Single(Sent(socket));
+        }
+    }
+
+    // An approval raised on a session is recent activity on it, so a session an hour
+    // quiet by the gateway's own account stays in a short window while one is
+    // pending. That stamp lives in a process-wide static that outlives a restart on
+    // purpose, so the test seam that forgets approvals forgets it too, or one test's
+    // approvals would make another's session look recent.
+    [Fact]
+    public void AnApprovalStampsTheSessionRecentAndTheTestSeamUndoesIt()
+    {
+        var window = OrbweaverSettings.OpenClawActiveWithinMinutes;
+        try
+        {
+            OrbweaverSettings.OpenClawActiveWithinMinutes = 60;
+            var quiet = "{\"sessions\":[{\"key\":\"" + Key + "\",\"chatType\":\"direct\",\"lastActivityAt\":" +
+                        Ms(Now.AddHours(-5)) + "}]}";
+
+            Assert.Empty(OpenClawSessions.Parse(Json(quiet), Now).Sessions);
+
+            Requested("a1");
+            Resolved("a1");
+            Assert.Single(OpenClawSessions.Parse(Json(quiet), Now).Sessions);
+
+            OpenClawSessions.ForgetApprovalsForTests();
+            Assert.Empty(OpenClawSessions.Parse(Json(quiet), Now).Sessions);
+        }
+        finally
+        {
+            OrbweaverSettings.OpenClawActiveWithinMinutes = window;
         }
     }
 }
