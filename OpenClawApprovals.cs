@@ -107,6 +107,10 @@ namespace Orbweaver
         // gateway and mints a standing grant this app has no surface to list or
         // revoke, so it is not an option, and a decision outside this set is
         // refused before anything is sent. See Stage 6's plan, section 3.3.
+        // The status of an ending nothing explained: a row a list stopped showing with
+        // no event, or one pushed out by the cap.
+        internal const string UnknownStatus = "unknown";
+
         internal const string Deny = "deny";
         internal const string AllowOnce = "allow-once";
 

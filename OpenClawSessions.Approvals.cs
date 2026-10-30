@@ -220,7 +220,8 @@ namespace Orbweaver
                 if (approval is null) return;
 
                 RecordEndedLocked(new OpenClawApprovalEnded(
-                    approval, "resolved", resolved.Decision, resolved.Reason, resolved.ResolvedBy, resolved.Status));
+                    approval, "resolved", resolved.Decision, resolved.Reason, resolved.ResolvedBy,
+                    resolved.Status ?? OpenClawApprovals.UnknownStatus));
             }
 
             NotifyApprovals(approval.SessionKey);
@@ -247,8 +248,7 @@ namespace Orbweaver
                     {
                         RemoveLocked(gone.Id, out _);
                         touched.Add(key);
-                        RecordEndedLocked(new OpenClawApprovalEnded(
-                            gone, OpenClawApprovals.IsExpired(gone, now) ? "expired" : "gone", null, null, null));
+                        RecordEndedLocked(DroppedEnding(gone, now));
                     }
                 }
 
@@ -282,8 +282,7 @@ namespace Orbweaver
                     {
                         RemoveLocked(gone.Id, out _);
                         touched.Add(key);
-                        RecordEndedLocked(new OpenClawApprovalEnded(
-                            gone, OpenClawApprovals.IsExpired(gone, now) ? "expired" : "gone", null, null, null));
+                        RecordEndedLocked(DroppedEnding(gone, now));
                     }
                 }
 
@@ -390,10 +389,19 @@ namespace Orbweaver
             return true;
         }
 
+        // An approval a feed stopped listing with no event saying why. Past its own
+        // expiry it is "expired" (this app's clock is the evidence, said as such by
+        // the "timeout" reason); before it, nothing says what happened, so the
+        // status is "unknown" rather than a guess.
+        private static OpenClawApprovalEnded DroppedEnding(OpenClawApproval gone, DateTimeOffset now) =>
+            OpenClawApprovals.IsExpired(gone, now)
+                ? new OpenClawApprovalEnded(gone, "expired", null, "timeout", null, "expired")
+                : new OpenClawApprovalEnded(gone, "gone", null, null, null, OpenClawApprovals.UnknownStatus);
+
         private static void EvictLocked(OpenClawApproval approval, ISet<string> touched)
         {
             RemoveLocked(approval.Id, out _);
-            RecordEndedLocked(new OpenClawApprovalEnded(approval, "evicted", null, null, null));
+            RecordEndedLocked(new OpenClawApprovalEnded(approval, "evicted", null, null, null, OpenClawApprovals.UnknownStatus));
             touched.Add(approval.SessionKey);
         }
 
