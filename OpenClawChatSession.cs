@@ -1475,7 +1475,8 @@ namespace Orbweaver
 
             // The status the gateway declared; failing that, what a resolved event's
             // decision says; failing that, the local clock's expiry.
-            var status = ended.Status ?? ended.Decision switch
+            var declared = ended.Status is null or OpenClawApprovals.UnknownStatus ? null : ended.Status;
+            var status = declared ?? ended.Decision switch
             {
                 OpenClawApprovals.Deny => "denied",
                 OpenClawApprovals.AllowOnce or "allow-always" => "allowed",
