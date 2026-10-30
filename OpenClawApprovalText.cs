@@ -16,11 +16,21 @@ namespace Orbweaver
         internal const string DenyKey = "deny";
         internal const string AllowOnceKey = "allow-once";
 
-        internal static readonly IReadOnlyList<ChatPromptOption> Options = new[]
-        {
-            new ChatPromptOption(DenyKey, "Deny"),
-            new ChatPromptOption(AllowOnceKey, "Allow once"),
-        };
+        // Each option is bound to the approval it is drawn for, so a click that
+        // lands after that request has gone, and another is showing, answers
+        // nothing. Deny only for a request that could not be shown safely: a person
+        // cannot be asked to allow what they could not read.
+        internal static IReadOnlyList<ChatPromptOption> Options(string approvalId, bool denyOnly = false) =>
+            denyOnly
+                ? new[] { new ChatPromptOption(DenyKey, "Deny", approvalId) }
+                : new[]
+                {
+                    new ChatPromptOption(DenyKey, "Deny", approvalId),
+                    new ChatPromptOption(AllowOnceKey, "Allow once", approvalId),
+                };
+
+        internal const string UnsafeRequest =
+            "A request couldn't be shown safely; answer it on the gateway";
 
         internal const int MaxCommand = 400;
         internal const int MaxLocation = 160;
@@ -35,8 +45,14 @@ namespace Orbweaver
 
         // The title and the line under it: what is being asked, then where. Plain
         // text; the panel draws both in a TextBlock.
-        internal static ChatPrompt Prompt(string agent, string command, string? cwd, string? host)
+        internal static ChatPrompt Prompt(
+            string approvalId, string agent, string command, string? cwd, string? host,
+            bool unsafeToShow = false)
         {
+            // Nothing of the request is drawn when the parser could not make it safe
+            // to: only that there is one, and a way to refuse it.
+            if (unsafeToShow) return new ChatPrompt(UnsafeRequest, Options(approvalId, denyOnly: true), Deliberate: true);
+
             var who = Clean(agent, MaxName);
             var what = Clean(command, MaxCommand);
             var title = (who.Length == 0 ? "An agent" : who) + " wants to run: " + (what.Length == 0 ? "(no command shown)" : what);
@@ -46,7 +62,7 @@ namespace Orbweaver
             if (Clean(host, MaxName) is { Length: > 0 } machine) where.Add("on " + machine);
             if (where.Count > 0) title += "\n" + string.Join(" ", where);
 
-            return new ChatPrompt(title, Options);
+            return new ChatPrompt(title, Options(approvalId), Deliberate: true);
         }
 
         // What our own answer reads as once the gateway has applied it.
@@ -101,22 +117,24 @@ namespace Orbweaver
         internal static string RoomLine(string member) =>
             Clean(member, MaxName) + " is waiting for an approval";
 
-        // Bounded, single-spaced, no control characters. Newlines and tabs become
-        // spaces: a command that sprawls over lines is shown on one so it cannot
-        // push the buttons off the bar, and cannot fake a second line.
+        // Single-spaced, no control characters, and capped: what is cut is said, as
+        // a count, so a long command cannot look shorter than it is. Newlines and
+        // tabs become spaces: a command that sprawls over lines is shown on one so
+        // it cannot push the buttons off the bar, and cannot fake a second line.
         internal static string Clean(string? text, int max)
         {
             if (string.IsNullOrEmpty(text)) return "";
 
             var sb = new System.Text.StringBuilder(Math.Min(text.Length, max + 1));
             var lastSpace = false;
+            var total = 0;
 
             foreach (var c in text)
             {
                 var ch = char.IsControl(c) ? ' ' : c;
                 if (ch == ' ')
                 {
-                    if (lastSpace || sb.Length == 0) continue;
+                    if (lastSpace || total == 0) continue;
                     lastSpace = true;
                 }
                 else
@@ -124,12 +142,16 @@ namespace Orbweaver
                     lastSpace = false;
                 }
 
-                sb.Append(ch);
-                if (sb.Length > max) break;
+                total++;
+                if (sb.Length <= max) sb.Append(ch);
             }
 
-            var result = sb.ToString().TrimEnd();
-            return result.Length > max ? result[..max].TrimEnd() + "…" : result;
+            // A trailing space is not content.
+            if (lastSpace) total--;
+
+            if (total <= max) return sb.ToString().TrimEnd();
+
+            return sb.ToString(0, max).TrimEnd() + $"… ({total - max} more characters)";
         }
     }
 }

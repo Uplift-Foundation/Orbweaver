@@ -10,34 +10,63 @@ public class OpenClawApprovalTextTests
     // gateway cannot name an option this app never meant to send, and allow-always
     // is not among them.
     [Fact]
-    public void TheOptionsAreExactlyDenyThenAllowOnce()
+    public void TheOptionsAreExactlyDenyThenAllowOnceEachBoundToItsApproval()
     {
-        Assert.Equal(new[] { "deny", "allow-once" }, OpenClawApprovalText.Options.Select(o => o.Key));
-        Assert.Equal(new[] { "Deny", "Allow once" }, OpenClawApprovalText.Options.Select(o => o.Label));
-        Assert.DoesNotContain(OpenClawApprovalText.Options, o => o.Key.Contains("always"));
+        var options = OpenClawApprovalText.Options("ap-1");
+
+        Assert.Equal(new[] { "deny", "allow-once" }, options.Select(o => o.Key));
+        Assert.Equal(new[] { "Deny", "Allow once" }, options.Select(o => o.Label));
+        Assert.All(options, o => Assert.Equal("ap-1", o.ApprovalId));
+        Assert.DoesNotContain(options, o => o.Key.Contains("always"));
     }
+
+    // A request that could not be shown safely can only be refused.
+    [Fact]
+    public void ADenyOnlyPromptOffersJustDeny()
+    {
+        var options = OpenClawApprovalText.Options("ap-1", denyOnly: true);
+
+        Assert.Equal(new[] { "deny" }, options.Select(o => o.Key));
+        Assert.Equal("ap-1", options[0].ApprovalId);
+    }
+
+    [Fact]
+    public void AnUnsafeRequestShowsNothingOfItAndOffersDenyOnly()
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "rm -rf /", "/", "box", unsafeToShow: true);
+
+        Assert.Equal("A request couldn't be shown safely; answer it on the gateway", prompt.Title);
+        Assert.DoesNotContain("rm", prompt.Title);
+        Assert.Equal(new[] { "deny" }, prompt.Options.Select(o => o.Key));
+        Assert.True(prompt.Deliberate);
+    }
+
+    // An approval prompt is deliberate: its options are armed, not instant.
+    [Fact]
+    public void AnApprovalPromptIsDeliberate() =>
+        Assert.True(OpenClawApprovalText.Prompt("ap-1", "Nova", "true", null, null).Deliberate);
 
     [Fact]
     public void ThePromptNamesTheAgentTheCommandAndWhere()
     {
-        var prompt = OpenClawApprovalText.Prompt("Nova", "ls /home/op/workspace | wc -l", "/home/op/workspace", "gateway");
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "ls /home/op/workspace | wc -l", "/home/op/workspace", "gateway");
 
         Assert.Equal("Nova wants to run: ls /home/op/workspace | wc -l\nin /home/op/workspace on gateway", prompt.Title);
-        Assert.Same(OpenClawApprovalText.Options, prompt.Options);
+        Assert.Equal(new[] { "deny", "allow-once" }, prompt.Options.Select(o => o.Key));
     }
 
     [Fact]
     public void ThePromptWithNoLocationIsOneLine()
     {
-        Assert.Equal("Nova wants to run: true", OpenClawApprovalText.Prompt("Nova", "true", null, null).Title);
-        Assert.Equal("Nova wants to run: true\nin /tmp", OpenClawApprovalText.Prompt("Nova", "true", "/tmp", "").Title);
-        Assert.Equal("Nova wants to run: true\non box", OpenClawApprovalText.Prompt("Nova", "true", " ", "box").Title);
+        Assert.Equal("Nova wants to run: true", OpenClawApprovalText.Prompt("ap-1", "Nova", "true", null, null).Title);
+        Assert.Equal("Nova wants to run: true\nin /tmp", OpenClawApprovalText.Prompt("ap-1", "Nova", "true", "/tmp", "").Title);
+        Assert.Equal("Nova wants to run: true\non box", OpenClawApprovalText.Prompt("ap-1", "Nova", "true", " ", "box").Title);
     }
 
     [Fact]
     public void ABlankAgentOrCommandIsSaidPlainly()
     {
-        Assert.Equal("An agent wants to run: (no command shown)", OpenClawApprovalText.Prompt("", "  ", null, null).Title);
+        Assert.Equal("An agent wants to run: (no command shown)", OpenClawApprovalText.Prompt("ap-1", "", "  ", null, null).Title);
     }
 
     // The command is the thing a person is deciding on, so it is shown on one line,
@@ -45,19 +74,20 @@ public class OpenClawApprovalTextTests
     [Fact]
     public void ACommandSprawlingOverLinesIsShownOnOneAndControlCharactersAreGone()
     {
-        var prompt = OpenClawApprovalText.Prompt("Nova", "echo hi\n\n  && rm -rf /\u0007\tnow", null, null);
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "echo hi\n\n  && rm -rf /\u0007\tnow", null, null);
 
         Assert.Equal("Nova wants to run: echo hi && rm -rf / now", prompt.Title);
         Assert.DoesNotContain('\u0007', prompt.Title);
     }
 
+    // What is cut is counted, so a long command cannot look shorter than it is.
     [Fact]
-    public void AnOverlongCommandIsCutWithAnEllipsis()
+    public void AnOverlongCommandIsCutAndSaysHowMuchWasLeftOut()
     {
-        var prompt = OpenClawApprovalText.Prompt("Nova", new string('x', 1000), null, null);
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", new string('x', 1000), null, null);
 
-        Assert.Equal("Nova wants to run: ".Length + OpenClawApprovalText.MaxCommand + 1, prompt.Title.Length);
-        Assert.EndsWith("…", prompt.Title);
+        Assert.Equal(
+            "Nova wants to run: " + new string('x', 400) + "… (600 more characters)", prompt.Title);
     }
 
     [Theory]
@@ -69,8 +99,12 @@ public class OpenClawApprovalTextTests
         Assert.Equal(expected, OpenClawApprovalText.Clean(input, 50));
 
     [Fact]
-    public void CleanStopsAtTheBoundWithoutBuildingTheRest() =>
-        Assert.Equal(new string('a', 5) + "…", OpenClawApprovalText.Clean(new string('a', 100_000), 5));
+    public void CleanCountsWhatItCutAndDoesNotCountTrailingSpace()
+    {
+        Assert.Equal("aaaaa… (99995 more characters)", OpenClawApprovalText.Clean(new string('a', 100_000), 5));
+        Assert.Equal("aaaaa", OpenClawApprovalText.Clean("aaaaa   ", 5));
+        Assert.Equal("aaaaa… (1 more characters)", OpenClawApprovalText.Clean("aaaaab", 5));
+    }
 
     [Fact]
     public void OurAnswersReadAsWhatWasDone()

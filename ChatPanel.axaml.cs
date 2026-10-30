@@ -3078,16 +3078,51 @@ namespace Orbweaver
         // composer: the panel doesn't hide what is happening because you can't
         // act on it yet, and the session — which owns the rule — is the thing
         // that states it.
+        // CB-270 Stage 6. A prompt marked Deliberate (an approval: an answer cannot
+        // be taken back) is armed, not instant: its options ignore presses for a
+        // moment after the prompt first shows or its content changes, so a click
+        // that was aimed at something else, or at what was there a moment ago,
+        // cannot answer it; and it answers on release over the same option that was
+        // pressed, so a press that slid off, or a press and release on different
+        // options, answers nothing. A permission bar read off a terminal is not
+        // marked, and answers on a press as it always has.
+        //
+        // The clock is a seam so a test does not sleep.
+        internal static Func<DateTime> PromptClock { get; set; } = () => DateTime.UtcNow;
+        internal static readonly TimeSpan PromptArmDelay = TimeSpan.FromMilliseconds(500);
+
+        private string? _promptSignature;
+        private DateTime _promptShownAt;
+        private bool _promptDeliberate;
+        private Control? _pressedPromptOption;
+
         private void ApplyPrompt()
         {
             var prompt = (_session as IRemoteChatPrompts)?.Prompt;
 
             if (prompt is null)
             {
+                _promptSignature = null;
+                _promptDeliberate = false;
+                _pressedPromptOption = null;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
                 return;
             }
+
+            // The arming clock restarts whenever what is being asked changes, not
+            // only when the box first appears: a new request replacing one under
+            // the pointer is exactly the moment a click must not carry over.
+            var signature = prompt.Title + "\n" + string.Join("\n",
+                prompt.Options.Select(o => o.Key + "|" + o.ApprovalId));
+            if (signature != _promptSignature)
+            {
+                _promptSignature = signature;
+                _promptShownAt = PromptClock();
+                _pressedPromptOption = null;
+            }
+
+            _promptDeliberate = prompt.Deliberate;
 
             PromptTitle.Text = prompt.Title;
 
@@ -3104,7 +3139,39 @@ namespace Orbweaver
         {
             e.Handled = true;
 
-            if ((sender as Control)?.DataContext is not ChatPromptOption option) return;
+            if (_promptDeliberate)
+            {
+                // Only remembered: the answer is given on release.
+                _pressedPromptOption = sender as Control;
+                return;
+            }
+
+            ChoosePromptOption(sender as Control);
+        }
+
+        private void PromptOption_PointerReleased(object? sender, PointerReleasedEventArgs e)
+        {
+            if (!_promptDeliberate) return;
+
+            e.Handled = true;
+
+            var pressed = _pressedPromptOption;
+            _pressedPromptOption = null;
+
+            if (sender is not Control option || !ReferenceEquals(pressed, option)) return;
+
+            // Released over the same option, not merely delivered to it by capture.
+            var at = e.GetPosition(option);
+            if (at.X < 0 || at.Y < 0 || at.X > option.Bounds.Width || at.Y > option.Bounds.Height) return;
+
+            if (PromptClock() - _promptShownAt < PromptArmDelay) return;
+
+            ChoosePromptOption(option);
+        }
+
+        private void ChoosePromptOption(Control? control)
+        {
+            if (control?.DataContext is not ChatPromptOption option) return;
             if (_session is not IRemoteChatPrompts prompts) return;
 
             _ = prompts.AnswerAsync(option);

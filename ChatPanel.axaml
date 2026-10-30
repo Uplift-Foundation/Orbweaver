@@ -589,7 +589,8 @@
                                 <Border Background="#33FFFFFF"
                                         BorderBrush="#40FFFFFF" BorderThickness="1"
                                         CornerRadius="6" Padding="7,4" Cursor="Hand"
-                                        PointerPressed="PromptOption_PointerPressed">
+                                        PointerPressed="PromptOption_PointerPressed"
+                                        PointerReleased="PromptOption_PointerReleased">
                                     <!-- No FontSize of its own: it inherits
                                          PromptOptions', which ApplyTextScale
                                          sets. A template has no handle a
