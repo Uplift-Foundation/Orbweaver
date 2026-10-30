@@ -61,6 +61,15 @@ namespace Orbweaver
         // failed and the record is still pending.
         private static readonly HashSet<string> Answered = new(StringComparer.Ordinal);
 
+        // Ids learned from the session-scoped path (a `session.approval` event or a
+        // subscribe's replay) rather than from the lists. The list poll must not
+        // drop these just because it cannot see them: the whole reason the session
+        // path exists is that a device can be shown an approval through it that the
+        // lists' visibility rules would not show. They live until a session event,
+        // a replay, an expiry or a restart ends them, or until the panel that
+        // subscribed closes, when they go back to being the list's to judge.
+        private static readonly HashSet<string> SessionSourced = new(StringComparer.Ordinal);
+
         private const int MaxEndedPerSession = 20;
 
         // The pending approvals for one session, oldest first, expired ones left
@@ -115,6 +124,12 @@ namespace Orbweaver
 
             var at = new DateTimeOffset(DateTime.SpecifyKind(now, DateTimeKind.Utc));
 
+            if (OpenClawApprovals.IsSessionEvent(name))
+            {
+                OnSessionApprovalEvent(payload, now, at);
+                return;
+            }
+
             if (OpenClawApprovals.ParseRequested(name, payload, at) is { } requested)
             {
                 if (OpenClawApprovals.IsExpired(requested, at)) return;
@@ -130,8 +145,38 @@ namespace Orbweaver
                 return;
             }
 
-            if (OpenClawApprovals.ParseResolved(name, payload) is not { } resolved) return;
+            if (OpenClawApprovals.ParseResolved(name, payload) is { } resolved) EndResolved(resolved, now);
+        }
 
+        // A `session.approval` event, from a session this app subscribed to with
+        // includeApprovals. Pending adds the record and marks it session-sourced;
+        // terminal ends it exactly as a resolved broadcast does.
+        private static void OnSessionApprovalEvent(JsonElement payload, DateTime now, DateTimeOffset at)
+        {
+            if (OpenClawApprovals.ParseSessionEvent(payload, at) is not { } change) return;
+
+            if (change.Pending is { } pending)
+            {
+                if (OpenClawApprovals.IsExpired(pending, at)) return;
+
+                bool added;
+                lock (Gate)
+                {
+                    added = AddLocked(pending, sessionSourced: true);
+                    if (added) LastSeen[pending.SessionKey] = now;
+                }
+
+                if (added) NotifyApprovals(pending.SessionKey);
+                return;
+            }
+
+            EndResolved(change.Terminal!, now);
+        }
+
+        // Takes a resolved approval off the set and records how it ended, for the
+        // panel to write up once.
+        private static void EndResolved(OpenClawApprovalResolved resolved, DateTime now)
+        {
             OpenClawApproval? approval;
             lock (Gate)
             {
@@ -147,6 +192,52 @@ namespace Orbweaver
             }
 
             NotifyApprovals(approval.SessionKey);
+        }
+
+        // A subscribe's approvalReplay: the gateway's authoritative pending set for
+        // this session. What it lists is added (and marked session-sourced), and,
+        // unless the gateway says it cut the list short, what it omits is gone.
+        internal static void ApplyReplay(string key, OpenClawApprovalReplay replay, DateTimeOffset now)
+        {
+            var changed = false;
+
+            lock (Gate)
+            {
+                var wanted = replay.Approvals.Where(a => !OpenClawApprovals.IsExpired(a, now))
+                    .GroupBy(a => a.Id, StringComparer.Ordinal).Select(g => g.First()).ToList();
+                var wantedIds = wanted.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+
+                if (!replay.Truncated && Pending.TryGetValue(key, out var held))
+                {
+                    foreach (var gone in held.Where(a => !wantedIds.Contains(a.Id)).ToList())
+                    {
+                        RemoveLocked(gone.Id, out _);
+                        changed = true;
+                        RecordEndedLocked(new OpenClawApprovalEnded(
+                            gone, OpenClawApprovals.IsExpired(gone, now) ? "expired" : "gone", null, null, null));
+                    }
+                }
+
+                foreach (var approval in wanted)
+                {
+                    if (AddLocked(approval, sessionSourced: true)) changed = true;
+                }
+            }
+
+            if (changed) NotifyApprovals(key);
+        }
+
+        // The panel that subscribed has closed: what it taught this app goes back
+        // to being the list's to judge, so an approval resolved while nobody was
+        // listening does not stay amber until it expires.
+        internal static void ReleaseSessionSourced(string key)
+        {
+            lock (Gate)
+            {
+                if (!Pending.TryGetValue(key, out var held)) return;
+
+                foreach (var approval in held) SessionSourced.Remove(approval.Id);
+            }
         }
 
         // The poll's reconciliation: the lists are the gateway's own account of
@@ -165,7 +256,10 @@ namespace Orbweaver
 
                 foreach (var (key, list) in Pending.ToList())
                 {
-                    foreach (var gone in list.Where(a => a.Kind == kind && !wantedIds.Contains(a.Id)).ToList())
+                    // A session-sourced record is not the list's to remove: the list
+                    // not showing it is exactly the case the session path exists for.
+                    foreach (var gone in list.Where(
+                                 a => a.Kind == kind && !wantedIds.Contains(a.Id) && !SessionSourced.Contains(a.Id)).ToList())
                     {
                         list.Remove(gone);
                         touched.Add(key);
@@ -196,6 +290,7 @@ namespace Orbweaver
             {
                 keys = Pending.Keys.ToList();
                 Pending.Clear();
+                SessionSourced.Clear();
                 Ended.Clear();
                 Answered.Clear();
             }
@@ -203,15 +298,17 @@ namespace Orbweaver
             foreach (var key in keys) NotifyApprovals(key);
         }
 
-        private static bool AddLocked(OpenClawApproval approval)
+        private static bool AddLocked(OpenClawApproval approval, bool sessionSourced = false)
         {
             if (!Pending.TryGetValue(approval.SessionKey, out var list))
                 Pending[approval.SessionKey] = list = new List<OpenClawApproval>();
 
             // De-duplicated by id across every session, so the same record arriving
-            // by broadcast and by poll is one record.
+            // by broadcast and by poll is one record. A session path that meets a
+            // record the lists already knew still claims it, so the poll leaves it.
             if (Pending.Values.Any(l => l.Any(a => a.Id == approval.Id)))
             {
+                if (sessionSourced) SessionSourced.Add(approval.Id);
                 if (list.Count == 0) Pending.Remove(approval.SessionKey);
                 return false;
             }
@@ -221,6 +318,7 @@ namespace Orbweaver
             if (list.Count >= OpenClawApprovals.MaxPerSession) return false;
 
             list.Add(approval);
+            if (sessionSourced) SessionSourced.Add(approval.Id);
             return true;
         }
 
@@ -234,6 +332,7 @@ namespace Orbweaver
                 if (found is null) continue;
 
                 list.Remove(found);
+                SessionSourced.Remove(id);
                 removed = found;
                 if (list.Count == 0) Pending.Remove(key);
                 return true;
@@ -311,6 +410,10 @@ namespace Orbweaver
 
             if (!string.Equals(approval.SessionKey, chat.GatewayKey, StringComparison.Ordinal))
                 return Fail("this request belongs to another conversation");
+
+            // Never an answer the gateway lists as unavailable for this request.
+            if (!approval.Allows(decision))
+                return Fail("the gateway doesn't allow that answer for this request");
 
             OpenClawGateway? gateway;
             bool first;

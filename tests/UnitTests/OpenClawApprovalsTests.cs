@@ -438,4 +438,292 @@ public class OpenClawApprovalsTests
     [InlineData("invalid decision", false)]
     public void ANotFoundRefusalIsRecognisedByItsMessage(string message, bool expected) =>
         Assert.Equal(expected, OpenClawApprovals.IsNotFound(new OpenClawRequestException(message, null)));
+
+    // --- the reviewer-safe snapshot, session events and the replay ---
+    //
+    // Declared, not measured: read from the gateway's own TypeBox schemas in
+    // openclaw 2026.10.5's dist (approval-result-validators, "since 2026.7"). A
+    // pending snapshot is {id, status, presentation, urlPath, createdAtMs,
+    // expiresAtMs}; the presentation is what is being asked, with the runtime's cwd
+    // and environment deliberately left out.
+
+    private static string ExecPresentation(
+        string command = "ls -la /tmp", string extra = "", string decisions = "[\"allow-once\",\"deny\"]") =>
+        "{\"kind\":\"exec\",\"commandText\":" + JsonSerializer.Serialize(command) +
+        ",\"host\":\"gateway\",\"agentId\":\"alpha\",\"allowedDecisions\":" + decisions + extra + "}";
+
+    private static string Snapshot(string id = "approval-0001", string presentation = "") =>
+        "{\"id\":\"" + id + "\",\"status\":\"pending\",\"urlPath\":\"/approve/" + id + "\"," +
+        "\"createdAtMs\":" + Ms(Now) + ",\"expiresAtMs\":" + Ms(Now.AddMinutes(30)) + "," +
+        "\"presentation\":" + (presentation.Length == 0 ? ExecPresentation() : presentation) + "}";
+
+    [Fact]
+    public void AnExecSnapshotIsReadFromItsPresentationWithNoCwd()
+    {
+        var approval = OpenClawApprovals.ParseSnapshot(Json(Snapshot()), Key, Now)!;
+
+        Assert.Equal("approval-0001", approval.Id);
+        Assert.Equal("exec", approval.Kind);
+        Assert.Equal(Key, approval.SessionKey);
+        Assert.Equal("alpha", approval.AgentId);
+        Assert.Equal("ls -la /tmp", approval.Command);
+        Assert.Null(approval.Cwd);
+        Assert.Equal("gateway", approval.Host);
+        Assert.Equal(Now, approval.CreatedAt);
+        Assert.Equal(new[] { "allow-once", "deny" }, approval.AllowedDecisions);
+        Assert.Null(approval.Warning);
+    }
+
+    // The preview is the fallback when the full text is absent, and the warning is
+    // carried for the panel to show.
+    [Fact]
+    public void AnExecSnapshotFallsBackToThePreviewAndCarriesItsWarning()
+    {
+        var presentation = "{\"kind\":\"exec\",\"commandPreview\":\"rm -rf …\",\"warningText\":\"deletes files\"," +
+                           "\"allowedDecisions\":[\"deny\"]}";
+
+        var approval = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation: presentation)), Key, Now)!;
+
+        Assert.Equal("rm -rf …", approval.Command);
+        Assert.Equal("deletes files", approval.Warning);
+        Assert.Equal(new[] { "deny" }, approval.AllowedDecisions);
+    }
+
+    [Fact]
+    public void APluginAndASystemAgentSnapshotAreDescribedByTheirTitleAndDescription()
+    {
+        var plugin = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation:
+            "{\"kind\":\"plugin\",\"title\":\"Publish\",\"description\":\"Pushes the package\",\"severity\":\"high\"," +
+            "\"allowedDecisions\":[\"allow-once\",\"deny\"]}")), Key, Now)!;
+        var system = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation:
+            "{\"kind\":\"system-agent\",\"title\":\"Change config\",\"description\":\"Edits openclaw.json\"," +
+            "\"proposalHash\":\"" + new string('a', 64) + "\",\"allowedDecisions\":[\"allow-once\",\"deny\"]}")), Key, Now)!;
+        var titleOnly = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation:
+            "{\"kind\":\"plugin\",\"title\":\"Publish\"}")), Key, Now)!;
+        var descriptionOnly = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation:
+            "{\"kind\":\"plugin\",\"description\":\"Pushes the package\"}")), Key, Now)!;
+        var toolOnly = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation:
+            "{\"kind\":\"plugin\",\"toolName\":\"browser.navigate\"}")), Key, Now)!;
+
+        Assert.Equal("plugin", plugin.Kind);
+        Assert.Equal("Publish — Pushes the package", plugin.Command);
+        Assert.Equal("system-agent", system.Kind);
+        Assert.Equal("Change config — Edits openclaw.json", system.Command);
+        Assert.Equal("Publish", titleOnly.Command);
+        Assert.Equal("Pushes the package", descriptionOnly.Command);
+        Assert.Equal("browser.navigate", toolOnly.Command);
+    }
+
+    // The session key is the caller's, trimmed of a run suffix, and a snapshot is
+    // refused without a presentation of a known kind, an id, or a usable key.
+    [Fact]
+    public void ASnapshotUsesTheCallersKeyTrimmedAndRefusesWhatCannotBeDrawn()
+    {
+        Assert.Equal(Key, OpenClawApprovals.ParseSnapshot(Json(Snapshot()), Key + ":run:r1", Now)!.SessionKey);
+
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json("[]"), Key, Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json("{\"presentation\":{\"kind\":\"exec\"}}"), Key, Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json(Snapshot()), "  ", Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json(Snapshot()), "agent:a\u0007", Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json(Snapshot()), "agent:" + new string('x', OpenClawApprovals.MaxKeyLength), Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json(Snapshot(id: "a\\nb")), Key, Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json(Snapshot(id: new string('x', OpenClawApprovals.MaxIdLength + 1))), Key, Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json("{\"id\":\"a1\"}"), Key, Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json("{\"id\":\"a1\",\"presentation\":7}"), Key, Now));
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation: "{\"kind\":\"shell\"}")), Key, Now));
+    }
+
+    [Fact]
+    public void ASnapshotWithNoTimesGetsTheDefaultAndABadAgentIdIsDropped()
+    {
+        var json = "{\"id\":\"a1\",\"presentation\":{\"kind\":\"exec\",\"commandText\":\"true\",\"agentId\":\"a\\u0007b\"}}";
+
+        var approval = OpenClawApprovals.ParseSnapshot(Json(json), Key, Now)!;
+
+        Assert.Equal(Now, approval.CreatedAt);
+        Assert.Equal(Now + OpenClawApprovals.DefaultLifetime, approval.ExpiresAt);
+        Assert.Null(approval.AgentId);
+        Assert.Null(approval.AllowedDecisions);
+
+        var tooLong = "{\"id\":\"a1\",\"presentation\":{\"kind\":\"exec\",\"commandText\":\"true\",\"agentId\":\"" +
+                      new string('x', OpenClawApprovals.MaxIdLength + 1) + "\"}}";
+        Assert.Null(OpenClawApprovals.ParseSnapshot(Json(tooLong), Key, Now)!.AgentId);
+    }
+
+    // The decisions listed: only well-formed strings, de-duplicated, at most three,
+    // and nothing readable means "did not say".
+    [Theory]
+    [InlineData("[\"deny\"]", new[] { "deny" })]
+    [InlineData("[\"deny\",\"deny\",\"allow-once\"]", new[] { "deny", "allow-once" })]
+    [InlineData("[\"a\",\"b\",\"c\",\"d\"]", new[] { "a", "b", "c" })]
+    [InlineData("[\"ok\",7,\"bad\\u0007\",\"\"]", new[] { "ok" })]
+    [InlineData("[]", null)]
+    [InlineData("[7]", null)]
+    [InlineData("\"deny\"", null)]
+    public void TheListedDecisionsAreReadForgivingly(string decisions, string[]? expected)
+    {
+        var json = Snapshot(presentation: ExecPresentation(decisions: decisions));
+
+        Assert.Equal(expected, OpenClawApprovals.ParseSnapshot(Json(json), Key, Now)!.AllowedDecisions);
+    }
+
+    // The legacy request carries the same two fields.
+    [Fact]
+    public void ALegacyRowCarriesItsAllowedDecisionsAndWarningToo()
+    {
+        var json = Row().Replace("\"security\":\"allowlist\"", "\"security\":\"allowlist\",\"warningText\":\"runs as root\"");
+
+        var approval = OpenClawApprovals.ParseRecord(Json(json), "exec", Now)!;
+
+        Assert.Equal(new[] { "allow-once", "deny" }, approval.AllowedDecisions);
+        Assert.Equal("runs as root", approval.Warning);
+        Assert.Null(OpenClawApprovals.ParseRecord(Json(Row().Replace("\"allowedDecisions\":[\"allow-once\",\"deny\"],", "")), "exec", Now)!.AllowedDecisions);
+    }
+
+    // The new fields take part in equality, and Allows says what is ruled out.
+    [Fact]
+    public void TheDecisionListIsPartOfAnApprovalsValueAndAllowsReadsIt()
+    {
+        var a = OpenClawApprovals.ParseSnapshot(Json(Snapshot()), Key, Now)!;
+        var same = OpenClawApprovals.ParseSnapshot(Json(Snapshot()), Key, Now)!;
+        var denyOnly = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation: ExecPresentation(decisions: "[\"deny\"]"))), Key, Now)!;
+        var unsaid = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation: ExecPresentation(decisions: "[]"))), Key, Now)!;
+
+        Assert.Equal(a, same);
+        Assert.Equal(a.GetHashCode(), same.GetHashCode());
+        Assert.NotEqual(a, denyOnly);
+        Assert.NotEqual(a, unsaid);
+        Assert.NotEqual(unsaid, a);
+        Assert.False(a.Equals(null));
+        Assert.Equal(unsaid, OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation: ExecPresentation(decisions: "[]"))), Key, Now));
+
+        Assert.True(a.Allows("allow-once"));
+        Assert.False(denyOnly.Allows("allow-once"));
+        Assert.True(denyOnly.Allows("deny"));
+        Assert.True(unsaid.Allows("allow-once"));
+        Assert.NotEqual(a, a with { Warning = "different" });
+    }
+
+    // --- a session.approval event ---
+
+    private static string SessionEvent(string phase, string approval, string key = Key) =>
+        "{\"sessionKey\":\"" + key + "\",\"sourceSessionKey\":\"" + key + "\",\"updatedAtMs\":" + Ms(Now) +
+        ",\"phase\":\"" + phase + "\",\"approval\":" + approval + "}";
+
+    [Fact]
+    public void APendingSessionEventCarriesTheApproval()
+    {
+        var change = OpenClawApprovals.ParseSessionEvent(Json(SessionEvent("pending", Snapshot())), Now)!;
+
+        Assert.Equal("pending", change.Phase);
+        Assert.Equal("approval-0001", change.Pending!.Id);
+        Assert.Equal(Key, change.Pending.SessionKey);
+        Assert.Null(change.Terminal);
+    }
+
+    [Fact]
+    public void ATerminalSessionEventCarriesHowItEnded()
+    {
+        var terminal = "{\"id\":\"approval-0001\",\"status\":\"denied\",\"decision\":\"deny\",\"reason\":\"user\"," +
+                       "\"resolvedAtMs\":" + Ms(Now) + ",\"resolver\":{\"kind\":\"device\",\"id\":\"device-0001\"}," +
+                       "\"presentation\":" + ExecPresentation() + "}";
+
+        var change = OpenClawApprovals.ParseSessionEvent(Json(SessionEvent("terminal", terminal)), Now)!;
+
+        Assert.Equal("terminal", change.Phase);
+        Assert.Equal(new OpenClawApprovalResolved("approval-0001", "exec", "deny", "user", "device-0001"), change.Terminal);
+        Assert.Null(change.Pending);
+    }
+
+    // An expired snapshot has no decision, and the reason or the status says why.
+    [Fact]
+    public void ATerminalEventWithNoDecisionOrResolverFallsBackToTheStatus()
+    {
+        var withReason = "{\"id\":\"a1\",\"status\":\"expired\",\"reason\":\"timeout\"}";
+        var statusOnly = "{\"id\":\"a1\",\"status\":\"cancelled\"}";
+        var byKind = "{\"id\":\"a1\",\"status\":\"allowed\",\"decision\":\"allow-once\",\"resolver\":{\"kind\":\"channel\"}}";
+
+        var a = OpenClawApprovals.ParseSessionEvent(Json(SessionEvent("terminal", withReason)), Now)!.Terminal!;
+        var b = OpenClawApprovals.ParseSessionEvent(Json(SessionEvent("terminal", statusOnly)), Now)!.Terminal!;
+        var c = OpenClawApprovals.ParseSessionEvent(Json(SessionEvent("terminal", byKind)), Now)!.Terminal!;
+
+        Assert.Equal(("exec", (string?)null, "timeout", (string?)null), (a.Kind, a.Decision, a.Reason, a.ResolvedBy));
+        Assert.Equal("cancelled", b.Reason);
+        Assert.Equal("channel", c.ResolvedBy);
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("{\"sessionKey\":\"agent:a:b\",\"phase\":\"pending\"}")]
+    [InlineData("{\"phase\":\"pending\",\"approval\":{}}")]
+    [InlineData("{\"sessionKey\":\"agent:a:b\",\"phase\":\"unknown\",\"approval\":{}}")]
+    [InlineData("{\"sessionKey\":\"agent:a:b\",\"phase\":\"pending\",\"approval\":{\"id\":\"a1\"}}")]
+    [InlineData("{\"sessionKey\":\"agent:a:b\",\"phase\":\"terminal\",\"approval\":{}}")]
+    [InlineData("{\"sessionKey\":\"agent:a:b\",\"phase\":\"terminal\",\"approval\":{\"id\":\"a\\nb\"}}")]
+    public void AMalformedSessionEventIsNull(string json) =>
+        Assert.Null(OpenClawApprovals.ParseSessionEvent(Json(json), Now));
+
+    [Fact]
+    public void ATerminalEventsOverlongIdIsNull() =>
+        Assert.Null(OpenClawApprovals.ParseSessionEvent(Json(SessionEvent(
+            "terminal", "{\"id\":\"" + new string('x', OpenClawApprovals.MaxIdLength + 1) + "\"}")), Now));
+
+    [Fact]
+    public void OnlyTheSessionApprovalNameIsASessionEvent()
+    {
+        Assert.True(OpenClawApprovals.IsSessionEvent("session.approval"));
+        Assert.False(OpenClawApprovals.IsSessionEvent("exec.approval.requested"));
+        Assert.False(OpenClawApprovals.IsSessionEvent("session.message"));
+    }
+
+    // --- the subscribe's replay ---
+
+    private static string Response(string approvals, bool truncated = false, bool withReplay = true) =>
+        "{\"subscribed\":true,\"key\":\"" + Key + "\",\"agentId\":\"alpha\"" +
+        (withReplay
+            ? ",\"approvalReplay\":{\"sessionKey\":\"" + Key + "\",\"updatedAtMs\":" + Ms(Now) +
+              ",\"approvals\":" + approvals + ",\"truncated\":" + (truncated ? "true" : "false") + "}"
+            : "") + "}";
+
+    [Fact]
+    public void AReplayIsReadUnderTheKeyThatWasSubscribed()
+    {
+        var replay = OpenClawApprovals.ParseReplay(
+            Json(Response("[" + Snapshot("a1") + "," + Snapshot("a2") + "]")), Key, Now)!;
+
+        Assert.Equal(new[] { "a1", "a2" }, replay.Approvals.Select(a => a.Id).ToArray());
+        Assert.All(replay.Approvals, a => Assert.Equal(Key, a.SessionKey));
+        Assert.False(replay.Truncated);
+    }
+
+    [Fact]
+    public void ATruncatedReplaySaysSoAndABadRowIsSkipped()
+    {
+        var replay = OpenClawApprovals.ParseReplay(
+            Json(Response("[{\"id\":\"no-presentation\"}," + Snapshot("a2") + "]", truncated: true)), Key, Now)!;
+
+        Assert.True(replay.Truncated);
+        Assert.Equal("a2", Assert.Single(replay.Approvals).Id);
+    }
+
+    // No replay in the answer, or not in the shape, is no replay: a subscribe made
+    // without includeApprovals answers none.
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("{\"subscribed\":true}")]
+    [InlineData("{\"approvalReplay\":7}")]
+    [InlineData("{\"approvalReplay\":{}}")]
+    [InlineData("{\"approvalReplay\":{\"approvals\":\"nope\"}}")]
+    public void AnAnswerWithNoReplayIsNull(string json) =>
+        Assert.Null(OpenClawApprovals.ParseReplay(Json(json), Key, Now));
+
+    [Fact]
+    public void AnEmptyReplayIsAnEmptyAuthoritativeSet()
+    {
+        var replay = OpenClawApprovals.ParseReplay(Json(Response("[]")), Key, Now)!;
+
+        Assert.Empty(replay.Approvals);
+        Assert.False(replay.Truncated);
+    }
 }

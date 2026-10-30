@@ -36,7 +36,36 @@ namespace Orbweaver
         string? Host,
         DateTimeOffset CreatedAt,
         DateTimeOffset ExpiresAt,
-        bool CommandTruncated = false);
+        bool CommandTruncated = false,
+
+        // The decisions the gateway says a reviewer may give this one, null when it
+        // did not say (a legacy list row without the field). `deny` is always in it
+        // when it is present; `allow-once` can be absent, and then the panel must
+        // not offer it. Declared in the gateway's approval schemas, not measured.
+        IReadOnlyList<string>? AllowedDecisions = null,
+
+        // The gateway's own warning about this request, where it carries one.
+        string? Warning = null)
+    {
+        // A record compares by value, and the decision list has to as well: the same
+        // approval read from a list row and from an event is one record.
+        public bool Equals(OpenClawApproval? other) =>
+            other is not null
+            && Id == other.Id && Kind == other.Kind && SessionKey == other.SessionKey
+            && AgentId == other.AgentId && Command == other.Command && Cwd == other.Cwd
+            && Host == other.Host && CreatedAt == other.CreatedAt && ExpiresAt == other.ExpiresAt
+            && CommandTruncated == other.CommandTruncated && Warning == other.Warning
+            && (AllowedDecisions is null
+                ? other.AllowedDecisions is null
+                : other.AllowedDecisions is not null && AllowedDecisions.SequenceEqual(other.AllowedDecisions));
+
+        public override int GetHashCode() => HashCode.Combine(Id, Kind, SessionKey, Command, ExpiresAt);
+
+        // Whether this is an answer the gateway has not ruled out. Nothing said
+        // means nothing ruled out.
+        internal bool Allows(string decision) =>
+            AllowedDecisions is null || AllowedDecisions.Contains(decision);
+    }
 
     // A requested approval that is no longer pending, whoever or whatever ended
     // it. The event carries the decision (null when nobody made one); the
@@ -45,6 +74,16 @@ namespace Orbweaver
     // present and null otherwise.
     internal sealed record OpenClawApprovalResolved(
         string Id, string Kind, string? Decision, string? Reason, string? ResolvedBy);
+
+    // One `session.approval` event, or one entry of a subscribe's approvalReplay,
+    // read: a pending transition carries the approval, a terminal one carries how
+    // it ended. Declared in the gateway's schemas (since 2026.7), not measured.
+    internal sealed record OpenClawSessionApproval(
+        string Phase, OpenClawApproval? Pending, OpenClawApprovalResolved? Terminal);
+
+    // The subscribe response's approvalReplay: the authoritative pending set for
+    // the session, and whether the gateway cut it short.
+    internal sealed record OpenClawApprovalReplay(IReadOnlyList<OpenClawApproval> Approvals, bool Truncated);
 
     // What the gateway answered when asked to resolve one: `applied` says whether
     // this call decided it, and a false carries what the other reviewer decided.
@@ -93,6 +132,13 @@ namespace Orbweaver
             "openclaw.approval.requested" or "openclaw.approval.resolved" => SystemAgentKind,
             _ => null,
         };
+
+        // The session-scoped event, delivered only to a connection that subscribed
+        // with includeApprovals and may see the record. The one path that does not
+        // depend on the requester fields the broadcasts and lists are filtered by.
+        internal const string SessionEventName = "session.approval";
+
+        internal static bool IsSessionEvent(string name) => name == SessionEventName;
 
         internal static bool IsRequestedEvent(string name) =>
             KindOfEvent(name) is not null && name.EndsWith(".requested", StringComparison.Ordinal);
@@ -154,8 +200,144 @@ namespace Orbweaver
             return new OpenClawApproval(
                 id, resolvedKind!, sessionKey, agent, command,
                 Short(Str(request, "cwd")), Short(Str(request, "host")),
-                created, expires, truncated);
+                created, expires, truncated,
+                DecisionsOf(request), Short(Str(request, "warningText")));
         }
+
+        // The reviewer-safe snapshot the gateway's session surfaces carry: an id,
+        // a status, and a `presentation` that says what is being asked, with the
+        // runtime's cwd and environment deliberately left out. The session key is
+        // the caller's: an event names it, and a subscribe's replay is read under
+        // the key that was subscribed, which is the one this app holds a panel on.
+        // Null for anything that is not a well-formed pending snapshot.
+        internal static OpenClawApproval? ParseSnapshot(JsonElement snapshot, string sessionKey, DateTimeOffset now)
+        {
+            if (snapshot.ValueKind != JsonValueKind.Object) return null;
+
+            var id = Str(snapshot, "id");
+            if (string.IsNullOrWhiteSpace(id) || id!.Length > MaxIdLength || OpenClawSocket.HasControlCharacter(id))
+                return null;
+
+            if (string.IsNullOrWhiteSpace(sessionKey)
+                || sessionKey.Length > MaxKeyLength
+                || OpenClawSocket.HasControlCharacter(sessionKey))
+                return null;
+
+            var run = sessionKey.IndexOf(":run:", StringComparison.Ordinal);
+            if (run > 0) sessionKey = sessionKey[..run];
+
+            if (!snapshot.TryGetProperty("presentation", out var presentation)
+                || presentation.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var kind = Str(presentation, "kind");
+            if (kind is not (ExecKind or PluginKind or SystemAgentKind)) return null;
+
+            var text = kind == ExecKind
+                ? Str(presentation, "commandText") ?? Str(presentation, "commandPreview")
+                : Join(Str(presentation, "title"), Str(presentation, "description"))
+                  ?? Str(presentation, "toolName");
+
+            var (command, truncated) = BoundCommand(text);
+            var agent = Str(presentation, "agentId");
+            if (agent is not null && (agent.Length > MaxIdLength || OpenClawSocket.HasControlCharacter(agent)))
+                agent = null;
+
+            var created = TimeOf(snapshot, "createdAtMs") ?? now;
+            var expires = TimeOf(snapshot, "expiresAtMs") ?? created + DefaultLifetime;
+
+            return new OpenClawApproval(
+                id, kind!, sessionKey, agent, command, null, Short(Str(presentation, "host")),
+                created, expires, truncated,
+                DecisionsOf(presentation), Short(Str(presentation, "warningText")));
+        }
+
+        // A `session.approval` event: phase pending carries a pending snapshot,
+        // phase terminal carries how it ended. The audience key is `sessionKey`.
+        internal static OpenClawSessionApproval? ParseSessionEvent(JsonElement payload, DateTimeOffset now)
+        {
+            if (payload.ValueKind != JsonValueKind.Object
+                || !payload.TryGetProperty("approval", out var approval)
+                || approval.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var key = Str(payload, "sessionKey");
+            if (string.IsNullOrWhiteSpace(key)) return null;
+
+            switch (Str(payload, "phase"))
+            {
+                case "pending":
+                {
+                    var pending = ParseSnapshot(approval, key!, now);
+                    return pending is null ? null : new OpenClawSessionApproval("pending", pending, null);
+                }
+
+                case "terminal":
+                {
+                    var id = Str(approval, "id");
+                    if (string.IsNullOrWhiteSpace(id) || id!.Length > MaxIdLength || OpenClawSocket.HasControlCharacter(id))
+                        return null;
+
+                    var presentation = approval.TryGetProperty("presentation", out var p) ? p : default;
+                    var resolver = approval.TryGetProperty("resolver", out var r) ? r : default;
+
+                    return new OpenClawSessionApproval("terminal", null, new OpenClawApprovalResolved(
+                        id, Str(presentation, "kind") ?? ExecKind,
+                        Short(Str(approval, "decision")),
+                        Short(Str(approval, "reason")) ?? Short(Str(approval, "status")),
+                        Short(Str(resolver, "id") ?? Str(resolver, "kind"))));
+                }
+
+                default:
+                    return null;
+            }
+        }
+
+        // The subscribe response: `{subscribed, key, agentId, approvalReplay}`, where
+        // approvalReplay is `{sessionKey, updatedAtMs, approvals, truncated}`. Null
+        // when the response carries none, which is also what a subscribe made
+        // without includeApprovals answers.
+        internal static OpenClawApprovalReplay? ParseReplay(JsonElement response, string key, DateTimeOffset now)
+        {
+            if (response.ValueKind != JsonValueKind.Object
+                || !response.TryGetProperty("approvalReplay", out var replay)
+                || replay.ValueKind != JsonValueKind.Object
+                || !replay.TryGetProperty("approvals", out var approvals)
+                || approvals.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var parsed = new List<OpenClawApproval>();
+            foreach (var row in approvals.EnumerateArray())
+            {
+                if (ParseSnapshot(row, key, now) is { } approval) parsed.Add(approval);
+            }
+
+            var truncated = replay.TryGetProperty("truncated", out var t) && t.ValueKind == JsonValueKind.True;
+            return new OpenClawApprovalReplay(parsed, truncated);
+        }
+
+        // The decisions listed, only the well-formed strings, null when there are
+        // none to read: absent, not an array, or empty all mean "did not say".
+        private static IReadOnlyList<string>? DecisionsOf(JsonElement holder)
+        {
+            if (!holder.TryGetProperty("allowedDecisions", out var list) || list.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var decisions = list.EnumerateArray()
+                .Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()!)
+                .Where(d => d.Length is > 0 and <= 40 && !OpenClawSocket.HasControlCharacter(d))
+                .Distinct(StringComparer.Ordinal)
+                .Take(3)
+                .ToList();
+
+            return decisions.Count == 0 ? null : decisions;
+        }
+
+        private static string? Join(string? title, string? description) =>
+            string.IsNullOrWhiteSpace(title) ? description
+            : string.IsNullOrWhiteSpace(description) ? title
+            : title + " — " + description;
 
         // A requested event: its payload is a record, and the name says the kind.
         internal static OpenClawApproval? ParseRequested(string name, JsonElement payload, DateTimeOffset now) =>
@@ -256,6 +438,14 @@ namespace Orbweaver
                        ?? Str(request, "description")
                        ?? Str(request, "toolName");
 
+            if (string.IsNullOrWhiteSpace(text)) return ("(the gateway did not say what this runs)", false);
+
+            return BoundCommand(text);
+        }
+
+        // The text as it will be drawn, cut at the bound and marked when it was.
+        private static (string Text, bool Truncated) BoundCommand(string? text)
+        {
             if (string.IsNullOrWhiteSpace(text)) return ("(the gateway did not say what this runs)", false);
 
             var cleaned = Clean(text!.Trim());

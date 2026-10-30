@@ -1848,7 +1848,7 @@ namespace Orbweaver
             // CB-270 Stage 6: approval broadcasts carry the session in
             // request.sessionKey, not at the top, so they are routed before the run
             // signal looks for one. They never touch a run's state.
-            if (OpenClawApprovals.KindOfEvent(name) is not null)
+            if (OpenClawApprovals.KindOfEvent(name) is not null || OpenClawApprovals.IsSessionEvent(name))
             {
                 OnApprovalEvent(name, payload, now);
                 return;
@@ -4988,8 +4988,22 @@ namespace Orbweaver
                     && gateway.GrantedScopes.Contains(ApprovalsScope))
                     parameters["includeApprovals"] = true;
 
-                await gateway.RequestAsync(
+                var response = await gateway.RequestAsync(
                     wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe", parameters, ct);
+
+                // The subscribe's answer carries the authoritative pending set for
+                // the session when approvals were asked for. An unsubscribe hands
+                // what the panel taught this app back to the list.
+                if (parameters.ContainsKey("includeApprovals"))
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    if (OpenClawApprovals.ParseReplay(response, key, now) is { } replay) ApplyReplay(key, replay, now);
+                }
+                else if (!wanted)
+                {
+                    ReleaseSessionSourced(key);
+                }
+
                 return null;
             }
             catch (Exception ex) when (wanted)

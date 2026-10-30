@@ -707,6 +707,15 @@ public class OpenClawApprovalStateTests : IDisposable
             await OpenClawSessions.PollApprovalsOnceAsync(gateway, CancellationToken.None);
             await OpenClawSessions.PollApprovalsOnceAsync(gateway, CancellationToken.None);
 
+            // The session-scoped path too: its events, its replay, and the subscribe
+            // that asks for it.
+            SessionPending("s1");
+            SessionTerminal("s1");
+            OpenClawSessions.ApplyReplay(Key, Replay(false, "r1"), new DateTimeOffset(Now));
+            await OpenClawSessions.MessagesRequestAsync(gateway, Key, true, CancellationToken.None);
+            OpenClawSessions.ReleaseSessionSourced(Key);
+            await OpenClawSessions.MessagesRequestAsync(gateway, Key, false, CancellationToken.None);
+
             OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now.AddHours(2)));
             _ = OpenClawSessions.StateFor(Key, Now.AddHours(2));
             _ = OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now.AddHours(2)));
@@ -812,5 +821,283 @@ public class OpenClawApprovalStateTests : IDisposable
         var unsubscribe = await SubscribeFrameAsync(Approving, wanted: false);
         Assert.Equal("sessions.messages.unsubscribe", unsubscribe.Method);
         Assert.Equal(new[] { "key" }, unsubscribe.Params.EnumerateObject().Select(p => p.Name).ToArray());
+    }
+
+    // --- the session-scoped path: session.approval and the subscribe's replay ---
+    //
+    // Declared shapes, from the gateway's own schemas; see OpenClawApprovalsTests.
+
+    private static string Snapshot(string id, string key = Key) =>
+        "{\"id\":\"" + id + "\",\"status\":\"pending\",\"urlPath\":\"/approve/" + id + "\"," +
+        "\"createdAtMs\":" + Ms(Now) + ",\"expiresAtMs\":" + Ms(Now.AddMinutes(30)) + "," +
+        "\"presentation\":{\"kind\":\"exec\",\"commandText\":\"ls -la /tmp\",\"agentId\":\"alpha\"," +
+        "\"allowedDecisions\":[\"allow-once\",\"deny\"]}}";
+
+    private static void SessionPending(string id, string key = Key) =>
+        OpenClawSessions.OnEvent("session.approval", Json(
+            "{\"sessionKey\":\"" + key + "\",\"updatedAtMs\":" + Ms(Now) + ",\"phase\":\"pending\",\"approval\":" +
+            Snapshot(id, key) + "}"), Now);
+
+    private static void SessionTerminal(string id, string key = Key, string status = "denied") =>
+        OpenClawSessions.OnEvent("session.approval", Json(
+            "{\"sessionKey\":\"" + key + "\",\"updatedAtMs\":" + Ms(Now) + ",\"phase\":\"terminal\",\"approval\":" +
+            "{\"id\":\"" + id + "\",\"status\":\"" + status + "\",\"decision\":\"deny\",\"reason\":\"user\"}}"), Now);
+
+    [Fact]
+    public void ASessionApprovalEventMakesTheSessionWaitingAndATerminalOneEndsIt()
+    {
+        SessionPending("s1");
+
+        Assert.Equal("s1", Ids(Key));
+        Assert.Equal("waiting", OpenClawSessions.StateFor(Key, Now));
+
+        SessionTerminal("s1");
+
+        Assert.Equal("", Ids(Key));
+        var ended = Assert.Single(OpenClawSessions.TakeEnded(Key));
+        Assert.Equal("resolved", ended.Cause);
+        Assert.Equal("deny", ended.Decision);
+        Assert.Equal("user", ended.Reason);
+    }
+
+    [Fact]
+    public void ASessionApprovalEventIsIgnoredWithApprovingOffOrExpiredOrMalformed()
+    {
+        OrbweaverSettings.OpenClawApproveEnabled = false;
+        SessionPending("s1");
+        Assert.Equal("", Ids(Key));
+
+        OrbweaverSettings.OpenClawApproveEnabled = true;
+        OpenClawSessions.OnEvent("session.approval", Json("{\"phase\":\"pending\"}"), Now);
+        OpenClawSessions.OnEvent("session.approval", Json(
+            "{\"sessionKey\":\"" + Key + "\",\"phase\":\"pending\",\"approval\":" +
+            Snapshot("late").Replace("\"expiresAtMs\":" + Ms(Now.AddMinutes(30)), "\"expiresAtMs\":" + Ms(Now.AddSeconds(-1))) + "}"), Now);
+        Assert.Equal("", Ids(Key));
+
+        // The control: the same event with the switch on and a live expiry is held.
+        SessionPending("s1");
+        Assert.Equal("s1", Ids(Key));
+    }
+
+    // The same approval met by the session path and by a broadcast is one record,
+    // and a terminal event for an id this app never held is ignored.
+    [Fact]
+    public void TheSessionPathAndABroadcastAreOneRecordAndAnUnknownEndingIsIgnored()
+    {
+        Requested("a1");
+        SessionPending("a1");
+
+        Assert.Equal("a1", Ids(Key));
+
+        SessionTerminal("never-held");
+        Assert.Equal("a1", Ids(Key));
+        Assert.Empty(OpenClawSessions.TakeEnded(Key));
+    }
+
+    // The point of the session path: a record the lists cannot see is not dropped
+    // by the list poll, because the poll cannot see it. A record only the list
+    // taught is, as before.
+    [Fact]
+    public void AListThatDoesNotShowASessionSourcedRecordDoesNotDropIt()
+    {
+        SessionPending("only-via-session");
+        Requested("only-via-broadcast");
+
+        var now = new DateTimeOffset(Now);
+        OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), now);
+
+        Assert.Equal("only-via-session", Ids(Key));
+        Assert.Equal("gone", Assert.Single(OpenClawSessions.TakeEnded(Key)).Cause);
+    }
+
+    // A session path that meets a record the lists already held claims it.
+    [Fact]
+    public void ASessionEventForARecordTheListsAlreadyHeldClaimsItFromThePoll()
+    {
+        Requested("a1");
+        SessionPending("a1");
+
+        OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now));
+
+        Assert.Equal("a1", Ids(Key));
+    }
+
+    // When the panel that taught it closes, what it taught goes back to the list to
+    // judge, so an approval resolved while nobody listened does not stay amber.
+    [Fact]
+    public void ReleasingASessionHandsItsRecordsBackToTheList()
+    {
+        SessionPending("a1");
+        OpenClawSessions.ReleaseSessionSourced(Key);
+        OpenClawSessions.ReleaseSessionSourced("agent:nobody:main");
+
+        OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now));
+
+        Assert.Equal("", Ids(Key));
+    }
+
+    [Fact]
+    public void ARestartForgetsWhichRecordsCameFromTheSessionPath()
+    {
+        SessionPending("a1");
+        OpenClawSessions.Restart();
+
+        // Re-learned from the list, the record is the list's to judge again.
+        OpenClawSessions.ReplacePending(
+            "exec", OpenClawApprovals.ParseList(Json("[" + Row("a1") + "]"), "exec", new DateTimeOffset(Now)),
+            new DateTimeOffset(Now));
+        OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now));
+
+        Assert.Equal("", Ids(Key));
+    }
+
+    private static OpenClawApprovalReplay Replay(bool truncated, params string[] ids) =>
+        new(ids.Select(i => OpenClawApprovals.ParseSnapshot(Json(Snapshot(i)), Key, new DateTimeOffset(Now))!).ToList(), truncated);
+
+    // The replay is the authoritative set: what it lists is added, and what it
+    // omits is gone, whatever else taught this app about it.
+    [Fact]
+    public void AReplayAddsWhatItListsAndRemovesWhatItOmits()
+    {
+        Requested("old");
+        Requested("kept");
+
+        OpenClawSessions.ApplyReplay(Key, Replay(false, "kept", "fresh"), new DateTimeOffset(Now));
+
+        Assert.Equal("fresh,kept", string.Join(",", Ids(Key).Split(',').OrderBy(i => i)));
+        Assert.Equal("old", Assert.Single(OpenClawSessions.TakeEnded(Key)).Approval.Id);
+    }
+
+    // A replay the gateway says it cut short cannot be trusted to omit: nothing is
+    // removed on its say-so, though what it lists is still added.
+    [Fact]
+    public void ATruncatedReplayAddsButNeverRemoves()
+    {
+        Requested("held");
+
+        OpenClawSessions.ApplyReplay(Key, Replay(true, "fresh"), new DateTimeOffset(Now));
+
+        Assert.Equal("fresh,held", string.Join(",", Ids(Key).Split(',').OrderBy(i => i)));
+        Assert.Empty(OpenClawSessions.TakeEnded(Key));
+    }
+
+    // An omitted record found past its expiry ended by expiring, and an expired or
+    // duplicate row in the replay is not added.
+    [Fact]
+    public void AReplayOmittingAnExpiredRecordEndsItByExpiryAndSkipsExpiredAndDuplicateRows()
+    {
+        Requested("will-expire", expires: Now.AddMinutes(5));
+        var later = new DateTimeOffset(Now.AddMinutes(6));
+        var stale = OpenClawApprovals.ParseSnapshot(Json(Snapshot("stale")), Key, later)! with { ExpiresAt = later.AddSeconds(-1) };
+        var live = OpenClawApprovals.ParseSnapshot(Json(Snapshot("live")), Key, later)! with { ExpiresAt = later.AddMinutes(5) };
+
+        OpenClawSessions.ApplyReplay(Key, new OpenClawApprovalReplay(new[] { stale, live, live }, false), later);
+
+        Assert.Equal("expired", Assert.Single(OpenClawSessions.TakeEnded(Key)).Cause);
+        Assert.Equal("live", string.Join(",", OpenClawSessions.PendingFor(Key, later).Select(a => a.Id)));
+    }
+
+    // A replay for a session that held nothing, listing nothing, changes nothing.
+    [Fact]
+    public void AnEmptyReplayForAnEmptySessionChangesNothing()
+    {
+        OpenClawSessions.ApplyReplay(Key, Replay(false), new DateTimeOffset(Now));
+
+        Assert.Equal("", Ids(Key));
+        Assert.Empty(OpenClawSessions.TakeEnded(Key));
+    }
+
+    // --- the subscribe over a socket: replay in, session-sourced released ---
+
+    [Fact]
+    public async Task ASubscribeWithApprovalsIngestsTheReplayInItsAnswer()
+    {
+        var (_, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "sessions.messages.subscribe"
+                ? FakeGatewaySocket.Ok(r.Id, Json(
+                    "{\"subscribed\":true,\"key\":\"" + Key + "\",\"approvalReplay\":{\"sessionKey\":\"" + Key +
+                    "\",\"updatedAtMs\":" + Ms(Now) + ",\"approvals\":[" + Snapshot("r1") + "],\"truncated\":false}}"))
+                : null);
+        using (gateway)
+        {
+            Assert.Null(await OpenClawSessions.MessagesRequestAsync(gateway, Key, true, CancellationToken.None));
+
+            Assert.Equal("r1", Ids(Key));
+            Assert.Equal("waiting", OpenClawSessions.StateFor(Key));
+        }
+    }
+
+    // Without approvals asked for the answer carries no replay, and a subscribe
+    // that was not for approvals ingests nothing.
+    [Fact]
+    public async Task ASubscribeWithoutApprovalsIngestsNothing()
+    {
+        OrbweaverSettings.OpenClawApproveEnabled = false;
+        var (_, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "sessions.messages.subscribe"
+                ? FakeGatewaySocket.Ok(r.Id, Json(
+                    "{\"subscribed\":true,\"approvalReplay\":{\"approvals\":[" + Snapshot("r1") + "],\"truncated\":false}}"))
+                : null);
+        using (gateway)
+        {
+            await OpenClawSessions.MessagesRequestAsync(gateway, Key, true, CancellationToken.None);
+
+            Assert.Equal("", Ids(Key));
+        }
+    }
+
+    // An approvals subscribe whose answer has no replay (an older gateway) changes
+    // nothing and is not a failure.
+    [Fact]
+    public async Task AnApprovalsSubscribeWhoseAnswerHasNoReplayChangesNothing()
+    {
+        Requested("held");
+        var (_, gateway) = await ConnectedAsync(Approving);
+        using (gateway)
+        {
+            Assert.Null(await OpenClawSessions.MessagesRequestAsync(gateway, Key, true, CancellationToken.None));
+
+            Assert.Equal("held", Ids(Key));
+        }
+    }
+
+    // Closing the panel hands what the session path taught back to the list.
+    [Fact]
+    public async Task AnUnsubscribeReleasesWhatTheSessionPathTaught()
+    {
+        SessionPending("a1");
+        var (_, gateway) = await ConnectedAsync(Approving);
+        using (gateway)
+        {
+            await OpenClawSessions.MessagesRequestAsync(gateway, Key, false, CancellationToken.None);
+
+            OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now));
+            Assert.Equal("", Ids(Key));
+        }
+    }
+
+    // --- an answer the gateway lists as unavailable is never sent ---
+
+    [Fact]
+    public async Task AnAnswerTheGatewayListsAsUnavailableForThisRequestNeverReachesTheWire()
+    {
+        var denyOnly = OpenClawApprovals.ParseSnapshot(Json(
+            Snapshot("a1").Replace("\"allowedDecisions\":[\"allow-once\",\"deny\"]", "\"allowedDecisions\":[\"deny\"]")),
+            Key, new DateTimeOffset(Now))!;
+        var (socket, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
+        using (gateway)
+        {
+            var refused = await OpenClawSessions.ResolveApprovalAsync(Chat(), denyOnly, "allow-once");
+
+            Assert.Equal(OpenClawApprovalResult.Failed, refused.Result);
+            Assert.Equal("the gateway doesn't allow that answer for this request", refused.Detail);
+            Assert.Empty(Sent(socket));
+
+            // The control: deny is listed, and goes.
+            var allowed = await OpenClawSessions.ResolveApprovalAsync(Chat(), denyOnly, "deny");
+            Assert.Equal(OpenClawApprovalResult.Answered, allowed.Result);
+            Assert.Single(Sent(socket));
+        }
     }
 }
