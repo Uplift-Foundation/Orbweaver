@@ -583,6 +583,27 @@ public class OpenClawChatApprovalTests : IDisposable
         }
     }
 
+    // End to end through the real parser: an announcement that carries no command, or
+    // a blank one, reaches the panel as an unsafe-style prompt with Deny only, not a
+    // placeholder sentence with Allow once.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AnAnnouncementWithNoCommandReachesThePanelAsDenyOnly(string? command)
+    {
+        var withCommand = Row("m1", "x");
+        var row = command is null
+            ? withCommand.Replace("\"command\":\"x\",", "")
+            : Row("m1", command);
+
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(row), Now);
+
+        var prompt = Chat().Prompt!;
+        Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, prompt.Title);
+        Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+    }
+
     // The poll finding it gone: before its expiry nothing says why, after it, it
     // expired.
     [Fact]
