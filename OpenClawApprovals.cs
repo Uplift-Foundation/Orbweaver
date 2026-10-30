@@ -247,7 +247,9 @@ namespace Orbweaver
         // character that is not whitespace, a control or format character, a combining
         // mark, or one of the characters that draw as blank without being any of those
         // (the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, and the blank braille
-        // cell U+2800). A "command" made only of those reads as nothing, and the single
+        // cell U+2800), and the code points that draw nothing because nothing is assigned
+        // to them: private use (Co), unassigned (Cn), the noncharacters, and the object
+        // replacement character U+FFFC. A "command" made only of those reads as nothing, and the single
         // place that decides so is here: the record's NoCommandToShow and the prompt's
         // text builder both ask this, so neither can drift from the other. A real command
         // with a combining accent or an emoji with a variation selector still has its
@@ -259,7 +261,12 @@ namespace Orbweaver
             foreach (var rune in text.EnumerateRunes())
             {
                 if (Rune.IsWhiteSpace(rune)) continue;
-                if (rune.Value is 0x115F or 0x1160 or 0x3164 or 0xFFA0 or 0x2800) continue;
+                if (rune.Value is 0x115F or 0x1160 or 0x3164 or 0xFFA0 or 0x2800 or 0xFFFC) continue;
+
+                // The noncharacters: U+FDD0 to U+FDEF and the last two code points of
+                // every plane (U+xxFFFE and U+xxFFFF). They are never assigned and a
+                // font has nothing to draw for them.
+                if (rune.Value is >= 0xFDD0 and <= 0xFDEF || (rune.Value & 0xFFFE) == 0xFFFE) continue;
 
                 switch (Rune.GetUnicodeCategory(rune))
                 {
@@ -267,6 +274,8 @@ namespace Orbweaver
                     case UnicodeCategory.Format:
                     case UnicodeCategory.NonSpacingMark:
                     case UnicodeCategory.EnclosingMark:
+                    case UnicodeCategory.PrivateUse:
+                    case UnicodeCategory.OtherNotAssigned:
                         continue;
                     default:
                         return true;

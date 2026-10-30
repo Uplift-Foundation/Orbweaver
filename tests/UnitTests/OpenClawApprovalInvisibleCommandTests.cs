@@ -39,26 +39,45 @@ public class OpenClawApprovalInvisibleCommandTests : IDisposable
     // QA's seven shapes: each draws as nothing.
     private static readonly string[] InvisibleShapes =
     {
-        "ㅤ",                 // Hangul filler
-        "ᅟ",                 // Hangul choseong filler
-        "ﾠ",                 // halfwidth Hangul filler
-        "⠀",                 // blank braille cell
-        "́",                 // a lone combining acute accent
-        "️",                 // a lone variation selector
-        " ㅤ⠀",     // no-break space + filler + blank braille
-        "ᅠ",                 // Hangul jungseong filler
-        " ㅤ ⠀ ️ ", // a mix with ordinary spaces
+        "\u3164",                 // Hangul filler
+        "\u115F",                 // Hangul choseong filler
+        "\uFFA0",                 // halfwidth Hangul filler
+        "\u2800",                 // blank braille cell
+        "\u0301",                 // a lone combining acute accent
+        "\uFE0F",                 // a lone variation selector
+        "\u00A0\u3164\u2800",     // no-break space + filler + blank braille
+        "\u1160",                 // Hangul jungseong filler
+        " \u3164 \u2800 \uFE0F ", // a mix with ordinary spaces
+
+        // Code points that draw nothing because nothing is assigned to them.
+        "\uE000",                 // private use (Co)
+        "\uF8FF",                 // private use, the last of the BMP block
+        "\uDB80\uDC00",           // U+F0000, plane 15 private use
+        "\u0378",                 // unassigned (Cn)
+        "\uFFFF",                 // noncharacter
+        "\uFFFE",                 // noncharacter
+        "\uFDD0",                 // noncharacter
+        "\uFDEF",                 // noncharacter
+        "\uD83F\uDFFE",           // U+1FFFE, a noncharacter in a supplementary plane
+        "\uDBFF\uDFFF",           // U+10FFFF, the last code point
+        "\uFFFC",                 // object replacement character
+        "\uE000\uFFFF\u0378\uFFFC", // a mix of them
     };
 
     // Readable commands that contain the same kinds of characters beside a real one.
     private static readonly string[] ReadableShapes =
     {
         "true",
-        "café",            // e + combining acute
-        "echo ❤️",          // a heart with a variation selector
-        "ㅤlsㅤ",             // fillers around a real command
-        "⠀x",                    // blank braille then a letter
-        "👍🏽",   // an emoji with a skin-tone modifier (surrogate pairs)
+        "cafe\u0301",            // e + combining acute
+        "echo \u2764\uFE0F",          // a heart with a variation selector
+        "\u3164ls\u3164",             // fillers around a real command
+        "\u2800x",                    // blank braille then a letter
+        "\uD83D\uDC4D\uD83C\uDFFD",   // an emoji with a skin-tone modifier (surrogate pairs)
+        "ls \uE000 -la",              // a private-use glyph beside real text
+        "\uE000ls",                   // a private-use glyph first
+        "echo \uFFFC done",           // an object replacement character beside real text
+        "run\uFFFF",                  // a noncharacter beside real text
+        "\uFF21\uFF22",                  // fullwidth letters, in the same block as the filler and the noncharacters
     };
 
     private static string Request(string command) =>
