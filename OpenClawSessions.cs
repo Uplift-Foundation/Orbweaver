@@ -56,6 +56,13 @@ namespace Orbweaver
         private static readonly Dictionary<string, DateTime> LastSeen =
             new(StringComparer.Ordinal);
 
+        // CB-270. The last poll's rows that the cluster filter dropped, and the keys of
+        // rows it kept only because a pending approval asked for them. Replaced by
+        // every poll; read and changed (under Gate) by RefreshSnapshotState, which is
+        // how an approval shows or removes such a row without waiting for the poll.
+        private static Dictionary<string, Session> _hiddenByCluster = new(StringComparer.Ordinal);
+        private static HashSet<string> _keptByApproval = new(StringComparer.Ordinal);
+
         // One chat session per gateway key, created the first time an orb is
         // clicked and kept afterwards so its transcript survives the panel being
         // dismissed and reopened. Only sessions someone has actually opened are
@@ -1441,6 +1448,11 @@ namespace Orbweaver
             var runStates = new Dictionary<string, OpenClawRunState>(StringComparer.Ordinal);
             var runStatuses = new Dictionary<string, string>(StringComparer.Ordinal);
 
+            // Rows the cluster filter dropped, and rows it would have dropped that a
+            // pending approval kept (CB-270): see the filter below.
+            var hiddenByCluster = new Dictionary<string, Session>(StringComparer.Ordinal);
+            var keptByApproval = new HashSet<string>(StringComparer.Ordinal);
+
             // Every agent the gateway knows of, filtered or not, so that a
             // colour is reserved for one whose orb isn't drawn — their messages
             // still appear in a room, and an uncoloured bubble in a coloured
@@ -1559,11 +1571,46 @@ namespace Orbweaver
                 // the chats' shape unless its cluster has a shape of its own:
                 // OrbClusters.GroupOf answers 0 for a Hidden cluster, so nothing
                 // here has to place it.
+                //
+                // CB-270, Warren's ruling: a session asking a person for an approval
+                // is shown the same way, because a hidden orb cannot ask. Only while
+                // approving is on (nothing is held for a device that did not opt in),
+                // and the row is remembered as kept by the approval, so that it goes
+                // the moment the approval ends and a pinned row, which was never
+                // kept by it, does not. An archived row was dropped at the top of the
+                // loop and never gets here.
+                var session = new Session(
+                    key,
+                    TitleFor(s, origin, key),
+                    channel,
+                    state,
+                    activity,
+                    DeliveryFor(s),
+                    kind,
+                    heartbeat,
+                    Str(s, "sessionId"),
+                    Bool(s, "isMain") == true,
+                    native,
+                    pinned,
+                    Str(s, "label"));
+
                 if (!pinned
                     && !OrbClusters.Visible(
                         OrbClusters.Of(heartbeat, kind, native != OpenClawNativeKind.None),
                         HeartbeatMode, CronMode, NativeMode))
-                    continue;
+                {
+                    if (state == "waiting" && OrbweaverSettings.OpenClawApproveEnabled)
+                    {
+                        keptByApproval.Add(key);
+                    }
+                    else
+                    {
+                        // Remembered so an approval that arrives before the next poll
+                        // can show this row at once (RefreshSnapshotState).
+                        hiddenByCluster[key] = session;
+                        continue;
+                    }
+                }
 
                 // Recorded here, past every filter above, rather than beside
                 // the membership at the top of the loop — which is the whole
@@ -1586,20 +1633,7 @@ namespace Orbweaver
                     standing.Add((key, activity));
                 }
 
-                result.Add(new Session(
-                    key,
-                    TitleFor(s, origin, key),
-                    channel,
-                    state,
-                    activity,
-                    DeliveryFor(s),
-                    kind,
-                    heartbeat,
-                    Str(s, "sessionId"),
-                    Bool(s, "isMain") == true,
-                    native,
-                    pinned,
-                    Str(s, "label")));
+                result.Add(session);
             }
 
             AssignColours(everyAgent);
@@ -1635,6 +1669,8 @@ namespace Orbweaver
                 _natives = natives;
                 _runStates = runStates;
                 _runStatuses = runStatuses;
+                _hiddenByCluster = hiddenByCluster;
+                _keptByApproval = keptByApproval;
             }
 
             return (result, list.GetArrayLength());

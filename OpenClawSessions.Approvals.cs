@@ -517,9 +517,34 @@ namespace Orbweaver
                     break;
                 }
 
-                if (index < 0) return;
-
                 var state = StateFor(key);
+
+                // A session in a Hidden cluster is shown while a person is being asked
+                // (and approving is on), and only then: it comes on the event that
+                // raises the request and goes on the one that ends the last. The
+                // poll applies the same rule, so the two cannot disagree. A pinned row
+                // was never kept by an approval and an archived one was never
+                // remembered, so neither is touched here.
+                var keep = state == "waiting" && OrbweaverSettings.OpenClawApproveEnabled;
+
+                if (index < 0)
+                {
+                    if (keep && _hiddenByCluster.TryGetValue(key, out var hidden))
+                    {
+                        _snapshot = snapshot.Append(hidden with { State = state }).ToList();
+                        _keptByApproval.Add(key);
+                    }
+
+                    return;
+                }
+
+                if (!keep && _keptByApproval.Remove(key))
+                {
+                    _hiddenByCluster[key] = snapshot[index] with { State = state };
+                    _snapshot = snapshot.Where((_, i) => i != index).ToList();
+                    return;
+                }
+
                 if (snapshot[index].State == state) return;
 
                 var rows = snapshot.ToList();
