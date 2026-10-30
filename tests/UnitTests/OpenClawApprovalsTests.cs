@@ -420,19 +420,21 @@ public class OpenClawApprovalsTests
     // --- a resolved event ---
 
     [Fact]
-    // ASSEMBLED, not declared. The `.resolved` broadcast has no named schema; the only
-    // declared vocabulary for a resolved record is the terminal snapshot (status,
-    // reason, decision, resolvedAtMs, a resolver object), which the tests further
-    // down use. This older shape, with `resolvedBy` and `ts`, is what the first read of
-    // the dist suggested and is kept only as an assumed alias. P3's live capture
-    // confirms which the broadcast really sends.
+    // MEASURED (P3, live, openclaw 2026.10.5; see OpenClawApprovalMeasuredTests). The
+    // `.resolved` broadcast has no named schema, and what the gateway really sends is
+    // this older shape: {id, decision, resolvedBy, ts, request}, with no status and no
+    // reason. `resolvedBy` (a string) and `ts` were the aliases first marked assumed;
+    // they are the real fields. The declared terminal-snapshot vocabulary (status,
+    // reason, a resolver object) is read as well, below, for the session events.
     public void ADeclaredResolvedEventCarriesWhoDecidedWhat()
     {
         var json = "{\"id\":\"approval-0001\",\"decision\":\"deny\",\"resolvedBy\":\"device-0001\",\"ts\":" + Ms(Now) + ",\"request\":{\"sessionKey\":\"" + Key + "\"}}";
 
         var resolved = OpenClawApprovals.ParseResolved("exec.approval.resolved", Json(json))!;
 
-        Assert.Equal(new OpenClawApprovalResolved("approval-0001", "exec", "deny", null, "device-0001"), resolved);
+        Assert.Equal(
+            new OpenClawApprovalResolved("approval-0001", "exec", "deny", null, "device-0001", null, DateTimeOffset.FromUnixTimeMilliseconds(Ms(Now))),
+            resolved);
     }
 
     [Fact]
@@ -1089,10 +1091,10 @@ public class OpenClawApprovalsTests
         Assert.Equal(new OpenClawApprovalResolved("a1", "exec", decision, reason, "device-0001", status), resolved);
     }
 
-    // The alias the first read of the dist had, accepted as assumed: a string
-    // resolvedBy with no resolver object, and the resolver's kind when it has no id.
+    // A string resolvedBy with no resolver object (the shape the live gateway sends,
+    // measured), and the resolver's kind when it has no id (declared, not measured).
     [Fact]
-    public void AResolvedEventStillAcceptsTheAssumedAliasAndTheResolversKind()
+    public void AResolvedEventReadsTheMeasuredResolvedByStringAndTheResolversKind()
     {
         var alias = OpenClawApprovals.ParseResolved("exec.approval.resolved", Json("{\"id\":\"a1\",\"resolvedBy\":\"device-0009\"}"))!;
         var byKind = OpenClawApprovals.ParseResolved("exec.approval.resolved", Json("{\"id\":\"a1\",\"resolver\":{\"kind\":\"channel\"}}"))!;

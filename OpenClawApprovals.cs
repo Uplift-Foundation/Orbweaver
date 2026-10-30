@@ -85,7 +85,8 @@ namespace Orbweaver
     // resolve call returns rather than on the event, so it is carried when
     // present and null otherwise.
     internal sealed record OpenClawApprovalResolved(
-        string Id, string Kind, string? Decision, string? Reason, string? ResolvedBy, string? Status = null);
+        string Id, string Kind, string? Decision, string? Reason, string? ResolvedBy, string? Status = null,
+        DateTimeOffset? At = null);
 
     // One `session.approval` event, or one entry of a subscribe's approvalReplay,
     // read: a pending transition carries the approval, a terminal one carries how
@@ -377,13 +378,14 @@ namespace Orbweaver
         internal static OpenClawApproval? ParseRequested(string name, JsonElement payload, DateTimeOffset now) =>
             IsRequestedEvent(name) ? ParseRecord(payload, KindOfEvent(name)!, now) : null;
 
-        // A resolved event. **No schema is declared for the broadcast**: the gateway
-        // builds it inline, and the only declared vocabulary for a resolved record is
-        // the terminal snapshot: `status` (allowed, denied, expired or cancelled),
-        // `reason`, `decision` (allowed and denied only), `resolvedAtMs` and a
-        // `resolver` attribution object. So those are read, and `resolvedBy` (a
-        // string) is accepted as an assumed alias, as the first read of the dist had
-        // it. A live capture confirms which the broadcast really sends.
+        // A resolved event. No schema is declared for the broadcast, so this is what a
+        // live gateway was MEASURED sending (openclaw 2026.10.5, Stage 6 P3/P4):
+        // {id, decision, resolvedBy, ts, request}, with no status and no reason, and an
+        // expiry arriving as decision "deny" with resolvedBy null. `ts` is read as the
+        // moment it ended, which is what lets an expiry be told from a refusal. The
+        // declared terminal-snapshot vocabulary (`status`, `reason`, a `resolver`
+        // object) is read as well, for the session events and in case a gateway sends
+        // it here.
         internal static OpenClawApprovalResolved? ParseResolved(string name, JsonElement payload)
         {
             if (!IsResolvedEvent(name) || payload.ValueKind != JsonValueKind.Object) return null;
@@ -398,7 +400,8 @@ namespace Orbweaver
                 Short(Str(payload, "decision")),
                 Short(Str(payload, "reason")),
                 Short(Str(resolver, "id") ?? Str(resolver, "kind") ?? Str(payload, "resolvedBy")),
-                Short(Str(payload, "status")));
+                Short(Str(payload, "status")),
+                TimeOf(payload, "ts"));
         }
 
         // A list reply: the declared shape is a bare array, and an object holding
@@ -533,7 +536,8 @@ namespace Orbweaver
         // which this client does not read, so the message is the signal.
         internal static bool IsNotFound(Exception ex) =>
             ex is OpenClawRequestException { Code: "INVALID_REQUEST" }
-            && ex.Message is "unknown or expired approval id"
+            && ex.Message is "approval not found"
+                or "unknown or expired approval id"
                 or "approval expired or not found"
                 or "approval already resolved";
 

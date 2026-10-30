@@ -219,9 +219,22 @@ namespace Orbweaver
                 // ending for something this app was not holding.
                 if (approval is null) return;
 
-                RecordEndedLocked(new OpenClawApprovalEnded(
-                    approval, "resolved", resolved.Decision, resolved.Reason, resolved.ResolvedBy,
-                    resolved.Status ?? OpenClawApprovals.UnknownStatus));
+                // Measured on a live gateway: the legacy broadcast carries no status
+                // and no reason, and a request that simply ran out of time arrives
+                // as decision "deny" with resolvedBy null, so read alone it looks
+                // like a refusal. With no status, an event stamped at or after the
+                // record's own expiry is that: an expiry, not a person's answer.
+                // Anything the event does say (a status), or any event before the
+                // expiry, is read as it always was. When the session event
+                // reached this app first it already ended the record and this finds
+                // nothing to end.
+                var timedOut = resolved.Status is null && resolved.At is { } at && at >= approval.ExpiresAt;
+
+                RecordEndedLocked(timedOut
+                    ? new OpenClawApprovalEnded(approval, "expired", null, "timeout", null, "expired")
+                    : new OpenClawApprovalEnded(
+                        approval, "resolved", resolved.Decision, resolved.Reason, resolved.ResolvedBy,
+                        resolved.Status ?? OpenClawApprovals.UnknownStatus));
             }
 
             NotifyApprovals(approval.SessionKey);
