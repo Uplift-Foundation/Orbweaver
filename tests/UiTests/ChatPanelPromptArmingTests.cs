@@ -72,7 +72,7 @@ public class ChatPanelPromptArmingTests : IDisposable
     }
 
     private ChatPrompt Approval(string id, string title = "Nova wants to run: true") =>
-        new(title, OpenClawApprovalText.Options(id), Deliberate: true);
+        new(title, OpenClawApprovalText.Options(id), ArmedActivation: true);
 
     private (ChatPanel Panel, PromptSession Session) Open(ChatPrompt prompt)
     {

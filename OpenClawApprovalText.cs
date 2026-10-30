@@ -32,9 +32,9 @@ namespace Orbweaver
         internal const string UnsafeRequest =
             "A request couldn't be shown safely; answer it on the gateway";
 
-        internal const int MaxCommand = 400;
-        internal const int MaxLocation = 160;
-        internal const int MaxName = 60;
+        internal const int MaxCommand = 240;
+        internal const int MaxLocation = 240;
+        internal const int MaxName = 240;
         internal const int MaxReason = 60;
 
         internal const string ApprovingOff =
@@ -61,7 +61,7 @@ namespace Orbweaver
             {
                 return new ChatPrompt(
                     UnsafeRequest + "\nRequest id: " + QuoteId(approvalId),
-                    Options(approvalId, denyOnly: true), Deliberate: true);
+                    Options(approvalId, denyOnly: true), ArmedActivation: true);
             }
 
             var who = Cap(agent, MaxName);
@@ -73,7 +73,7 @@ namespace Orbweaver
             if (Cap(host, MaxName) is { Length: > 0 } machine) where.Add("on " + machine);
             if (where.Count > 0) title += "\n" + string.Join(" ", where);
 
-            return new ChatPrompt(title, Options(approvalId), Deliberate: true);
+            return new ChatPrompt(title, Options(approvalId), ArmedActivation: true);
         }
 
         // What our own answer reads as once the gateway has applied it.

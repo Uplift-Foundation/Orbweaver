@@ -3078,7 +3078,7 @@ namespace Orbweaver
         // composer: the panel doesn't hide what is happening because you can't
         // act on it yet, and the session — which owns the rule — is the thing
         // that states it.
-        // CB-270 Stage 6. A prompt marked Deliberate (an approval: an answer cannot
+        // CB-270 Stage 6. A prompt marked ArmedActivation (an approval: an answer cannot
         // be taken back) is armed, not instant: its options ignore presses for a
         // moment after the prompt first shows or its content changes, so a click
         // that was aimed at something else, or at what was there a moment ago,
@@ -3093,7 +3093,7 @@ namespace Orbweaver
 
         private string? _promptSignature;
         private DateTime _promptShownAt;
-        private bool _promptDeliberate;
+        private bool _promptArmed;
         private Control? _pressedPromptOption;
 
         private void ApplyPrompt()
@@ -3103,7 +3103,7 @@ namespace Orbweaver
             if (prompt is null)
             {
                 _promptSignature = null;
-                _promptDeliberate = false;
+                _promptArmed = false;
                 _pressedPromptOption = null;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
@@ -3122,7 +3122,7 @@ namespace Orbweaver
                 _pressedPromptOption = null;
             }
 
-            _promptDeliberate = prompt.Deliberate;
+            _promptArmed = prompt.ArmedActivation;
 
             PromptTitle.Text = prompt.Title;
 
@@ -3139,7 +3139,7 @@ namespace Orbweaver
         {
             e.Handled = true;
 
-            if (_promptDeliberate)
+            if (_promptArmed)
             {
                 // Only remembered: the answer is given on release.
                 _pressedPromptOption = sender as Control;
@@ -3151,7 +3151,7 @@ namespace Orbweaver
 
         private void PromptOption_PointerReleased(object? sender, PointerReleasedEventArgs e)
         {
-            if (!_promptDeliberate) return;
+            if (!_promptArmed) return;
 
             e.Handled = true;
 

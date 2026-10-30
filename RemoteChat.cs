@@ -707,12 +707,12 @@ namespace Orbweaver
     // be showing by the time it lands. Null for every other kind of prompt.
     public sealed record ChatPromptOption(string Key, string Label, string? ApprovalId = null);
 
-    // Deliberate marks a prompt whose answer cannot be undone and must not be
+    // ArmedActivation marks a prompt whose answer cannot be undone and must not be
     // given by accident: its options ignore presses for a moment after the prompt
     // first shows or changes, and activate on release over the same option. False
     // for a permission bar read off a terminal, which answers on a press.
     public sealed record ChatPrompt(
-        string Title, IReadOnlyList<ChatPromptOption> Options, bool Deliberate = false);
+        string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can

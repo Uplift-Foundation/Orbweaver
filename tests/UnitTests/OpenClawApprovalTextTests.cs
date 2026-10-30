@@ -54,7 +54,7 @@ public class OpenClawApprovalTextTests
     // An approval prompt is deliberate: its options are armed, not instant.
     [Fact]
     public void AnApprovalPromptIsDeliberate() =>
-        Assert.True(OpenClawApprovalText.Prompt("ap-1", "Nova", "true", null, null).Deliberate);
+        Assert.True(OpenClawApprovalText.Prompt("ap-1", "Nova", "true", null, null).ArmedActivation);
 
     // The command is the one thing that must not be reworded for display, so text
     // that cannot be shown as it is is not shown at all.
@@ -72,7 +72,7 @@ public class OpenClawApprovalTextTests
         Assert.StartsWith("A request couldn't be shown safely; answer it on the gateway\nRequest id: 'ap-1'", prompt.Title);
         Assert.DoesNotContain("echo", prompt.Title);
         Assert.Equal(new[] { "deny" }, prompt.Options.Select(o => o.Key));
-        Assert.True(prompt.Deliberate);
+        Assert.True(prompt.ArmedActivation);
     }
 
     // Every displayed field is held to it, not only the command.
@@ -115,16 +115,16 @@ public class OpenClawApprovalTextTests
     {
         var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", new string('x', 1000), null, null);
 
-        Assert.Equal("Nova wants to run: " + new string('x', 400) + "… (600 more characters)", prompt.Title);
+        Assert.Equal("Nova wants to run: " + new string('x', 240) + "… (760 more characters)", prompt.Title);
     }
 
     // Not through the middle of a surrogate pair.
     [Fact]
     public void ACutNeverSplitsASurrogatePair()
     {
-        var text = new string('a', 399) + "😀" + "bbb";
+        var text = new string('a', 239) + "😀" + "bbb";
 
-        Assert.Equal(new string('a', 399) + "… (5 more characters)", OpenClawApprovalText.Cap(text, 400));
+        Assert.Equal(new string('a', 239) + "… (5 more characters)", OpenClawApprovalText.Cap(text, 240));
     }
 
     [Theory]
