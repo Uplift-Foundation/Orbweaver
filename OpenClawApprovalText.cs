@@ -79,7 +79,7 @@ namespace Orbweaver
             // no command text to show (missing, empty or only whitespace) is the same
             // as one that could not be shown safely, and can only be denied. A live
             // prompt once offered Allow once over nothing.
-            if (unsafeToShow || string.IsNullOrWhiteSpace(command) || HasUnsafe(agent) || HasUnsafe(command, allowLayout: true)
+            if (unsafeToShow || !OpenClawApprovals.HasVisibleText(command) || HasUnsafe(agent) || HasUnsafe(command, allowLayout: true)
                 || HasUnsafe(cwd) || HasUnsafe(host) || HasUnsafe(warning))
             {
                 return new ChatPrompt(

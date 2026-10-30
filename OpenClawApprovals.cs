@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
@@ -62,7 +63,7 @@ namespace Orbweaver
         // blanks, and the record is not the unsafe kind (which has its own refusal).
         // Such a request can only be denied here, because a person must never be
         // offered Allow on something they cannot read.
-        internal bool NoCommandToShow => !Unsafe && string.IsNullOrWhiteSpace(Command);
+        internal bool NoCommandToShow => !Unsafe && !OpenClawApprovals.HasVisibleText(Command);
 
         // A record compares by value, and the decision list has to as well: the same
         // approval read from a list row and from an event is one record.
@@ -242,6 +243,39 @@ namespace Orbweaver
 
         // An identifier is the gateway's own: non-empty, within the bound, not "."
         // or "..", and safe to show. Never stored otherwise.
+        // Whether a string has anything a person could actually read: at least one
+        // character that is not whitespace, a control or format character, a combining
+        // mark, or one of the characters that draw as blank without being any of those
+        // (the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, and the blank braille
+        // cell U+2800). A "command" made only of those reads as nothing, and the single
+        // place that decides so is here: the record's NoCommandToShow and the prompt's
+        // text builder both ask this, so neither can drift from the other. A real command
+        // with a combining accent or an emoji with a variation selector still has its
+        // base character, and so still counts.
+        internal static bool HasVisibleText(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            foreach (var rune in text.EnumerateRunes())
+            {
+                if (Rune.IsWhiteSpace(rune)) continue;
+                if (rune.Value is 0x115F or 0x1160 or 0x3164 or 0xFFA0 or 0x2800) continue;
+
+                switch (Rune.GetUnicodeCategory(rune))
+                {
+                    case UnicodeCategory.Control:
+                    case UnicodeCategory.Format:
+                    case UnicodeCategory.NonSpacingMark:
+                    case UnicodeCategory.EnclosingMark:
+                        continue;
+                    default:
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
         internal static bool IsWellFormedId(string? id) =>
             !string.IsNullOrEmpty(id) && id.Length <= MaxIdLength
             && id is not ("." or "..") && IsDisplaySafe(id);
