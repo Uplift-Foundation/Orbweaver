@@ -39,11 +39,6 @@ public class ChatPanelApprovalScreenshots : IDisposable
         ScreenshotHelper.Flush();
         after?.Invoke(ChatPanelTestAccess.Instance!);
         ScreenshotHelper.Flush();
-        ChatPanelTestAccess.Instance!.UpdateLayout();
-        ScreenshotHelper.Flush();
-        ChatPanelTestAccess.Instance!.FindControl<TextBlock>("PromptTitle")!.InvalidateMeasure();
-        ChatPanelTestAccess.Instance!.UpdateLayout();
-        ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, name);
         ChatPanel.HideFor(fake.SessionId);
     }
@@ -61,7 +56,7 @@ public class ChatPanelApprovalScreenshots : IDisposable
     [AvaloniaFact]
     public void AnUnsafeRequestIsNotShownAndOffersOnlyDeny() =>
         Capture(
-            OpenClawApprovalText.Prompt("ap-2", "Nova", "echo hi\nrm -rf /", "/", "gateway"),
+            OpenClawApprovalText.Prompt("ap-2", "Nova", "echo \u0007hi", "/", "gateway"),
             "chat-panel-approval-unsafe.png");
 
     // A field that is not what is being approved, cut with the count of what was

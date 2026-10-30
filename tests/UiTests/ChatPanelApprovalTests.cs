@@ -180,6 +180,25 @@ public class ChatPanelApprovalTests : IDisposable
         Assert.Equal(2, panel.FindControl<ItemsControl>("PromptOptions")!.ItemsPanelRoot!.Children.Count);
     }
 
+    // The last line of a prompt is where an unsafe request's id sits, and it was
+    // laid out away when three lines of the font's own height rounded the box down
+    // to a whole pixel. Every character of the title must be in the laid-out text.
+    [AvaloniaFact]
+    public void EveryLineOfAThreeLinePromptIsLaidOut()
+    {
+        var (panel, _) = Open();
+
+        Request("a1", "echo hi");
+        Flush();
+        var title = panel.FindControl<TextBlock>("PromptTitle")!;
+        title.Text = OpenClawApprovalText.UnsafeRequest + "\nRequest id: 'a1'";
+        Flush();
+
+        var laidOut = title.TextLayout.TextLines.Sum(l => l.Length);
+        Assert.True(laidOut >= title.Text!.Length, $"laid out {laidOut} of {title.Text.Length}");
+        Assert.Equal(0, title.LineHeight % 1);
+    }
+
     // --- one click, one frame, the decision the option names ---
 
     [AvaloniaTheory]

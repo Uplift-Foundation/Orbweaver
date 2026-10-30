@@ -2665,6 +2665,14 @@ namespace Orbweaver
             // carries the size for its items, which have no handle of their own
             // (see the template's comment).
             PromptTitle.FontSize = 11 * scale;
+
+            // A whole-number line height, so n lines are a whole number of pixels
+            // tall. At the font's own height (13.431 at 11 pt) three lines measure
+            // 40.29, layout rounding makes the box 40, and the text is then laid out
+            // again to fit 40: the third line no longer fits and is not drawn. That
+            // would drop the last line of an approval, which is where the request
+            // id sits, on a display without sub-pixel layout.
+            PromptTitle.LineHeight = Math.Ceiling(PromptTitle.FontSize * 1.25);
             PromptOptions.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 
