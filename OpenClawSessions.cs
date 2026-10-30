@@ -1958,7 +1958,7 @@ namespace Orbweaver
                 return (null, "gateway didn't return a session key");
             }
 
-            var key = keyEl.GetString();
+            var key = keyEl.SafeString();
             return string.IsNullOrWhiteSpace(key)
                 ? (null, "gateway returned an empty session key")
                 : (key, null);
@@ -2543,7 +2543,7 @@ namespace Orbweaver
         // things to keep in step.
         internal static string TextOf(JsonElement content) => content.ValueKind switch
         {
-            JsonValueKind.String => content.GetString() ?? "",
+            JsonValueKind.String => content.SafeString() ?? "",
 
             JsonValueKind.Array => string.Join("\n", content.EnumerateArray()
                 .Where(b => Str(b, "type") == "text")
@@ -5322,7 +5322,7 @@ namespace Orbweaver
             e.ValueKind == JsonValueKind.Object
             && e.TryGetProperty(name, out var v)
             && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
+                ? v.SafeString()
                 : null;
 
         // Null rather than false when absent, because the three answers are

@@ -210,7 +210,7 @@ namespace Orbweaver
         {
             if (!message.TryGetProperty("content", out var content)) return "";
 
-            if (content.ValueKind == JsonValueKind.String) return content.GetString() ?? "";
+            if (content.ValueKind == JsonValueKind.String) return content.SafeString() ?? "";
             if (content.ValueKind != JsonValueKind.Array) return "";
 
             var parts = new List<string>();
@@ -268,7 +268,7 @@ namespace Orbweaver
             if (!message.TryGetProperty("content", out var content)) return false;
 
             if (content.ValueKind == JsonValueKind.String)
-                return !string.IsNullOrWhiteSpace(content.GetString());
+                return !string.IsNullOrWhiteSpace(content.SafeString());
 
             if (content.ValueKind != JsonValueKind.Array) return false;
 
@@ -285,7 +285,7 @@ namespace Orbweaver
             e.ValueKind == JsonValueKind.Object
             && e.TryGetProperty(name, out var v)
             && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
+                ? v.SafeString()
                 : null;
     }
 }

@@ -454,7 +454,7 @@ namespace Orbweaver
             if (response.TryGetProperty("protocol", out var protocol)) ServerVersion =
                 response.TryGetProperty("server", out var server)
                 && server.TryGetProperty("version", out var version)
-                    ? version.GetString()
+                    ? version.SafeString()
                     : protocol.ToString();
 
             if (response.TryGetProperty("auth", out var authOut)
@@ -462,7 +462,7 @@ namespace Orbweaver
                 && scopes.ValueKind == JsonValueKind.Array)
             {
                 GrantedScopes = scopes.EnumerateArray()
-                    .Select(s => s.GetString() ?? "")
+                    .Select(s => s.SafeString() ?? "")
                     .Where(s => s.Length > 0)
                     .ToArray();
             }
@@ -525,8 +525,8 @@ namespace Orbweaver
             && auth.ValueKind == JsonValueKind.Object
             && auth.TryGetProperty("deviceToken", out var token)
             && token.ValueKind == JsonValueKind.String
-            && !string.IsNullOrWhiteSpace(token.GetString())
-                ? token.GetString()
+            && !string.IsNullOrWhiteSpace(token.SafeString())
+                ? token.SafeString()
                 : null;
 
         internal static ConnectResult Classify(OpenClawRequestException ex)
@@ -685,15 +685,14 @@ namespace Orbweaver
                 return methods;
             }
 
-            // GetString() on a String element is never null, so it is asserted
-            // rather than tested: a null arm here could never be reached, and an
-            // unreachable arm is a branch with no possible numerator.
+            // A name holding a lone surrogate reads as null (see OpenClawJson) and,
+            // like an empty one, is skipped: one bad name must not cost the list.
             foreach (var method in list.EnumerateArray())
             {
                 if (method.ValueKind != JsonValueKind.String) continue;
 
-                var name = method.GetString()!;
-                if (name.Length > 0) methods.Add(name);
+                var name = method.SafeString();
+                if (!string.IsNullOrEmpty(name)) methods.Add(name);
             }
 
             return methods;
@@ -742,7 +741,7 @@ namespace Orbweaver
             {
                 if (name != "connect.challenge") return;
                 tcs.TrySetResult(new Challenge(
-                    payload.TryGetProperty("nonce", out var n) ? n.GetString() : null,
+                    payload.TryGetProperty("nonce", out var n) ? n.SafeString() : null,
                     Arrived: true));
             }
 
@@ -907,14 +906,14 @@ namespace Orbweaver
             if (root.TryGetProperty("event", out var name))
             {
                 root.TryGetProperty("payload", out var payload);
-                EventReceived?.Invoke(name.GetString() ?? "", payload);
+                EventReceived?.Invoke(name.SafeString() ?? "", payload);
                 return;
             }
 
             if (!root.TryGetProperty("id", out var idElement)) return;
 
             var id = idElement.ValueKind == JsonValueKind.String
-                ? idElement.GetString()
+                ? idElement.SafeString()
                 : idElement.ToString();
 
             if (id is null || !_pending.TryRemove(id, out var tcs)) return;
@@ -930,10 +929,10 @@ namespace Orbweaver
             string? code = null, detail = null, message = null;
             if (root.TryGetProperty("error", out var error))
             {
-                if (error.TryGetProperty("code", out var c)) code = c.GetString();
-                if (error.TryGetProperty("message", out var m)) message = m.GetString();
+                if (error.TryGetProperty("code", out var c)) code = c.SafeString();
+                if (error.TryGetProperty("message", out var m)) message = m.SafeString();
                 if (error.TryGetProperty("details", out var d) && d.TryGetProperty("code", out var dc))
-                    detail = dc.GetString();
+                    detail = dc.SafeString();
             }
 
             tcs.TrySetException(new OpenClawRequestException(message ?? code ?? "request failed", detail)

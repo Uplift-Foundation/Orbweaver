@@ -53,12 +53,12 @@ namespace Orbweaver
                 || pin.ValueKind != JsonValueKind.String || ids.ValueKind != JsonValueKind.Array)
                 return null;
 
-            var requested = ids.EnumerateArray().Select(id => id.ValueKind == JsonValueKind.String ? id.GetString() : null).ToList();
-            if (!ValidPin(pin.GetString()) || requested.Count > MaxAgents
+            var requested = ids.EnumerateArray().Select(id => id.ValueKind == JsonValueKind.String ? id.SafeString() : null).ToList();
+            if (!ValidPin(pin.SafeString()) || requested.Count > MaxAgents
                 || requested.Any(id => !ValidAgentId(id)) || requested.Distinct(StringComparer.OrdinalIgnoreCase).Count() != requested.Count)
                 return null;
 
-            return new Request(pin.GetString()!, requested!);
+            return new Request(pin.SafeString()!, requested!);
         }
 
         internal static Response? ResponseFrom(JsonElement body)
@@ -67,7 +67,7 @@ namespace Orbweaver
                 || !OnlyProperties(body, "gatewayPin", "voices")
                 || !body.TryGetProperty("gatewayPin", out var pin)
                 || !body.TryGetProperty("voices", out var voices)
-                || pin.ValueKind != JsonValueKind.String || voices.ValueKind != JsonValueKind.Array || !ValidPin(pin.GetString()))
+                || pin.ValueKind != JsonValueKind.String || voices.ValueKind != JsonValueKind.Array || !ValidPin(pin.SafeString()))
                 return null;
 
             var rows = new List<Row>();
@@ -78,7 +78,7 @@ namespace Orbweaver
                     || !row.TryGetProperty("agentId", out var id)
                     || !row.TryGetProperty("voice", out var voice)
                     || id.ValueKind != JsonValueKind.String || voice.ValueKind != JsonValueKind.String
-                    || !ValidAgentId(id.GetString()) || !ValidVoice(voice.GetString())) return null;
+                    || !ValidAgentId(id.SafeString()) || !ValidVoice(voice.SafeString())) return null;
 
                 double? rate = null;
                 if (row.TryGetProperty("rate", out var rateElement))
@@ -89,11 +89,11 @@ namespace Orbweaver
                     rate = parsedRate;
                 }
 
-                rows.Add(new Row(id.GetString()!, voice.GetString()!, rate));
+                rows.Add(new Row(id.SafeString()!, voice.SafeString()!, rate));
             }
 
             return rows.Count > MaxAgents || rows.Select(r => r.AgentId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != rows.Count
-                ? null : new Response(pin.GetString()!, rows);
+                ? null : new Response(pin.SafeString()!, rows);
         }
 
         private static bool OnlyProperties(JsonElement value, params string[] allowed) =>
