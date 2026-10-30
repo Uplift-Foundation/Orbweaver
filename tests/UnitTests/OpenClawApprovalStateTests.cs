@@ -63,11 +63,14 @@ public class OpenClawApprovalStateTests : IDisposable
         "\"createdAtMs\":" + Ms(Now) + ",\"expiresAtMs\":" + Ms(expires ?? Now.AddMinutes(30)) + "}";
 
     private static void Requested(string id, string key = Key, string kind = "exec", DateTime? expires = null) =>
-        OpenClawSessions.OnEvent(kind + ".approval.requested", Json(Row(id, key, kind, expires)), Now);
+        OpenClawSessions.OnEvent(EventPrefix(kind) + ".approval.requested", Json(Row(id, key, kind, expires)), Now);
+
+    // The gateway names the system agent's events openclaw.approval.*.
+    private static string EventPrefix(string kind) => kind == "system-agent" ? "openclaw" : kind;
 
     private static void Resolved(string id, string kind = "exec", string decision = "deny") =>
         OpenClawSessions.OnEvent(
-            kind + ".approval.resolved",
+            EventPrefix(kind) + ".approval.resolved",
             Json("{\"id\":\"" + id + "\",\"decision\":\"" + decision + "\",\"resolvedBy\":\"device-0001\"}"), Now);
 
     private static string Ids(string key) =>
@@ -139,12 +142,25 @@ public class OpenClawApprovalStateTests : IDisposable
     // --- the broadcasts ---
 
     [Fact]
-    public void ARequestAlreadyPastItsExpiryIsNotHeld()
+    public void ARequestDatedInThePastIsShownForASecondNotDroppedUnseen()
     {
         Requested("a1", expires: Now.AddSeconds(-1));
 
-        Assert.Equal("", Ids(Key));
-        Assert.Equal("idle", OpenClawSessions.StateFor(Key, Now));
+        Assert.Equal("a1", Ids(Key));
+        Assert.Equal("waiting", OpenClawSessions.StateFor(Key, Now));
+
+        Assert.Equal("idle", OpenClawSessions.StateFor(Key, Now.AddSeconds(2)));
+        Assert.Empty(OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now.AddSeconds(2))));
+    }
+
+    // A date years ahead cannot pin a prompt: it expires within a day.
+    [Fact]
+    public void ARequestDatedAYearAheadExpiresWithinADay()
+    {
+        Requested("a1", expires: Now.AddDays(365));
+
+        Assert.Equal("waiting", OpenClawSessions.StateFor(Key, Now.AddHours(23)));
+        Assert.Equal("idle", OpenClawSessions.StateFor(Key, Now.AddHours(24)));
     }
 
     [Fact]
@@ -158,33 +174,108 @@ public class OpenClawApprovalStateTests : IDisposable
         Assert.Equal("", Ids(OtherKey));
     }
 
-    // A flood is capped: the oldest stay and the rest are not held.
+    // A flood is capped at EIGHT per session, asserted as the number and not the
+    // constant so that raising or removing the cap fails this test. The newest are
+    // kept: the oldest arrival is evicted, and the evictions are recorded so the
+    // open panel can say so.
     [Fact]
-    public void ARunawayFloodIsCappedPerSession()
+    public void ARunawayFloodIsCappedAtEightPerSessionKeepingTheNewest()
     {
-        for (var i = 0; i < OpenClawApprovals.MaxPerSession + 5; i++) Requested("a" + i.ToString("D3"));
+        for (var i = 0; i < 30; i++) Requested("a" + i.ToString("D3"));
 
         var held = OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now));
 
-        Assert.Equal(OpenClawApprovals.MaxPerSession, held.Count);
-        Assert.Contains(held, a => a.Id == "a000");
-        Assert.DoesNotContain(held, a => a.Id == "a" + (OpenClawApprovals.MaxPerSession + 4).ToString("D3"));
+        Assert.Equal(8, held.Count);
+        Assert.Equal(
+            Enumerable.Range(22, 8).Select(i => "a" + i.ToString("D3")).ToArray(),
+            held.Select(a => a.Id).ToArray());
+
+        var evicted = OpenClawSessions.TakeEnded(Key);
+        Assert.Equal(20, evicted.Count);
+        Assert.All(evicted, e => Assert.Equal("evicted", e.Cause));
 
         // The cap is per session: another session still holds its own.
         Requested("b1", key: OtherKey);
         Assert.Equal("b1", Ids(OtherKey));
+        Assert.Equal(8, OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now)).Count);
     }
 
-    // Oldest first, ties broken on id so the answer is the same twice running.
+    // And SIXTY-FOUR overall: 65 requests on 65 distinct sessions hold 64, and the
+    // first, the oldest arrival, is gone and told about.
     [Fact]
-    public void PendingIsOldestFirstWithTiesBrokenOnId()
+    public void SixtyFiveRequestsOnSixtyFiveSessionsHoldSixtyFourAndTheOldestIsGone()
     {
-        var older = Row("z-older").Replace("\"createdAtMs\":" + Ms(Now), "\"createdAtMs\":" + Ms(Now.AddMinutes(-2)));
-        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("b-tie")), Now);
-        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("a-tie")), Now);
+        for (var i = 0; i < 65; i++) Requested("g" + i.ToString("D2"), key: "agent:a" + i + ":dashboard:one");
+
+        var held = Enumerable.Range(0, 65)
+            .Count(i => OpenClawSessions.PendingFor("agent:a" + i + ":dashboard:one", new DateTimeOffset(Now)).Count == 1);
+
+        Assert.Equal(64, held);
+        Assert.Empty(OpenClawSessions.PendingFor("agent:a0:dashboard:one", new DateTimeOffset(Now)));
+        Assert.Equal("evicted", Assert.Single(OpenClawSessions.TakeEnded("agent:a0:dashboard:one")).Cause);
+        Assert.Equal("waiting", OpenClawSessions.StateFor("agent:a64:dashboard:one", Now));
+    }
+
+    // Three thousand requests on three thousand invented keys leave sixty-four, and
+    // keyed lookup keeps that fast: this would take minutes with a scan under the lock.
+    [Fact]
+    public void ThreeThousandInventedKeysLeaveSixtyFourAndFinishQuickly()
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        for (var i = 0; i < 3000; i++) Requested("f" + i, key: "agent:x" + i + ":dashboard:one");
+        clock.Stop();
+
+        var held = Enumerable.Range(0, 3000)
+            .Count(i => OpenClawSessions.PendingFor("agent:x" + i + ":dashboard:one", new DateTimeOffset(Now)).Count == 1);
+
+        Assert.Equal(64, held);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), $"took {clock.Elapsed}");
+    }
+
+    // Unlisted keys are purged on every poll: Parse records every session the
+    // gateway listed, and a pending approval on one it does not list, or on an
+    // invented key, goes with its endings.
+    [Fact]
+    public void AnUnlistedKeyIsPurgedAfterThePollAndAListedOneIsKept()
+    {
+        var window = OrbweaverSettings.OpenClawActiveWithinMinutes;
+        try
+        {
+            OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+            Requested("listed", key: Key);
+            Requested("invented", key: OtherKey);
+            Resolved("invented");
+
+            OpenClawSessions.Parse(Json("{\"sessions\":[{\"key\":\"" + Key + "\",\"chatType\":\"direct\",\"lastActivityAt\":" + Ms(Now) + "}]}"), Now);
+            OpenClawSessions.PurgeUnlistedApprovals();
+
+            Assert.Equal("listed", Ids(Key));
+            Assert.Equal("", Ids(OtherKey));
+            Assert.Empty(OpenClawSessions.TakeEnded(OtherKey));
+
+            // A quiet session the gateway lists is kept even outside a short window.
+            OrbweaverSettings.OpenClawActiveWithinMinutes = 1;
+            OpenClawSessions.Parse(Json("{\"sessions\":[{\"key\":\"" + Key + "\",\"chatType\":\"direct\",\"lastActivityAt\":" + Ms(Now.AddHours(-9)) + "}]}"), Now);
+            OpenClawSessions.PurgeUnlistedApprovals();
+            Assert.Equal("listed", Ids(Key));
+        }
+        finally
+        {
+            OrbweaverSettings.OpenClawActiveWithinMinutes = window;
+        }
+    }
+
+    // Arrival order, never the gateway's own dates: a record carrying an old date
+    // cannot pin itself first, so a hostile gateway cannot choose what is shown.
+    [Fact]
+    public void PendingIsInArrivalOrderWhateverTheGatewaysDatesSay()
+    {
+        var older = Row("z-older").Replace("\"createdAtMs\":" + Ms(Now), "\"createdAtMs\":" + Ms(Now.AddYears(-3)));
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("b-first")), Now);
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("a-second")), Now);
         OpenClawSessions.OnEvent("exec.approval.requested", Json(older), Now);
 
-        Assert.Equal("z-older,a-tie,b-tie", Ids(Key));
+        Assert.Equal("b-first,a-second,z-older", Ids(Key));
     }
 
     // An ending for an id this app never held is ignored: a broadcast cannot
@@ -330,7 +421,7 @@ public class OpenClawApprovalStateTests : IDisposable
     // The list also teaches this app about approvals it was never told of, which
     // is how an approval raised before the app started becomes amber.
     [Fact]
-    public void TheListAddsWhatBroadcastsNeverSaidAndSkipsExpiredAndDuplicateRows()
+    public void TheListAddsWhatBroadcastsNeverSaidAndCollapsesDuplicateRows()
     {
         var now = new DateTimeOffset(Now);
         var rows = OpenClawApprovals.ParseList(
@@ -338,8 +429,10 @@ public class OpenClawApprovalStateTests : IDisposable
 
         OpenClawSessions.ReplacePending("exec", rows, now);
 
-        Assert.Equal("a1", Ids(Key));
+        // The stale row is clamped to a second, so it is held and then gone.
+        Assert.Equal("a1,stale", string.Join(",", Ids(Key).Split(',').OrderBy(i => i)));
         Assert.Equal("waiting", OpenClawSessions.StateFor(Key, Now));
+        Assert.Equal("a1", string.Join(",", OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now.AddSeconds(2))).Select(a => a.Id)));
     }
 
     [Fact]
@@ -488,12 +581,15 @@ public class OpenClawApprovalStateTests : IDisposable
         string decision, Func<string, object> reply, string kind = "exec", OpenClawChatSession? chat = null,
         OpenClawApproval? approval = null)
     {
+        var held = approval ?? Approval(kind: kind);
+        if (OpenClawSessions.PendingFor(held.SessionKey).All(a => a.Id != held.Id))
+            Requested(held.Id, held.SessionKey, held.Kind);
+
         var (socket, gateway) = await ConnectedAsync(Approving, r =>
             r.Method == "approval.resolve" ? reply(r.Id) : null);
         using (gateway)
         {
-            var outcome = await OpenClawSessions.ResolveApprovalAsync(
-                chat ?? Chat(), approval ?? Approval(kind: kind), decision);
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(chat ?? Chat(), held.Id, decision);
             return (outcome, socket);
         }
     }
@@ -613,18 +709,21 @@ public class OpenClawApprovalStateTests : IDisposable
     // Two clicks, or a click racing a broadcast: one frame. The id is marked the
     // moment the first click lands.
     [Fact]
-    public async Task ASecondAnswerForTheSameIdSendsNothing()
+    public async Task ASecondAnswerForAnApprovalThatSettledSendsNothing()
     {
         Requested("a1");
         var (socket, gateway) = await ConnectedAsync(Approving, r =>
             r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
         using (gateway)
         {
-            var first = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "deny");
-            var second = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "allow-once");
+            var first = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
+            var second = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "allow-once");
 
             Assert.Equal(OpenClawApprovalResult.Answered, first.Result);
-            Assert.Equal(OpenClawApprovalResult.Duplicate, second.Result);
+
+            // It settled: the second click is for an approval that is no longer
+            // pending, and nothing is sent for it.
+            Assert.Equal(OpenClawApprovalResult.NoLongerPending, second.Result);
             Assert.Single(Sent(socket));
         }
     }
@@ -651,10 +750,11 @@ public class OpenClawApprovalStateTests : IDisposable
     [Fact]
     public async Task AnApprovalAnsweredFromAnotherConversationsPanelNeverReachesTheWire()
     {
+        Requested("a1");
         var (socket, gateway) = await ConnectedAsync(Approving);
         using (gateway)
         {
-            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(OtherKey), Approval(), "deny");
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(OtherKey), "a1", "deny");
 
             Assert.Equal(OpenClawApprovalResult.Failed, outcome.Result);
             Assert.Equal("this request belongs to another conversation", outcome.Detail);
@@ -665,8 +765,9 @@ public class OpenClawApprovalStateTests : IDisposable
     [Fact]
     public async Task WithNoConnectionNothingIsSentAndTheIdIsNotSpent()
     {
+        Requested("a1");
         OpenClawSessions.SetGatewayForTests(null);
-        var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "deny");
+        var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
 
         Assert.Equal(OpenClawApprovalResult.Failed, outcome.Result);
         Assert.Equal("not connected to the gateway", outcome.Detail);
@@ -678,7 +779,7 @@ public class OpenClawApprovalStateTests : IDisposable
         {
             Assert.Equal(
                 OpenClawApprovalResult.Answered,
-                (await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "deny")).Result);
+                (await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny")).Result);
         }
     }
 
@@ -828,16 +929,16 @@ public class OpenClawApprovalStateTests : IDisposable
     //
     // Declared shapes, from the gateway's own schemas; see OpenClawApprovalsTests.
 
-    private static string Snapshot(string id, string key = Key) =>
+    private static string Snapshot(string id, string key = Key, string decisions = "[\"allow-once\",\"deny\"]") =>
         "{\"id\":\"" + id + "\",\"status\":\"pending\",\"urlPath\":\"/approve/" + id + "\"," +
         "\"createdAtMs\":" + Ms(Now) + ",\"expiresAtMs\":" + Ms(Now.AddMinutes(30)) + "," +
         "\"presentation\":{\"kind\":\"exec\",\"commandText\":\"ls -la /tmp\",\"agentId\":\"alpha\"," +
-        "\"allowedDecisions\":[\"allow-once\",\"deny\"]}}";
+        "\"allowedDecisions\":" + decisions + "}}";
 
-    private static void SessionPending(string id, string key = Key) =>
+    private static void SessionPending(string id, string key = Key, string decisions = "[\"allow-once\",\"deny\"]") =>
         OpenClawSessions.OnEvent("session.approval", Json(
             "{\"sessionKey\":\"" + key + "\",\"updatedAtMs\":" + Ms(Now) + ",\"phase\":\"pending\",\"approval\":" +
-            Snapshot(id, key) + "}"), Now);
+            Snapshot(id, key, decisions) + "}"), Now);
 
     private static void SessionTerminal(string id, string key = Key, string status = "denied") =>
         OpenClawSessions.OnEvent("session.approval", Json(
@@ -862,7 +963,7 @@ public class OpenClawApprovalStateTests : IDisposable
     }
 
     [Fact]
-    public void ASessionApprovalEventIsIgnoredWithApprovingOffOrExpiredOrMalformed()
+    public void ASessionApprovalEventIsIgnoredWithApprovingOffOrMalformedAndAPastExpiryIsShownBriefly()
     {
         OrbweaverSettings.OpenClawApproveEnabled = false;
         SessionPending("s1");
@@ -870,14 +971,19 @@ public class OpenClawApprovalStateTests : IDisposable
 
         OrbweaverSettings.OpenClawApproveEnabled = true;
         OpenClawSessions.OnEvent("session.approval", Json("{\"phase\":\"pending\"}"), Now);
+        Assert.Equal("", Ids(Key));
+
+        // A past expiry is clamped to a second from now, so it is shown for that
+        // second rather than dropped unseen.
         OpenClawSessions.OnEvent("session.approval", Json(
             "{\"sessionKey\":\"" + Key + "\",\"phase\":\"pending\",\"approval\":" +
             Snapshot("late").Replace("\"expiresAtMs\":" + Ms(Now.AddMinutes(30)), "\"expiresAtMs\":" + Ms(Now.AddSeconds(-1))) + "}"), Now);
-        Assert.Equal("", Ids(Key));
+        Assert.Equal("late", Ids(Key));
+        Assert.Empty(OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now.AddSeconds(2))));
 
         // The control: the same event with the switch on and a live expiry is held.
         SessionPending("s1");
-        Assert.Equal("s1", Ids(Key));
+        Assert.Contains("s1", Ids(Key));
     }
 
     // The same approval met by the session path and by a broadcast is one record,
@@ -1082,33 +1188,30 @@ public class OpenClawApprovalStateTests : IDisposable
     [Fact]
     public async Task AnAnswerTheGatewayListsAsUnavailableForThisRequestNeverReachesTheWire()
     {
-        var denyOnly = OpenClawApprovals.ParseSnapshot(Json(
-            Snapshot("a1").Replace("\"allowedDecisions\":[\"allow-once\",\"deny\"]", "\"allowedDecisions\":[\"deny\"]")),
-            Key, new DateTimeOffset(Now))!;
+        SessionPending("a1", decisions: "[\"deny\"]");
         var (socket, gateway) = await ConnectedAsync(Approving, r =>
             r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
         using (gateway)
         {
-            var refused = await OpenClawSessions.ResolveApprovalAsync(Chat(), denyOnly, "allow-once");
+            var refused = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "allow-once");
 
             Assert.Equal(OpenClawApprovalResult.Failed, refused.Result);
             Assert.Equal("the gateway doesn't allow that answer for this request", refused.Detail);
             Assert.Empty(Sent(socket));
 
             // The control: deny is listed, and goes.
-            var allowed = await OpenClawSessions.ResolveApprovalAsync(Chat(), denyOnly, "deny");
+            var allowed = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
             Assert.Equal(OpenClawApprovalResult.Answered, allowed.Result);
             Assert.Single(Sent(socket));
         }
     }
 
-    // An approval raised on a session is recent activity on it, so a session an hour
-    // quiet by the gateway's own account stays in a short window while one is
-    // pending. That stamp lives in a process-wide static that outlives a restart on
-    // purpose, so the test seam that forgets approvals forgets it too, or one test's
-    // approvals would make another's session look recent.
+    // A session waiting on an approval is exempt from the recency window like one
+    // mid-run, however quiet the gateway says it is: the orb that is asking for a
+    // person is the one that must not vanish. Nothing is stamped into a static to
+    // achieve it; the state itself is what exempts it, and it ends with the approval.
     [Fact]
-    public void AnApprovalStampsTheSessionRecentAndTheTestSeamUndoesIt()
+    public void AWaitingSessionIsExemptFromTheRecencyWindowUntilItsApprovalEnds()
     {
         var window = OrbweaverSettings.OpenClawActiveWithinMinutes;
         try
@@ -1120,15 +1223,502 @@ public class OpenClawApprovalStateTests : IDisposable
             Assert.Empty(OpenClawSessions.Parse(Json(quiet), Now).Sessions);
 
             Requested("a1");
-            Resolved("a1");
-            Assert.Single(OpenClawSessions.Parse(Json(quiet), Now).Sessions);
+            var kept = Assert.Single(OpenClawSessions.Parse(Json(quiet), Now).Sessions);
+            Assert.Equal("waiting", kept.State);
 
-            OpenClawSessions.ForgetApprovalsForTests();
+            Resolved("a1");
             Assert.Empty(OpenClawSessions.Parse(Json(quiet), Now).Sessions);
         }
         finally
         {
             OrbweaverSettings.OpenClawActiveWithinMinutes = window;
         }
+    }
+
+    // --- a refusal is not-found only when it is exactly the gateway's not-found ---
+
+    private static object Refusal(string id, string code, string message) =>
+        FakeGatewaySocket.Error(id, code, message, null);
+
+    // Ines's case: a transient refusal that merely contains "unknown" must not take a
+    // real pending approval out of sight. It is a failure, the record stays, the id
+    // is free, and the retry reaches the wire.
+    [Fact]
+    public async Task AnUnknownErrorThatIsNotTheGatewaysNotFoundKeepsTheRecordAndTheRetryReachesTheWire()
+    {
+        Requested("a1");
+        var busy = true;
+        var (socket, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method != "approval.resolve" ? null
+            : busy ? Refusal(r.Id, "INVALID_REQUEST", "unknown error: gateway busy")
+                   : FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")));
+        using (gateway)
+        {
+            var first = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
+
+            Assert.Equal(OpenClawApprovalResult.Failed, first.Result);
+            Assert.Equal("unknown error: gateway busy", first.Detail);
+            Assert.Equal("a1", Ids(Key));
+
+            busy = false;
+            var retry = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
+
+            Assert.Equal(OpenClawApprovalResult.Answered, retry.Result);
+            Assert.Equal(2, Sent(socket).Count);
+        }
+    }
+
+    // The gateway's own not-found takes it off, releases the id, and a poll that
+    // lists it again (the gateway disagreeing with itself) makes it answerable
+    // again rather than stranding it behind a spent id.
+    [Fact]
+    public async Task AGenuineNotFoundTakesTheRecordOffAndAReListedOneIsAnswerableAgain()
+    {
+        Requested("a1");
+        var gone = true;
+        var (socket, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method != "approval.resolve" ? null
+            : gone ? Refusal(r.Id, "INVALID_REQUEST", "unknown or expired approval id")
+                   : FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")));
+        using (gateway)
+        {
+            var first = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
+
+            Assert.Equal(OpenClawApprovalResult.NoLongerPending, first.Result);
+            Assert.Equal("", Ids(Key));
+
+            gone = false;
+            Requested("a1");
+            Assert.Equal("a1", Ids(Key));
+
+            var again = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
+            Assert.Equal(OpenClawApprovalResult.Answered, again.Result);
+            Assert.Equal(2, Sent(socket).Count);
+        }
+    }
+
+    // --- an applied id is never re-added ---
+
+    // A replayed request for an id whose resolve applied is ignored, whichever feed
+    // brings it back: the prompt would show again and could not be answered.
+    [Fact]
+    public async Task AnIdWhoseAnswerAppliedIsNotReAddedByAnyFeed()
+    {
+        Requested("a1");
+        var (socket, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
+        using (gateway)
+        {
+            await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
+            Assert.Equal("", Ids(Key));
+
+            Requested("a1");
+            SessionPending("a1");
+            OpenClawSessions.ApplyReplay(Key, Replay(false, "a1"), new DateTimeOffset(Now));
+            OpenClawSessions.ReplacePending(
+                "exec", OpenClawApprovals.ParseList(Json("[" + Row("a1") + "]"), "exec", new DateTimeOffset(Now)),
+                new DateTimeOffset(Now));
+
+            Assert.Equal("", Ids(Key));
+            Assert.Equal("idle", OpenClawSessions.StateFor(Key, Now));
+            Assert.Single(Sent(socket));
+        }
+    }
+
+    // Another reviewer having decided first (applied:false) spends the id too.
+    [Fact]
+    public async Task AnIdAnotherReviewerDecidedFirstIsNotReAddedEither()
+    {
+        Requested("a1");
+        var (_, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "approval.resolve"
+                ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":false,\"approval\":{\"status\":\"denied\"}}"))
+                : null);
+        using (gateway)
+        {
+            await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "allow-once");
+
+            Requested("a1");
+
+            Assert.Equal("", Ids(Key));
+        }
+    }
+
+    // --- a click is bound to the approval it was drawn for ---
+
+    // resolved(A) then requested(B): a click drawn for A sends nothing; a click for
+    // B is the one that goes, with B's id on the frame.
+    [Fact]
+    public async Task AStaleClickForAReplacedApprovalSendsNothingAndTheNewOneIsAnswerable()
+    {
+        Requested("A");
+        Resolved("A");
+        Requested("B");
+        var (socket, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
+        using (gateway)
+        {
+            var stale = await OpenClawSessions.ResolveApprovalAsync(Chat(), "A", "deny");
+            Assert.Equal(OpenClawApprovalResult.NoLongerPending, stale.Result);
+            Assert.Empty(Sent(socket));
+
+            var current = await OpenClawSessions.ResolveApprovalAsync(Chat(), "B", "deny");
+            Assert.Equal(OpenClawApprovalResult.Answered, current.Result);
+            Assert.Equal("B", Sent(socket).Single().Params.GetProperty("id").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task AClickForAnIdNeverHeldAnEvictedOneOrAnExpiredOneSendsNothing()
+    {
+        // Evicted: the ninth request on a session pushes the first out.
+        for (var i = 0; i < 9; i++) Requested("e" + i);
+        // Expired: arrived an hour ago, a past expiry clamped to a second after.
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("old", OtherKey, expires: Now.AddHours(-2))), DateTime.UtcNow.AddHours(-1));
+
+        var (socket, gateway) = await ConnectedAsync(Approving);
+        using (gateway)
+        {
+            foreach (var id in new[] { "never-held", "e0", "old" })
+            {
+                var chat = Chat(id == "old" ? OtherKey : Key);
+                var outcome = await OpenClawSessions.ResolveApprovalAsync(chat, id, "deny");
+
+                Assert.Equal(OpenClawApprovalResult.NoLongerPending, outcome.Result);
+            }
+
+            Assert.Empty(Sent(socket));
+        }
+    }
+
+    // The panel's own call, holding the record it drew, is the same answer.
+    [Fact]
+    public async Task TheRecordOverloadAnswersByTheRecordsId()
+    {
+        Requested("a1");
+        var (socket, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
+        using (gateway)
+        {
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "deny");
+
+            Assert.Equal(OpenClawApprovalResult.Answered, outcome.Result);
+            Assert.Equal("a1", Sent(socket).Single().Params.GetProperty("id").GetString());
+        }
+    }
+
+    // Two clicks while the first is still in flight: the id is spent the moment the
+    // first lands, so the second is a duplicate and sends nothing. Driven through the
+    // set directly because the in-memory socket answers too fast to race reliably.
+    [Fact]
+    public async Task ASecondClickWhileTheFirstIsInFlightIsADuplicate()
+    {
+        Requested("a1");
+        var answered = (HashSet<string>)typeof(OpenClawSessions)
+            .GetField("Answered", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .GetValue(null)!;
+        var (socket, gateway) = await ConnectedAsync(Approving);
+        using (gateway)
+        {
+            lock (typeof(OpenClawSessions).GetField("Gate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!)
+                answered.Add("a1");
+
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), "a1", "deny");
+
+            Assert.Equal(OpenClawApprovalResult.Duplicate, outcome.Result);
+            Assert.Empty(Sent(socket));
+        }
+    }
+
+    // --- an allow is never sent for what nobody saw whole or safely ---
+
+    private static string HostileSnapshot(string id) =>
+        Snapshot(id).Replace("\"commandText\":\"ls -la /tmp\"", "\"commandText\":\"ls \\u202E /tmp\"");
+
+    [Fact]
+    public async Task AnUnsafeRequestCanOnlyBeDeniedAndItsOrbIsStillAmber()
+    {
+        OpenClawSessions.OnEvent("session.approval", Json(
+            "{\"sessionKey\":\"" + Key + "\",\"phase\":\"pending\",\"approval\":" + HostileSnapshot("u1") + "}"), Now);
+
+        var held = Assert.Single(OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now)));
+        Assert.True(held.Unsafe);
+        Assert.Equal("waiting", OpenClawSessions.StateFor(Key, Now));
+
+        var (socket, gateway) = await ConnectedAsync(Approving, r =>
+            r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
+        using (gateway)
+        {
+            var allow = await OpenClawSessions.ResolveApprovalAsync(Chat(), "u1", "allow-once");
+            Assert.Equal(OpenClawApprovalResult.Failed, allow.Result);
+            Assert.Equal("this request can only be denied here", allow.Detail);
+            Assert.Empty(Sent(socket));
+
+            var deny = await OpenClawSessions.ResolveApprovalAsync(Chat(), "u1", "deny");
+            Assert.Equal(OpenClawApprovalResult.Answered, deny.Result);
+            Assert.Single(Sent(socket));
+        }
+    }
+
+    [Fact]
+    public async Task ACutCommandCanOnlyBeDeniedToo()
+    {
+        var long5000 = Snapshot("t1").Replace("\"commandText\":\"ls -la /tmp\"", "\"commandText\":\"" + new string('a', 5000) + "\"");
+        OpenClawSessions.OnEvent("session.approval", Json(
+            "{\"sessionKey\":\"" + Key + "\",\"phase\":\"pending\",\"approval\":" + long5000 + "}"), Now);
+
+        var held = Assert.Single(OpenClawSessions.PendingFor(Key, new DateTimeOffset(Now)));
+        Assert.True(held.CommandTruncated);
+        Assert.Equal(5000, held.CommandLength);
+
+        var (socket, gateway) = await ConnectedAsync(Approving);
+        using (gateway)
+        {
+            var allow = await OpenClawSessions.ResolveApprovalAsync(Chat(), "t1", "allow-once");
+
+            Assert.Equal(OpenClawApprovalResult.Failed, allow.Result);
+            Assert.Empty(Sent(socket));
+        }
+    }
+
+    // --- one bad row must never stall the feed ---
+
+    // The poll over a socket, with one list holding a poisoned row, a hostile id and
+    // a lone-surrogate command beside a good row. It returns, the good row is kept,
+    // the hostile id is absent, and the poisoned row is held with its time clamped.
+    [Fact]
+    public async Task APoisonedListNeverStallsThePollAndTheGoodRowIsKept()
+    {
+        var poison = Row("poison").Replace("\"expiresAtMs\":" + Ms(Now.AddMinutes(30)), "\"expiresAtMs\":9223372036854775807");
+        // A valid but hostile character: the in-memory socket cannot carry a lone
+        // surrogate escape through a JsonElement, which the parser tests cover directly.
+        var lone = Row("lone").Replace("\"command\":\"ls -la /tmp\"", "\"command\":\"ls \\u202E /tmp\"");
+        var hostileId = Row("bad\\u202Eid");
+
+        var (socket, gateway) = await ConnectedAsync(Approving, r => r.Method switch
+        {
+            "exec.approval.list" => FakeGatewaySocket.Ok(r.Id, Json("[" + Row("good") + "," + poison + "," + lone + "," + hostileId + "]")),
+            _ => FakeGatewaySocket.Ok(r.Id, Json("[]")),
+        });
+        using (gateway)
+        {
+            await OpenClawSessions.PollApprovalsOnceAsync(gateway, CancellationToken.None);
+
+            var held = OpenClawSessions.PendingFor(Key);
+            Assert.Equal("good,lone,poison", string.Join(",", held.Select(a => a.Id).OrderBy(i => i)));
+            Assert.True(held.Single(a => a.Id == "lone").Unsafe);
+            Assert.False(held.Single(a => a.Id == "good").Unsafe);
+            Assert.True(held.Single(a => a.Id == "poison").ExpiresAt <= DateTimeOffset.UtcNow.AddHours(24).AddMinutes(1));
+            Assert.Equal(3, Sent(socket).Count);
+        }
+    }
+
+    // The same poisoned feeds never keep sessions from updating: Parse runs on its own
+    // input, and a poisoned approvals row cannot reach it.
+    [Fact]
+    public void ASessionListParsesWhateverTheApprovalsHeld()
+    {
+        Requested("poison", expires: Now.AddYears(1));
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("lone").Replace("\"command\":\"ls -la /tmp\"", "\"command\":\"x\\ud800\"")), Now);
+        var window = OrbweaverSettings.OpenClawActiveWithinMinutes;
+        try
+        {
+            OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+
+            var parsed = OpenClawSessions.Parse(Json(
+                "{\"sessions\":[{\"key\":\"" + Key + "\",\"chatType\":\"direct\",\"lastActivityAt\":" + Ms(Now) + "}," +
+                "{\"key\":\"" + OtherKey + "\",\"chatType\":\"direct\",\"lastActivityAt\":" + Ms(Now) + "}]}"), Now);
+
+            Assert.Equal(2, parsed.Sessions.Count);
+            Assert.Equal("waiting", parsed.Sessions.Single(x => x.Key == Key).State);
+            Assert.Equal("idle", parsed.Sessions.Single(x => x.Key == OtherKey).State);
+        }
+        finally
+        {
+            OrbweaverSettings.OpenClawActiveWithinMinutes = window;
+        }
+    }
+
+    // --- no auto-approve, however the method name is built ---
+    //
+    // The single-site test above greps for the literal, so a sender whose method name
+    // is assembled at run time ("approval." + "resolve") would pass it, and the
+    // zero-frames replay only exercises the paths that exist. This one reads the
+    // method-name argument of EVERY request the app sends to the gateway and refuses
+    // anything that is not either a plain string literal other than a resolve, or one
+    // of a short list of known constants. Adding a dynamically built request, or any
+    // request that could be a resolve, makes it fail until someone looks.
+
+    private static readonly string[] AllowedDynamicMethodNames =
+    {
+        "OpenClawApprovals.ListMethodFor(kind)",
+        "OpenClawOrbActions.AbortMethod",
+        "OpenClawOrbActions.PatchMethod",
+        "wanted ? \"sessions.messages.subscribe\" : \"sessions.messages.unsubscribe\"",
+    };
+
+    // A line without its trailing // comment (a // inside a string literal is kept),
+    // so a request mentioned in prose is not mistaken for one that is sent.
+    private static string StripLineComment(string line)
+    {
+        var quoted = false;
+
+        for (var i = 0; i < line.Length - 1; i++)
+        {
+            if (quoted)
+            {
+                if (line[i] == '\\') i++;
+                else if (line[i] == '"') quoted = false;
+            }
+            else if (line[i] == '"') quoted = true;
+            else if (line[i] == '/' && line[i + 1] == '/') return line[..i];
+        }
+
+        return line;
+    }
+
+    private static List<(string File, string Argument)> GatewayRequestMethodNames()
+    {
+        var found = new List<(string, string)>();
+        var root = RepositoryRoot();
+        var call = new System.Text.RegularExpressions.Regex(@"(?<![A-Za-z0-9_])RequestAsync\(");
+
+        foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+                     .Where(f => !f.Split(Path.DirectorySeparatorChar).Any(
+                         part => part is "tests" or "tools" or "obj" or "bin" or "TestResults")
+                                 && Path.GetFileName(f).StartsWith("OpenClaw", StringComparison.Ordinal)))
+        {
+            var text = string.Join("\n", File.ReadAllLines(file).Select(StripLineComment));
+
+            foreach (System.Text.RegularExpressions.Match m in call.Matches(text))
+            {
+                int depth = 0, i = m.Index + m.Length, j = i;
+                var quoted = false;
+
+                for (; j < text.Length; j++)
+                {
+                    var c = text[j];
+                    if (quoted)
+                    {
+                        if (c == '\\') j++;
+                        else if (c == '"') quoted = false;
+                    }
+                    else if (c == '"') quoted = true;
+                    else if (c is '(' or '[' or '{') depth++;
+                    else if (c is ')' or ']' or '}')
+                    {
+                        if (depth == 0) break;
+                        depth--;
+                    }
+                    else if (c == ',' && depth == 0) break;
+                }
+
+                var argument = System.Text.RegularExpressions.Regex.Replace(text[i..j], @"\s+", " ").Trim();
+
+                // A method declaration, not a call: "string method", "Type name".
+                if (System.Text.RegularExpressions.Regex.IsMatch(argument, @"^[\w<>?\[\]]+ \w+$")) continue;
+
+                found.Add((Path.GetFileName(file), argument));
+            }
+        }
+
+        return found;
+    }
+
+    [Fact]
+    public void EveryGatewayRequestsMethodNameIsALiteralOrAKnownConstantAndNeverAResolve()
+    {
+        var calls = GatewayRequestMethodNames();
+
+        // The scan actually found the app's requests; an empty scan would pass by
+        // looking at nothing.
+        Assert.True(calls.Count > 15, $"only {calls.Count} requests found");
+        Assert.Contains(calls, c => c.Argument == "\"approval.resolve\"");
+
+        foreach (var (file, argument) in calls)
+        {
+            var literal = System.Text.RegularExpressions.Regex.IsMatch(argument, "^\"[^\"]*\"$");
+
+            if (literal)
+            {
+                if (argument == "\"approval.resolve\"")
+                    Assert.Equal("OpenClawSessions.Approvals.cs", file);
+                else
+                    Assert.DoesNotContain("resolve", argument, StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                Assert.True(
+                    AllowedDynamicMethodNames.Contains(argument),
+                    $"{file} builds a gateway method name at run time: {argument}");
+            }
+        }
+
+        // And the allowed dynamic names can only ever be what they say.
+        Assert.All(OpenClawApprovals.Kinds, k => Assert.EndsWith(".approval.list", OpenClawApprovals.ListMethodFor(k)));
+        Assert.DoesNotContain("resolve", OpenClawOrbActions.AbortMethod, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("resolve", OpenClawOrbActions.PatchMethod, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // The method that sends a resolve is called from exactly one place outside its own
+    // file: the chat session's answer to a click. Its own file adds only the
+    // overload that forwards to it.
+    [Fact]
+    public void ResolveApprovalAsyncHasExactlyOneCallerOutsideItsOwnFile()
+    {
+        var root = RepositoryRoot();
+
+        var callers = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Split(Path.DirectorySeparatorChar).Any(
+                part => part is "tests" or "tools" or "obj" or "bin" or "TestResults"))
+            .Where(f => Path.GetFileName(f) != "OpenClawSessions.Approvals.cs")
+            .SelectMany(f => File.ReadAllLines(f).Select(line => (File: Path.GetFileName(f), Text: line)))
+            .Where(x => x.Text.Contains("ResolveApprovalAsync(", StringComparison.Ordinal)
+                        && !x.Text.TrimStart().StartsWith("//", StringComparison.Ordinal))
+            .ToList();
+
+        var caller = Assert.Single(callers);
+        Assert.Equal("OpenClawChatSession.cs", caller.File);
+    }
+
+    // --- the assembly-wide reset: what it does and what it must not ---
+
+    // Around a test in the Settings collection it clears every piece of approvals
+    // state, so one class's approvals cannot reach the next whatever either does.
+    [Fact]
+    public void TheResetHookClearsApprovalsAroundASettingsCollectionTest()
+    {
+        var hook = new ResetOpenClawApprovalsAttribute();
+        var inSettings = typeof(OpenClawApprovalStateTests).GetMethod(nameof(TheResetHookClearsApprovalsAroundASettingsCollectionTest))!;
+
+        Requested("a1");
+        Resolved("a1");
+        Requested("a2", key: OtherKey);
+        hook.Before(inSettings);
+        Assert.Equal("", Ids(Key));
+        Assert.Equal("", Ids(OtherKey));
+        Assert.Empty(OpenClawSessions.TakeEnded(Key));
+
+        Requested("a3");
+        hook.After(inSettings);
+        Assert.Equal("", Ids(Key));
+    }
+
+    // And it leaves a test in any other collection alone. xunit runs separate
+    // collections in parallel, and a reset fired from one in the middle of another
+    // class's test would wipe that test's state: this is the property that was
+    // missing when the first version reset around every test and made the suite
+    // flaky.
+    [Fact]
+    public void TheResetHookLeavesATestInAnotherCollectionAlone()
+    {
+        var hook = new ResetOpenClawApprovalsAttribute();
+        var elsewhere = typeof(OpenClawApprovalsTests).GetMethods().First(m => m.GetCustomAttributes(typeof(FactAttribute), false).Length > 0);
+
+        Requested("a1");
+        hook.Before(elsewhere);
+        hook.After(elsewhere);
+
+        Assert.Equal("a1", Ids(Key));
     }
 }

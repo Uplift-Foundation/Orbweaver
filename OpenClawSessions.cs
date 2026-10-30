@@ -1363,12 +1363,29 @@ namespace Orbweaver
 
                 // CB-270 Stage 6: the approvals lists, before Parse reads each
                 // session's state so a pending approval is amber in this very poll.
-                await PollApprovalsOnceAsync(gateway, ct);
+                //
+                // Isolated: whatever goes wrong in here, of any kind, must not skip
+                // the session parse below or force a reconnect, which would stall
+                // every OpenClaw orb, not only the approvals. A failure is dropped
+                // here and tried again at the next poll. (Cancellation is not a
+                // failure and passes through.)
+                try
+                {
+                    await PollApprovalsOnceAsync(gateway, ct);
+                }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                {
+                }
 
                 var before = RunStatesSnapshot();
                 var (sessions, total) = Parse(res);
                 NotifyRunOptions(ChatsWithChangedRunState(before, RunStatesSnapshot(), OpenChats()));
                 NotifyRunStatuses(OpenChats());
+
+                // CB-270 Stage 6: Parse has just recorded every session the gateway
+                // listed, so a pending approval on one it no longer lists, or one
+                // invented under a key it never listed, can go.
+                PurgeUnlistedApprovals();
 
                 _snapshot = sessions;
                 Report(total == sessions.Count
@@ -1504,7 +1521,10 @@ namespace Orbweaver
                 // CB-270: a pinned session or a dashboard one is exempt, however
                 // quiet. See OpenClawRetention for why those two and no others.
                 var pinned = Bool(s, "pinned") == true;
-                if (state != "generating"
+                // CB-270 Stage 6: a session waiting on an approval is exempt like one
+                // mid-run, however quiet the gateway says it is: the orb that is
+                // asking for a person is the one that must not vanish.
+                if (state is not ("generating" or "waiting")
                     && !OpenClawRetention.KeptRegardlessOfAge(pinned, native)
                     && within is { } limit && asOf - activity > limit) continue;
 
