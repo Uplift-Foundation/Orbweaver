@@ -1941,7 +1941,24 @@ namespace Orbweaver
             // IRemoteChatSession can promise its events arrive on the UI thread.
             if (chat is not null)
             {
-                Dispatcher.UIThread.Post(() => chat.OnAgentEvent(name, payload));
+                Dispatcher.UIThread.Post(() => RunUiJobGuarded(() => chat.OnAgentEvent(name, payload)));
+            }
+        }
+
+        // A job posted to the UI thread runs after the socket loop's own catch has
+        // gone out of scope, so an exception thrown by one is not a skipped frame:
+        // CrashLog only records an unhandled UI exception, and Avalonia's default
+        // then ends the process. One gateway payload must not be able to do that, so
+        // each event's delivery is its own try. The next event still arrives.
+        internal static void RunUiJobGuarded(Action job)
+        {
+            try
+            {
+                job();
+            }
+            catch (Exception ex)
+            {
+                CrashLog.Record("OpenClaw event", ex);
             }
         }
 

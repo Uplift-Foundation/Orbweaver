@@ -154,7 +154,7 @@ namespace Orbweaver
                 // every isMeta row was before: better a missing bubble than the
                 // provenance boilerplate shown as if the user had typed it.
                 if (content.ValueKind == JsonValueKind.String
-                    && UnwrapPeerMessage(content.GetString() ?? "") is { } ours)
+                    && UnwrapPeerMessage(content.SafeString() ?? "") is { } ours)
                     AddText(ours, ChatRole.User, uuid, at, into);
 
                 return;
@@ -162,7 +162,7 @@ namespace Orbweaver
 
             if (content.ValueKind == JsonValueKind.String)
             {
-                AddText(content.GetString(), ChatRole.User, uuid, at, into);
+                AddText(content.SafeString(), ChatRole.User, uuid, at, into);
                 return;
             }
 
@@ -382,7 +382,7 @@ namespace Orbweaver
                 if (!input.TryGetProperty(key, out var value)) continue;
                 if (value.ValueKind != JsonValueKind.String) continue;
 
-                var arg = value.GetString();
+                var arg = value.SafeString();
                 if (string.IsNullOrWhiteSpace(arg)) continue;
 
                 if (key is "file_path" or "notebook_path" or "path") arg = Path.GetFileName(arg);
@@ -507,7 +507,7 @@ namespace Orbweaver
             e.ValueKind == JsonValueKind.Object
             && e.TryGetProperty(name, out var v)
             && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
+                ? v.SafeString()
                 : null;
 
         private static bool Bool(JsonElement e, string name) =>

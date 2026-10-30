@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Xunit;
@@ -220,5 +221,72 @@ public class OpenClawLoneSurrogateReadTests : IDisposable
         Assert.Null(OpenClawPeerIdentity.RequestFrom(Json("{\"gatewayPin\":\"" + pin + "\",\"agentIds\":[],\"\\ud800\":1}")));
         Assert.Null(OpenClawPeerIdentity.ResponseFrom(Json("{\"gatewayPin\":\"" + pin + "\",\"voices\":[],\"\\ud800\":1}")));
         Assert.NotNull(OpenClawPeerIdentity.RequestFrom(Json("{\"gatewayPin\":\"" + pin + "\",\"agentIds\":[\"alpha\"]}")));
+    }
+
+    // --- a tool call's arguments (QA found this one after the sweep above) ---
+    //
+    // A gateway or agent that cuts an emoji in half writes exactly a lone high
+    // surrogate escape, and a tool's arguments are where free text from a command
+    // lives. ChatTranscript.ToolSummary read each with GetString() and threw, which
+    // aborted a whole history page and, on the live path, threw inside a job posted
+    // to the UI thread.
+
+    [Theory]
+    [InlineData("command")]
+    [InlineData("path")]
+    [InlineData("file_path")]
+    [InlineData("url")]
+    public void AToolSummaryWithAnUnreadableArgumentIsJustTheToolName(string key)
+    {
+        var args = Json("{\"" + key + "\":\"echo \\ud83d\"}");
+
+        Assert.Equal("· exec", ChatTranscript.ToolSummary("exec", args));
+        Assert.Equal("· exec  ok", ChatTranscript.ToolSummary("exec", Json("{\"" + key + "\":\"ok\"}")));
+    }
+
+    [Fact]
+    public void AHistoryPageWithAPoisonedToolArgumentStillDrawsItsOtherTurns()
+    {
+        var page = Json("""
+            [{"role":"user","content":"before","timestamp":1790000000000},
+             {"role":"assistant","content":[{"type":"toolcall","id":"t1","name":"exec","arguments":{"command":"echo \ud83d"}}],"timestamp":1790000001000},
+             {"role":"assistant","content":[{"type":"text","text":"after"}],"timestamp":1790000002000}]
+            """);
+
+        var turns = OpenClawSessions.TurnsFromHistory(page, "agent:alpha:main");
+
+        Assert.Contains(turns, t => t.Text == "before");
+        Assert.Contains(turns, t => t.Text == "· exec");
+        Assert.Contains(turns, t => t.Text == "after");
+    }
+
+    [Fact]
+    public void ALiveToolEventWithAPoisonedArgumentDrawsALineAndTheNextEventStillArrives()
+    {
+        var session = new OpenClawChatSession("openclaw:agent:main:main", "agent:main:main", "main");
+
+        session.OnAgentEvent("session.tool", Json(
+            "{\"data\":{\"phase\":\"start\",\"name\":\"exec\",\"args\":{\"command\":\"echo \\ud83d\"}}}"));
+        session.OnAgentEvent("agent", Json("{\"data\":{\"text\":\"next\"}}"));
+
+        Assert.Equal(new[] { "· exec", "next" }, session.History.Select(t => t.Text));
+    }
+
+    // Whatever else throws inside a delivery, it is that event's own failure: it is
+    // recorded, nothing escapes into the UI thread, and the next job still runs.
+    [Fact]
+    public void AJobThatThrowsOnTheUiThreadIsRecordedAndDoesNotStopTheNext()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "orbweaver-crash-" + Guid.NewGuid().ToString("N"));
+        using (CrashLog.ScopeForTests(dir))
+        {
+            var ran = new List<string>();
+
+            OpenClawSessions.RunUiJobGuarded(() => throw new InvalidOperationException("poisoned payload"));
+            OpenClawSessions.RunUiJobGuarded(() => ran.Add("next"));
+
+            Assert.Equal(new[] { "next" }, ran);
+            Assert.Contains("poisoned payload", File.ReadAllText(CrashLog.Path_));
+        }
     }
 }
