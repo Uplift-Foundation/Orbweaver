@@ -130,7 +130,7 @@ public class ChatPanelPageBoundaryTests : IDisposable
         {
             H(ChatRole.User, "go"),
             new(ChatRole.Assistant, "here it is", "/route", "clip.png", at, null, null,
-                ImageSourcePath: "/x/clip.png", RunTail: true)
+                ImageSourcePath: "/x/clip.png", RunTail: true, FreeNamed: true)
         });
         FlushRender();
 

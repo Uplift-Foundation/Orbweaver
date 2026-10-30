@@ -26,6 +26,7 @@ public class OpenClawSeamPictureTests
 
     private const string User = """{"role":"user","content":"go"}""";
     private const string Next = """{"role":"user","content":"next"}""";
+    private const string Between = """{"role":"user","content":"between"}""";
 
     private static string Named(string file) =>
         // The agent's own message ends with the file's path, the shape the real capture has.
@@ -114,14 +115,15 @@ public class OpenClawSeamPictureTests
         Assert.Empty(removed);
     }
 
+    // The collapse is page-wide, not bound to a run: a user message between the
+    // older page's mirror and the next page's named message does not stop the named
+    // message cancelling it, as it would not on one page.
     [Fact]
-    public void AMirrorOnTheOlderPageStaysWhenTheNewerPageStartsAtAUserMessage()
+    public void AMirrorOnTheOlderPageIsCancelledByANamedMessageOnTheNextPageEvenAfterAUserMessage()
     {
-        // No head run: the newer page begins at a user turn, so nothing there can be
-        // the same run's other half.
         var (session, _) = Load(Page(User, Mirror(A)), Page(Next, Named(A)));
 
-        Assert.Equal(2, Pictures(session, A));
+        Assert.Equal(1, Pictures(session, A));
     }
 
     // A message the agent actually sent that names the same file is never dropped,
@@ -135,16 +137,62 @@ public class OpenClawSeamPictureTests
         Assert.Empty(removed);
     }
 
+    // ---- the collapse is page-wide and budgeted (CB-270, Ines's raw pages) ----------------
+
+    // Two delivery records of one file, one on each page, with nothing named: two
+    // genuine deliveries, as the whole page keeps them.
+    [Fact]
+    public void TwoMirrorRecordsOfOneFileAcrossTheSeamBothStay()
+    {
+        var (session, removed) = Load(Page(User, Mirror(A)), Page(Mirror(A), Next));
+
+        Assert.Equal(2, Pictures(session, A));
+        Assert.Empty(removed);
+    }
+
+    // The named message already paired with a mirror on its own page, so a second
+    // record on the next page has nothing left to be cancelled by.
+    [Fact]
+    public void ANamedMessageThatAlreadyPairedWithAMirrorCannotCancelASecondOneOnTheNextPage()
+    {
+        var (session, removed) = Load(Page(User, Named(A), Mirror(A)), Page(Mirror(A), Next));
+
+        Assert.Equal(2, Pictures(session, A));
+        Assert.Empty(removed);
+    }
+
+    // A user message between the named message and its mirror does not stop the
+    // collapse on one page, so it does not across the seam either: the shape of the
+    // real capture, where an inter-session message sits between them.
+    [Fact]
+    public void AUserMessageBetweenTheNamedMessageAndItsMirrorDoesNotStopTheCollapseAcrossTheSeam()
+    {
+        var (session, removed) = Load(Page(User, Named(A), Next), Page(Between, Mirror(A)));
+
+        Assert.Equal(1, Pictures(session, A));
+        Assert.Single(removed);
+    }
+
+    // One unpaired named message cancels one mirror, not every mirror of the file.
+    [Fact]
+    public void OneNamedMessageCancelsOnlyOneOfTwoMirrorsOnTheNextPage()
+    {
+        var (session, removed) = Load(Page(User, Named(A)), Page(Mirror(A), Mirror(A), Next));
+
+        Assert.Equal(2, Pictures(session, A));
+        Assert.Single(removed);
+    }
+
     // ---- covered turns across the seam -----------------------------------------------------
 
     private static HistoryTurn Tail(string text, string file, bool blanked = false, bool mirror = false) =>
         new(ChatRole.Assistant, text, "/route/" + file, file, DateTimeOffset.Now, null, null,
-            ImageSourcePath: Dir + file, RunTail: true, Blanked: blanked,
+            ImageSourcePath: Dir + file, RunTail: true, Blanked: blanked, FreeNamed: !blanked && !mirror,
             Arm: mirror ? MediaSourceArm.Mirror : MediaSourceArm.None);
 
     private static HistoryTurn HeadPic(string text, string file, bool blanked = false, bool mirror = false) =>
         new(ChatRole.Assistant, text, "/route/" + file, file, DateTimeOffset.Now, null, null,
-            ImageSourcePath: Dir + file, RunHead: true, Blanked: blanked,
+            ImageSourcePath: Dir + file, RunHead: true, Blanked: blanked, FreeNamed: !blanked && !mirror,
             Arm: mirror ? MediaSourceArm.Mirror : MediaSourceArm.None);
 
     [Fact]
@@ -262,11 +310,44 @@ public class OpenClawSeamPictureTests
     {
         var session = Session();
         session.SetHistory(new List<HistoryTurn> { HeadPic("", A, mirror: true) });
-        typeof(OpenClawChatSession).GetField("_headRun", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .SetValue(session, new List<ChatTurn> { new() { ImageUrl = "/route", ImageAlt = A, IsMirror = true } });
+        var stale = new List<ChatTurn> { new() { ImageUrl = "/route", ImageAlt = A, IsMirror = true } };
+        foreach (var field in new[] { "_headRun", "_headPage" })
+            typeof(OpenClawChatSession).GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(session, stale);
 
         session.PrependHistory(new List<HistoryTurn> { Tail("caption", A) });
 
         Assert.Equal(2, session.History.Count);
+    }
+
+    // A mirror parsed on its own guesses its route (the shared media directory); the
+    // whole page resolves it against the directory the agent's message names. The
+    // copy that survives the seam takes that route from the named turn beside it, in
+    // both directions, and the split matches the whole page.
+    [Fact]
+    public void ASurvivingMirrorOnTheNewerPageTakesTheRouteTheNamedTurnOnTheOlderPageHas()
+    {
+        var whole = OpenClawSessions.TurnsFromHistory(Page(User, Named(A), Mirror(A), Mirror(A), Next), Key);
+        var (session, _) = Load(Page(User, Named(A)), Page(Mirror(A), Mirror(A), Next));
+
+        Assert.Equal(whole.Count(t => t.ImageAlt == A && t.ImageUrl is not null), Pictures(session, A));
+        Assert.All(session.History.Where(t => t.ImageUrl is not null), t => Assert.Equal(Dir + A, t.ImageSourcePath));
+    }
+
+    [Fact]
+    public void ASurvivingMirrorOnTheOlderPageTakesTheRouteTheNamedTurnOnTheNewerPageHas()
+    {
+        var whole = OpenClawSessions.TurnsFromHistory(Page(User, Mirror(A), Mirror(A), Named(A), Next), Key);
+        var (session, _) = Load(Page(User, Mirror(A), Mirror(A)), Page(Named(A), Next));
+
+        Assert.Equal(whole.Count(t => t.ImageAlt == A && t.ImageUrl is not null), Pictures(session, A));
+        Assert.All(session.History.Where(t => t.ImageUrl is not null), t => Assert.Equal(Dir + A, t.ImageSourcePath));
+    }
+
+    [Fact]
+    public void AMirrorParsedAloneGuessesTheSharedMediaDirectory()
+    {
+        var turn = OpenClawSessions.TurnsFromHistory(Page(User, Mirror(A)), Key).Single(t => t.ImageUrl is not null);
+
+        Assert.StartsWith(OpenClawSessions.SharedMediaDir, turn.ImageSourcePath);
     }
 }

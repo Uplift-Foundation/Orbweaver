@@ -3284,6 +3284,14 @@ namespace Orbweaver
                     doomed.Add(index);
                 }
 
+                // CB-270: the named turns that paired with no mirror on this page can
+                // account for one on the page next to it. Marked before the paired
+                // mirrors are removed, while the indices still hold.
+                foreach (var left in namedIndices.Values)
+                {
+                    foreach (var i in left) turns[i] = turns[i] with { FreeNamed = true };
+                }
+
                 for (var i = doomed.Count - 1; i >= 0; i--) turns.RemoveAt(doomed[i]);
             }
 

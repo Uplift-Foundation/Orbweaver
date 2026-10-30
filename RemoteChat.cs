@@ -126,6 +126,10 @@ namespace Orbweaver
 
         public bool Blanked { get; init; }
 
+        // CB-270 stage 3b: a named-path turn not paired with a delivery-mirror on its
+        // own page, so it can account for one on the next page over.
+        public bool FreeNamed { get; init; }
+
         private bool _isError;
 
         // CB-270: a tool line whose result reported an error. Mutable and

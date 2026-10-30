@@ -152,7 +152,14 @@ namespace Orbweaver
         // kinds of turn the boundary may drop as a duplicate picture.
         bool RunTail = false,
         bool RunHead = false,
-        bool Blanked = false);
+        bool Blanked = false,
+
+        // CB-270 stage 3b: a named-path turn whose page did not pair it with a
+        // delivery-mirror, so it can still account for one on the page next to it.
+        // The collapse of a mirror into the message naming its file is page-wide and
+        // one named turn cancels one mirror, so across a page boundary only unpaired
+        // named turns count.
+        bool FreeNamed = false);
 
     // See HistoryTurn.Arm. Internal and small on purpose: this exists only to
     // let the post-parse dedup pass in OpenClawSessions tell an inline image
@@ -670,6 +677,11 @@ namespace Orbweaver
         // precede it, so the page boundary can compare their pictures with the older
         // page's trailing run.
         private List<ChatTurn> _headRun = new();
+
+        // CB-270 stage 3b: every turn of the page next to the one about to be
+        // prepended, for the page-wide, budgeted collapse of a delivery-mirror into the
+        // message naming its file (see DedupePicturesAcrossTheSeam).
+        private List<ChatTurn> _headPage = new();
 
         private void RunSeen()
         {
@@ -1534,6 +1546,7 @@ namespace Orbweaver
                     FromRollup = t.FromRollup,
                     IsMirror = t.Arm == MediaSourceArm.Mirror,
                     Blanked = t.Blanked,
+                    FreeNamed = t.FreeNamed,
                     IsComplete = true
                 };
 
@@ -1548,6 +1561,7 @@ namespace Orbweaver
             // is the next seam; otherwise there is none.
             _seamRollup = seam;
             _headRun = headRun;
+            _headPage = older;
 
             HistoryPrepended?.Invoke(older.Count);
         }
@@ -1586,50 +1600,55 @@ namespace Orbweaver
             return filtered.Where((_, i) => !gone.Contains(i)).ToList();
         }
 
-        // A picture is not drawn twice in one run, and that includes a run the page
-        // boundary cuts. Only two kinds of turn are ever dropped for it: a turn whose
-        // caption was blanked (its words shown by the other half of a covered pair)
-        // and a delivery-mirror, the gateway's record of having delivered a file. A
-        // turn the agent actually sent is never dropped, even naming the same file, and
-        // the last copy always stays.
+        // A picture is not drawn twice, and that includes across a page boundary. Only
+        // two kinds of turn are ever dropped for it: a turn whose caption was blanked
+        // (its words shown by the other half of a covered pair) and a delivery-mirror,
+        // the gateway's record of having delivered a file. A turn the agent sent is
+        // never dropped, even naming the same file, and the last copy always stays.
         //
-        // The older page's trailing run is compared with the transcript's head run:
-        // an older candidate goes when a head turn shows its picture, and a head
-        // candidate (a row on screen, removed through TurnsRemoved) goes when a
-        // remaining older turn shows its picture. A mirror matches by file name (the
-        // page it was parsed on may not hold the directory its picture sits in, so
-        // its path is a guess), a blanked turn by resolved path.
+        // A blanked turn goes when a turn of the other half of the *run* shows its
+        // resolved path: the older page's trailing run is compared with the
+        // transcript's head run (an older candidate is left out before it becomes a
+        // row, a head candidate is a row on screen and is removed).
+        //
+        // A mirror is different, because the collapse it takes part in is page-wide
+        // and budgeted: on one page each mirror is cancelled by one unpaired named
+        // turn for its file, wherever it sits (a user message between them does not
+        // matter), and a mirror with no unpaired named turn is a second genuine
+        // delivery and stays. Across the seam the same: the older page's mirrors are
+        // cancelled by the unpaired named turns of the page next to it, and that
+        // page's mirrors by the older page's, one for one, matched by file name (the
+        // page a mirror was parsed on may not hold the directory its picture sits in,
+        // so its own path is a guess). Two mirrors of one file with nothing named stay
+        // two.
         private IReadOnlyList<HistoryTurn> DedupePicturesAcrossTheSeam(IReadOnlyList<HistoryTurn> older)
         {
             var headRun = _headRun.Where(t => _history.Contains(t)).ToList();
-            if (headRun.Count == 0) return older;
+            var headPage = _headPage.Where(t => _history.Contains(t)).ToList();
 
             static bool IsPicture(HistoryTurn t) => t.ImageUrl is not null;
-
-            static bool SameFile(HistoryTurn o, ChatTurn h, bool mirror) =>
-                mirror
-                    ? !string.IsNullOrEmpty(o.ImageAlt) && string.Equals(o.ImageAlt, h.ImageAlt, StringComparison.Ordinal)
-                    : !string.IsNullOrEmpty(o.ImageSourcePath) && string.Equals(o.ImageSourcePath, h.ImageSourcePath, StringComparison.Ordinal);
 
             var gone = new HashSet<int>();
 
             for (var i = 0; i < older.Count; i++)
             {
                 var c = older[i];
-                if (!c.RunTail || !IsPicture(c) || !(c.Blanked || c.Arm == MediaSourceArm.Mirror)) continue;
+                if (!c.RunTail || !IsPicture(c) || !c.Blanked) continue;
 
-                if (headRun.Any(h => h.ImageUrl is not null && SameFile(c, h, c.Arm == MediaSourceArm.Mirror)))
+                if (headRun.Any(h => h.ImageUrl is not null && !string.IsNullOrEmpty(c.ImageSourcePath)
+                                     && string.Equals(c.ImageSourcePath, h.ImageSourcePath, StringComparison.Ordinal)))
                     gone.Add(i);
             }
 
             var rows = new SortedSet<int>();
-            foreach (var h in headRun.Where(h => h.ImageUrl is not null && (h.Blanked || h.IsMirror)))
+            foreach (var h in headRun.Where(h => h.ImageUrl is not null && h.Blanked))
             {
                 for (var i = 0; i < older.Count; i++)
                 {
                     if (!older[i].RunTail || gone.Contains(i) || !IsPicture(older[i])) continue;
 
-                    if (SameFile(older[i], h, h.IsMirror))
+                    if (!string.IsNullOrEmpty(older[i].ImageSourcePath)
+                        && string.Equals(older[i].ImageSourcePath, h.ImageSourcePath, StringComparison.Ordinal))
                     {
                         rows.Add(_history.IndexOf(h));
                         break;
@@ -1637,10 +1656,68 @@ namespace Orbweaver
                 }
             }
 
+            // The older page's mirrors against the next page's unpaired named turns.
+            foreach (var file in older.Where(t => t.Arm == MediaSourceArm.Mirror && IsPicture(t) && !string.IsNullOrEmpty(t.ImageAlt))
+                         .Select(t => t.ImageAlt).Distinct().ToList())
+            {
+                var budget = headPage.Count(h => h.FreeNamed && h.ImageUrl is not null && h.ImageAlt == file);
+                for (var i = 0; i < older.Count && budget > 0; i++)
+                {
+                    if (older[i].Arm != MediaSourceArm.Mirror || !IsPicture(older[i]) || older[i].ImageAlt != file || gone.Contains(i)) continue;
+
+                    gone.Add(i);
+                    budget--;
+                }
+            }
+
+            // The next page's mirrors against the older page's unpaired named turns.
+            foreach (var file in headPage.Where(h => h.IsMirror && h.ImageUrl is not null && !string.IsNullOrEmpty(h.ImageAlt))
+                         .Select(h => h.ImageAlt).Distinct().ToList())
+            {
+                var budget = older.Where((t, i) => !gone.Contains(i) && t.FreeNamed && IsPicture(t) && t.ImageAlt == file).Count();
+                foreach (var h in headPage.Where(h => h.IsMirror && h.ImageUrl is not null && h.ImageAlt == file))
+                {
+                    if (budget == 0) break;
+
+                    rows.Add(_history.IndexOf(h));
+                    budget--;
+                }
+            }
+
             if (rows.Count > 0) RemoveRows(rows);
 
-            return gone.Count == 0 ? older : older.Where((_, i) => !gone.Contains(i)).ToList();
+            var kept = gone.Count == 0 ? older.ToList() : older.Where((_, i) => !gone.Contains(i)).ToList();
+
+            // The whole page resolves a mirror's route against the directories every
+            // message on it names; parsed on its own, a mirror whose file is named on
+            // the other page falls back to a guess. A mirror that survives is given the
+            // route of the named turn for its file on the page next to it, so the copy
+            // that stays fetches the file the whole page would.
+            for (var i = 0; i < kept.Count; i++)
+            {
+                var m = kept[i];
+                if (m.Arm != MediaSourceArm.Mirror || !IsGuess(m.ImageSourcePath)) continue;
+
+                var named = headPage.FirstOrDefault(h => !h.IsMirror && h.ImageUrl is not null && h.ImageAlt == m.ImageAlt
+                                                       && !string.IsNullOrEmpty(h.ImageSourcePath) && !IsGuess(h.ImageSourcePath));
+                if (named is not null) kept[i] = m with { ImageUrl = named.ImageUrl, ImageSourcePath = named.ImageSourcePath };
+            }
+
+            foreach (var h in headPage.Where(h => h.IsMirror && h.ImageUrl is not null && IsGuess(h.ImageSourcePath)))
+            {
+                var named = kept.FirstOrDefault(o => o.Arm != MediaSourceArm.Mirror && o.ImageUrl is not null && o.ImageAlt == h.ImageAlt
+                                                    && !string.IsNullOrEmpty(o.ImageSourcePath) && !IsGuess(o.ImageSourcePath));
+                if (named.ImageUrl is null) continue;
+
+                h.ImageUrl = named.ImageUrl;
+                h.ImageSourcePath = named.ImageSourcePath;
+            }
+
+            return kept;
         }
+
+        private static bool IsGuess(string? path) =>
+            path is not null && path.StartsWith(OpenClawSessions.SharedMediaDir, StringComparison.Ordinal);
 
         // Removes rows already on screen, highest first and one TurnsRemoved per
         // contiguous run, so the indices are the transcript's as it stood. The page's
@@ -1718,6 +1795,7 @@ namespace Orbweaver
                     FromRollup = turn.FromRollup,
                     IsMirror = turn.Arm == MediaSourceArm.Mirror,
                     Blanked = turn.Blanked,
+                    FreeNamed = turn.FreeNamed,
                     IsComplete = true
                 });
             }
@@ -1725,6 +1803,7 @@ namespace Orbweaver
             // The page's own seam rollup, if it has one (a page an older one may
             // precede, whose first run ends in a kept rollup), and its head run.
             _headRun = new List<ChatTurn>();
+            _headPage = _history.ToList();
             for (var i = 0; i < turns.Count; i++)
             {
                 if (turns[i].SeamRollup) _seamRollup = _history[i];
