@@ -239,7 +239,7 @@ try
 
                     gateway.EventReceived += (name, payload) =>
                     {
-                        if (!name.Contains(".approval.", StringComparison.Ordinal)) return;
+                        if (!name.Contains(".approval.", StringComparison.Ordinal) && name != "session.approval") return;
                         Console.WriteLine($"+{(DateTime.UtcNow - started).TotalSeconds,7:F2}s {name}");
                         Console.WriteLine(JsonSerializer.Serialize(payload, pretty));
                     };
@@ -327,6 +327,7 @@ try
 catch (Exception ex)
 {
     Console.Error.WriteLine($"{ex.GetType().Name}: {ex.Message}");
+    if (ex is OpenClawRequestException rex) Console.Error.WriteLine($"  code={rex.Code} detail={rex.DetailCode}");
     return 1;
 }
 
