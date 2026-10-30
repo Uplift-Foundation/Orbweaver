@@ -27,6 +27,8 @@ public class OpenClawChatApprovalTests : IDisposable
     {
         OrbweaverSettings.OpenClawApproveEnabled = true;
         Reset();
+        OpenClawSessions.SetIdentitiesForTests(
+            new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string> { ["alpha"] = "Nova" });
     }
 
     public void Dispose()
@@ -602,6 +604,45 @@ public class OpenClawChatApprovalTests : IDisposable
         var prompt = Chat().Prompt!;
         Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, prompt.Title);
         Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+    }
+
+    // The prompt names the agent, never the chat's label. A conversation's label can
+    // be any sentence (a session's title) and used to read as "<title> wants to run".
+    [Fact]
+    public void ThePromptNamesTheAgentAndTheChatLabelNeverLeaksIntoIt()
+    {
+        var chat = new OpenClawChatSession(
+            "openclaw:" + _key, _key, "Lilibeth \u2014 CB-270 approval recheck \u2014 please ignore");
+        Request("a1", "true");
+
+        var title = chat.Prompt!.Title;
+
+        Assert.StartsWith("Nova wants to run: true", title);
+        Assert.DoesNotContain("Lilibeth", title);
+        Assert.DoesNotContain("recheck", title);
+    }
+
+    // An agent with no display name is shown by its id; a record that carries no
+    // agent id falls back to the one in the conversation's key; with neither, it is
+    // "An agent". The label is not consulted in any of the three.
+    [Fact]
+    public void WithNoNameTheAgentIdIsUsedThenTheKeysThenAnAgent()
+    {
+        OpenClawSessions.SetIdentitiesForTests(new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string>());
+        var chat = new OpenClawChatSession("openclaw:" + _key, _key, "Some title");
+
+        Request("a1", "true");
+        Assert.StartsWith("alpha wants to run: true", chat.Prompt!.Title);
+
+        OpenClawSessions.Restart();
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("a2", "true").Replace("\"agentId\":\"alpha\",", "")), Now);
+        Assert.StartsWith("alpha wants to run: true", chat.Prompt!.Title);
+
+        OpenClawSessions.Restart();
+        var keyless = new OpenClawChatSession("openclaw:main", "main", "Some title");
+        OpenClawSessions.OnEvent("exec.approval.requested",
+            Json(Row("a3", "true").Replace("\"agentId\":\"alpha\",", "").Replace(_key, "main")), Now);
+        Assert.StartsWith("An agent wants to run: true", keyless.Prompt!.Title);
     }
 
     // The poll finding it gone: before its expiry nothing says why, after it, it

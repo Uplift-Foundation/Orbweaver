@@ -17,11 +17,11 @@ public class ChatPanelApprovalScreenshots : IDisposable
         foreach (var id in _toClean) ChatPanel.HideFor(id);
     }
 
-    private FakeChatSession Fake(ChatPrompt? prompt, IEnumerable<ChatTurn>? history = null)
+    private FakeChatSession Fake(ChatPrompt? prompt, IEnumerable<ChatTurn>? history = null, string label = "Nova")
     {
         var id = "screenshot-approval-" + Guid.NewGuid();
         _toClean.Add(id);
-        return new FakeChatSession(history) { SessionId = id, DisplayName = "Nova", Prompt = prompt };
+        return new FakeChatSession(history) { SessionId = id, DisplayName = label, Prompt = prompt };
     }
 
     private static OrbWindow NewOrb() => new(Guid.NewGuid().ToString());
@@ -32,9 +32,9 @@ public class ChatPanelApprovalScreenshots : IDisposable
         new ChatTurn { Role = ChatRole.Assistant, Text = "I need to run a command for that." },
     };
 
-    private static void Capture(ChatPrompt prompt, string name, Action<ChatPanel>? after = null)
+    private static void Capture(ChatPrompt prompt, string name, Action<ChatPanel>? after = null, string label = "Nova")
     {
-        var fake = new ChatPanelApprovalScreenshots().Fake(prompt, Context());
+        var fake = new ChatPanelApprovalScreenshots().Fake(prompt, Context(), label);
         ChatPanel.OpenFor(NewOrb(), fake);
         ScreenshotHelper.Flush();
         after?.Invoke(ChatPanelTestAccess.Instance!);
@@ -50,6 +50,15 @@ public class ChatPanelApprovalScreenshots : IDisposable
         Capture(
             OpenClawApprovalText.Prompt("ap-1", "Nova", "ls /home/op/workspace | wc -l", "/home/op/workspace", "gateway"),
             "chat-panel-approval-prompt.png");
+
+    // The prompt names the agent, and the chat's own long label stays in the header:
+    // the label never reads as the agent's name.
+    [AvaloniaFact]
+    public void ThePromptNamesTheAgentNotTheChatLabel() =>
+        Capture(
+            OpenClawApprovalText.Prompt("ap-7", "Lilibeth", "true", "/tmp", "gateway"),
+            "chat-panel-approval-agent-name.png",
+            label: "Lilibeth \u2014 CB-270 approval recheck \u2014 please ignore");
 
     // A request that could not be shown safely: nothing of it is drawn, and it can
     // only be denied.

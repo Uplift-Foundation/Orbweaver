@@ -1436,9 +1436,20 @@ namespace Orbweaver
         private OpenClawApproval? CurrentApproval() =>
             OpenClawSessions.PendingFor(GatewayKey).FirstOrDefault(a => !_answering.Contains(a.Id));
 
+        // Who is asking: the agent's own name, from the record's agent id and failing
+        // that the one in this conversation's key, never the chat's label. DisplayName
+        // is what the orb and the panel header call the conversation, which can be any
+        // sentence (a session's title), and reading it as the agent's name made the
+        // prompt say "<whole title> wants to run". The header already shows the label.
+        private string AgentNameFor(OpenClawApproval approval)
+        {
+            var id = !string.IsNullOrWhiteSpace(approval.AgentId) ? approval.AgentId : OpenClawSessions.AgentIdOf(GatewayKey);
+            return string.IsNullOrWhiteSpace(id) ? "" : OpenClawSessions.AgentNameOf(id);
+        }
+
         private ChatPrompt PromptFor(OpenClawApproval approval) =>
             OpenClawApprovalText.Prompt(
-                approval.Id, DisplayName, approval.Command, approval.Cwd, approval.Host,
+                approval.Id, AgentNameFor(approval), approval.Command, approval.Cwd, approval.Host,
                 commandTruncated: approval.CommandTruncated,
                 allowedDecisions: approval.AllowedDecisions, warning: approval.Warning,
                 unsafeToShow: approval.Unsafe, commandLength: approval.CommandLength > 0 ? approval.CommandLength : null);
