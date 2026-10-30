@@ -350,4 +350,99 @@ public class OpenClawSeamPictureTests
 
         Assert.StartsWith(OpenClawSessions.SharedMediaDir, turn.ImageSourcePath);
     }
+
+    // ---- the seam walks past turns that do not match ----------------------------------------
+
+    // The older page's trailing run holds a different picture, and one with no resolved
+    // path at all, ahead of the one the blanked head turn duplicates: the comparison
+    // moves on past both and removes the head row only when it reaches the match.
+    [Fact]
+    public void ABlankedHeadTurnIsRemovedWhenTheMatchingOlderPictureComesAfterOnesThatDoNotMatch()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn> { HeadPic("", B, blanked: true), new(ChatRole.User, "next", null, "", DateTimeOffset.Now, null, null) });
+        var removed = new List<(int, int)>();
+        session.TurnsRemoved += (f, c) => removed.Add((f, c));
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            Tail("other", A),
+            Tail("unresolved", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png") with { ImageSourcePath = null },
+            Tail("caption", B)
+        });
+
+        Assert.Equal(new[] { (0, 1) }, removed.ToArray());
+        Assert.Equal(new[] { "other", "unresolved", "caption", "next" }, session.History.Select(t => t.Text).ToArray());
+    }
+
+    // Control for the one above: with no older picture matching, the head turn stays.
+    [Fact]
+    public void ABlankedHeadTurnStaysWhenNoOlderPictureMatchesItsPath()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn> { HeadPic("", B, blanked: true) });
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            Tail("other", A),
+            Tail("unresolved", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png") with { ImageSourcePath = null }
+        });
+
+        Assert.Equal(3, session.History.Count);
+    }
+
+    // ---- scrolling back past more than one page ------------------------------------------------
+
+    // The first prepend removes the only row of the newest page, so the page has no last
+    // row; the next prepend removes a row of the page now at the head, with nothing to
+    // fix up, and the transcript is still right.
+    [Fact]
+    public void ARemovalWhenNoRowIsHeldAsThePagesLastLeavesTheTranscriptRight()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn> { HeadPic("", A, mirror: true) });
+
+        session.PrependHistory(new List<HistoryTurn> { Tail("caption A", A), HeadPic("", B, mirror: true) });
+        Assert.Null(PageLast(session));
+
+        var removed = new List<(int, int)>();
+        session.TurnsRemoved += (f, c) => removed.Add((f, c));
+        session.PrependHistory(new List<HistoryTurn> { Tail("caption B", B) });
+
+        Assert.Equal(new[] { (1, 1) }, removed.ToArray());
+        Assert.Equal(new[] { "caption B", "caption A" }, session.History.Select(t => t.Text).ToArray());
+        Assert.Null(PageLast(session));
+    }
+
+    // A removal that is not the page's last row leaves the page's last row where it was.
+    [Fact]
+    public void ARemovalOfAnEarlierRowLeavesThePagesLastRowAlone()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            HeadPic("", A, mirror: true),
+            new(ChatRole.User, "next", null, "", DateTimeOffset.Now, null, null)
+        });
+        var last = session.History[^1];
+
+        session.PrependHistory(new List<HistoryTurn> { Tail("caption", A) });
+
+        Assert.Same(last, PageLast(session));
+    }
+
+    // ---- a mirror whose route is not a guess is left as it is ---------------------------------
+
+    // The older page has the named message and two mirrors of the file: one collapses
+    // into it, the other survives and already carries the route the page resolved, so
+    // the seam has nothing to repair and leaves it.
+    [Fact]
+    public void AMirrorWhoseRouteThePageResolvedIsNotRewrittenAtTheSeam()
+    {
+        var whole = OpenClawSessions.TurnsFromHistory(Page(User, Named(A), Mirror(A), Mirror(A)), Key);
+        var (session, _) = Load(Page(User, Named(A), Mirror(A), Mirror(A)), Page(Next));
+
+        Assert.Equal(whole.Count(t => t.ImageUrl is not null), session.History.Count(t => t.ImageUrl is not null));
+        Assert.All(session.History.Where(t => t.ImageUrl is not null), t => Assert.Equal(Dir + A, t.ImageSourcePath));
+    }
 }

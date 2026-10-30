@@ -126,6 +126,36 @@ public class OpenClawCoveredPictureTests
         Assert.Single(turns, t => t.ImageSourcePath == P1);
     }
 
+    // A covered step whose picture nothing else in the run shows keeps it, caption-less:
+    // there is no second copy to drop, so the in-page dedupe has nothing to remove.
+    [Fact]
+    public void ACoveredStepWhosePictureNothingElseShowsKeepsItCaptionLess()
+    {
+        var step = "here it is\n\n" + P1;
+        var turns = Parse(User, Step(Text(step)), Rollup(Text(step + "\n\nand more")));
+
+        var picture = Assert.Single(turns, t => t.ImageSourcePath == P1);
+        Assert.Equal("", picture.Text);
+        Assert.Equal(1, turns.Count(t => t.Text.Contains("here it is")));
+    }
+
+    // An open step that spoke before it acted renders a tool line and then its words
+    // (the tool line first). Only the words are the open tail's; the tool line, a
+    // System turn in the same message, is not marked.
+    [Fact]
+    public void AnOpenStepThatSpokeBeforeItActedMarksItsWordsAndNotItsToolLine()
+    {
+        var content = "[{\"type\":\"text\",\"text\":\"looking now\"},"
+            + "{\"type\":\"toolcall\",\"id\":\"t1\",\"name\":\"exec\",\"arguments\":{\"command\":\"ls\"}}]";
+        var turns = Parse(User, Step(content));
+
+        var tool = Assert.Single(turns, t => t.Role == ChatRole.System);
+        Assert.False(tool.OpenTail);
+        var words = Assert.Single(turns, t => t.Role == ChatRole.Assistant);
+        Assert.True(words.OpenTail);
+        Assert.Equal("looking now", words.Text);
+    }
+
     // Control: two different pictures both stay.
     [Fact]
     public void TwoDifferentPicturesInOneRunBothStay()
