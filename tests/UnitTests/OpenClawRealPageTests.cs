@@ -298,9 +298,10 @@ public class OpenClawRealPageTests
         Assert.Equal(1, turns.Count(t => t.Text == "S50 look"));
     }
 
-    // The covered named-path rollup (idx 36) and clip rollup (idx 44) keep their
-    // picture and attachment with no caption, so the step's words appear once;
-    // the covered inline-image rollup (idx 52) does the same.
+    // The covered clip rollup (idx 44) and inline-image rollup (idx 52) keep their
+    // attachment and picture with no caption, so the step's words appear once. The
+    // covered named-path rollup (idx 36) names the same file as its step, so the
+    // picture shows once, on the step.
     [Fact]
     public void CoveredPictureRollupsOnTheSyntheticPageShowTheirPictureOnceAndTheirWordsOnce()
     {
@@ -309,12 +310,15 @@ public class OpenClawRealPageTests
         var captionless = turns.Where(t => t.FromRollup && t.Text == ""
             && (t.ImageUrl is not null || t.ImageBytes is not null || t.Attachment is not null)).ToList();
 
-        Assert.Equal(3, captionless.Count);
-        Assert.Contains(captionless, t => t.ImageUrl is not null);
+        Assert.Equal(2, captionless.Count);
         Assert.Contains(captionless, t => t.Attachment is not null);
         Assert.Contains(captionless, t => t.ImageBytes is not null);
         Assert.Equal(1, turns.Count(t => t.Text.StartsWith("S34", StringComparison.Ordinal)));
         Assert.Equal(1, turns.Count(t => t.Text.StartsWith("S42 clip", StringComparison.Ordinal)));
+
+        var named = turns.Where(t => !string.IsNullOrEmpty(t.ImageSourcePath) && t.Text.StartsWith("S34", StringComparison.Ordinal)).ToList();
+        Assert.Single(named);
+        Assert.False(named[0].FromRollup);
     }
 
     // On the seven real pages no dropped rollup carries a picture or an

@@ -1556,6 +1556,11 @@ namespace Orbweaver
 
                 if (step.ImageUrl is null && step.ImageBytes is null && step.Attachment is null)
                     gone.Add(at);
+                else if (!string.IsNullOrEmpty(step.ImageSourcePath)
+                         && string.Equals(step.ImageSourcePath, head.ImageSourcePath, StringComparison.Ordinal))
+                    // The head rollup already shows this very picture, so the
+                    // caption-less copy would draw it twice. The last copy stays.
+                    gone.Add(at);
                 else
                     filtered[at] = step with { Text = "" };
             }

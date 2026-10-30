@@ -115,7 +115,7 @@ public class OpenClawRollupArmTests
     // picture and loses only its caption: the words show once, the pictures are
     // never lost.
     [Fact]
-    public void ANamedPathRollupAtThePageHeadStaysWholeAndTheOlderPictureStepLosesItsCaptionOnScrollBack()
+    public void ANamedPathRollupAtThePageHeadStaysWholeAndTheOlderStepNamingTheSamePictureIsLeftOutOnScrollBack()
     {
         var newer = JsonDocument.Parse("[" + Rollup(NamedContent) + "]").RootElement;
         var headText = OpenClawSessions.TurnsFromHistory(newer, Key)[0].Text;
@@ -127,15 +127,14 @@ public class OpenClawRollupArmTests
         session.SetHistory(OpenClawSessions.TurnsFromHistory(newer, Key, startsMidRun: true));
         session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, Key));
 
-        Assert.Equal(3, session.History.Count);
-        Assert.Equal("", session.History[1].Text);
-        Assert.NotNull(session.History[1].ImageUrl);
-
-        var picture = session.History[2];
+        // The head rollup shows the picture, with its caption; the older step's
+        // caption-less copy of the same file is the duplicate and is left out.
+        Assert.Equal(2, session.History.Count);
+        var picture = session.History[1];
         Assert.True(picture.FromRollup);
         Assert.NotNull(picture.ImageUrl);
         Assert.Contains("here you go", picture.Text);
-        Assert.Equal(1, session.History.Count(t => t.Text.Contains("here you go")));
+        Assert.Equal(1, session.History.Count(t => t.ImageUrl is not null));
     }
 
     // ---- a covered rollup's picture survives caption-less, on every arm ----
@@ -151,15 +150,18 @@ public class OpenClawRollupArmTests
             JsonDocument.Parse("[{\"role\":\"user\",\"content\":\"go\"}," + Step(stepText) + "," + Rollup(rollupContent) + "]").RootElement,
             Key);
 
+    // A covered named-path rollup and the step that covers it name the same file:
+    // the picture shows once, on the step, which keeps its own caption. (The rollup's
+    // caption-less copy is the duplicate; see OpenClawCoveredPictureTests.)
     [Fact]
-    public void ACoveredNamedPathRollupKeepsItsPictureWithNoCaption()
+    public void ACoveredNamedPathRollupShowsItsPictureOnceOnTheStepThatNamesItToo()
     {
         var raw = "here you go\nMEDIA:" + Path + "\nenjoy";
         var turns = CoveredPage(raw, "[{\"type\":\"text\",\"text\":" + JsonSerializer.Serialize(raw) + "}]");
 
-        var rollupTurn = Assert.Single(turns, t => t.FromRollup);
-        Assert.NotNull(rollupTurn.ImageUrl);
-        Assert.Equal("", rollupTurn.Text);
+        var picture = Assert.Single(turns, t => t.ImageUrl is not null);
+        Assert.False(picture.FromRollup);
+        Assert.Contains("here you go", picture.Text);
         Assert.Equal(1, turns.Count(t => t.Text.Contains("here you go")));
     }
 

@@ -2570,6 +2570,11 @@ namespace Orbweaver
             var namedIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
             var mirrorDrawn = new List<(int Index, string Source)>();
 
+            // CB-270: turns whose caption was blanked because the words are shown by
+            // the other half of a covered pair (a dropped rollup, or a step a kept
+            // rollup contains). Their picture stays; see the dedupe after the loop.
+            var blanked = new HashSet<int>();
+
             // CB-270: a tool-using run is stored as its steps and then a rollup
             // repeating their text. Decided once, over the whole page, because
             // the rule is positional: a rollup its steps cover is dropped, and a
@@ -3081,6 +3086,8 @@ namespace Orbweaver
                         at, speaker, colour, mine, null, namedMedia.Path,
                         Automation: cronAutomation, Confidence: confidence));
 
+                    if (dropText) blanked.Add(turns.Count - 1);
+
                     // Recorded after the Add, as the index of the turn just
                     // pushed — see the merge below for why this needs the
                     // index and not just a count.
@@ -3128,6 +3135,65 @@ namespace Orbweaver
 
             var head = startsMidRun ? OpenClawHistoryShape.HeadRollupIndex(messages) : -1;
             if (head >= 0) MarkText(head, seam: true);
+
+            // CB-270: a covered pair can show one picture twice. An equal-join rollup
+            // and its last step both end in the same MEDIA: path, or a kept rollup
+            // and a step it contains do; the covered side has lost its caption but
+            // kept its picture, so the picture would be drawn twice in one run. A
+            // blanked turn whose resolved path another turn of the same run still
+            // shows is removed; the last copy is always kept, so a picture is never
+            // drawn zero times. Runs are the raw messages' (a user message or a
+            // rollup closes one). Two different pictures both stay, and so do two
+            // genuine deliveries of one file, which are not blanked turns.
+            if (blanked.Count > 0)
+            {
+                var spanOfMessage = new int[turnStarts.Count - 1];
+                var span = 0;
+                var m = 0;
+                foreach (var raw in messages.EnumerateArray())
+                {
+                    spanOfMessage[m++] = span;
+                    if (Str(raw, "role") == "user" || OpenClawHistoryShape.IsRollup(raw)) span++;
+                }
+
+                var spanOfTurn = new int[turns.Count];
+                for (var msg = 0; msg < spanOfMessage.Length; msg++)
+                {
+                    for (var t = turnStarts[msg]; t < turnStarts[msg + 1]; t++) spanOfTurn[t] = spanOfMessage[msg];
+                }
+
+                var redundant = new HashSet<int>();
+                foreach (var b in blanked.OrderBy(i => i))
+                {
+                    var path = turns[b].ImageSourcePath;
+                    if (string.IsNullOrEmpty(path)) continue;
+
+                    var shownElsewhere = false;
+                    for (var j = 0; j < turns.Count && !shownElsewhere; j++)
+                    {
+                        shownElsewhere = j != b && !redundant.Contains(j) && spanOfTurn[j] == spanOfTurn[b]
+                            && string.Equals(turns[j].ImageSourcePath, path, StringComparison.Ordinal);
+                    }
+
+                    if (shownElsewhere) redundant.Add(b);
+                }
+
+                if (redundant.Count > 0)
+                {
+                    var newIndex = new int[turns.Count];
+                    var next = 0;
+                    for (var i = 0; i < turns.Count; i++) newIndex[i] = redundant.Contains(i) ? -1 : next++;
+
+                    foreach (var key in namedIndices.Keys.ToList())
+                        namedIndices[key] = namedIndices[key].Where(i => newIndex[i] >= 0).Select(i => newIndex[i]).ToList();
+
+                    var keptMirrors = mirrorDrawn.Where(x => newIndex[x.Index] >= 0).Select(x => (newIndex[x.Index], x.Source)).ToList();
+                    mirrorDrawn.Clear();
+                    mirrorDrawn.AddRange(keptMirrors);
+
+                    foreach (var i in redundant.OrderByDescending(i => i)) turns.RemoveAt(i);
+                }
+            }
 
             // One delivery, two arms, one bubble — CB-98's cross-arm case,
             // which turned out to be live rather than latent.
