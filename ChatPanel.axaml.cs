@@ -3150,8 +3150,10 @@ namespace Orbweaver
 
             if (_promptArmed)
             {
-                // Only remembered: the answer is given on release.
-                _pressedPromptOption = sender as Control;
+                // Only remembered: the answer is given on release. And only a press
+                // that itself came after the arming window is remembered, so one
+                // that began inside it and is held past it answers nothing.
+                _pressedPromptOption = PromptClock() - _promptShownAt < PromptArmDelay ? null : sender as Control;
                 return;
             }
 
