@@ -56,7 +56,7 @@ public class OpenClawApprovalEndStatusTests : IDisposable
     [InlineData("allowed", "allow-once", "user")]
     [InlineData("denied", "deny", "user")]
     [InlineData("expired", null, "timeout")]
-    [InlineData("cancelled", null, "superseded")]
+    [InlineData("cancelled", null, "run-aborted")]
     public void AResolvedBroadcastCarriesItsStatusAndReason(string status, string? decision, string reason)
     {
         Requested("a1");

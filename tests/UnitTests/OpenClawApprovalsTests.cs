@@ -608,7 +608,8 @@ public class OpenClawApprovalsTests
     }
 
     // The preview is the fallback when the full text is absent, and the warning is
-    // carried for the panel to show.
+    // carried for the panel to show. TOLERANCE, not a declared shape: the declared
+    // exec presentation requires commandText (a non-empty string).
     [Fact]
     public void AnExecSnapshotFallsBackToThePreviewAndCarriesItsWarning()
     {
@@ -622,11 +623,14 @@ public class OpenClawApprovalsTests
         Assert.Equal(new[] { "deny" }, approval.AllowedDecisions);
     }
 
+    // The full plugin and system-agent presentations are declared shapes. The
+    // title-only, description-only and toolName-only ones are TOLERANCE: the
+    // declaration requires title, description and severity together.
     [Fact]
     public void APluginAndASystemAgentSnapshotAreDescribedByTheirTitleAndDescription()
     {
         var plugin = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation:
-            "{\"kind\":\"plugin\",\"title\":\"Publish\",\"description\":\"Pushes the package\",\"severity\":\"high\"," +
+            "{\"kind\":\"plugin\",\"title\":\"Publish\",\"description\":\"Pushes the package\",\"severity\":\"warning\"," +
             "\"allowedDecisions\":[\"allow-once\",\"deny\"]}")), Key, Now)!;
         var system = OpenClawApprovals.ParseSnapshot(Json(Snapshot(presentation:
             "{\"kind\":\"system-agent\",\"title\":\"Change config\",\"description\":\"Edits openclaw.json\"," +
@@ -757,7 +761,11 @@ public class OpenClawApprovalsTests
     [Fact]
     public void ATerminalSessionEventCarriesHowItEnded()
     {
-        var terminal = "{\"id\":\"approval-0001\",\"status\":\"denied\",\"decision\":\"deny\",\"reason\":\"user\"," +
+        // The declared shape (DeniedApprovalSnapshotSchema): the common record
+        // fields (urlPath, createdAtMs, expiresAtMs) plus the terminal ones.
+        var terminal = "{\"id\":\"approval-0001\",\"status\":\"denied\",\"urlPath\":\"/approve/approval-0001\"," +
+                       "\"createdAtMs\":" + Ms(Now) + ",\"expiresAtMs\":" + Ms(Now.AddMinutes(30)) + "," +
+                       "\"decision\":\"deny\",\"reason\":\"user\"," +
                        "\"resolvedAtMs\":" + Ms(Now) + ",\"resolver\":{\"kind\":\"device\",\"id\":\"device-0001\"}," +
                        "\"presentation\":" + ExecPresentation() + "}";
 
