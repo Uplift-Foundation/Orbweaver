@@ -237,22 +237,30 @@ public class OpenClawApprovalTextTests
     {
         Assert.Equal("Couldn't answer: no reason given", OpenClawApprovalText.CouldntAnswer("bad\u0007"));
         Assert.Equal("Already decided elsewhere: unknown", OpenClawApprovalText.AlreadyDecided("de\nnied"));
-        Assert.Equal("Dropped by the gateway", OpenClawApprovalText.Ended("pending", "x\u202Ey"));
+        Assert.Equal(OpenClawApprovalText.NoLongerPending, OpenClawApprovalText.Ended("pending", "x\u202Ey"));
         Assert.Equal(" is waiting for an approval", OpenClawApprovalText.RoomLine("Qu\u0007ill"));
     }
 
-    // Every terminal reason the gateway has, and a decision by someone else.
+    // The gateway declares status and reason as pairs, so the line comes from the
+    // status first and the reason only refines it; with no status the reason is read
+    // alone, and with neither the request is simply no longer pending.
     [Theory]
     [InlineData("denied", "user", "Denied by another reviewer")]
     [InlineData("allowed", "user", "Allowed by another reviewer")]
-    [InlineData("denied", "timeout", "Expired unanswered")]
-    [InlineData("denied", "run-aborted", "The run was stopped")]
-    [InlineData("denied", "gateway-restart", "Dropped by the gateway (gateway-restart)")]
+    [InlineData("expired", "timeout", "Expired unanswered")]
+    [InlineData("expired", null, "Expired unanswered")]
+    [InlineData("cancelled", "run-aborted", "The run was stopped")]
+    [InlineData("cancelled", "gateway-restart", "Dropped by the gateway (gateway-restart)")]
+    [InlineData("cancelled", null, "Cancelled")]
     [InlineData("denied", "no-route", "Dropped by the gateway (no-route)")]
     [InlineData("denied", "storage-corrupt", "Dropped by the gateway (storage-corrupt)")]
     [InlineData("denied", "malformed-verdict", "Dropped by the gateway (malformed-verdict)")]
-    [InlineData("pending", "something-new", "Dropped by the gateway (something-new)")]
-    [InlineData(null, null, "Dropped by the gateway")]
+    [InlineData("denied", "timeout", "Denied by another reviewer")]      // status wins over a mismatched reason
+    [InlineData(null, "timeout", "Expired unanswered")]
+    [InlineData(null, "run-aborted", "The run was stopped")]
+    [InlineData(null, "no-route", "Dropped by the gateway (no-route)")]
+    [InlineData("pending", "something-new", "This request is no longer pending")]
+    [InlineData(null, null, "This request is no longer pending")]
     public void AnEndWeDidNotCauseReadsAsWhatHappened(string? status, string? reason, string expected) =>
         Assert.Equal(expected, OpenClawApprovalText.Ended(status, reason));
 
@@ -341,10 +349,4 @@ public class OpenClawApprovalTextTests
     public void TheGatewaysWarningIsShownAsPlainText() =>
         Assert.Equal("Nova wants to run: true\nin /tmp\nruns as root",
             OpenClawApprovalText.Prompt("ap-1", "Nova", "true", "/tmp", null, warning: "runs as root").Title);
-
-    [Theory]
-    [InlineData("expired", null, "Expired unanswered")]
-    [InlineData("cancelled", null, "Cancelled")]
-    public void TheTerminalStatusesHaveTheirOwnLines(string status, string? reason, string line) =>
-        Assert.Equal(line, OpenClawApprovalText.Ended(status, reason));
 }

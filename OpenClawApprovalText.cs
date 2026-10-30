@@ -120,32 +120,42 @@ namespace Orbweaver
             "Couldn't answer: " + (Safe(message, MaxCommand) is { Length: > 0 } m ? m : "no reason given");
 
         // A request we did not answer ended: from a resolved event, a poll that no
-        // longer lists it, or the local clock. Terminal reasons are the gateway's
-        // seven; each reads as what it means, and an unknown one by name.
+        // longer lists it, or the local clock. The gateway declares status and reason
+        // as pairs (expired with timeout, cancelled with run-aborted or
+        // gateway-restart, allowed with user, denied with the rest), so the line is
+        // chosen from the status first and the reason only refines it. With no
+        // status at all (a drop nobody explained) the reason is read on its own, and
+        // with neither the request is simply no longer pending.
         internal static string Ended(string? status, string? reason)
         {
-            switch (reason)
+            switch (status)
             {
-                case "timeout":
+                case "expired":
                     return "Expired unanswered";
-                case "run-aborted":
-                    return "The run was stopped";
-                case "gateway-restart":
-                case "no-route":
-                case "storage-corrupt":
-                case "malformed-verdict":
-                    return "Dropped by the gateway (" + reason + ")";
+                case "cancelled":
+                    return reason == "run-aborted" ? "The run was stopped"
+                        : IsDropReason(reason) ? "Dropped by the gateway (" + reason + ")"
+                        : "Cancelled";
+                case "allowed":
+                    return "Allowed by another reviewer";
+                case "denied":
+                    return IsDropReason(reason) ? "Dropped by the gateway (" + reason + ")" : "Denied by another reviewer";
             }
 
-            return status switch
-            {
-                "expired" => "Expired unanswered",
-                "cancelled" => "Cancelled",
-                "allowed" => "Allowed by another reviewer",
-                "denied" => "Denied by another reviewer",
-                _ => "Dropped by the gateway" + (Safe(reason, MaxReason) is { Length: > 0 } r ? " (" + r + ")" : "")
-            };
+            if (reason == "timeout") return "Expired unanswered";
+            if (reason == "run-aborted") return "The run was stopped";
+            if (IsDropReason(reason)) return "Dropped by the gateway (" + reason + ")";
+
+            return NoLongerPending;
         }
+
+        private static bool IsDropReason(string? reason) =>
+            reason is "gateway-restart" or "no-route" or "storage-corrupt" or "malformed-verdict";
+
+        // More requests were waiting than the app keeps; the oldest is dropped from
+        // view and can still be answered on the gateway.
+        internal const string Evicted =
+            "Dropped from view: more requests were waiting than can be shown; answer it on the gateway";
 
         // How to answer it on the gateway instead, since there is no terminal to
         // focus. The id is shown as data, quoted and escaped, never composed into a

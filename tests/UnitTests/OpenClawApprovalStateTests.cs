@@ -680,14 +680,14 @@ public class OpenClawApprovalStateTests : IDisposable
                 : FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")));
         using (gateway)
         {
-            var first = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "deny");
+            var first = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval().Id, "deny");
 
             Assert.Equal(OpenClawApprovalResult.Failed, first.Result);
             Assert.Equal("missing scope: operator.approvals", first.Detail);
             Assert.Equal("a1", Ids(Key));
 
             failing = false;
-            var second = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "deny");
+            var second = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval().Id, "deny");
 
             Assert.Equal(OpenClawApprovalResult.Answered, second.Result);
             Assert.Equal(2, Sent(socket).Count);
@@ -739,7 +739,7 @@ public class OpenClawApprovalStateTests : IDisposable
         var (socket, gateway) = await ConnectedAsync(Approving);
         using (gateway)
         {
-            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), decision);
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval().Id, decision);
 
             Assert.Equal(OpenClawApprovalResult.Failed, outcome.Result);
             Assert.Equal("that answer is not offered", outcome.Detail);
@@ -1400,7 +1400,7 @@ public class OpenClawApprovalStateTests : IDisposable
             r.Method == "approval.resolve" ? FakeGatewaySocket.Ok(r.Id, Json("{\"applied\":true}")) : null);
         using (gateway)
         {
-            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval(), "deny");
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(Chat(), Approval().Id, "deny");
 
             Assert.Equal(OpenClawApprovalResult.Answered, outcome.Result);
             Assert.Equal("a1", Sent(socket).Single().Params.GetProperty("id").GetString());

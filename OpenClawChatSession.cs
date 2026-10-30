@@ -1417,8 +1417,9 @@ namespace Orbweaver
 
         // --- approvals (CB-270 Stage 6) ----------------------------------------
         //
-        // The oldest unexpired pending approval for this conversation is the
-        // prompt, read from OpenClawSessions every time it is asked, so a panel
+        // The first unexpired pending approval to arrive for this conversation is
+        // the prompt, in the order the store gives and never sorted by the gateway's
+        // own createdAt (which a hostile gateway could set to jump the queue), read from OpenClawSessions every time it is asked, so a panel
         // that opens after the request arrived shows it too. The rest queue behind
         // it. The two answers are the client's, fixed, and every option is bound
         // to the approval it was drawn for.
@@ -1433,7 +1434,7 @@ namespace Orbweaver
         private string? _shownPromptKey;
 
         private OpenClawApproval? CurrentApproval() =>
-            OpenClawSessions.PendingFor(GatewayKey).Where(a => !_answering.Contains(a.Id)).OrderBy(a => a.CreatedAt).FirstOrDefault();
+            OpenClawSessions.PendingFor(GatewayKey).FirstOrDefault(a => !_answering.Contains(a.Id));
 
         private ChatPrompt PromptFor(OpenClawApproval approval) =>
             OpenClawApprovalText.Prompt(
@@ -1468,19 +1469,21 @@ namespace Orbweaver
             PromptChanged?.Invoke();
         }
 
-        private static string EndedLine(OpenClawApprovalEnded ended) => ended.Cause switch
+        private static string EndedLine(OpenClawApprovalEnded ended)
         {
-            "expired" => OpenClawApprovalText.Ended(null, "timeout"),
-            "gone" => OpenClawApprovalText.Ended(null, null),
-            _ => OpenClawApprovalText.Ended(
-                ended.Decision switch
-                {
-                    OpenClawApprovals.Deny => "denied",
-                    OpenClawApprovals.AllowOnce or "allow-always" => "allowed",
-                    _ => null
-                },
-                ended.Reason)
-        };
+            if (ended.Cause == "evicted") return OpenClawApprovalText.Evicted;
+
+            // The status the gateway declared; failing that, what a resolved event's
+            // decision says; failing that, the local clock's expiry.
+            var status = ended.Status ?? ended.Decision switch
+            {
+                OpenClawApprovals.Deny => "denied",
+                OpenClawApprovals.AllowOnce or "allow-always" => "allowed",
+                _ => ended.Cause == "expired" ? "expired" : null
+            };
+
+            return OpenClawApprovalText.Ended(status, ended.Reason);
+        }
 
         // The one handler an answer comes through, reached only from a click on a
         // button the person can see. Sends nothing unless the option is one this
@@ -1520,7 +1523,7 @@ namespace Orbweaver
             _answering.Add(approval.Id);
             RefreshApprovals();
 
-            var outcome = await OpenClawSessions.ResolveApprovalAsync(this, approval, option.Key);
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(this, approval.Id, option.Key);
 
             switch (outcome.Result)
             {

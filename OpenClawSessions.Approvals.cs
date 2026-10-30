@@ -581,12 +581,6 @@ namespace Orbweaver
                 new(OpenClawApprovalResult.Failed, null, null, null, detail);
         }
 
-        // The panel's own call, which already holds the record it drew: the same
-        // answer, by the id the click was bound to.
-        internal static Task<OpenClawApprovalOutcome> ResolveApprovalAsync(
-            OpenClawChatSession chat, OpenClawApproval approval, string decision, CancellationToken ct = default) =>
-            ResolveApprovalAsync(chat, approval.Id, decision, ct);
-
         // The record is over whichever way it ended: off the pending set now,
         // rather than at the next poll.
         private static void Settle(OpenClawApproval approval)

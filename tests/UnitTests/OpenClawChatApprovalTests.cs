@@ -106,10 +106,10 @@ public class OpenClawChatApprovalTests : IDisposable
     public void NothingPendingIsNoPrompt() => Assert.Null(Chat().Prompt);
 
     [Fact]
-    public void ThePromptIsTheOldestPendingApprovalWithDenyThenAllowOnceBoundToIt()
+    public void ThePromptIsTheFirstToArriveWithDenyThenAllowOnceBoundToIt()
     {
-        Request("a2", "second", createdOffset: 5);
         Request("a1", "first", createdOffset: 0);
+        Request("a2", "second", createdOffset: -50);   // arrived later, claims to be older: still second
 
         var prompt = Chat().Prompt!;
 
@@ -456,10 +456,8 @@ public class OpenClawChatApprovalTests : IDisposable
     [InlineData("deny", null, "Denied by another reviewer")]
     [InlineData("allow-once", null, "Allowed by another reviewer")]
     [InlineData("allow-always", null, "Allowed by another reviewer")]
-    [InlineData("deny", "timeout", "Expired unanswered")]
-    [InlineData("deny", "run-aborted", "The run was stopped")]
-    [InlineData("deny", "gateway-restart", "Dropped by the gateway (gateway-restart)")]
-    [InlineData("mystery", null, "Dropped by the gateway")]
+    [InlineData("deny", "run-aborted", "Denied by another reviewer")]   // status first, reason only refines
+    [InlineData("mystery", null, "This request is no longer pending")]
     public void AnApprovalThatEndedElsewhereIsWrittenUpOnce(string decision, string? reason, string expected)
     {
         var chat = Chat();
@@ -483,7 +481,7 @@ public class OpenClawChatApprovalTests : IDisposable
 
         OpenClawSessions.ReplacePending("exec", new[] { OpenClawApprovals.ParseRecord(Json(Row("a2", minutes: 30)), "exec", new DateTimeOffset(Now))! }, new DateTimeOffset(Now));
         chat.OnApprovalsChanged();
-        Assert.Contains("Dropped by the gateway", Texts(chat));
+        Assert.Contains(OpenClawApprovalText.NoLongerPending, Texts(chat));
 
         OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now.AddMinutes(31)));
         chat.OnApprovalsChanged();
