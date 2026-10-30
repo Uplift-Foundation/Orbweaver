@@ -1483,7 +1483,7 @@ namespace Orbweaver
                 _ => ended.Cause == "expired" ? "expired" : null
             };
 
-            return OpenClawApprovalText.Ended(status, ended.Reason);
+            return OpenClawApprovalText.Ended(status, ended.Reason, ended.Decision);
         }
 
         // The one handler an answer comes through, reached only from a click on a
@@ -1532,7 +1532,7 @@ namespace Orbweaver
                     Note(OpenClawApprovalText.Answered(option.Key));
                     break;
                 case OpenClawApprovalResult.DecidedElsewhere:
-                    Note(OpenClawApprovalText.AlreadyDecided(outcome.Status));
+                    Note(OpenClawApprovalText.AlreadyDecided(outcome.Status, outcome.Reason));
                     break;
                 case OpenClawApprovalResult.NoLongerPending:
                     Note(OpenClawApprovalText.NoLongerPending);

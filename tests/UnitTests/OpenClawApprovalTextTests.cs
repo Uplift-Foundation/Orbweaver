@@ -220,7 +220,7 @@ public class OpenClawApprovalTextTests
     [Fact]
     public void AnotherReviewerGettingThereFirstSaysWhatTheyDecided()
     {
-        Assert.Equal("Already decided elsewhere: denied", OpenClawApprovalText.AlreadyDecided("denied"));
+        Assert.Equal("Already decided elsewhere: Denied by another reviewer", OpenClawApprovalText.AlreadyDecided("denied"));
         Assert.Equal("Already decided elsewhere: unknown", OpenClawApprovalText.AlreadyDecided(null));
     }
 
@@ -349,4 +349,16 @@ public class OpenClawApprovalTextTests
     public void TheGatewaysWarningIsShownAsPlainText() =>
         Assert.Equal("Nova wants to run: true\nin /tmp\nruns as root",
             OpenClawApprovalText.Prompt("ap-1", "Nova", "true", "/tmp", null, warning: "runs as root").Title);
+
+    // allow-always by another reviewer is named as such; the lines are reused for
+    // an answer that lost the race.
+    [Fact]
+    public void AnAllowAlwaysBySomeoneElseIsNamedAndTheLinesAreReusedForALostRace()
+    {
+        Assert.Equal("Allowed always, by another reviewer", OpenClawApprovalText.Ended("allowed", "user", "allow-always"));
+        Assert.Equal("Allowed by another reviewer", OpenClawApprovalText.Ended("allowed", "user", "allow-once"));
+        Assert.Equal("Already decided elsewhere: Denied by another reviewer", OpenClawApprovalText.AlreadyDecided("denied", "user"));
+        Assert.Equal("Already decided elsewhere: Expired unanswered", OpenClawApprovalText.AlreadyDecided("expired", "timeout"));
+        Assert.Equal("Already decided elsewhere: unknown", OpenClawApprovalText.AlreadyDecided(null));
+    }
 }

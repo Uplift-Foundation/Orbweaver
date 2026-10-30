@@ -113,8 +113,10 @@ namespace Orbweaver
             decision == AllowOnceKey ? "Allowed once" : "Denied";
 
         // Another reviewer got there first; the snapshot says what they decided.
-        internal static string AlreadyDecided(string? status) =>
-            "Already decided elsewhere: " + (Safe(status, MaxReason) is { Length: > 0 } s ? s : "unknown");
+        internal static string AlreadyDecided(string? status, string? reason = null) =>
+            "Already decided elsewhere: " + (status is "allowed" or "denied" or "expired" or "cancelled"
+                ? Ended(status, reason)
+                : Safe(status, MaxReason) is { Length: > 0 } s ? s : "unknown");
 
         internal static string CouldntAnswer(string message) =>
             "Couldn't answer: " + (Safe(message, MaxCommand) is { Length: > 0 } m ? m : "no reason given");
@@ -126,7 +128,7 @@ namespace Orbweaver
         // chosen from the status first and the reason only refines it. With no
         // status at all (a drop nobody explained) the reason is read on its own, and
         // with neither the request is simply no longer pending.
-        internal static string Ended(string? status, string? reason)
+        internal static string Ended(string? status, string? reason, string? decision = null)
         {
             switch (status)
             {
@@ -137,7 +139,7 @@ namespace Orbweaver
                         : IsDropReason(reason) ? "Dropped by the gateway (" + reason + ")"
                         : "Cancelled";
                 case "allowed":
-                    return "Allowed by another reviewer";
+                    return decision == "allow-always" ? "Allowed always, by another reviewer" : "Allowed by another reviewer";
                 case "denied":
                     return IsDropReason(reason) ? "Dropped by the gateway (" + reason + ")" : "Denied by another reviewer";
             }

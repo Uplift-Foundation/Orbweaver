@@ -390,7 +390,7 @@ public class OpenClawChatApprovalTests : IDisposable
 
             await chat.AnswerAsync(Option(chat, "deny"));
 
-            Assert.Contains("Already decided elsewhere: allowed", Texts(chat));
+            Assert.Contains("Already decided elsewhere: Allowed by another reviewer", Texts(chat));
         }
     }
 
@@ -455,7 +455,7 @@ public class OpenClawChatApprovalTests : IDisposable
     [Theory]
     [InlineData("deny", null, "Denied by another reviewer")]
     [InlineData("allow-once", null, "Allowed by another reviewer")]
-    [InlineData("allow-always", null, "Allowed by another reviewer")]
+    [InlineData("allow-always", null, "Allowed always, by another reviewer")]
     [InlineData("deny", "run-aborted", "Denied by another reviewer")]   // status first, reason only refines
     [InlineData("mystery", null, "This request is no longer pending")]
     public void AnApprovalThatEndedElsewhereIsWrittenUpOnce(string decision, string? reason, string expected)
