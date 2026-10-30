@@ -59,99 +59,48 @@ public class ChatPanelPageBoundaryTests : IDisposable
         };
     }
 
+    private static HistoryTurn Seam(string text) =>
+        new(ChatRole.Assistant, text, null, "", new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero),
+            null, null, FromRollup: true, SeamRollup: true);
+
+    private static HistoryTurn Tail(string text, string? imageUrl = null) =>
+        new(ChatRole.Assistant, text, imageUrl, imageUrl is null ? "" : "p.png",
+            new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero), null, null, OpenTail: true);
+
+    // Stage 3b: the older page's trailing-run steps the head rollup contains are
+    // left out before they become rows, so the panel only ever inserts what the
+    // model inserted and its rows stay equal to the model's, with the words once.
     [AvaloniaFact]
-    public void ScrollingBackOverASplitRunDrawsTheReplyOnceAndKeepsRowsInStepWithTheModel()
+    public void ScrollingBackLeavesOutTheOlderStepsTheHeadRollupContainsAndKeepsRowsInStep()
     {
         var session = Session();
-        session.SetHistory(new List<HistoryTurn>
-        {
-            H(ChatRole.Assistant, "step1\n\nstep3", fromRollup: true), H(ChatRole.User, "next")
-        });
+        session.SetHistory(new List<HistoryTurn> { Seam("step1\n\nstep3\n\nand the answer"), H(ChatRole.User, "next") });
         var panel = Open(session);
 
         session.PrependHistory(new List<HistoryTurn>
         {
-            H(ChatRole.User, "go"), H(ChatRole.Assistant, "step1"), H(ChatRole.System, "· exec  ls"), H(ChatRole.Assistant, "step3")
-        }, olderEndsInOpenTextStep: true);
+            H(ChatRole.User, "go"), Tail("step1"), H(ChatRole.System, "· exec  ls"), Tail("step3")
+        });
         FlushRender();
 
         var rows = RowTexts(panel);
 
         Assert.Equal(session.History.Count, rows.Length);
-        Assert.Equal(5, rows.Length);
-        Assert.DoesNotContain(rows, r => r.Contains("step1\n\nstep3"));
+        Assert.Equal(4, rows.Length);
         Assert.Equal(1, rows.Count(r => r.Contains("step3")));
+        Assert.DoesNotContain(rows, r => r == "step1" || r == "step3");
         Assert.Contains("next", rows[^1]);
     }
 
-    // The dropped rollup is not the first row: a later step sits above it.
+    // An older step that carries a picture keeps its row and loses only its caption.
     [AvaloniaFact]
-    public void ScrollingBackRemovesTheRightRowWhenTheRollupIsBehindALaterStep()
+    public void ScrollingBackKeepsTheRowOfACoveredOlderPictureStepAndBlanksItsCaption()
     {
         var session = Session();
-        session.SetHistory(new List<HistoryTurn>
-        {
-            H(ChatRole.Assistant, "step3"), H(ChatRole.Assistant, "step1\n\nstep3", fromRollup: true), H(ChatRole.User, "next")
-        });
+        session.SetHistory(new List<HistoryTurn> { Seam("look at this\n\nmore") });
         var panel = Open(session);
 
-        session.PrependHistory(new List<HistoryTurn>
-        {
-            H(ChatRole.User, "go"), H(ChatRole.Assistant, "step1"), H(ChatRole.System, "· exec  ls")
-        }, olderEndsInOpenTextStep: true);
-        FlushRender();
-
-        var rows = RowTexts(panel);
-
-        Assert.Equal(session.History.Count, rows.Length);
-        Assert.Equal(5, rows.Length);
-        Assert.DoesNotContain(rows, r => r.Contains("step1\n\nstep3"));
-        Assert.Contains("step3", rows[3]);
-        Assert.Contains("next", rows[4]);
-    }
-
-    // A rollup that was two rows (picture, then text) loses only its text row.
-    [AvaloniaFact]
-    public void ScrollingBackRemovesOnlyTheTextRowOfAMultiTurnRollup()
-    {
-        var session = Session();
-        session.SetHistory(new List<HistoryTurn>
-        {
-            H(ChatRole.Assistant, "", fromRollup: true), H(ChatRole.Assistant, "look", fromRollup: true), H(ChatRole.User, "next")
-        });
-        var panel = Open(session);
-
-        session.PrependHistory(new List<HistoryTurn>
-        {
-            H(ChatRole.User, "go"), H(ChatRole.Assistant, "look"), H(ChatRole.System, "· exec  ls")
-        }, olderEndsInOpenTextStep: true);
-        FlushRender();
-
-        var rows = RowTexts(panel);
-
-        Assert.Equal(session.History.Count, rows.Length);
-        Assert.Equal(5, rows.Length);
-        Assert.Equal(1, rows.Count(r => r.Contains("look")));
-        Assert.Contains("next", rows[^1]);
-    }
-
-    // A covered rollup turn that carries a picture keeps its row and loses only
-    // its caption, in place; the row count does not change.
-    [AvaloniaFact]
-    public void ScrollingBackBlanksTheCaptionOfACoveredPictureRowWithoutRemovingIt()
-    {
-        var session = Session();
-        session.SetHistory(new List<HistoryTurn>
-        {
-            new(ChatRole.Assistant, "look at this", "/route", "p.png",
-                new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero), null, null, FromRollup: true)
-        });
-        var panel = Open(session);
-
-        session.PrependHistory(new List<HistoryTurn>
-        {
-            H(ChatRole.User, "go"), H(ChatRole.Assistant, "look at this")
-        }, olderEndsInOpenTextStep: true);
+        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.User, "go"), Tail("look at this", "/route") });
         FlushRender();
 
         var rows = RowTexts(panel);
@@ -161,21 +110,54 @@ public class ChatPanelPageBoundaryTests : IDisposable
         Assert.Equal(1, rows.Count(r => r.Contains("look at this")));
     }
 
-    // Control: nothing dropped, so no row is removed and rows still match.
+    // The seam can remove a row already drawn: a delivery-mirror at the head of the
+    // transcript whose file the older page names. The panel mirrors the removal
+    // through TurnsRemoved and its rows stay equal to the model's.
     [AvaloniaFact]
-    public void ScrollingBackWhenTheOlderPageEndsInAUserTurnRemovesNoRow()
+    public void ScrollingBackRemovesAMirrorRowTheOlderPageNamesAndKeepsRowsInStep()
     {
+        var at = new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero);
         var session = Session();
-        session.SetHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "reply", fromRollup: true) });
+        session.SetHistory(new List<HistoryTurn>
+        {
+            new(ChatRole.Assistant, "clip.png", "/route", "clip.png", at, null, null,
+                ImageSourcePath: "/x/clip.png", RunHead: true, Arm: MediaSourceArm.Mirror),
+            H(ChatRole.User, "next")
+        });
         var panel = Open(session);
 
-        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.User, "go") }, olderEndsInOpenTextStep: false);
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"),
+            new(ChatRole.Assistant, "here it is", "/route", "clip.png", at, null, null,
+                ImageSourcePath: "/x/clip.png", RunTail: true, FreeNamed: true)
+        });
         FlushRender();
 
         var rows = RowTexts(panel);
 
-        Assert.Equal(2, rows.Length);
-        Assert.Contains("go", rows[0]);
-        Assert.Contains("reply", rows[1]);
+        Assert.Equal(session.History.Count, rows.Length);
+        Assert.Equal(3, rows.Length);
+        Assert.DoesNotContain(rows, r => r == "clip.png");
+        Assert.Contains("here it is", rows[1]);
+        Assert.Contains("next", rows[2]);
+    }
+
+    // Control: nothing marked, nothing left out.
+    [AvaloniaFact]
+    public void ScrollingBackWhenNothingIsCoveredAddsEveryRow()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn> { Seam("the real answer") });
+        var panel = Open(session);
+
+        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.User, "go"), Tail("let me look") });
+        FlushRender();
+
+        var rows = RowTexts(panel);
+
+        Assert.Equal(session.History.Count, rows.Length);
+        Assert.Equal(3, rows.Length);
+        Assert.Contains("let me look", rows[1]);
     }
 }

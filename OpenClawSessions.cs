@@ -2528,8 +2528,14 @@ namespace Orbweaver
         // (FetchHistoryPageAsync, which has chat.GatewayKey in hand). Nullable
         // so a fixture or a caller with genuinely no session gets exactly the
         // routes this built before.
+        //
+        // startsMidRun (CB-270): an older page may precede this one, so the turns of
+        // the first rollup with no user message before it are marked SeamRollup,
+        // for the page boundary (PrependHistory) to compare against the older
+        // page's trailing steps. The turns of the page's trailing run, with no
+        // rollup or user message after them, are always marked OpenTail.
         internal static List<HistoryTurn> TurnsFromHistory(
-            JsonElement messages, string? sessionKey, OwnerIndex? owners = null)
+            JsonElement messages, string? sessionKey, OwnerIndex? owners = null, bool startsMidRun = false)
         {
             // CB-277: null keeps every route exactly as it was built before —
             // the asking key — so a caller or fixture that does not know the
@@ -2564,10 +2570,17 @@ namespace Orbweaver
             var namedIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
             var mirrorDrawn = new List<(int Index, string Source)>();
 
+            // CB-270: turns whose caption was blanked because the words are shown by
+            // the other half of a covered pair (a dropped rollup, or a step a kept
+            // rollup contains). Their picture stays; see the dedupe after the loop.
+            var blanked = new HashSet<int>();
+
             // CB-270: a tool-using run is stored as its steps and then a rollup
             // repeating their text. Decided once, over the whole page, because
-            // the rule is positional — see OpenClawHistoryShape.RollupsToDrop.
-            var drop = OpenClawHistoryShape.RollupsToDrop(messages);
+            // the rule is positional: a rollup its steps cover is dropped, and a
+            // rollup that holds more is kept and the steps it contains are
+            // dropped instead — see OpenClawHistoryShape.TextsToDrop.
+            var drop = OpenClawHistoryShape.TextsToDrop(messages);
             var messageIndex = -1;
 
             // CB-270: the turns a rollup message produced, whichever arm built
@@ -2585,15 +2598,21 @@ namespace Orbweaver
                 rollupFrom = -1;
             }
 
+            // Where each message's turns start, for marking the page boundary's
+            // turns below (a message can produce none, one, or several).
+            var turnStarts = new List<int>();
+
             foreach (var message in messages.EnumerateArray())
             {
                 MarkRollupTurns();
                 messageIndex++;
+                turnStarts.Add(turns.Count);
 
-                // A dropped rollup loses its *text* turn only. Its text is
-                // covered by the steps, but a picture or attachment it carries
-                // is not shown by anything else, and a loss is worse than a
-                // picture drawn twice when a step showed it too.
+                // A dropped message (a covered rollup, or a step a kept rollup
+                // contains) loses its *text* turn only. Its words are shown by
+                // the other half, but a picture or attachment it carries is not
+                // shown by anything else, and a loss is worse than a picture
+                // drawn twice. Its tool lines are emitted regardless.
                 var dropText = drop.Contains(messageIndex);
                 if (OpenClawHistoryShape.IsRollup(message)) rollupFrom = turns.Count;
 
@@ -3067,6 +3086,8 @@ namespace Orbweaver
                         at, speaker, colour, mine, null, namedMedia.Path,
                         Automation: cronAutomation, Confidence: confidence));
 
+                    if (dropText) blanked.Add(turns.Count - 1);
+
                     // Recorded after the Add, as the index of the turn just
                     // pushed — see the merge below for why this needs the
                     // index and not just a count.
@@ -3091,6 +3112,107 @@ namespace Orbweaver
             }
 
             MarkRollupTurns();
+            turnStarts.Add(turns.Count);
+
+            // CB-270: the page boundary compares the steps of the page's trailing
+            // run (OpenTail) with the rollup that closes the head run (SeamRollup).
+            // Both are found from the raw messages, where a user message is a
+            // boundary even when it renders to no turn, and marked on the turns
+            // those messages produced: the text ones only, since a picture turn
+            // has nothing to compare. The flags are values on the turns, so the
+            // removals below do not disturb them.
+            void MarkText(int message, bool seam)
+            {
+                for (var i = turnStarts[message]; i < turnStarts[message + 1]; i++)
+                {
+                    if (turns[i].Role != ChatRole.Assistant || string.IsNullOrWhiteSpace(turns[i].Text)) continue;
+
+                    turns[i] = seam ? turns[i] with { SeamRollup = true } : turns[i] with { OpenTail = true };
+                }
+            }
+
+            foreach (var i in OpenClawHistoryShape.OpenTailSteps(messages)) MarkText(i, seam: false);
+
+            var head = startsMidRun ? OpenClawHistoryShape.HeadRollupIndex(messages) : -1;
+            if (head >= 0) MarkText(head, seam: true);
+
+            // CB-270: the raw messages' runs (a user message or a rollup closes one),
+            // for the picture checks here and at the page boundary. The runs of the
+            // page's trailing end and head are marked on every turn they produced,
+            // pictures included; turns whose caption was blanked are marked as well.
+            var spanOfMessage = new int[turnStarts.Count - 1];
+            var span = 0;
+            var lastClosed = false;
+            var firstIsUser = false;
+            var m = 0;
+            foreach (var raw in messages.EnumerateArray())
+            {
+                spanOfMessage[m] = span;
+                lastClosed = Str(raw, "role") == "user" || OpenClawHistoryShape.IsRollup(raw);
+                if (m == 0) firstIsUser = Str(raw, "role") == "user";
+                if (lastClosed) span++;
+                m++;
+            }
+
+            var spanOfTurn = new int[turns.Count];
+            for (var msg = 0; msg < spanOfMessage.Length; msg++)
+            {
+                for (var t = turnStarts[msg]; t < turnStarts[msg + 1]; t++) spanOfTurn[t] = spanOfMessage[msg];
+            }
+
+            var lastSpan = spanOfMessage.Length == 0 ? -1 : spanOfMessage[^1];
+            for (var t = 0; t < turns.Count; t++)
+            {
+                var tail = !lastClosed && spanOfTurn[t] == lastSpan;
+                var headRun = startsMidRun && !firstIsUser && spanOfTurn[t] == 0;
+
+                if (tail || headRun || blanked.Contains(t))
+                    turns[t] = turns[t] with { RunTail = tail, RunHead = headRun, Blanked = blanked.Contains(t) };
+            }
+
+            // CB-270: a covered pair can show one picture twice. An equal-join rollup
+            // and its last step both end in the same MEDIA: path, or a kept rollup
+            // and a step it contains do; the covered side has lost its caption but
+            // kept its picture, so the picture would be drawn twice in one run. A
+            // blanked turn whose resolved path another turn of the same run still
+            // shows is removed; the last copy is always kept, so a picture is never
+            // drawn zero times. Runs are the raw messages' (a user message or a
+            // rollup closes one). Two different pictures both stay, and so do two
+            // genuine deliveries of one file, which are not blanked turns.
+            if (blanked.Count > 0)
+            {
+                var redundant = new HashSet<int>();
+                foreach (var b in blanked.OrderBy(i => i))
+                {
+                    var path = turns[b].ImageSourcePath;
+                    if (string.IsNullOrEmpty(path)) continue;
+
+                    var shownElsewhere = false;
+                    for (var j = 0; j < turns.Count && !shownElsewhere; j++)
+                    {
+                        shownElsewhere = j != b && !redundant.Contains(j) && spanOfTurn[j] == spanOfTurn[b]
+                            && string.Equals(turns[j].ImageSourcePath, path, StringComparison.Ordinal);
+                    }
+
+                    if (shownElsewhere) redundant.Add(b);
+                }
+
+                if (redundant.Count > 0)
+                {
+                    var newIndex = new int[turns.Count];
+                    var next = 0;
+                    for (var i = 0; i < turns.Count; i++) newIndex[i] = redundant.Contains(i) ? -1 : next++;
+
+                    foreach (var key in namedIndices.Keys.ToList())
+                        namedIndices[key] = namedIndices[key].Where(i => newIndex[i] >= 0).Select(i => newIndex[i]).ToList();
+
+                    var keptMirrors = mirrorDrawn.Where(x => newIndex[x.Index] >= 0).Select(x => (newIndex[x.Index], x.Source)).ToList();
+                    mirrorDrawn.Clear();
+                    mirrorDrawn.AddRange(keptMirrors);
+
+                    foreach (var i in redundant.OrderByDescending(i => i)) turns.RemoveAt(i);
+                }
+            }
 
             // One delivery, two arms, one bubble — CB-98's cross-arm case,
             // which turned out to be live rather than latent.
@@ -3160,6 +3282,14 @@ namespace Orbweaver
                     }
 
                     doomed.Add(index);
+                }
+
+                // CB-270: the named turns that paired with no mirror on this page can
+                // account for one on the page next to it. Marked before the paired
+                // mirrors are removed, while the indices still hold.
+                foreach (var left in namedIndices.Values)
+                {
+                    foreach (var i in left) turns[i] = turns[i] with { FreeNamed = true };
                 }
 
                 for (var i = doomed.Count - 1; i >= 0; i--) turns.RemoveAt(doomed[i]);
@@ -4908,7 +5038,7 @@ namespace Orbweaver
             var page = await FetchPageAsync(chat, chat.LoadedMessages, ct);
             if (page is null) return false;
 
-            var (turns, messages, endsOpen) = page.Value;
+            var (turns, messages) = page.Value;
 
             // Nothing came back, so there is nothing behind this. Asked once and
             // remembered, rather than re-asking every time the user reaches the
@@ -4924,7 +5054,7 @@ namespace Orbweaver
             if (messages < PageSize) chat.HasMore = false;
 
             chat.LoadedMessages += messages;
-            chat.PrependHistory(turns, endsOpen);
+            chat.PrependHistory(turns);
             return turns.Count > 0;
         }
 
@@ -4936,7 +5066,7 @@ namespace Orbweaver
             var first = await FetchPageAsync(chat, 0, ct);
             if (first is null) return;
 
-            var (initial, count, _) = first.Value;
+            var (initial, count) = first.Value;
 
             chat.LoadedMessages = count;
             chat.HasMore = count >= PageSize;
@@ -4955,7 +5085,7 @@ namespace Orbweaver
         // reaches for an older one, rather than opening a second request shape
         // for the same "one page of chat.history" idea.
         [ExcludeFromCodeCoverage]
-        internal static async Task<(List<HistoryTurn> Turns, int Messages, bool EndsInOpenTextStep)?>
+        internal static async Task<(List<HistoryTurn> Turns, int Messages)?>
             FetchPageAsync(OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             OpenClawGateway? gateway;
@@ -4975,7 +5105,7 @@ namespace Orbweaver
         // fetched is not a reason to refuse the conversation, because the panel
         // still works forward from whatever happens next.
         [ExcludeFromCodeCoverage]
-        private static async Task<(List<HistoryTurn> Turns, int Count, bool EndsInOpenTextStep)?> FetchHistoryPageAsync(
+        private static async Task<(List<HistoryTurn> Turns, int Count)?> FetchHistoryPageAsync(
             OpenClawGateway gateway, OpenClawChatSession chat, int offset, CancellationToken ct)
         {
             try
@@ -4998,7 +5128,10 @@ namespace Orbweaver
                 // be told whose conversation they belong to (CB-109), and
                 // this is the one place that knows.
                 var owners = OwnerIndexSnapshot();
-                var turns = TurnsFromHistory(messages, chat.GatewayKey, owners);
+                // A full page means an older one may exist, so the page's first run
+                // may be cut (CB-270): a short page is the start of the conversation.
+                var turns = TurnsFromHistory(messages, chat.GatewayKey, owners,
+                    startsMidRun: messages.GetArrayLength() >= PageSize);
 
                 // CB-115: recover a cron-delivered picture whose transcript
                 // lost its directory. Only turns TurnsFromHistory tagged with
@@ -5104,7 +5237,7 @@ namespace Orbweaver
                 // The message count, not the turn count: it is what the next
                 // page's offset is measured in, and one message can produce
                 // several turns or none.
-                return (turns, messages.GetArrayLength(), OpenClawHistoryShape.EndsInOpenTextStep(messages));
+                return (turns, messages.GetArrayLength());
             }
             catch
             {
