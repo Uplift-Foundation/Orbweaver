@@ -46,9 +46,9 @@ if (string.IsNullOrWhiteSpace(host))
 var command = args.Length > 0 ? args[0] : "sessions";
 
 OpenClawGateway.ScopesOverride = OpenClawGateway.ParseOverride(
-    Environment.GetEnvironmentVariable("ORBWEAVER_PROBE_SCOPES"));
+    BrandEnv.Get(BrandEnv.ProbeScopes));
 OpenClawGateway.CapsOverride = OpenClawGateway.ParseOverride(
-    Environment.GetEnvironmentVariable("ORBWEAVER_PROBE_CAPS"));
+    BrandEnv.Get(BrandEnv.ProbeCaps));
 
 // The token the app already stores for this gateway, beside the device key.
 var token = OpenClawIdentity.GatewayTokenFor(host);
@@ -268,7 +268,7 @@ try
                         return 1;
                     }
 
-                    if (Environment.GetEnvironmentVariable("ORBWEAVER_PROBE_ALLOW_RESOLVE") != "1")
+                    if (BrandEnv.Get(BrandEnv.ProbeAllowResolve) != "1")
                     {
                         Console.Error.WriteLine(
                             "Refusing: this answers a real approval. Set ORBWEAVER_PROBE_ALLOW_RESOLVE=1 "
