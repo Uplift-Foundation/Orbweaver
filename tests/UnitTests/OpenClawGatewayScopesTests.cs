@@ -150,4 +150,18 @@ public class OpenClawGatewayScopesTests : IDisposable
         Assert.Equal(new[] { "operator.read" }, ScopesIn(plain));
         Assert.False(plain.TryGetProperty("caps", out _));
     }
+
+    // The probe's environment lists: unset or blank is no override, "none" is an
+    // explicit empty list, and entries are trimmed with blanks dropped.
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData(" , ,", null)]
+    [InlineData("none", new string[0])]
+    [InlineData(" NONE ", new string[0])]
+    [InlineData("approvals", new[] { "approvals" })]
+    [InlineData(" operator.read , operator.approvals ,", new[] { "operator.read", "operator.approvals" })]
+    public void TheProbesEnvironmentListsAreParsedForgivingly(string? text, string[]? expected) =>
+        Assert.Equal(expected, OpenClawGateway.ParseOverride(text));
 }

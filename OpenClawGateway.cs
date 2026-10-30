@@ -107,6 +107,20 @@ namespace Orbweaver
         internal static string[]? ScopesOverride { get; set; }
         internal static string[]? CapsOverride { get; set; }
 
+        // A comma-separated list from the probe's environment. Null for unset or
+        // blank, which means "no override"; the word "none" means an explicit empty
+        // list (a pairing request that declares no caps at all). Entries are trimmed
+        // and blanks dropped.
+        internal static string[]? ParseOverride(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            if (string.Equals(text.Trim(), "none", StringComparison.OrdinalIgnoreCase))
+                return Array.Empty<string>();
+
+            var items = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return items.Length == 0 ? null : items;
+        }
+
         private readonly string _host;
         private readonly int _port;
 

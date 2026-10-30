@@ -4977,9 +4977,19 @@ namespace Orbweaver
         {
             try
             {
+                var parameters = new Dictionary<string, object> { ["key"] = key };
+
+                // CB-270 Stage 6: ask for the session-scoped replay of its pending
+                // approvals, only for a device that chose to approve and was granted
+                // the scope. Never on an unsubscribe, and never otherwise, so a
+                // device that did not opt in sends the frame it always did.
+                if (wanted
+                    && OrbweaverSettings.OpenClawApproveEnabled
+                    && gateway.GrantedScopes.Contains(ApprovalsScope))
+                    parameters["includeApprovals"] = true;
+
                 await gateway.RequestAsync(
-                    wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe",
-                    new Dictionary<string, object> { ["key"] = key }, ct);
+                    wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe", parameters, ct);
                 return null;
             }
             catch (Exception ex) when (wanted)

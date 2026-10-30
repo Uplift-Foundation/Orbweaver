@@ -768,4 +768,49 @@ public class OpenClawApprovalStateTests : IDisposable
             directory = Path.GetDirectoryName(directory);
         return directory ?? throw new DirectoryNotFoundException("no Orbweaver.csproj above " + thisFile);
     }
+
+    // --- the subscribe's includeApprovals flag ---
+
+    private static async Task<FakeGatewaySocket.Request> SubscribeFrameAsync(
+        string[] scopes, bool wanted)
+    {
+        var (socket, gateway) = await ConnectedAsync(scopes);
+        using (gateway)
+        {
+            Assert.Null(await OpenClawSessions.MessagesRequestAsync(
+                gateway, "agent:a:dashboard:one", wanted, CancellationToken.None));
+
+            return Assert.Single(Sent(socket));
+        }
+    }
+
+    // On only for a device that chose to approve AND was granted the scope, and
+    // only on a subscribe.
+    [Fact]
+    public async Task ASubscribeAsksForApprovalsOnlyWhenApprovingIsOnAndGranted()
+    {
+        var frame = await SubscribeFrameAsync(Approving, wanted: true);
+
+        Assert.Equal("sessions.messages.subscribe", frame.Method);
+        Assert.Equal(new[] { "key", "includeApprovals" }, frame.Params.EnumerateObject().Select(p => p.Name).ToArray());
+        Assert.True(frame.Params.GetProperty("includeApprovals").GetBoolean());
+    }
+
+    // The paired controls: each of the three missing pieces alone sends the frame
+    // it always did.
+    [Fact]
+    public async Task WithoutTheSwitchTheScopeOrOnAnUnsubscribeTheFrameIsTheOldOne()
+    {
+        OrbweaverSettings.OpenClawApproveEnabled = false;
+        var off = await SubscribeFrameAsync(Approving, wanted: true);
+        Assert.Equal(new[] { "key" }, off.Params.EnumerateObject().Select(p => p.Name).ToArray());
+
+        OrbweaverSettings.OpenClawApproveEnabled = true;
+        var notGranted = await SubscribeFrameAsync(ReadOnly, wanted: true);
+        Assert.Equal(new[] { "key" }, notGranted.Params.EnumerateObject().Select(p => p.Name).ToArray());
+
+        var unsubscribe = await SubscribeFrameAsync(Approving, wanted: false);
+        Assert.Equal("sessions.messages.unsubscribe", unsubscribe.Method);
+        Assert.Equal(new[] { "key" }, unsubscribe.Params.EnumerateObject().Select(p => p.Name).ToArray());
+    }
 }

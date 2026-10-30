@@ -14,9 +14,25 @@ using Orbweaver;
 //   dotnet run --project tools/openclaw-probe -- cron-runs <jobId> [limit] [offset]
 //   dotnet run --project tools/openclaw-probe -- raw <method> [jsonParams]
 //   dotnet run --project tools/openclaw-probe -- events [seconds] [sessionKey|-] [out.jsonl|-] [messagesKey]
+//   dotnet run --project tools/openclaw-probe -- approvals list
+//   dotnet run --project tools/openclaw-probe -- approvals watch [seconds] [sessionKey]
+//   dotnet run --project tools/openclaw-probe -- approvals resolve <id> <kind> <deny|allow-once>
 //
 // Read-only by construction: it never calls chat.send, and it requests whatever
 // scopes the app's settings already granted rather than asking for more.
+//
+// CB-270 Stage 6 adds two environment overrides, so a probe can pair with an
+// explicit request instead of reading the settings it shares a device identity
+// with (pairing the probe with a new scope set re-pairs the app, and the reverse,
+// which is why the app is quiet while one is run):
+//   ORBWEAVER_PROBE_SCOPES=operator.read,operator.write,operator.approvals
+//   ORBWEAVER_PROBE_CAPS=approvals      (or "none" for an explicitly empty list)
+// and three `approvals` modes. **None of them has been run against a gateway**:
+// they were built while the device could not be paired with operator.approvals, and
+// the first run is Stage 6's P1 to P7. `resolve` answers a real approval, so it
+// refuses unless ORBWEAVER_PROBE_ALLOW_RESOLVE=1 is set, only sends deny or
+// allow-once, and is meant for an approval the probe registered itself on a
+// throwaway session, never a real one.
 
 var host = OrbweaverSettings.OpenClawHost;
 var port = OrbweaverSettings.OpenClawPort;
@@ -28,6 +44,11 @@ if (string.IsNullOrWhiteSpace(host))
 }
 
 var command = args.Length > 0 ? args[0] : "sessions";
+
+OpenClawGateway.ScopesOverride = OpenClawGateway.ParseOverride(
+    Environment.GetEnvironmentVariable("ORBWEAVER_PROBE_SCOPES"));
+OpenClawGateway.CapsOverride = OpenClawGateway.ParseOverride(
+    Environment.GetEnvironmentVariable("ORBWEAVER_PROBE_CAPS"));
 
 // The token the app already stores for this gateway, beside the device key.
 var token = OpenClawIdentity.GatewayTokenFor(host);
@@ -181,6 +202,101 @@ try
             }
             Console.Error.WriteLine($"listening for {seconds}s{(filter is null ? "" : $" on {filter}")}");
             await Task.Delay(TimeSpan.FromSeconds(seconds));
+            break;
+        }
+
+        // Stage 6. What the gateway is holding for a person's say-so, as raw as
+        // every other mode here: the point is to see the fields nobody documented.
+        case "approvals":
+        {
+            var mode = args.Length > 1 ? args[1] : "list";
+            Console.Error.WriteLine($"granted scopes: {string.Join(", ", gateway.GrantedScopes)}");
+
+            switch (mode)
+            {
+                case "list":
+                    foreach (var method in new[] { "exec.approval.list", "plugin.approval.list", "openclaw.approval.list" })
+                    {
+                        Console.WriteLine($"== {method}");
+                        try
+                        {
+                            var res = await gateway.RequestAsync(method, new Dictionary<string, object>(), CancellationToken.None);
+                            Console.WriteLine(JsonSerializer.Serialize(res, pretty));
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"{ex.GetType().Name}: {ex.Message}");
+                        }
+                    }
+                    break;
+
+                // Every *.approval.* event, whole. Optionally also subscribes to one
+                // session's messages with includeApprovals, to see the replay.
+                case "watch":
+                {
+                    var seconds = args.Length > 2 ? int.Parse(args[2]) : 60;
+                    var started = DateTime.UtcNow;
+
+                    gateway.EventReceived += (name, payload) =>
+                    {
+                        if (!name.Contains(".approval.", StringComparison.Ordinal)) return;
+                        Console.WriteLine($"+{(DateTime.UtcNow - started).TotalSeconds,7:F2}s {name}");
+                        Console.WriteLine(JsonSerializer.Serialize(payload, pretty));
+                    };
+
+                    await gateway.RequestAsync("sessions.subscribe", new Dictionary<string, object>(), CancellationToken.None);
+                    if (args.Length > 3)
+                    {
+                        await gateway.RequestAsync("sessions.messages.subscribe",
+                            new Dictionary<string, object> { ["key"] = args[3], ["includeApprovals"] = true },
+                            CancellationToken.None);
+                        Console.Error.WriteLine($"also subscribed to {args[3]} with includeApprovals");
+                    }
+
+                    Console.Error.WriteLine($"watching for {seconds}s");
+                    await Task.Delay(TimeSpan.FromSeconds(seconds));
+                    break;
+                }
+
+                // Answers one. Refused unless explicitly allowed, and only with the
+                // two answers the app itself can send.
+                case "resolve":
+                {
+                    if (args.Length < 5)
+                    {
+                        Console.Error.WriteLine("approvals resolve needs <id> <kind> <deny|allow-once>");
+                        return 1;
+                    }
+
+                    if (Environment.GetEnvironmentVariable("ORBWEAVER_PROBE_ALLOW_RESOLVE") != "1")
+                    {
+                        Console.Error.WriteLine(
+                            "Refusing: this answers a real approval. Set ORBWEAVER_PROBE_ALLOW_RESOLVE=1 "
+                            + "for one the probe registered itself on a throwaway session.");
+                        return 1;
+                    }
+
+                    if (args[4] is not ("deny" or "allow-once"))
+                    {
+                        Console.Error.WriteLine("Only deny and allow-once are sent, as in the app.");
+                        return 1;
+                    }
+
+                    var res = await gateway.RequestAsync("approval.resolve", new Dictionary<string, object>
+                    {
+                        ["id"] = args[2],
+                        ["kind"] = args[3],
+                        ["decision"] = args[4]
+                    }, CancellationToken.None);
+                    Console.WriteLine(JsonSerializer.Serialize(res, pretty));
+                    break;
+                }
+
+                default:
+                    Console.Error.WriteLine($"Unknown approvals mode '{mode}'.");
+                    return 1;
+            }
+
             break;
         }
 
