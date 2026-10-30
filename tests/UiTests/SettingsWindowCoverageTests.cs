@@ -300,7 +300,7 @@ public class SettingsWindowCoverageTests
             // reply, status note, reconnect button — in that order, with no
             // certificate row since none is rejected, and no shape row for
             // either timer-driven group since neither is on Own shape.
-            Assert.Equal(10, rows.Length);
+            Assert.Equal(11, rows.Length);
         }
         finally
         {
@@ -323,7 +323,7 @@ public class SettingsWindowCoverageTests
             // One more row than the plain-enabled case, and the trust button
             // is never clicked here — it reconnects over a real socket, which
             // is exactly why OnTrustNewCertificateClicked is excluded.
-            Assert.Equal(11, rows.Length);
+            Assert.Equal(12, rows.Length);
 
             var trustButton = rows[^1].GetLogicalDescendants().OfType<Button>().Single();
             Assert.Equal("Trust the new certificate", trustButton.Content);
@@ -391,8 +391,8 @@ public class SettingsWindowCoverageTests
             var rows = NewWindow().OpenClawRows();
 
             // Enabled, host, token, active-within, heartbeat mode, heartbeat
-            // shape, cron mode, native mode, reply, note, reconnect.
-            Assert.Equal(11, rows.Length);
+            // shape, cron mode, native mode, reply, approve, note, reconnect.
+            Assert.Equal(12, rows.Length);
 
             var shape = ComboIn(rows[5]);
             Assert.Contains("Circle", ItemsOf(shape).Cast<string>());
@@ -432,7 +432,7 @@ public class SettingsWindowCoverageTests
             var rows = NewWindow().OpenClawRows();
 
             // …heartbeat mode, heartbeat shape, cron mode, cron shape, reply…
-            Assert.Equal(12, rows.Length);
+            Assert.Equal(13, rows.Length);
 
             var cronShape = ComboIn(rows[7]);
             cronShape.SelectedIndex = ItemsOf(cronShape).Cast<string>().ToList().IndexOf("Grid");
@@ -463,7 +463,7 @@ public class SettingsWindowCoverageTests
             OrbweaverSettings.OpenClawEnabled = true;
 
             var rows = NewWindow().OpenClawRows();
-            Assert.Equal(10, rows.Length);
+            Assert.Equal(11, rows.Length);
 
             // Index 0 Hidden, 2 Own shape; the combo is row 6 (see the row order
             // in the case above). Picking Own shape rebuilds the page through
@@ -474,7 +474,7 @@ public class SettingsWindowCoverageTests
             Assert.Equal(ClusterMode.WithChats, OrbweaverSettings.OpenClawCronMode);
 
             var rebuilt = NewWindow().OpenClawRows();
-            Assert.Equal(11, rebuilt.Length);
+            Assert.Equal(12, rebuilt.Length);
 
             var shape = ComboIn(rebuilt[7]);
             shape.SelectedIndex = ItemsOf(shape).Cast<string>().ToList().IndexOf("Star");
@@ -486,7 +486,7 @@ public class SettingsWindowCoverageTests
             // Back off Own shape: the shape row goes away again.
             ComboIn(rebuilt[6]).SelectedIndex = 0;
             Assert.Equal(ClusterMode.Hidden, OrbweaverSettings.OpenClawNativeMode);
-            Assert.Equal(10, NewWindow().OpenClawRows().Length);
+            Assert.Equal(11, NewWindow().OpenClawRows().Length);
         }
         finally
         {
@@ -514,7 +514,7 @@ public class SettingsWindowCoverageTests
             heartbeat.SelectedIndex = 1;
 
             Assert.Equal(ClusterMode.WithChats, OrbweaverSettings.OpenClawHeartbeatMode);
-            Assert.Equal(10, rows.Length);
+            Assert.Equal(11, rows.Length);
         }
         finally
         {

@@ -72,9 +72,40 @@ namespace Orbweaver
         // Read per connection rather than cached: changing the setting restarts
         // the connection, and the gateway treats the new scope set as a fresh
         // pairing to approve.
-        private static string[] Scopes => OrbweaverSettings.OpenClawReplyEnabled
-            ? new[] { "operator.read", "operator.write" }
-            : new[] { "operator.read" };
+        //
+        // CB-270 Stage 6: built from two independent switches, so there are four
+        // possible sets. Read is always asked for; write only when replying is on;
+        // approvals only when approving is on. Approving does not require replying
+        // and replying grants nothing about approving: three separate powers.
+        private static string[] Scopes => ScopesOverride
+            ?? ScopesFor(OrbweaverSettings.OpenClawReplyEnabled, OrbweaverSettings.OpenClawApproveEnabled);
+
+        internal static string[] ScopesFor(bool reply, bool approve)
+        {
+            var scopes = new List<string> { "operator.read" };
+            if (reply) scopes.Add("operator.write");
+            if (approve) scopes.Add("operator.approvals");
+
+            return scopes.ToArray();
+        }
+
+        // What the connect frame declares it can receive. The gateway does not send
+        // an approval's requested broadcast to a non-admin client on the scope
+        // alone: it also needs a declared client cap. So a device that never asked
+        // to approve declares nothing, and one that did declares "approvals". The
+        // name is read from the gateway's own client-cap list (declared, not yet
+        // measured against a live pairing); the probe can try the alternatives.
+        internal static string[] CapsFor(bool approve) =>
+            approve ? new[] { "approvals" } : Array.Empty<string>();
+
+        private static string[] Caps => CapsOverride
+            ?? CapsFor(OrbweaverSettings.OpenClawApproveEnabled);
+
+        // Set only by tools/openclaw-probe, from its environment, so a probe can
+        // pair with an explicit scope set and cap list instead of reading the app's
+        // settings (which it shares an identity with). Nothing in the app sets them.
+        internal static string[]? ScopesOverride { get; set; }
+        internal static string[]? CapsOverride { get; set; }
 
         private readonly string _host;
         private readonly int _port;
@@ -317,6 +348,11 @@ namespace Orbweaver
             var signedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var token = OpenClawIdentity.TokenFor(_host);
 
+            // Read once so the signature and the frame cannot disagree about which
+            // scopes were asked for, even if a setting changes in between.
+            var requestedScopes = Scopes;
+            var caps = Caps;
+
             // Which token goes into the *signature* is not obvious and not
             // documented: the gateway's resolveSignatureToken takes
             // `auth.token ?? auth.deviceToken ?? auth.bootstrapToken`, so once a
@@ -329,7 +365,7 @@ namespace Orbweaver
                 !string.IsNullOrEmpty(token) ? token : "";
 
             var payload = OpenClawIdentity.AuthPayload(
-                identity.DeviceId, ClientId, ClientMode, Role, Scopes,
+                identity.DeviceId, ClientId, ClientMode, Role, requestedScopes,
                 signedAt, signatureToken, nonce, Platform, "");
 
             var auth = new Dictionary<string, object>();
@@ -341,7 +377,7 @@ namespace Orbweaver
                 ["minProtocol"] = 4,
                 ["maxProtocol"] = 4,
                 ["role"] = Role,
-                ["scopes"] = Scopes,
+                ["scopes"] = requestedScopes,
                 ["client"] = new Dictionary<string, object>
                 {
                     ["id"] = ClientId,
@@ -359,6 +395,8 @@ namespace Orbweaver
                     ["nonce"] = nonce
                 }
             };
+
+            if (caps.Length > 0) connect["caps"] = caps;
 
             JsonElement response;
             try
