@@ -470,6 +470,56 @@ public class OpenClawChatApprovalTests : IDisposable
         Assert.Equal(1, Texts(chat).Count(t => t == expected));
     }
 
+    // An option that names no approval at all is not bound to anything, so it is
+    // not the click for the request on the bar: nothing is sent.
+    [Fact]
+    public async Task AnOptionBoundToNoApprovalSendsNothingAndSaysTheRequestChanged()
+    {
+        var (socket, gateway) = await ConnectedAsync(r => r.Method == "approval.resolve" ? Applied(r) : null);
+        using (gateway)
+        {
+            var chat = Chat();
+            Request("a1");
+
+            await chat.AnswerAsync(new ChatPromptOption("deny", "Deny"));
+
+            Assert.Empty(Resolves(socket));
+            Assert.Contains(OpenClawApprovalText.RequestChanged, Texts(chat));
+        }
+    }
+
+    // A gateway refusal with no message still says that there is no reason.
+    [Fact]
+    public async Task AFailureWithAnEmptyMessageSaysThereIsNoReason()
+    {
+        var (_, gateway) = await ConnectedAsync(r => r.Method == "approval.resolve"
+            ? FakeGatewaySocket.Error(r.Id, "UNAVAILABLE", "", null)
+            : null);
+        using (gateway)
+        {
+            var chat = Chat();
+            Request("a1");
+
+            await chat.AnswerAsync(Option(chat, "deny"));
+
+            Assert.Contains("Couldn't answer: no reason given", Texts(chat));
+        }
+    }
+
+    // More waiting than the store keeps (8 per conversation): the oldest drops out
+    // of view and the panel says so, once.
+    [Fact]
+    public void ARequestEvictedByALaterOneIsWrittenUpAsDroppedFromView()
+    {
+        var chat = Chat();
+        for (var i = 1; i <= 9; i++) Request("e" + i, "echo " + i, createdOffset: i);
+
+        chat.OnApprovalsChanged();
+        chat.OnApprovalsChanged();
+
+        Assert.Equal(1, Texts(chat).Count(t => t == OpenClawApprovalText.Evicted));
+    }
+
     // The poll finding it gone: before its expiry nothing says why, after it, it
     // expired.
     [Fact]

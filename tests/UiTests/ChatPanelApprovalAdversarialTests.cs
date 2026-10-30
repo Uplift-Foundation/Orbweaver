@@ -290,4 +290,62 @@ public class ChatPanelApprovalAdversarialTests : IDisposable
             Assert.Equal(0, Resolves(socket));
         }
     }
+
+    // A release with no press behind it (the press landed elsewhere, or was never
+    // delivered) answers nothing.
+    [AvaloniaFact]
+    public async Task AReleaseWithNoPressBehindItAnswersNothing()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var (panel, _) = Open();
+            Request("a1"); Flush();
+            _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+
+            Release(panel, Option(panel, 1));
+            await Settle();
+
+            Assert.Equal(0, Resolves(socket));
+        }
+    }
+
+    // An option whose binding has been lost by the time the release lands has no
+    // answer to give.
+    [AvaloniaFact]
+    public async Task AnOptionThatHasLostItsBindingAnswersNothing()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var (panel, _) = Open();
+            Request("a1"); Flush();
+            _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+            var option = Option(panel, 1);
+
+            Press(panel, option);
+            option.DataContext = null;
+            Release(panel, option);
+            await Settle();
+
+            Assert.Equal(0, Resolves(socket));
+        }
+    }
+
+    // The "where else" link with nothing pending has no prompt to read a label from
+    // and says nothing; the panel closes as it does for a bar with no terminal.
+    [AvaloniaFact]
+    public void TheElsewhereLinkWithNothingPendingDoesNothingHarmful()
+    {
+        var (panel, chat) = Open();
+        var link = panel.FindControl<TextBlock>("PromptElsewhere")!;
+
+        link.RaiseEvent(new PointerPressedEventArgs(
+            link, NewPointer(), panel, new Point(2, 2), 0,
+            new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
+            KeyModifiers.None, 1));
+        Flush();
+
+        Assert.DoesNotContain(chat.History, t => t.Text.Contains("approvals resolve"));
+    }
 }

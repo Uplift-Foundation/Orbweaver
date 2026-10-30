@@ -361,4 +361,51 @@ public class OpenClawApprovalTextTests
         Assert.Equal("Already decided elsewhere: Expired unanswered", OpenClawApprovalText.AlreadyDecided("expired", "timeout"));
         Assert.Equal("Already decided elsewhere: unknown", OpenClawApprovalText.AlreadyDecided(null));
     }
+
+    // Optional lines of the prompt: each of cwd, host and the gateway's warning is
+    // drawn when it has text and left out when it is null or empty. (A field cannot
+    // be capped down to nothing: the caps are far above zero, so a cut field always
+    // keeps its first characters.)
+    [Theory]
+    [InlineData(null, null, null, "Nova wants to run: true")]
+    [InlineData("", "", "", "Nova wants to run: true")]
+    [InlineData("/tmp", null, null, "Nova wants to run: true\nin /tmp")]
+    [InlineData(null, "box", null, "Nova wants to run: true\non box")]
+    [InlineData(null, null, "careful", "Nova wants to run: true\ncareful")]
+    [InlineData("/tmp", "box", "careful", "Nova wants to run: true\nin /tmp on box\ncareful")]
+    public void EachOptionalLineIsDrawnOnlyWhenItHasText(string? cwd, string? host, string? warning, string expected) =>
+        Assert.Equal(expected, OpenClawApprovalText.Prompt("ap-1", "Nova", "true", cwd, host, warning: warning).Title);
+
+    [Fact]
+    public void ALongWorkingDirectoryHostAndWarningAreEachCappedWithACount()
+    {
+        var title = OpenClawApprovalText.Prompt(
+            "ap-1", "Nova", "true", new string('d', 300), new string('h', 300), warning: new string('w', 300)).Title;
+
+        Assert.Equal(3, title.Split('\n').Length);
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(title, @"\(\d+ more characters\)").Count);
+    }
+
+    // What the gateway said decided an answer that lost the race, for every status
+    // it declares, and for one it does not (shown if clean, "unknown" if not).
+    [Theory]
+    [InlineData("allowed", "user", "Already decided elsewhere: Allowed by another reviewer")]
+    [InlineData("denied", "user", "Already decided elsewhere: Denied by another reviewer")]
+    [InlineData("denied", "no-route", "Already decided elsewhere: Dropped by the gateway (no-route)")]
+    [InlineData("expired", "timeout", "Already decided elsewhere: Expired unanswered")]
+    [InlineData("cancelled", "run-aborted", "Already decided elsewhere: The run was stopped")]
+    [InlineData("cancelled", null, "Already decided elsewhere: Cancelled")]
+    [InlineData("pending", null, "Already decided elsewhere: pending")]
+    [InlineData("", null, "Already decided elsewhere: unknown")]
+    [InlineData("sta\ntus", null, "Already decided elsewhere: unknown")]
+    [InlineData(null, null, "Already decided elsewhere: unknown")]
+    public void ALostRaceReusesTheStatusLine(string? status, string? reason, string expected) =>
+        Assert.Equal(expected, OpenClawApprovalText.AlreadyDecided(status, reason));
+
+    [Theory]
+    [InlineData("", "Couldn't answer: no reason given")]
+    [InlineData("bad\u0007", "Couldn't answer: no reason given")]
+    [InlineData("not connected", "Couldn't answer: not connected")]
+    public void ACouldntAnswerNoteSaysWhyOrThatThereIsNoReason(string message, string expected) =>
+        Assert.Equal(expected, OpenClawApprovalText.CouldntAnswer(message));
 }
