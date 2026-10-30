@@ -29,10 +29,18 @@ namespace Orbweaver
                     new ChatPromptOption(AllowOnceKey, "Allow once", approvalId),
                 };
 
+        internal const string TooLongToAllow =
+            "This command is too long to read here, so it can only be denied here; answer it on the gateway.";
+
         internal const string UnsafeRequest =
             "A request couldn't be shown safely; answer it on the gateway";
 
-        internal const int MaxCommand = 240;
+        // The command is what a person is deciding on, so it is shown whole up to here:
+        // heredocs and long pipelines run past a few hundred characters, and a
+        // limit that low would send most real approvals to the gateway. Past this
+        // the end of the command could not be read in the prompt, so it can only
+        // be denied here.
+        internal const int MaxCommand = 4000;
         internal const int MaxLocation = 240;
         internal const int MaxName = 240;
         internal const int MaxReason = 60;
@@ -55,7 +63,7 @@ namespace Orbweaver
         // judges, since neither should be trusted to be the only check.
         internal static ChatPrompt Prompt(
             string approvalId, string agent, string command, string? cwd, string? host,
-            bool unsafeToShow = false)
+            bool unsafeToShow = false, bool commandTruncated = false, int? commandLength = null)
         {
             if (unsafeToShow || HasUnsafe(agent) || HasUnsafe(command) || HasUnsafe(cwd) || HasUnsafe(host))
             {
@@ -65,7 +73,13 @@ namespace Orbweaver
             }
 
             var who = Cap(agent, MaxName);
-            var what = Cap(command, MaxCommand);
+
+            // A command too long to show whole, by our bound or the parser's, is
+            // shown up to the bound with what is missing counted, and can only be
+            // denied: Allow once is never offered for a command whose end was not
+            // shown.
+            var tooLong = commandTruncated || command.Length > MaxCommand;
+            var what = tooLong ? CapCommand(command, commandLength) : command;
             var title = (who.Length == 0 ? "An agent" : who) + " wants to run: " + (what.Length == 0 ? "(no command shown)" : what);
 
             var where = new List<string>();
@@ -73,7 +87,9 @@ namespace Orbweaver
             if (Cap(host, MaxName) is { Length: > 0 } machine) where.Add("on " + machine);
             if (where.Count > 0) title += "\n" + string.Join(" ", where);
 
-            return new ChatPrompt(title, Options(approvalId), ArmedActivation: true);
+            if (tooLong) title += "\n" + TooLongToAllow;
+
+            return new ChatPrompt(title, Options(approvalId, denyOnly: tooLong), ArmedActivation: true);
         }
 
         // What our own answer reads as once the gateway has applied it.
@@ -145,6 +161,18 @@ namespace Orbweaver
         // session and is answered in that member's own panel.
         internal static string RoomLine(string member) =>
             Safe(member, MaxName) + " is waiting for an approval";
+
+        // The command cut at the bound, with the count of what is missing. The
+        // length the parser saw is used when it is known, since the text handed over
+        // may already have been cut.
+        private static string CapCommand(string command, int? fullLength)
+        {
+            var shown = command.Length <= MaxCommand ? command : Cap(command, MaxCommand);
+            if (command.Length > MaxCommand) return shown;
+
+            var missing = (fullLength ?? command.Length) - command.Length;
+            return missing > 0 ? command + $"… ({missing} more characters)" : command + "…";
+        }
 
         // Capped, and what is cut is said as a count, so a long command cannot look
         // shorter than it is. Never altered otherwise.

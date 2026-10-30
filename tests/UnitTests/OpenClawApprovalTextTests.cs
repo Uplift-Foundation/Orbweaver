@@ -115,13 +115,62 @@ public class OpenClawApprovalTextTests
         Assert.Equal(2, prompt.Options.Count);
     }
 
-    // What is cut is counted, so a long command cannot look shorter than it is.
-    [Fact]
-    public void AnOverlongCommandIsCutAndSaysHowMuchWasLeftOut()
+    // The command is shown whole up to the bound, with both options, and its last
+    // character is on the bar.
+    [Theory]
+    [InlineData(3999)]
+    [InlineData(4000)]
+    public void ACommandUpToTheBoundIsShownWholeWithBothOptions(int length)
     {
-        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", new string('x', 1000), null, null);
+        var command = new string('x', length - 1) + "Z";
 
-        Assert.Equal("Nova wants to run: " + new string('x', 240) + "… (760 more characters)", prompt.Title);
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", command, null, null);
+
+        Assert.Equal("Nova wants to run: " + command, prompt.Title);
+        Assert.EndsWith("Z", prompt.Title);
+        Assert.Equal(new[] { "deny", "allow-once" }, prompt.Options.Select(o => o.Key));
+    }
+
+    // One character past it, the end cannot be read here, so it can only be denied.
+    [Fact]
+    public void ACommandPastTheBoundIsCutCountedAndOnlyDenyIsOffered()
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", new string('x', 4000) + "Z", null, null);
+
+        Assert.Equal(
+            "Nova wants to run: " + new string('x', 4000) + "… (1 more characters)\n" + OpenClawApprovalText.TooLongToAllow,
+            prompt.Title);
+        Assert.Equal(new[] { "deny" }, prompt.Options.Select(o => o.Key));
+        Assert.Equal("ap-1", prompt.Options[0].ApprovalId);
+        Assert.True(prompt.ArmedActivation);
+    }
+
+    // The parser may already have cut it: its flag is honoured, and the length it
+    // saw is what the count is taken from.
+    [Fact]
+    public void ACommandTheParserTruncatedIsDenyOnlyAndCountedFromItsLength()
+    {
+        var prompt = OpenClawApprovalText.Prompt(
+            "ap-1", "Nova", new string('x', 4000), null, null, commandTruncated: true, commandLength: 9000);
+
+        Assert.Contains("… (5000 more characters)", prompt.Title);
+        Assert.Equal(new[] { "deny" }, prompt.Options.Select(o => o.Key));
+
+        // With no length known there is no number to give.
+        var unknown = OpenClawApprovalText.Prompt("ap-1", "Nova", "ls", null, null, commandTruncated: true);
+        Assert.Contains("ls…\n", unknown.Title.Replace("\r", ""));
+        Assert.Equal(new[] { "deny" }, unknown.Options.Select(o => o.Key));
+    }
+
+    // The other fields are not what is being approved: they keep the small cap.
+    [Fact]
+    public void TheAgentWorkingDirectoryAndHostKeepTheSmallCap()
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "true", new string('d', 300), new string('h', 300));
+
+        Assert.Contains(new string('d', 240) + "… (60 more characters)", prompt.Title);
+        Assert.Contains(new string('h', 240) + "… (60 more characters)", prompt.Title);
+        Assert.Equal(2, prompt.Options.Count);
     }
 
     // Not through the middle of a surrogate pair.
