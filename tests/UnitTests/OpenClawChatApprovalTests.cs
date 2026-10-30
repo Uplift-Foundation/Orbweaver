@@ -622,26 +622,55 @@ public class OpenClawChatApprovalTests : IDisposable
         Assert.DoesNotContain("recheck", title);
     }
 
-    // An agent with no display name is shown by its id; a record that carries no
-    // agent id falls back to the one in the conversation's key; with neither, it is
-    // "An agent". The label is not consulted in any of the three.
+    // The conversation's own agent wins: a record whose agentId disagrees with the
+    // key's never reaches the title, with or without a listed name.
     [Fact]
-    public void WithNoNameTheAgentIdIsUsedThenTheKeysThenAnAgent()
+    public void TheKeysAgentWinsOverARecordsDisagreeingAgentId()
     {
-        OpenClawSessions.SetIdentitiesForTests(new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string>());
         var chat = new OpenClawChatSession("openclaw:" + _key, _key, "Some title");
 
-        Request("a1", "true");
-        Assert.StartsWith("alpha wants to run: true", chat.Prompt!.Title);
-
-        OpenClawSessions.Restart();
-        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("a2", "true").Replace("\"agentId\":\"alpha\",", "")), Now);
-        Assert.StartsWith("alpha wants to run: true", chat.Prompt!.Title);
-
-        OpenClawSessions.Restart();
-        var keyless = new OpenClawChatSession("openclaw:main", "main", "Some title");
         OpenClawSessions.OnEvent("exec.approval.requested",
-            Json(Row("a3", "true").Replace("\"agentId\":\"alpha\",", "").Replace(_key, "main")), Now);
+            Json(Row("a1", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":\"beta\"")), Now);
+        Assert.StartsWith("Nova wants to run: true", chat.Prompt!.Title);
+
+        OpenClawSessions.SetIdentitiesForTests(new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string>());
+        OpenClawSessions.Restart();
+        OpenClawSessions.OnEvent("exec.approval.requested",
+            Json(Row("a2", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":\"beta\"")), Now);
+        Assert.StartsWith("alpha wants to run: true", chat.Prompt!.Title);
+    }
+
+    // A record's agentId is only a fallback for a key that is not an agent key, and
+    // only a plain id: 1 to 64 of letters, digits, dot, underscore, hyphen. Anything
+    // else is treated as absent, so the title says "An agent" rather than an odd
+    // character from the gateway.
+    [Theory]
+    [InlineData("beta", "beta wants to run: true")]
+    [InlineData("a.b_c-9", "a.b_c-9 wants to run: true")]
+    [InlineData("al\uD800pha", "An agent wants to run: true")]   // lone surrogate
+    [InlineData("a b", "An agent wants to run: true")]
+    [InlineData("a\nb", "A request couldn't be shown safely")]   // the parser already refuses it
+    [InlineData("", "An agent wants to run: true")]
+    public void ARecordsAgentIdIsUsedOnlyForANonAgentKeyAndOnlyWhenPlain(string recorded, string expected)
+    {
+        var keyless = new OpenClawChatSession("openclaw:main", "main", "Some title");
+        var row = Row("a3", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":" + JsonSerializer.Serialize(recorded))
+            .Replace(_key, "main");
+
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(row), Now);
+
+        Assert.StartsWith(expected, keyless.Prompt!.Title);
+    }
+
+    [Fact]
+    public void AnOverlongRecordAgentIdIsNotUsed()
+    {
+        var keyless = new OpenClawChatSession("openclaw:main", "main", "Some title");
+        var row = Row("a4", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":\"" + new string('x', 65) + "\"")
+            .Replace(_key, "main");
+
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(row), Now);
+
         Assert.StartsWith("An agent wants to run: true", keyless.Prompt!.Title);
     }
 

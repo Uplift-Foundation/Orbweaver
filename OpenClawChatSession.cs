@@ -1441,10 +1441,21 @@ namespace Orbweaver
         // is what the orb and the panel header call the conversation, which can be any
         // sentence (a session's title), and reading it as the agent's name made the
         // prompt say "<whole title> wants to run". The header already shows the label.
+        //
+        // The conversation's own agent wins: when the key names one, the title uses
+        // that agent and a record's agentId that disagrees never reaches it. The
+        // record's id is only a fallback for a key that is not an agent key, and is
+        // used only if it is a plain id (letters, digits, dot, underscore, hyphen,
+        // 1 to 64): anything else is treated as absent, so an odd character from the
+        // gateway cannot reach the title.
+        private static readonly System.Text.RegularExpressions.Regex PlainAgentId =
+            new("^[A-Za-z0-9._-]{1,64}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
         private string AgentNameFor(OpenClawApproval approval)
         {
-            var id = !string.IsNullOrWhiteSpace(approval.AgentId) ? approval.AgentId : OpenClawSessions.AgentIdOf(GatewayKey);
-            return string.IsNullOrWhiteSpace(id) ? "" : OpenClawSessions.AgentNameOf(id);
+            var id = OpenClawSessions.AgentIdOf(GatewayKey)
+                     ?? (approval.AgentId is { } recorded && PlainAgentId.IsMatch(recorded) ? recorded : null);
+            return id is null ? "" : OpenClawSessions.AgentNameOf(id);
         }
 
         private ChatPrompt PromptFor(OpenClawApproval approval) =>
