@@ -424,4 +424,41 @@ public class OpenClawApprovalTextTests
         Assert.Equal("deny", Assert.Single(prompt.Options).Key);
         Assert.DoesNotContain(prompt.Options, o => o.Key == "allow-once");
     }
+
+    // A command made only of characters that draw as nothing is no command to show:
+    // Deny only, as for an empty one. The decision is the parser's HasVisibleText, so
+    // the two never disagree.
+    [Theory]
+    [InlineData("\u3164")]                  // Hangul filler
+    [InlineData("\u115F")]                  // Hangul choseong filler
+    [InlineData("\u1160")]                  // Hangul jungseong filler
+    [InlineData("\uFFA0")]                  // halfwidth Hangul filler
+    [InlineData("\u2800")]                  // blank braille cell
+    [InlineData("\u0301")]                  // a lone combining acute
+    [InlineData("\uFE0F")]                  // variation selector
+    [InlineData("\u00A0\u3164\u2800")]      // a mix
+    [InlineData(" \u3164 \n\u2800\t")]      // with ordinary whitespace
+    public void ACommandOfOnlyInvisibleCharactersOffersOnlyDeny(string command)
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", command, "/tmp", "box");
+
+        Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, prompt.Title);
+        Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+    }
+
+    // Controls: anything with a visible character stays an ordinary, allowable prompt.
+    [Theory]
+    [InlineData("true")]
+    [InlineData("e\u0301")]
+    [InlineData("echo \u2764\uFE0F")]
+    [InlineData("\u3164ls\u3164")]
+    [InlineData("\u2800x")]
+    [InlineData("\U0001F44D\U0001F3FD")]
+    public void ACommandWithAVisibleCharacterStillOffersBothOptions(string command)
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", command, null, null);
+
+        Assert.StartsWith("Nova wants to run: ", prompt.Title);
+        Assert.Equal(new[] { "deny", "allow-once" }, prompt.Options.Select(o => o.Key));
+    }
 }
