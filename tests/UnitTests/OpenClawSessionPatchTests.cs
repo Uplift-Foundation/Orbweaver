@@ -85,6 +85,109 @@ public class OpenClawSessionPatchTests
         var mutations = OpenClawSessionPatch.Fields.Where(f => !envelope.Contains(f)).ToHashSet();
 
         Assert.Subset(GatewayWriteScopeMutations_2026_10_5, mutations);
-        Assert.Equal(new HashSet<string> { "archived", "pinned", "label" }, mutations);
+        // Six since Stage 4 added a native session's run controls; the set is
+        // still pinned exactly, so a seventh cannot arrive unnoticed.
+        Assert.Equal(
+            new HashSet<string> { "archived", "pinned", "label", "model", "thinkingLevel", "fastMode" },
+            mutations);
+    }
+
+    // --- run controls (Stage 4) ---
+
+    [Fact]
+    public void ModelIsKeyModelExpectedSessionId()
+    {
+        var patch = OpenClawSessionPatch.Model("k", "sid", "claude-haiku-4-5");
+
+        Assert.Equal(new[] { "key", "model", "expectedSessionId" }, Keys(patch));
+        Assert.Equal("claude-haiku-4-5", patch.Params["model"]);
+        Assert.Equal("sid", patch.Params["expectedSessionId"]);
+    }
+
+    [Fact]
+    public void ThinkingIsKeyThinkingLevelExpectedSessionId()
+    {
+        var patch = OpenClawSessionPatch.Thinking("k", "sid", "xhigh");
+
+        Assert.Equal(new[] { "key", "thinkingLevel", "expectedSessionId" }, Keys(patch));
+        Assert.Equal("xhigh", patch.Params["thinkingLevel"]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void FastIsKeyFastModeExpectedSessionId(bool on)
+    {
+        var patch = OpenClawSessionPatch.Fast("k", "sid", on);
+
+        Assert.Equal(new[] { "key", "fastMode", "expectedSessionId" }, Keys(patch));
+        Assert.Equal(on, patch.Params["fastMode"]);
+    }
+
+    // A blank value is refused here, never sent as an empty string.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ABlankModelOrLevelIsRefused(string blank)
+    {
+        Assert.Throws<ArgumentException>(() => OpenClawSessionPatch.Model("k", "s", blank));
+        Assert.Throws<ArgumentException>(() => OpenClawSessionPatch.Thinking("k", "s", blank));
+    }
+
+    // The three new factories stay inside the declared fields, and the fields
+    // added for them are exactly the three, none of them an admin one.
+    [Fact]
+    public void TheRunControlFactoriesStayInsideTheDeclaredFields()
+    {
+        var all = new[]
+        {
+            OpenClawSessionPatch.Model("k", "s", "m"),
+            OpenClawSessionPatch.Thinking("k", "s", "low"),
+            OpenClawSessionPatch.Fast("k", "s", true),
+        };
+
+        Assert.Subset(OpenClawSessionPatch.Fields.ToHashSet(), all.SelectMany(Keys).ToHashSet());
+        Assert.Equal(
+            new[] { "fastMode", "model", "thinkingLevel" },
+            OpenClawSessionPatch.Fields.Except(new[] { "key", "expectedSessionId", "archived", "pinned", "label" })
+                .OrderBy(f => f, StringComparer.Ordinal));
+    }
+
+    // --- back to the default (Stage 4, probe P2) ---
+
+    [Theory]
+    [InlineData("model")]
+    [InlineData("thinkingLevel")]
+    [InlineData("fastMode")]
+    public void EachClearSendsAJsonNullForItsOneField(string field)
+    {
+        var patch = field switch
+        {
+            "model" => OpenClawSessionPatch.ClearModel("k", "sid"),
+            "thinkingLevel" => OpenClawSessionPatch.ClearThinking("k", "sid"),
+            _ => OpenClawSessionPatch.ClearFast("k", "sid"),
+        };
+
+        Assert.Equal(new[] { "key", field, "expectedSessionId" }, Keys(patch));
+        Assert.Null(patch.Params[field]);
+
+        // On the wire the key is there with a null, not dropped.
+        Assert.Equal(
+            "{\"key\":\"k\",\"" + field + "\":null,\"expectedSessionId\":\"sid\"}",
+            System.Text.Json.JsonSerializer.Serialize(patch.Params));
+    }
+
+    [Fact]
+    public void TheClearFactoriesStayInsideTheDeclaredFields()
+    {
+        var all = new[]
+        {
+            OpenClawSessionPatch.ClearModel("k", "s"),
+            OpenClawSessionPatch.ClearThinking("k", "s"),
+            OpenClawSessionPatch.ClearFast("k", "s"),
+        };
+
+        Assert.Subset(OpenClawSessionPatch.Fields.ToHashSet(), all.SelectMany(Keys).ToHashSet());
     }
 }
+

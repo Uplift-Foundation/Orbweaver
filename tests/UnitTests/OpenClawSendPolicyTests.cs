@@ -145,5 +145,71 @@ public class OpenClawSendPolicyTests
 
         Assert.Equal(OpenClawSendRoute.Surface, chat.Route);
     }
+
+    // --- timeoutMs (Stage 4) ---
+
+    [Fact]
+    public void ATimeoutIsAppendedAfterTheIdempotencyKey()
+    {
+        var request = OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1", 600_000);
+
+        Assert.Equal(new[] { "sessionKey", "message", "deliver", "idempotencyKey", "timeoutMs" }, request.Keys.ToArray());
+        Assert.Equal(600_000, request["timeoutMs"]);
+    }
+
+    // With none chosen the request is exactly what it always was.
+    [Fact]
+    public void WithNoTimeoutTheRequestIsUnchanged()
+    {
+        var plain = OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1");
+        var explicitNull = OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1", null);
+
+        Assert.Equal(new[] { "sessionKey", "message", "deliver", "idempotencyKey" }, plain.Keys.ToArray());
+        Assert.Equal(plain.Keys.ToArray(), explicitNull.Keys.ToArray());
+    }
+
+    // The gateway reads 0 as no timeout at all and a negative value as the
+    // default; neither may be asked for.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ANonPositiveTimeoutIsRefused(int ms) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            OpenClawSendPolicy.ChatSendRequest("agent:a:b", "hi", OpenClawSendRoute.Native, "k1", ms));
+
+    // --- attachments (Stage 4) ---
+
+    private static OpenClawOutgoingImage Image() =>
+        OpenClawOutgoingImage.From("probe.png", new byte[] { 1, 2, 3 })!;
+
+    [Fact]
+    public void AttachmentsAreAppendedLastAfterTheTimeout()
+    {
+        var request = OpenClawSendPolicy.ChatSendRequest(
+            "agent:a:b", "hi", OpenClawSendRoute.Native, "k1", 600_000, new[] { Image() });
+
+        Assert.Equal(
+            new[] { "sessionKey", "message", "deliver", "idempotencyKey", "timeoutMs", "attachments" },
+            request.Keys.ToArray());
+
+        var wire = Assert.Single((List<Dictionary<string, object>>)request["attachments"]);
+        Assert.Equal(new[] { "type", "mimeType", "fileName", "content" }, wire.Keys.ToArray());
+        Assert.Equal("image", wire["type"]);
+        Assert.Equal("image/png", wire["mimeType"]);
+        Assert.Equal("probe.png", wire["fileName"]);
+        Assert.Equal("AQID", wire["content"]);
+    }
+
+    // No pictures is no field, whether the list is null or empty.
+    [Fact]
+    public void NoAttachmentsMeansNoField()
+    {
+        var none = OpenClawSendPolicy.ChatSendRequest("k", "hi", OpenClawSendRoute.Native, "k1", null, null);
+        var empty = OpenClawSendPolicy.ChatSendRequest(
+            "k", "hi", OpenClawSendRoute.Native, "k1", null, new List<OpenClawOutgoingImage>());
+
+        Assert.DoesNotContain("attachments", none.Keys);
+        Assert.DoesNotContain("attachments", empty.Keys);
+    }
 }
 

@@ -60,6 +60,12 @@ namespace Orbweaver
         KeepOnScreen,
         StopKeeping,
         Rename,
+
+        // CB-270 Stage 4: a native conversation's run controls. Each sends one
+        // sessions.patch field, and each can also be sent back to its default.
+        Model,
+        Thinking,
+        Fast,
     }
 
     public enum OpenClawActionOutcome
@@ -150,6 +156,9 @@ namespace Orbweaver
             OpenClawAction.Interrupt => "Interrupt the current run",
             OpenClawAction.End => "End the conversation",
             OpenClawAction.Rename => "Rename conversation…",
+            OpenClawAction.Model => "Model",
+            OpenClawAction.Thinking => "Thinking",
+            OpenClawAction.Fast => "Fast mode",
             _ => "Keep on screen",
         };
 
@@ -158,6 +167,9 @@ namespace Orbweaver
             OpenClawAction.Interrupt => "Stops the agent generating. The conversation stays.",
             OpenClawAction.End => "Archives this conversation on the gateway, so every client stops showing it. It can be restored from OpenClaw.",
             OpenClawAction.Rename => "Changes this conversation's name on the gateway, so every client shows the new one.",
+            OpenClawAction.Model => "Changes the model this conversation runs on, in every client.",
+            OpenClawAction.Thinking => "Changes how much this conversation's agent thinks before it answers, in every client.",
+            OpenClawAction.Fast => "Turns fast mode on or off for this conversation, in every client.",
             _ => "Pins this conversation on the gateway, so it stays on screen however long it has been quiet — in every client.",
         };
 
@@ -167,6 +179,7 @@ namespace Orbweaver
             OpenClawAction.End => "Ending…",
             OpenClawAction.KeepOnScreen => "Keeping…",
             OpenClawAction.StopKeeping => "Releasing…",
+            OpenClawAction.Model or OpenClawAction.Thinking or OpenClawAction.Fast => "Changing…",
             _ => "Renaming…",
         };
 
@@ -178,6 +191,9 @@ namespace Orbweaver
                 OpenClawAction.End => "end",
                 OpenClawAction.KeepOnScreen => "keep it on screen",
                 OpenClawAction.StopKeeping => "release it",
+                OpenClawAction.Model => "change the model",
+                OpenClawAction.Thinking => "change thinking",
+                OpenClawAction.Fast => "change fast mode",
                 _ => "rename",
             };
 
@@ -189,6 +205,7 @@ namespace Orbweaver
                     OpenClawAction.End => "Ended",
                     OpenClawAction.KeepOnScreen => "Kept on screen",
                     OpenClawAction.StopKeeping => "No longer kept on screen",
+                    OpenClawAction.Model or OpenClawAction.Thinking or OpenClawAction.Fast => "Changed",
                     _ => "Renamed",
                 },
                 OpenClawActionOutcome.NothingRunning => "Nothing was running",

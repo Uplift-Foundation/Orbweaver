@@ -151,7 +151,7 @@ namespace Orbweaver
     // A send is routed by OpenClawSendPolicy: a conversation on a chat surface
     // is delivered back to that surface with the typed message mirrored into
     // it, and a native session, which has no surface, is answered in place.
-    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey
+    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -323,7 +323,47 @@ namespace Orbweaver
         public event Action<ChatTurn>? TurnUpdated;
         public event Action<RemoteChatState>? StateChanged;
 
-        public async Task<ChatSendOutcome> SendAsync(string text)
+        public Task<ChatSendOutcome> SendAsync(string text) => SendCoreAsync(text, null, null);
+
+        // CB-270 Stage 4: a native conversation takes pictures with its message.
+        // The panel hands over files it already saved to disk; only the images
+        // among them are sent, by name and content, and the first one is drawn on
+        // the message's own bubble so it is not text-only until the gateway's
+        // copy comes back.
+        public async Task<ChatSendOutcome> SendWithImagesAsync(string text, IReadOnlyList<string> imagePaths)
+        {
+            var images = new List<OpenClawOutgoingImage>();
+            byte[]? thumbnail = null;
+
+            foreach (var path in imagePaths)
+            {
+                byte[] bytes;
+                try { bytes = await File.ReadAllBytesAsync(path); }
+                catch { continue; }
+
+                if (OpenClawOutgoingImage.From(path, bytes) is not { } image) continue;
+
+                images.Add(image);
+                thumbnail ??= bytes;
+            }
+
+            return await SendCoreAsync(text, images, thumbnail);
+        }
+
+        // Pictures go only to a conversation answered in place, and only when
+        // replying is allowed: anywhere else a pasted picture stays the ordinary
+        // paste it would have been, rather than becoming a message that then fails.
+        public bool CanSendImages
+        {
+            get
+            {
+                Observe(OpenClawSessions.NativeOf(GatewayKey));
+                return Route == OpenClawSendRoute.Native && OrbweaverSettings.OpenClawReplyEnabled;
+            }
+        }
+
+        private async Task<ChatSendOutcome> SendCoreAsync(
+            string text, IReadOnlyList<OpenClawOutgoingImage>? images, byte[]? thumbnail)
         {
             // The user's own turn is added here rather than by the panel, so one
             // thing owns the transcript and a send that fails leaves a message
@@ -345,10 +385,15 @@ namespace Orbweaver
             // read the same: your message is on screen, and the note under it
             // says why nothing happened, exactly like a room whose channel
             // has nobody to carry a message to.
+            Observe(OpenClawSessions.NativeOf(GatewayKey));
+            _pendingLimitMinutes = Route == OpenClawSendRoute.Native ? TimeoutMinutes : null;
             var mine = new ChatTurn
             {
-                Role = ChatRole.User, Text = text, IsComplete = true, Mine = true
+                Role = ChatRole.User, Text = text, IsComplete = true, Mine = true,
+                ImageBytes = thumbnail
             };
+            _sent.Add(mine);
+            if (_liveRunActive) _typedMidRun.Add(mine);
             Add(mine);
 
             if (!OrbweaverSettings.OpenClawReplyEnabled)
@@ -361,7 +406,7 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            var failure = await SendOrFailureAsync(text);
+            var failure = await SendOrFailureAsync(text, images);
             if (failure is not null)
             {
                 Note("Couldn't send: " + failure);
@@ -381,11 +426,11 @@ namespace Orbweaver
         // completes, and the decision that reads it — say so in the transcript —
         // is measured where it belongs.
         [ExcludeFromCodeCoverage]
-        private async Task<string?> SendOrFailureAsync(string text)
+        private async Task<string?> SendOrFailureAsync(string text, IReadOnlyList<OpenClawOutgoingImage>? images)
         {
             try
             {
-                await OpenClawSessions.SendAsync(this, text, CancellationToken.None);
+                await OpenClawSessions.SendAsync(this, text, CancellationToken.None, images);
                 return null;
             }
             catch (Exception ex)
@@ -398,6 +443,21 @@ namespace Orbweaver
         // Both are System turns, and a reconciliation has to tell them apart: a
         // note about a send belongs to the message it follows and is kept with it.
         private readonly HashSet<ChatTurn> _notes = new();
+
+        // The messages this session added for the person who typed them, so an
+        // append can tell one a page has not shown yet from one it has.
+        private readonly HashSet<ChatTurn> _sent = new();
+
+        // Those of them typed while a run was already streaming. Such a message is
+        // not what the run began after, wherever a page happens to place it, so a
+        // reconciliation never takes it as the anchor: the run began before it.
+        private readonly HashSet<ChatTurn> _typedMidRun = new();
+
+        // Whether the stream says a run is going right now: any event of one since
+        // the last end. Wider than "has drawn something", because a panel opened
+        // partway through a run can be typed into before the next word draws, and
+        // that message still comes after the run began.
+        private bool _liveRunActive;
 
         private void Note(string text)
         {
@@ -435,13 +495,19 @@ namespace Orbweaver
                     {
                         EndRun();
                     }
+                    else
+                    {
+                        _liveRunActive = true;
+                    }
                     break;
 
                 case "agent":
+                    _liveRunActive = true;
                     OnAgentText(payload);
                     break;
 
                 case "session.tool":
+                    _liveRunActive = true;
                     OnTool(payload);
                     break;
 
@@ -477,6 +543,11 @@ namespace Orbweaver
                 case "chat" when Str(payload, "state") is "final" or "error" or "aborted":
                     EndRun();
                     RefreshTailAsync();
+                    break;
+
+                // Any other state of a run (a delta, a status) says one is going.
+                case "chat":
+                    _liveRunActive = true;
                     break;
 
                 case "session.message":
@@ -523,14 +594,63 @@ namespace Orbweaver
         private bool _runDirty;
         private bool _runEnded;
 
+        // CB-270 Stage 4. A run this session drew is waiting to be told how it
+        // ended, and the limit the last send asked for is what a timeout names.
+        // The row's status arrives with the next poll, so the note is written then:
+        // a timed-out run otherwise just stops, and the reply looks cut off for no
+        // reason. Only a run this panel saw counts, so a conversation opened on an
+        // old timeout does not announce it.
+        private static readonly HashSet<string> TerminalStatuses =
+            new(StringComparer.Ordinal) { "done", "failed", "error", "killed", "aborted", "timeout" };
+
+        private bool _awaitingStatus;
+
+        // The limit a send asked for belongs to the run that send starts, and to no
+        // other: it is pending from the send until the next run begins drawing, and
+        // that run keeps it. A run another client started has none, so its timeout
+        // is announced without a number rather than with this send's.
+        private int? _pendingLimitMinutes;
+        private int? _runLimitMinutes;
+
+        internal void OnRunStatus(string? status)
+        {
+            // Only a status that says the run is over settles it. One that says it is
+            // still going ("running", read on the first poll after a send) leaves it
+            // waiting, and so does anything not recognised.
+            if (!_awaitingStatus || status is null || !TerminalStatuses.Contains(status)) return;
+
+            // So a later timeout (another client's run, say) is not announced with
+            // this send's limit.
+            _awaitingStatus = false;
+            if (status != "timeout") return;
+
+            Note(_runLimitMinutes is { } minutes
+                ? $"The time limit ({minutes} minutes) was reached, so the run was stopped."
+                : "The run's time limit was reached, so the run was stopped.");
+        }
+
         // The first row the live run drew in this transcript, by reference so a
         // prepend or the cap cannot shift it. The run's user turn is before it,
         // however much of the run was already on the page when the panel opened.
         // Null until something is drawn after a wholesale replace.
         private ChatTurn? _runFirst;
 
+        // The last row of the page SetHistory installed, by reference. Everything
+        // after it was added later, a message typed after the page landed among
+        // it, and none of it can be the user turn a run began after.
+        private ChatTurn? _pageLast;
+
         private void RunSeen()
         {
+            // A run beginning: it takes the limit the last send asked for, if one
+            // is waiting, and nothing otherwise.
+            if (!_awaitingStatus)
+            {
+                _runLimitMinutes = _pendingLimitMinutes;
+                _pendingLimitMinutes = null;
+            }
+
+            _awaitingStatus = true;
             if (!_runDirty) _runFirst = null;
             _runDirty = true;
             _runEnded = false;
@@ -538,6 +658,7 @@ namespace Orbweaver
 
         private void EndRun()
         {
+            _liveRunActive = false;
             _runEnded = true;
             Complete();
         }
@@ -585,14 +706,15 @@ namespace Orbweaver
         private void ReconcileRun(IReadOnlyList<HistoryTurn> page)
         {
             var first = _runFirst is null ? -1 : _history.IndexOf(_runFirst);
-            var before = first >= 0 ? first : _history.Count;
+            var afterPage = _pageLast is null ? -1 : _history.IndexOf(_pageLast) + 1;
+            var before = first >= 0 ? first : afterPage > 0 ? afterPage : _history.Count;
 
             var user = -1;
             var at = -1;
 
             for (var u = before - 1; u >= 0 && at < 0; u--)
             {
-                if (_history[u].Role != ChatRole.User) continue;
+                if (_history[u].Role != ChatRole.User || _typedMidRun.Contains(_history[u])) continue;
 
                 for (var i = page.Count - 1; i >= 0; i--)
                 {
@@ -692,7 +814,22 @@ namespace Orbweaver
 
             int startIndex;
 
-            if (_history.Count == 0)
+            // Without this session's own notes, and the messages it sent that no
+            // page shows yet: neither is on a page, so at the tail either would be
+            // the anchor, match nothing, and stop every later delivery appearing (a
+            // send that failed leaves both). Each copy a page does show accounts for
+            // one sent message, which is then ordinary again. They stay in the
+            // transcript; only the search for where the page joins looks past them.
+            var shown = freshTurns.Where(t => t.Role == ChatRole.User).Select(t => t.Text).ToList();
+            var live = new List<ChatTurn>();
+            foreach (var turn in _history)
+            {
+                if (_notes.Contains(turn)) continue;
+                if (_sent.Contains(turn) && !shown.Remove(turn.Text)) continue;
+                live.Add(turn);
+            }
+
+            if (live.Count == 0)
             {
                 startIndex = 0;
             }
@@ -710,9 +847,9 @@ namespace Orbweaver
                 for (var i = freshTurns.Count - 1; i >= 0; i--)
                 {
                     var matched = 0;
-                    while (matched <= i && matched < _history.Count
-                           && freshTurns[i - matched].Role == _history[^(matched + 1)].Role
-                           && string.Equals(freshTurns[i - matched].Text, _history[^(matched + 1)].Text,
+                    while (matched <= i && matched < live.Count
+                           && freshTurns[i - matched].Role == live[^(matched + 1)].Role
+                           && string.Equals(freshTurns[i - matched].Text, live[^(matched + 1)].Text,
                                StringComparison.Ordinal))
                     {
                         matched++;
@@ -1210,6 +1347,99 @@ namespace Orbweaver
         public Task<bool> LoadOlderAsync(CancellationToken ct) =>
             OpenClawSessions.LoadOlderAsync(this, ct);
 
+        // --- run controls (CB-270 Stage 4) -----------------------------------
+
+        public event Action? RunOptionsChanged;
+
+        public int? TimeoutMinutes { get; set; }
+
+        // Called on the UI thread when the run state or the model catalogue moved.
+        internal void OnRunOptionsChanged() => RunOptionsChanged?.Invoke();
+
+        // Null unless every one of these holds, so the panel hides the picker
+        // rather than showing one that would be refused:
+        //   - the conversation is answered in place. A surface chat's model is the
+        //     channel's configuration, and patching it would change how the agent
+        //     answers everyone else there. This is the same predicate that decides
+        //     whether a reply is delivered, so the two cannot disagree.
+        //   - replying is allowed, which is what grants the write scope;
+        //   - the gateway granted write and lists sessions.patch (read through
+        //     CapabilitiesFor, the one source), and has listed this conversation;
+        //   - the gateway told us what it is running on, and which models it has.
+        public RemoteRunOptions? RunOptions
+        {
+            get
+            {
+                // What the gateway last said this conversation is, read now: a panel
+                // is opened before any send has asked, and Route is Surface until it
+                // has been told.
+                Observe(OpenClawSessions.NativeOf(GatewayKey));
+
+                if (Route != OpenClawSendRoute.Native) return null;
+                if (!OrbweaverSettings.OpenClawReplyEnabled) return null;
+
+                var context = OpenClawSessions.CapabilitiesFor(SessionId);
+                if (!context.Connected || context.SessionId is null
+                    || !context.Methods.Contains(OpenClawOrbActions.PatchMethod)
+                    || !context.Scopes.Contains(OpenClawOrbActions.WriteScope))
+                {
+                    return null;
+                }
+
+                if (OpenClawSessions.RunStateOf(GatewayKey) is not { Model: { } modelId } state) return null;
+
+                var catalogue = OpenClawSessions.OfferedModels;
+                if (catalogue.Count == 0) return null;
+
+                var models = catalogue.Select(m => new RemoteRunChoice(m.Id, m.Name)).ToList();
+
+                // The model in force may not be one that is offered (the gateway's
+                // default can be a model it will not let a patch choose): it is still
+                // what the chip must name, so it is listed rather than left out.
+                if (models.All(m => m.Id != modelId)) models.Insert(0, new RemoteRunChoice(modelId, modelId));
+
+                // The levels the gateway reports for this conversation's own model,
+                // else the catalogue's entry for it. Never the refusal text.
+                var levels = state.ThinkingLevels.Count > 0
+                    ? state.ThinkingLevels
+                    : catalogue.FirstOrDefault(m => m.Id == modelId)?.ThinkingLevels
+                      ?? Array.Empty<OpenClawRunOption>();
+
+                var modelName = models.First(m => m.Id == modelId).Label;
+                var defaultLabel = state.ThinkingDefault is { } d
+                    ? levels.FirstOrDefault(o => o.Id == d)?.Label ?? d
+                    : null;
+
+                return new RemoteRunOptions(
+                    modelId,
+                    models,
+                    state.ThinkingLevel,
+                    defaultLabel,
+                    levels.Select(o => new RemoteRunChoice(o.Id, o.Label)).ToList(),
+                    state.EffectiveFastMode,
+                    state.FastMode is not null,
+                    state.SelectionLocked,
+                    // Measured accepted on all three fields.
+                    true,
+                    OpenClawRunText.Chip(modelName, state.EffectiveThinkingLabel, state.EffectiveFastMode));
+            }
+        }
+
+        public async Task<string?> SetModelAsync(string? id) =>
+            Describe(await OpenClawSessions.SetModelAsync(SessionId, id, CancellationToken.None), OpenClawAction.Model);
+
+        public async Task<string?> SetThinkingAsync(string? id) =>
+            Describe(await OpenClawSessions.SetThinkingAsync(SessionId, id, CancellationToken.None), OpenClawAction.Thinking);
+
+        public async Task<string?> SetFastModeAsync(bool? on) =>
+            Describe(await OpenClawSessions.SetFastModeAsync(SessionId, on, CancellationToken.None), OpenClawAction.Fast);
+
+        // Null on success, otherwise the sentence the flyout shows.
+        private static string? Describe((OpenClawActionOutcome Outcome, string? Detail) result, OpenClawAction action) =>
+            result.Outcome == OpenClawActionOutcome.Done
+                ? null
+                : OpenClawActionText.For(result.Outcome, result.Detail, action);
+
         public string ComposerHint => OrbweaverSettings.OpenClawReplyEnabled
             ? "Message…"
             : "Replying is off";
@@ -1394,6 +1624,7 @@ namespace Orbweaver
                 });
             }
 
+            _pageLast = _history[^1];
             HistoryReplaced?.Invoke();
         }
 

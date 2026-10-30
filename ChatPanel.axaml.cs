@@ -211,6 +211,7 @@ namespace Orbweaver
             // button's mark.
             AttachMark.Data = StreamGeometry.Parse(SymbolMarks.Gear);
             HeartChipMark.Data = StreamGeometry.Parse(SymbolMarks.Heart);
+            RunOptionsChip.PointerPressed += RunOptionsChip_PointerPressed;
 
             _defaultWidth = Width;
             _defaultHeight = Height;
@@ -693,6 +694,11 @@ namespace Orbweaver
             // taking the box away from an unrelated one.
             if (_session is IRemoteChatReadOnly wasReadOnly) wasReadOnly.ReadOnlyChanged -= OnReadOnlyChanged;
             if (_session is IRemoteChatInterrupt wasInterruptible) wasInterruptible.InterruptChanged -= OnInterruptChanged;
+            if (_session is IRemoteChatRunOptions wasRunnable) wasRunnable.RunOptionsChanged -= OnRunOptionsChanged;
+
+            // The flyout belongs to the conversation it was built for.
+            _runFlyout?.Hide();
+            _runFlyout = null;
             if (_session is IRemoteChatPeerInbound wasInbound) wasInbound.InboundChanged -= OnInboundChanged;
 
             // Nobody is looking any more, so its live loop stops.
@@ -833,6 +839,8 @@ namespace Orbweaver
             // ApplyComposerAffordances below for the initial state.
             if (session is IRemoteChatReadOnly readOnlyNow) readOnlyNow.ReadOnlyChanged += OnReadOnlyChanged;
             if (session is IRemoteChatInterrupt interruptible) interruptible.InterruptChanged += OnInterruptChanged;
+            if (session is IRemoteChatRunOptions runnable) runnable.RunOptionsChanged += OnRunOptionsChanged;
+            ApplyRunOptions(session);
 
             // CB-267: the offer comes and goes under an open panel — the
             // transcript's mode row lands after bind, settings.json is edited
@@ -1021,6 +1029,207 @@ namespace Orbweaver
         private void OnReadOnlyChanged() => ApplyComposerAffordances(_session);
 
         private void OnInterruptChanged() => ApplyStop(_session);
+
+        // --- CB-270 Stage 4: run controls --------------------------------------
+
+        private void OnRunOptionsChanged() => ApplyRunOptions(_session);
+
+        // The chip says what the conversation is running on; a click opens the
+        // flyout. Hidden whenever the session offers nothing, which is also what
+        // closes a flyout left open when the options go away under it.
+        private void ApplyRunOptions(IRemoteChatSession? session)
+        {
+            var options = (session as IRemoteChatRunOptions)?.RunOptions;
+
+            RunOptionsChip.IsVisible = options is not null;
+
+            if (options is null)
+            {
+                _runFlyout?.Hide();
+                return;
+            }
+
+            RunOptionsChipText.Text = options.ChipText;
+            // The whole text in the tip as well, since a long model name can be cut
+            // by the column's width.
+            ToolTip.SetTip(RunOptionsChip, options.ChipText + "\n" + OpenClawRunText.ChipTip);
+
+            if (_runFlyout is not null) _runFlyout.Content = BuildRunFlyout((IRemoteChatRunOptions)session!, options);
+        }
+
+        private Flyout? _runFlyout;
+
+        // The controls of the flyout, kept so a test can reach what a real person
+        // would click without a pointer. Rebuilt from the options every time they
+        // change; _runApplying holds the handlers off while it is being set.
+        internal ComboBox? RunModelBox { get; private set; }
+        internal ComboBox? RunThinkingBox { get; private set; }
+        internal ToggleSwitch? RunFastSwitch { get; private set; }
+        internal Button? RunFastDefault { get; private set; }
+        internal ComboBox? RunLimitBox { get; private set; }
+        internal TextBlock? RunStatus { get; private set; }
+        private bool _runApplying;
+
+        private void RunOptionsChip_PointerPressed(object? sender, PointerPressedEventArgs e) => OpenRunOptions();
+
+        internal void OpenRunOptions()
+        {
+            if (_session is not IRemoteChatRunOptions run || run.RunOptions is not { } options) return;
+
+            _runFlyout ??= new Flyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+            _runFlyout.Content = BuildRunFlyout(run, options);
+            _runFlyout.ShowAt(RunOptionsChip);
+        }
+
+        internal Control BuildRunFlyout(IRemoteChatRunOptions run, RemoteRunOptions options)
+        {
+            _runApplying = true;
+            try
+            {
+                var panel = new StackPanel { Spacing = 8, MinWidth = 240 };
+
+                // Model. "Default" first when it can be reset, so it is the same
+                // gesture as choosing any other.
+                RunModelBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                if (options.CanResetToDefault) RunModelBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.DefaultLabel, Tag = null });
+                foreach (var m in options.Models) RunModelBox.Items.Add(new ComboBoxItem { Content = m.Label, Tag = m.Id });
+                RunModelBox.IsEnabled = !options.Locked;
+                if (options.Locked) ToolTip.SetTip(RunModelBox, OpenClawRunText.LockedModelTip);
+                // The handler before the selection, so setting the selection from
+                // the options is held off by _runApplying like any other.
+                RunModelBox.SelectionChanged += async (_, _) =>
+                {
+                    if (_runApplying || RunModelBox.SelectedItem is not ComboBoxItem item) return;
+                    await ChangeAsync(RunModelBox, () => run.SetModelAsync((string?)item.Tag));
+                };
+                RunModelBox.SelectedIndex = IndexOfTag(RunModelBox, options.ModelId);
+                panel.Children.Add(Labelled(OpenClawRunText.ModelLabel, RunModelBox));
+
+                // Thinking: the model's own levels, id sent and label shown.
+                RunThinkingBox = null;
+                if (options.ThinkingChoices.Count > 0)
+                {
+                    RunThinkingBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                    if (options.CanResetToDefault)
+                    {
+                        var label = options.ThinkingDefaultLabel is { } d
+                            ? $"{OpenClawRunText.DefaultLabel} ({d})"
+                            : OpenClawRunText.DefaultLabel;
+                        RunThinkingBox.Items.Add(new ComboBoxItem { Content = label, Tag = null });
+                    }
+
+                    foreach (var t in options.ThinkingChoices) RunThinkingBox.Items.Add(new ComboBoxItem { Content = t.Label, Tag = t.Id });
+                    RunThinkingBox.SelectionChanged += async (_, _) =>
+                    {
+                        if (_runApplying || RunThinkingBox.SelectedItem is not ComboBoxItem item) return;
+                        await ChangeAsync(RunThinkingBox, () => run.SetThinkingAsync((string?)item.Tag));
+                    };
+                    RunThinkingBox.SelectedIndex = IndexOfTag(RunThinkingBox, options.ThinkingId);
+                    panel.Children.Add(Labelled(OpenClawRunText.ThinkingLabel, RunThinkingBox));
+                }
+
+                // Fast mode, with its own way back to the default.
+                RunFastSwitch = new ToggleSwitch { IsChecked = options.Fast, OnContent = "", OffContent = "" };
+                RunFastSwitch.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_runApplying) return;
+                    var on = RunFastSwitch.IsChecked == true;
+                    await ChangeAsync(RunFastSwitch, () => run.SetFastModeAsync(on));
+                };
+                RunFastDefault = new Button
+                {
+                    Content = OpenClawRunText.DefaultLabel,
+                    IsVisible = options.CanResetToDefault && options.FastIsSet,
+                    Padding = new Thickness(6, 1)
+                };
+                RunFastDefault.Click += async (_, _) => await ChangeAsync(RunFastDefault, () => run.SetFastModeAsync(null));
+                var fastRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                fastRow.Children.Add(RunFastSwitch);
+                fastRow.Children.Add(RunFastDefault);
+                panel.Children.Add(Labelled(OpenClawRunText.FastLabel, fastRow));
+
+                // Time limit for the next sends: held on the session, never zero.
+                RunLimitBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(null), Tag = null });
+                foreach (var minutes in OpenClawRunText.TimeLimitMinutes)
+                {
+                    RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(minutes), Tag = minutes });
+                }
+
+                RunLimitBox.SelectionChanged += (_, _) =>
+                {
+                    if (_runApplying || RunLimitBox.SelectedItem is not ComboBoxItem item) return;
+                    run.TimeoutMinutes = (int?)item.Tag;
+                };
+                RunLimitBox.SelectedIndex = IndexOfTag(RunLimitBox, run.TimeoutMinutes);
+                panel.Children.Add(Labelled(OpenClawRunText.TimeLimitLabel, RunLimitBox));
+
+                RunStatus = new TextBlock
+                {
+                    FontSize = 11, TextWrapping = TextWrapping.Wrap, IsVisible = false,
+                    Foreground = RecordingFill
+                };
+                panel.Children.Add(RunStatus);
+
+                return panel;
+            }
+            finally
+            {
+                _runApplying = false;
+            }
+        }
+
+        private static int IndexOfTag(ComboBox box, object? tag)
+        {
+            // Every item is one this panel added, so each is a ComboBoxItem.
+            for (var i = 0; i < box.Items.Count; i++)
+            {
+                if (Equals(((ComboBoxItem)box.Items[i]!).Tag, tag)) return i;
+            }
+
+            return -1;
+        }
+
+        private static Control Labelled(string label, Control control)
+        {
+            var row = new StackPanel { Spacing = 2 };
+            row.Children.Add(new TextBlock { Text = label, FontSize = 10.5, Opacity = 0.7 });
+            row.Children.Add(control);
+            return row;
+        }
+
+        // One change: the control is held off while the request is out, and the
+        // sentence the session returns, if any, goes in the status line. Success
+        // returns null, and the session's own RunOptionsChanged then redraws the
+        // chip and rebuilds the flyout from what really happened.
+        private async Task ChangeAsync(Control control, Func<Task<string?>> change)
+        {
+            // Always built by the time a control can be changed: the handlers that
+            // call this belong to the flyout that builds it.
+            var status = RunStatus!;
+
+            control.IsEnabled = false;
+            status.IsVisible = false;
+
+            var failure = await change();
+
+            control.IsEnabled = true;
+
+            if (failure is null) return;
+
+            status.Text = failure;
+            status.IsVisible = true;
+
+            // A refusal changed nothing, so put the controls back to what is true.
+            // The panel may have been rebound, or the options gone, while the
+            // request was out, and then there is nothing to put back.
+            if (_session is IRemoteChatRunOptions run && run.RunOptions is { } options && _runFlyout is not null)
+            {
+                _runFlyout.Content = BuildRunFlyout(run, options);
+                RunStatus!.Text = failure;
+                RunStatus.IsVisible = true;
+            }
+        }
 
         // --- CB-267: a message the session would hold ---
 
@@ -1980,7 +2189,7 @@ namespace Orbweaver
             // paste intercepted at all — see IRemoteChatImages. Anything
             // else falls straight through to the TextBox's own paste, which
             // is exactly what happened here before this feature existed.
-            if (_session is IRemoteChatImages && IsPasteGesture(e))
+            if (_session is IRemoteChatImages { CanSendImages: true } && IsPasteGesture(e))
             {
                 e.Handled = true;
                 _ = HandlePasteAsync();
@@ -2561,7 +2770,7 @@ namespace Orbweaver
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            var outcome = images.Count > 0 && session is IRemoteChatImages withImages
+            var outcome = images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
                 ? await withImages.SendWithImagesAsync(text, images)
                 : await session.SendAsync(text);
 

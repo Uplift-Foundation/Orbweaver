@@ -694,6 +694,104 @@ namespace Orbweaver
                 return _natives.TryGetValue(key, out var native) ? native : null;
         }
 
+        // CB-270 Stage 4: what each listed session is running on, read off its row
+        // for every listed session, native or not (the gate on whether to offer
+        // controls is the route, never whether this exists). Replaced whole per
+        // poll; a row with no model has no entry.
+        private static Dictionary<string, OpenClawRunState> _runStates = new(StringComparer.Ordinal);
+
+        // Test seams, in the way of SetSnapshotForTests.
+        internal static void SetModelsForTests(IReadOnlyList<OpenClawModel> models)
+        {
+            lock (Gate) _models = models;
+        }
+
+        // How the conversation's last run ended, as the row's own `status` says
+        // ("done", "timeout", ...), for every listed row. Replaced whole per poll.
+        private static Dictionary<string, string> _runStatuses = new(StringComparer.Ordinal);
+
+        internal static string? RunStatusOf(string key)
+        {
+            lock (Gate)
+                return _runStatuses.TryGetValue(key, out var status) ? status : null;
+        }
+
+        // After a poll: every open chat is told how its conversation's last run
+        // ended, on the UI thread. The chat decides whether that is news.
+        internal static void NotifyRunStatuses(IEnumerable<OpenClawChatSession> chats)
+        {
+            foreach (var chat in chats)
+            {
+                var status = RunStatusOf(chat.GatewayKey);
+                Dispatcher.UIThread.Post(() => chat.OnRunStatus(status));
+            }
+        }
+
+        internal static IReadOnlyDictionary<string, OpenClawRunState> RunStatesSnapshot()
+        {
+            lock (Gate) return new Dictionary<string, OpenClawRunState>(_runStates, StringComparer.Ordinal);
+        }
+
+        internal static OpenClawRunState? RunStateOf(string key)
+        {
+            lock (Gate)
+                return _runStates.TryGetValue(key, out var state) ? state : null;
+        }
+
+        // The models the gateway offers, from models.list once per connection. Empty
+        // until it answers, or if it never does, and the picker is then hidden.
+        private static IReadOnlyList<OpenClawModel> _models = Array.Empty<OpenClawModel>();
+
+        internal static IReadOnlyList<OpenClawModel> OfferedModels
+        {
+            get { lock (Gate) return _models; }
+        }
+
+        // Asks the gateway which models it runs and keeps the ones it vouches for. A
+        // failure leaves the catalogue empty and says nothing: the controls are an
+        // extra, and a conversation is no worse off without them. Open panels are
+        // told so a chip that was waiting for the catalogue appears.
+        //
+        // Not excluded from coverage: the gateway is a constructor argument, so the
+        // in-memory socket reaches both arms.
+        internal static async Task LoadModelsAsync(OpenClawGateway gateway, CancellationToken ct)
+        {
+            IReadOnlyList<OpenClawModel> offered;
+
+            try
+            {
+                var res = await gateway.RequestAsync("models.list", new Dictionary<string, object>(), ct);
+                offered = OpenClawModelCatalog.Offered(OpenClawModelCatalog.Parse(res));
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            lock (Gate) _models = offered;
+            NotifyRunOptions(OpenChats());
+        }
+
+        // Tells the chats whose run controls may now read differently. On the UI
+        // thread, which is where the panel redraws from.
+        private static void NotifyRunOptions(IEnumerable<OpenClawChatSession> chats)
+        {
+            foreach (var chat in chats)
+            {
+                Dispatcher.UIThread.Post(chat.OnRunOptionsChanged);
+            }
+        }
+
+        // After a poll: the open chats whose run state is not what it was.
+        internal static IReadOnlyList<OpenClawChatSession> ChatsWithChangedRunState(
+            IReadOnlyDictionary<string, OpenClawRunState> before,
+            IReadOnlyDictionary<string, OpenClawRunState> after,
+            IEnumerable<OpenClawChatSession> chats) =>
+            chats.Where(c =>
+                    before.TryGetValue(c.GatewayKey, out var was) != after.TryGetValue(c.GatewayKey, out var now)
+                    || (was is not null && !was.Equals(now)))
+                .ToList();
+
         public static IReadOnlyList<string> MembersOfRoom(string roomKey)
         {
             lock (Gate)
@@ -1046,6 +1144,7 @@ namespace Orbweaver
                     foreach (var chat in OpenChats()) _ = LoadHistoryAsync(chat, ct);
 
                     await LoadAgentNamesAsync(gateway, ct);
+                    await LoadModelsAsync(gateway, ct);
                     await SubscribeAsync(gateway, ct);
                     await ResubscribeOpenPanelsAsync(gateway, OpenChats(), ct);
                     await PollAsync(gateway, ct);
@@ -1260,7 +1359,10 @@ namespace Orbweaver
             while (!ct.IsCancellationRequested)
             {
                 var res = await gateway.RequestAsync("sessions.list", new Dictionary<string, object>(), ct);
+                var before = RunStatesSnapshot();
                 var (sessions, total) = Parse(res);
+                NotifyRunOptions(ChatsWithChangedRunState(before, RunStatesSnapshot(), OpenChats()));
+                NotifyRunStatuses(OpenChats());
 
                 _snapshot = sessions;
                 Report(total == sessions.Count
@@ -1313,6 +1415,8 @@ namespace Orbweaver
 
             var deliveries = new Dictionary<string, Delivery?>(StringComparer.Ordinal);
             var natives = new Dictionary<string, OpenClawNativeKind>(StringComparer.Ordinal);
+            var runStates = new Dictionary<string, OpenClawRunState>(StringComparer.Ordinal);
+            var runStatuses = new Dictionary<string, string>(StringComparer.Ordinal);
 
             // Every agent the gateway knows of, filtered or not, so that a
             // colour is reserved for one whose orb isn't drawn — their messages
@@ -1380,6 +1484,10 @@ namespace Orbweaver
                     s.TryGetProperty("deliveryContext", out var dc) && dc.ValueKind == JsonValueKind.Object,
                     Str(s, "lastChannel"));
                 natives[key] = native;
+
+                // ...and what it is running on, likewise.
+                if (OpenClawRunState.From(s) is { } runState) runStates[key] = runState;
+                if (Str(s, "status") is { Length: > 0 } runStatus) runStatuses[key] = runStatus;
 
                 everyAgent.Add(AgentIdOf(key) ?? key);
 
@@ -1491,6 +1599,8 @@ namespace Orbweaver
                 _roomColours = roomColours;
                 _deliveries = deliveries;
                 _natives = natives;
+                _runStates = runStates;
+                _runStatuses = runStatuses;
             }
 
             return (result, list.GetArrayLength());
@@ -1972,7 +2082,7 @@ namespace Orbweaver
             try
             {
                 var res = await gateway.RequestAsync(
-                    OpenClawOrbActions.PatchMethod, new Dictionary<string, object>(patch.Params), ct);
+                    OpenClawOrbActions.PatchMethod, new Dictionary<string, object?>(patch.Params), ct);
 
                 return OpenClawOrbActions.ParsePatchResult(res, unconfirmed);
             }
@@ -2041,6 +2151,112 @@ namespace Orbweaver
                 "the gateway didn't confirm the change", ct);
         }
 
+        // CB-270 Stage 4: the run controls of a native conversation. Each sends one
+        // sessions.patch field, or JSON null to send it back to the default (measured
+        // accepted for all three). Never throws; the flyout shows what this returns.
+
+        internal static Task<(OpenClawActionOutcome Outcome, string? Detail)> SetModelAsync(
+            string orbSessionId, string? modelId, CancellationToken ct)
+        {
+            if (modelId is not null && string.IsNullOrWhiteSpace(modelId))
+                return Task.FromResult((OpenClawActionOutcome.Refused, (string?)"choose a model"));
+
+            return RunControlAsync(
+                orbSessionId,
+                (key, sid) => modelId is null
+                    ? OpenClawSessionPatch.ClearModel(key, sid)
+                    : OpenClawSessionPatch.Model(key, sid, modelId),
+                // The default model is not known here, so clearing waits for the next
+                // poll. A chosen one moves the thinking choices with it, since those
+                // belong to the model; whether the gateway keeps a level the new model
+                // does not list is unmeasured, so one it does not list is dropped and
+                // the poll corrects whichever way it went.
+                state => modelId is null ? state : WithModel(state, modelId),
+                ct);
+        }
+
+        internal static Task<(OpenClawActionOutcome Outcome, string? Detail)> SetThinkingAsync(
+            string orbSessionId, string? levelId, CancellationToken ct)
+        {
+            if (levelId is not null && string.IsNullOrWhiteSpace(levelId))
+                return Task.FromResult((OpenClawActionOutcome.Refused, (string?)"choose a level"));
+
+            return RunControlAsync(
+                orbSessionId,
+                (key, sid) => levelId is null
+                    ? OpenClawSessionPatch.ClearThinking(key, sid)
+                    : OpenClawSessionPatch.Thinking(key, sid, levelId),
+                state => state with { ThinkingLevel = levelId },
+                ct);
+        }
+
+        internal static Task<(OpenClawActionOutcome Outcome, string? Detail)> SetFastModeAsync(
+            string orbSessionId, bool? on, CancellationToken ct) =>
+            RunControlAsync(
+                orbSessionId,
+                (key, sid) => on is { } value
+                    ? OpenClawSessionPatch.Fast(key, sid, value)
+                    : OpenClawSessionPatch.ClearFast(key, sid),
+                // Unset reads back as off: effectiveFastMode was false on a default row.
+                state => state with { FastMode = on, EffectiveFastMode = on == true },
+                ct);
+
+        private static OpenClawRunState WithModel(OpenClawRunState state, string modelId)
+        {
+            var entry = OfferedModels.FirstOrDefault(m => m.Id == modelId);
+            if (entry is null) return state with { Model = modelId };
+
+            var keeps = state.ThinkingLevel is { } level && entry.ThinkingLevels.Any(o => o.Id == level);
+            return state with
+            {
+                Model = modelId,
+                ThinkingLevels = entry.ThinkingLevels,
+                ThinkingDefault = entry.ThinkingDefault,
+                ThinkingLevel = keeps ? state.ThinkingLevel : null
+            };
+        }
+
+        // The shared shape of the three: the connection and session id guards that
+        // pin and rename use, the one patch call, and on Done the list catching up
+        // with a fact, with the chat told so its chip redraws before the next poll.
+        private static async Task<(OpenClawActionOutcome Outcome, string? Detail)> RunControlAsync(
+            string orbSessionId,
+            Func<string, string, OpenClawSessionPatch> build,
+            Func<OpenClawRunState, OpenClawRunState> optimistic,
+            CancellationToken ct)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            var key = KeyOfOrb(orbSessionId);
+            if (gateway is null || key is null) return (OpenClawActionOutcome.NotConnected, null);
+
+            var sessionId = _snapshot.FirstOrDefault(s => s.Key == key)?.SessionId;
+            if (sessionId is null)
+                return (OpenClawActionOutcome.Refused, "the gateway hasn't listed this conversation");
+
+            var result = await PatchAsync(
+                gateway, build(key, sessionId), "the gateway didn't confirm the change", ct);
+
+            if (result.Outcome == OpenClawActionOutcome.Done)
+            {
+                lock (Gate)
+                {
+                    if (_runStates.TryGetValue(key, out var state))
+                    {
+                        _runStates = new Dictionary<string, OpenClawRunState>(_runStates, StringComparer.Ordinal)
+                        {
+                            [key] = optimistic(state)
+                        };
+                    }
+                }
+
+                NotifyRunOptions(OpenChats().Where(c => c.GatewayKey == key));
+            }
+
+            return result;
+        }
+
         private static async Task<(OpenClawActionOutcome Outcome, string? Detail)> AbortAsync(
             OpenClawGateway gateway, string key, CancellationToken ct)
         {
@@ -2073,7 +2289,9 @@ namespace Orbweaver
         //
         // Not excluded from coverage: the gateway is a constructor argument, so
         // SetGatewayForTests drives every path over an in-memory socket (CB-270).
-        public static async Task SendAsync(OpenClawChatSession chat, string text, CancellationToken ct)
+        public static async Task SendAsync(
+            OpenClawChatSession chat, string text, CancellationToken ct,
+            IReadOnlyList<OpenClawOutgoingImage>? images = null)
         {
             OpenClawGateway? gateway;
             lock (Gate) gateway = _gateway;
@@ -2097,6 +2315,17 @@ namespace Orbweaver
             chat.Observe(NativeOf(chat.GatewayKey));
             var route = chat.Route;
 
+            // Refused before anything is sent, so a picture that cannot go does not
+            // leave a mirrored message behind it.
+            if (images is { Count: > 0 })
+            {
+                if (route != OpenClawSendRoute.Native)
+                    throw new IOException("pictures can only be sent to a conversation answered in place");
+
+                if (!OpenClawOutgoingImage.Fits(images, gateway.MaxPayload))
+                    throw new IOException("that picture is too large to send");
+            }
+
             if (route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
             {
                 try
@@ -2113,9 +2342,16 @@ namespace Orbweaver
                 }
             }
 
+            // The time limit and the pictures belong to a conversation answered in
+            // place. A surface send never carries either: its limits and its
+            // channel are not this person's to set from here.
+            int? timeoutMs = route == OpenClawSendRoute.Native && chat.TimeoutMinutes is { } minutes
+                ? minutes * 60_000
+                : null;
+
             await gateway.RequestAsync("chat.send",
                 OpenClawSendPolicy.ChatSendRequest(
-                    chat.GatewayKey, text, route, Guid.NewGuid().ToString()), ct);
+                    chat.GatewayKey, text, route, Guid.NewGuid().ToString(), timeoutMs, images), ct);
         }
 
         // --- posting to a room -------------------------------------------
@@ -2426,6 +2662,57 @@ namespace Orbweaver
                             // like every other turn this loop has no opinion
                             // on.
                             Arm: bytes is { Length: > 0 } ? MediaSourceArm.Inline : MediaSourceArm.None));
+                    }
+                }
+
+                // CB-270 Stage 4: a picture sent with a user turn is not a content
+                // block. Measured on 2026.10.5: the turn's `content` is the message
+                // text alone and the picture is under `__openclaw.media`, as
+                // `{url, contentType, kind, fileName, sizeBytes}`, where url is
+                // `media://inbound/<name>`: not something that can be requested as a
+                // path (every plain http form of it was measured to answer nothing).
+                // The same file is served by the assistant-media route, which takes
+                // that `media://` string as its `source`, asked with this
+                // conversation's key like every other picture it serves (CB-109).
+                // One bubble per image, before the text.
+                if (role == ChatRole.User
+                    && message.TryGetProperty("__openclaw", out var mediaOwner)
+                    && mediaOwner.ValueKind == JsonValueKind.Object
+                    && mediaOwner.TryGetProperty("media", out var mediaList)
+                    && mediaList.ValueKind == JsonValueKind.Array)
+                {
+                    var pictureSender = OpenClawSender.Classify(
+                        Bool(mediaOwner, "senderIsOwner"),
+                        Str(mediaOwner, "senderName"),
+                        Str(message, "idempotencyKey") ?? Str(mediaOwner, "idempotencyKey"),
+                        "",
+                        // The same provenance the text below is classified with: a
+                        // turn the gateway labels as its own machinery is not a
+                        // person's picture.
+                        Str(
+                            message.TryGetProperty("provenance", out var pictureProvenance)
+                            && pictureProvenance.ValueKind == JsonValueKind.Object
+                                ? pictureProvenance
+                                : default,
+                            "kind"));
+                    var pictureMine = pictureSender.Kind == OpenClawSender.SenderKind.Mine;
+                    var pictureMs = Num(message, "timestamp");
+
+                    foreach (var item in mediaList.EnumerateArray())
+                    {
+                        if (pictureSender.Kind == OpenClawSender.SenderKind.Machine) break;
+                        if (Str(item, "kind") != "image") continue;
+
+                        var pictureUrl = CleanUrl(Str(item, "url"));
+                        if (pictureUrl is null) continue;
+
+                        turns.Add(new HistoryTurn(role, "",
+                            new OpenClawMediaSource(pictureUrl, sessionKey).Route,
+                            Str(item, "fileName") ?? "",
+                            pictureMs <= 0
+                                ? DateTimeOffset.Now
+                                : DateTimeOffset.FromUnixTimeMilliseconds(pictureMs).ToLocalTime(),
+                            null, null, pictureMine, null, ImageSourcePath: null));
                     }
                 }
 

@@ -609,6 +609,57 @@ namespace Orbweaver
         event Action? WaitChanged;
     }
 
+    // One choice in a run-controls picker: the id that is sent and the label that
+    // is shown. They differ in the gateway's own data, so the panel sends one and
+    // displays the other.
+    public sealed record RemoteRunChoice(string Id, string Label);
+
+    // What the run-controls chip and flyout draw, with nothing in it that needs a
+    // gateway to understand.
+    //
+    // ThinkingId is null when nobody chose a level and the model's default applies,
+    // and FastIsSet likewise says whether fast mode was chosen or is the default.
+    // CanResetToDefault is whether a "Default" choice may be offered at all.
+    public sealed record RemoteRunOptions(
+        string ModelId,
+        IReadOnlyList<RemoteRunChoice> Models,
+        string? ThinkingId,
+        string? ThinkingDefaultLabel,
+        IReadOnlyList<RemoteRunChoice> ThinkingChoices,
+        bool Fast,
+        bool FastIsSet,
+        bool Locked,
+        bool CanResetToDefault,
+        string ChipText);
+
+    // A session whose model, thinking level and fast mode a person may change from
+    // the panel (CB-270 Stage 4).
+    //
+    // A property, not a marker interface, because the same class serves
+    // conversations that have these controls and conversations that must not: a
+    // surface chat's model is the channel's configuration, so changing it would
+    // change how the agent answers everyone else in that channel. RunOptions is
+    // null when the picker should not show, which is the IsRoom pattern.
+    //
+    // Each Set returns null on success or the sentence to show. A null argument
+    // means "back to the default", which the gateway accepts as a JSON null on all
+    // three fields (measured).
+    public interface IRemoteChatRunOptions
+    {
+        RemoteRunOptions? RunOptions { get; }
+
+        // Raised on the UI thread when what RunOptions would answer has changed.
+        event Action? RunOptionsChanged;
+
+        Task<string?> SetModelAsync(string? id);
+        Task<string?> SetThinkingAsync(string? id);
+        Task<string?> SetFastModeAsync(bool? on);
+
+        // How long the agent may run for a send, in minutes; null is the gateway's
+        // own default. Held in memory only and never zero.
+        int? TimeoutMinutes { get; set; }
+    }
+
     // A session where a pasted picture can actually go somewhere.
     //
     // Not on IRemoteChatSession itself, for the same reason the three
@@ -622,6 +673,13 @@ namespace Orbweaver
     // cannot open.
     public interface IRemoteChatImages
     {
+        // Whether pictures can be sent right now. The panel asks before it takes a
+        // paste as a picture, so a session that implements this for one kind of
+        // conversation (a native gateway chat) and not another does not turn the
+        // other's pastes into pictures that then fail. Defaults to true, which is
+        // what every implementation before this one meant.
+        bool CanSendImages => true;
+
         // Sends text together with pictures already saved to disk. Called
         // instead of SendAsync exactly when the panel is holding at least
         // one pasted picture; a message with none still goes through
