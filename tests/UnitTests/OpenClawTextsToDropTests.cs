@@ -227,98 +227,42 @@ public class OpenClawTextsToDropTests
             OpenClawHistoryShape.StepsCoveredBy("alpha  beta\ngamma", new[] { "alpha beta", "delta", "gamma" }).ToArray());
         Assert.Empty(OpenClawHistoryShape.StepsCoveredBy("alpha", new[] { "   ", "" }));
         Assert.Empty(OpenClawHistoryShape.StepsCoveredBy("alpha", new string[0]));
+
+        // An occurrence covers one step: the same words twice are covered only if
+        // the rollup says them twice.
+        Assert.Equal(new[] { 0 }, OpenClawHistoryShape.StepsCoveredBy("same and more", new[] { "same", "same" }).ToArray());
+        Assert.Equal(new[] { 0, 1 }, OpenClawHistoryShape.StepsCoveredBy("same same more", new[] { "same", "same" }).ToArray());
     }
 
-    // ---- the page boundary ------------------------------------------------------
+    // ---- the page boundary: what the raw messages say ----------------------------
 
-    private static JsonElement Slice(JsonElement page, int from, int to) =>
-        Json("[" + string.Join(",", page.EnumerateArray().Skip(from).Take(to - from).Select(m => m.GetRawText())) + "]");
-
-    // What a split page ends up dropping, using only the pure functions: the older
-    // page with no cut span, the newer page with its first span cut, and the
-    // boundary resolved over the combined span.
-    private static HashSet<int> SplitDrop(JsonElement page, int split)
-    {
-        var count = page.GetArrayLength();
-        var older = Slice(page, 0, split);
-        var newer = Slice(page, split, count);
-
-        var drop = OpenClawHistoryShape.TextsToDrop(older);
-        foreach (var i in OpenClawHistoryShape.TextsToDrop(newer, startsMidRun: true)) drop.Add(i + split);
-
-        var tail = HistoryShapeTestHelpers.OpenTailSteps(older);
-        var (lead, rollup) = HistoryShapeTestHelpers.HeadSpan(newer);
-
-        if ((tail.Count > 0 || lead.Count > 0) && rollup >= 0)
-        {
-            var items = tail.Select(t => t.Index).Concat(lead.Select(t => t.Index + split)).ToList();
-            var texts = tail.Concat(lead).Select(t => t.Text).ToList();
-            var decision = OpenClawHistoryShape.ResolveSpan(texts, TextOf(newer[rollup]));
-
-            if (decision.DropRollup) drop.Add(rollup + split);
-            else foreach (var j in decision.DropSteps) drop.Add(items[j]);
-        }
-
-        return drop;
-    }
-
-    [Theory]
-    [InlineData("page-channel-disjoint-and-equal-join.json")]
-    [InlineData("page-direct-plus-more.json")]
-    [InlineData("page-main-equal-join-and-plus-more.json")]
-    [InlineData("page-main-plus-more.json")]
-    [InlineData("page-mixed-runtimes-no-rollup.json")]
-    [InlineData("page-synthetic-shapes.json")]
-    [InlineData("page-transcript-runtime-channel.json")]
-    [InlineData("page-transcript-runtime-lone-rollups.json")]
-    public void SplitAtEveryIndexDropsTheSameMessagesAsTheWholePage(string file)
-    {
-        var page = Load(file);
-        var whole = Sorted(OpenClawHistoryShape.TextsToDrop(page));
-        var differing = new List<int>();
-
-        for (var split = 1; split < page.GetArrayLength(); split++)
-            if (!Sorted(SplitDrop(page, split)).SequenceEqual(whole)) differing.Add(split);
-
-        Assert.True(differing.Count == 0, $"{file}: splits differing from the whole page: {string.Join(",", differing)}");
-    }
-
-    // Why the cut span defers (c): an equal join split mid-span. Judged alone, the
-    // newer page would hide its lead step as "contained in the rollup" and the
-    // boundary could never get it back; deferred, the combined span is an equal
-    // join and drops the rollup instead, as the whole page does.
     [Fact]
-    public void ACutFirstSpanDefersItsCoveredStepsToTheBoundary()
+    public void ACutFirstRunStillDropsTheStepsItsKeptRollupContains()
     {
-        var newer = Json("[" + Step("c d") + "," + Rollup("a b\n\nc d") + "]");
+        // The older page is not visible, but the rollup on this page holds the step's
+        // words, so dropping the step needs nothing from it.
+        var newer = Json("[" + Step("c d") + "," + Rollup("a b\n\nc d\n\nmore") + "]");
 
-        Assert.Empty(OpenClawHistoryShape.TextsToDrop(newer, startsMidRun: true));
         Assert.Equal(new[] { 0 }, Sorted(OpenClawHistoryShape.TextsToDrop(newer)));
     }
 
     [Fact]
-    public void ACutFirstSpanStillDropsARollupThatItsOwnStepsCover()
+    public void OpenTailStepsAreTheTextStepsOfAnUnclosedLastRun()
     {
-        var newer = Json("[" + Step("a b") + "," + Rollup("a b") + "]");
-
-        Assert.Equal(new[] { 1 }, Sorted(OpenClawHistoryShape.TextsToDrop(newer, startsMidRun: true)));
+        Assert.Equal(new[] { 1, 3 }, OpenClawHistoryShape.OpenTailSteps(
+            Json("[" + User + "," + Step("a") + "," + ToolStep + "," + Step("b") + "]")).ToArray());
+        Assert.Empty(OpenClawHistoryShape.OpenTailSteps(Json("[" + User + "," + Step("a") + "," + Rollup("a") + "]")));
+        Assert.Empty(OpenClawHistoryShape.OpenTailSteps(Json("[" + Step("a") + "," + User + "]")));
+        Assert.Empty(OpenClawHistoryShape.OpenTailSteps(Json("{}")));
     }
 
     [Fact]
-    public void OnlyTheFirstSpanOfAPageIsCut()
+    public void HeadRollupIndexIsTheFirstRollupWithNoUserMessageBeforeIt()
     {
-        // The second run starts after a user turn, so it is whole and decided in page.
-        var newer = Json("[" + Step("a") + "," + Rollup("a more") + "," + User + "," + Step("b") + "," + Rollup("b more") + "]");
-
-        Assert.Equal(new[] { 3 }, Sorted(OpenClawHistoryShape.TextsToDrop(newer, startsMidRun: true)));
-    }
-
-    [Fact]
-    public void AUserTurnFirstMeansThePageStartsAtTheStartOfARun()
-    {
-        var newer = Json("[" + User + "," + Step("a") + "," + Rollup("a more") + "]");
-
-        Assert.Equal(new[] { 1 }, Sorted(OpenClawHistoryShape.TextsToDrop(newer, startsMidRun: true)));
+        Assert.Equal(3, OpenClawHistoryShape.HeadRollupIndex(Json("[" + Step("a") + "," + ToolStep + "," + Step("b") + "," + Rollup("a b") + "]")));
+        Assert.Equal(-1, OpenClawHistoryShape.HeadRollupIndex(Json("[" + Step("a") + "," + User + "," + Rollup("a") + "]")));
+        Assert.Equal(-1, OpenClawHistoryShape.HeadRollupIndex(Json("[" + Step("a") + "," + Step("b") + "]")));
+        Assert.Equal(-1, OpenClawHistoryShape.HeadRollupIndex(Json("{}")));
     }
 
     [Fact]

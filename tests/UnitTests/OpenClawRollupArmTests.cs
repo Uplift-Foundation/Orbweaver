@@ -110,10 +110,12 @@ public class OpenClawRollupArmTests
     }
 
     // End to end: a picture-naming rollup at the page head, under an older page
-    // ending in the steps whose text it repeats. Its one turn carries the
-    // picture, so it stays, but it loses its caption: the steps already say it.
+    // ending in the step that named the same picture. The rollup is kept whole,
+    // picture and caption. The older step names a picture too, so it keeps its
+    // picture and loses only its caption: the words show once, the pictures are
+    // never lost.
     [Fact]
-    public void ANamedPathRollupAtThePageHeadKeepsItsPictureAndLosesItsCaptionOnScrollBack()
+    public void ANamedPathRollupAtThePageHeadStaysWholeAndTheOlderPictureStepLosesItsCaptionOnScrollBack()
     {
         var newer = JsonDocument.Parse("[" + Rollup(NamedContent) + "]").RootElement;
         var headText = OpenClawSessions.TurnsFromHistory(newer, Key)[0].Text;
@@ -122,13 +124,17 @@ public class OpenClawRollupArmTests
             + Plain("[{\"type\":\"text\",\"text\":" + JsonSerializer.Serialize(headText) + "}]") + "]").RootElement;
 
         var session = new OpenClawChatSession("openclaw:" + Key, Key, "main") { HasMore = false };
-        session.SetHistory(OpenClawSessions.TurnsFromHistory(newer, Key));
+        session.SetHistory(OpenClawSessions.TurnsFromHistory(newer, Key, startsMidRun: true));
         session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, Key));
 
-        // The step's own named-path turn also carries a picture; the rollup's is
-        // the FromRollup one, and it is the one that lost its caption.
-        var picture = Assert.Single(session.History, t => t.FromRollup && t.ImageUrl is not null);
-        Assert.Equal("", picture.Text);
+        Assert.Equal(3, session.History.Count);
+        Assert.Equal("", session.History[1].Text);
+        Assert.NotNull(session.History[1].ImageUrl);
+
+        var picture = session.History[2];
+        Assert.True(picture.FromRollup);
+        Assert.NotNull(picture.ImageUrl);
+        Assert.Contains("here you go", picture.Text);
         Assert.Equal(1, session.History.Count(t => t.Text.Contains("here you go")));
     }
 

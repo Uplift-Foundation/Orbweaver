@@ -145,48 +145,113 @@ public class OpenClawRealPageTests
         Assert.True(Seq(before).SequenceEqual(Seq(withoutToolLines)), $"{file}: non-tool turns changed");
     }
 
-    // ---- a split page reads like the whole ------------------------------
+    // ---- a split page reads like the whole, up to one named case -------------
+
+    private static (ChatRole Role, string Text)[] Shown(IEnumerable<ChatTurn> turns) =>
+        turns.Select(t => (t.Role, t.Text)).ToArray();
+
+    private static string[] AssistantWords(IEnumerable<(ChatRole Role, string Text)> turns) =>
+        turns.Where(t => t.Role == ChatRole.Assistant).SelectMany(t => Tokens(t.Text)).OrderBy(w => w, StringComparer.Ordinal).ToArray();
+
+    private static string[] ToolLines(IEnumerable<(ChatRole Role, string Text)> turns) =>
+        turns.Where(t => t.Role == ChatRole.System && t.Text.StartsWith("· ", StringComparison.Ordinal)).Select(t => t.Text).ToArray();
+
+    private static string[] Users(IEnumerable<(ChatRole Role, string Text)> turns) =>
+        turns.Where(t => t.Role == ChatRole.User).Select(t => t.Text).ToArray();
+
+    // The one case where a split page may differ from the whole: a rollup the whole
+    // page drops because its steps cover it (an exact join), whose run the split
+    // cuts. The page that holds the rollup cannot know the steps on the other page
+    // cover it, so it keeps the rollup and drops the steps there: the same words,
+    // with the narration at the end instead of interleaved. True when the split
+    // falls inside such a run: steps before it, the rollup at or after it.
+    private static bool CutsAnExactJoin(List<JsonElement> all, HashSet<int> wholeDrop, int split)
+    {
+        foreach (var r in wholeDrop.Where(i => OpenClawHistoryShape.IsRollup(all[i])))
+        {
+            var stepBefore = false;
+
+            for (var j = r - 1; j >= 0; j--)
+            {
+                if (Role(all[j]) == "user" || OpenClawHistoryShape.IsRollup(all[j])) break;
+                if (Role(all[j]) == "assistant" && TextOf(all[j]).Trim().Length > 0 && j < split) stepBefore = true;
+            }
+
+            if (stepBefore && split <= r) return true;
+        }
+
+        return false;
+    }
+
+    // Per page: how many splits differ from the whole-page parse, all of them an
+    // exact join cut by the split. Measured and pinned; a change means the rule or
+    // the fixtures moved.
+    private static readonly Dictionary<string, int> ExactJoinSplits = new()
+    {
+        ["page-channel-disjoint-and-equal-join.json"] = 8,
+        ["page-direct-plus-more.json"] = 0,
+        ["page-main-equal-join-and-plus-more.json"] = 15,
+        ["page-main-plus-more.json"] = 0,
+        ["page-mixed-runtimes-no-rollup.json"] = 0,
+        ["page-synthetic-shapes.json"] = 19,
+        ["page-transcript-runtime-channel.json"] = 0,
+        ["page-transcript-runtime-lone-rollups.json"] = 0,
+    };
 
     [Theory]
     [MemberData(nameof(Pages))]
-    public void SplitAtEveryIndexEqualsTheFullPageParse(string file)
+    public void SplitAtEveryIndexLosesNoTextRepeatsNoneAndKeepsToolLinesInOrder(string file)
     {
         var all = Messages(file);
-        var want = Seq(OpenClawSessions.TurnsFromHistory(Load(file), "k"));
-        var differ = new List<int>();
+        var whole = Shown(OpenClawSessions.TurnsFromHistory(Load(file), "k").Select(t =>
+            new ChatTurn { Role = t.Role, Text = t.Text }));
+        var wholeDrop = OpenClawHistoryShape.TextsToDrop(Load(file));
+        var differing = new List<int>();
 
         for (var split = 1; split < all.Count; split++)
         {
             var older = Array(all.Take(split));
             var newer = Array(all.Skip(split));
 
-            // As the panel loads them: the newer page first, cut at its start
-            // because an older one exists; the older page is the conversation's
-            // start.
+            // As the panel loads them: the newer page first, with an older one
+            // possibly before it; the older page is the conversation's start.
             var session = new OpenClawChatSession("openclaw:k", "k", "main");
             session.SetHistory(OpenClawSessions.TurnsFromHistory(newer, "k", startsMidRun: true));
             session.PrependHistory(OpenClawSessions.TurnsFromHistory(older, "k"));
 
-            if (!Seq(session.History.Select(h => new HistoryTurn(h.Role, h.Text, null, "", h.At, null, null))).SequenceEqual(want))
-                differ.Add(split);
+            var got = Shown(session.History);
+
+            // No lost text and no repeated text: the same words, once each.
+            Assert.True(AssistantWords(got).SequenceEqual(AssistantWords(whole)), $"{file} split {split}: assistant words differ");
+            Assert.True(ToolLines(got).SequenceEqual(ToolLines(whole)), $"{file} split {split}: tool lines differ");
+            Assert.True(Users(got).SequenceEqual(Users(whole)), $"{file} split {split}: user turns differ");
+
+            if (!got.SequenceEqual(whole)) differing.Add(split);
         }
 
-        Assert.True(differ.Count == 0, $"{file}: splits differing from the full parse: {string.Join(",", differ)}");
+        // Every difference is an exact join the split cut, and no other split differs.
+        foreach (var split in differing)
+            Assert.True(CutsAnExactJoin(all, wholeDrop, split), $"{file} split {split} differs and is not a cut exact join");
+
+        _out.WriteLine($"{file}: splits cutting an exact join and differing = {differing.Count} at {string.Join(",", differing)}");
+        Assert.Equal(ExactJoinSplits[file], differing.Count);
     }
 
     // ---- what is still repeated -------------------------------------------
 
     // Stage 3 kept a rollup that holds every step plus more, which drew the steps'
     // narration twice: 5 step texts on the seven real pages. Stage 3b drops the
-    // covered steps instead. Measured on the wired parse (not on the rule): for
-    // each kept rollup turn, the shown step turns of its run whose text it contains.
+    // covered steps instead, on the page itself, so a first open (parsed with an
+    // older page possibly before it, as FetchHistoryPageAsync does) shows none.
+    // Measured on the wired parse (not on the rule): for each kept rollup turn, the
+    // shown step turns of its run whose text it contains.
     [Fact]
     public void NoRealPageRepeatsAStepsNarrationInsideAKeptRollupAnyMore()
     {
         foreach (var file in Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "Fixtures", "pages"), "*.json")
                      .Select(Path.GetFileName).Where(f => f != SyntheticPage).OrderBy(f => f, StringComparer.Ordinal))
         {
-            var turns = OpenClawSessions.TurnsFromHistory(Load(file!), "k");
+            var turns = OpenClawSessions.TurnsFromHistory(Load(file!), "k", startsMidRun: true);
             var repeated = 0;
             var steps = new List<string>();
 

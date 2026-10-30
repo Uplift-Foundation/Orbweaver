@@ -7,7 +7,7 @@ using Xunit;
 namespace Orbweaver.Tests;
 
 // CB-270 stage 3b: a scroll-back can land while a run is being drawn, and it now
-// removes rows from the transcript as well as inserting them. The run's end
+// leaves some of the older page's steps out as well as inserting rows. The run's end
 // reconciles against the newest page by references (the page's last row, the
 // run's first row), not by an index recorded earlier, so rows shifting or
 // leaving above it must not change where the reconciliation lands.
@@ -55,47 +55,42 @@ public class OpenClawPrependDuringRunTests : IDisposable
         }
     }
 
-    // The newest page opens cut: a lead step the rollup above the run contains.
-    // While the run streams, the user scrolls back, the seam removes that lead row
-    // and inserts the older page, and then the run ends and reconciles. The
-    // transcript must be the older page, the page's rows and the run's history,
-    // each once.
+    // The newest page opens cut: its head rollup holds a step that sits on an older
+    // page (the page already dropped the lead step it contains). While the run
+    // streams, the user scrolls back, the older page's covered trailing step is left
+    // out of what is inserted, and then the run ends and reconciles. The transcript
+    // must be the older page, the head rollup, and the run's history, each once.
     [Fact]
-    public void AScrollBackThatRemovesARowDuringARunStillLetsTheRunReconcile()
+    public void AScrollBackThatFiltersAnOlderStepDuringARunStillLetsTheRunReconcile()
     {
         OpenClawSessions.SetGatewayForTests(null);
         var key = $"agent:main:dashboard:{Guid.NewGuid()}";
         var session = new OpenClawChatSession("openclaw:" + key, key, "main");
         var (step1, step3) = Steps();
 
-        // The newest page as the panel opened it: a cut first run ("pre2" is a lead
-        // step; the rollup holds pre1, pre2 and more) and the user turn the run answers.
         session.SetHistory(new List<HistoryTurn>
         {
-            T(ChatRole.Assistant, "pre2"),
-            T(ChatRole.Assistant, "pre1\n\npre2\n\nmore", fromRollup: true),
+            new(ChatRole.Assistant, "pre1\n\npre2\n\nmore", null, "", DateTime.UtcNow, null, null, FromRollup: true, SeamRollup: true),
             T(ChatRole.User, "go")
         });
-
-        var removed = new List<(int From, int Count)>();
-        session.TurnsRemoved += (f, c) => removed.Add((f, c));
 
         var events = Run();
         Feed(session, events.Take(14));
 
-        // Mid-run: scroll back.
-        session.PrependHistory(new List<HistoryTurn> { T(ChatRole.User, "q"), T(ChatRole.Assistant, "pre1") });
+        // Mid-run: scroll back to an older page ending in the run's first step.
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            T(ChatRole.User, "q"),
+            new(ChatRole.Assistant, "pre1", null, "", DateTime.UtcNow, null, null, OpenTail: true)
+        });
 
-        Assert.Equal(new[] { (0, 1) }, removed.ToArray());
         Assert.Equal(new[] { "q", "pre1\n\npre2\n\nmore" }, session.History.Take(2).Select(t => t.Text).ToArray());
 
         Feed(session, events.Skip(14));
 
-        // The newest page now holds the whole run.
         session.ApplyFetchedTail(new List<HistoryTurn>
         {
-            T(ChatRole.Assistant, "pre2"),
-            T(ChatRole.Assistant, "pre1\n\npre2\n\nmore", fromRollup: true),
+            new(ChatRole.Assistant, "pre1\n\npre2\n\nmore", null, "", DateTime.UtcNow, null, null, FromRollup: true),
             T(ChatRole.User, "go"),
             T(ChatRole.Assistant, step1),
             T(ChatRole.System, ToolLine()),

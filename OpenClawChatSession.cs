@@ -130,7 +130,17 @@ namespace Orbweaver
         // can tell, when an older page ends in the steps of the run whose
         // rollup is the head of the transcript, that the rollup is the double
         // and must go (see PrependHistory).
-        bool FromRollup = false);
+        bool FromRollup = false,
+
+        // CB-270 stage 3b, both set by TurnsFromHistory from the page's raw
+        // messages (a user message that renders to no turn is still a boundary
+        // there, which the turns alone would lose). OpenTail: a text step of the
+        // page's trailing run, with no rollup or user message after it, so the run
+        // an older page ends in. SeamRollup: the kept text of the first rollup with
+        // no user message before it, on a page an older one may precede; the rollup
+        // that closes that run. The page boundary compares exactly these two.
+        bool OpenTail = false,
+        bool SeamRollup = false);
 
     // See HistoryTurn.Arm. Internal and small on purpose: this exists only to
     // let the post-parse dedup pass in OpenClawSessions tell an inline image
@@ -639,6 +649,10 @@ namespace Orbweaver
         // after it was added later, a message typed after the page landed among
         // it, and none of it can be the user turn a run began after.
         private ChatTurn? _pageLast;
+
+        // CB-270 stage 3b: the transcript's head rollup that closes a run whose
+        // earlier steps may be on an older page (see PrependHistory), or null.
+        private ChatTurn? _seamRollup;
 
         private void RunSeen()
         {
@@ -1449,189 +1463,105 @@ namespace Orbweaver
         // position back afterwards — content appearing above where you are
         // reading would otherwise throw you down the page.
         //
-        // CB-270 stage 3b: a run's steps and its rollup can sit on two pages. Each
-        // page decided what it could alone, and a page whose first run is cut
-        // deferred the choice of which steps a kept rollup repeats (TextsToDrop,
-        // startsMidRun), so this is where it is made, over the combined span: the
-        // older page's trailing steps plus this transcript's lead steps, against
-        // the transcript's first rollup. The rule is OpenClawHistoryShape's
-        // ResolveSpan, the same one a whole page uses, so a split page reads as
-        // the whole one does: a covered rollup is dropped, otherwise the steps it
-        // contains are, on either side of the seam.
+        // CB-270 stage 3b: a run's steps and its rollup can sit on two chat.history
+        // pages. Each page drops, on its own, the steps a kept rollup on it
+        // contains (TextsToDrop). The one thing a page cannot do is drop the steps
+        // of *this* rollup that sit on an older page, so that is done here, when the
+        // older page arrives: its trailing-run steps (OpenTail) that the
+        // transcript's head rollup (SeamRollup) contains are left out of the turns
+        // before they become rows, or keep their picture and lose their caption.
         //
-        // Rows already on screen are removed highest first, one TurnsRemoved per
-        // contiguous run, before the older turns are inserted, so the indices are
-        // the transcript's as it stood and the panel mirrors them as it already
-        // does. A turn that also carries a picture or attachment is never
-        // removed: it keeps its row and loses only its caption, in place. The
-        // older page's covered steps are filtered out of the turns before they
-        // become rows, so nothing there moves. HistoryPrepended still reports the
-        // rows inserted.
+        // Both sets come from the pages' raw messages, never from scanning turns,
+        // because a user message can render to no turn and a boundary read off turns
+        // would run past it into a different run. Nothing already on screen is
+        // removed: where the whole run is an exact join across the seam, the page's
+        // outcome stands (rollup kept, steps dropped) and the words are those of the
+        // whole-page parse. HistoryPrepended reports the rows inserted.
         public void PrependHistory(IReadOnlyList<HistoryTurn> turns)
         {
             if (turns.Count == 0) return;
 
-            turns = ResolveSplitSpan(turns);
+            turns = FilterOlderTailSteps(turns);
 
-            var older = turns.Select(t => new ChatTurn
+            var older = new List<ChatTurn>(turns.Count);
+            ChatTurn? seam = null;
+
+            foreach (var t in turns)
             {
-                Role = t.Role,
-                Text = t.Text,
+                var turn = new ChatTurn
+                {
+                    Role = t.Role,
+                    Text = t.Text,
 
-                // Copied alongside ImageUrl, never instead of it: the url is
-                // what gets fetched, this is the file it names, and a turn
-                // that kept one without the other could no longer say why a
-                // picture did not load (CB-109).
-                ImageSourcePath = t.ImageSourcePath,
-                Attachment = t.Attachment,
+                    // Copied alongside ImageUrl, never instead of it: the url is
+                    // what gets fetched, this is the file it names, and a turn
+                    // that kept one without the other could no longer say why a
+                    // picture did not load (CB-109).
+                    ImageSourcePath = t.ImageSourcePath,
+                    Attachment = t.Attachment,
 
-                // CB-116: carried the same way — the tier TurnsFromHistory
-                // already worked out for this turn, not re-guessed here from
-                // its text. See ChatTurn.Confidence's own header.
-                Confidence = t.Confidence,
-                ImageUrl = t.ImageUrl,
-                ImageBytes = t.ImageBytes,
-                ImageAlt = t.ImageAlt,
-                At = t.At,
-                Speaker = t.Speaker,
-                SpeakerColor = t.SpeakerColor,
-                Mine = t.Mine,
-                IsError = t.IsError,
-                FromRollup = t.FromRollup,
-                IsComplete = true
-            }).ToList();
+                    // CB-116: carried the same way — the tier TurnsFromHistory
+                    // already worked out for this turn, not re-guessed here from
+                    // its text. See ChatTurn.Confidence's own header.
+                    Confidence = t.Confidence,
+                    ImageUrl = t.ImageUrl,
+                    ImageBytes = t.ImageBytes,
+                    ImageAlt = t.ImageAlt,
+                    At = t.At,
+                    Speaker = t.Speaker,
+                    SpeakerColor = t.SpeakerColor,
+                    Mine = t.Mine,
+                    IsError = t.IsError,
+                    FromRollup = t.FromRollup,
+                    IsComplete = true
+                };
+
+                older.Add(turn);
+                if (t.SeamRollup) seam = turn;
+            }
 
             _history.InsertRange(0, older);
 
-            if (older.Count > 0) HistoryPrepended?.Invoke(older.Count);
+            // The older page is now the head. Its own cut first run, if it has one,
+            // is the next seam; otherwise there is none.
+            _seamRollup = seam;
+
+            HistoryPrepended?.Invoke(older.Count);
         }
 
-        // Judges the combined span at the seam and applies it: removes or blanks
-        // rows of this transcript, and returns the older turns to prepend with
-        // the covered trailing steps taken out (or their captions blanked).
-        private IReadOnlyList<HistoryTurn> ResolveSplitSpan(IReadOnlyList<HistoryTurn> older)
+        // The older page's trailing-run steps the transcript's head rollup contains
+        // are taken out; one that carries a picture or attachment keeps it, with an
+        // empty caption.
+        private IReadOnlyList<HistoryTurn> FilterOlderTailSteps(IReadOnlyList<HistoryTurn> older)
         {
-            // The transcript's head span: assistant text turns before its first
-            // rollup, with no user turn first. A caption-less picture turn of the
-            // rollup is passed over; the text turn is the rollup.
-            var lead = new List<int>();
-            var rollup = -1;
+            var head = _seamRollup;
+            if (head is null || !_history.Contains(head)) return older;
 
-            for (var k = 0; k < _history.Count; k++)
-            {
-                var t = _history[k];
-                if (t.Role == ChatRole.User) break;
-
-                if (t.FromRollup)
-                {
-                    if (string.IsNullOrWhiteSpace(t.Text)) continue;
-
-                    rollup = k;
-                    break;
-                }
-
-                if (t.Role == ChatRole.Assistant && !string.IsNullOrWhiteSpace(t.Text))
-                    lead.Add(k);
-            }
-
-            if (rollup < 0) return older;
-
-            // The older page's trailing steps: back from its end to a user turn or
-            // a rollup, text turns only (tool lines are System).
             var tail = new List<int>();
-            for (var i = older.Count - 1; i >= 0; i--)
+            for (var i = 0; i < older.Count; i++)
             {
-                var t = older[i];
-                if (t.Role == ChatRole.User || t.FromRollup) break;
-                if (t.Role == ChatRole.Assistant && !string.IsNullOrWhiteSpace(t.Text)) tail.Insert(0, i);
+                if (older[i].OpenTail) tail.Add(i);
             }
 
-            var texts = tail.Select(i => older[i].Text).Concat(lead.Select(k => _history[k].Text)).ToList();
-            if (texts.Count == 0) return older;
-
-            var decision = OpenClawHistoryShape.ResolveSpan(texts, _history[rollup].Text);
-            if (!decision.DropRollup && decision.DropSteps.Count == 0) return older;
-
-            // The page's last row is held by reference (ReconcileRun anchors on
-            // it); if it is removed it is replaced by the nearest row before it.
-            var pageLastAt = _pageLast is null ? -1 : _history.IndexOf(_pageLast);
-            var removals = new SortedSet<int>();
-
-            void Drop(int at)
-            {
-                if (IsPureText(_history[at]))
-                {
-                    removals.Add(at);
-                }
-                else
-                {
-                    _history[at].Text = "";
-                    TurnUpdated?.Invoke(_history[at]);
-                }
-            }
+            var covered = OpenClawHistoryShape.StepsCoveredBy(head.Text, tail.Select(i => older[i].Text).ToList());
+            if (covered.Count == 0) return older;
 
             var filtered = older.ToList();
             var gone = new HashSet<int>();
 
-            if (decision.DropRollup)
+            foreach (var j in covered)
             {
-                Drop(rollup);
-            }
-            else
-            {
-                foreach (var j in decision.DropSteps)
-                {
-                    if (j < tail.Count)
-                    {
-                        // An older step is not a row yet: a pure text one is left
-                        // out, one that carries a picture keeps it and loses its
-                        // caption.
-                        var at = tail[j];
-                        var step = older[at];
+                var at = tail[j];
+                var step = older[at];
 
-                        if (step.ImageUrl is null && step.ImageBytes is null && step.Attachment is null)
-                            gone.Add(at);
-                        else
-                            filtered[at] = step with { Text = "" };
-                    }
-                    else
-                    {
-                        Drop(lead[j - tail.Count]);
-                    }
-                }
-
-                filtered = filtered.Where((_, i) => !gone.Contains(i)).ToList();
+                if (step.ImageUrl is null && step.ImageBytes is null && step.Attachment is null)
+                    gone.Add(at);
+                else
+                    filtered[at] = step with { Text = "" };
             }
 
-            // Highest first, one event per contiguous run.
-            var ordered = removals.Reverse().ToList();
-            var n = 0;
-            while (n < ordered.Count)
-            {
-                var top = ordered[n];
-                var run = 1;
-                while (n + run < ordered.Count && ordered[n + run] == top - run) run++;
-
-                var from = top - run + 1;
-                _history.RemoveRange(from, run);
-                TurnsRemoved?.Invoke(from, run);
-                n += run;
-            }
-
-            if (pageLastAt >= 0 && removals.Contains(pageLastAt))
-            {
-                var before = pageLastAt - removals.Count(r => r < pageLastAt) - 1;
-                _pageLast = before >= 0 ? _history[before] : null;
-            }
-
-            return filtered;
+            return filtered.Where((_, i) => !gone.Contains(i)).ToList();
         }
-
-        private static bool IsPureText(ChatTurn t) =>
-            !string.IsNullOrWhiteSpace(t.Text)
-            && string.IsNullOrWhiteSpace(t.ImageUrl)
-            && t.ImageBytes is null
-            && t.Attachment is null;
 
         public event Action<int>? HistoryPrepended;
 
@@ -1654,6 +1584,8 @@ namespace Orbweaver
             // the run's end appends what the page did not hold.
             _closed = _runText;
             HasMore = true;
+
+            _seamRollup = null;
 
             foreach (var turn in turns)
             {
@@ -1678,6 +1610,13 @@ namespace Orbweaver
                     FromRollup = turn.FromRollup,
                     IsComplete = true
                 });
+            }
+
+            // The page's own seam rollup, if it has one (a page an older one may
+            // precede, whose first run ends in a kept rollup).
+            for (var i = 0; i < turns.Count; i++)
+            {
+                if (turns[i].SeamRollup) _seamRollup = _history[i];
             }
 
             _pageLast = _history[^1];

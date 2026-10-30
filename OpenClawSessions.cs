@@ -2529,10 +2529,11 @@ namespace Orbweaver
         // so a fixture or a caller with genuinely no session gets exactly the
         // routes this built before.
         //
-        // startsMidRun (CB-270): an older page exists, so this page's first run
-        // may be missing steps that sit on it. The decision about which of that
-        // run's steps a rollup repeats is then left to the page boundary
-        // (PrependHistory), which sees both halves. See TextsToDrop.
+        // startsMidRun (CB-270): an older page may precede this one, so the turns of
+        // the first rollup with no user message before it are marked SeamRollup,
+        // for the page boundary (PrependHistory) to compare against the older
+        // page's trailing steps. The turns of the page's trailing run, with no
+        // rollup or user message after them, are always marked OpenTail.
         internal static List<HistoryTurn> TurnsFromHistory(
             JsonElement messages, string? sessionKey, OwnerIndex? owners = null, bool startsMidRun = false)
         {
@@ -2574,7 +2575,7 @@ namespace Orbweaver
             // the rule is positional: a rollup its steps cover is dropped, and a
             // rollup that holds more is kept and the steps it contains are
             // dropped instead — see OpenClawHistoryShape.TextsToDrop.
-            var drop = OpenClawHistoryShape.TextsToDrop(messages, startsMidRun);
+            var drop = OpenClawHistoryShape.TextsToDrop(messages);
             var messageIndex = -1;
 
             // CB-270: the turns a rollup message produced, whichever arm built
@@ -2592,10 +2593,15 @@ namespace Orbweaver
                 rollupFrom = -1;
             }
 
+            // Where each message's turns start, for marking the page boundary's
+            // turns below (a message can produce none, one, or several).
+            var turnStarts = new List<int>();
+
             foreach (var message in messages.EnumerateArray())
             {
                 MarkRollupTurns();
                 messageIndex++;
+                turnStarts.Add(turns.Count);
 
                 // A dropped message (a covered rollup, or a step a kept rollup
                 // contains) loses its *text* turn only. Its words are shown by
@@ -3099,6 +3105,29 @@ namespace Orbweaver
             }
 
             MarkRollupTurns();
+            turnStarts.Add(turns.Count);
+
+            // CB-270: the page boundary compares the steps of the page's trailing
+            // run (OpenTail) with the rollup that closes the head run (SeamRollup).
+            // Both are found from the raw messages, where a user message is a
+            // boundary even when it renders to no turn, and marked on the turns
+            // those messages produced: the text ones only, since a picture turn
+            // has nothing to compare. The flags are values on the turns, so the
+            // removals below do not disturb them.
+            void MarkText(int message, bool seam)
+            {
+                for (var i = turnStarts[message]; i < turnStarts[message + 1]; i++)
+                {
+                    if (turns[i].Role != ChatRole.Assistant || string.IsNullOrWhiteSpace(turns[i].Text)) continue;
+
+                    turns[i] = seam ? turns[i] with { SeamRollup = true } : turns[i] with { OpenTail = true };
+                }
+            }
+
+            foreach (var i in OpenClawHistoryShape.OpenTailSteps(messages)) MarkText(i, seam: false);
+
+            var head = startsMidRun ? OpenClawHistoryShape.HeadRollupIndex(messages) : -1;
+            if (head >= 0) MarkText(head, seam: true);
 
             // One delivery, two arms, one bubble — CB-98's cross-arm case,
             // which turned out to be live rather than latent.
