@@ -58,6 +58,12 @@ namespace Orbweaver
         // can say how much it did not show.
         int CommandLength = 0)
     {
+        // Nothing readable to decide on: the gateway sent no command text, or only
+        // blanks, and the record is not the unsafe kind (which has its own refusal).
+        // Such a request can only be denied here, because a person must never be
+        // offered Allow on something they cannot read.
+        internal bool NoCommandToShow => !Unsafe && string.IsNullOrWhiteSpace(Command);
+
         // A record compares by value, and the decision list has to as well: the same
         // approval read from a list row and from an event is one record.
         public bool Equals(OpenClawApproval? other) =>
@@ -322,9 +328,10 @@ namespace Orbweaver
             DateTimeOffset? created, DateTimeOffset? expires, DateTimeOffset now)
         {
             // \r\n is one line break; a lone \r is a control character and stays one.
-            var command = (string.IsNullOrWhiteSpace(commandText)
-                ? "(the gateway did not say what this runs)"
-                : commandText!.Trim()).Replace("\r\n", "\n", StringComparison.Ordinal);
+            // A blank command stays blank: no placeholder sentence stands in for it, which
+            // read as a command and went with an Allow button (NoCommandToShow).
+            var command = (string.IsNullOrWhiteSpace(commandText) ? "" : commandText!.Trim())
+                .Replace("\r\n", "\n", StringComparison.Ordinal);
 
             var length = command.Length;
             var unsafeText = !IsDisplaySafe(command, multiLine: true)

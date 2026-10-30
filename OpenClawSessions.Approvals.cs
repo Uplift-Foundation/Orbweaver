@@ -574,7 +574,7 @@ namespace Orbweaver
             if (!approval.Allows(decision))
                 return Fail("the gateway doesn't allow that answer for this request");
 
-            if ((approval.Unsafe || approval.CommandTruncated) && decision != OpenClawApprovals.Deny)
+            if ((approval.Unsafe || approval.CommandTruncated || approval.NoCommandToShow) && decision != OpenClawApprovals.Deny)
                 return Fail("this request can only be denied here");
 
             if (gateway is null) return Fail("not connected to the gateway");

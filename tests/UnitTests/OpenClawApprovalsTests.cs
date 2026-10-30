@@ -360,9 +360,10 @@ public class OpenClawApprovalsTests
     {
         var json = "{\"id\":\"a1\",\"request\":{" + field + ",\"sessionKey\":\"" + Key + "\"}}";
 
-        Assert.Equal(
-            "(the gateway did not say what this runs)",
-            OpenClawApprovals.ParseRecord(Json(json), "exec", Now)!.Command);
+        var approval = OpenClawApprovals.ParseRecord(Json(json), "exec", Now)!;
+
+        Assert.Equal("", approval.Command);
+        Assert.True(approval.NoCommandToShow);
     }
 
     // --- events, kinds and methods ---
