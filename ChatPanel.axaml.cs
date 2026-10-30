@@ -3103,6 +3103,10 @@ namespace Orbweaver
         private DateTime _promptShownAt;
         private bool _promptArmed;
         private Control? _pressedPromptOption;
+        // What the bar was asking when the press landed: a release answers only the
+        // question that was on the bar when the press began, however the controls
+        // are rebuilt in between (the same id can come back with another command).
+        private string? _pressedPromptSignature;
 
         private void ApplyPrompt()
         {
@@ -3154,6 +3158,7 @@ namespace Orbweaver
                 // that itself came after the arming window is remembered, so one
                 // that began inside it and is held past it answers nothing.
                 _pressedPromptOption = PromptClock() - _promptShownAt < PromptArmDelay ? null : sender as Control;
+                _pressedPromptSignature = _promptSignature;
                 return;
             }
 
@@ -3169,7 +3174,11 @@ namespace Orbweaver
             var pressed = _pressedPromptOption;
             _pressedPromptOption = null;
 
+            var pressedSignature = _pressedPromptSignature;
+            _pressedPromptSignature = null;
+
             if (sender is not Control option || !ReferenceEquals(pressed, option)) return;
+            if (pressedSignature is null || pressedSignature != _promptSignature) return;
 
             // Released over the same option, not merely delivered to it by capture.
             var at = e.GetPosition(option);

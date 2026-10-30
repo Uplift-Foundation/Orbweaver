@@ -203,4 +203,62 @@ public class ChatPanelApprovalAdversarialTests : IDisposable
             Assert.Equal(0, Resolves(socket));
         }
     }
+
+    // The lead's attack: the SAME id, different content, while a press is held. Resolve + re-request lets a
+    // hostile gateway swap the command under one id, so the id-bound click cannot tell them apart.
+    private async Task<(bool reused, int frames, string title)> SwapUnderHeldPress(bool resolveInBetweenFlush)
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var (panel, _) = Open();
+            Request("a1", "echo harmless"); Flush(); _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+            var oldAllow = Option(panel, 1);
+            Press(panel, oldAllow);                                        // armed press on the harmless command, then held
+            OpenClawSessions.OnEvent("exec.approval.resolved", Json("{\"id\":\"a1\",\"decision\":\"deny\"}"), DateTime.UtcNow);
+            if (resolveInBetweenFlush) Flush();                            // the UI sees the empty gap
+            Request("a1", "echo DANGEROUS"); Flush();                      // same id, another command on the bar
+            _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+            var newAllow = Option(panel, 1);
+            var reused = ReferenceEquals(oldAllow, newAllow);
+            Release(panel, newAllow);                                      // the release lands on whatever is under the pointer now
+            await Settle();
+            return (reused, Resolves(socket), panel.FindControl<TextBlock>("PromptTitle")!.Text ?? "");
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task SameIdSwapNoGapSeenByTheUi()
+    {
+        var r = await SwapUnderHeldPress(false);
+        Assert.True(r.frames == 0 && !r.reused, $"SAME-ID-SWAP (UI never sees an empty bar): controlsReused={r.reused}; resolve frames={r.frames}; title now: {r.title}");
+    }
+
+    [AvaloniaFact]
+    public async Task SameIdSwapWithTheEmptyGapSeenByTheUi()
+    {
+        var r = await SwapUnderHeldPress(true);
+        Assert.True(r.frames == 0 && !r.reused, $"SAME-ID-SWAP (UI sees the empty gap): controlsReused={r.reused}; resolve frames={r.frames}; title now: {r.title}");
+    }
+
+    // Pins the clearing of the remembered press on a changed request by itself: release on the OLD control,
+    // the one path where the same-control comparison cannot help, so only the clear stands in the way.
+    [AvaloniaFact]
+    public async Task ReleaseOnTheOldControlAfterTheRequestChanged()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var (panel, _) = Open();
+            Request("a1", "echo harmless"); Flush(); _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+            var oldAllow = Option(panel, 1);
+            Press(panel, oldAllow);
+            OpenClawSessions.OnEvent("exec.approval.resolved", Json("{\"id\":\"a1\",\"decision\":\"deny\"}"), DateTime.UtcNow);
+            Request("a1", "echo DANGEROUS"); Flush();
+            _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+            Release(panel, oldAllow);
+            await Settle();
+            Assert.True(Resolves(socket) == 0, $"RELEASE-ON-OLD-CONTROL: resolve frames={Resolves(socket)}; title now: {panel.FindControl<TextBlock>("PromptTitle")!.Text}");
+        }
+    }
 }
