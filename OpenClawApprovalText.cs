@@ -32,6 +32,10 @@ namespace Orbweaver
         internal const string TooLongToAllow =
             "This command is too long to read here, so it can only be denied here; answer it on the gateway.";
 
+        internal const string ElsewhereLabel = "How to answer on the gateway";
+
+        internal const string RequestChanged = "That request changed before you clicked; look again";
+
         internal const string UnsafeRequest =
             "A request couldn't be shown safely; answer it on the gateway";
 
@@ -69,7 +73,7 @@ namespace Orbweaver
             {
                 return new ChatPrompt(
                     UnsafeRequest + "\nRequest id: " + QuoteId(approvalId),
-                    Options(approvalId, denyOnly: true), ArmedActivation: true);
+                    Options(approvalId, denyOnly: true), ArmedActivation: true, ElsewhereLabel: ElsewhereLabel);
             }
 
             var who = Cap(agent, MaxName);
@@ -89,7 +93,7 @@ namespace Orbweaver
 
             if (tooLong) title += "\n" + TooLongToAllow;
 
-            return new ChatPrompt(title, Options(approvalId, denyOnly: tooLong), ArmedActivation: true);
+            return new ChatPrompt(title, Options(approvalId, denyOnly: tooLong), ArmedActivation: true, ElsewhereLabel: ElsewhereLabel);
         }
 
         // What our own answer reads as once the gateway has applied it.

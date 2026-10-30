@@ -234,6 +234,14 @@ namespace Orbweaver
             chat.HistoryReplaced += ScheduleRebuild;
             chat.HistoryPrepended += OnMemberPrepended;
             chat.TurnsRemoved += OnMemberRemoved;
+
+            // CB-270 Stage 6: an approval belongs to one member's session and is
+            // answered in that member's own panel, but the room is not silent about
+            // it. Said once per request, from the same record.
+            Action announce = () => AnnounceApprovals(chat);
+            _approvalHandlers[chat] = announce;
+            chat.ApprovalsChanged += announce;
+            announce();
         }
 
         private void Unsubscribe(OpenClawChatSession chat)
@@ -243,6 +251,22 @@ namespace Orbweaver
             chat.HistoryReplaced -= ScheduleRebuild;
             chat.HistoryPrepended -= OnMemberPrepended;
             chat.TurnsRemoved -= OnMemberRemoved;
+
+            if (_approvalHandlers.Remove(chat, out var announce)) chat.ApprovalsChanged -= announce;
+        }
+
+        private readonly Dictionary<OpenClawChatSession, Action> _approvalHandlers = new();
+        private readonly HashSet<string> _announcedApprovals = new(StringComparer.Ordinal);
+
+        // One System line per pending request, naming who is waiting.
+        private void AnnounceApprovals(OpenClawChatSession chat)
+        {
+            var agent = _members.FirstOrDefault(m => ReferenceEquals(m.Chat, chat))?.Agent ?? chat.DisplayName;
+
+            foreach (var approval in OpenClawSessions.PendingFor(chat.GatewayKey))
+            {
+                if (_announcedApprovals.Add(approval.Id)) Note(OpenClawApprovalText.RoomLine(agent));
+            }
         }
 
         private void OnMemberChanged(ChatTurn _) => ScheduleRebuild();

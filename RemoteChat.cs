@@ -711,8 +711,14 @@ namespace Orbweaver
     // given by accident: its options ignore presses for a moment after the prompt
     // first shows or changes, and activate on release over the same option. False
     // for a permission bar read off a terminal, which answers on a press.
+    //
+    // ElsewhereLabel replaces the "Answer in the terminal" link's words for a
+    // prompt that has no terminal to go to, and a prompt that sets it keeps the
+    // panel open when that link is used, since the answer to "where else" is a note
+    // in the transcript and not another window.
     public sealed record ChatPrompt(
-        string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false);
+        string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false,
+        string? ElsewhereLabel = null);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can

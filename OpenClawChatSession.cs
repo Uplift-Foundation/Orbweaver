@@ -180,7 +180,7 @@ namespace Orbweaver
     // A send is routed by OpenClawSendPolicy: a conversation on a chat surface
     // is delivered back to that surface with the typed message mirrored into
     // it, and a native session, which has no surface, is answered in place.
-    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages
+    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages, IRemoteChatPrompts
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -256,6 +256,9 @@ namespace Orbweaver
         // which the room fans PanelOpened out to, each hold their own.
         internal void PanelOpened()
         {
+            // What ended while no panel was watching is written up on opening.
+            RefreshApprovals();
+
             if (_panels++ == 0) OpenClawSessions.MessagesWanted(this, true);
         }
 
@@ -1406,7 +1409,145 @@ namespace Orbweaver
         // lines about approvals it did not answer itself.
         internal event Action? ApprovalsChanged;
 
-        internal void OnApprovalsChanged() => ApprovalsChanged?.Invoke();
+        internal void OnApprovalsChanged()
+        {
+            RefreshApprovals();
+            ApprovalsChanged?.Invoke();
+        }
+
+        // --- approvals (CB-270 Stage 6) ----------------------------------------
+        //
+        // The oldest unexpired pending approval for this conversation is the
+        // prompt, read from OpenClawSessions every time it is asked, so a panel
+        // that opens after the request arrived shows it too. The rest queue behind
+        // it. The two answers are the client's, fixed, and every option is bound
+        // to the approval it was drawn for.
+
+        public event Action? PromptChanged;
+
+        // Ids with an answer in flight from this panel: hidden from the bar at the
+        // click so a second click has nothing to land on, and restored if the answer
+        // failed and the request is still pending.
+        private readonly HashSet<string> _answering = new(StringComparer.Ordinal);
+
+        private string? _shownPromptKey;
+
+        private OpenClawApproval? CurrentApproval() =>
+            OpenClawSessions.PendingFor(GatewayKey).FirstOrDefault(a => !_answering.Contains(a.Id));
+
+        private ChatPrompt PromptFor(OpenClawApproval approval) =>
+            OpenClawApprovalText.Prompt(
+                approval.Id, DisplayName, approval.Command, approval.Cwd, approval.Host,
+                commandTruncated: approval.CommandTruncated);
+
+        // Remembers what it handed out, so PromptChanged is raised only when the bar
+        // would differ from what the panel last drew.
+        public ChatPrompt? Prompt
+        {
+            get
+            {
+                var approval = CurrentApproval();
+                var prompt = approval is null ? null : PromptFor(approval);
+                _shownPromptKey = approval is null ? null : approval.Id + "|" + prompt!.Title;
+                return prompt;
+            }
+        }
+
+        // Writes up what ended without this panel answering it, once each, and
+        // redraws the bar if what it shows changed.
+        private void RefreshApprovals()
+        {
+            foreach (var ended in OpenClawSessions.TakeEnded(GatewayKey)) Note(EndedLine(ended));
+
+            var key = CurrentApproval() is { } approval ? approval.Id + "|" + PromptFor(approval).Title : null;
+            if (key == _shownPromptKey) return;
+
+            _shownPromptKey = key;
+            PromptChanged?.Invoke();
+        }
+
+        private static string EndedLine(OpenClawApprovalEnded ended) => ended.Cause switch
+        {
+            "expired" => OpenClawApprovalText.Ended(null, "timeout"),
+            "gone" => OpenClawApprovalText.Ended(null, null),
+            _ => OpenClawApprovalText.Ended(
+                ended.Decision switch
+                {
+                    OpenClawApprovals.Deny => "denied",
+                    OpenClawApprovals.AllowOnce or "allow-always" => "allowed",
+                    _ => null
+                },
+                ended.Reason)
+        };
+
+        // The one handler an answer comes through, reached only from a click on a
+        // button the person can see. Sends nothing unless the option is one this
+        // conversation's current prompt offered for the approval it shows now.
+        public async Task AnswerAsync(ChatPromptOption option)
+        {
+            if (!OrbweaverSettings.OpenClawApproveEnabled)
+            {
+                Note(OpenClawApprovalText.ApprovingOff);
+                return;
+            }
+
+            // A second click on a request already being answered has nothing to say.
+            if (option.ApprovalId is { } already && _answering.Contains(already)) return;
+
+            var approval = CurrentApproval();
+
+            // The queue moved between drawing the option and the click: the option
+            // is for a request that is no longer the one on the bar. Answering the
+            // new one with the old click would put "Allow once" on a command the
+            // person never saw.
+            if (approval is null || option.ApprovalId != approval.Id)
+            {
+                Note(OpenClawApprovalText.RequestChanged);
+                RefreshApprovals();
+                return;
+            }
+
+            // Only an option the prompt offers for this request: never a key the
+            // payload names, never allow-once on a request that can only be denied.
+            if (!PromptFor(approval).Options.Any(o => o.Key == option.Key && o.ApprovalId == option.ApprovalId))
+            {
+                return;
+            }
+
+            // Marked the moment the click lands: a second click has nothing to land on.
+            _answering.Add(approval.Id);
+            RefreshApprovals();
+
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(this, approval, option.Key);
+
+            switch (outcome.Result)
+            {
+                case OpenClawApprovalResult.Answered:
+                    Note(OpenClawApprovalText.Answered(option.Key));
+                    break;
+                case OpenClawApprovalResult.DecidedElsewhere:
+                    Note(OpenClawApprovalText.AlreadyDecided(outcome.Status));
+                    break;
+                case OpenClawApprovalResult.NoLongerPending:
+                    Note(OpenClawApprovalText.NoLongerPending);
+                    break;
+                case OpenClawApprovalResult.Failed:
+                    Note(OpenClawApprovalText.CouldntAnswer(outcome.Detail ?? ""));
+                    break;
+                    // Duplicate: already being answered, so nothing more to say.
+            }
+
+            // Back on the bar if it did not land and is still pending.
+            _answering.Remove(approval.Id);
+            RefreshApprovals();
+        }
+
+        // There is no terminal to focus: say how to answer it on the gateway, with
+        // the id as data.
+        public void AnswerElsewhere()
+        {
+            if (CurrentApproval() is { } approval) Note(OpenClawApprovalText.Elsewhere(approval.Id));
+        }
 
         // Null unless every one of these holds, so the panel hides the picker
         // rather than showing one that would be refused:

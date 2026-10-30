@@ -3125,6 +3125,7 @@ namespace Orbweaver
             _promptArmed = prompt.ArmedActivation;
 
             PromptTitle.Text = prompt.Title;
+            PromptElsewhere.Text = prompt.ElsewhereLabel ?? "Answer in the terminal";
 
             // No options means the screen couldn't be read. The box still
             // appears — something is waiting and the transcript won't say so —
@@ -3183,7 +3184,14 @@ namespace Orbweaver
 
             if (_session is not IRemoteChatPrompts prompts) return;
 
+            // Read before the call: answering may change the prompt.
+            var staysOpen = prompts.Prompt?.ElsewhereLabel is not null;
+
             prompts.AnswerElsewhere();
+
+            // A prompt with no terminal to go to answers "where else" with a note in
+            // the transcript, which is the thing to read, so the panel stays.
+            if (staysOpen) return;
 
             // Dismissed, because this asked to be somewhere else. Leaving the
             // panel up over the terminal it just brought forward would be
