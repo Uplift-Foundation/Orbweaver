@@ -561,6 +561,28 @@ public class OpenClawChatApprovalTests : IDisposable
         Assert.Equal(2, Texts(chat).Count(t => t == OpenClawApprovalText.NoLongerPending));
     }
 
+    // A record that reached the panel with no command text (however the feed made
+    // it) never offers Allow once, and a click for it sends nothing.
+    [Fact]
+    public async Task ARecordWithNoCommandTextOffersOnlyDenyAndAllowOnceSendsNothing()
+    {
+        var (socket, gateway) = await ConnectedAsync(r => r.Method == "approval.resolve" ? Applied(r) : null);
+        using (gateway)
+        {
+            var chat = Chat();
+            var bare = new OpenClawApproval("c1", "exec", _key, "alpha", "", "/tmp", "gateway",
+                new DateTimeOffset(Now), new DateTimeOffset(Now.AddMinutes(30)));
+            OpenClawSessions.ReplacePending("exec", new[] { bare }, new DateTimeOffset(Now));
+
+            var prompt = chat.Prompt!;
+            Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, prompt.Title);
+            Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+
+            await chat.AnswerAsync(new ChatPromptOption("allow-once", "Allow once", "c1"));
+            Assert.Empty(Resolves(socket));
+        }
+    }
+
     // The poll finding it gone: before its expiry nothing says why, after it, it
     // expired.
     [Fact]

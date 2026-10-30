@@ -73,9 +73,13 @@ namespace Orbweaver
             // Line breaks and tabs are how a real command is written, so the command
             // alone may carry them (a CRLF is read as one break); every other field,
             // and every other control or format character, makes the request unsafe.
-            command = command.Replace("\r\n", "\n");
+            command = (command ?? "").Replace("\r\n", "\n");
 
-            if (unsafeToShow || HasUnsafe(agent) || HasUnsafe(command, allowLayout: true)
+            // A person cannot be asked to allow what they cannot read: a request with
+            // no command text to show (missing, empty or only whitespace) is the same
+            // as one that could not be shown safely, and can only be denied. A live
+            // prompt once offered Allow once over nothing.
+            if (unsafeToShow || string.IsNullOrWhiteSpace(command) || HasUnsafe(agent) || HasUnsafe(command, allowLayout: true)
                 || HasUnsafe(cwd) || HasUnsafe(host) || HasUnsafe(warning))
             {
                 return new ChatPrompt(
@@ -91,7 +95,7 @@ namespace Orbweaver
             // shown.
             var tooLong = commandTruncated || command.Length > MaxCommand;
             var what = tooLong ? CapCommand(command, commandLength) : command;
-            var title = (who.Length == 0 ? "An agent" : who) + " wants to run: " + (what.Length == 0 ? "(no command shown)" : what);
+            var title = (who.Length == 0 ? "An agent" : who) + " wants to run: " + what;
 
             var where = new List<string>();
             if (Cap(cwd, MaxLocation) is { Length: > 0 } dir) where.Add("in " + dir);

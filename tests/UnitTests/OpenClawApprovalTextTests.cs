@@ -48,8 +48,8 @@ public class OpenClawApprovalTextTests
     }
 
     [Fact]
-    public void ABlankAgentOrCommandIsSaidPlainly() =>
-        Assert.Equal("An agent wants to run: (no command shown)", OpenClawApprovalText.Prompt("ap-1", "", "", null, null).Title);
+    public void ABlankAgentIsSaidPlainly() =>
+        Assert.Equal("An agent wants to run: true", OpenClawApprovalText.Prompt("ap-1", "", "true", null, null).Title);
 
     // An approval prompt is deliberate: its options are armed, not instant.
     [Fact]
@@ -408,4 +408,20 @@ public class OpenClawApprovalTextTests
     [InlineData("not connected", "Couldn't answer: not connected")]
     public void ACouldntAnswerNoteSaysWhyOrThatThereIsNoReason(string message, string expected) =>
         Assert.Equal(expected, OpenClawApprovalText.CouldntAnswer(message));
+
+    // A request with no command text to show is never allowable: it reads as one that
+    // could not be shown safely, with Deny only and the quoted id.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\n\t \r\n")]
+    [InlineData(null)]
+    public void ARequestWithNoCommandTextOffersOnlyDenyAndSaysItCouldNotBeShown(string? command)
+    {
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", command!, "/tmp", "box");
+
+        Assert.StartsWith(OpenClawApprovalText.UnsafeRequest + "\nRequest id: 'ap-1'", prompt.Title);
+        Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+        Assert.DoesNotContain(prompt.Options, o => o.Key == "allow-once");
+    }
 }

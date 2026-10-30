@@ -62,6 +62,14 @@ public class ChatPanelApprovalAdversarialTests : IDisposable
     private static Pointer NewPointer() => new(Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true);
     private static void Press(ChatPanel panel, Border option) { var at = option.TranslatePoint(new Point(2, 2), panel) ?? new Point(2, 2); option.RaiseEvent(new PointerPressedEventArgs(option, NewPointer(), panel, at, 0, new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None, 1)); }
     private static void Release(ChatPanel panel, Border option) { var at = option.TranslatePoint(new Point(2, 2), panel) ?? new Point(2, 2); option.RaiseEvent(new PointerReleasedEventArgs(option, NewPointer(), panel, at, 0, new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased), KeyModifiers.None, MouseButton.Left)); }
+    // The same id brought back with another command. A broadcast re-announcement of
+    // an id that just ended is refused as stale, so the swap arrives the one way it
+    // still can: the gateway's own list, which is authoritative.
+    private void Relist(string id, string command)
+    {
+        var record = OpenClawApprovals.ParseRecord(Json(Row(id, command)), "exec", new DateTimeOffset(DateTime.UtcNow))!;
+        OpenClawSessions.ReplacePending("exec", new[] { record }, new DateTimeOffset(DateTime.UtcNow));
+    }
     private static async Task Settle() { for (var i = 0; i < 30; i++) { Dispatcher.UIThread.RunJobs(); await Task.Delay(10); } Flush(); }
     private static int Resolves(FakeGatewaySocket s) => s.Requests.Count(r => r.Method.Contains("resolve", StringComparison.Ordinal));
 
@@ -217,7 +225,7 @@ public class ChatPanelApprovalAdversarialTests : IDisposable
             Press(panel, oldAllow);                                        // armed press on the harmless command, then held
             OpenClawSessions.OnEvent("exec.approval.resolved", Json("{\"id\":\"a1\",\"decision\":\"deny\"}"), DateTime.UtcNow);
             if (resolveInBetweenFlush) Flush();                            // the UI sees the empty gap
-            Request("a1", "echo DANGEROUS"); Flush();                      // same id, another command on the bar
+            Relist("a1", "echo DANGEROUS"); Flush();                      // same id, another command on the bar
             _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
             var newAllow = Option(panel, 1);
             var reused = ReferenceEquals(oldAllow, newAllow);
@@ -254,7 +262,7 @@ public class ChatPanelApprovalAdversarialTests : IDisposable
             var oldAllow = Option(panel, 1);
             Press(panel, oldAllow);
             OpenClawSessions.OnEvent("exec.approval.resolved", Json("{\"id\":\"a1\",\"decision\":\"deny\"}"), DateTime.UtcNow);
-            Request("a1", "echo DANGEROUS"); Flush();
+            Relist("a1", "echo DANGEROUS"); Flush();
             _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
             Release(panel, oldAllow);
             await Settle();
@@ -280,7 +288,7 @@ public class ChatPanelApprovalAdversarialTests : IDisposable
             Press(panel, survivor);
 
             OpenClawSessions.OnEvent("exec.approval.resolved", Json("{\"id\":\"a1\",\"decision\":\"deny\"}"), DateTime.UtcNow);
-            Request("a1", "echo DANGEROUS"); Flush();
+            Relist("a1", "echo DANGEROUS"); Flush();
             _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
 
             survivor.DataContext = Option(panel, 1).DataContext;
