@@ -92,6 +92,18 @@ namespace Orbweaver
         // subscribed closes, when they go back to being the list's to judge.
         private static readonly HashSet<string> SessionSourced = new(StringComparer.Ordinal);
 
+        // Ids whose approval ended recently, with when. The gateway re-sends a
+        // `requested` event or a `session.approval` pending phase for an approval that
+        // has already ended (measured to arrive out of order, and replays do it), and
+        // adding it back would show a prompt that can only fail. So those two feeds are
+        // ignored for an id in here; the list poll and the subscribe replay are the
+        // gateway's own account of what is pending now, so they still add one, and
+        // doing so takes the id out. Bounded by count and by age, so it cannot grow.
+        private static readonly Dictionary<string, DateTimeOffset> RecentlyEnded = new(StringComparer.Ordinal);
+
+        internal const int MaxRecentlyEnded = 256;
+        internal static readonly TimeSpan RecentlyEndedTtl = TimeSpan.FromMinutes(10);
+
         private const int MaxEndedPerSession = 20;
         private const int MaxAnswered = 1024;
 
@@ -148,6 +160,7 @@ namespace Orbweaver
                 Ended.Clear();
                 Answered.Clear();
                 SessionSourced.Clear();
+                RecentlyEnded.Clear();
             }
         }
 
@@ -176,13 +189,13 @@ namespace Orbweaver
                 if (OpenClawApprovals.IsExpired(requested, at)) return;
 
                 var touched = new HashSet<string>(StringComparer.Ordinal);
-                lock (Gate) AddLocked(requested, false, touched);
+                lock (Gate) AddLocked(requested, false, touched, at, authoritative: false);
 
                 Notify(touched);
                 return;
             }
 
-            if (OpenClawApprovals.ParseResolved(name, payload) is { } resolved) EndResolved(resolved);
+            if (OpenClawApprovals.ParseResolved(name, payload) is { } resolved) EndResolved(resolved, at);
         }
 
         // A `session.approval` event, from a session this app subscribed to with
@@ -197,18 +210,18 @@ namespace Orbweaver
                 if (OpenClawApprovals.IsExpired(pending, at)) return;
 
                 var touched = new HashSet<string>(StringComparer.Ordinal);
-                lock (Gate) AddLocked(pending, true, touched);
+                lock (Gate) AddLocked(pending, true, touched, at, authoritative: false);
 
                 Notify(touched);
                 return;
             }
 
-            EndResolved(change.Terminal!);
+            EndResolved(change.Terminal!, at);
         }
 
         // Takes a resolved approval off the set and records how it ended, for the
         // panel to write up once.
-        private static void EndResolved(OpenClawApprovalResolved resolved)
+        private static void EndResolved(OpenClawApprovalResolved resolved, DateTimeOffset at)
         {
             OpenClawApproval? approval;
             lock (Gate)
@@ -228,13 +241,14 @@ namespace Orbweaver
                 // expiry, is read as it always was. When the session event
                 // reached this app first it already ended the record and this finds
                 // nothing to end.
-                var timedOut = resolved.Status is null && resolved.At is { } at && at >= approval.ExpiresAt;
+                var timedOut = resolved.Status is null && resolved.ResolvedBy is null
+                               && resolved.At is { } stamped && stamped >= approval.ExpiresAt;
 
                 RecordEndedLocked(timedOut
                     ? new OpenClawApprovalEnded(approval, "expired", null, "timeout", null, "expired")
                     : new OpenClawApprovalEnded(
                         approval, "resolved", resolved.Decision, resolved.Reason, resolved.ResolvedBy,
-                        resolved.Status ?? OpenClawApprovals.UnknownStatus));
+                        resolved.Status ?? OpenClawApprovals.UnknownStatus), at);
             }
 
             NotifyApprovals(approval.SessionKey);
@@ -261,11 +275,11 @@ namespace Orbweaver
                     {
                         RemoveLocked(gone.Id, out _);
                         touched.Add(key);
-                        RecordEndedLocked(DroppedEnding(gone, now));
+                        RecordEndedLocked(DroppedEnding(gone, now), now);
                     }
                 }
 
-                foreach (var approval in wanted) AddLocked(approval, true, touched);
+                foreach (var approval in wanted) AddLocked(approval, true, touched, now, authoritative: true);
             }
 
             Notify(touched);
@@ -295,11 +309,11 @@ namespace Orbweaver
                     {
                         RemoveLocked(gone.Id, out _);
                         touched.Add(key);
-                        RecordEndedLocked(DroppedEnding(gone, now));
+                        RecordEndedLocked(DroppedEnding(gone, now), now);
                     }
                 }
 
-                foreach (var approval in wanted) AddLocked(approval, false, touched);
+                foreach (var approval in wanted) AddLocked(approval, false, touched, now, authoritative: true);
             }
 
             Notify(touched);
@@ -356,6 +370,7 @@ namespace Orbweaver
                 SessionSourced.Clear();
                 Ended.Clear();
                 Answered.Clear();
+                RecentlyEnded.Clear();
             }
 
             foreach (var key in keys) NotifyApprovals(key);
@@ -368,7 +383,8 @@ namespace Orbweaver
         // when a session already holds MaxPerSession, or the whole set MaxTotal, the
         // oldest arrival is evicted and recorded so the panel can say so.
         // `touched` collects the sessions whose set changed, to be told afterwards.
-        private static bool AddLocked(OpenClawApproval approval, bool sessionSourced, ISet<string> touched)
+        private static bool AddLocked(
+            OpenClawApproval approval, bool sessionSourced, ISet<string> touched, DateTimeOffset now, bool authoritative)
         {
             if (ById.ContainsKey(approval.Id))
             {
@@ -379,6 +395,11 @@ namespace Orbweaver
             }
 
             if (Answered.Contains(approval.Id)) return false;
+
+            // A re-sent announcement of something that already ended is stale. Only
+            // the gateway's own list or replay may bring such an id back.
+            if (!authoritative && RecentlyEndedLocked(approval.Id, now)) return false;
+            RecentlyEnded.Remove(approval.Id);
 
             if (Pending.TryGetValue(approval.SessionKey, out var existing))
             {
@@ -414,7 +435,7 @@ namespace Orbweaver
         private static void EvictLocked(OpenClawApproval approval, ISet<string> touched)
         {
             RemoveLocked(approval.Id, out _);
-            RecordEndedLocked(new OpenClawApprovalEnded(approval, "evicted", null, null, null, OpenClawApprovals.UnknownStatus));
+            RecordEndedLocked(new OpenClawApprovalEnded(approval, "evicted", null, null, null, OpenClawApprovals.UnknownStatus), DateTimeOffset.UtcNow);
             touched.Add(approval.SessionKey);
         }
 
@@ -433,8 +454,24 @@ namespace Orbweaver
             return true;
         }
 
-        private static void RecordEndedLocked(OpenClawApprovalEnded ended)
+        private static bool RecentlyEndedLocked(string id, DateTimeOffset now) =>
+            RecentlyEnded.TryGetValue(id, out var when) && now - when < RecentlyEndedTtl;
+
+        private static void RecordEndedLocked(OpenClawApprovalEnded ended, DateTimeOffset now)
         {
+            // An eviction is this app's own cap, not an ending: the gateway still holds
+            // the approval and may announce it again.
+            if (ended.Cause != "evicted")
+            {
+                RecentlyEnded[ended.Approval.Id] = now;
+
+                foreach (var old in RecentlyEnded.Where(e => now - e.Value >= RecentlyEndedTtl).Select(e => e.Key).ToList())
+                    RecentlyEnded.Remove(old);
+
+                while (RecentlyEnded.Count > MaxRecentlyEnded)
+                    RecentlyEnded.Remove(RecentlyEnded.MinBy(e => e.Value).Key);
+            }
+
             var key = ended.Approval.SessionKey;
             if (!Ended.TryGetValue(key, out var list)) Ended[key] = list = new List<OpenClawApprovalEnded>();
 
