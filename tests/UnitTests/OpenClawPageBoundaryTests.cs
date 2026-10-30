@@ -195,6 +195,23 @@ public class OpenClawPageBoundaryTests
         Assert.Equal(new[] { "x", "plain", "first", "x\n\nmore", "q", "now" }, Texts(session));
     }
 
+    // ---- carried through the three copies -------------------------------------------------
+
+    [Fact]
+    public void FromRollupIsCarriedBySetHistoryPrependAndAppend()
+    {
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "a", fromRollup: true) });
+        session.PrependHistory(new List<HistoryTurn> { H(ChatRole.Assistant, "b", fromRollup: true) });
+        session.AppendNewTail(new List<HistoryTurn>
+        {
+            H(ChatRole.Assistant, "a", fromRollup: true), H(ChatRole.Assistant, "c", fromRollup: true)
+        });
+
+        Assert.All(session.History, t => Assert.True(t.FromRollup));
+        Assert.Equal(3, session.History.Count);
+    }
+
     // ---- the boundary is the raw messages', not the turns' (CB-270 review) ---------
     // A user message can render to no turn at all (scaffolding). Spans read off turns
     // would run past it into a different run and judge an earlier step against a

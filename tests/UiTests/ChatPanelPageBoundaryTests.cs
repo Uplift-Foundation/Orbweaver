@@ -110,6 +110,39 @@ public class ChatPanelPageBoundaryTests : IDisposable
         Assert.Equal(1, rows.Count(r => r.Contains("look at this")));
     }
 
+    // The seam can remove a row already drawn: a delivery-mirror at the head of the
+    // transcript whose file the older page names. The panel mirrors the removal
+    // through TurnsRemoved and its rows stay equal to the model's.
+    [AvaloniaFact]
+    public void ScrollingBackRemovesAMirrorRowTheOlderPageNamesAndKeepsRowsInStep()
+    {
+        var at = new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero);
+        var session = Session();
+        session.SetHistory(new List<HistoryTurn>
+        {
+            new(ChatRole.Assistant, "clip.png", "/route", "clip.png", at, null, null,
+                ImageSourcePath: "/x/clip.png", RunHead: true, Arm: MediaSourceArm.Mirror),
+            H(ChatRole.User, "next")
+        });
+        var panel = Open(session);
+
+        session.PrependHistory(new List<HistoryTurn>
+        {
+            H(ChatRole.User, "go"),
+            new(ChatRole.Assistant, "here it is", "/route", "clip.png", at, null, null,
+                ImageSourcePath: "/x/clip.png", RunTail: true)
+        });
+        FlushRender();
+
+        var rows = RowTexts(panel);
+
+        Assert.Equal(session.History.Count, rows.Length);
+        Assert.Equal(3, rows.Length);
+        Assert.DoesNotContain(rows, r => r == "clip.png");
+        Assert.Contains("here it is", rows[1]);
+        Assert.Contains("next", rows[2]);
+    }
+
     // Control: nothing marked, nothing left out.
     [AvaloniaFact]
     public void ScrollingBackWhenNothingIsCoveredAddsEveryRow()

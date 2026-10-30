@@ -155,7 +155,7 @@ public class OpenClawCoveredPictureTests
 
     private static HistoryTurn Tail(string text, string path) =>
         new(ChatRole.Assistant, text, "/route", "p.jpg", System.DateTimeOffset.Now, null, null,
-            ImageSourcePath: path, OpenTail: true);
+            ImageSourcePath: path, OpenTail: true, RunTail: true);
 
     // The older page's trailing step ends in the picture the head rollup also shows:
     // the head's copy stays, and the older step's caption-less copy is dropped.
@@ -164,7 +164,7 @@ public class OpenClawCoveredPictureTests
     {
         var session = new OpenClawChatSession("openclaw:" + Key, Key, "main");
         var head = new HistoryTurn(ChatRole.Assistant, "here\nend\n\nand more", "/route", "p.jpg",
-            System.DateTimeOffset.Now, null, null, FromRollup: true, SeamRollup: true, ImageSourcePath: P1);
+            System.DateTimeOffset.Now, null, null, FromRollup: true, SeamRollup: true, RunHead: true, ImageSourcePath: P1);
         session.SetHistory(new List<HistoryTurn> { head });
 
         session.PrependHistory(new List<HistoryTurn>
@@ -183,7 +183,7 @@ public class OpenClawCoveredPictureTests
     {
         var session = new OpenClawChatSession("openclaw:" + Key, Key, "main");
         var head = new HistoryTurn(ChatRole.Assistant, "here\n\nand more", "/route", "p.jpg",
-            System.DateTimeOffset.Now, null, null, FromRollup: true, SeamRollup: true, ImageSourcePath: P1);
+            System.DateTimeOffset.Now, null, null, FromRollup: true, SeamRollup: true, RunHead: true, ImageSourcePath: P1);
         session.SetHistory(new List<HistoryTurn> { head });
 
         session.PrependHistory(new List<HistoryTurn> { Tail("here", P2) });

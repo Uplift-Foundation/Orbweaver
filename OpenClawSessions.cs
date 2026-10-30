@@ -3136,6 +3136,40 @@ namespace Orbweaver
             var head = startsMidRun ? OpenClawHistoryShape.HeadRollupIndex(messages) : -1;
             if (head >= 0) MarkText(head, seam: true);
 
+            // CB-270: the raw messages' runs (a user message or a rollup closes one),
+            // for the picture checks here and at the page boundary. The runs of the
+            // page's trailing end and head are marked on every turn they produced,
+            // pictures included; turns whose caption was blanked are marked as well.
+            var spanOfMessage = new int[turnStarts.Count - 1];
+            var span = 0;
+            var lastClosed = false;
+            var firstIsUser = false;
+            var m = 0;
+            foreach (var raw in messages.EnumerateArray())
+            {
+                spanOfMessage[m] = span;
+                lastClosed = Str(raw, "role") == "user" || OpenClawHistoryShape.IsRollup(raw);
+                if (m == 0) firstIsUser = Str(raw, "role") == "user";
+                if (lastClosed) span++;
+                m++;
+            }
+
+            var spanOfTurn = new int[turns.Count];
+            for (var msg = 0; msg < spanOfMessage.Length; msg++)
+            {
+                for (var t = turnStarts[msg]; t < turnStarts[msg + 1]; t++) spanOfTurn[t] = spanOfMessage[msg];
+            }
+
+            var lastSpan = spanOfMessage.Length == 0 ? -1 : spanOfMessage[^1];
+            for (var t = 0; t < turns.Count; t++)
+            {
+                var tail = !lastClosed && spanOfTurn[t] == lastSpan;
+                var headRun = startsMidRun && !firstIsUser && spanOfTurn[t] == 0;
+
+                if (tail || headRun || blanked.Contains(t))
+                    turns[t] = turns[t] with { RunTail = tail, RunHead = headRun, Blanked = blanked.Contains(t) };
+            }
+
             // CB-270: a covered pair can show one picture twice. An equal-join rollup
             // and its last step both end in the same MEDIA: path, or a kept rollup
             // and a step it contains do; the covered side has lost its caption but
@@ -3147,21 +3181,6 @@ namespace Orbweaver
             // genuine deliveries of one file, which are not blanked turns.
             if (blanked.Count > 0)
             {
-                var spanOfMessage = new int[turnStarts.Count - 1];
-                var span = 0;
-                var m = 0;
-                foreach (var raw in messages.EnumerateArray())
-                {
-                    spanOfMessage[m++] = span;
-                    if (Str(raw, "role") == "user" || OpenClawHistoryShape.IsRollup(raw)) span++;
-                }
-
-                var spanOfTurn = new int[turns.Count];
-                for (var msg = 0; msg < spanOfMessage.Length; msg++)
-                {
-                    for (var t = turnStarts[msg]; t < turnStarts[msg + 1]; t++) spanOfTurn[t] = spanOfMessage[msg];
-                }
-
                 var redundant = new HashSet<int>();
                 foreach (var b in blanked.OrderBy(i => i))
                 {

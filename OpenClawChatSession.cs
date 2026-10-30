@@ -140,7 +140,19 @@ namespace Orbweaver
         // no user message before it, on a page an older one may precede; the rollup
         // that closes that run. The page boundary compares exactly these two.
         bool OpenTail = false,
-        bool SeamRollup = false);
+        bool SeamRollup = false,
+
+        // CB-270 stage 3b, set by TurnsFromHistory from the raw messages like the two
+        // above. RunTail / RunHead: any turn (a picture too) of the page's trailing
+        // run, with no rollup or user message after it / of its head run, before any
+        // user message or rollup closes it, on a page an older one may precede. The
+        // page boundary compares pictures across them by path. Blanked: the caption
+        // was blanked because its words are shown by the other half of a covered pair
+        // and the picture kept; with a delivery mirror (Arm) it is one of the only two
+        // kinds of turn the boundary may drop as a duplicate picture.
+        bool RunTail = false,
+        bool RunHead = false,
+        bool Blanked = false);
 
     // See HistoryTurn.Arm. Internal and small on purpose: this exists only to
     // let the post-parse dedup pass in OpenClawSessions tell an inline image
@@ -653,6 +665,11 @@ namespace Orbweaver
         // CB-270 stage 3b: the transcript's head rollup that closes a run whose
         // earlier steps may be on an older page (see PrependHistory), or null.
         private ChatTurn? _seamRollup;
+
+        // CB-270 stage 3b: the turns of the transcript's head run when an older page may
+        // precede it, so the page boundary can compare their pictures with the older
+        // page's trailing run.
+        private List<ChatTurn> _headRun = new();
 
         private void RunSeen()
         {
@@ -1482,9 +1499,11 @@ namespace Orbweaver
             if (turns.Count == 0) return;
 
             turns = FilterOlderTailSteps(turns);
+            turns = DedupePicturesAcrossTheSeam(turns);
 
             var older = new List<ChatTurn>(turns.Count);
             ChatTurn? seam = null;
+            var headRun = new List<ChatTurn>();
 
             foreach (var t in turns)
             {
@@ -1513,11 +1532,14 @@ namespace Orbweaver
                     Mine = t.Mine,
                     IsError = t.IsError,
                     FromRollup = t.FromRollup,
+                    IsMirror = t.Arm == MediaSourceArm.Mirror,
+                    Blanked = t.Blanked,
                     IsComplete = true
                 };
 
                 older.Add(turn);
                 if (t.SeamRollup) seam = turn;
+                if (t.RunHead) headRun.Add(turn);
             }
 
             _history.InsertRange(0, older);
@@ -1525,13 +1547,14 @@ namespace Orbweaver
             // The older page is now the head. Its own cut first run, if it has one,
             // is the next seam; otherwise there is none.
             _seamRollup = seam;
+            _headRun = headRun;
 
             HistoryPrepended?.Invoke(older.Count);
         }
 
         // The older page's trailing-run steps the transcript's head rollup contains
         // are taken out; one that carries a picture or attachment keeps it, with an
-        // empty caption.
+        // empty caption (and is then Blanked, a candidate for the picture dedupe).
         private IReadOnlyList<HistoryTurn> FilterOlderTailSteps(IReadOnlyList<HistoryTurn> older)
         {
             var head = _seamRollup;
@@ -1556,16 +1579,96 @@ namespace Orbweaver
 
                 if (step.ImageUrl is null && step.ImageBytes is null && step.Attachment is null)
                     gone.Add(at);
-                else if (!string.IsNullOrEmpty(step.ImageSourcePath)
-                         && string.Equals(step.ImageSourcePath, head.ImageSourcePath, StringComparison.Ordinal))
-                    // The head rollup already shows this very picture, so the
-                    // caption-less copy would draw it twice. The last copy stays.
-                    gone.Add(at);
                 else
-                    filtered[at] = step with { Text = "" };
+                    filtered[at] = step with { Text = "", Blanked = true };
             }
 
             return filtered.Where((_, i) => !gone.Contains(i)).ToList();
+        }
+
+        // A picture is not drawn twice in one run, and that includes a run the page
+        // boundary cuts. Only two kinds of turn are ever dropped for it: a turn whose
+        // caption was blanked (its words shown by the other half of a covered pair)
+        // and a delivery-mirror, the gateway's record of having delivered a file. A
+        // turn the agent actually sent is never dropped, even naming the same file, and
+        // the last copy always stays.
+        //
+        // The older page's trailing run is compared with the transcript's head run:
+        // an older candidate goes when a head turn shows its picture, and a head
+        // candidate (a row on screen, removed through TurnsRemoved) goes when a
+        // remaining older turn shows its picture. A mirror matches by file name (the
+        // page it was parsed on may not hold the directory its picture sits in, so
+        // its path is a guess), a blanked turn by resolved path.
+        private IReadOnlyList<HistoryTurn> DedupePicturesAcrossTheSeam(IReadOnlyList<HistoryTurn> older)
+        {
+            var headRun = _headRun.Where(t => _history.Contains(t)).ToList();
+            if (headRun.Count == 0) return older;
+
+            static bool IsPicture(HistoryTurn t) => t.ImageUrl is not null;
+
+            static bool SameFile(HistoryTurn o, ChatTurn h, bool mirror) =>
+                mirror
+                    ? !string.IsNullOrEmpty(o.ImageAlt) && string.Equals(o.ImageAlt, h.ImageAlt, StringComparison.Ordinal)
+                    : !string.IsNullOrEmpty(o.ImageSourcePath) && string.Equals(o.ImageSourcePath, h.ImageSourcePath, StringComparison.Ordinal);
+
+            var gone = new HashSet<int>();
+
+            for (var i = 0; i < older.Count; i++)
+            {
+                var c = older[i];
+                if (!c.RunTail || !IsPicture(c) || !(c.Blanked || c.Arm == MediaSourceArm.Mirror)) continue;
+
+                if (headRun.Any(h => h.ImageUrl is not null && SameFile(c, h, c.Arm == MediaSourceArm.Mirror)))
+                    gone.Add(i);
+            }
+
+            var rows = new SortedSet<int>();
+            foreach (var h in headRun.Where(h => h.ImageUrl is not null && (h.Blanked || h.IsMirror)))
+            {
+                for (var i = 0; i < older.Count; i++)
+                {
+                    if (!older[i].RunTail || gone.Contains(i) || !IsPicture(older[i])) continue;
+
+                    if (SameFile(older[i], h, h.IsMirror))
+                    {
+                        rows.Add(_history.IndexOf(h));
+                        break;
+                    }
+                }
+            }
+
+            if (rows.Count > 0) RemoveRows(rows);
+
+            return gone.Count == 0 ? older : older.Where((_, i) => !gone.Contains(i)).ToList();
+        }
+
+        // Removes rows already on screen, highest first and one TurnsRemoved per
+        // contiguous run, so the indices are the transcript's as it stood. The page's
+        // last row, held by reference (ReconcileRun anchors on it), moves to the row
+        // before it if it is removed.
+        private void RemoveRows(SortedSet<int> rows)
+        {
+            var pageLastAt = _pageLast is null ? -1 : _history.IndexOf(_pageLast);
+
+            var ordered = rows.Reverse().ToList();
+            var n = 0;
+            while (n < ordered.Count)
+            {
+                var top = ordered[n];
+                var run = 1;
+                while (n + run < ordered.Count && ordered[n + run] == top - run) run++;
+
+                var from = top - run + 1;
+                _history.RemoveRange(from, run);
+                TurnsRemoved?.Invoke(from, run);
+                n += run;
+            }
+
+            if (pageLastAt >= 0 && rows.Contains(pageLastAt))
+            {
+                var before = pageLastAt - rows.Count(r => r < pageLastAt) - 1;
+                _pageLast = before >= 0 ? _history[before] : null;
+            }
         }
 
         public event Action<int>? HistoryPrepended;
@@ -1613,15 +1716,19 @@ namespace Orbweaver
                     Mine = turn.Mine,
                     IsError = turn.IsError,
                     FromRollup = turn.FromRollup,
+                    IsMirror = turn.Arm == MediaSourceArm.Mirror,
+                    Blanked = turn.Blanked,
                     IsComplete = true
                 });
             }
 
             // The page's own seam rollup, if it has one (a page an older one may
-            // precede, whose first run ends in a kept rollup).
+            // precede, whose first run ends in a kept rollup), and its head run.
+            _headRun = new List<ChatTurn>();
             for (var i = 0; i < turns.Count; i++)
             {
                 if (turns[i].SeamRollup) _seamRollup = _history[i];
+                if (turns[i].RunHead) _headRun.Add(_history[i]);
             }
 
             _pageLast = _history[^1];

@@ -118,6 +118,14 @@ namespace Orbweaver
         // CB-270: drawn from a gateway rollup message; see HistoryTurn.FromRollup.
         public bool FromRollup { get; init; }
 
+        // CB-270 stage 3b: a delivery-mirror turn, and a turn whose caption was blanked
+        // because its words are shown by the other half of a covered pair (its picture
+        // kept). The page boundary may drop either as a duplicate picture, never any
+        // other turn.
+        public bool IsMirror { get; init; }
+
+        public bool Blanked { get; init; }
+
         private bool _isError;
 
         // CB-270: a tool line whose result reported an error. Mutable and
