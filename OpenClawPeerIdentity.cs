@@ -97,6 +97,6 @@ namespace Orbweaver
         }
 
         private static bool OnlyProperties(JsonElement value, params string[] allowed) =>
-            value.EnumerateObject().All(property => allowed.Contains(property.Name, StringComparer.Ordinal));
+            value.EnumerateObject().All(property => property.SafeName() is { } name && allowed.Contains(name, StringComparer.Ordinal));
     }
 }

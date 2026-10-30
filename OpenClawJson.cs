@@ -23,5 +23,24 @@ namespace Orbweaver
                 return null;
             }
         }
+
+        // JsonProperty.Name throws the same way, for a property NAME that holds a
+        // lone surrogate. Null means "a name nothing here could ever match".
+        internal static string? SafeName(this JsonProperty property)
+        {
+            try
+            {
+                return property.Name;
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
+        // JsonElement.ToString() on a String element is GetString() and throws
+        // the same way; on any other kind it is the raw text and does not.
+        internal static string? SafeText(this JsonElement element) =>
+            element.ValueKind == JsonValueKind.String ? element.SafeString() : element.ToString();
     }
 }

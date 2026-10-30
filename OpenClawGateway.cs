@@ -455,7 +455,7 @@ namespace Orbweaver
                 response.TryGetProperty("server", out var server)
                 && server.TryGetProperty("version", out var version)
                     ? version.SafeString()
-                    : protocol.ToString();
+                    : protocol.SafeText();
 
             if (response.TryGetProperty("auth", out var authOut)
                 && authOut.TryGetProperty("scopes", out var scopes)

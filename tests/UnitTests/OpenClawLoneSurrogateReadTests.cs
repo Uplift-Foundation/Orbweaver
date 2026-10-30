@@ -181,4 +181,44 @@ public class OpenClawLoneSurrogateReadTests : IDisposable
 
         Assert.Equal(new[] { "chat.history", "sessions.list" }, methods.OrderBy(m => m, StringComparer.Ordinal));
     }
+
+    // --- the other ways to read a string out of an element ---
+    //
+    // Measured by probe, not assumed: ToString() on a String element and
+    // JsonProperty.Name throw on a lone surrogate; GetRawText() and a property's
+    // ToString() do not. The two that throw are the only other reads of gateway or
+    // peer text in the OpenClaw files (grep: one ToString on a hello-ok protocol,
+    // one property name check on peer bodies).
+
+    [Fact]
+    public void ToStringOnAStringElementAndAPropertyNameThrowWhereRawTextDoesNot()
+    {
+        var poison = Json("{\"\\ud800\":\"\\ud800\"}");
+
+        Assert.Throws<InvalidOperationException>(() => Json("\"\\ud800\"").ToString());
+        Assert.Throws<InvalidOperationException>(() => poison.EnumerateObject().First().Name);
+        Assert.NotNull(poison.GetRawText());
+        Assert.NotNull(poison.EnumerateObject().First().ToString());
+    }
+
+    [Fact]
+    public void TheSafeTextAndNameReadersReturnTheValueOrNull()
+    {
+        Assert.Equal("ok", Json("\"ok\"").SafeText());
+        Assert.Null(Json("\"\\ud800\"").SafeText());
+        Assert.Equal("3", Json("3").SafeText());
+        Assert.Equal("a", Json("{\"a\":1}").EnumerateObject().First().SafeName());
+        Assert.Null(Json("{\"\\ud800\":1}").EnumerateObject().First().SafeName());
+    }
+
+    // A peer body whose property NAME cannot be read is refused, not thrown on.
+    [Fact]
+    public void APeerBodyWithAnUnreadablePropertyNameIsRefused()
+    {
+        var pin = new string('a', 64);
+
+        Assert.Null(OpenClawPeerIdentity.RequestFrom(Json("{\"gatewayPin\":\"" + pin + "\",\"agentIds\":[],\"\\ud800\":1}")));
+        Assert.Null(OpenClawPeerIdentity.ResponseFrom(Json("{\"gatewayPin\":\"" + pin + "\",\"voices\":[],\"\\ud800\":1}")));
+        Assert.NotNull(OpenClawPeerIdentity.RequestFrom(Json("{\"gatewayPin\":\"" + pin + "\",\"agentIds\":[\"alpha\"]}")));
+    }
 }
