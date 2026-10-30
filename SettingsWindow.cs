@@ -1890,9 +1890,8 @@ namespace Orbweaver
                 + "every few minutes with nobody on the other end. They wear a beating "
                 + "heart. Hidden takes them off the screen; Own shape keeps them, arranged "
                 + "beside your conversations instead of among them. The agents keep their "
-                + "colours in any channel they are in whichever you pick. A main session "
-                + "no chat app is behind is governed by \"" + OpenClawNativeText.SettingLabel
-                + "\" below instead."));
+                + "colours in any channel they are in whichever you pick. Pin one of "
+                + "these with Keep on screen and it shows whatever this says."));
 
             if (OrbweaverSettings.OpenClawHeartbeatMode == ClusterMode.OwnShape)
             {

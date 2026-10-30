@@ -203,33 +203,98 @@ namespace Orbweaver.Tests
             Assert.Empty(Parse(json, withinMinutes: 60).Sessions);
         }
 
-        // Hidden drops exactly the native rows: the dashboard session and the
-        // native main (which is also a heartbeat by key; native wins). The Discord
-        // DM, the WhatsApp main (still a heartbeat) and the cron stay. Then the
-        // control: WithChats keeps all five.
+        // Hiding "Agents' own sessions" drops the dashboard session and nothing
+        // else. The native main is a heartbeat by key and follows the heartbeat
+        // setting (Warren's ruling), so it stays; so do the Discord DM, the
+        // WhatsApp main and the cron. Then the control: every other mode keeps all
+        // five.
         [Fact]
-        public void HidingNativeSessionsDropsOnlyTheNativeRows()
+        public void HidingNativeSessionsDropsOnlyTheDashboardSession()
         {
             var (hidden, _) = Parse(NativeFixture(JustNow), native: ClusterMode.Hidden);
 
             Assert.Equal(
-                new[] { "agent:alpha:cron:job-1", "agent:alpha:discord:direct:1900000000000000001", "agent:beta:main" },
+                new[]
+                {
+                    "agent:alpha:cron:job-1", "agent:alpha:discord:direct:1900000000000000001",
+                    "agent:alpha:main", "agent:beta:main"
+                },
                 hidden.Select(s => s.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
-            Assert.True(hidden.Single(s => s.Key == "agent:beta:main").Heartbeat);
+            Assert.True(hidden.Single(s => s.Key == "agent:alpha:main").Heartbeat);
+            Assert.Equal(OpenClawNativeKind.Main, hidden.Single(s => s.Key == "agent:alpha:main").Native);
 
             Assert.Equal(5, Parse(NativeFixture(JustNow), native: ClusterMode.WithChats).Sessions.Count);
             Assert.Equal(5, Parse(NativeFixture(JustNow), native: ClusterMode.OwnShape).Sessions.Count);
         }
 
-        // Hiding heartbeats no longer hides a native main (native is checked
-        // first), but it still hides the WhatsApp main.
+        // Hiding heartbeats hides both mains now: the WhatsApp-routed one as it
+        // always did, and the native one, which is the agent's own main session
+        // and which the heartbeat job keeps waking. That native main coming back
+        // was the bug.
         [Fact]
-        public void HidingHeartbeatsHidesTheWhatsAppMainAndNotTheNativeOne()
+        public void HidingHeartbeatsHidesTheNativeMainAsWellAsTheWhatsAppOne()
         {
             var (sessions, _) = Parse(NativeFixture(JustNow), heartbeats: false);
 
-            Assert.Contains(sessions, s => s.Key == "agent:alpha:main");
+            Assert.DoesNotContain(sessions, s => s.Key == "agent:alpha:main");
             Assert.DoesNotContain(sessions, s => s.Key == "agent:beta:main");
+
+            // The dashboard session is not a heartbeat, so the native setting
+            // still governs it.
+            Assert.Contains(sessions, s => s.Key.Contains(":dashboard:"));
+        }
+
+        // A session the gateway reports pinned is shown even with its cluster
+        // Hidden. A native heartbeat main hidden by the heartbeat setting comes
+        // back when pinned; its unpinned twin does not.
+        [Fact]
+        public void APinnedNativeHeartbeatMainIsShownWithHeartbeatsHiddenAndAnUnpinnedOneIsNot()
+        {
+            var json = $$"""
+                {"sessions":[
+                  {"key":"agent:pinned:main","classification":"main","isMain":true,"pinned":true,"lastActivityAt":{{JustNow}}},
+                  {"key":"agent:plain:main","classification":"main","isMain":true,"pinned":false,"lastActivityAt":{{JustNow}}}
+                ]}
+                """;
+
+            var (sessions, _) = Parse(json, heartbeats: false);
+
+            var kept = Assert.Single(sessions);
+            Assert.Equal("agent:pinned:main", kept.Key);
+            Assert.True(kept.GatewayPinned);
+            Assert.True(kept.Heartbeat);
+        }
+
+        // Pinned also beats a Hidden cron, and a Hidden "Agents' own sessions".
+        [Fact]
+        public void PinnedBeatsAHiddenCronAndAHiddenNativeSetting()
+        {
+            var json = $$"""
+                {"sessions":[
+                  {"key":"agent:a:cron:pinned1","classification":"cron","pinned":true,"label":"Cron: sweep","lastActivityAt":{{JustNow}}},
+                  {"key":"agent:a:cron:plain1","classification":"cron","pinned":false,"label":"Cron: sweep","lastActivityAt":{{JustNow}}},
+                  {"key":"agent:a:dashboard:pinned2","classification":"dashboard","pinned":true,"lastActivityAt":{{JustNow}}},
+                  {"key":"agent:a:dashboard:plain2","classification":"dashboard","pinned":false,"lastActivityAt":{{JustNow}}}
+                ]}
+                """;
+            var wasCron = OrbweaverSettings.OpenClawCronMode;
+            try
+            {
+                OrbweaverSettings.OpenClawCronMode = ClusterMode.Hidden;
+                var (hidden, _) = Parse(json, native: ClusterMode.Hidden);
+
+                Assert.Equal(
+                    new[] { "agent:a:cron:pinned1", "agent:a:dashboard:pinned2" },
+                    hidden.Select(s => s.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+
+                // The control: with both modes on, all four are shown.
+                OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+                Assert.Equal(4, Parse(json).Sessions.Count);
+            }
+            finally
+            {
+                OrbweaverSettings.OpenClawCronMode = wasCron;
+            }
         }
 
         // --- CB-170: what the orb's Interrupt and End rows read off a row ---

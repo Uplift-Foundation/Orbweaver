@@ -250,11 +250,28 @@ public class OrbGroupMenuTests : IDisposable
         Assert.Equal(OrbGroups.Heartbeats, context.GroupId);
     }
 
-    // CB-270: a native root (a dashboard session, or a main with no surface) is in
-    // the native group under Own shape and in main under WithChats. The same
-    // status is also a heartbeat by key; native wins, which is the point.
+    // CB-270: a native root that is not a heartbeat (a New Chat) is in the native
+    // group under Own shape and in main under WithChats.
     [Fact]
-    public void ANativeRootIsInTheNativeGroupOnlyUnderOwnShape()
+    public void ANativeNonHeartbeatRootIsInTheNativeGroupOnlyUnderOwnShape()
+    {
+        var statuses = Of(("n", new SessionStatus
+        {
+            Source = SessionSource.OpenClaw,
+            Native = OpenClawNativeKind.Dashboard
+        }));
+
+        Assert.Equal(OrbGroups.Native, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape).GroupId);
+        Assert.Equal(OrbGroups.Main, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats).GroupId);
+    }
+
+    // Warren's ruling: a native main is also a heartbeat by key, and the heartbeat
+    // setting wins, so it is in the heartbeat group under Own shape there and not
+    // in the native group whatever the native setting says.
+    [Fact]
+    public void ANativeHeartbeatMainFollowsTheHeartbeatSettingNotTheNativeOne()
     {
         var statuses = Of(("n", new SessionStatus
         {
@@ -263,10 +280,10 @@ public class OrbGroupMenuTests : IDisposable
             Native = OpenClawNativeKind.Main
         }));
 
-        Assert.Equal(OrbGroups.Native, OrbGroupMenu.Resolve(
-            "n", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape).GroupId);
+        Assert.Equal(OrbGroups.Heartbeats, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.OwnShape, ClusterMode.WithChats, ClusterMode.WithChats).GroupId);
         Assert.Equal(OrbGroups.Main, OrbGroupMenu.Resolve(
-            "n", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats).GroupId);
+            "n", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape).GroupId);
     }
 
     // Value equality on the key list, which a record's default does not give.
