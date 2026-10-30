@@ -542,7 +542,10 @@ namespace Orbweaver
 
         private static string? ArgvOf(JsonElement request)
         {
-            if (!request.TryGetProperty("commandArgv", out var argv) || argv.ValueKind != JsonValueKind.Array)
+            // `request` is default (not an object) when the row carried none, and
+            // TryGetProperty throws on that, so it is checked first.
+            if (request.ValueKind != JsonValueKind.Object
+                || !request.TryGetProperty("commandArgv", out var argv) || argv.ValueKind != JsonValueKind.Array)
                 return null;
 
             var parts = argv.EnumerateArray()
@@ -562,7 +565,8 @@ namespace Orbweaver
         // none to read: absent, not an array, or empty all mean "did not say".
         private static IReadOnlyList<string>? DecisionsOf(JsonElement holder)
         {
-            if (!holder.TryGetProperty("allowedDecisions", out var list) || list.ValueKind != JsonValueKind.Array)
+            if (holder.ValueKind != JsonValueKind.Object
+                || !holder.TryGetProperty("allowedDecisions", out var list) || list.ValueKind != JsonValueKind.Array)
                 return null;
 
             var decisions = list.EnumerateArray()
