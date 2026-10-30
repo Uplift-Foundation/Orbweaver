@@ -162,6 +162,19 @@ public class OpenClawApprovalTextTests
         Assert.Equal(new[] { "deny" }, unknown.Options.Select(o => o.Key));
     }
 
+    // The count is of the command as the gateway sent it, measured before any
+    // bound: a 4,500-character command the parser cut to 4,000 says 500 are missing,
+    // never none.
+    [Fact]
+    public void TheCountIsFromTheLengthTheGatewaySentNotTheTextHandedOver()
+    {
+        var prompt = OpenClawApprovalText.Prompt(
+            "ap-1", "Nova", new string('x', 4000), null, null, commandTruncated: true, commandLength: 4500);
+
+        Assert.Contains("… (500 more characters)", prompt.Title);
+        Assert.DoesNotContain("(0 more", prompt.Title);
+    }
+
     // The other fields are not what is being approved: they keep the small cap.
     [Fact]
     public void TheAgentWorkingDirectoryAndHostKeepTheSmallCap()
