@@ -3131,7 +3131,6 @@ namespace Orbweaver
             {
                 _promptSignature = signature;
                 _promptShownAt = PromptClock();
-                _pressedPromptOption = null;
             }
 
             _promptArmed = prompt.ArmedActivation;

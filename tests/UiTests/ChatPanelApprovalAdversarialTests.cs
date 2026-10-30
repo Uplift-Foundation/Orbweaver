@@ -261,4 +261,33 @@ public class ChatPanelApprovalAdversarialTests : IDisposable
             Assert.True(Resolves(socket) == 0, $"RELEASE-ON-OLD-CONTROL: resolve frames={Resolves(socket)}; title now: {panel.FindControl<TextBlock>("PromptTitle")!.Text}");
         }
     }
+
+    // The press must not depend on Avalonia rebuilding the option controls. The same
+    // id comes back with another command while a press is held, and the old control
+    // is made to survive (re-pointed at the new request's option, as a container
+    // reuse would), so the same-control comparison and the id-bound click both pass:
+    // only the prompt signature remembered at the press stands in the way.
+    [AvaloniaFact]
+    public async Task ASameIdSwapUnderAHeldPressAnswersNothingEvenIfTheControlSurvives()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var (panel, _) = Open();
+            Request("a1", "echo harmless"); Flush();
+            _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+            var survivor = Option(panel, 1);
+            Press(panel, survivor);
+
+            OpenClawSessions.OnEvent("exec.approval.resolved", Json("{\"id\":\"a1\",\"decision\":\"deny\"}"), DateTime.UtcNow);
+            Request("a1", "echo DANGEROUS"); Flush();
+            _now += ChatPanel.PromptArmDelay + TimeSpan.FromSeconds(1);
+
+            survivor.DataContext = Option(panel, 1).DataContext;
+            Release(panel, survivor);
+            await Settle();
+
+            Assert.Equal(0, Resolves(socket));
+        }
+    }
 }
