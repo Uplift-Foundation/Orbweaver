@@ -520,6 +520,47 @@ public class OpenClawChatApprovalTests : IDisposable
         Assert.Equal(1, Texts(chat).Count(t => t == OpenClawApprovalText.Evicted));
     }
 
+    // A record carrying no command length (the default, 0) draws and cannot count
+    // what was cut; the parser always stamps one, and a record built without it is
+    // handed in directly.
+    [Fact]
+    public void ARecordWithNoCommandLengthStillDrawsAndOneWithItCountsWhatWasCut()
+    {
+        var chat = Chat();
+        var bare = new OpenClawApproval("n1", "exec", _key, "alpha", "echo bare", "/tmp", "gateway",
+            new DateTimeOffset(Now), new DateTimeOffset(Now.AddMinutes(30)));
+        OpenClawSessions.ReplacePending("exec", new[] { bare }, new DateTimeOffset(Now));
+        Assert.StartsWith("Nova wants to run: echo bare", chat.Prompt!.Title);
+
+        OpenClawSessions.Restart();
+        Request("n2", new string('x', 4300));
+        Assert.Contains("(300 more characters)", Chat().Prompt!.Title);
+    }
+
+    // The two ways an ending can arrive with nothing declared and no decision we
+    // know: the local clock passing the expiry reads as expired, and anything else
+    // (the poll no longer listing it, or a decision we do not recognise) reads as no
+    // longer pending.
+    [Fact]
+    public void AnEndingWithNoDeclaredStatusReadsAsExpiredOnlyWhenTheClockSaidSo()
+    {
+        var chat = Chat();
+        Request("x1", "echo 1");
+        OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now.AddMinutes(31)));
+        chat.OnApprovalsChanged();
+        Assert.Contains("Expired unanswered", Texts(chat));
+
+        Request("x2", "echo 2");
+        OpenClawSessions.ReplacePending("exec", Array.Empty<OpenClawApproval>(), new DateTimeOffset(Now));
+        chat.OnApprovalsChanged();
+        Assert.Contains(OpenClawApprovalText.NoLongerPending, Texts(chat));
+
+        Request("x3", "echo 3");
+        Resolve("x3", "mystery");
+        chat.OnApprovalsChanged();
+        Assert.Equal(2, Texts(chat).Count(t => t == OpenClawApprovalText.NoLongerPending));
+    }
+
     // The poll finding it gone: before its expiry nothing says why, after it, it
     // expired.
     [Fact]
