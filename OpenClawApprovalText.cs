@@ -45,21 +45,32 @@ namespace Orbweaver
 
         // The title and the line under it: what is being asked, then where. Plain
         // text; the panel draws both in a TextBlock.
+        //
+        // Nothing is repaired. A displayed field with a control, format or line- or
+        // paragraph-separator character in it is not shown at all (flattening it
+        // would show a person something other than what the agent asked for, and a
+        // command is the one thing that must not be reworded for display), and the
+        // request becomes the unsafe prompt: what it is, where to answer it, and
+        // Deny. The caller's flag says the parser already judged it so; this also
+        // judges, since neither should be trusted to be the only check.
         internal static ChatPrompt Prompt(
             string approvalId, string agent, string command, string? cwd, string? host,
             bool unsafeToShow = false)
         {
-            // Nothing of the request is drawn when the parser could not make it safe
-            // to: only that there is one, and a way to refuse it.
-            if (unsafeToShow) return new ChatPrompt(UnsafeRequest, Options(approvalId, denyOnly: true), Deliberate: true);
+            if (unsafeToShow || HasUnsafe(agent) || HasUnsafe(command) || HasUnsafe(cwd) || HasUnsafe(host))
+            {
+                return new ChatPrompt(
+                    UnsafeRequest + "\nRequest id: " + QuoteId(approvalId),
+                    Options(approvalId, denyOnly: true), Deliberate: true);
+            }
 
-            var who = Clean(agent, MaxName);
-            var what = Clean(command, MaxCommand);
+            var who = Cap(agent, MaxName);
+            var what = Cap(command, MaxCommand);
             var title = (who.Length == 0 ? "An agent" : who) + " wants to run: " + (what.Length == 0 ? "(no command shown)" : what);
 
             var where = new List<string>();
-            if (Clean(cwd, MaxLocation) is { Length: > 0 } dir) where.Add("in " + dir);
-            if (Clean(host, MaxName) is { Length: > 0 } machine) where.Add("on " + machine);
+            if (Cap(cwd, MaxLocation) is { Length: > 0 } dir) where.Add("in " + dir);
+            if (Cap(host, MaxName) is { Length: > 0 } machine) where.Add("on " + machine);
             if (where.Count > 0) title += "\n" + string.Join(" ", where);
 
             return new ChatPrompt(title, Options(approvalId), Deliberate: true);
@@ -71,10 +82,10 @@ namespace Orbweaver
 
         // Another reviewer got there first; the snapshot says what they decided.
         internal static string AlreadyDecided(string? status) =>
-            "Already decided elsewhere: " + (Clean(status, MaxReason) is { Length: > 0 } s ? s : "unknown");
+            "Already decided elsewhere: " + (Safe(status, MaxReason) is { Length: > 0 } s ? s : "unknown");
 
         internal static string CouldntAnswer(string message) =>
-            "Couldn't answer: " + (Clean(message, MaxCommand) is { Length: > 0 } m ? m : "no reason given");
+            "Couldn't answer: " + (Safe(message, MaxCommand) is { Length: > 0 } m ? m : "no reason given");
 
         // A request we did not answer ended: from a resolved event, a poll that no
         // longer lists it, or the local clock. Terminal reasons are the gateway's
@@ -98,60 +109,78 @@ namespace Orbweaver
             {
                 "allowed" => "Allowed by another reviewer",
                 "denied" => "Denied by another reviewer",
-                _ => "Dropped by the gateway" + (Clean(reason, MaxReason) is { Length: > 0 } r ? " (" + r + ")" : "")
+                _ => "Dropped by the gateway" + (Safe(reason, MaxReason) is { Length: > 0 } r ? " (" + r + ")" : "")
             };
         }
 
-        // The command a person can run on the gateway instead, since there is no
-        // terminal to focus. allow-always is named here and nowhere else: it mints
-        // a standing grant this app has no surface to list or revoke.
-        internal static string Elsewhere(string id)
+        // How to answer it on the gateway instead, since there is no terminal to
+        // focus. The id is shown as data, quoted and escaped, never composed into a
+        // line to paste: ids are the gateway's, may be up to 512 characters, and may
+        // carry printable punctuation a shell reads as syntax. allow-always is named
+        // here and nowhere else: it mints a standing grant this app has no surface to
+        // list or revoke.
+        internal static string Elsewhere(string id) =>
+            "To answer this yourself, use the openclaw CLI on the gateway host: approvals resolve, "
+            + "with --deny or --allow-once, for this request id: " + QuoteId(id)
+            + ". (A standing grant is --allow-always --expires-in-days N, and is managed there.)";
+
+        // Single-quoted, with an embedded quote escaped the way a shell would need
+        // it, and anything unprintable written out as \u{...}, so what is shown is
+        // exactly the id and nothing in it can pass for text of ours.
+        internal static string QuoteId(string? id)
         {
-            var safe = Clean(id, MaxName);
-            return $"To answer this yourself, on the gateway host run: openclaw approvals resolve {safe} --deny "
-                + $"or --allow-once. (A standing grant is --allow-always --expires-in-days N, and is managed there.)";
+            var sb = new System.Text.StringBuilder("'");
+
+            foreach (var rune in (id ?? "").EnumerateRunes())
+            {
+                if (rune.Value == '\'') sb.Append("'\\''");
+                else if (IsUnsafe(rune)) sb.Append("\\u{").Append(rune.Value.ToString("X")).Append('}');
+                else sb.Append(rune.ToString());
+            }
+
+            return sb.Append('\'').ToString();
         }
 
         // One line in a room's transcript: an approval belongs to one member's
         // session and is answered in that member's own panel.
         internal static string RoomLine(string member) =>
-            Clean(member, MaxName) + " is waiting for an approval";
+            Safe(member, MaxName) + " is waiting for an approval";
 
-        // Single-spaced, no control characters, and capped: what is cut is said, as
-        // a count, so a long command cannot look shorter than it is. Newlines and
-        // tabs become spaces: a command that sprawls over lines is shown on one so
-        // it cannot push the buttons off the bar, and cannot fake a second line.
-        internal static string Clean(string? text, int max)
+        // Capped, and what is cut is said as a count, so a long command cannot look
+        // shorter than it is. Never altered otherwise.
+        internal static string Cap(string? text, int max)
         {
             if (string.IsNullOrEmpty(text)) return "";
+            if (text.Length <= max) return text;
 
-            var sb = new System.Text.StringBuilder(Math.Min(text.Length, max + 1));
-            var lastSpace = false;
-            var total = 0;
+            // Not through the middle of a surrogate pair.
+            var cut = char.IsHighSurrogate(text[max - 1]) ? max - 1 : max;
+            return text[..cut] + $"… ({text.Length - cut} more characters)";
+        }
 
-            foreach (var c in text)
+        // Text the gateway supplied for a sentence of ours: shown if it is clean,
+        // and absent (so the sentence says there is none) if it is not.
+        private static string Safe(string? text, int max) => HasUnsafe(text) ? "" : Cap(text, max);
+
+        // A control (Cc), format (Cf), line-separator (Zl) or paragraph-separator
+        // (Zp) character anywhere in it. Such text is not shown.
+        internal static bool HasUnsafe(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            foreach (var rune in text.EnumerateRunes())
             {
-                var ch = char.IsControl(c) ? ' ' : c;
-                if (ch == ' ')
-                {
-                    if (lastSpace || total == 0) continue;
-                    lastSpace = true;
-                }
-                else
-                {
-                    lastSpace = false;
-                }
-
-                total++;
-                if (sb.Length <= max) sb.Append(ch);
+                if (IsUnsafe(rune)) return true;
             }
 
-            // A trailing space is not content.
-            if (lastSpace) total--;
-
-            if (total <= max) return sb.ToString().TrimEnd();
-
-            return sb.ToString(0, max).TrimEnd() + $"… ({total - max} more characters)";
+            return false;
         }
+
+        private static bool IsUnsafe(System.Text.Rune rune) =>
+            System.Text.Rune.GetUnicodeCategory(rune) is
+                System.Globalization.UnicodeCategory.Control
+                or System.Globalization.UnicodeCategory.Format
+                or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator;
     }
 }
