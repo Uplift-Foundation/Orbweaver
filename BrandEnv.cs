@@ -60,6 +60,15 @@ namespace Orbweaver
         internal const string TeamLiveNames = "LIVE_NAMES";
         internal const string TeamWindowsUsers = "WINDOWS_USERS";
 
+        // CB-270 Stage 6. The probe's own switches (tools/openclaw-probe): the
+        // scopes and caps it asks for in place of the app's, and the opt-in that
+        // lets its `approvals resolve` mode answer a real approval. No older
+        // spelling ever existed; they are here for the one list and the same
+        // precedence. ALLOW_RESOLVE is read as exactly "1" and nothing else.
+        internal const string ProbeScopes = "PROBE_SCOPES";
+        internal const string ProbeCaps = "PROBE_CAPS";
+        internal const string ProbeAllowResolve = "PROBE_ALLOW_RESOLVE";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -67,6 +76,7 @@ namespace Orbweaver
             LiveBridgeTests, LaunchTests, LiveDaemonTests,
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
+            ProbeScopes, ProbeCaps, ProbeAllowResolve,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

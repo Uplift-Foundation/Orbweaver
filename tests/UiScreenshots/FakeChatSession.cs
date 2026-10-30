@@ -8,8 +8,17 @@ namespace Orbweaver.Tests;
 internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatRoom,
     IRemoteChatReadOnly, IRemoteChatInterrupt,
-    IRemoteChatMachine, IRemoteChatPeerInbound, IRemoteChatRunOptions
+    IRemoteChatMachine, IRemoteChatPeerInbound, IRemoteChatRunOptions, IRemoteChatPrompts
 {
+    // CB-270 Stage 6: a prompt posed for a capture; answering does nothing.
+    public ChatPrompt? Prompt { get; set; }
+
+    public event Action? PromptChanged { add { } remove { } }
+
+    public Task AnswerAsync(ChatPromptOption option) => Task.CompletedTask;
+
+    public void AnswerElsewhere() { }
+
     // CB-270 Stage 4: run controls, posed for a capture. See the UiTests copy.
     public RemoteRunOptions? RunOptions { get; set; }
 

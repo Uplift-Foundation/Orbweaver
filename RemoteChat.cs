@@ -702,9 +702,23 @@ namespace Orbweaver
     // One option in a dialog the session is blocked on. Key is what gets sent —
     // a digit, for the numbered lists Claude Code puts up — and Label is the
     // dialog's own wording, read off the screen rather than guessed at.
-    public sealed record ChatPromptOption(string Key, string Label);
+    // ApprovalId binds an option to the one request it was drawn for (CB-270 Stage
+    // 6): a click answers that request or nothing, never whichever one happens to
+    // be showing by the time it lands. Null for every other kind of prompt.
+    public sealed record ChatPromptOption(string Key, string Label, string? ApprovalId = null);
 
-    public sealed record ChatPrompt(string Title, IReadOnlyList<ChatPromptOption> Options);
+    // ArmedActivation marks a prompt whose answer cannot be undone and must not be
+    // given by accident: its options ignore presses for a moment after the prompt
+    // first shows or changes, and activate on release over the same option. False
+    // for a permission bar read off a terminal, which answers on a press.
+    //
+    // ElsewhereLabel replaces the "Answer in the terminal" link's words for a
+    // prompt that has no terminal to go to, and a prompt that sets it keeps the
+    // panel open when that link is used, since the answer to "where else" is a note
+    // in the transcript and not another window.
+    public sealed record ChatPrompt(
+        string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false,
+        string? ElsewhereLabel = null);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can

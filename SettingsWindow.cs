@@ -1941,6 +1941,20 @@ namespace Orbweaver
                 + "them from an orb — which asks the gateway for write permission, so you "
                 + "have to approve this device again there (`openclaw devices approve --latest`)."));
 
+            // CB-270 Stage 6. A third power, separate from the other two: replying
+            // can make an agent act, approving lets you decide when one asks first.
+            // The text says what it grants and what it never does, and that turning
+            // it on or off needs the device approved again on the gateway.
+            rows.Add(Row("Allow approving agent actions",
+                Switch(OrbweaverSettings.OpenClawApproveEnabled, OnOpenClawApproveToggled),
+                "Off, you can see your agents but not answer when one asks permission. "
+                + "On, an agent waiting for your say-so before it runs a command turns "
+                + "its orb amber, and its panel offers Allow once or Deny. Nothing is "
+                + "ever allowed automatically, and there is no \"always\" here. This asks "
+                + "the gateway for approval permission, so you have to approve this "
+                + "device again there (`openclaw devices approve --latest`), and again "
+                + "if you turn it off. It is independent of replying."));
+
             // Kept as a field and ticked, rather than rebuilt: the connection
             // changes state while you are looking at it — pairing gets approved,
             // a machine wakes up — and a status line that only tells the truth
@@ -2290,6 +2304,19 @@ namespace Orbweaver
         {
             OrbweaverSettings.OpenClawNativeMode = mode;
             SessionManager.Instance?.ReapplyArrangement();
+        }
+
+        // CB-270 Stage 6. Not excluded from coverage, unlike the reply switch it
+        // mirrors: with no gateway address set, Restart is inert, which is how the
+        // suite drives it without a socket.
+        internal void OnOpenClawApproveToggled(bool enabled)
+        {
+            OrbweaverSettings.OpenClawApproveEnabled = enabled;
+
+            // Reconnects, because the scopes are part of the handshake and the
+            // gateway treats a changed scope set as a device to approve afresh.
+            OpenClawSessions.Restart();
+            Rebuild();
         }
 
         // Excluded from coverage: reconnects to the gateway, because the scopes

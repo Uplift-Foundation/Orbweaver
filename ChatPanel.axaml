@@ -575,9 +575,16 @@
                     CornerRadius="8" Padding="8,6"
                     Background="#26B8860B" BorderBrush="#80B8860B" BorderThickness="1">
                 <StackPanel Spacing="6">
-                    <TextBlock x:Name="PromptTitle" TextWrapping="Wrap"
-                               FontSize="11" FontWeight="SemiBold"
-                               Foreground="#F2FFFFFF"/>
+                    <!-- Bounded and scrollable: an approval shows its whole
+                         command, up to four thousand characters, and a block
+                         that tall must not push the buttons off the panel. -->
+                    <ScrollViewer x:Name="PromptTitleScroll" MaxHeight="150"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <TextBlock x:Name="PromptTitle" TextWrapping="Wrap"
+                                   FontSize="11" FontWeight="SemiBold"
+                                   Foreground="#F2FFFFFF"/>
+                    </ScrollViewer>
                     <ItemsControl x:Name="PromptOptions">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -589,7 +596,8 @@
                                 <Border Background="#33FFFFFF"
                                         BorderBrush="#40FFFFFF" BorderThickness="1"
                                         CornerRadius="6" Padding="7,4" Cursor="Hand"
-                                        PointerPressed="PromptOption_PointerPressed">
+                                        PointerPressed="PromptOption_PointerPressed"
+                                        PointerReleased="PromptOption_PointerReleased">
                                     <!-- No FontSize of its own: it inherits
                                          PromptOptions', which ApplyTextScale
                                          sets. A template has no handle a

@@ -15,7 +15,7 @@ namespace Orbweaver
     // AgentTeamViewer), and an interface whose second implementation is
     // permanently off would be ceremony. Off means Snapshot() returns an empty
     // array — no socket, no task, no key, nothing constructed at all.
-    internal static class OpenClawSessions
+    internal static partial class OpenClawSessions
     {
         private static readonly object Gate = new();
 
@@ -1024,6 +1024,7 @@ namespace Orbweaver
                 _supervisor = null;
                 _snapshot = Array.Empty<Session>();
                 Running.Clear();
+                ClearPendingLocked();
 
                 // LastSeen deliberately survives a reconnect: a session that was
                 // busy ten seconds before the socket dropped is still a session
@@ -1359,10 +1360,32 @@ namespace Orbweaver
             while (!ct.IsCancellationRequested)
             {
                 var res = await gateway.RequestAsync("sessions.list", new Dictionary<string, object>(), ct);
+
+                // CB-270 Stage 6: the approvals lists, before Parse reads each
+                // session's state so a pending approval is amber in this very poll.
+                //
+                // Isolated: whatever goes wrong in here, of any kind, must not skip
+                // the session parse below or force a reconnect, which would stall
+                // every OpenClaw orb, not only the approvals. A failure is dropped
+                // here and tried again at the next poll. (Cancellation is not a
+                // failure and passes through.)
+                try
+                {
+                    await PollApprovalsOnceAsync(gateway, ct);
+                }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                {
+                }
+
                 var before = RunStatesSnapshot();
                 var (sessions, total) = Parse(res);
                 NotifyRunOptions(ChatsWithChangedRunState(before, RunStatesSnapshot(), OpenChats()));
                 NotifyRunStatuses(OpenChats());
+
+                // CB-270 Stage 6: Parse has just recorded every session the gateway
+                // listed, so a pending approval on one it no longer lists, or one
+                // invented under a key it never listed, can go.
+                PurgeUnlistedApprovals();
 
                 _snapshot = sessions;
                 Report(total == sessions.Count
@@ -1498,7 +1521,10 @@ namespace Orbweaver
                 // CB-270: a pinned session or a dashboard one is exempt, however
                 // quiet. See OpenClawRetention for why those two and no others.
                 var pinned = Bool(s, "pinned") == true;
-                if (state != "generating"
+                // CB-270 Stage 6: a session waiting on an approval is exempt like one
+                // mid-run, however quiet the gateway says it is: the orb that is
+                // asking for a person is the one that must not vanish.
+                if (state is not ("generating" or "waiting")
                     && !OpenClawRetention.KeptRegardlessOfAge(pinned, native)
                     && within is { } limit && asOf - activity > limit) continue;
 
@@ -1787,6 +1813,12 @@ namespace Orbweaver
         {
             lock (Gate)
             {
+                // CB-270 Stage 6: a session with an unanswered approval is waiting
+                // on a person, ahead of working or idle. A session mid-run that is
+                // blocked on a click is waiting, not working.
+                if (HasPending(key, new DateTimeOffset(DateTime.SpecifyKind(now ?? DateTime.UtcNow, DateTimeKind.Utc))))
+                    return "waiting";
+
                 if (!Running.TryGetValue(key, out var track)) return "idle";
                 if (!OpenClawRunSignal.IsGenerating(track, now ?? DateTime.UtcNow))
                 {
@@ -1832,6 +1864,15 @@ namespace Orbweaver
         internal static void OnEvent(string name, JsonElement payload, DateTime now)
         {
             if (name is "tick" or "health" or "presence" or "connect.challenge") return;
+
+            // CB-270 Stage 6: approval broadcasts carry the session in
+            // request.sessionKey, not at the top, so they are routed before the run
+            // signal looks for one. They never touch a run's state.
+            if (OpenClawApprovals.KindOfEvent(name) is not null || OpenClawApprovals.IsSessionEvent(name))
+            {
+                OnApprovalEvent(name, payload, now);
+                return;
+            }
 
             var key = OpenClawRunSignal.SessionOf(payload);
             if (key is null) return;
@@ -1900,7 +1941,24 @@ namespace Orbweaver
             // IRemoteChatSession can promise its events arrive on the UI thread.
             if (chat is not null)
             {
-                Dispatcher.UIThread.Post(() => chat.OnAgentEvent(name, payload));
+                Dispatcher.UIThread.Post(() => RunUiJobGuarded(() => chat.OnAgentEvent(name, payload)));
+            }
+        }
+
+        // A job posted to the UI thread runs after the socket loop's own catch has
+        // gone out of scope, so an exception thrown by one is not a skipped frame:
+        // CrashLog only records an unhandled UI exception, and Avalonia's default
+        // then ends the process. One gateway payload must not be able to do that, so
+        // each event's delivery is its own try. The next event still arrives.
+        internal static void RunUiJobGuarded(Action job)
+        {
+            try
+            {
+                job();
+            }
+            catch (Exception ex)
+            {
+                CrashLog.Record("OpenClaw event", ex);
             }
         }
 
@@ -1917,7 +1975,7 @@ namespace Orbweaver
                 return (null, "gateway didn't return a session key");
             }
 
-            var key = keyEl.GetString();
+            var key = keyEl.SafeString();
             return string.IsNullOrWhiteSpace(key)
                 ? (null, "gateway returned an empty session key")
                 : (key, null);
@@ -2502,7 +2560,7 @@ namespace Orbweaver
         // things to keep in step.
         internal static string TextOf(JsonElement content) => content.ValueKind switch
         {
-            JsonValueKind.String => content.GetString() ?? "",
+            JsonValueKind.String => content.SafeString() ?? "",
 
             JsonValueKind.Array => string.Join("\n", content.EnumerateArray()
                 .Where(b => Str(b, "type") == "text")
@@ -4956,9 +5014,33 @@ namespace Orbweaver
         {
             try
             {
-                await gateway.RequestAsync(
-                    wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe",
-                    new Dictionary<string, object> { ["key"] = key }, ct);
+                var parameters = new Dictionary<string, object> { ["key"] = key };
+
+                // CB-270 Stage 6: ask for the session-scoped replay of its pending
+                // approvals, only for a device that chose to approve and was granted
+                // the scope. Never on an unsubscribe, and never otherwise, so a
+                // device that did not opt in sends the frame it always did.
+                if (wanted
+                    && OrbweaverSettings.OpenClawApproveEnabled
+                    && gateway.GrantedScopes.Contains(ApprovalsScope))
+                    parameters["includeApprovals"] = true;
+
+                var response = await gateway.RequestAsync(
+                    wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe", parameters, ct);
+
+                // The subscribe's answer carries the authoritative pending set for
+                // the session when approvals were asked for. An unsubscribe hands
+                // what the panel taught this app back to the list.
+                if (parameters.ContainsKey("includeApprovals"))
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    if (OpenClawApprovals.ParseReplay(response, key, now) is { } replay) ApplyReplay(key, replay, now);
+                }
+                else if (!wanted)
+                {
+                    ReleaseSessionSourced(key);
+                }
+
                 return null;
             }
             catch (Exception ex) when (wanted)
@@ -5257,7 +5339,7 @@ namespace Orbweaver
             e.ValueKind == JsonValueKind.Object
             && e.TryGetProperty(name, out var v)
             && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
+                ? v.SafeString()
                 : null;
 
         // Null rather than false when absent, because the three answers are

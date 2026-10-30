@@ -44,6 +44,7 @@
     <Compile Include="../../OpenClawIdentity.cs" />
     <Compile Include="../../OpenClawSocket.cs" />
     <Compile Include="../../OpenClawGateway.cs" />
+    <Compile Include="../../OpenClawJson.cs" />
     <!-- The orb-group table and the account-orb overrides, which the settings
          now hold (CB-270 found the probe broken by them). All pure; the one
          thing OrbGroupTable reaches for that is not, OrbArrangement, is

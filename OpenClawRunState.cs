@@ -91,7 +91,7 @@ namespace Orbweaver
             {
                 if (item.ValueKind == JsonValueKind.String)
                 {
-                    var id = item.GetString();
+                    var id = item.SafeString();
                     if (!string.IsNullOrWhiteSpace(id)) list.Add(new OpenClawRunOption(id, id));
                 }
                 else if (item.ValueKind == JsonValueKind.Object)
@@ -113,7 +113,7 @@ namespace Orbweaver
                 return null;
             }
 
-            var text = v.GetString();
+            var text = v.SafeString();
             return string.IsNullOrWhiteSpace(text) ? null : text;
         }
 

@@ -88,7 +88,7 @@ namespace Orbweaver
             "orbSize", "orbSizes", "orbMemberOffsets", "accountOrbOverrides",
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
-            "openclawReplyEnabled", "openclawActiveWithinMinutes",
+            "openclawReplyEnabled", "openclawApproveEnabled", "openclawActiveWithinMinutes",
             "claudeCloudEnabled",
             // Still written, though nothing reads it into the model any more —
             // see OpenClawHeartbeatMode. Listed here so it does not also
@@ -340,6 +340,14 @@ namespace Orbweaver
             // for. Turning it on widens the scopes this device requests, which
             // the gateway treats as a new pairing to approve.
             public bool OpenClawReplyEnabled { get; set; }
+
+            // CB-270 Stage 6: a third, separate power. Allowing replies grants
+            // operator.write; this grants operator.approvals, which lets the app
+            // see what the gateway is holding for a person's say-so and answer it
+            // allow-once or deny. Off by default, independent of replying, and
+            // turning it on widens the scopes this device requests, which the
+            // gateway treats as a new pairing to approve on its own host.
+            public bool OpenClawApproveEnabled { get; set; }
 
             // The chat panel on a local Claude Code orb. On by default, unlike
             // everything else here that is off: it opens no socket, starts no
@@ -1564,6 +1572,12 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.OpenClawReplyEnabled = value; Save(); }
         }
 
+        public static bool OpenClawApproveEnabled
+        {
+            get { Load(); lock (Gate) return _model.OpenClawApproveEnabled; }
+            set { Load(); lock (Gate) _model.OpenClawApproveEnabled = value; Save(); }
+        }
+
         public static bool ClaudeCodeChatEnabled
         {
             get { Load(); lock (Gate) return _model.ClaudeCodeChatEnabled; }
@@ -2331,6 +2345,7 @@ namespace Orbweaver
                         OpenClawPort = root["openclawPort"]?.GetValue<int>() ?? DefaultOpenClawPort,
                         OpenClawFingerprint = Text(root["openclawFingerprint"]),
                         OpenClawReplyEnabled = root["openclawReplyEnabled"]?.GetValue<bool>() ?? false,
+                        OpenClawApproveEnabled = root["openclawApproveEnabled"]?.GetValue<bool>() ?? false,
                         OpenClawActiveWithinMinutes =
                             root["openclawActiveWithinMinutes"]?.GetValue<int>() ?? DefaultOpenClawActiveWithin,
                         OpenClawHeartbeatMode = ClusterModeFrom(
@@ -2995,6 +3010,7 @@ namespace Orbweaver
                         ["openclawPort"] = _model.OpenClawPort,
                         ["openclawFingerprint"] = _model.OpenClawFingerprint,
                         ["openclawReplyEnabled"] = _model.OpenClawReplyEnabled,
+                        ["openclawApproveEnabled"] = _model.OpenClawApproveEnabled,
                         ["openclawActiveWithinMinutes"] = _model.OpenClawActiveWithinMinutes,
                         // Still written, and derived rather than stored: an older
                         // build reading this file has no idea what

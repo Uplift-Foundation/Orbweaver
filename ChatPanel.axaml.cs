@@ -2665,6 +2665,14 @@ namespace Orbweaver
             // carries the size for its items, which have no handle of their own
             // (see the template's comment).
             PromptTitle.FontSize = 11 * scale;
+
+            // A whole-number line height, so n lines are a whole number of pixels
+            // tall. At the font's own height (13.431 at 11 pt) three lines measure
+            // 40.29, layout rounding makes the box 40, and the text is then laid out
+            // again to fit 40: the third line no longer fits and is not drawn. That
+            // would drop the last line of an approval, which is where the request
+            // id sits, on a display without sub-pixel layout.
+            PromptTitle.LineHeight = Math.Ceiling(PromptTitle.FontSize * 1.25);
             PromptOptions.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 
@@ -3078,18 +3086,57 @@ namespace Orbweaver
         // composer: the panel doesn't hide what is happening because you can't
         // act on it yet, and the session — which owns the rule — is the thing
         // that states it.
+        // CB-270 Stage 6. A prompt marked ArmedActivation (an approval: an answer cannot
+        // be taken back) is armed, not instant: its options ignore presses for a
+        // moment after the prompt first shows or its content changes, so a click
+        // that was aimed at something else, or at what was there a moment ago,
+        // cannot answer it; and it answers on release over the same option that was
+        // pressed, so a press that slid off, or a press and release on different
+        // options, answers nothing. A permission bar read off a terminal is not
+        // marked, and answers on a press as it always has.
+        //
+        // The clock is a seam so a test does not sleep.
+        internal static Func<DateTime> PromptClock { get; set; } = () => DateTime.UtcNow;
+        internal static readonly TimeSpan PromptArmDelay = TimeSpan.FromMilliseconds(500);
+
+        private string? _promptSignature;
+        private DateTime _promptShownAt;
+        private bool _promptArmed;
+        private Control? _pressedPromptOption;
+        // What the bar was asking when the press landed: a release answers only the
+        // question that was on the bar when the press began, however the controls
+        // are rebuilt in between (the same id can come back with another command).
+        private string? _pressedPromptSignature;
+
         private void ApplyPrompt()
         {
             var prompt = (_session as IRemoteChatPrompts)?.Prompt;
 
             if (prompt is null)
             {
+                _promptSignature = null;
+                _promptArmed = false;
+                _pressedPromptOption = null;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
                 return;
             }
 
+            // The arming clock restarts whenever what is being asked changes, not
+            // only when the box first appears: a new request replacing one under
+            // the pointer is exactly the moment a click must not carry over.
+            var signature = prompt.Title + "\n" + string.Join("\n",
+                prompt.Options.Select(o => o.Key + "|" + o.ApprovalId));
+            if (signature != _promptSignature)
+            {
+                _promptSignature = signature;
+                _promptShownAt = PromptClock();
+            }
+
+            _promptArmed = prompt.ArmedActivation;
+
             PromptTitle.Text = prompt.Title;
+            PromptElsewhere.Text = prompt.ElsewhereLabel ?? "Answer in the terminal";
 
             // No options means the screen couldn't be read. The box still
             // appears — something is waiting and the transcript won't say so —
@@ -3104,7 +3151,46 @@ namespace Orbweaver
         {
             e.Handled = true;
 
-            if ((sender as Control)?.DataContext is not ChatPromptOption option) return;
+            if (_promptArmed)
+            {
+                // Only remembered: the answer is given on release. And only a press
+                // that itself came after the arming window is remembered, so one
+                // that began inside it and is held past it answers nothing.
+                _pressedPromptOption = PromptClock() - _promptShownAt < PromptArmDelay ? null : sender as Control;
+                _pressedPromptSignature = _promptSignature;
+                return;
+            }
+
+            ChoosePromptOption(sender as Control);
+        }
+
+        private void PromptOption_PointerReleased(object? sender, PointerReleasedEventArgs e)
+        {
+            if (!_promptArmed) return;
+
+            e.Handled = true;
+
+            var pressed = _pressedPromptOption;
+            _pressedPromptOption = null;
+
+            var pressedSignature = _pressedPromptSignature;
+            _pressedPromptSignature = null;
+
+            if (sender is not Control option || !ReferenceEquals(pressed, option)) return;
+            if (pressedSignature is null || pressedSignature != _promptSignature) return;
+
+            // Released over the same option, not merely delivered to it by capture.
+            var at = e.GetPosition(option);
+            if (at.X < 0 || at.Y < 0 || at.X > option.Bounds.Width || at.Y > option.Bounds.Height) return;
+
+            if (PromptClock() - _promptShownAt < PromptArmDelay) return;
+
+            ChoosePromptOption(option);
+        }
+
+        private void ChoosePromptOption(Control? control)
+        {
+            if (control?.DataContext is not ChatPromptOption option) return;
             if (_session is not IRemoteChatPrompts prompts) return;
 
             _ = prompts.AnswerAsync(option);
@@ -3116,7 +3202,14 @@ namespace Orbweaver
 
             if (_session is not IRemoteChatPrompts prompts) return;
 
+            // Read before the call: answering may change the prompt.
+            var staysOpen = prompts.Prompt?.ElsewhereLabel is not null;
+
             prompts.AnswerElsewhere();
+
+            // A prompt with no terminal to go to answers "where else" with a note in
+            // the transcript, which is the thing to read, so the panel stays.
+            if (staysOpen) return;
 
             // Dismissed, because this asked to be somewhere else. Leaving the
             // panel up over the terminal it just brought forward would be
