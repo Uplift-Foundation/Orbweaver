@@ -15,7 +15,7 @@ namespace Orbweaver
     // AgentTeamViewer), and an interface whose second implementation is
     // permanently off would be ceremony. Off means Snapshot() returns an empty
     // array — no socket, no task, no key, nothing constructed at all.
-    internal static class OpenClawSessions
+    internal static partial class OpenClawSessions
     {
         private static readonly object Gate = new();
 
@@ -1024,6 +1024,7 @@ namespace Orbweaver
                 _supervisor = null;
                 _snapshot = Array.Empty<Session>();
                 Running.Clear();
+                ClearPendingLocked();
 
                 // LastSeen deliberately survives a reconnect: a session that was
                 // busy ten seconds before the socket dropped is still a session
@@ -1359,6 +1360,11 @@ namespace Orbweaver
             while (!ct.IsCancellationRequested)
             {
                 var res = await gateway.RequestAsync("sessions.list", new Dictionary<string, object>(), ct);
+
+                // CB-270 Stage 6: the approvals lists, before Parse reads each
+                // session's state so a pending approval is amber in this very poll.
+                await PollApprovalsOnceAsync(gateway, ct);
+
                 var before = RunStatesSnapshot();
                 var (sessions, total) = Parse(res);
                 NotifyRunOptions(ChatsWithChangedRunState(before, RunStatesSnapshot(), OpenChats()));
@@ -1787,6 +1793,12 @@ namespace Orbweaver
         {
             lock (Gate)
             {
+                // CB-270 Stage 6: a session with an unanswered approval is waiting
+                // on a person, ahead of working or idle. A session mid-run that is
+                // blocked on a click is waiting, not working.
+                if (HasPending(key, new DateTimeOffset(DateTime.SpecifyKind(now ?? DateTime.UtcNow, DateTimeKind.Utc))))
+                    return "waiting";
+
                 if (!Running.TryGetValue(key, out var track)) return "idle";
                 if (!OpenClawRunSignal.IsGenerating(track, now ?? DateTime.UtcNow))
                 {
@@ -1832,6 +1844,15 @@ namespace Orbweaver
         internal static void OnEvent(string name, JsonElement payload, DateTime now)
         {
             if (name is "tick" or "health" or "presence" or "connect.challenge") return;
+
+            // CB-270 Stage 6: approval broadcasts carry the session in
+            // request.sessionKey, not at the top, so they are routed before the run
+            // signal looks for one. They never touch a run's state.
+            if (OpenClawApprovals.KindOfEvent(name) is not null)
+            {
+                OnApprovalEvent(name, payload, now);
+                return;
+            }
 
             var key = OpenClawRunSignal.SessionOf(payload);
             if (key is null) return;

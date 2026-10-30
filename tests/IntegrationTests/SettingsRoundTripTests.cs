@@ -90,6 +90,36 @@ public class SettingsRoundTripTests
         Assert.Equal("star", OrbweaverSettings.OpenClawCronShape);
     }
 
+    // CB-270 Stage 6. A third, separate switch: off by default, written to its own
+    // key, independent of the reply switch, and written exactly once (a key Save
+    // writes that Load does not recognise would round-trip through _unknownKeys as
+    // well and be rejected as a duplicate).
+    [Fact]
+    public void ApproveEnabled_DefaultsOffRoundTripsAndIsIndependentOfReplying()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        Assert.False(OrbweaverSettings.OpenClawApproveEnabled);
+
+        OrbweaverSettings.OpenClawApproveEnabled = true;
+
+        Assert.False(OrbweaverSettings.OpenClawReplyEnabled);
+
+        var text = File.ReadAllText(Path.Combine(dir, "settings.json"));
+        var root = JsonNode.Parse(text) as JsonObject;
+        Assert.True(root!["openclawApproveEnabled"]!.GetValue<bool>());
+        Assert.False(root["openclawReplyEnabled"]!.GetValue<bool>());
+        Assert.Equal(1, text.Split("\"openclawApproveEnabled\"").Length - 1);
+
+        PointSettingsAt(dir);
+        Assert.True(OrbweaverSettings.OpenClawApproveEnabled);
+
+        // A second launch that saves for an unrelated reason still writes it once.
+        OrbweaverSettings.TwoLetterGlyphs = true;
+        Assert.Equal(1, File.ReadAllText(Path.Combine(dir, "settings.json")).Split("\"openclawApproveEnabled\"").Length - 1);
+    }
+
     // CB-270. WithChats and a diamond by default, and Hidden then OwnShape
     // written and read back, since a missing key also reads as WithChats and only
     // a non-default value proves the write happened.

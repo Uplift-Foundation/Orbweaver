@@ -1399,6 +1399,15 @@ namespace Orbweaver
         // Called on the UI thread when the run state or the model catalogue moved.
         internal void OnRunOptionsChanged() => RunOptionsChanged?.Invoke();
 
+        // CB-270 Stage 6: the pending approvals for this session changed (one
+        // arrived, one was resolved, or the poll reconciled). Called on the UI
+        // thread by OpenClawSessions, which has already updated PendingFor(key); the
+        // panel side reads that and redraws its prompt, and drains TakeEnded for the
+        // lines about approvals it did not answer itself.
+        internal event Action? ApprovalsChanged;
+
+        internal void OnApprovalsChanged() => ApprovalsChanged?.Invoke();
+
         // Null unless every one of these holds, so the panel hides the picker
         // rather than showing one that would be refused:
         //   - the conversation is answered in place. A surface chat's model is the
