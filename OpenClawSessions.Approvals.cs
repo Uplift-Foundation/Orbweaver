@@ -489,10 +489,43 @@ namespace Orbweaver
         // snapshot like any other state.
         private static void NotifyApprovals(string key)
         {
+            RefreshSnapshotState(key);
+
             OpenClawChatSession? chat;
             lock (Gate) Chats.TryGetValue(key, out chat);
 
             if (chat is not null) Dispatcher.UIThread.Post(chat.OnApprovalsChanged);
+        }
+
+        // The orb draws from the snapshot the poll rebuilds every five seconds, which the
+        // manager reads every two, so an approval that arrives by event would be amber
+        // up to seven seconds late: an approval answered within that is never seen
+        // amber at all (the measured live run was clicked 4.6 s after it was raised,
+        // and the orb had not turned). The row's state is therefore re-derived the
+        // moment the store changes, for the sessions it changed; the next poll
+        // rebuilds it the same way, so the two cannot disagree.
+        private static void RefreshSnapshotState(string key)
+        {
+            lock (Gate)
+            {
+                var snapshot = _snapshot;
+                var index = -1;
+                for (var i = 0; i < snapshot.Count; i++)
+                {
+                    if (snapshot[i].Key != key) continue;
+                    index = i;
+                    break;
+                }
+
+                if (index < 0) return;
+
+                var state = StateFor(key);
+                if (snapshot[index].State == state) return;
+
+                var rows = snapshot.ToList();
+                rows[index] = rows[index] with { State = state };
+                _snapshot = rows;
+            }
         }
 
         // Asks the gateway for each kind's list and reconciles. Only for a device
