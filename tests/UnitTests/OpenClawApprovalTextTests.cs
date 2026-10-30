@@ -94,10 +94,16 @@ public class OpenClawApprovalTextTests
     [Fact]
     public void ARequestTheParserFlaggedUnsafeIsNotShownWhateverItsFieldsSay()
     {
-        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "true", null, null, unsafeToShow: true);
+        var prompt = OpenClawApprovalText.Prompt("ap-1", "Nova", "rm -rf /", "/etc", "box", unsafeToShow: true);
 
         Assert.StartsWith("A request couldn't be shown safely", prompt.Title);
         Assert.Equal(new[] { "deny" }, prompt.Options.Select(o => o.Key));
+
+        // Nothing of the request is on the bar: not the command, the place or the agent.
+        Assert.DoesNotContain("rm -rf", prompt.Title);
+        Assert.DoesNotContain("/etc", prompt.Title);
+        Assert.DoesNotContain("Nova", prompt.Title);
+        Assert.DoesNotContain("box", prompt.Title);
     }
 
     [Fact]
