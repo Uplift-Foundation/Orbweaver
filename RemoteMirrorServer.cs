@@ -85,7 +85,15 @@ namespace Orbweaver
             // the machines that have one. SessionManager's userConfigDirs seam
             // (CB-143) is the precedent. Read once per roster build, never per
             // entry.
-            Func<IReadOnlyList<string>>? UserConfigDirs = null);
+            Func<IReadOnlyList<string>>? UserConfigDirs = null,
+
+            // CB-300: the Claude Code config dirs the Agents roster was read
+            // from, for the hello that just read it. Null means no gap
+            // analysis (every seam built before this existed), which is why
+            // it defaults to null rather than being required. AllAccountSeams
+            // answers it from the same snapshot Agents did, so the gaps are
+            // computed against exactly the dirs that were asked.
+            Func<IReadOnlyList<string>>? RosterDirs = null);
 
         private readonly string _account;
         private readonly Seams _seams;
@@ -155,44 +163,151 @@ namespace Orbweaver
         // under `.claude-board`; the peer server read `.claude`; the two
         // machines connected in 22 milliseconds and exchanged a roster of
         // exactly zero entries, with nothing failing anywhere.
+        //
+        // CB-300: the dirs are a function, read on every roster build. A profile
+        // added in Settings → Claude Code while the app runs is offered by the
+        // next hello, with no restart; the snapshot this used to take at
+        // startup could not have seen it however the list was chosen.
         public static Seams AllAccountSeams(
-            IReadOnlyList<string> profileDirs,
+            Func<IReadOnlyList<string>> profileDirs,
             Func<string, string, Task<bool>> sendFrame,
-            Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> localSessions)
+            Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> localSessions,
+            Func<string, AgentRoster.ReadResult>? readAgents = null,
+            Func<DateTime>? now = null,
+            RosterReadLog? readLog = null)
         {
+            var first = profileDirs();
             var one = LiveSeams(
-                profileDirs.Count > 0 ? profileDirs[0] : ".claude", sendFrame, localSessions);
+                first.Count > 0 ? first[0] : ".claude", sendFrame, localSessions);
 
-            return one with { Agents = () => AgentsAcross(profileDirs) };
+            var memo = new RosterMemo(
+                profileDirs, readAgents ?? AgentRosterReader, now ?? (() => DateTime.UtcNow), RosterMemoTtl,
+                readLog ?? new RosterReadLog(MirrorLog.Say));
+
+            return one with { Agents = memo.Read, RosterDirs = () => memo.LastDirs };
         }
 
-        // Every account's roster, as one list.
-        //
-        // Excluded from coverage: each call launches `claude agents`. What is
-        // worth asserting is that duplicates collapse, which MergeRosters does
-        // and is pure.
+        // The one line that launches `claude agents`, held apart so RosterMemo
+        // below is testable with a fake reader.
         [ExcludeFromCodeCoverage]
-        private static IReadOnlyList<AgentRoster.Entry> AgentsAcross(
-            IReadOnlyList<string> profileDirs)
-        {
-            var all = new List<IReadOnlyList<AgentRoster.Entry>>();
+        private static AgentRoster.ReadResult AgentRosterReader(string dir) =>
+            AgentRoster.ReadChecked(dir);
 
-            foreach (var dir in profileDirs)
+        // How long one merged roster is reused. Long enough that two peers
+        // whose ten-second hellos are not phase-aligned share one read (2 s
+        // would not), short enough that a new session reaches the far machine
+        // within one hello interval of the memo expiring. Before CB-300 every
+        // hello from every peer spawned `claude agents` once per dir before
+        // the roster hash was even compared; the mini's three dirs and two
+        // peers made six spawns every ten seconds, permanently.
+        internal static readonly TimeSpan RosterMemoTtl = TimeSpan.FromSeconds(5);
+
+        // A dir as the log may print it: as the user wrote it when relative
+        // (".claude-loginid"), "~/..." when absolute under home, and by kind
+        // otherwise — an absolute path elsewhere can carry a user name.
+        internal static string DirLabel(string dir, string home)
+        {
+            var trimmed = dir.Trim();
+            if (!IsRootedPath(trimmed)) return trimmed;
+
+            var canon = CanonicalPath(home, trimmed);
+            var homeCanon = CanonicalPath(home, "");
+            return canon.StartsWith(homeCanon + "/", StringComparison.OrdinalIgnoreCase)
+                ? "~/" + canon[(homeCanon.Length + 1)..]
+                : "(outside home)";
+        }
+
+        // Every account's roster, as one list, memoised.
+        //
+        // Keyed by the dir list, so adding a profile invalidates it at once
+        // instead of after the TTL. One memo is shared by every peer. The reader
+        // and the clock are injected: RemoteControlSessions.LocalSessions' own
+        // 2 s memo is the precedent, and it is what lets this be tested without
+        // launching a process or sleeping.
+        internal sealed class RosterMemo
+        {
+            private readonly Func<IReadOnlyList<string>> _dirs;
+            private readonly Func<string, AgentRoster.ReadResult> _read;
+            private readonly RosterReadLog _log;
+            private readonly string _home;
+            private readonly Func<DateTime> _now;
+            private readonly TimeSpan _ttl;
+            private readonly object _lock = new();
+
+            private IReadOnlyList<string> _lastDirs = Array.Empty<string>();
+            private IReadOnlyList<AgentRoster.Entry>? _merged;
+            private DateTime _readAt;
+
+            internal RosterMemo(
+                Func<IReadOnlyList<string>> dirs,
+                Func<string, AgentRoster.ReadResult> read,
+                Func<DateTime> now,
+                TimeSpan ttl,
+                RosterReadLog? log = null,
+                string? home = null)
             {
-                try
-                {
-                    all.Add(AgentRoster.Read(dir));
-                }
-                catch (Exception ex)
-                {
-                    // One account that cannot be read must not take the others
-                    // with it — a profile dir removed from disk but left in
-                    // settings is the ordinary way this happens.
-                    MirrorLog.Say("roster-read-failed", $"dir={dir} {ex.GetType().Name}");
-                }
+                _log = log ?? new RosterReadLog(MirrorLog.Say);
+                _home = home ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                _dirs = dirs;
+                _read = read;
+                _now = now;
+                _ttl = ttl;
             }
 
-            return MergeRosters(all);
+            // The dirs the latest Read used — not a fresh evaluation, so the
+            // gap analysis is against what was actually asked.
+            internal IReadOnlyList<string> LastDirs
+            {
+                get { lock (_lock) return _lastDirs; }
+            }
+
+            internal IReadOnlyList<AgentRoster.Entry> Read()
+            {
+                // Held across the read on purpose: peers that arrive together
+                // wait for the one read instead of each launching their own.
+                lock (_lock)
+                {
+                    var dirs = _dirs();
+                    var now = _now();
+
+                    if (_merged is not null
+                        && now - _readAt < _ttl
+                        && dirs.SequenceEqual(_lastDirs, StringComparer.Ordinal))
+                        return _merged;
+
+                    var all = new List<IReadOnlyList<AgentRoster.Entry>>();
+
+                    foreach (var dir in dirs)
+                    {
+                        AgentRoster.ReadResult result;
+
+                        try
+                        {
+                            result = _read(dir);
+                        }
+                        catch (Exception ex)
+                        {
+                            // One account that cannot be read must not take the
+                            // others with it — a profile dir removed from disk
+                            // but left in settings is the ordinary way this
+                            // happens.
+                            result = new AgentRoster.ReadResult(
+                                Array.Empty<AgentRoster.Entry>(), "threw:" + ex.GetType().Name);
+                        }
+
+                        // Said here, on a real read, so a memo hit cannot say it
+                        // again. A failed read is cached with the rest for one
+                        // TTL: the next hello within it does not retry.
+                        _log.Note(DirLabel(dir, _home), result.Failure);
+                        all.Add(result.Entries);
+                    }
+
+                    _lastDirs = dirs;
+                    _merged = MergeRosters(all);
+                    _readAt = now;
+                    return _merged;
+                }
+            }
         }
 
         // Several accounts' rosters, deduplicated by session id.
@@ -369,6 +484,7 @@ namespace Orbweaver
                 : MirrorProtocol.UnpackRows(frame.Payload);
 
             var agents = _seams.Agents();
+            var askedDirs = _seams.RosterDirs?.Invoke();
             var sessions = _seams.LocalSessions();
 
             // Asking about nothing in particular means "what have you got?"
@@ -409,7 +525,8 @@ namespace Orbweaver
 
             MirrorLog.Say("hello",
                 $"asked={(everything ? "all" : wanted.Count.ToString())} "
-                + $"agents={agents.Count} sessions={sessions.Count}");
+                + $"agents={agents.Count} sessions={sessions.Count}"
+                + (askedDirs is null ? "" : $" dirs={askedDirs.Count}"));
 
             foreach (var (name, resolved) in Offer(wanted, agents, sessions))
             {
@@ -522,6 +639,13 @@ namespace Orbweaver
 
             // Every entry, offered by either path, says whose team it is in.
             entries = WithTeamFields(entries, sessions);
+
+            // CB-300: a live session the roster never named leaves no trace in
+            // the loops above — it is not in `wanted`, so it is never looked up,
+            // never unresolved, never logged. Say so, on the complete roster
+            // only (a named ask is a question about particular sessions).
+            if (everything && askedDirs is not null)
+                RecordRosterGaps(agents, sessions, askedDirs);
 
             // CB-216: hashed before it is compressed, so an asker holding this
             // exact roster is told so with a bare OK and no roster at all. See
@@ -752,6 +876,147 @@ namespace Orbweaver
             return added;
         }
 
+        // CB-300: the sessions this machine is running that the roster read
+        // never mentioned, grouped by the config root they live under.
+        //
+        // Root is home-relative ("~/.claude-loginid") where it can be, so
+        // neither the log nor the settings line carries a home path.
+        // Asked says the root's dir was one the roster was read from — a normal
+        // state, because the registry does not list every session even under a
+        // dir that was asked. Only an unasked root is the CB-300 signal, and
+        // Actionable keeps the advice to roots the user can act on: not a WSL
+        // path, not a session hosted by Claude Desktop.
+        internal sealed record RosterGap(string Root, int Sessions, bool Asked, bool Actionable);
+
+        internal const string NoTranscriptRoot = "(no transcript)";
+
+        internal static IReadOnlyList<RosterGap> RosterGaps(
+            IReadOnlyList<AgentRoster.Entry> agents,
+            IReadOnlyList<(string SessionId, SessionStatus Status)> sessions,
+            IReadOnlyList<string> askedDirs,
+            string home,
+            Func<SessionStatus, bool> eligible)
+        {
+            var asked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var dir in askedDirs)
+                if (!string.IsNullOrWhiteSpace(dir)) asked.Add(CanonicalPath(home, dir.Trim()));
+
+            var homeCanon = CanonicalPath(home, "");
+            var groups = new Dictionary<string, (string Root, int Sessions, bool Asked, bool Actionable)>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var session in sessions)
+            {
+                var status = session.Status;
+
+                // Team members are out of the registry by design (CB-223), and
+                // only ever offered through a lead.
+                if (status.Source != SessionSource.ClaudeCode) continue;
+                if (!string.IsNullOrEmpty(status.Lead)) continue;
+                if (!eligible(status)) continue;
+                if (agents.Any(a => RowMatches(a, session))) continue;
+
+                var raw = ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath);
+
+                string root;
+                bool isAsked;
+                bool underHome;
+
+                if (raw is null)
+                {
+                    root = NoTranscriptRoot;
+                    isAsked = false;
+                    underHome = false;
+                }
+                else
+                {
+                    var canon = CanonicalPath(home, raw);
+                    isAsked = asked.Contains(canon);
+                    underHome = canon.StartsWith(homeCanon + "/", StringComparison.OrdinalIgnoreCase);
+                    root = underHome ? "~/" + canon[(homeCanon.Length + 1)..] : raw;
+                }
+
+                var actionable = !isAsked && underHome && !status.IsDesktopHosted;
+
+                // One group per root. Actionable is per session, so a root
+                // holding both a Desktop-hosted session and a plain one is
+                // actionable for the plain one's sake.
+                groups.TryGetValue(root, out var g);
+                groups[root] = (root, g.Sessions + 1, isAsked, g.Actionable || actionable);
+            }
+
+            return groups.Values
+                .Select(g => new RosterGap(g.Root, g.Sessions, g.Asked, g.Actionable))
+                .OrderByDescending(g => g.Sessions)
+                .ThenBy(g => g.Root, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        // A path reduced to one comparable spelling: separators unified, "." and
+        // ".." folded, trailing separator dropped. Not Path.GetFullPath, which
+        // answers for the OS the test runs on — a Windows transcript path read
+        // on a Mac would otherwise be resolved against the working directory.
+        internal static bool IsRootedPath(string p) =>
+            p.StartsWith('/') || p.StartsWith('\\')
+            || (p.Length >= 3 && char.IsAsciiLetter(p[0]) && p[1] == ':' && (p[2] is '/' or '\\'));
+
+        internal static string CanonicalPath(string home, string path)
+        {
+            var full = path.Length == 0 ? home : IsRootedPath(path) ? path : home.TrimEnd('/', '\\') + "/" + path;
+            var parts = new List<string>();
+
+            foreach (var seg in full.Replace('\\', '/').Split('/'))
+            {
+                if (seg == "." || (seg.Length == 0 && parts.Count > 0)) continue;
+                if (seg == ".." && parts.Count > 1) { parts.RemoveAt(parts.Count - 1); continue; }
+                parts.Add(seg);
+            }
+
+            return string.Join("/", parts);
+        }
+
+        // The latest complete-roster hello's gaps, for the settings line.
+        private IReadOnlyList<RosterGap> _rosterGaps = Array.Empty<RosterGap>();
+
+        internal IReadOnlyList<RosterGap> LastRosterGaps
+        {
+            get { lock (_gate) return _rosterGaps; }
+        }
+
+        // Where "home" is for the gap analysis. Injectable for the same reason
+        // Now is: a test points it at a scratch directory.
+        internal string Home { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        // The sink for gap lines; MirrorLog.SayOnce in the app, a capture in a
+        // test, since the real log is opt-in and decided once per process.
+        internal Action<string, string> GapLog { get; set; } = (what, detail) => MirrorLog.SayOnce(what, detail);
+
+        private void RecordRosterGaps(
+            IReadOnlyList<AgentRoster.Entry> agents,
+            IReadOnlyList<(string SessionId, SessionStatus Status)> sessions,
+            IReadOnlyList<string> askedDirs)
+        {
+            var gaps = RosterGaps(agents, sessions, askedDirs, Home,
+                s => !(HasTranscript(s) && !LivelyEnough(s)));
+
+            lock (_gate) _rosterGaps = gaps;
+
+            // A root outside home is logged by kind, never by path: a WSL path
+            // carries a user name. Several such roots share one label, so their
+            // counts are summed rather than flip-flopping one SayOnce key.
+            foreach (var group in gaps.GroupBy(g => LogLabel(g.Root)))
+            {
+                GapLog($"roster-gap:{group.Key}",
+                    $"root={group.Key} sessions={group.Sum(g => g.Sessions)} "
+                    + $"asked={(group.Any(g => g.Asked) ? "yes" : "no")}");
+            }
+        }
+
+        internal static string LogLabel(string root) =>
+            root.StartsWith("~/", StringComparison.Ordinal) || root == NoTranscriptRoot
+                ? root
+                : "(outside home)";
+
         // CB-223: each entry with its team fields, from the session it was
         // built from. Lead is the lead's route, and only when that route is in
         // this same roster — a near machine must never be pointed at an orb it
@@ -847,6 +1112,16 @@ namespace Orbweaver
         internal static string Qualified(string name, string sessionId) =>
             sessionId.Length >= 6 ? name + QualifierMark + sessionId[..6] : name;
 
+        // Whether an agent row is this session: by id, or by the process id the
+        // registry and the status file both carry. Pulled out of Candidates
+        // (CB-300) so the gap analysis asks the very same question rather than
+        // a paraphrase of it.
+        internal static bool RowMatches(
+            AgentRoster.Entry row,
+            (string SessionId, SessionStatus Status) session) =>
+            string.Equals(row.SessionId, session.SessionId, StringComparison.OrdinalIgnoreCase)
+            || (row.Pid > 0 && row.Pid == session.Status.SessionPid);
+
         // The sessions a name could mean, in the order the roster lists them.
         internal static List<(string SessionId, SessionStatus Status)> Candidates(
             string name,
@@ -865,9 +1140,7 @@ namespace Orbweaver
 
             foreach (var session in sessions)
             {
-                var matches = named.Any(a =>
-                    string.Equals(a.SessionId, session.SessionId, StringComparison.OrdinalIgnoreCase)
-                    || (a.Pid > 0 && a.Pid == session.Status.SessionPid));
+                var matches = named.Any(a => RowMatches(a, session));
 
                 if (!matches) continue;
 

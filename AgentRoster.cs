@@ -158,16 +158,45 @@ namespace Orbweaver
         // against a context with no credentials answers empty rather than
         // hanging on a wizard — but it is the same wrong account, so a fix in
         // one place and not the other would be half a fix (CB-42).
+        // What came back from one `claude agents --json` run, as plain facts,
+        // so what they *mean* can be decided (and tested) without a process.
+        internal readonly record struct RunOutcome(
+            bool BinaryFound, bool Started, bool TimedOut, int ExitCode, string? Stdout, string? Threw);
+
+        // Entries, and why there are none when that is because the read failed.
+        // Failure is null for a read that worked — including one that answered
+        // an empty list, which is a registry with nothing in it and not a
+        // problem. The reason carries no stderr and no path: stderr can hold
+        // either, and a log is not the place for them.
+        internal readonly record struct ReadResult(IReadOnlyList<Entry> Entries, string? Failure);
+
+        // CB-300: Read used to turn a timeout or a non-zero exit into an empty
+        // list and say nothing, so a dir whose `claude agents` was failing
+        // looked exactly like one with no sessions, and the roster-read-failed
+        // line RemoteMirrorServer wrote for a throw could never fire.
+        internal static ReadResult Interpret(RunOutcome run)
+        {
+            if (!run.BinaryFound) return Fail("no-binary");
+            if (run.Threw is not null) return Fail("threw:" + run.Threw);
+            if (!run.Started) return Fail("start-failed");
+            if (run.TimedOut) return Fail("timeout");
+            if (run.ExitCode != 0) return Fail("exit=" + run.ExitCode);
+
+            return new ReadResult(ParseAgentsJson(run.Stdout), null);
+
+            static ReadResult Fail(string why) => new(Array.Empty<Entry>(), why);
+        }
+
         // Excluded from coverage: launches `claude agents --json` as a real
         // subprocess against a real account's config directory. What comes back
-        // is turned into entries by ParseAgentsJson, which is pure and covered
-        // against fixtures — this is only the asking, its timeout, and the kill
-        // for a CLI that never answers.
+        // is turned into entries by ParseAgentsJson and into a verdict by
+        // Interpret, both pure and covered — this is only the asking, its
+        // timeout, and the kill for a CLI that never answers.
         [ExcludeFromCodeCoverage]
-        public static IReadOnlyList<Entry> Read(string profileDir, int timeoutMs = 5000)
+        private static RunOutcome Run(string profileDir, int timeoutMs)
         {
             var claude = ClaudeBinary.Path;
-            if (claude is null) return Array.Empty<Entry>();
+            if (claude is null) return new RunOutcome(false, false, false, 0, null, null);
 
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
@@ -176,7 +205,7 @@ namespace Orbweaver
                 var psi = AgentsProcess(claude, ClaudeProfile.ConfigDirFor(home, profileDir));
 
                 using var process = Process.Start(psi);
-                if (process is null) return Array.Empty<Entry>();
+                if (process is null) return new RunOutcome(true, false, false, 0, null, null);
 
                 // Both pipes drained before waiting, for two reasons: a
                 // blocking read makes the timeout unreachable, and an undrained
@@ -187,19 +216,30 @@ namespace Orbweaver
                 if (!process.WaitForExit(timeoutMs))
                 {
                     try { process.Kill(true); } catch { }
-                    return Array.Empty<Entry>();
+                    return new RunOutcome(true, true, true, 0, null, null);
                 }
 
                 var stdout = outTask.GetAwaiter().GetResult();
                 errTask.GetAwaiter().GetResult();
 
-                return process.ExitCode == 0 ? ParseAgentsJson(stdout) : Array.Empty<Entry>();
+                return new RunOutcome(true, true, false, process.ExitCode, stdout, null);
             }
-            catch
+            catch (Exception ex)
             {
-                return Array.Empty<Entry>();
+                return new RunOutcome(true, true, false, 0, null, ex.GetType().Name);
             }
         }
+
+        [ExcludeFromCodeCoverage]
+        internal static ReadResult ReadChecked(string profileDir, int timeoutMs = 5000) =>
+            Interpret(Run(profileDir, timeoutMs));
+
+        // The empty-list contract every existing caller relies on: a failure is
+        // an empty list here, and ReadChecked is for the caller that wants to
+        // know why.
+        [ExcludeFromCodeCoverage]
+        public static IReadOnlyList<Entry> Read(string profileDir, int timeoutMs = 5000) =>
+            ReadChecked(profileDir, timeoutMs).Entries;
 
         private static string? Str(JsonElement element, string name) =>
             element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String

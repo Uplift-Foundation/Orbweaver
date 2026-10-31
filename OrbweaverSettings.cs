@@ -564,6 +564,12 @@ namespace Orbweaver
 
             // Every account to run a relay for.
             //
+            // CB-300: still read, as one part of a union, by the peer link
+            // (PeerRosterDirs) — no screen writes it any more, but whatever it
+            // holds is still offered, so nothing shared before drops out. A
+            // profile added in Settings → Claude Code is offered by the same
+            // union through ClaudeCodeProfileDirs.
+            //
             // Replaces the single RemoteControlProfileDir above, which is kept
             // only so an existing setting isn't silently dropped — see the
             // RemoteControlProfileDirs accessor, which reads the old key when

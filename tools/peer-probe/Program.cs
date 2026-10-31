@@ -62,7 +62,7 @@ internal static class Program
         }
 
         using var host = new PeerMirrorHost();
-        host.Serve(OrbweaverSettings.RemoteControlProfileDirs, RemoteControlSessions.LocalSessions);
+        host.Serve(() => PeerRosterDirs.Configured(), RemoteControlSessions.LocalSessions);
 
         var client = host.Client!;
 
