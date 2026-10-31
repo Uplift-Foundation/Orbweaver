@@ -156,8 +156,10 @@ namespace Orbweaver
             // Every configured account, not just the first. See
             // RemoteMirrorServer.AllAccountSeams — a socket is not account
             // scoped, and reading one roster made that claim untrue.
+            // CB-300: every Claude Code profile the user configured, re-read per
+            // hello — see PeerRosterDirs for why the old list alone was not it.
             host.Serve(
-                OrbweaverSettings.RemoteControlProfileDirs,
+                () => PeerRosterDirs.Configured(),
                 RemoteControlSessions.LocalSessions);
 
             // A roster landing is what puts an orb on screen and what tells an
@@ -648,11 +650,17 @@ namespace Orbweaver
         // telling them apart is the whole complaint about the transport this
         // replaces.
         internal static string StatusText(
-            bool enabled, bool running, int listening, int connected, int seen)
+            bool enabled, bool running, int listening, int connected, int seen,
+            IReadOnlyList<RemoteMirrorServer.RosterGap>? gaps = null)
         {
             if (!enabled) return "Off";
             if (!running) return "Starting…";
 
+            return Plain(listening, connected, seen) + GapSentence(gaps);
+        }
+
+        private static string Plain(int listening, int connected, int seen)
+        {
             if (connected > 0)
                 return connected == 1
                     ? $"Connected to 1 machine, listening on {listening}"
@@ -664,6 +672,31 @@ namespace Orbweaver
                     : $"{seen} machines found, none paired yet — listening on {listening}";
 
             return $"Listening on {listening}, no machines found yet";
+        }
+
+        // CB-300: one sentence when live sessions exist under a Claude Code
+        // folder the link was never told to read, which is otherwise an empty
+        // roster on the far machine with nothing to say why. Only actionable
+        // gaps count — see RemoteMirrorServer.RosterGap — and with none, the
+        // text is exactly what it was before this existed. The largest root is
+        // named and the rest counted, since a line has room for one folder.
+        internal static string GapSentence(IReadOnlyList<RemoteMirrorServer.RosterGap>? gaps)
+        {
+            var actionable = gaps?.Where(g => g.Actionable).ToList();
+            if (actionable is null || actionable.Count == 0) return "";
+
+            var total = actionable.Sum(g => g.Sessions);
+            var largest = actionable.OrderByDescending(g => g.Sessions).ThenBy(g => g.Root, StringComparer.Ordinal).First();
+            var more = actionable.Count - 1;
+
+            var sessions = total == 1 ? "1 session" : $"{total} sessions";
+            var where = more == 0
+                ? largest.Root
+                : more == 1 ? $"{largest.Root} and 1 more folder" : $"{largest.Root} and {more} more folders";
+            var verb = total == 1 ? "isn't" : "aren't";
+            var folder = more == 0 ? "that folder" : "those folders";
+
+            return $" — {sessions} under {where} {verb} offered; add {folder} under Settings → Claude Code.";
         }
 
         [ExcludeFromCodeCoverage]
@@ -680,11 +713,20 @@ namespace Orbweaver
 
             return StatusText(
                 OrbweaverSettings.PeerLinkEnabled,
-                host is not null,
+                host is not null || _gapsForTests is not null,
                 host?.Link.BoundPort ?? 0,
                 host?.Link.ConnectedMachines().Count ?? 0,
-                discovery?.Peers().Count ?? 0);
+                discovery?.Peers().Count ?? 0,
+                host?.Server?.LastRosterGaps ?? _gapsForTests);
         }
+
+        // A gap list a test hands the status line without a server behind it;
+        // while one is set the link reads as running, since the sentence is only
+        // ever shown for a running link. Never set by the app.
+        private static IReadOnlyList<RemoteMirrorServer.RosterGap>? _gapsForTests;
+
+        internal static void UseRosterGapsForTests(IReadOnlyList<RemoteMirrorServer.RosterGap>? gaps) =>
+            _gapsForTests = gaps;
 
         [ExcludeFromCodeCoverage]
         internal static void Stop()

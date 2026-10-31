@@ -459,6 +459,43 @@ public class SettingsWindowScreenshots
         }
     }
 
+    // CB-300: the same card with the sentence that says live sessions exist
+    // under a Claude Code folder the link was never told to read. A new visible
+    // state of an existing surface, and the thing to compare across the two
+    // rids is that the sentence is whole and wraps rather than being clipped.
+    [AvaloniaFact]
+    public void PeerLinkGroupNamesAFolderWhoseSessionsAreNotOffered()
+    {
+        var wasEnabled = OrbweaverSettings.PeerLinkEnabled;
+        try
+        {
+            OrbweaverSettings.PeerLinkEnabled = true;
+            PeerSessions.UseRosterGapsForTests(new[]
+            {
+                new RemoteMirrorServer.RosterGap("~/.claude-loginid", 23, Asked: false, Actionable: true)
+            });
+
+            var ctor = typeof(SettingsWindow).GetConstructor(
+                BindingFlags.NonPublic | BindingFlags.Instance,
+                types: Type.EmptyTypes)
+                ?? throw new MissingMethodException("SettingsWindow", ".ctor()");
+
+            var window = (SettingsWindow)ctor.Invoke(null);
+
+            window.Show();
+            window.OnStatusTick(null, EventArgs.Empty);
+            ScreenshotHelper.Flush();
+
+            CaptureGroup(window, "Let another machine pair with this one",
+                "Other machines", "settings-peer-link-roster-gap.png");
+        }
+        finally
+        {
+            PeerSessions.UseRosterGapsForTests(null);
+            OrbweaverSettings.PeerLinkEnabled = wasEnabled;
+        }
+    }
+
     // The Codex group, now with the usage-orb row. Same reason as Grok: the
     // whole-window shot is the window's own height, and this section sits
     // below Claude Code.
