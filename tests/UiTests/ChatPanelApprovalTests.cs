@@ -46,10 +46,14 @@ public class ChatPanelApprovalTests : IDisposable
         OrbweaverSettings.OpenClawApproveEnabled = true;
         OrbweaverSettings.OpenClawEnabled = true;
         ChatPanel.PromptClock = () => _now;
+        OpenClawSessions.SetIdentitiesForTests(
+            new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string> { ["alpha"] = "Alpha" });
     }
 
     public void Dispose()
     {
+        OpenClawSessions.SetIdentitiesForTests(
+            new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string>());
         Reset();
         OpenClawSessions.ForgetApprovalsForTests();
         ChatPanel.PromptClock = _previousClock;
@@ -106,9 +110,9 @@ public class ChatPanelApprovalTests : IDisposable
         return (socket, gateway);
     }
 
-    private (ChatPanel Panel, OpenClawChatSession Chat) Open()
+    private (ChatPanel Panel, OpenClawChatSession Chat) Open(string label = "Alpha")
     {
-        var chat = (OpenClawChatSession)OpenClawSessions.ChatFor("openclaw:" + _key, "Alpha")!;
+        var chat = (OpenClawChatSession)OpenClawSessions.ChatFor("openclaw:" + _key, label)!;
         _toClean.Add(chat.SessionId);
         ChatPanel.OpenFor(new OrbWindow(Guid.NewGuid().ToString()), chat);
         Flush();
@@ -213,6 +217,21 @@ public class ChatPanelApprovalTests : IDisposable
         Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, title);
         Assert.DoesNotContain("EVIL", title);
         Assert.Single(panel.FindControl<ItemsControl>("PromptOptions")!.ItemsPanelRoot!.Children);
+    }
+
+    // The prompt names the agent; the chat's long label is the header's to show and
+    // never reads as the agent's name.
+    [AvaloniaFact]
+    public void TheChatLabelDoesNotLeakIntoThePromptTitle()
+    {
+        var (panel, _) = Open("Lilibeth \u2014 CB-270 approval recheck \u2014 please ignore");
+
+        Request("a1", "true");
+        Flush();
+
+        var title = panel.FindControl<TextBlock>("PromptTitle")!.Text!;
+        Assert.StartsWith("Alpha wants to run: true", title);
+        Assert.DoesNotContain("recheck", title);
     }
 
     // --- one click, one frame, the decision the option names ---

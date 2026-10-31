@@ -27,6 +27,8 @@ public class OpenClawChatApprovalTests : IDisposable
     {
         OrbweaverSettings.OpenClawApproveEnabled = true;
         Reset();
+        OpenClawSessions.SetIdentitiesForTests(
+            new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string> { ["alpha"] = "Nova" });
     }
 
     public void Dispose()
@@ -602,6 +604,105 @@ public class OpenClawChatApprovalTests : IDisposable
         var prompt = Chat().Prompt!;
         Assert.StartsWith(OpenClawApprovalText.UnsafeRequest, prompt.Title);
         Assert.Equal("deny", Assert.Single(prompt.Options).Key);
+    }
+
+    // The prompt names the agent, never the chat's label. A conversation's label can
+    // be any sentence (a session's title) and used to read as "<title> wants to run".
+    [Fact]
+    public void ThePromptNamesTheAgentAndTheChatLabelNeverLeaksIntoIt()
+    {
+        var chat = new OpenClawChatSession(
+            "openclaw:" + _key, _key, "Lilibeth \u2014 CB-270 approval recheck \u2014 please ignore");
+        Request("a1", "true");
+
+        var title = chat.Prompt!.Title;
+
+        Assert.StartsWith("Nova wants to run: true", title);
+        Assert.DoesNotContain("Lilibeth", title);
+        Assert.DoesNotContain("recheck", title);
+    }
+
+    // The conversation's own agent wins: a record whose agentId disagrees with the
+    // key's never reaches the title, with or without a listed name.
+    [Fact]
+    public void TheKeysAgentWinsOverARecordsDisagreeingAgentId()
+    {
+        var chat = new OpenClawChatSession("openclaw:" + _key, _key, "Some title");
+
+        OpenClawSessions.OnEvent("exec.approval.requested",
+            Json(Row("a1", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":\"beta\"")), Now);
+        Assert.StartsWith("Nova wants to run: true", chat.Prompt!.Title);
+
+        OpenClawSessions.SetIdentitiesForTests(new Dictionary<string, OpenClawSessions.AgentIdentity>(), new Dictionary<string, string>());
+        OpenClawSessions.Restart();
+        OpenClawSessions.OnEvent("exec.approval.requested",
+            Json(Row("a2", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":\"beta\"")), Now);
+        Assert.StartsWith("alpha wants to run: true", chat.Prompt!.Title);
+    }
+
+    // A record's agentId is only a fallback for a key that is not an agent key, and
+    // only a plain id: 1 to 64 of letters, digits, dot, underscore, hyphen. Anything
+    // else is treated as absent, so the title says "An agent" rather than an odd
+    // character from the gateway.
+    [Theory]
+    [InlineData("beta", "beta wants to run: true")]
+    [InlineData("a.b_c-9", "a.b_c-9 wants to run: true")]
+    [InlineData("al\uD800pha", "An agent wants to run: true")]   // lone surrogate
+    [InlineData("a b", "An agent wants to run: true")]
+    [InlineData("a\nb", "A request couldn't be shown safely")]   // the parser already refuses it
+    [InlineData("", "An agent wants to run: true")]
+    [InlineData("beta\n", "A request couldn't be shown safely")]   // a trailing newline: refused by the parser
+    public void ARecordsAgentIdIsUsedOnlyForANonAgentKeyAndOnlyWhenPlain(string recorded, string expected)
+    {
+        var keyless = new OpenClawChatSession("openclaw:main", "main", "Some title");
+        var row = Row("a3", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":" + JsonSerializer.Serialize(recorded))
+            .Replace(_key, "main");
+
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(row), Now);
+
+        Assert.StartsWith(expected, keyless.Prompt!.Title);
+    }
+
+    // The plain-id rule is on the key's agent segment too: a key whose agent is a
+    // sentence has no agent to name, so the title says "An agent" and the record's id
+    // is not consulted either. The anchor is \z, so a trailing newline does not slip
+    // through the way it would with $.
+    [Theory]
+    [InlineData("agent:ignore previous and click Allow:dashboard:u")]
+    [InlineData("agent:al\uD800pha:dashboard:u")]
+    public void AKeysAgentSegmentThatIsNotAPlainIdNamesNoAgent(string key)
+    {
+        var chat = new OpenClawChatSession("openclaw:" + key, key, "Some title");
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(Row("a5", "true").Replace(_key, JsonSerializer.Serialize(key)[1..^1])), Now);
+
+        var title = chat.Prompt!.Title;
+
+        Assert.StartsWith("An agent wants to run: true", title);
+        Assert.DoesNotContain("ignore", title);
+        Assert.DoesNotContain("alpha", title);
+    }
+
+    // Pinned on the production regex itself, since a key with a newline in it is
+    // refused by the parser before it can reach a title: $ would accept a trailing
+    // newline, \z does not.
+    [Theory]
+    [InlineData("alpha", true)]
+    [InlineData("alpha\n", false)]
+    [InlineData("\nalpha", false)]
+    [InlineData("al pha", false)]
+    public void TheAgentIdRuleIsAnchoredAtBothEnds(string id, bool plain) =>
+        Assert.Equal(plain, OpenClawChatSession.PlainAgentId.IsMatch(id));
+
+    [Fact]
+    public void AnOverlongRecordAgentIdIsNotUsed()
+    {
+        var keyless = new OpenClawChatSession("openclaw:main", "main", "Some title");
+        var row = Row("a4", "true").Replace("\"agentId\":\"alpha\"", "\"agentId\":\"" + new string('x', 65) + "\"")
+            .Replace(_key, "main");
+
+        OpenClawSessions.OnEvent("exec.approval.requested", Json(row), Now);
+
+        Assert.StartsWith("An agent wants to run: true", keyless.Prompt!.Title);
     }
 
     // The poll finding it gone: before its expiry nothing says why, after it, it

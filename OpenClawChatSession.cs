@@ -1436,9 +1436,37 @@ namespace Orbweaver
         private OpenClawApproval? CurrentApproval() =>
             OpenClawSessions.PendingFor(GatewayKey).FirstOrDefault(a => !_answering.Contains(a.Id));
 
+        // Who is asking: the agent's own name, from the record's agent id and failing
+        // that the one in this conversation's key, never the chat's label. DisplayName
+        // is what the orb and the panel header call the conversation, which can be any
+        // sentence (a session's title), and reading it as the agent's name made the
+        // prompt say "<whole title> wants to run". The header already shows the label.
+        //
+        // The conversation's own agent wins: when the key names one, the title uses
+        // that agent and a record's agentId that disagrees never reaches it. The
+        // record's id is only a fallback for a key that is not an agent key, and is
+        // used only if it is a plain id (letters, digits, dot, underscore, hyphen,
+        // 1 to 64): anything else is treated as absent, so an odd character from the
+        // gateway cannot reach the title.
+        internal static readonly System.Text.RegularExpressions.Regex PlainAgentId =
+            new(@"\A[A-Za-z0-9._-]{1,64}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private string AgentNameFor(OpenClawApproval approval)
+        {
+            // The key's agent is held to the same plain-id rule as the record's: a key
+            // whose agent segment is a sentence has no agent to name, and neither
+            // falls through to the record nor goes to the listed-name lookup.
+            var keyed = OpenClawSessions.AgentIdOf(GatewayKey);
+            if (keyed is not null) return PlainAgentId.IsMatch(keyed) ? OpenClawSessions.AgentNameOf(keyed) : "";
+
+            return approval.AgentId is { } recorded && PlainAgentId.IsMatch(recorded)
+                ? OpenClawSessions.AgentNameOf(recorded)
+                : "";
+        }
+
         private ChatPrompt PromptFor(OpenClawApproval approval) =>
             OpenClawApprovalText.Prompt(
-                approval.Id, DisplayName, approval.Command, approval.Cwd, approval.Host,
+                approval.Id, AgentNameFor(approval), approval.Command, approval.Cwd, approval.Host,
                 commandTruncated: approval.CommandTruncated,
                 allowedDecisions: approval.AllowedDecisions, warning: approval.Warning,
                 unsafeToShow: approval.Unsafe, commandLength: approval.CommandLength > 0 ? approval.CommandLength : null);

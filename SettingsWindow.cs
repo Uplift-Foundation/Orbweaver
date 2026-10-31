@@ -1891,7 +1891,9 @@ namespace Orbweaver
                 + "heart. Hidden takes them off the screen; Own shape keeps them, arranged "
                 + "beside your conversations instead of among them. The agents keep their "
                 + "colours in any channel they are in whichever you pick. Pin one of "
-                + "these with Keep on screen and it shows whatever this says."));
+                + "these with Keep on screen and it shows whatever this says. One exception, "
+                + "and it changes what you see: with Allow approving agent actions on, a hidden "
+                + "session that is waiting for your approval shows its orb until you answer."));
 
             if (OrbweaverSettings.OpenClawHeartbeatMode == ClusterMode.OwnShape)
             {

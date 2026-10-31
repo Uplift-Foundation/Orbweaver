@@ -63,6 +63,9 @@ internal sealed class FakeGatewaySocket : WebSocket
     // controls.
     public bool ParkSendUntilCancelled { get; set; }
 
+    // Set to make every send record its frame and then complete however this says.
+    public Func<Task>? SendCompletes { get; set; }
+
     public override WebSocketState State { get; } = WebSocketState.Open;
     public override WebSocketCloseStatus? CloseStatus => null;
     public override string? CloseStatusDescription => null;
@@ -128,6 +131,11 @@ internal sealed class FakeGatewaySocket : WebSocket
             root.GetProperty("params").Clone());
 
         Requests.Add(request);
+
+        // The send is on the wire and does not finish until the test says how it
+        // ends: what a real socket does when the connection is torn down under a
+        // request that was already being written.
+        if (SendCompletes is { } completes) return completes();
 
         if (ParkSendUntilCancelled)
         {

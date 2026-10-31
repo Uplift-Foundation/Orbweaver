@@ -1602,7 +1602,7 @@ orbs do, and there are three answers rather than two:
 
 | | |
 | --- | --- |
-| **Hidden** | No orb at all. |
+| **Hidden** | No orb at all, except while that session is asking you to approve something (see below). |
 | **With the chats** | An orb, gathered into the same shape as everything else when you press the arrange button. The default, and what the app has always done. |
 | **Own shape** | An orb, gathered into a shape of its own, drawn beside your conversations rather than among them. |
 
@@ -1617,11 +1617,11 @@ app behind them: any chat you start from Orbweaver's New Chat. It does not touch
 an agent's Discord or WhatsApp conversations, direct messages included, and it
 does not govern an agent's *main* session. That is the one the gateway's
 heartbeat keeps waking, so it follows **Heartbeat sessions**: hide heartbeats and
-the main sessions go with them, and they stay gone. To keep one anyway, pin it
-with **Keep on screen** (below): a pinned session is shown even when its setting
-is *Hidden*, sitting with your chats, or in its own shape if that setting is *Own
-shape*. The default is *With the chats*, and the shape, when you give it one, is
-a diamond.
+the main sessions go with them, and they stay gone, with one exception.
+
+**A hidden session that is asking you to approve something shows its orb anyway (a change to what is on screen, CB-270).** When **Allow approving agent actions** is on and a hidden heartbeat, cron or agent session has an approval waiting, its orb comes back in the waiting colour the moment the request arrives, and goes again the moment you answer the last one, without waiting for the next refresh. A hidden orb cannot ask you anything, which is why this one overrides **Hidden**. With approving off nothing comes back, and a session you archived stays gone.
+
+To keep one on screen the rest of the time, pin it with **Keep on screen** (below): a pinned session is shown even when its setting is *Hidden*, sitting with your chats, or in its own shape if that setting is *Own shape*. The default is *With the chats*, and the shape, when you give it one, is a diamond.
 
 Two things keep a conversation on screen however long it has been quiet, and both
 are the gateway's own: a chat started from New Chat (which ends only when you
