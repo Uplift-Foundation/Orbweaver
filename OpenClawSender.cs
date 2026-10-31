@@ -88,7 +88,13 @@ namespace Orbweaver
 
             // Somebody with a name: another agent relayed through the channel,
             // or (assumed) another person in it.
-            Named
+            Named,
+
+            // CB-270: not a person at all. The gateway's own machinery injected
+            // this into the transcript in the user role: an exec notice, a
+            // reminder, a system line. Drawn as a dim note, never as anybody's
+            // words.
+            Machine
         }
 
         internal readonly record struct Sender(SenderKind Kind, string? Name, string Text);
@@ -100,9 +106,28 @@ namespace Orbweaver
         //
         // The order below is precedence, and each step earns its place over the
         // one after it:
+        //
+        // provenanceKind is `message.provenance.kind`, which sits on the message
+        // itself and not inside `__openclaw`. A trailing, defaulted parameter so
+        // every caller that predates it is unchanged; what matters is the order
+        // of the checks, and that one is first.
         public static Sender Classify(
-            bool? senderIsOwner, string? senderName, string? idempotencyKey, string text)
+            bool? senderIsOwner, string? senderName, string? idempotencyKey, string text,
+            string? provenanceKind = null)
         {
+            // CB-270, and first of all. The gateway labels its own injected turns
+            // provenance.kind "internal_system", and it has to be asked before
+            // anything else because the measured exec notices on a WhatsApp-routed
+            // main carry the ":user" suffix with senderIsOwner false: checked
+            // after the suffix, they were drawn as the operator's own words,
+            // blue and right-aligned. A turn the gateway says it wrote itself is
+            // not the operator's whatever else it wears, not even our mirror
+            // prefix.
+            if (string.Equals(provenanceKind, "internal_system", StringComparison.Ordinal))
+            {
+                return new Sender(SenderKind.Machine, null, text);
+            }
+
             // Our own mirror, coming back. First, and ahead of senderName,
             // because the relayed copy is attributed to the *bot account* that
             // carried it — so a message you typed here reaches the other agents
@@ -162,5 +187,23 @@ namespace Orbweaver
             // transcript instead of to a wrong one.
             return new Sender(SenderKind.Unknown, null, text);
         }
+
+        // CB-270: turns the gateway injects as plain user text with no provenance
+        // to say so. Exact openings measured on 2026.10.5 on the two mains a
+        // WhatsApp DM is routed into, in the same style as Readable's rule for
+        // "OpenClaw resumed this CLI session":
+        //   * "A scheduled reminder has been triggered" (by far the commonest);
+        //   * a `System: [<timestamp>]` line, with or without a zone.
+        // Anchored at the start, and case-sensitive, so a person who types the
+        // sentence mid-message or in lower case is not swallowed. A different
+        // gateway's wording falls through to Unknown, which is the old behaviour
+        // and not a wrong one.
+        public static bool IsGatewayInjected(string text) =>
+            text.StartsWith("A scheduled reminder has been triggered", StringComparison.Ordinal)
+            || SystemLine.IsMatch(text);
+
+        private static readonly System.Text.RegularExpressions.Regex SystemLine = new(
+            @"^System: \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}( [A-Z]{2,5})?\]",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     }
 }

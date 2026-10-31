@@ -170,7 +170,7 @@ namespace Orbweaver
 
         // Same two seams as the cloud panel's: a credential read is given a
         // budget, and the one retry waits on a clock a test can fake.
-        internal TimeSpan ReadBudget { get; init; } = ClaudeCliCredentials.UnmeasuredReadBudget;
+        internal CredentialBudget ReadBudget { get; init; } = CredentialBudget.Unmeasured;
         internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
 
         // The API's own refusal to take messages into this chat, learned from the

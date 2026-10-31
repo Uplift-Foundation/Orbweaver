@@ -27,9 +27,10 @@ namespace Orbweaver
         internal const string LegacyPrefix = "CLAUDE_BUDDY_";
 
         // The suffixes, one per variable. The first eight are read by the app,
-        // the two *Tests ones by the test suites' opt-in gates, and the last
-        // four only by shell scripts (install-hooks.sh, stop-installed-buddy.sh),
-        // listed here so BrandEnvTests can hold the whole set to one list.
+        // the two *Tests ones by the test suites' opt-in gates, and the
+        // shell-script ones (install-hooks.sh, stop-installed-buddy.sh, the team
+        // resolver) only by those scripts, listed here so BrandEnvTests can hold
+        // the whole set to one list.
         internal const string SettingsDir = "SETTINGS_DIR";
         internal const string LogDir = "LOG_DIR";
         internal const string StatusRoot = "STATUS_ROOT";
@@ -46,12 +47,36 @@ namespace Orbweaver
         internal const string KeepAliveAppCandidates = "KEEPALIVE_APP_CANDIDATES";
         internal const string StopGraceSeconds = "STOP_GRACE_SECONDS";
 
+        // CB-291. PERSONAS is read by the app (PersonaPool) and by the team
+        // resolver script: the folder holding a user's shared profiles/, roles/
+        // and teams/. The other two are the resolver script's own test seams:
+        // where its built-in roles are, and which instance names count as live
+        // (so a test never depends on what happens to be running). No older
+        // spelling of any of them ever existed; they are listed so the one
+        // list is complete, and so BrandEnv.Get gives them the same precedence
+        // as the rest.
+        internal const string Personas = "PERSONAS";
+        internal const string TeamBuiltinRoles = "BUILTIN_ROLES";
+        internal const string TeamLiveNames = "LIVE_NAMES";
+        internal const string TeamWindowsUsers = "WINDOWS_USERS";
+
+        // CB-270 Stage 6. The probe's own switches (tools/openclaw-probe): the
+        // scopes and caps it asks for in place of the app's, and the opt-in that
+        // lets its `approvals resolve` mode answer a real approval. No older
+        // spelling ever existed; they are here for the one list and the same
+        // precedence. ALLOW_RESOLVE is read as exactly "1" and nothing else.
+        internal const string ProbeScopes = "PROBE_SCOPES";
+        internal const string ProbeCaps = "PROBE_CAPS";
+        internal const string ProbeAllowResolve = "PROBE_ALLOW_RESOLVE";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
             NoCredentialStore, PersonaWalkCeiling, MirrorLog,
             LiveBridgeTests, LaunchTests, LiveDaemonTests,
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
+            Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
+            ProbeScopes, ProbeCaps, ProbeAllowResolve,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

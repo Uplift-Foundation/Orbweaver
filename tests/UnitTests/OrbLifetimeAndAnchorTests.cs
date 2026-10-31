@@ -80,38 +80,14 @@ public class OrbLifetimeAndAnchorTests
         }
     }
 
-    // --- ArrangementAnchor / ShiftArrangementAnchor --------------------------
+    // --- ShiftArrangementAnchor -----------------------------------------------
 
-    [Fact]
-    public void TheFirstArrangementEverIsCentredAndThenRemembered()
-    {
-        // The remembering is the point of it: without a saved anchor, an orb
-        // joining or leaving would re-fit the shape around the screen's middle
-        // rather than around wherever the user has since dragged it, so the
-        // whole arrangement would jump every time a session started.
-        var before = OrbweaverSettings.ArrangeAnchor;
-        try
-        {
-            OrbweaverSettings.ArrangeAnchor = null;
-
-            var work = new PixelRect(0, 0, 1920, 1080);
-            var first = SessionManager.ArrangementAnchor(work);
-
-            Assert.Equal(new PixelPoint(960, 540), first);
-            Assert.Equal(new OrbweaverSettings.OrbPlacement(960, 540), OrbweaverSettings.ArrangeAnchor);
-
-            // Asked again about a *different* screen, it still answers with what
-            // was saved — the shape stays where it is rather than following the
-            // work area around.
-            Assert.Equal(
-                first,
-                SessionManager.ArrangementAnchor(new PixelRect(0, 0, 800, 600)));
-        }
-        finally
-        {
-            OrbweaverSettings.ArrangeAnchor = before;
-        }
-    }
+    // TheFirstArrangementEverIsCentredAndThenRemembered lived here and tested
+    // SessionManager.ArrangementAnchor, which seeded main's anchor at the
+    // screen's middle before laying out. CB-268 removed it: with no anchors
+    // ComputeGroups draws today's bands, and every group's landed anchor is
+    // saved from that. The remembering it protected is now
+    // SessionManagerGroupsTests.TheFirstArrangeSavesEveryGroupsAnchorAndTheNextReproducesIt.
 
     [Fact]
     public void DraggingTheWholeShapeMovesItsSavedCentreByTheSameDelta()

@@ -71,7 +71,8 @@ public class PeerMirrorEndToEndTests : IDisposable
             ReplyEnabled: _ => true,
             CanType: _ => true,
             TypeInto: (_, _) => Task.FromResult(true),
-            PeerAllowed: host.MayAsk));
+            PeerAllowed: host.MayAsk,
+            UserConfigDirs: () => Array.Empty<string>()));
 
         host.Bind(new RemoteMirrorClient("acct", new RemoteMirrorClient.Seams(host.SendFrameAsync)), server);
 
@@ -91,7 +92,8 @@ public class PeerMirrorEndToEndTests : IDisposable
             ReplyEnabled: _ => true,
             CanType: _ => false,
             TypeInto: (_, _) => Task.FromResult(false),
-            PeerAllowed: host.MayAsk));
+            PeerAllowed: host.MayAsk,
+            UserConfigDirs: () => Array.Empty<string>()));
 
         host.Bind(client, server);
         return (host, client);

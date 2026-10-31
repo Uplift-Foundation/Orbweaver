@@ -74,6 +74,18 @@ public class OpenClawCronRecoveryTests
 
     // ---- CandidateBasenameFrom: the trigger's second conjunct --------------
 
+    // CB-272: a cron run can end on a clip as readily as on a picture.
+    [Fact]
+    public void CandidateBasenameFromAcceptsAClipTrailingToken()
+    {
+        Assert.Equal("clip.mp4", OpenClawCronRecovery.CandidateBasenameFrom("caption\nclip.mp4"));
+        Assert.Equal("clip.mp4", OpenClawCronRecovery.CandidateBasenameFrom("caption\n/x/clip.mp4"));
+        Assert.Null(OpenClawCronRecovery.CandidateBasenameFrom("caption\nnotes.txt"));
+        Assert.Null(OpenClawCronRecovery.CandidateBasenameFrom("caption\n/x/../clip.mp4"));
+        Assert.Null(OpenClawCronRecovery.CandidateBasenameFrom("caption\nsub\\clip.mp4"));
+    }
+
+
     // The real shape this ticket exists for: a caption, then the bare
     // filename the delivery route left behind once it stripped MEDIA: and
     // the directory.

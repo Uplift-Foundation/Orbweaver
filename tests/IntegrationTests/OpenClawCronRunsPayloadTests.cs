@@ -191,6 +191,53 @@ public class OpenClawCronRunsPayloadTests
             map["astra_scenesweater_couch_2.png"]);
     }
 
+    // CB-272: a cron run whose summary ends on a clip is recoverable the same
+    // way a picture is. Invented page, real envelope shape: only the fields
+    // RunsFrom reads matter to the result, the rest ride along as they do live.
+    [Fact]
+    public void ARunSummaryNamingAClipIsRecoverableByBasename()
+    {
+        var page = """
+        {"entries":[{"ts":1700000900000,"jobId":"job-clip0001","action":"finished",
+          "status":"ok","completionStatus":"succeeded","delivered":true,
+          "deliveryStatus":"delivered","runAtMs":1700000840000,"durationMs":41000,
+          "summary":"a short one for you\nMEDIA:/home/agent/outputs/astra/clip_123.mp4"}]}
+        """;
+
+        var runs = OpenClawCronRecovery.RunsFrom(Json(page));
+        var map = OpenClawCronRecovery.MediaPathsByBasenameForJob(runs, "job-clip0001");
+
+        Assert.Equal("/home/agent/outputs/astra/clip_123.mp4", map["clip_123.mp4"]);
+        Assert.Equal("clip_123.mp4",
+            OpenClawCronRecovery.CandidateBasenameFrom("a short one for you\nclip_123.mp4"));
+    }
+
+    // CB-274 / CB-275: a failed attachment block names its file by label, and
+    // the run that produced it names the real path. A clip, a voice note and
+    // a document (which no picture/clip/audio predicate nominates) are all
+    // recoverable by basename; an unsafe path is not.
+    [Fact]
+    public void ARunSummaryNamingAClipAVoiceNoteOrADocumentIsRecoverableByLabel()
+    {
+        var page = """
+        {"entries":[
+          {"jobId":"job-att0001","summary":"x\nMEDIA:/home/agent/outputs/astra/sample_clip.mp4"},
+          {"jobId":"job-att0001","summary":"x\nMEDIA:/home/agent/outputs/astra/note.m4a"},
+          {"jobId":"job-att0001","summary":"x\nMEDIA:/home/agent/outputs/astra/report.pdf"},
+          {"jobId":"job-att0001","summary":"x\nMEDIA:/home/agent/../etc/passwd"},
+          {"jobId":"job-other","summary":"x\nMEDIA:/home/agent/outputs/astra/other.pdf"}]}
+        """;
+
+        var map = OpenClawCronRecovery.MediaPathsByBasenameForJob(
+            OpenClawCronRecovery.RunsFrom(Json(page)), "job-att0001");
+
+        Assert.Equal("/home/agent/outputs/astra/sample_clip.mp4", map["sample_clip.mp4"]);
+        Assert.Equal("/home/agent/outputs/astra/note.m4a", map["note.m4a"]);
+        Assert.Equal("/home/agent/outputs/astra/report.pdf", map["report.pdf"]);
+        Assert.DoesNotContain("passwd", map.Keys);
+        Assert.DoesNotContain("other.pdf", map.Keys);
+    }
+
     // A run with no MEDIA: line at all (a status-only or a failed run)
     // contributes nothing — it is not a third kind of entry to special-case,
     // it simply never enters the basename map.

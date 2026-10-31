@@ -22,4 +22,12 @@
     <!-- CB-206: a second process to claim the single-instance mutex from. -->
     <ProjectReference Include="..\SingleInstanceProbe\SingleInstanceProbe.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- CB-278: the unit suite's in-memory gateway socket, so a whole hello-ok
+         can be driven through OpenClawGateway here without a second copy of
+         it to keep in step. -->
+    <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
+    <!-- CB-270 Stage 3: the captured native runs, as one scrubbed constant. -->
+    <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
+  </ItemGroup>
 </Project>

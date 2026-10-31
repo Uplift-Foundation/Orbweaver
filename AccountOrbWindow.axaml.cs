@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
@@ -6,6 +8,7 @@ using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 
 // Shapes.Path against System.IO.Path, which the project's implicit usings bring
 // in. Aliased rather than fully qualified because this file names the type a
@@ -148,6 +151,31 @@ namespace Orbweaver
         // what a person would have seen rather than on how it was drawn.
         internal string GlyphText => Glyph.Text ?? string.Empty;
 
+        // CB-287, read back the same way: the icon actually on screen, not the
+        // one asked for. Null when the letters are showing — including when an
+        // icon was asked for and could not be loaded.
+        internal string? IconFileShown { get; private set; }
+
+        internal bool IconVisible => Icon.IsVisible;
+
+        internal bool GlyphVisible => Glyph.IsVisible;
+
+        internal IReadOnlyList<string> ContextMenuHeaders =>
+            Root.ContextMenu!.Items.OfType<MenuItem>().Select(m => m.Header?.ToString() ?? "").ToList();
+
+        // How many times a picture was decoded for this orb. A good icon is
+        // decoded once per file name, never per redraw; the count is what lets
+        // a test say so.
+        internal int IconDecodeCount { get; private set; }
+
+        internal event Action<AccountOrbWindow>? CustomizeRequested;
+
+        private void Customize_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+            CustomizeRequested?.Invoke(this);
+
+        private string? _loadedIconFile;
+        private Bitmap? _iconBitmap;
+
         internal string? WeeklyColour { get; private set; }
 
         internal string? SessionColour { get; private set; }
@@ -188,9 +216,15 @@ namespace Orbweaver
         // staleness rules can be driven to their boundaries in a test without
         // waiting a quarter of an hour, which is the same reason AccountUsage
         // takes it.
-        internal void UpdateFrom(AccountUsage usage, DateTimeOffset now)
+        internal void UpdateFrom(AccountUsage usage, DateTimeOffset now) =>
+            UpdateFrom(usage, AccountOrbLooks.For(usage), now);
+
+        // CB-287: the same, wearing what the user chose. The look is resolved by
+        // the caller so this stays a drawing method with no settings behind it.
+        internal void UpdateFrom(AccountUsage usage, AccountOrbLook look, DateTimeOffset now)
         {
-            Glyph.Text = OrbGlyph.For(usage.Label, OrbweaverSettings.TwoLetterGlyphs);
+            Glyph.Text = look.Glyph;
+            ApplyIcon(look.IconFile);
 
             IsDimmed = usage.IsStale(now);
             Root.Opacity = IsDimmed ? StaleOpacity : 1;
@@ -205,12 +239,55 @@ namespace Orbweaver
             ApplyCli(usage.Source);
 
             var summary = Summary(usage, now);
-            if (usage.Label != _lastTipLabel || summary != _lastTipSummary)
+            if (look.DisplayName != _lastTipLabel || summary != _lastTipSummary)
             {
-                ToolTip.SetTip(Root, OrbWindow.ThoughtBubble(usage.Label, summary, compact: true));
-                _lastTipLabel = usage.Label;
+                ToolTip.SetTip(Root, OrbWindow.ThoughtBubble(look.DisplayName, summary, compact: true));
+                _lastTipLabel = look.DisplayName;
                 _lastTipSummary = summary;
             }
+        }
+
+        // Shows the icon when it loads and the letters otherwise — never an
+        // empty disc. A decoded icon is kept for as long as the file name is
+        // unchanged (names are content-addressed, so a new picture is a new
+        // name). A failed load is deliberately not remembered: the file may be
+        // mid-write or restored, and CB-148's lesson is that an avatar must not
+        // quietly settle on its fallback. It is retried on the next redraw.
+        private void ApplyIcon(string? file)
+        {
+            if (file is null)
+            {
+                DropIcon();
+                return;
+            }
+
+            if (file != _loadedIconFile || _iconBitmap is null)
+            {
+                DropIcon();
+                var load = AccountOrbIcons.Load(AccountOrbIcons.IconsDirectory, file);
+                if (load.Outcome == IconLoadOutcome.Loaded)
+                {
+                    IconDecodeCount++;
+                    _iconBitmap = new Bitmap(new System.IO.MemoryStream(load.Png!));
+                    _loadedIconFile = file;
+                }
+            }
+
+            Icon.Source = _iconBitmap;
+            Icon.IsVisible = _iconBitmap is not null;
+            Glyph.IsVisible = _iconBitmap is null;
+            IconFileShown = _iconBitmap is null ? null : file;
+        }
+
+        private void DropIcon()
+        {
+            _iconBitmap?.Dispose();
+            _iconBitmap = null;
+            _loadedIconFile = null;
+            Icon.Source = null;
+            Icon.IsVisible = false;
+            Glyph.IsVisible = true;
+            IconFileShown = null;
         }
 
         private void ApplyCli(AccountUsageSource source)

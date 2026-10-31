@@ -314,6 +314,57 @@ function Set-ClaudeBuddyHooks {
     }
 }
 
+# The orbweaver-team skill (CB-291): copied beside a settings.json, into
+# <config dir>\skills\orbweaver-team, because each Claude Code account reads only
+# its own config directory -- native, a second native account, or a WSL distro's
+# (a \\wsl.localhost\... path, which Copy-Item reaches like any other). Called
+# once for every settings.json this script wires. It is shipped code, not the
+# user's files (their personas, roles and teams live in their pool or project),
+# so an install replaces the folder outright and an uninstall removes that one
+# folder and nothing beside it. A skill that cannot be found is a warning: the
+# hooks are what this script is for.
+$skillSource = Join-Path $repoRoot 'skills\orbweaver-team'
+
+# A junction or symlink is removed as the link it is and never walked into: on
+# Windows PowerShell 5.1, Remove-Item -Recurse follows one and deletes what it
+# points at, which for a folder someone linked into place is their own files.
+function Remove-SkillDirectory([string] $Path) {
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        $item.Delete()
+    }
+    else {
+        Remove-Item -LiteralPath $Path -Recurse -Force
+    }
+}
+
+function Set-OrbweaverSkill {
+    param(
+        [Parameter(Mandatory)] [string] $SettingsPath,
+        [switch] $Uninstall
+    )
+
+    $skillDir = Join-Path (Join-Path (Split-Path -Parent $SettingsPath) 'skills') 'orbweaver-team'
+
+    if ($Uninstall) {
+        if (Test-Path -LiteralPath $skillDir) {
+            Remove-SkillDirectory $skillDir
+            Write-Host "Removed skill: $skillDir"
+        }
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $skillSource 'SKILL.md'))) {
+        Write-Warning "Can't find skills\orbweaver-team next to the repo root ($skillSource); the team skill was not installed for $(Split-Path -Parent $SettingsPath)."
+        return
+    }
+
+    if (Test-Path -LiteralPath $skillDir) { Remove-SkillDirectory $skillDir }
+    New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $skillSource '*') -Destination $skillDir -Recurse -Force
+    Write-Host "Skill installed: $skillDir"
+}
+
 # Computed once, here, in this script's own normal full environment, and
 # baked into every wired command as a literal -- rather than letting
 # OrbweaverHook.ps1 re-derive it via $env:TEMP at hook-run time, where a
@@ -343,6 +394,7 @@ $nativeCommandBuilder = {
 
 if ($touchNative) {
     Set-ClaudeBuddyHooks -SettingsPath $SettingsPath -CommandBuilder $nativeCommandBuilder -Uninstall:$Uninstall
+    Set-OrbweaverSkill -SettingsPath $SettingsPath -Uninstall:$Uninstall
 
     foreach ($entry in $ProfileDir) {
         $extraPath = if ([System.IO.Path]::IsPathRooted($entry)) {
@@ -353,6 +405,7 @@ if ($touchNative) {
         }
         Write-Host "--- Additional Claude Code profile: $entry ---"
         Set-ClaudeBuddyHooks -SettingsPath $extraPath -CommandBuilder $nativeCommandBuilder -Uninstall:$Uninstall
+        Set-OrbweaverSkill -SettingsPath $extraPath -Uninstall:$Uninstall
     }
 }
 
@@ -661,12 +714,14 @@ if ($Uninstall -or $Wsl -or $UninstallWsl) {
         if (-not $WslProfileDirOnly) {
             Write-Host "--- WSL distro: $distro ---"
             Set-ClaudeBuddyHooks -SettingsPath $wslSettingsPath -CommandBuilder $wslCommandBuilder -Uninstall:$removeWsl
+            Set-OrbweaverSkill -SettingsPath $wslSettingsPath -Uninstall:$removeWsl
         }
 
         foreach ($entry in $WslProfileDir) {
             $extraWslSettingsPath = Get-WslSettingsPath $distro $info.Home $entry
             Write-Host "--- WSL distro: $distro, profile: $entry ---"
             Set-ClaudeBuddyHooks -SettingsPath $extraWslSettingsPath -CommandBuilder $wslCommandBuilder -Uninstall:$removeWsl
+            Set-OrbweaverSkill -SettingsPath $extraWslSettingsPath -Uninstall:$removeWsl
         }
     }
 

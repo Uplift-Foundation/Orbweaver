@@ -141,7 +141,10 @@ public class CloudChatPanelTests : IDisposable
     // the unit suite uses it.
     private static ClaudeCloudChatSession Chat(string id, ICloudApi api,
         ICloudCredentialSource? creds = null) =>
-        new(Session(id), api, creds ?? new FakeCredentials(), action => action());
+        new(Session(id), api, creds ?? new FakeCredentials(), action => action())
+        {
+            ReadBudget = TestBudgets.AlwaysAnswers,
+        };
 
     // --- the composer ---
 
@@ -879,6 +882,7 @@ public class CloudChatPanelTests : IDisposable
         var chat = new ClaudeCloudChatSession(Session(id), new NewestApi(), new FakeCredentials(),
             action => Dispatcher.UIThread.Post(action))
         {
+            ReadBudget = TestBudgets.AlwaysAnswers,
             Stream = stream,
             Enabled = () => true,
         };

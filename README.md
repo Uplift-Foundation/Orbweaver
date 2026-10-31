@@ -136,6 +136,18 @@ on the command line, so the app reads all three off the process it is already
 tracking. The assigned colour becomes the orb's ring and its arrow when the
 agent hasn't run `/color` itself; it is not the automatic accent described
 above, which really is nowhere on disk.
+**A team running in WSL is drawn as a team too.** A Claude Code inside a WSL
+distro has no process this app can read: the hook that reports it is a Windows
+process, so its status file records no `session_pid`, and Windows' process list
+does not show Linux processes. For those sessions alone the app reads what
+Claude Code leaves on disk instead — the member's transcript says which team and
+which agent it is, and `teams/<team>/config.json` beside the transcript's
+`projects` folder names the lead and the member's colour — through the
+`\\wsl.localhost` share. A session that does have a process is still read from
+its process, exactly as above, and a session that is not in a team costs one
+small read every fifteen seconds at most. Before this, a team started from WSL
+drew as unrelated full-size orbs with no arrows.
+
 Sessions that aren't in a team are completely unaffected: no arrow, full-size
 orb, nothing read that wasn't already being read.
 
@@ -982,6 +994,10 @@ the panel. And sending from the panel types into the session's tmux pane, so
 anything you send from the orb shows up in the terminal too, exactly as if you
 had typed it there. There is no second conversation to get out of step.
 
+**A conversation on an OpenClaw gateway is live while its panel is open (CB-270).** The app holds that conversation's own message stream for as long as a panel is open on it and lets go when the last one closes, so a run streams into the panel word by word instead of freezing at its first few. The reply is drawn the way history draws it: each tool the agent reached for is one line in the transcript (`· name  argument`, the same idiom Claude Code's own transcripts use), between the part of the reply before it and the part after, and a tool that reported an error turns its line red, with the reason on hover. A tool-using run appears once, not as its steps and then the gateway's rollup of them. This applies to every chat surface, Discord and WhatsApp included, in history as well as live; with no panel open nothing is held, and a gateway that refuses the stream leaves a one-line note in that conversation and carries on without it.
+
+**A conversation an agent answers in place has run controls (CB-270).** A chip below the header names the model, thinking level and (when on) fast mode the conversation is running on, and clicking it opens a flyout to change any of them, with a Default choice for each that sends the setting back to what applies when nobody chose, and a time limit of 2, 10, 30 or 60 minutes on what you send next (never "no limit"; the default is the gateway's own). The changes are the gateway's, so every client sees them. The thinking levels offered are the model's own, shown by their labels and sent by their ids. On an agent's main session the model also changes the model its scheduled reminders and heartbeats run on, which the chip's tooltip says. Pasting a picture into such a conversation sends it with your message. None of this appears on a Discord or WhatsApp conversation, where the model is the channel's configuration and changing it would change how the agent answers everyone else there, or when replying is off.
+
 **The header says which conversation this is, and where it is happening.** The
 name and the picture on the first line, the room or the place on the second,
 and under those the facts that are true whether or not anybody has named the
@@ -1062,13 +1078,14 @@ OpenClaw shows up disabled, with a reason stated directly under the row rather t
 
 ## Global hotkeys
 
-Three system-wide hotkeys, all working whether or not Orbweaver has focus:
+Four system-wide hotkeys, all working whether or not Orbweaver has focus:
 
 | Default | Does | Override key |
 | --- | --- | --- |
 | **Ctrl+Alt+H** | hides or shows every orb, usage orbs included — the tray menu's "Show orbs" checkbox | `toggleOrbsHotkey` |
 | **Ctrl+Alt+N** | opens **New chat**, or brings the one already open to the front — the tray menu's "New chat…" | `newChatHotkey` |
 | **Ctrl+Alt+U** | hides or shows only the account usage orbs — the tray menu's "Show usage orbs" checkbox | `toggleUsageOrbsHotkey` |
+| **Ctrl+Alt+M** | mutes or unmutes every sound Orbweaver makes — the tray menu's "Mute" checkbox | `toggleMuteHotkey` |
 
 Each is reachable without finding the menu bar icon first. **Ctrl+Alt+N never opens a second New chat window** and never closes the one that's open: pressed again, it un-minimises the dialog if needed and brings it forward, wherever it was opened from.
 
@@ -1077,10 +1094,10 @@ macOS registers them through Carbon's `RegisterEventHotKey`, which asks the wind
 Override any of them in `settings.json`:
 
 ```json
-{ "toggleOrbsHotkey": "Ctrl+Shift+H", "newChatHotkey": "Ctrl+Shift+N", "toggleUsageOrbsHotkey": "Ctrl+Shift+U" }
+{ "toggleOrbsHotkey": "Ctrl+Shift+H", "newChatHotkey": "Ctrl+Shift+N", "toggleUsageOrbsHotkey": "Ctrl+Shift+U", "toggleMuteHotkey": "Ctrl+Shift+M" }
 ```
 
-Modifiers are `Ctrl`/`Control`, `Alt`/`Option`, `Shift`, and `Cmd`/`Command`/`Win`/`Windows`/`Super`/`Meta` (all four spellings mean the same physical key, whichever platform you're on), joined with `+` and ending in one letter or one digit (`Ctrl+Alt+5` is the 5 key). Other keys — `F5`, `Space`, punctuation, a modifier used as the key — are rejected, because neither platform's hook has a code for them yet, and a rejected value falls back like any other. An unparseable value falls back to that hotkey's built-in default rather than leaving it unregistered, so a typo costs you the override, not the feature. If two overrides resolve to the same combination, however they're spelled, the hotkey listed first in the table above keeps it and the later one falls back to its own default — so if `newChatHotkey` names the orb toggle's combination, New chat falls back to Ctrl+Alt+N, and a `toggleUsageOrbsHotkey` that clashes with either of the other two falls back to Ctrl+Alt+U. If that default is taken too — the toggle moved to Ctrl+Alt+N, say — the later hotkey registers nothing at all rather than registering one combination twice. Either way a line saying so goes into `hotkeys.log`, beside `crash.log` in the app's log directory. So does a combination the operating system refuses — usually because another app already holds it — naming the hotkey and the combination it tried, so a hotkey that does nothing always leaves a reason behind. There is no settings-window control for any of them yet — `settings.json` is the only place to change them.
+Modifiers are `Ctrl`/`Control`, `Alt`/`Option`, `Shift`, and `Cmd`/`Command`/`Win`/`Windows`/`Super`/`Meta` (all four spellings mean the same physical key, whichever platform you're on), joined with `+` and ending in one letter or one digit (`Ctrl+Alt+5` is the 5 key). Other keys — `F5`, `Space`, punctuation, a modifier used as the key — are rejected, because neither platform's hook has a code for them yet, and a rejected value falls back like any other. An unparseable value falls back to that hotkey's built-in default rather than leaving it unregistered, so a typo costs you the override, not the feature. If two overrides resolve to the same combination, however they're spelled, the hotkey listed first in the table above keeps it and the later one falls back to its own default — so if `newChatHotkey` names the orb toggle's combination, New chat falls back to Ctrl+Alt+N, a `toggleUsageOrbsHotkey` that clashes with either of the other two falls back to Ctrl+Alt+U, and a `toggleMuteHotkey` that clashes with any of the three falls back to Ctrl+Alt+M. If that default is taken too — the toggle moved to Ctrl+Alt+N, say — the later hotkey registers nothing at all rather than registering one combination twice. Either way a line saying so goes into `hotkeys.log`, beside `crash.log` in the app's log directory. So does a combination the operating system refuses — usually because another app already holds it — naming the hotkey and the combination it tried, so a hotkey that does nothing always leaves a reason behind. There is no settings-window control for any of them yet — `settings.json` is the only place to change them.
 
 ## Personas from CLAUDE.md
 
@@ -1370,6 +1387,111 @@ picture decodes to, not by how many bytes it arrived as, which is what makes
 raising the file-size cap to 16 MiB cost nothing extra on a machine running
 twenty or thirty agents out of one repository.
 
+## Personas, roles and teams
+
+**Keep a pool of personas, give them jobs, group them into teams, and put a team
+on a task.** A *persona* is an individual: a name, a picture, a voice and a
+personality (the files profile-gen writes, or anything in
+the grammar above). A *role* is a job: `pm`, `architect`, `engineer`, `qa`, or any
+you add. A *team* says which personas fill which roles. Say "put Alpha on this" in
+Claude Code and each member starts as its own teammate, wearing its own orb.
+
+Nothing here is on until you make a file. A project with no pool behaves exactly as
+it did, and a team member whose name matches no persona keeps the main session's
+persona, as it always has.
+
+**Where the files live.** Three kinds of file, in the same layout at every level:
+
+```
+profiles/<name>/<name>.md     a persona
+roles/<role>.md               a role
+teams/<team>.md               a team
+```
+
+Looked up nearest first, and **a nearer file of the same name replaces a farther
+one completely** — fields are never merged between two files, so a file says what
+applies and nothing else does:
+
+| Level | Where |
+|---|---|
+| project | `.orbweaver/` in the nearest ancestor directory that has one (and `profiles/<name>/` in any ancestor, as profile-gen writes it) |
+| account | the Claude account's config directory: `~/.claude`, or whatever `CLAUDE_CONFIG_DIR` names |
+| pool | the folder named by **`ORBWEAVER_PERSONAS`**, else `personaPoolDir` in `settings.json`, else `~/.orbweaver` |
+| built-in | the four default roles that ship with Orbweaver (roles only) |
+
+The pool is one folder for every project and every account, so your personas follow
+you rather than a login. Use the environment variable for anything started from a
+shell and the setting for the tray app, which is launched by launchd or the Start
+menu and never sees a shell's environment; the variable wins when both are set. `~`
+works in either; a relative path is refused rather than guessed at. Under WSL the
+skill's resolver also looks in each Windows user's `.orbweaver` when nothing is named,
+and it reads the same `personaPoolDir` the app does (from `settings.json`, wherever the
+app keeps it on that platform), so a pool named only in the setting is the same pool to
+the orb and to the resolver.
+profile-gen's single-persona `persona/persona.md` is recognised in the account and
+the pool as the persona named by its own `slug:`, so an existing setup needs nothing
+moved.
+
+**Roles** are Markdown with a few lines of front matter and the job in prose:
+
+```markdown
+---
+role: qa
+title: QA Engineer
+model: sonnet        # optional
+---
+You are QA on this team. Start from the acceptance criteria...
+```
+
+Add a role by writing a file (`roles/writer.md`), change one by writing a file with
+the same name nearer, and remove one with `disabled: true`.
+
+**Teams** map roles to personas. A slot is one persona or several, and several can
+either share the work (`collaborate`, the default) or have one lead:
+
+```markdown
+---
+team: alpha
+title: Alpha Team
+pm: atlas
+architect: vector
+engineer: vector, echo
+qa: sentry
+engineer.lead: vector        # naming a lead makes the slot `lead`
+qa.model: haiku              # optional: this slot's model
+---
+```
+
+A team can `extends` another and swap whole slots. For a mix you do not want to
+keep, say it as words when you ask, and the resolver builds it:
+
+| You say | You get |
+|---|---|
+| `alpha` | the saved team |
+| `alpha+bravo` | both teams. A slot both fill with different people needs its mode stated: `pm.mode=lead pm.lead=atlas`, or `pm.mode=collaborate` |
+| `alpha qa=bravo-qa` | Alpha with one slot swapped |
+| `pm=atlas engineer=vector,echo` | no saved team at all |
+
+**Putting a team on a task** is the `orbweaver-team` skill, which the hook installers
+copy into every Claude Code account's `skills/` folder (the default and each saved
+profile; `--uninstall` removes only that folder). It runs a bundled resolver that
+turns the spec into a manifest, or refuses with every problem named — an unknown
+persona, a disabled role, a union with no mode — before anything starts, so you never
+get half a team. Then it spawns each member as a named teammate whose prompt says
+who it is, what its job is, and that any other persona a `CLAUDE.md` describes does
+not apply to it.
+
+**The same persona twice.** A persona that would run twice at once — in two slots of
+one team, or on two teams running together — becomes `vector`, then `vector_2`, then
+`vector_3`, because two live sessions with one name cannot be told apart. The orb is
+still the persona's: the lookup tries the full name and then the persona it is an
+instance of.
+
+**What the orbs do.** Each member's orb wears its persona's name, picture and voice
+instead of the main session's, found through the same lookup — project, then each
+account, then the pool. The first place that has the persona decides all of it, so a
+teammate is never one persona's name with another's face.
+
 ## OpenClaw agents (experimental, off by default)
 
 Orbweaver can also show an orb for each recently active session on an
@@ -1480,15 +1602,34 @@ orbs do, and there are three answers rather than two:
 
 | | |
 | --- | --- |
-| **Hidden** | No orb at all. |
+| **Hidden** | No orb at all, except while that session is asking you to approve something (see below). |
 | **With the chats** | An orb, gathered into the same shape as everything else when you press the arrange button. The default, and what the app has always done. |
 | **Own shape** | An orb, gathered into a shape of its own, drawn beside your conversations rather than among them. |
 
-Set both to *Own shape* and the arrange button draws three patterns side by side
-— your chats, the heartbeats, the crons — each with its own entry in Settings
-picking from the same six shapes. Leave both alone and it is one shape, exactly
-as before. The agents keep their colours in any channel they are in whichever you
-pick.
+Set them all to *Own shape* and the arrange button draws up to four patterns side
+by side — your chats, the heartbeats, the crons and your agents' own sessions
+(below) — each with its own entry in Settings picking from the same shapes. Leave
+them alone and it is one shape, exactly as before. The agents keep their colours
+in any channel they are in whichever you pick.
+
+**Agents' own sessions** takes the same three answers for chats that have no chat
+app behind them: any chat you start from Orbweaver's New Chat. It does not touch
+an agent's Discord or WhatsApp conversations, direct messages included, and it
+does not govern an agent's *main* session. That is the one the gateway's
+heartbeat keeps waking, so it follows **Heartbeat sessions**: hide heartbeats and
+the main sessions go with them, and they stay gone, with one exception.
+
+**A hidden session that is asking you to approve something shows its orb anyway (a change to what is on screen, CB-270).** When **Allow approving agent actions** is on and a hidden heartbeat, cron or agent session has an approval waiting, its orb comes back in the waiting colour the moment the request arrives, and goes again the moment you answer the last one, without waiting for the next refresh. A hidden orb cannot ask you anything, which is why this one overrides **Hidden**. With approving off nothing comes back, and a session you archived stays gone.
+
+To keep one on screen the rest of the time, pin it with **Keep on screen** (below): a pinned session is shown even when its setting is *Hidden*, sitting with your chats, or in its own shape if that setting is *Own shape*. The default is *With the chats*, and the shape, when you give it one, is a diamond.
+
+Two things keep a conversation on screen however long it has been quiet, and both
+are the gateway's own: a chat started from New Chat (which ends only when you
+**End the conversation**), and anything pinned. An orb's menu has **Keep on
+screen** to pin or unpin a conversation on the gateway, so it is pinned in every
+client, and **Rename conversation…** to change its name there. Both need "Allow
+replying to agents", and a conversation pinned from another client is kept here
+too — a pinned Discord DM stops timing out.
 
 The shapes sit beside each other rather than anywhere you place them
 individually: each gets a share of the screen in proportion to how many orbs it
@@ -1563,6 +1704,10 @@ treats as a new pairing — so approve the device again there
 waiting until you do. Seeing what your agents are doing and being able to make
 them do things are different powers, which is why the second one is asked for
 separately rather than coming along with the first.
+
+Answering an agent's approval request is a **third switch**, off by default: **Allow approving agent actions**. Turning it on asks the gateway for the `operator.approvals` scope, which it treats as another new pairing, so approve the device there again. With it on, an agent waiting on an approval shows in its chat panel as a prompt: what it wants to run, where, and two buttons, **Deny** first and **Allow once** second. **Allow always is never offered** — it mints a standing grant this app has no way to list or revoke, so the prompt's "How to answer on the gateway" link names the `openclaw` CLI verb and shows the request id as quoted data for anyone who wants one. Nothing answers from the keyboard: the buttons cannot be focused and there is no default one, and a button ignores presses for half a second after a prompt appears or changes, answering on release, so a request that replaces another under the pointer cannot be answered by the click meant for the first. Each button is tied to the request it was drawn for; if that request has gone by the time of the click, nothing is sent and the panel says "That request changed before you clicked; look again".
+
+Two kinds of request can only be denied here. A request with a control, format or line-separator character in any field it would show is not shown at all (nothing is repaired or flattened, since a person must not approve something other than what the agent asked for) and reads "A request couldn't be shown safely; answer it on the gateway". A command is shown whole up to 4,000 characters in a scrollable block; past that, or if the gateway cut it, the prompt says how many characters are missing and offers Deny only. Other long fields (agent, working directory, host) are cut at 240 characters with a count. A request that ends without you (decided by someone else, expired, dropped by the gateway) is written into the transcript as a one-line note, and a room's transcript says "<member> is waiting for an approval" once per request, since an approval belongs to one member's session and is answered in that member's own panel. The request shapes behind all of this are as the gateway documents them and have not yet been measured against a running gateway.
 
 **If the status row says `can't reach the gateway: No route to host`, check
 macOS's Local Network permission before you check your network.** macOS grants
@@ -2048,6 +2193,12 @@ setup — or picks up the second CLI after you install it. Pass `--uninstall` /
 & "$env:LOCALAPPDATA\Programs\ClaudeBuddy\tools\install-hooks.ps1"
 ```
 
+For Claude Code it also copies the `orbweaver-team` skill into each account it wires
+(`<config dir>/skills/orbweaver-team`; see *Personas, roles and teams*), through
+`install-skill.sh` on a Mac and the same script on Windows, WSL distros included.
+Re-running it refreshes that folder, which is shipped code and not yours: your
+personas, roles and teams live in your pool or your project, never in there.
+
 A CLI you don't have is skipped and said so, not treated as an error. Underneath
 it are one installer per CLI — `install-macos-hooks.sh` /
 `install-windows-hooks.ps1` for Claude Code, `install-codex-hooks.sh` /
@@ -2493,6 +2644,30 @@ outside the app (a launchd agent, an installer replacing the bundle) stopped it.
   the process is true the moment the orb appears and needs no hook at all, which
   is also why the hook scripts carry nothing about teams.
 
+  **A session with no pid is read from files instead** (`AgentTeamFiles.cs`).
+  The hook for a Claude Code in WSL is Windows PowerShell started through WSL's
+  interop, so its parent chain ends in the interop bridge and never reaches the
+  Linux `claude`: every status file it writes carries `"session_pid":0`, and
+  `AgentTeam.Of` answers "no team" for any pid at or below zero. Measured on a
+  WSL team of four, the orbs drew alone, each wearing the main-session persona,
+  while `ps` inside the distro showed every member's command line carrying the
+  right `--parent-session-id`. What such a session does leave is its transcript
+  — every entry from the first user entry on carries `"teamName"` and
+  `"agentName"` — and `<config>/teams/<team>/config.json`, which holds
+  `leadSessionId` and each member's `color`. Only the first 64 KB of the
+  transcript is read, because the entry after the first carries the member's
+  whole `CLAUDE.md`; the transcript path is a Linux path, so each distro from the
+  `Lxss` registry key is tried as `\\wsl.localhost\<distro>\...`. The candidates
+  are exactly the Claude Code sessions with no pid and a transcript path
+  (`ScanProbePlan.FileTeamCandidates`), read in the scan's background half and
+  applied by the UI half through `ScanProbes.TeamOf(sessionId, pid)`, which
+  answers from the process whenever there is a pid and from the files only when
+  there is none. A found team is kept; "not in a team" is asked again after
+  fifteen seconds, because a teammate's config can land after its first status
+  file. Not covered: the roster this machine serves a far machine
+  (`ApplyTeams`) is still keyed by pid, so a WSL team is not yet sent over the
+  direct link.
+
   Downstream, that one value does three things: `OrbWindow.SetTeamRole` draws a
   member smaller (the *window* keeps the orb's size — 56x56 at the default, or
   whatever the Size setting makes it — so stacking, dragging and remembered
@@ -2506,6 +2681,66 @@ outside the app (a launchd agent, an installer replacing the bundle) stopped it.
   (`SessionManager.MembersOf`, captured on press in `OrbWindow`); their new spots
   are only *remembered* when their `PositionKey` differs from the lead's, since
   a team usually shares one directory and positions are keyed by directory.
+- **Personas, roles and teams (CB-291)**: two halves that share nothing but a file
+  layout (`profiles/`, `roles/`, `teams/` under a level), because one runs in the app
+  and one runs in a Claude Code session.
+
+  *The app's half* is `PersonaPool.cs` and `LocalPersona.CandidatesBelow`. A team
+  member is found by `--agent-name`, and until this its persona was only looked up in
+  the working directory and its ancestors, so a pool anywhere else drew every
+  teammate in the main session's face. The candidate list is now the walk (each
+  directory's `profiles/`, `.profiles-assets/` and `.orbweaver/`, unchanged and in the
+  order they always were), then **each config dir's pool immediately before that
+  dir's own `CLAUDE.md`**, then the shared pool. That placement is deliberate: a
+  member-profile candidate is exclusive once it states any field (`ResolveFrom`,
+  CB-191), and the `CLAUDE.md` that follows each account's pool is a non-member
+  candidate that ends the run of member candidates, so two accounts' pools are two
+  personas and the nearer replaces the farther instead of being blended field by
+  field. profile-gen's fixed `persona/persona.md` is offered with a `SlugFilter` and
+  only read when its front matter's `slug:` names this agent, because the same path
+  is whoever's persona it happens to hold. An instance (`vector_2`) is looked up
+  under its own name and then `vector` (`PersonaPool.NamesFor`). Only Claude Code
+  members read the pool: agent teams are a Claude Code idea, and a gateway session's
+  working directory is somebody else's disk (CB-140). The pool's root is
+  `ORBWEAVER_PERSONAS`, then `personaPoolDir`, then `~/.orbweaver`
+  (`PersonaPool.SharedRoot`), and the persona signature watches its files, so editing
+  a pool persona reaches the orb.
+
+  *The session's half* is `skills/orbweaver-team/`: a skill (`SKILL.md`,
+  `FORMATS.md`), the four built-in roles, and `orbweaver-team.sh`, which resolves a
+  spec to a manifest. It is a script because the rules (nearest file wins entirely,
+  `extends`, unions, instance names) have to come out the same every run, and bash
+  because Claude Code already needs one on every platform (Git Bash on Windows).
+  That choice has costs worth knowing. macOS ships bash 3.2, so it uses no
+  associative arrays; and on Windows a process costs about 0.1 s, so the first
+  version, which used awk and sed freely, took 14 s to resolve four slots. It is
+  all builtins now (a resolve is about 0.2 s under Git Bash), values come back in
+  variables rather than through `$(...)` because each of those is a fork, and the
+  one remaining trap is that **every path join strips a trailing slash first**: the
+  walk up from `$PWD` reaches `/`, and `/` joined to `/profiles/x` is `//profiles/x`,
+  which Git Bash reads as a UNC path to a host called `profiles`, so each `[ -f ]` on
+  one waited about 2.7 s for it. Tests are `tools/test-orbweaver-team.py` (the
+  resolver, under Git Bash on Windows with Windows-style paths) and
+  `tools/test-install-skill.py`, both CI steps.
+
+  *Installing it* is `tools/install-skill.sh` on macOS, called by
+  `install-macos-hooks.sh` once per settings file it wires (so each saved profile
+  gets its copy by the same path as the default account), and `Set-OrbweaverSkill` in
+  `install-windows-hooks.ps1` at each of its four sites (native, a second native
+  account, a WSL distro, a distro's second account). The copy is its own script on
+  the Mac because `install-macos-hooks.sh` needs osascript and can only run there.
+  An install replaces `skills/orbweaver-team` outright and `--uninstall` removes that
+  one folder; the app bundle's `Resources/skills` and the Inno Setup `{app}\skills`
+  carry the source.
+
+  Findings that shaped it, from spawning real teammates (2026-10-28): a named spawn
+  with no `isolation` and no `run_in_background` is a team member process; a
+  teammate does not know its own name when it starts, so its prompt must say; a
+  `subagent_type` naming a persona the session cannot see **falls back to a generic
+  agent without an error**, so the skill never relies on one; and a teammate inherits
+  the project's main-session persona from `CLAUDE.md` unless told otherwise. The
+  spawn's `model` passes through (`--model haiku` was observed); `effort` produced no
+  flag, so it is not offered.
 - **Color palette**: `AgentColors` at the top of `OrbWindow.axaml.cs` maps
   `/color` names to hex. Claude Code renders its accents as xterm-256 indices,
   so these are the matching cube values — but only `green` (index 35) and the
@@ -2648,6 +2883,7 @@ outside the app (a launchd agent, an installer replacing the bundle) stopped it.
   only, every system sound, or a chosen file); an individual orb can override
   either trigger from its right-click "Sound" submenu, keyed by
   `SessionManager.SoundKeyFor`.
+- **Mute** (CB-298): one switch for every sound the app makes, reachable from the tray menu's "Mute" checkbox, the Ctrl+Alt+M hotkey and the speaker button in every chat panel's header, all three the same flag, so flipping one moves the others. Muting stops what is already playing mid-sentence, then keeps speech, chimes and the vibe summary silent — a muted turn does not even pay for the summariser — until unmuted. It is persisted as `muted` in `settings.json` and survives a restart, and it writes that one key: `speechVolume`, `alertVolume`, `turnSoundsEnabled` and every per-orb sound override are left exactly as they were, so unmuting puts back what was there. While it is on, the tray icon wears a slash and its hover text ends in ", muted". The gate is the two places that start a sound process, so the previews in Settings (the voice and chime buttons) are silent while muted too — deliberately. Voice input is not affected.
 - **Volume** (CB-200): two independent levels in settings, `speechVolume` and `alertVolume`, each 0 to 1 and defaulting to 1 — at which every backend gets exactly the argv, script and text it got before the sliders existed. `AudioVolume.cs` owns every rule turning a level into a backend's units: `[[volm N]]` embedded in the text for `say` (which has no volume flag), `SpeechSynthesizer.Volume` 0–100 for SAPI, a `CLAUDEBUDDY_SPEECH_VOLUME` environment variable for the Kokoro engine (which hands it to `afplay -v` on macOS and KokoroSharp's own `SetVolume` on Windows), `afplay -v` for macOS chimes, and a sample-scaled cached copy of the WAV for Windows chimes, since `Media.SoundPlayer` has no volume. A custom `speakCommand` gets the same `CLAUDEBUDDY_SPEECH_VOLUME`, always set, and applies it only if it reads it. The slider is never greyed out; a note under it says so whenever the engine that will speak is a custom command — globally, or for any orb whose persona voice resolves to one (`SessionIdentity.OrbEngines`, from the in-memory persona registries and the already-built voice list; if no list has been built yet, the note states both caveats as rules). A `speakEngine` of `custom` with no command configured speaks with a system voice and gets no note; the Alert slider does not depend on the engine.
   - **What the levels do not promise.** A percentage is a position on the slider, not a decibel figure. `say`'s `[[volm]]` is not linear for every voice: measured by rendering to a file, Ava (Premium) scaled linearly, but Samantha, Karen and Susan (Enhanced) at 50% came out at about 25% amplitude. SAPI applies its own curve too. On Windows, a chime is made quieter by scaling a copy of the WAV's samples, which works for uncompressed PCM and 32-bit float only — every sound under `C:\Windows\Media` qualifies, but a compressed WAV you chose yourself (ADPCM, MP3-in-WAV and the like) plays at full volume, and the Alert volume row says so on Windows. A malformed WAV plays unscaled the same way rather than failing.
   - **The high-quality voice needs this version's engine.** Kokoro receives the level through `CLAUDEBUDDY_SPEECH_VOLUME`, which engines from before CB-200 ignore — they speak at full volume. Right after an upgrade, until the new engine finishes downloading (and on a development build whose engine was never published), Buddy speaks through the older engine it already has, and the Speech volume row says "Takes effect once the updated voice engine is installed" beneath a slider that still saves the level for when it arrives — and says the same for orbs whose own voice is Kokoro when the global one is not. Which engine can honour it is judged by what the engine *is*, not where it sits: its build writes `engine-contract.txt` beside the executable (from `SpeechEngineContract.ContractVersion`, currently `1` = honours the volume variable), and an engine folder without one — any engine released before CB-200, including one that shares this build's version number and so its folder — is treated as ignoring the level. The variable's name and the stamp's live in `tools/OrbweaverSpeech/SpeechEngineContract.cs`, the one file compiled into both the app and the engine.

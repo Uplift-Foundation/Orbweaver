@@ -59,7 +59,7 @@
                  offered only while pinned. -->
             <Grid x:Name="HeaderRow" Grid.Row="0"
                   Background="Transparent"
-                  ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="10">
+                  ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="10">
                 <Grid x:Name="AvatarBox" Grid.Column="0" Width="68" Height="68"
                       VerticalAlignment="Center" Cursor="Hand"
                       Background="Transparent">
@@ -231,7 +231,19 @@
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                IsHitTestVisible="False"/>
                 </Grid>
-                <Grid x:Name="SpeakButton" Grid.Column="3" Width="24" Height="24"
+                <!-- Global mute (CB-298): the output switch, beside the output
+                     button it silences. Glyph, fill and tooltip are applied by
+                     ApplyMuted from SymbolMarks.MuteLook / MuteTip; the tooltip
+                     is set in code because it names whichever chord is
+                     really bound. -->
+                <Grid x:Name="MuteButton" Grid.Column="3" Width="24" Height="24"
+                      VerticalAlignment="Center" Cursor="Hand">
+                    <Ellipse x:Name="MuteFill" Fill="#E0202024" Stroke="#80FFFFFF" StrokeThickness="1.5"/>
+                    <TextBlock x:Name="MuteGlyph" Text="&#128266;" FontSize="11"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Grid>
+                <Grid x:Name="SpeakButton" Grid.Column="4" Width="24" Height="24"
                       VerticalAlignment="Center" Cursor="Hand">
                     <Ellipse x:Name="SpeakFill" Fill="#E0202024" Stroke="#80FFFFFF" StrokeThickness="1.5"/>
                     <TextBlock x:Name="SpeakGlyph" Text="&#128264;" FontSize="11"
@@ -246,7 +258,7 @@
                           HorizontalAlignment="Center" VerticalAlignment="Center"
                           IsHitTestVisible="False"/>
                 </Grid>
-                <Grid x:Name="CloseButton" Grid.Column="4" Width="24" Height="24"
+                <Grid x:Name="CloseButton" Grid.Column="5" Width="24" Height="24"
                       VerticalAlignment="Center" Cursor="Hand">
                     <Ellipse Fill="#E0202024" Stroke="#80FFFFFF" StrokeThickness="1.5"/>
                     <TextBlock Text="&#10005;" FontSize="10" Foreground="#DDFFFFFF"
@@ -338,6 +350,7 @@
                                          is a small stack of paragraphs, lists
                                          and code blocks — see BuildBody. -->
                                     <ContentControl Content="{Binding Body}"
+                                                    ToolTip.Tip="{Binding ErrorTip}"
                                                     IsVisible="{Binding HasText}"/>
                                     <!-- A picture sent in the conversation.
                                          Width-constrained and free in height so
@@ -352,6 +365,109 @@
                                            Cursor="Hand"
                                            PointerPressed="Image_PointerPressed"
                                            HorizontalAlignment="Left"/>
+                                    <!-- CB-272: a video the agent posted, as a
+                                         tile rather than inline playback. Shown
+                                         only once the gateway's meta answer says
+                                         the clip is servable, sized to the
+                                         clip's own aspect ratio; a click fetches
+                                         the bytes and opens the system player.
+                                         A refused or unreachable clip draws the
+                                         note below instead, like a picture. -->
+                                    <Border Classes="videoTile"
+                                            IsVisible="{Binding HasVideo}"
+                                            Width="{Binding VideoWidth}"
+                                            Height="{Binding VideoHeight}"
+                                            CornerRadius="8"
+                                            Background="#CC1B1F27"
+                                            ClipToBounds="True"
+                                            Cursor="Hand"
+                                            ToolTip.Tip="{Binding ImageAlt}"
+                                            PointerPressed="Video_PointerPressed"
+                                            HorizontalAlignment="Left">
+                                        <Panel>
+                                            <Ellipse Width="44" Height="44"
+                                                     Fill="#99000000"
+                                                     Stroke="#E6FFFFFF" StrokeThickness="2"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center"/>
+                                            <Path Data="M 0,0 L 0,20 L 17,10 Z"
+                                                  Fill="#F2FFFFFF"
+                                                  Margin="4,0,0,0"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                                            <Border IsVisible="{Binding HasVideoDuration}"
+                                                    Background="#B3000000"
+                                                    CornerRadius="4"
+                                                    Padding="5,1"
+                                                    Margin="0,0,6,6"
+                                                    HorizontalAlignment="Right"
+                                                    VerticalAlignment="Bottom">
+                                                <TextBlock Text="{Binding VideoDuration}"
+                                                           FontSize="{Binding TimeSize}"
+                                                           Foreground="#F2FFFFFF"/>
+                                            </Border>
+                                        </Panel>
+                                    </Border>
+                                    <!-- CB-275: an audio note the agent posted, as a
+                                         click-to-open tile, not an inline player: the
+                                         system player is the player. A fixed 64 high,
+                                         since audio has no aspect ratio. -->
+                                    <Border Classes="audioTile"
+                                            IsVisible="{Binding HasAudio}"
+                                            Width="{Binding AudioWidth}"
+                                            Height="64"
+                                            CornerRadius="8"
+                                            Background="#CC1B1F27"
+                                            Cursor="Hand"
+                                            ToolTip.Tip="{Binding ImageAlt}"
+                                            PointerPressed="Audio_PointerPressed"
+                                            HorizontalAlignment="Left">
+                                        <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0">
+                                            <Path Grid.Column="0"
+                                                  Data="M 0,6 L 6,6 L 14,0 L 14,20 L 6,14 L 0,14 Z M 18,4 Q 23,10 18,16"
+                                                  Fill="#F2FFFFFF" Stroke="#F2FFFFFF" StrokeThickness="1.5"
+                                                  VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding AudioLabel}"
+                                                       Margin="12,0,8,0"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="#F2FFFFFF"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding AudioDuration}"
+                                                       IsVisible="{Binding HasAudioDuration}"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="{Binding TimeSize}"
+                                                       Foreground="#F2FFFFFF"/>
+                                        </Grid>
+                                    </Border>
+                                    <!-- CB-275: a file the agent posted, as a chip with
+                                         its name and size. A click fetches it and hands
+                                         it to the system's default app. -->
+                                    <Border Classes="fileChip"
+                                            IsVisible="{Binding HasDocument}"
+                                            CornerRadius="8"
+                                            Background="#CC1B1F27"
+                                            Padding="10,8"
+                                            MaxWidth="260"
+                                            Cursor="Hand"
+                                            ToolTip.Tip="{Binding DocumentTip}"
+                                            PointerPressed="Document_PointerPressed"
+                                            HorizontalAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Path Data="M 0,0 L 10,0 L 14,4 L 14,18 L 0,18 Z M 10,0 L 10,4 L 14,4"
+                                                  Stroke="#F2FFFFFF" StrokeThickness="1.5"
+                                                  VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding DocumentLabel}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="170"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="#F2FFFFFF"/>
+                                            <TextBlock Text="{Binding DocumentSize}"
+                                                       IsVisible="{Binding HasDocumentSize}"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="{Binding TimeSize}"
+                                                       Foreground="#F2FFFFFF" Opacity="0.7"/>
+                                        </StackPanel>
+                                    </Border>
                                     <!-- CB-93: why a picture that should have
                                          shown didn't, in the slot the picture
                                          would have occupied. The tooltip
@@ -399,7 +515,32 @@
                  a healthy transfer look stuck. Elapsed time is the honest
                  number, and the hint underneath is what stops three minutes
                  reading as a fault. See CB-58. -->
-            <Border x:Name="FetchWaitBox" Grid.Row="1" IsVisible="False"
+            <StackPanel Grid.Row="1" Spacing="6">
+            <!-- CB-270 Stage 4: the model, thinking level and fast
+                     mode a native conversation is running on. Shown only
+                     when the session offers run controls at all (see
+                     IRemoteChatRunOptions), and a click opens the flyout
+                     that changes them. A chip and a flyout rather than
+                     three controls in the header row, which already holds
+                     the title column and four buttons, and on its own strip
+                     below it rather than in the title column, which the
+                     buttons leave about a hundred and fifty points wide: a
+                     model name and two more words do not fit there. -->
+                    <Border x:Name="RunOptionsChip"
+                            IsVisible="False"
+                            HorizontalAlignment="Left"
+                            CornerRadius="4" Padding="4,1"
+                            VerticalAlignment="Center"
+                            Cursor="Hand"
+                            Background="#26FFFFFF">
+                        <TextBlock x:Name="RunOptionsChipText"
+                                   FontSize="9.5"
+                                   MaxWidth="300"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"
+                                   Foreground="#CCFFFFFF"/>
+                    </Border>
+            <Border x:Name="FetchWaitBox" IsVisible="False"
                     Padding="10,7" CornerRadius="8"
                     Background="#FF2C2C31"
                     BorderBrush="#33FFFFFF" BorderThickness="1">
@@ -412,6 +553,7 @@
                                  Height="3" MinWidth="0" />
                 </StackPanel>
             </Border>
+            </StackPanel>
 
             <!-- A dialog the session has stopped on, almost always a permission
                  prompt. It sits between the transcript and the input because
@@ -433,9 +575,16 @@
                     CornerRadius="8" Padding="8,6"
                     Background="#26B8860B" BorderBrush="#80B8860B" BorderThickness="1">
                 <StackPanel Spacing="6">
-                    <TextBlock x:Name="PromptTitle" TextWrapping="Wrap"
-                               FontSize="11" FontWeight="SemiBold"
-                               Foreground="#F2FFFFFF"/>
+                    <!-- Bounded and scrollable: an approval shows its whole
+                         command, up to four thousand characters, and a block
+                         that tall must not push the buttons off the panel. -->
+                    <ScrollViewer x:Name="PromptTitleScroll" MaxHeight="150"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <TextBlock x:Name="PromptTitle" TextWrapping="Wrap"
+                                   FontSize="11" FontWeight="SemiBold"
+                                   Foreground="#F2FFFFFF"/>
+                    </ScrollViewer>
                     <ItemsControl x:Name="PromptOptions">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -447,7 +596,8 @@
                                 <Border Background="#33FFFFFF"
                                         BorderBrush="#40FFFFFF" BorderThickness="1"
                                         CornerRadius="6" Padding="7,4" Cursor="Hand"
-                                        PointerPressed="PromptOption_PointerPressed">
+                                        PointerPressed="PromptOption_PointerPressed"
+                                        PointerReleased="PromptOption_PointerReleased">
                                     <!-- No FontSize of its own: it inherits
                                          PromptOptions', which ApplyTextScale
                                          sets. A template has no handle a

@@ -88,13 +88,19 @@ namespace Orbweaver
             // is not the port that machine listens on, so guessing one would
             // record an address that never works.
             public string? Endpoint { get; } = endpoint;
+            //
+            // **Never disposed, deliberately.** A write that fails drops the
+            // connection, and dropping disposes it, all while the sender that hit
+            // the failure still holds this gate and others may be queued behind
+            // it. A disposed SemaphoreSlim throws on Release and on Wait, so the
+            // sender's own `finally` threw out of SendAsync (unobserved, for a
+            // caller that does not await it) and nobody queued could be released.
+            // The gate owns nothing unmanaged — the stream is what closes — so
+            // leaving it alone costs nothing; queued senders then take it in turn,
+            // find the stream closed, and report "not delivered".
             public SemaphoreSlim Writing { get; } = new(1, 1);
 
-            public void Dispose()
-            {
-                Writing.Dispose();
-                Stream.Dispose();
-            }
+            public void Dispose() => Stream.Dispose();
         }
 
         // --- what the mirror halves use -------------------------------------------

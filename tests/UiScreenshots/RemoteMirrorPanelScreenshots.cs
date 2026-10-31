@@ -246,7 +246,9 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             (_, _) => Task.FromResult(true),
             CanDeliver: status => canDeliver,
             Deliver: (status, text) =>
-                Task.FromResult(new DeliveryReceipt(DeliveryResult.Accepted, "idle"))));
+                Task.FromResult(new DeliveryReceipt(DeliveryResult.Accepted, "idle")),
+            // CB-252: never the developer's real persona files.
+            UserConfigDirs: () => Array.Empty<string>()));
 
         _client = new RemoteMirrorClient(Account, new RemoteMirrorClient.Seams(SendToServerAsync));
         RemoteControlSessions.UseMirrorClientForTests(Account, _client);

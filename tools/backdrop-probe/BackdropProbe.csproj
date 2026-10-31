@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- CB-268 S0: a throwaway-shaped but reusable probe for the group backdrop
+       window's z-order and hit-testing on macOS and Windows. It shows two
+       small windows (an orb stand-in and a backdrop behind it), reads the
+       window manager's own answers back, prints them and exits. It never
+       synthesizes input. See docs/cb268-backdrop-spike.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RollForward>LatestMajor</RollForward>
+    <AssemblyName>BackdropProbe</AssemblyName>
+    <RootNamespace>BackdropProbe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The app's own Avalonia version, so the windows behave as the app's do. -->
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+  </ItemGroup>
+
+</Project>

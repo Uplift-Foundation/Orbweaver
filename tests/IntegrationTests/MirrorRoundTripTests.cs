@@ -20,18 +20,26 @@ namespace Orbweaver.Tests;
 // end are the same bytes that were on the far disk. A hash agreeing with itself
 // is easy; a transcript arriving intact through chunking, gzip, base64, framing,
 // reassembly and window alignment is the actual claim this feature makes.
+// CB-252: in ConfigDirEnv because three tests below set CLAUDE_CONFIG_DIR, and
+// ConfigDirEnvCollection.cs explains what a sibling reading it mid-test does.
+// The whole class rather than just those tests, since xUnit serialises by
+// collection and a class cannot be half in one.
+[Collection("ConfigDirEnv")]
 public class MirrorRoundTripTests : IDisposable
 {
     private readonly string _dir;
+    private readonly string? _previousConfigDir;
 
     public MirrorRoundTripTests()
     {
+        _previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
         _dir = Path.Combine(Path.GetTempPath(), "cb-mirror-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
     }
 
     public void Dispose()
     {
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", _previousConfigDir);
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
 
@@ -1786,6 +1794,60 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Null(persona.Avatar);
     }
 
+    // --- CB-252: the roster does not read the developer's own persona -------------
+
+    private string WriteUserConfig(string name)
+    {
+        var dir = Path.Combine(_dir, "user-config");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "CLAUDE.md"), $"## Attributes\nName {name}\n");
+        return dir;
+    }
+
+    // The shape measured red on develop before the seam: CLAUDE_CONFIG_DIR at a
+    // persona, and a session that has no project persona of its own. A Harness
+    // must not see it. Without the pin, this is the test that fails only on
+    // machines that happen to have a persona.
+    [Fact]
+    public async Task AHarnessNeverReadsTheMachinesUserConfigPersona()
+    {
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", WriteUserConfig("Leaked"));
+        var harness = new Harness(_dir);
+        harness.AddSession("first", WriteTranscript("first.jsonl", Conversation(2)));
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Null(Assert.Single(harness.Client.Known()).Entry.Persona);
+    }
+
+    // The control that stops the pin above passing trivially: the seam's own
+    // directory is read, so an empty answer is a decision and not a dead path.
+    [Fact]
+    public async Task TheSeamsUserConfigDirIsWhatTheRosterReads()
+    {
+        var harness = new Harness(_dir);
+        harness.UserConfigDirs = new[] { WriteUserConfig("Seamed") };
+        harness.AddSession("first", WriteTranscript("first.jsonl", Conversation(2)));
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Equal("Seamed", Assert.Single(harness.Client.Known()).Entry.Persona!.Name);
+    }
+
+    // The app's own default: no seam means ask the machine, which is
+    // CLAUDE_CONFIG_DIR. Covers the `??` arm and pins that behaviour as unchanged.
+    [Fact]
+    public async Task WithNoSeamTheRosterAsksTheMachine()
+    {
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", WriteUserConfig("Machine"));
+        var harness = new Harness(_dir, machineUserConfigDirs: true);
+        harness.AddSession("first", WriteTranscript("first.jsonl", Conversation(2)));
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Equal("Machine", Assert.Single(harness.Client.Known()).Entry.Persona!.Name);
+    }
+
     // Codex and Grok sessions reach the roster by a second path, straight from
     // the status files, and their pictures travel by id there too.
     [Fact]
@@ -2138,7 +2200,11 @@ public class MirrorRoundTripTests : IDisposable
         // other accounts down with it. See ServeOneAsync.
         public bool AgentsThrow { get; set; }
 
-        public Harness(string dir, bool wireDelivery = false)
+        // What the roster resolves personas against. Empty by default, so a
+        // Harness never reads the developer's real persona (CB-252).
+        public IReadOnlyList<string> UserConfigDirs { get; set; } = Array.Empty<string>();
+
+        public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false)
         {
             _dir = dir;
 
@@ -2173,7 +2239,8 @@ public class MirrorRoundTripTests : IDisposable
                 // It refuses by default now; the real transport answers properly,
                 // because a peer has completed a TLS handshake with a certificate
                 // somebody pinned by typing a code. A harness says yes explicitly.
-                PeerAllowed: _ => true));
+                PeerAllowed: _ => true,
+                UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //

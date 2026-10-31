@@ -90,6 +90,80 @@ public class SettingsRoundTripTests
         Assert.Equal("star", OrbweaverSettings.OpenClawCronShape);
     }
 
+    // CB-270 Stage 6. A third, separate switch: off by default, written to its own
+    // key, independent of the reply switch, and written exactly once (a key Save
+    // writes that Load does not recognise would round-trip through _unknownKeys as
+    // well and be rejected as a duplicate).
+    [Fact]
+    public void ApproveEnabled_DefaultsOffRoundTripsAndIsIndependentOfReplying()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        Assert.False(OrbweaverSettings.OpenClawApproveEnabled);
+
+        OrbweaverSettings.OpenClawApproveEnabled = true;
+
+        Assert.False(OrbweaverSettings.OpenClawReplyEnabled);
+
+        var text = File.ReadAllText(Path.Combine(dir, "settings.json"));
+        var root = JsonNode.Parse(text) as JsonObject;
+        Assert.True(root!["openclawApproveEnabled"]!.GetValue<bool>());
+        Assert.False(root["openclawReplyEnabled"]!.GetValue<bool>());
+        Assert.Equal(1, text.Split("\"openclawApproveEnabled\"").Length - 1);
+
+        PointSettingsAt(dir);
+        Assert.True(OrbweaverSettings.OpenClawApproveEnabled);
+
+        // A second launch that saves for an unrelated reason still writes it once.
+        OrbweaverSettings.TwoLetterGlyphs = true;
+        Assert.Equal(1, File.ReadAllText(Path.Combine(dir, "settings.json")).Split("\"openclawApproveEnabled\"").Length - 1);
+    }
+
+    // CB-270. WithChats and a diamond by default, and Hidden then OwnShape
+    // written and read back, since a missing key also reads as WithChats and only
+    // a non-default value proves the write happened.
+    [Fact]
+    public void NativeMode_AndShape_DefaultAndRoundTrip()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        Assert.Equal(ClusterMode.WithChats, OrbweaverSettings.OpenClawNativeMode);
+        Assert.Equal("diamond", OrbweaverSettings.OpenClawNativeShape);
+
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.OwnShape;
+        OrbweaverSettings.OpenClawNativeShape = "star";
+
+        var root = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json"))) as JsonObject;
+        Assert.Equal("own", root!["openclawNativeMode"]!.GetValue<string>());
+        Assert.Equal("star", root["openclawNativeShape"]!.GetValue<string>());
+
+        PointSettingsAt(dir);
+        Assert.Equal(ClusterMode.OwnShape, OrbweaverSettings.OpenClawNativeMode);
+        Assert.Equal("star", OrbweaverSettings.OpenClawNativeShape);
+
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.Hidden;
+        PointSettingsAt(dir);
+        Assert.Equal(ClusterMode.Hidden, OrbweaverSettings.OpenClawNativeMode);
+    }
+
+    [Theory]
+    [InlineData("sideways")]
+    [InlineData(7)]
+    public void NativeMode_SurvivesAGarbageValue(object garbage)
+    {
+        var dir = NewSettingsDir();
+        var json = new JsonObject { ["version"] = 1, ["twoLetterGlyphs"] = true };
+        json["openclawNativeMode"] = garbage is int n ? JsonValue.Create(n) : JsonValue.Create((string)garbage);
+        File.WriteAllText(Path.Combine(dir, "settings.json"), json.ToJsonString());
+
+        PointSettingsAt(dir);
+
+        Assert.Equal(ClusterMode.WithChats, OrbweaverSettings.OpenClawNativeMode);
+        Assert.True(OrbweaverSettings.TwoLetterGlyphs);
+    }
+
     [Theory]
     [InlineData(false, ClusterMode.Hidden)]
     [InlineData(true, ClusterMode.WithChats)]
@@ -180,6 +254,7 @@ public class SettingsRoundTripTests
         var dir = NewSettingsDir();
         PointSettingsAt(dir);
         OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.Hidden;
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.Hidden;
 
         PointSettingsAt(dir);
         OrbweaverSettings.TwoLetterGlyphs = true;   // any Save at all
@@ -195,7 +270,8 @@ public class SettingsRoundTripTests
         foreach (var key in new[]
                  {
                      "openclawShowHeartbeats", "openclawHeartbeatMode",
-                     "openclawHeartbeatShape", "openclawCronMode", "openclawCronShape"
+                     "openclawHeartbeatShape", "openclawCronMode", "openclawCronShape",
+                     "openclawNativeMode", "openclawNativeShape"
                  })
         {
             Assert.Equal(1, text.Split($"\"{key}\"").Length - 1);
@@ -885,5 +961,58 @@ public class SettingsRoundTripTests
         Assert.Equal("Ctrl+Shift+N", OrbweaverSettings.NewChatHotkey);
         Assert.Equal("Ctrl+Shift+U", OrbweaverSettings.ToggleUsageOrbsHotkey);
         Assert.False(OrbweaverSettings.ShowUsageOrbs);
+    }
+
+    // --- the shared persona pool (CB-291) ------------------------------------
+
+    [Fact]
+    public void PersonaPoolDir_SurvivesARestartAndIsNullUntilChosen()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        // Null rather than a copy of the default, so PersonaPool owns what "not
+        // chosen" means (the environment, then the home directory).
+        Assert.Null(OrbweaverSettings.PersonaPoolDir);
+
+        OrbweaverSettings.PersonaPoolDir = "  /shared/personas  ";
+
+        // Back from disk, trimmed, not from the in-memory model the setter wrote.
+        PointSettingsAt(dir);
+        Assert.Equal("/shared/personas", OrbweaverSettings.PersonaPoolDir);
+
+        var saved = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json")))!.AsObject();
+        Assert.Equal("/shared/personas", saved["personaPoolDir"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void PersonaPoolDir_ABlankValueClearsIt()
+    {
+        var dir = NewSettingsDir();
+        PointSettingsAt(dir);
+
+        OrbweaverSettings.PersonaPoolDir = "/shared/personas";
+        OrbweaverSettings.PersonaPoolDir = "   ";
+
+        PointSettingsAt(dir);
+        Assert.Null(OrbweaverSettings.PersonaPoolDir);
+    }
+
+    [Fact]
+    public void PersonaPoolDir_IsKnownSoItDoesNotAlsoRoundTripAsAnUnknownKey()
+    {
+        // Save rejects a key that is both written and carried through
+        // _unknownKeys as a duplicate, so a setting missing from KnownKeys
+        // throws on the first save after it is read back.
+        var dir = NewSettingsDir();
+        File.WriteAllText(Path.Combine(dir, "settings.json"), "{ \"personaPoolDir\": \"/from/disk\" }");
+        PointSettingsAt(dir);
+
+        Assert.Equal("/from/disk", OrbweaverSettings.PersonaPoolDir);
+
+        OrbweaverSettings.ShowOrbs = !OrbweaverSettings.ShowOrbs;   // any save at all
+
+        var saved = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json")))!.AsObject();
+        Assert.Equal("/from/disk", saved["personaPoolDir"]!.GetValue<string>());
     }
 }

@@ -32,7 +32,8 @@ public class ScanProbeScanTests
 
         public void Write(
             string sessionId, int pid, string termProgram = "", string tmuxPane = "",
-            string cwd = "/Users/user/project", DateTime? written = null)
+            string cwd = "/Users/user/project", DateTime? written = null,
+            string transcriptPath = "")
         {
             var path = Path.Combine(Dir, sessionId + ".txt");
             File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new SessionStatus
@@ -45,6 +46,7 @@ public class ScanProbeScanTests
                 TermProgram = termProgram,
                 Tty = termProgram.Length > 0 ? "/dev/ttys004" : "",
                 TmuxPane = tmuxPane,
+                TranscriptPath = transcriptPath,
             }));
 
             if (written is not null) File.SetLastWriteTimeUtc(path, written.Value);
@@ -62,7 +64,9 @@ public class ScanProbeScanTests
         Func<Dictionary<string, string>?>? jobListing = null,
         Func<HashSet<string>?>? attachClients = null,
         Func<string, AgentViewer?>? agentViewer = null,
-        Func<IReadOnlyList<int>, IReadOnlyDictionary<int, AgentTeam.Membership>>? teams = null)
+        Func<IReadOnlyList<int>, IReadOnlyDictionary<int, AgentTeam.Membership>>? teams = null,
+        Func<IEnumerable<(string SessionId, string TranscriptPath)>, IReadOnlyDictionary<string, AgentTeam.Membership>>? fileTeams = null,
+        bool? onWindows = null)
     {
         OrbweaverSettings.ClaudeCodeEnabled = true;
         OrbweaverSettings.CodexEnabled = true;
@@ -72,9 +76,13 @@ public class ScanProbeScanTests
             jobListing ?? (() => new Dictionary<string, string>(StringComparer.Ordinal)),
             attachClients ?? (() => new HashSet<string>(StringComparer.Ordinal)),
             dependents: _ => SessionDependents.Nothing,
+            onWindows: onWindows,
             paneOwners: paneOwners,
             agentViewer: agentViewer ?? (_ => null),
-            teams: teams ?? (pids => pids.ToDictionary(p => p, _ => AgentTeam.None)));
+            teams: teams ?? (pids => pids.ToDictionary(p => p, _ => AgentTeam.None)),
+            // Never the real files: a scan suite must not read a transcript
+            // that happens to exist on the machine running it.
+            fileTeams: fileTeams ?? (_ => new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal)));
     }
 
     private static IReadOnlyDictionary<TmuxPaneKey, string?> Owners(
@@ -264,6 +272,103 @@ public class ScanProbeScanTests
         Assert.NotNull(status);
         Assert.Equal("lead-id", status!.Lead);
         Assert.Equal("MenuUX", status.Agent);
+    }
+
+    // --- a team read from files, for a session with no pid (WSL) ---------------------
+    //
+    // A Claude Code in WSL records session_pid 0, so there is no command line to
+    // read its team off, and its orb drew alone with no arrow to its lead. The
+    // background half now reads such a session's transcript and team config
+    // instead (AgentTeamFiles), and the UI half applies the answer exactly as it
+    // applies a process's.
+
+    private const string WslTranscript = "/home/user/.claude/projects/-home-user/5e6f7a8b.jsonl";
+
+    private static IReadOnlyDictionary<string, AgentTeam.Membership> OnlyWslMember(
+        IEnumerable<(string SessionId, string TranscriptPath)> asked) =>
+        asked.Where(a => a.SessionId == "wsl-member")
+            .ToDictionary(a => a.SessionId, _ => Member, StringComparer.Ordinal);
+
+    // `onWindows: true` throughout, because that is what makes a pid-less
+    // session with a Linux path a WSL one to the scan (see
+    // SessionPresence.LocalDaemonCanAnswerFor): anywhere else the local daemon's
+    // empty job listing rules a pid-less session out as "not a job", and the
+    // session is dropped before there is any team to draw.
+
+    [AvaloniaFact]
+    public async Task APidlessSessionIsDrawnInItsTeamFromItsFiles()
+    {
+        // Negative control just below: with no file answer the same session
+        // reads "" for its lead, which is how every WSL teammate drew before.
+        using var scratch = new Scratch();
+        scratch.Write("wsl-member", 0, termProgram: "iTerm.app", transcriptPath: WslTranscript);
+        scratch.Write("native", LivePid, termProgram: "iTerm.app");
+
+        var asked = new List<(IReadOnlyList<(string Id, string Path)> Sessions, bool OnUIThread)>();
+        var manager = Manager(
+            scratch,
+            paneOwners: claims => Owners(claims, null),
+            onWindows: true,
+            fileTeams: sessions =>
+            {
+                var list = sessions.Select(s => (Id: s.SessionId, Path: s.TranscriptPath)).ToList();
+                lock (asked) asked.Add((list, Dispatcher.UIThread.CheckAccess()));
+                return OnlyWslMember(sessions);
+            });
+
+        await manager.ScheduleScan();
+
+        var (sessions, onUIThread) = Assert.Single(asked);
+        Assert.Equal(new[] { ("wsl-member", WslTranscript) }, sessions);   // not the session that has a pid
+        Assert.False(onUIThread, "the team files were read on the UI thread");
+
+        var status = manager.StatusFor("wsl-member");
+        Assert.NotNull(status);
+        Assert.Equal("lead-id", status!.Lead);
+        Assert.Equal("MenuUX", status.Agent);
+        Assert.Equal("blue", status.Color);   // the colour the team config gave it
+
+        Assert.Equal("", manager.StatusFor("native")!.Lead);   // untouched: it has a pid and no team
+    }
+
+    [AvaloniaFact]
+    public async Task APidlessSessionWithNoFileAnswerHasNoTeam()
+    {
+        using var scratch = new Scratch();
+        scratch.Write("wsl-member", 0, termProgram: "iTerm.app", transcriptPath: WslTranscript);
+
+        var manager = Manager(scratch, paneOwners: claims => Owners(claims, null), onWindows: true);
+
+        await manager.ScheduleScan();
+
+        var status = manager.StatusFor("wsl-member");
+        Assert.NotNull(status);
+        Assert.Equal("", status!.Lead);
+        Assert.Equal("", status.Agent);
+    }
+
+    [AvaloniaFact]
+    public void AWslMemberIsPresentWhileItsLeadIsOnTheScanAndParkedOnceItIsNot()
+    {
+        // Giving a WSL member a lead brings it under the orphan rule that every
+        // other member is already under: a teammate whose lead is on the scan is
+        // part of a live team, and one whose lead is gone is answering to
+        // nothing. Both halves, since a change that made the first false would
+        // dim every WSL team.
+        using var withLead = new Scratch();
+        withLead.Write("lead-id", 0, termProgram: "iTerm.app", cwd: "/home/user/lead");
+        withLead.Write("wsl-member", 0, termProgram: "iTerm.app", transcriptPath: WslTranscript);
+
+        var live = Manager(withLead, paneOwners: claims => Owners(claims, null), onWindows: true, fileTeams: OnlyWslMember);
+        live.ScanAndUpdate();
+        Assert.Equal(OrbPresence.Present, live.StatusFor("wsl-member")!.Presence);
+
+        using var leadGone = new Scratch();
+        leadGone.Write("wsl-member", 0, termProgram: "iTerm.app", transcriptPath: WslTranscript);
+
+        var orphaned = Manager(leadGone, paneOwners: claims => Owners(claims, null), onWindows: true, fileTeams: OnlyWslMember);
+        orphaned.ScanAndUpdate();
+        Assert.Equal(OrbPresence.Parked, orphaned.StatusFor("wsl-member")!.Presence);
     }
 
     [AvaloniaFact]

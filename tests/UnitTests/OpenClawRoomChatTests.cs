@@ -93,6 +93,26 @@ namespace Orbweaver.Tests
             Assert.Equal("#7f7", room.History[0].SpeakerColor);
         }
 
+        // CB-272: the merged copy carries ImageSourcePath, and IsVideo is read
+        // off it, so a clip in a room stays a clip. A future copy site that
+        // forgot the path would turn it into a picture-shaped turn with no tile.
+        [Fact]
+        public void ARoomMergedVideoTurnIsStillAVideo()
+        {
+            var nova = Member("nova");
+            nova.SetHistory(new List<HistoryTurn>
+            {
+                new(ChatRole.Assistant, "here you go", "/route?path=clip.mp4", "clip.mp4",
+                    T0.AddMinutes(1), null, null, ImageSourcePath: "/a/b/clip.mp4"),
+            });
+
+            var room = Room((nova, "Nova", "#7f7"));
+
+            var turn = Assert.Single(room.History);
+            Assert.True(turn.IsVideo);
+            Assert.Equal("/a/b/clip.mp4", turn.ImageSourcePath);
+        }
+
         // The first bug. Nova's message is an assistant turn in her own
         // transcript and a *user* turn in Aurora's, because Aurora received
         // it — so a naive merge shows it twice, once as Nova and once as a blue

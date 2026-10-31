@@ -63,5 +63,11 @@
          be a second source of truth for the thing this file exists to keep
          single. -->
     <Compile Include="..\ArrangementTests\ArrangementSweep.cs" />
+    <Compile Include="..\UnitTests\TestBudgets.cs" Link="TestBudgets.cs" />
+    <!-- CB-270 Stage 3: the unit suite's in-memory gateway socket and the
+         scrubbed capture of two native runs, so a panel can be driven against a
+         real OpenClawGateway and the real events without second copies. -->
+    <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
+    <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
   </ItemGroup>
 </Project>

@@ -394,6 +394,49 @@ public class HookInstallerMigrationTests
         Assert.False(Directory.Exists(WinClaudeLegacyDir(s)));
     }
 
+    // CB-291: the orbweaver-team skill lands in every account's own skills folder
+    // — the default one and each saved profile — because each Claude Code account
+    // reads only its own config directory. A reinstall replaces the folder
+    // outright, and an uninstall removes that one folder and nothing beside it.
+    [WindowsInstallerTheory]
+    [MemberData(nameof(WindowsShells))]
+    public void WindowsClaudeCode_InstallsTheTeamSkillForEveryAccount_AndUninstallRemovesOnlyThat(string shell)
+    {
+        using var s = new Scratch();
+        Write(Path.Combine(s.AppData, "Orbweaver", "settings.json"),
+            new JsonObject { ["claudeCodeProfileDirs"] = new JsonArray(".claude-work") });
+        var neighbour = Path.Combine(s.Home, ".claude", "skills", "someone-elses", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(neighbour)!);
+        File.WriteAllText(neighbour, "not ours");
+
+        AssertOk(RunPs(shell, "install-windows-hooks.ps1", s));
+
+        foreach (var account in new[] { ".claude", ".claude-work" })
+        {
+            var skill = Path.Combine(s.Home, account, "skills", "orbweaver-team");
+            Assert.True(File.Exists(Path.Combine(skill, "SKILL.md")), account);
+            Assert.True(File.Exists(Path.Combine(skill, "FORMATS.md")), account);
+            Assert.True(File.Exists(Path.Combine(skill, "orbweaver-team.sh")), account);
+            Assert.Equal(4, Directory.GetFiles(Path.Combine(skill, "roles"), "*.md").Length);
+
+            // The resolver must reach Git Bash as shipped: a carriage return in
+            // its shebang line is a script that cannot run at all.
+            Assert.DoesNotContain((byte)'\r', File.ReadAllBytes(Path.Combine(skill, "orbweaver-team.sh")));
+        }
+
+        // A reinstall replaces the folder rather than adding to it.
+        var stale = Path.Combine(s.Home, ".claude", "skills", "orbweaver-team", "left-by-an-older-version.txt");
+        File.WriteAllText(stale, "stale");
+        AssertOk(RunPs(shell, "install-windows-hooks.ps1", s));
+        Assert.False(File.Exists(stale));
+
+        AssertOk(RunPs(shell, "install-windows-hooks.ps1", s, "-Uninstall", "-WslDistro", NoSuchDistro));
+
+        foreach (var account in new[] { ".claude", ".claude-work" })
+            Assert.False(Directory.Exists(Path.Combine(s.Home, account, "skills", "orbweaver-team")), account);
+        Assert.True(File.Exists(neighbour));
+    }
+
     // The installers run before the upgraded app has moved %APPDATA%\ClaudeBuddy,
     // so the saved extra profiles must still be found there.
     [WindowsInstallerTheory]
@@ -684,6 +727,42 @@ public class HookInstallerMigrationTests
         AssertOk(RunSh("install-macos-hooks.sh", s));
         AssertMacClaudeWired(s, MacClaudeSettings(s));
         Assert.False(Directory.Exists(MacClaudeLegacyDir(s)));
+    }
+
+    // CB-291: the same promise on a Mac — the skill beside every account's
+    // settings.json, replaced on reinstall, and only that folder removed.
+    [MacInstallerFact]
+    public void MacClaudeCode_InstallsTheTeamSkillForEveryAccount_AndUninstallRemovesOnlyThat()
+    {
+        using var s = new Scratch();
+        Write(MacSupport(s, "Orbweaver"), new JsonObject { ["claudeCodeProfileDirs"] = new JsonArray(".claude-work") });
+        var neighbour = Path.Combine(s.Home, ".claude", "skills", "someone-elses", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(neighbour)!);
+        File.WriteAllText(neighbour, "not ours");
+
+        AssertOk(RunSh("install-macos-hooks.sh", s));
+
+        foreach (var account in new[] { ".claude", ".claude-work" })
+        {
+            var skill = Path.Combine(s.Home, account, "skills", "orbweaver-team");
+            Assert.True(File.Exists(Path.Combine(skill, "SKILL.md")), account);
+            Assert.True(File.Exists(Path.Combine(skill, "FORMATS.md")), account);
+            Assert.Equal(4, Directory.GetFiles(Path.Combine(skill, "roles"), "*.md").Length);
+            Assert.True(
+                (File.GetUnixFileMode(Path.Combine(skill, "orbweaver-team.sh")) & UnixFileMode.UserExecute) != 0,
+                account + ": the resolver should be executable");
+        }
+
+        var stale = Path.Combine(s.Home, ".claude", "skills", "orbweaver-team", "left-by-an-older-version.txt");
+        File.WriteAllText(stale, "stale");
+        AssertOk(RunSh("install-macos-hooks.sh", s));
+        Assert.False(File.Exists(stale));
+
+        AssertOk(RunSh("install-macos-hooks.sh", s, "--uninstall"));
+
+        foreach (var account in new[] { ".claude", ".claude-work" })
+            Assert.False(Directory.Exists(Path.Combine(s.Home, account, "skills", "orbweaver-team")), account);
+        Assert.True(File.Exists(neighbour));
     }
 
     [MacInstallerFact]

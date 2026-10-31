@@ -103,6 +103,8 @@ namespace Orbweaver
         private static readonly Dictionary<string, string> Drafts = new(StringComparer.Ordinal);
 
         private IRemoteChatSession? _session;
+
+        private string? AskingKey() => (_session as IRemoteChatGatewayKey)?.GatewayKey;
         private OrbWindow? _owner;
 
         // Whether the header is currently wearing the orb's identity rather
@@ -209,6 +211,7 @@ namespace Orbweaver
             // button's mark.
             AttachMark.Data = StreamGeometry.Parse(SymbolMarks.Gear);
             HeartChipMark.Data = StreamGeometry.Parse(SymbolMarks.Heart);
+            RunOptionsChip.PointerPressed += RunOptionsChip_PointerPressed;
 
             _defaultWidth = Width;
             _defaultHeight = Height;
@@ -338,6 +341,7 @@ namespace Orbweaver
             };
             MicButton.PointerPressed += (_, e) => { e.Handled = true; _owner?.ToggleRecording(); };
             SpeakButton.PointerPressed += (_, e) => { e.Handled = true; SpeakLatest(); };
+            MuteButton.PointerPressed += (_, e) => { e.Handled = true; AudioMute.Toggle(); };
 
             // Tunnel, not bubble. TextBox handles Return in a class handler that
             // runs before any instance handler on the same element, so a plain
@@ -474,7 +478,14 @@ namespace Orbweaver
             // stale entry is not a visible bug — it is Transient or PanelFor
             // handing out a panel whose window is gone, which shows up later
             // and somewhere else.
-            Closed += (_, _) => Panels.Remove(this);
+            Closed += (_, _) => { Panels.Remove(this); AudioMute.Changed -= ApplyMuted; };
+
+            // Every open panel mirrors the one global flag, so the tray, the
+            // hotkey and a click on any panel's button all leave every header
+            // saying the same thing. Unsubscribed beside Panels.Remove: a
+            // closed panel left on a static event is a leak that also keeps
+            // repainting a window that is gone.
+            AudioMute.Changed += ApplyMuted;
 
             ApplyPinAffordance();
 
@@ -664,6 +675,7 @@ namespace Orbweaver
             _session.TurnAdded -= OnTurnAdded;
             _session.TurnUpdated -= OnTurnUpdated;
             _session.StateChanged -= OnStateChanged;
+            if (_session is OpenClawChatSession gatewayChat) gatewayChat.TurnsRemoved -= OnTurnsRemoved;
 
             if (_session is IRemoteChatBacklog previous)
             {
@@ -682,6 +694,11 @@ namespace Orbweaver
             // taking the box away from an unrelated one.
             if (_session is IRemoteChatReadOnly wasReadOnly) wasReadOnly.ReadOnlyChanged -= OnReadOnlyChanged;
             if (_session is IRemoteChatInterrupt wasInterruptible) wasInterruptible.InterruptChanged -= OnInterruptChanged;
+            if (_session is IRemoteChatRunOptions wasRunnable) wasRunnable.RunOptionsChanged -= OnRunOptionsChanged;
+
+            // The flyout belongs to the conversation it was built for.
+            _runFlyout?.Hide();
+            _runFlyout = null;
             if (_session is IRemoteChatPeerInbound wasInbound) wasInbound.InboundChanged -= OnInboundChanged;
 
             // Nobody is looking any more, so its live loop stops.
@@ -775,6 +792,7 @@ namespace Orbweaver
 
             session.TurnAdded += OnTurnAdded;
             session.TurnUpdated += OnTurnUpdated;
+            if (session is OpenClawChatSession gateway) gateway.TurnsRemoved += OnTurnsRemoved;
             session.StateChanged += OnStateChanged;
 
             if (session is RemoteControlChatSession remote)
@@ -821,6 +839,8 @@ namespace Orbweaver
             // ApplyComposerAffordances below for the initial state.
             if (session is IRemoteChatReadOnly readOnlyNow) readOnlyNow.ReadOnlyChanged += OnReadOnlyChanged;
             if (session is IRemoteChatInterrupt interruptible) interruptible.InterruptChanged += OnInterruptChanged;
+            if (session is IRemoteChatRunOptions runnable) runnable.RunOptionsChanged += OnRunOptionsChanged;
+            ApplyRunOptions(session);
 
             // CB-267: the offer comes and goes under an open panel — the
             // transcript's mode row lands after bind, settings.json is edited
@@ -869,13 +889,14 @@ namespace Orbweaver
             OnStateChanged(session.State);
 
             _turns.Clear();
-            foreach (var turn in session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale));
+            foreach (var turn in session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
 
             HideSlashSuggestions();
 
             Input.Text = Drafts.GetValueOrDefault(session.SessionId, "");
             MicButton.IsVisible = OrbweaverSettings.VoiceInputEnabled;
             ApplySpeakState(TextToSpeech.State);
+            ApplyMuted(AudioMute.IsMuted);
 
             // The box stays enabled even when sending won't work, and says why
             // on itself instead. A disabled box can't be pasted into or drafted
@@ -1008,6 +1029,207 @@ namespace Orbweaver
         private void OnReadOnlyChanged() => ApplyComposerAffordances(_session);
 
         private void OnInterruptChanged() => ApplyStop(_session);
+
+        // --- CB-270 Stage 4: run controls --------------------------------------
+
+        private void OnRunOptionsChanged() => ApplyRunOptions(_session);
+
+        // The chip says what the conversation is running on; a click opens the
+        // flyout. Hidden whenever the session offers nothing, which is also what
+        // closes a flyout left open when the options go away under it.
+        private void ApplyRunOptions(IRemoteChatSession? session)
+        {
+            var options = (session as IRemoteChatRunOptions)?.RunOptions;
+
+            RunOptionsChip.IsVisible = options is not null;
+
+            if (options is null)
+            {
+                _runFlyout?.Hide();
+                return;
+            }
+
+            RunOptionsChipText.Text = options.ChipText;
+            // The whole text in the tip as well, since a long model name can be cut
+            // by the column's width.
+            ToolTip.SetTip(RunOptionsChip, options.ChipText + "\n" + OpenClawRunText.ChipTip);
+
+            if (_runFlyout is not null) _runFlyout.Content = BuildRunFlyout((IRemoteChatRunOptions)session!, options);
+        }
+
+        private Flyout? _runFlyout;
+
+        // The controls of the flyout, kept so a test can reach what a real person
+        // would click without a pointer. Rebuilt from the options every time they
+        // change; _runApplying holds the handlers off while it is being set.
+        internal ComboBox? RunModelBox { get; private set; }
+        internal ComboBox? RunThinkingBox { get; private set; }
+        internal ToggleSwitch? RunFastSwitch { get; private set; }
+        internal Button? RunFastDefault { get; private set; }
+        internal ComboBox? RunLimitBox { get; private set; }
+        internal TextBlock? RunStatus { get; private set; }
+        private bool _runApplying;
+
+        private void RunOptionsChip_PointerPressed(object? sender, PointerPressedEventArgs e) => OpenRunOptions();
+
+        internal void OpenRunOptions()
+        {
+            if (_session is not IRemoteChatRunOptions run || run.RunOptions is not { } options) return;
+
+            _runFlyout ??= new Flyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+            _runFlyout.Content = BuildRunFlyout(run, options);
+            _runFlyout.ShowAt(RunOptionsChip);
+        }
+
+        internal Control BuildRunFlyout(IRemoteChatRunOptions run, RemoteRunOptions options)
+        {
+            _runApplying = true;
+            try
+            {
+                var panel = new StackPanel { Spacing = 8, MinWidth = 240 };
+
+                // Model. "Default" first when it can be reset, so it is the same
+                // gesture as choosing any other.
+                RunModelBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                if (options.CanResetToDefault) RunModelBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.DefaultLabel, Tag = null });
+                foreach (var m in options.Models) RunModelBox.Items.Add(new ComboBoxItem { Content = m.Label, Tag = m.Id });
+                RunModelBox.IsEnabled = !options.Locked;
+                if (options.Locked) ToolTip.SetTip(RunModelBox, OpenClawRunText.LockedModelTip);
+                // The handler before the selection, so setting the selection from
+                // the options is held off by _runApplying like any other.
+                RunModelBox.SelectionChanged += async (_, _) =>
+                {
+                    if (_runApplying || RunModelBox.SelectedItem is not ComboBoxItem item) return;
+                    await ChangeAsync(RunModelBox, () => run.SetModelAsync((string?)item.Tag));
+                };
+                RunModelBox.SelectedIndex = IndexOfTag(RunModelBox, options.ModelId);
+                panel.Children.Add(Labelled(OpenClawRunText.ModelLabel, RunModelBox));
+
+                // Thinking: the model's own levels, id sent and label shown.
+                RunThinkingBox = null;
+                if (options.ThinkingChoices.Count > 0)
+                {
+                    RunThinkingBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                    if (options.CanResetToDefault)
+                    {
+                        var label = options.ThinkingDefaultLabel is { } d
+                            ? $"{OpenClawRunText.DefaultLabel} ({d})"
+                            : OpenClawRunText.DefaultLabel;
+                        RunThinkingBox.Items.Add(new ComboBoxItem { Content = label, Tag = null });
+                    }
+
+                    foreach (var t in options.ThinkingChoices) RunThinkingBox.Items.Add(new ComboBoxItem { Content = t.Label, Tag = t.Id });
+                    RunThinkingBox.SelectionChanged += async (_, _) =>
+                    {
+                        if (_runApplying || RunThinkingBox.SelectedItem is not ComboBoxItem item) return;
+                        await ChangeAsync(RunThinkingBox, () => run.SetThinkingAsync((string?)item.Tag));
+                    };
+                    RunThinkingBox.SelectedIndex = IndexOfTag(RunThinkingBox, options.ThinkingId);
+                    panel.Children.Add(Labelled(OpenClawRunText.ThinkingLabel, RunThinkingBox));
+                }
+
+                // Fast mode, with its own way back to the default.
+                RunFastSwitch = new ToggleSwitch { IsChecked = options.Fast, OnContent = "", OffContent = "" };
+                RunFastSwitch.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_runApplying) return;
+                    var on = RunFastSwitch.IsChecked == true;
+                    await ChangeAsync(RunFastSwitch, () => run.SetFastModeAsync(on));
+                };
+                RunFastDefault = new Button
+                {
+                    Content = OpenClawRunText.DefaultLabel,
+                    IsVisible = options.CanResetToDefault && options.FastIsSet,
+                    Padding = new Thickness(6, 1)
+                };
+                RunFastDefault.Click += async (_, _) => await ChangeAsync(RunFastDefault, () => run.SetFastModeAsync(null));
+                var fastRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                fastRow.Children.Add(RunFastSwitch);
+                fastRow.Children.Add(RunFastDefault);
+                panel.Children.Add(Labelled(OpenClawRunText.FastLabel, fastRow));
+
+                // Time limit for the next sends: held on the session, never zero.
+                RunLimitBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(null), Tag = null });
+                foreach (var minutes in OpenClawRunText.TimeLimitMinutes)
+                {
+                    RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(minutes), Tag = minutes });
+                }
+
+                RunLimitBox.SelectionChanged += (_, _) =>
+                {
+                    if (_runApplying || RunLimitBox.SelectedItem is not ComboBoxItem item) return;
+                    run.TimeoutMinutes = (int?)item.Tag;
+                };
+                RunLimitBox.SelectedIndex = IndexOfTag(RunLimitBox, run.TimeoutMinutes);
+                panel.Children.Add(Labelled(OpenClawRunText.TimeLimitLabel, RunLimitBox));
+
+                RunStatus = new TextBlock
+                {
+                    FontSize = 11, TextWrapping = TextWrapping.Wrap, IsVisible = false,
+                    Foreground = RecordingFill
+                };
+                panel.Children.Add(RunStatus);
+
+                return panel;
+            }
+            finally
+            {
+                _runApplying = false;
+            }
+        }
+
+        private static int IndexOfTag(ComboBox box, object? tag)
+        {
+            // Every item is one this panel added, so each is a ComboBoxItem.
+            for (var i = 0; i < box.Items.Count; i++)
+            {
+                if (Equals(((ComboBoxItem)box.Items[i]!).Tag, tag)) return i;
+            }
+
+            return -1;
+        }
+
+        private static Control Labelled(string label, Control control)
+        {
+            var row = new StackPanel { Spacing = 2 };
+            row.Children.Add(new TextBlock { Text = label, FontSize = 10.5, Opacity = 0.7 });
+            row.Children.Add(control);
+            return row;
+        }
+
+        // One change: the control is held off while the request is out, and the
+        // sentence the session returns, if any, goes in the status line. Success
+        // returns null, and the session's own RunOptionsChanged then redraws the
+        // chip and rebuilds the flyout from what really happened.
+        private async Task ChangeAsync(Control control, Func<Task<string?>> change)
+        {
+            // Always built by the time a control can be changed: the handlers that
+            // call this belong to the flyout that builds it.
+            var status = RunStatus!;
+
+            control.IsEnabled = false;
+            status.IsVisible = false;
+
+            var failure = await change();
+
+            control.IsEnabled = true;
+
+            if (failure is null) return;
+
+            status.Text = failure;
+            status.IsVisible = true;
+
+            // A refusal changed nothing, so put the controls back to what is true.
+            // The panel may have been rebound, or the options gone, while the
+            // request was out, and then there is nothing to put back.
+            if (_session is IRemoteChatRunOptions run && run.RunOptions is { } options && _runFlyout is not null)
+            {
+                _runFlyout.Content = BuildRunFlyout(run, options);
+                RunStatus!.Text = failure;
+                RunStatus.IsVisible = true;
+            }
+        }
 
         // --- CB-267: a message the session would hold ---
 
@@ -1695,6 +1917,30 @@ namespace Orbweaver
             if ((sender as Control)?.DataContext is TurnView turn) turn.OpenFullSize();
         }
 
+        // CB-272: the same click, for a video tile — handled for the same two
+        // reasons, and it fetches the clip only now rather than when the row
+        // was drawn.
+        private void Audio_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+
+            if ((sender as Control)?.DataContext is TurnView turn) turn.OpenAudio();
+        }
+
+        private void Document_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+
+            if ((sender as Control)?.DataContext is TurnView turn) turn.OpenDocument();
+        }
+
+        private void Video_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+
+            if ((sender as Control)?.DataContext is TurnView turn) turn.OpenVideo();
+        }
+
         // Avalonia.Native's macOS cursor factory (libAvaloniaNative.dylib)
         // only ever asks AppKit for arrow, crosshair, hand, I-beam, and the
         // two straight resize cursors (up/down, left/right) — nothing in it
@@ -1943,7 +2189,7 @@ namespace Orbweaver
             // paste intercepted at all — see IRemoteChatImages. Anything
             // else falls straight through to the TextBox's own paste, which
             // is exactly what happened here before this feature existed.
-            if (_session is IRemoteChatImages && IsPasteGesture(e))
+            if (_session is IRemoteChatImages { CanSendImages: true } && IsPasteGesture(e))
             {
                 e.Handled = true;
                 _ = HandlePasteAsync();
@@ -2419,6 +2665,14 @@ namespace Orbweaver
             // carries the size for its items, which have no handle of their own
             // (see the template's comment).
             PromptTitle.FontSize = 11 * scale;
+
+            // A whole-number line height, so n lines are a whole number of pixels
+            // tall. At the font's own height (13.431 at 11 pt) three lines measure
+            // 40.29, layout rounding makes the box 40, and the text is then laid out
+            // again to fit 40: the third line no longer fits and is not drawn. That
+            // would drop the last line of an approval, which is where the request
+            // id sits, on a display without sub-pixel layout.
+            PromptTitle.LineHeight = Math.Ceiling(PromptTitle.FontSize * 1.25);
             PromptOptions.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 
@@ -2524,7 +2778,7 @@ namespace Orbweaver
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            var outcome = images.Count > 0 && session is IRemoteChatImages withImages
+            var outcome = images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
                 ? await withImages.SendWithImagesAsync(text, images)
                 : await session.SendAsync(text);
 
@@ -2565,6 +2819,18 @@ namespace Orbweaver
             SpeakGlyph.IsVisible = glyph is not null;
             SpeakStopMark.Data = mark is null ? null : StreamGeometry.Parse(mark);
             SpeakStopMark.IsVisible = mark is not null;
+        }
+
+        private static readonly IBrush MuteActiveFill = new SolidColorBrush(Color.Parse("#E0A04040"));
+
+        // The mute button's whole look, from the one flag: glyph, a desaturated
+        // red fill while muted (readable beside the amber Preparing and blue
+        // Speaking fills), and a tooltip naming the chord that is really bound.
+        private void ApplyMuted(bool muted)
+        {
+            MuteGlyph.Text = SymbolMarks.MuteLook(muted);
+            MuteFill.Fill = muted ? MuteActiveFill : IdleFill;
+            ToolTip.SetTip(MuteButton, SymbolMarks.MuteTip(muted, HotkeyActions.Bound(HotkeyAction.ToggleMute)));
         }
 
         private bool _loadingOlder;
@@ -2618,7 +2884,7 @@ namespace Orbweaver
             // start them downloading again.
             for (var i = 0; i < count && i < _session.History.Count; i++)
             {
-                _turns.Insert(i, new TurnView(_session.History[i], _defaultBubble, _soleSpeaker, Adopt, _textScale));
+                _turns.Insert(i, new TurnView(_session.History[i], _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
             }
         }
 
@@ -2627,7 +2893,7 @@ namespace Orbweaver
             if (_session is null) return;
 
             _turns.Clear();
-            foreach (var turn in _session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale));
+            foreach (var turn in _session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
 
             // Re-read rather than left at what Bind found.
             //
@@ -2648,7 +2914,7 @@ namespace Orbweaver
 
         private void OnTurnAdded(ChatTurn turn)
         {
-            _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale));
+            _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
 
             // Your own turn always brings the view with it; everything else
             // respects where you were reading.
@@ -2659,6 +2925,13 @@ namespace Orbweaver
             }
 
             ScrollToEndIfPinned();
+        }
+
+        // CB-270: a run's live rows replaced by what history says at its end.
+        // The rows that take their place arrive as ordinary TurnAdded.
+        private void OnTurnsRemoved(int from, int count)
+        {
+            for (var i = 0; i < count && from < _turns.Count; i++) _turns.RemoveAt(from);
         }
 
         private void OnTurnUpdated(ChatTurn turn)
@@ -2813,18 +3086,57 @@ namespace Orbweaver
         // composer: the panel doesn't hide what is happening because you can't
         // act on it yet, and the session — which owns the rule — is the thing
         // that states it.
+        // CB-270 Stage 6. A prompt marked ArmedActivation (an approval: an answer cannot
+        // be taken back) is armed, not instant: its options ignore presses for a
+        // moment after the prompt first shows or its content changes, so a click
+        // that was aimed at something else, or at what was there a moment ago,
+        // cannot answer it; and it answers on release over the same option that was
+        // pressed, so a press that slid off, or a press and release on different
+        // options, answers nothing. A permission bar read off a terminal is not
+        // marked, and answers on a press as it always has.
+        //
+        // The clock is a seam so a test does not sleep.
+        internal static Func<DateTime> PromptClock { get; set; } = () => DateTime.UtcNow;
+        internal static readonly TimeSpan PromptArmDelay = TimeSpan.FromMilliseconds(500);
+
+        private string? _promptSignature;
+        private DateTime _promptShownAt;
+        private bool _promptArmed;
+        private Control? _pressedPromptOption;
+        // What the bar was asking when the press landed: a release answers only the
+        // question that was on the bar when the press began, however the controls
+        // are rebuilt in between (the same id can come back with another command).
+        private string? _pressedPromptSignature;
+
         private void ApplyPrompt()
         {
             var prompt = (_session as IRemoteChatPrompts)?.Prompt;
 
             if (prompt is null)
             {
+                _promptSignature = null;
+                _promptArmed = false;
+                _pressedPromptOption = null;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
                 return;
             }
 
+            // The arming clock restarts whenever what is being asked changes, not
+            // only when the box first appears: a new request replacing one under
+            // the pointer is exactly the moment a click must not carry over.
+            var signature = prompt.Title + "\n" + string.Join("\n",
+                prompt.Options.Select(o => o.Key + "|" + o.ApprovalId));
+            if (signature != _promptSignature)
+            {
+                _promptSignature = signature;
+                _promptShownAt = PromptClock();
+            }
+
+            _promptArmed = prompt.ArmedActivation;
+
             PromptTitle.Text = prompt.Title;
+            PromptElsewhere.Text = prompt.ElsewhereLabel ?? "Answer in the terminal";
 
             // No options means the screen couldn't be read. The box still
             // appears — something is waiting and the transcript won't say so —
@@ -2839,7 +3151,46 @@ namespace Orbweaver
         {
             e.Handled = true;
 
-            if ((sender as Control)?.DataContext is not ChatPromptOption option) return;
+            if (_promptArmed)
+            {
+                // Only remembered: the answer is given on release. And only a press
+                // that itself came after the arming window is remembered, so one
+                // that began inside it and is held past it answers nothing.
+                _pressedPromptOption = PromptClock() - _promptShownAt < PromptArmDelay ? null : sender as Control;
+                _pressedPromptSignature = _promptSignature;
+                return;
+            }
+
+            ChoosePromptOption(sender as Control);
+        }
+
+        private void PromptOption_PointerReleased(object? sender, PointerReleasedEventArgs e)
+        {
+            if (!_promptArmed) return;
+
+            e.Handled = true;
+
+            var pressed = _pressedPromptOption;
+            _pressedPromptOption = null;
+
+            var pressedSignature = _pressedPromptSignature;
+            _pressedPromptSignature = null;
+
+            if (sender is not Control option || !ReferenceEquals(pressed, option)) return;
+            if (pressedSignature is null || pressedSignature != _promptSignature) return;
+
+            // Released over the same option, not merely delivered to it by capture.
+            var at = e.GetPosition(option);
+            if (at.X < 0 || at.Y < 0 || at.X > option.Bounds.Width || at.Y > option.Bounds.Height) return;
+
+            if (PromptClock() - _promptShownAt < PromptArmDelay) return;
+
+            ChoosePromptOption(option);
+        }
+
+        private void ChoosePromptOption(Control? control)
+        {
+            if (control?.DataContext is not ChatPromptOption option) return;
             if (_session is not IRemoteChatPrompts prompts) return;
 
             _ = prompts.AnswerAsync(option);
@@ -2851,7 +3202,14 @@ namespace Orbweaver
 
             if (_session is not IRemoteChatPrompts prompts) return;
 
+            // Read before the call: answering may change the prompt.
+            var staysOpen = prompts.Prompt?.ElsewhereLabel is not null;
+
             prompts.AnswerElsewhere();
+
+            // A prompt with no terminal to go to answers "where else" with a note in
+            // the transcript, which is the thing to read, so the panel stays.
+            if (staysOpen) return;
 
             // Dismissed, because this asked to be somewhere else. Leaving the
             // panel up over the terminal it just brought forward would be
@@ -3088,6 +3446,7 @@ namespace Orbweaver
             // reads Transient on the very next line sees the truth even if the
             // platform defers the event.
             Panels.Remove(this);
+            AudioMute.Changed -= ApplyMuted;
             Close();
         }
 
@@ -3142,9 +3501,16 @@ namespace Orbweaver
             // panel as it is built, for the rules that span more than one
             // bubble. Passed in rather than reached for through the singleton,
             // so a TurnView built by a test is a TurnView and not half a window.
+            // askingKey is the gateway key of the conversation this row is in,
+            // or null when the panel is not one OpenClaw conversation (a room,
+            // another kind of session). Only the clip's refusal tooltip reads
+            // it, to say a route was re-keyed (CB-277).
+            private readonly string? _askingKey;
+
             public TurnView(ChatTurn turn, Color? defaultBubble, Speaker? soleSpeaker,
-                Action<SelectableTextBlock> adopt, TextScale scale)
+                Action<SelectableTextBlock> adopt, TextScale scale, string? askingKey = null)
             {
+                _askingKey = askingKey;
                 _turn = turn;
                 _defaultBubble = defaultBubble;
                 _soleSpeaker = soleSpeaker;
@@ -3160,6 +3526,18 @@ namespace Orbweaver
                     {
                         _body = null;
                         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Body)));
+                    }
+
+                    // CB-270: a tool line learns it failed only when the result
+                    // arrives, after its row is drawn. The body is rebuilt because
+                    // its runs carry the ink they were made with.
+                    if (e.PropertyName == nameof(ChatTurn.IsError))
+                    {
+                        _body = null;
+                        foreach (var name in new[] { nameof(Body), nameof(Ink), nameof(ErrorTip) })
+                        {
+                            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                        }
                     }
 
                     // A live turn can start with no picture and gain one once
@@ -3204,6 +3582,20 @@ namespace Orbweaver
 
                 if (!string.IsNullOrEmpty(turn.ImageUrl)) LoadImage();
                 else if (turn.ImageBytes is { Length: > 0 } bytes) LoadImageBytes(bytes);
+
+                // CB-274: a failed attachment whose label could not be turned
+                // into a route (an empty one, or one that is only dots) has
+                // nothing to fetch or ask about, but the user must still be
+                // told the gateway never delivered it — a bare caption is the
+                // exact symptom this ticket exists to remove. No path, so no
+                // gateway question and no "also" sentence.
+                else if (turn.Attachment is { Failed: true } lost
+                         && turn.Confidence == MediaConfidence.High
+                         && turn.ImageNote is null)
+                {
+                    turn.ImageNoteDetail = string.IsNullOrWhiteSpace(lost.Label) ? null : lost.Label;
+                    turn.ImageNote = OpenClawMediaRefusal.ExplainDelivery(lost, null);
+                }
             }
 
             // The turn this row was built from, so the panel can find a row
@@ -3517,6 +3909,30 @@ namespace Orbweaver
             {
                 if (string.IsNullOrEmpty(_turn.ImageUrl)) return;
 
+                // CB-272: a clip never goes down the picture path below, which
+                // would decode its bytes as a bitmap. It asks the gateway
+                // about the clip instead and draws a tile from the answer.
+                if (_turn.IsVideo)
+                {
+                    await LoadVideoAsync();
+                    return;
+                }
+
+                // CB-275: an audio note and a file take the same detour for the
+                // same reason — their bytes are not pictures. (A picture
+                // attachment is the url-form image path below.)
+                if (_turn.IsAudio)
+                {
+                    await LoadAudioAsync();
+                    return;
+                }
+
+                if (_turn.IsDocument)
+                {
+                    await LoadDocumentChipAsync();
+                    return;
+                }
+
                 // Fetched verbatim. Since CB-109 the url is a fully-formed
                 // request — path, session and agent — built where the turn was
                 // built, by whoever knew which session it belonged to. This
@@ -3570,8 +3986,299 @@ namespace Orbweaver
                 // fetch didn't either.
                 var json = await OpenClawSessions.FetchLocalMediaMetaAsync(url, CancellationToken.None);
                 _turn.ImageNoteDetail = OpenClawMediaRefusal.Detail(json, path);
-                _turn.ImageNote = OpenClawMediaRefusal.Explain(json);
+                _turn.ImageNote = _turn.Attachment is { Failed: true } failed
+                    ? OpenClawMediaRefusal.ExplainDelivery(failed, json)
+                    : OpenClawMediaRefusal.Explain(json);
             }
+
+            private ChatAttachment? _video;
+            private bool _videoRequested;
+            private bool _videoOpening;
+
+            public bool HasVideo => _video is not null;
+
+            public double VideoWidth => OpenClawVideo.TileWidth;
+
+            public double VideoHeight => OpenClawVideo.TileHeight(_video?.Width, _video?.Height);
+
+            public string? VideoDuration => OpenClawVideo.FormatDuration(_video?.DurationMs);
+
+            public bool HasVideoDuration => VideoDuration is not null;
+
+            // The tile is drawn from the gateway's `&meta=1` answer alone —
+            // the clip's bytes are not downloaded to draw it, which for a
+            // video can be megabytes per clip per scroll. Asked once per row:
+            // the ImageUrl change handler can fire again for the same turn.
+            //
+            // A clip the gateway will not serve follows the picture's CB-93
+            // and CB-116 rules exactly: a High-confidence turn gets a note
+            // saying why, in the slot the tile would have taken, and a Low one
+            // (prose that merely ends in "something.mp4") stays silent and
+            // keeps its text, since nothing says a clip was ever meant.
+            private async Task LoadVideoAsync()
+            {
+                if (_videoRequested) return;
+                _videoRequested = true;
+
+                // CB-274: a clip the gateway delivered as a block already
+                // carries its own meta (duration, size, shape), and its url is
+                // the outgoing route, which has no `&meta=1` — asking would
+                // build `…/full&meta=1`, get a 404 and caption a working clip
+                // with "couldn't ask the gateway why".
+                if (_turn.Attachment is { Kind: AttachmentKind.Video, Fetchable: true } block)
+                {
+                    ShowVideo(block);
+                    return;
+                }
+
+                var json = await OpenClawVideo.FetchMeta(_turn.ImageUrl!, CancellationToken.None);
+                var meta = OpenClawVideo.ParseMeta(json);
+
+                if (meta is { Available: true })
+                {
+                    ShowVideo(OpenClawVideo.FromMeta(meta.Value, _turn.ImageAlt));
+                    return;
+                }
+
+                if (_turn.Confidence != MediaConfidence.High) return;
+
+                // Same refusal to caption with a guess as LoadImage's: no path,
+                // no note. Every producer that sets a route sets the path with
+                // it, so this cannot be null here.
+                var path = _turn.ImageSourcePath!;
+
+                // CB-277: only the clip's tooltip names the session, and only
+                // when it is not the conversation's own — a clip is the one
+                // kind asked for under another agent's key, and a refusal under
+                // the asker's own key is the ordinary one and says nothing new.
+                _turn.ImageNoteDetail = OpenClawMediaRefusal.Detail(json, path, _turn.ImageUrl, _askingKey);
+
+                // CB-274: a clip the gateway failed to deliver says so first,
+                // and then why the fetch of the recovered path also failed.
+                _turn.ImageNote = _turn.Attachment is { Failed: true } failed
+                    ? OpenClawMediaRefusal.ExplainDelivery(failed, json)
+                    : OpenClawMediaRefusal.Explain(json, video: true);
+            }
+
+            private void ShowVideo(ChatAttachment attachment)
+            {
+                _video = attachment;
+                foreach (var name in new[]
+                {
+                    nameof(HasVideo), nameof(VideoHeight),
+                    nameof(VideoDuration), nameof(HasVideoDuration),
+                    nameof(Pad)
+                })
+                {
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                }
+            }
+
+            // The click: fetch the clip now, then hand it to the system
+            // player. Guarded against a second click while the first is still
+            // downloading — a clip is large enough that two fetches would be
+            // noticed, and two players opened for one click would be worse.
+            // A clip that will not come down says so in the same note slot,
+            // rather than the click doing nothing at all.
+            public async void OpenVideo()
+            {
+                if (_videoOpening || string.IsNullOrEmpty(_turn.ImageUrl)) return;
+                _videoOpening = true;
+
+                try
+                {
+                    if (OpenClawVideo.TooLargeToOpen(_video))
+                    {
+                        VideoNote(OpenClawVideo.TooLargeNote(_video!.Value.SizeBytes!.Value));
+                        return;
+                    }
+
+                    var bytes = await OpenClawVideo.FetchBytes(_turn.ImageUrl!, CancellationToken.None);
+                    if (bytes is not { Length: > 0 })
+                    {
+                        VideoNote(OpenClawVideo.NotSentNote);
+                        return;
+                    }
+
+                    if (OpenClawVideo.IsTruncated(bytes.Length))
+                    {
+                        VideoNote(OpenClawVideo.TruncatedNote);
+                        return;
+                    }
+
+                    // A delivered block's label is untrusted text, so its name
+                    // takes its extension from the mime type. A recovered
+                    // path's name was already filtered to a clip extension.
+                    var name = _turn.Attachment is { Kind: AttachmentKind.Video, Fetchable: true } delivered
+                        ? OpenClawAttachment.VideoOpenName(delivered)
+                        : OpenClawVideo.OpenName(_turn.ImageAlt, _turn.ImageSourcePath);
+
+                    OpenClawVideo.Open(bytes, name);
+                }
+                finally
+                {
+                    _videoOpening = false;
+                }
+            }
+
+            // ---- CB-275: audio tile and file chip --------------------------
+
+            private ChatAttachment? _audio;
+            private ChatAttachment? _document;
+            private bool _audioRequested;
+            private bool _documentRequested;
+            private bool _attachmentOpening;
+
+            public bool HasAudio => _audio is not null;
+            public double AudioWidth => OpenClawVideo.TileWidth;
+            public string AudioLabel => LabelOrWord(_audio, "audio");
+            public string? AudioDuration => _audio?.Duration;
+            public bool HasAudioDuration => AudioDuration is not null;
+
+            public bool HasDocument => _document is not null;
+            public string DocumentLabel => LabelOrWord(_document, "file");
+            public string? DocumentSize => OpenClawAttachment.FormatSize(_document?.SizeBytes);
+            public bool HasDocumentSize => DocumentSize is not null;
+            public string? DocumentTip => _document?.MimeType;
+
+            // A block that named nothing shows a generic word, never a made-up
+            // filename that something might go looking for.
+            private static string LabelOrWord(ChatAttachment? a, string word) =>
+                a is null ? "" : string.IsNullOrWhiteSpace(a.Value.Label) ? word : a.Value.Label;
+
+            private void Raise(params string[] names)
+            {
+                foreach (var name in names)
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+            }
+
+            // Mirrors LoadVideoAsync, without the video's shape: a block the
+            // gateway delivered carries its own meta and is never asked about;
+            // a recovered path (a streamed `MEDIA:/…/note.m4a`, or a failed
+            // block whose path was recovered) asks the assistant-media route.
+            // A failed block still draws its tile when the route will serve it,
+            // and a refused one draws the note instead, as a clip does — except
+            // that a failed audio note keeps its tile, so there is something
+            // to click for the honest "the gateway didn't send it".
+            private async Task LoadAudioAsync()
+            {
+                if (_audioRequested) return;
+                _audioRequested = true;
+
+                if (_turn.Attachment is { Kind: AttachmentKind.Audio, Fetchable: true } block)
+                {
+                    ShowAudio(block);
+                    return;
+                }
+
+                var json = await OpenClawVideo.FetchMeta(_turn.ImageUrl!, CancellationToken.None);
+                var meta = OpenClawVideo.ParseMeta(json);
+                var failed = _turn.Attachment is { Failed: true, Kind: AttachmentKind.Audio } f ? f : (ChatAttachment?)null;
+
+                if (meta is { Available: true })
+                {
+                    ShowAudio(failed ?? OpenClawVideo.FromMeta(meta.Value, AudioNameOf()) with { Kind = AttachmentKind.Audio });
+                    return;
+                }
+
+                if (failed is { } shown) ShowAudio(shown);
+
+                if (_turn.Confidence != MediaConfidence.High) return;
+
+                _turn.ImageNoteDetail = OpenClawMediaRefusal.Detail(json, _turn.ImageSourcePath!);
+                _turn.ImageNote = failed is { } why
+                    ? OpenClawMediaRefusal.ExplainDelivery(why, json)
+                    : OpenClawMediaRefusal.Explain(json, noun: "Audio");
+            }
+
+            private string AudioNameOf() =>
+                !string.IsNullOrEmpty(_turn.ImageAlt) ? _turn.ImageAlt : System.IO.Path.GetFileName(_turn.ImageSourcePath ?? "");
+
+            private void ShowAudio(ChatAttachment attachment)
+            {
+                _audio = attachment;
+                Raise(nameof(HasAudio), nameof(AudioLabel), nameof(AudioDuration),
+                      nameof(HasAudioDuration), nameof(Pad));
+            }
+
+            // A file chip is drawn from the block alone — nothing is asked and
+            // nothing is downloaded to draw it. A *failed* one is drawn too,
+            // then the gateway is asked about the recovered path once; the
+            // note appears only if that is refused as well.
+            private async Task LoadDocumentChipAsync()
+            {
+                if (_documentRequested) return;
+                _documentRequested = true;
+
+                var attachment = _turn.Attachment!.Value;
+                ShowDocument(attachment);
+
+                if (!attachment.Failed || _turn.Confidence != MediaConfidence.High) return;
+
+                var json = await OpenClawVideo.FetchMeta(_turn.ImageUrl!, CancellationToken.None);
+                if (OpenClawVideo.ParseMeta(json) is { Available: true }) return;
+
+                _turn.ImageNoteDetail = OpenClawMediaRefusal.Detail(json, _turn.ImageSourcePath!);
+                _turn.ImageNote = OpenClawMediaRefusal.ExplainDelivery(attachment, json);
+            }
+
+            private void ShowDocument(ChatAttachment attachment)
+            {
+                _document = attachment;
+                Raise(nameof(HasDocument), nameof(DocumentLabel), nameof(DocumentSize),
+                      nameof(HasDocumentSize), nameof(DocumentTip), nameof(Pad));
+            }
+
+            public async void OpenAudio() => await OpenFetched(_audio, OpenClawAttachment.AudioOpenName);
+
+            public async void OpenDocument() => await OpenFetched(_document, OpenClawAttachment.OpenName);
+
+            // The click, for either kind: the same three guards the clip has —
+            // the size the block (or meta) declared, the empty body, the body
+            // the socket cut at its ceiling — then the system's own app.
+            private async Task OpenFetched(ChatAttachment? attachment, Func<ChatAttachment, string> nameFor)
+            {
+                if (_attachmentOpening || attachment is not { } a || string.IsNullOrEmpty(_turn.ImageUrl)) return;
+                _attachmentOpening = true;
+
+                try
+                {
+                    if (OpenClawAttachment.TooLargeToOpen(a))
+                    {
+                        VideoNote(OpenClawAttachment.TooLargeNote(a.Kind, a.SizeBytes!.Value));
+                        return;
+                    }
+
+                    var bytes = await OpenClawVideo.FetchBytes(_turn.ImageUrl!, CancellationToken.None);
+                    if (bytes is not { Length: > 0 })
+                    {
+                        VideoNote(OpenClawAttachment.NotSentNote(a.Kind));
+                        return;
+                    }
+
+                    if (OpenClawVideo.IsTruncated(bytes.Length))
+                    {
+                        VideoNote(OpenClawAttachment.TruncatedNote(a.Kind));
+                        return;
+                    }
+
+                    OpenClawVideo.Open(bytes, nameFor(a));
+                }
+                finally
+                {
+                    _attachmentOpening = false;
+                }
+            }
+
+            // Detail before note: only the note's setter raises (see
+            // ChatTurn.ImageNoteDetail's header).
+            private void VideoNote(string text)
+            {
+                _turn.ImageNoteDetail = _turn.ImageSourcePath;
+                _turn.ImageNote = text;
+            }
+
+            public string ImageAlt => _turn.ImageAlt;
 
             // The bytes are already in hand — decoded from a local CLI's own
             // transcript (ChatTranscript's image handling), or read straight
@@ -3745,7 +4452,15 @@ namespace Orbweaver
                     ? new SolidColorBrush(Color.FromArgb(0x3D, c.R, c.G, c.B))
                     : IsUser ? UserBubble : AgentBubble;
 
-            public IBrush Ink => IsSystem ? SystemInk : BubbleInk;
+            // A tool line whose result reported an error is the same row in the
+            // red the panel already uses for trouble; nothing else about it moves.
+            private bool IsToolError => IsSystem && _turn.IsError;
+
+            public IBrush Ink => IsToolError ? ErrorInk : IsSystem ? SystemInk : BubbleInk;
+
+            public string? ErrorTip => IsToolError ? "The tool reported an error" : null;
+
+            private static readonly IBrush ErrorInk = new SolidColorBrush(Color.Parse("#E0D93B3B"));
 
             // The corner nearest the speaker is squared off. It is the one
             // detail that makes a column of bubbles read as two people talking
@@ -3756,7 +4471,7 @@ namespace Orbweaver
 
             public Thickness Pad => IsSystem
                 ? new Thickness(0, 1)
-                : HasImage && !HasText ? new Thickness(5) : new Thickness(9, 6);
+                : (HasImage || HasVideo || HasAudio || HasDocument) && !HasText ? new Thickness(5) : new Thickness(9, 6);
 
             // Bubbles sit closer to their own side's previous bubble than to the
             // other side's, which is what gives a conversation its rhythm.

@@ -84,6 +84,65 @@ namespace Orbweaver
             return first.ToUpperInvariant() + second.ToLowerInvariant();
         }
 
+        // CB-287: a user-chosen override, used verbatim — cut to the first one
+        // or two *visible text elements*, case untouched. Not For(): that
+        // derives letters from a word, and an override is the letters. Text
+        // elements rather than chars so a family emoji (seven code units), a
+        // flag (two) or a letter plus combining accent counts as one.
+        //
+        // An element with nothing visible in it is dropped, not kept as a blank
+        // glyph: whitespace (so "A B" is "AB"), controls, format characters (a
+        // lone zero-width joiner) and a lone surrogate would otherwise be
+        // stored as initials and draw an empty disc. All-invisible is blank,
+        // which the caller reads as "no override".
+        public static string Clip(string? text, bool twoLetter) => Take(text, twoLetter ? 2 : 1, dropSpaces: true);
+
+        // The same cut for a longer free-text field (the display name), so one
+        // rule decides what a "character" is across the feature.
+        // Spaces inside it are kept; only elements with nothing visible *and*
+        // no space role (controls, format characters, lone surrogates) go.
+        public static string ClipText(string? text, int maxElements) =>
+            Take(text, maxElements, dropSpaces: false);
+
+        private static string Take(string? text, int max, bool dropSpaces)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+
+            var e = System.Globalization.StringInfo.GetTextElementEnumerator(text);
+            var sb = new System.Text.StringBuilder();
+            var kept = 0;
+            while (kept < max && e.MoveNext())
+            {
+                var element = e.GetTextElement();
+                if (!HasVisible(element, dropSpaces)) continue;
+                sb.Append(element);
+                kept++;
+            }
+            return sb.ToString();
+        }
+
+        private static bool HasVisible(string element, bool dropSpaces)
+        {
+            foreach (var r in element.EnumerateRunes())
+            {
+                if (r.Value == 0xFFFD) continue; // what an invalid surrogate decodes to
+                var cat = System.Text.Rune.GetUnicodeCategory(r);
+                if (cat is System.Globalization.UnicodeCategory.Control
+                    or System.Globalization.UnicodeCategory.Format
+                    or System.Globalization.UnicodeCategory.OtherNotAssigned
+                    or System.Globalization.UnicodeCategory.PrivateUse) continue;
+                if (cat is System.Globalization.UnicodeCategory.SpaceSeparator
+                    or System.Globalization.UnicodeCategory.LineSeparator
+                    or System.Globalization.UnicodeCategory.ParagraphSeparator)
+                {
+                    if (dropSpaces) continue;
+                    return true;
+                }
+                return true;
+            }
+            return false;
+        }
+
         // First letters of the first two words: "Ada Lovelace" gives AL, and a
         // single-word name gives its first two characters rather than one, which
         // fills a 68pt circle better and still reads as a monogram.

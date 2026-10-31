@@ -114,6 +114,25 @@ namespace Orbweaver
             return await ReadResponseAsync(stream, ct);
         }
 
+        // The request line is written by hand, with the bearer token already in
+        // the headers, so a CR or LF in the path ends the line early and
+        // injects a header into a token-bearing request. Every url this app
+        // fetches reaches here (pictures, clips, files and their meta), and
+        // several arrive from the gateway's own transcript, so the refusal
+        // lives at the one place that splices a path into the request rather
+        // than at each producer that might forget it.
+        internal static bool HasControlCharacter(string? text)
+        {
+            if (text is null) return false;
+
+            foreach (var c in text)
+            {
+                if (c < ' ' || c == '\u007f') return true;
+            }
+
+            return false;
+        }
+
         // `Connection: close` rather than keep-alive, because one connection per
         // fetch is the whole shape here — see GetAsync's header. Split out from
         // GetAsync so the exact bytes are assertable without a gateway: the
@@ -121,6 +140,11 @@ namespace Orbweaver
         // serves a picture or a 401, and it is not otherwise visible from
         // anywhere.
         internal static string GetRequest(string host, int port, string path, string bearer) =>
+            HasControlCharacter(path)
+                ? throw new ArgumentException("A request path may not contain control characters.", nameof(path))
+                : BuildRequest(host, port, path, bearer);
+
+        private static string BuildRequest(string host, int port, string path, string bearer) =>
             $"GET {path} HTTP/1.1\r\n" +
             $"Host: {host}:{port}\r\n" +
             $"Authorization: Bearer {bearer}\r\n" +
@@ -152,14 +176,26 @@ namespace Orbweaver
 
                 body.Write(buffer, 0, read);
 
-                // A ceiling rather than a limit anyone should hit: these are
-                // pictures in a chat window, and a malformed length header
-                // shouldn't be able to fill memory.
-                if (body.Length > 32 * 1024 * 1024) break;
+                // A ceiling rather than a limit anyone should hit for a picture,
+                // and a malformed length header shouldn't be able to fill memory.
+                // Note what happens at it: the loop stops once the body has
+                // *exceeded* the ceiling and returns what it has, truncated,
+                // rather than null — so a body longer than MaxBodyBytes is by
+                // construction incomplete, which CB-272's clip guard relies on.
+                if (body.Length > MaxBodyBytes) break;
             }
+
+            // A stream that ended before the declared length is a dropped
+            // connection, not a short answer: returning the partial body would
+            // let FetchMediaAsync cache it and, for a clip, hand half a file to
+            // the player. The ceiling case is exempt on purpose — it stops
+            // early by design and is what OpenClawVideo.IsTruncated catches.
+            if (length >= 0 && body.Length < length && body.Length <= MaxBodyBytes) return null;
 
             return body.ToArray();
         }
+
+        internal const long MaxBodyBytes = 32 * 1024 * 1024;
 
         internal static long ContentLength(string headers)
         {
@@ -271,6 +307,13 @@ namespace Orbweaver
 
             // Network writes are ordered by their own gate: TLS records must
             // reach the wire in the order the protocol produced them.
+            //
+            // Never disposed, deliberately: it owns nothing unmanaged, and
+            // PumpOutAsync releases it in a `finally` that can run after Dispose
+            // while a drain is mid-write. A disposed semaphore throws on Release
+            // and on Wait, which replaced the write's real failure with an
+            // ObjectDisposedException. Waiters on a closed stream fail on the
+            // socket instead, which is the failure they should see.
             private readonly SemaphoreSlim _netWrite = new(1, 1);
 
             private readonly byte[] _cipherIn = new byte[16 * 1024];
@@ -421,7 +464,6 @@ namespace Orbweaver
                 if (disposing)
                 {
                     try { _net.Dispose(); } catch { }
-                    _netWrite.Dispose();
                 }
 
                 base.Dispose(disposing);

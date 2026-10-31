@@ -266,6 +266,61 @@ public class OpenClawMediaRefusalTests
         Assert.Equal("/a/b.png", OpenClawMediaRefusal.Detail(null, "/a/b.png"));
     }
 
+    // CB-277: which session the refused route was built with.
+    [Fact]
+    public void DetailNamesTheSessionTheRefusedRouteWasAskedUnder()
+    {
+        var url = new OpenClawMediaSource("/a/b.mp4", "agent:comfyui:discord:direct:1").Route;
+
+        Assert.Equal(
+            "/a/b.mp4 — unsupported-media-type — asked under agent:comfyui:discord:direct:1",
+            OpenClawMediaRefusal.Detail("{\"available\":false,\"code\":\"unsupported-media-type\"}", "/a/b.mp4", url, "agent:main:discord:direct:1"));
+        Assert.Equal(
+            "/a/b.mp4 — asked under agent:comfyui:discord:direct:1",
+            OpenClawMediaRefusal.Detail("{\"available\":false}", "/a/b.mp4", url, "agent:main:discord:direct:1"));
+        Assert.Equal(
+            "/a/b.mp4 — asked under agent:comfyui:discord:direct:1",
+            OpenClawMediaRefusal.Detail(null, "/a/b.mp4", url, "agent:main:discord:direct:1"));
+    }
+
+    [Fact]
+    public void DetailAddsNothingWhenTheRouteIsTheConversationsOwnKey()
+    {
+        const string own = "agent:comfyui:discord:direct:1";
+        var url = new OpenClawMediaSource("/a/b.mp4", own).Route;
+
+        Assert.Equal("/a/b.mp4 — x", OpenClawMediaRefusal.Detail("{\"code\":\"x\"}", "/a/b.mp4", url, own));
+    }
+
+    [Fact]
+    public void DetailAddsNothingWhenTheAskingKeyIsNotKnown()
+    {
+        var url = new OpenClawMediaSource("/a/b.mp4", "agent:comfyui:discord:direct:1").Route;
+
+        Assert.Equal("/a/b.mp4", OpenClawMediaRefusal.Detail(null, "/a/b.mp4", url, null));
+    }
+
+    [Fact]
+    public void DetailAddsNothingWhenTheRouteNamesNoSession()
+    {
+        Assert.Equal("/a/b.mp4", OpenClawMediaRefusal.Detail(null, "/a/b.mp4", new OpenClawMediaSource("/a/b.mp4", null).Route));
+        Assert.Equal("/a/b.mp4", OpenClawMediaRefusal.Detail(null, "/a/b.mp4", null));
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("/no/query", null)]
+    [InlineData("/r?source=%2Fa", null)]
+    [InlineData("/r?source=%2Fa&sessionKey=", null)]
+    [InlineData("/r?source=%2Fa&sessionKey=agent%3Ax%3Amain", "agent:x:main")]
+    [InlineData("/r?source=%2Fa&sessionKey=agent%3Ax%3Amain&meta=1", "agent:x:main")]
+    [InlineData("/r?source=%2Fa&flag=1&sessionKey=agent%3Ax%3Amain", "agent:x:main")]
+    public void SessionKeyOfReadsTheKeyBackOutOfTheQuery(string? route, string? expected)
+    {
+        Assert.Equal(expected, OpenClawMediaSource.SessionKeyOf(route));
+    }
+
     // ---- The HTTP half: a JSON body survives ReadResponseAsync intact -------
     //
     // Reusing OpenClawSocket.ReadResponseAsync over a MemoryStream, the same

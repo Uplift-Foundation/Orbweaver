@@ -101,6 +101,11 @@ namespace Orbweaver
     // corpus today (a picture-delivery job's every turn already ends in a
     // filename), but it is not free to skip for a job that looks different.
     //
+    // CB-272: both predicates now accept a clip as well (a picture-delivery
+    // job's cron run can end on `clip.mp4` just as readily); the rooted case
+    // goes through LooksLikeAMediaPath for that reason, which still refuses
+    // anything that LooksLikeAnImagePath refuses on structure.
+    //
     // The rooted case reuses OpenClawSessions.LooksLikeAnImagePath, already
     // present for LocalMediaPathFrom's own bare-path arm. The bare-filename
     // case has no existing predicate to reuse — 290d086 (this ticket's base)
@@ -177,8 +182,8 @@ namespace Orbweaver
             var token = TrailingTokenOf(text);
             if (token is null) return null;
 
-            if (LooksLikeABareImageFilename(token)) return token;
-            if (OpenClawSessions.LooksLikeAnImagePath(token)) return BasenameOf(token);
+            if (LooksLikeABareImageFilename(token) || LooksLikeABareVideoFilename(token)) return token;
+            if (OpenClawSessions.LooksLikeAMediaPath(token)) return BasenameOf(token);
 
             return null;
         }
@@ -192,7 +197,10 @@ namespace Orbweaver
         // Mirrors OpenClawSessions' own ImageExtensions list rather than
         // sharing it — the same small, deliberate duplication this file
         // already accepts for StringOrNull: one file to a concern, rather
-        // than a shared utility neither file would then fully own.
+        // than a shared utility neither file would then fully own. That
+        // reasoning is about the *image* list only. The video half is not
+        // duplicated: CB-272 reads it from OpenClawVideo.Extensions, so there
+        // is exactly one list of clip extensions in the app.
         private static readonly string[] ImageExtensions =
             { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
 
@@ -206,6 +214,27 @@ namespace Orbweaver
             && !token.Contains('\\')
             && !token.Contains(' ')
             && Array.Exists(ImageExtensions, ext => token.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
+
+        private static bool LooksLikeABareVideoFilename(string token) =>
+            token.Length > 0
+            && !token.Contains('/')
+            && !token.Contains('\\')
+            && !token.Contains(' ')
+            && (OpenClawVideo.HasVideoExtension(token) || OpenClawAudio.HasAudioExtension(token));
+
+        // CB-274: the filename a failed attachment block names, as a lookup
+        // key for the cron run's summary. Any extension: the block already
+        // says what kind of file it is, so the extension tests above (which
+        // exist to nominate a candidate out of prose) have no job here, and
+        // the basename equality in MediaPathsByBasenameForJob is the real
+        // match. A label with a separator or whitespace is not a bare name.
+        internal static string? BareMediaBasename(string? label) =>
+            !string.IsNullOrWhiteSpace(label)
+            && !label!.Contains('/')
+            && !label.Contains('\\')
+            && !label.Any(char.IsWhiteSpace)
+                ? label
+                : null;
 
         internal static string BasenameOf(string path)
         {
@@ -277,9 +306,12 @@ namespace Orbweaver
                 if (run.Summary is null) continue;
 
                 var candidate = OpenClawSessions.LocalMediaPathFrom(run.Summary);
-                if (candidate is null) continue;
 
-                var path = candidate.Value.Path;
+                // CB-275: a document's `MEDIA:` path has no picture, clip or
+                // voice-note extension, so fall back to the marker alone.
+                var path = candidate?.Path ?? OpenClawSessions.MediaMarkerPathFrom(run.Summary);
+                if (path is null) continue;
+
                 var basename = BasenameOf(path);
                 if (!byBasename.TryGetValue(basename, out var paths))
                 {
@@ -313,7 +345,7 @@ namespace Orbweaver
 
         private static string? StringOrNull(JsonElement obj, string name) =>
             obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-                ? value.GetString()
+                ? value.SafeString()
                 : null;
     }
 }

@@ -1131,7 +1131,9 @@ public class RemoteMirrorChatSessionTests : IDisposable
             // It refuses by default now; the real transport answers properly,
             // because a peer has completed a TLS handshake with a certificate
             // somebody pinned by typing a code. A harness says yes explicitly.
-            PeerAllowed: _ => true));
+            PeerAllowed: _ => true,
+            // CB-252: never the developer's real persona files.
+            UserConfigDirs: () => Array.Empty<string>()));
 
     private void BuildClient()
     {

@@ -26,6 +26,50 @@ namespace Orbweaver.Tests;
 [Collection("Settings")]
 public class OpenClawGatewayPayloadTests
 {
+    // CB-272: a whole chat.history record for a cron-delivered clip — role,
+    // provider, the automation carrier, timestamp and content blocks — walked
+    // into one video turn. Invented values on the real structure.
+    [Fact]
+    public void AHistoryPageWithAClipMediaLineWalksIntoAVideoTurn()
+    {
+        const string path = "/home/agent/outputs/astra/clip_123.mp4";
+        var messages = JsonDocument.Parse("""
+        [{"role":"assistant","provider":"claude-cli-example","timestamp":1700000900000,
+          "openclawAutomation":{"kind":"cron","jobId":"job-clip0001"},
+          "content":[{"type":"text","text":"a short one for you\nMEDIA:/home/agent/outputs/astra/clip_123.mp4"}]}]
+        """).RootElement;
+
+        var turn = Assert.Single(OpenClawSessions.TurnsFromHistory(messages, "agent:main:cron:job-clip0001"));
+
+        Assert.Equal(new OpenClawMediaSource(path, "agent:main:cron:job-clip0001").Route, turn.ImageUrl);
+        Assert.Equal(path, turn.ImageSourcePath);
+        Assert.Equal(MediaConfidence.High, turn.Confidence);
+        Assert.Null(turn.ImageBytes);
+        Assert.True(OpenClawVideo.IsVideoPath(turn.ImageSourcePath));
+        Assert.NotNull(turn.Automation);
+    }
+
+    // Both kinds on one page: each carries a route, and only the clip is a
+    // video, so the picture still goes to the bitmap path and the clip to the
+    // tile.
+    [Fact]
+    public void AHistoryPageWithAPictureAndAClipKeepsTheKindsApart()
+    {
+        var messages = JsonDocument.Parse("""
+        [{"role":"assistant","content":[{"type":"text","text":"one\nMEDIA:/home/agent/outputs/pic_1.png"}]},
+         {"role":"assistant","content":[{"type":"text","text":"two\nMEDIA:/home/agent/outputs/clip_2.mp4"}]}]
+        """).RootElement;
+
+        var turns = OpenClawSessions.TurnsFromHistory(messages, "agent:main:main");
+
+        var picture = turns.Single(t => t.Text.StartsWith("one"));
+        var clip = turns.Single(t => t.Text.StartsWith("two"));
+        Assert.False(OpenClawVideo.IsVideoPath(picture.ImageSourcePath));
+        Assert.True(OpenClawVideo.IsVideoPath(clip.ImageSourcePath));
+        Assert.NotNull(picture.ImageUrl);
+        Assert.NotNull(clip.ImageUrl);
+    }
+
     // CB-99: history is an external payload, so prove the full record carries
     // the two provenance fields into the delivery predicate. A missing field
     // preserves compatibility, while a present mismatch must not initiate a
@@ -585,9 +629,143 @@ public class OpenClawGatewayPayloadTests
     {
         OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
         OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.WithChats;
         OrbweaverSettings.OpenClawActiveWithinMinutes = withinMinutes;
 
         return OpenClawSessions.Parse(Json(SessionsList), Now);
+    }
+
+    // CB-270: one page in the gateway's envelope, the field structure of the rows
+    // measured on a live 2026.10.5 gateway and every value invented (phone numbers
+    // are +1555000000N, Discord ids are 190000000000000000N, names are made up).
+    // By category, what each row carried:
+    //   native main      classification main; no origin, deliveryContext or
+    //                    lastChannel (3 of the 5 main rows measured)
+    //   whatsapp main    classification main; origin.provider, deliveryContext
+    //                    and lastChannel all whatsapp (the other 2)
+    //   whatsapp direct  classification direct; all three present
+    //   whatsapp group   classification group; all three present
+    //   discord dm       classification direct; all three present
+    //   discord channel  classification channel; all three present
+    //   cron             classification cron; none of the three
+    //   dashboard        a New Chat; the live gateway had none, so its shape is
+    //                    the sessions.create result the findings record
+    //   pinned dm        a Discord DM with pinned:true
+    // Every row is two days old so the recency window has something to decide.
+    private static string NativePage()
+    {
+        var old = new DateTimeOffset(Now.AddDays(-2)).ToUnixTimeMilliseconds();
+
+        static string Surface(string provider, string to, string classification, string chatType) =>
+            $$"""
+              "classification":"{{classification}}","chatType":"{{chatType}}",
+              "origin":{"provider":"{{provider}}","to":"{{to}}"},
+              "deliveryContext":{"channel":"{{provider}}","to":"{{to}}"},
+              "lastChannel":"{{provider}}","lastTo":"{{to}}"
+              """;
+
+        return $$"""
+            {"ts":1700000000000,"path":"/x/sessions.json","count":9,"totalCount":9,"hasMore":false,
+             "sessions":[
+              {"key":"agent:alpha:main","kind":"direct","isMain":true,"classification":"main","pinned":false,
+               "sessionId":"sid-n1","lastActivityAt":{{old}}},
+              {"key":"agent:beta:main","kind":"direct","isMain":true,"pinned":false,"sessionId":"sid-n2",
+               {{Surface("whatsapp", "+15550000001", "main", "direct")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:whatsapp:direct:+15550000002","pinned":false,"sessionId":"sid-n3",
+               {{Surface("whatsapp", "+15550000002", "direct", "direct")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:whatsapp:group:1555000000300000003@g.us","pinned":false,"sessionId":"sid-n4",
+               {{Surface("whatsapp", "1555000000300000003@g.us", "group", "group")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:discord:direct:1900000000000000001","pinned":false,"sessionId":"sid-n5",
+               {{Surface("discord", "user:1900000000000000001", "direct", "direct")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:discord:channel:1900000000000000002","pinned":false,"sessionId":"sid-n6",
+               {{Surface("discord", "channel:1900000000000000002", "channel", "channel")}},"lastActivityAt":{{old}}},
+              {"key":"agent:alpha:cron:job-0001","classification":"cron","pinned":false,"sessionId":"sid-n7",
+               "label":"Cron: sweep","lastActivityAt":{{old}}},
+              {"key":"agent:alpha:dashboard:11111111-2222-3333-4444-555555555555","classification":"dashboard",
+               "pinned":false,"sessionId":"sid-n8","label":"Scratch pad","lastActivityAt":{{old}}},
+              {"key":"agent:alpha:discord:direct:1900000000000000003","pinned":true,"sessionId":"sid-n9",
+               {{Surface("discord", "user:1900000000000000003", "direct", "direct")}},"lastActivityAt":{{old}}}
+             ]}
+            """;
+    }
+
+    private static (IReadOnlyList<OpenClawSessions.Session> Sessions, int Total) ParseNative(
+        ClusterMode native = ClusterMode.WithChats)
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawNativeMode = native;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = 60;
+
+        return OpenClawSessions.Parse(Json(NativePage()), Now);
+    }
+
+    // The whole exchange. Nine rows two days old against a 60 minute window:
+    // exactly the dashboard row (retention) and the pinned DM (the gateway's own
+    // signal) survive, and each row's native kind, heartbeat flag and pin are what
+    // the category above says. A format someone else defines, so this is the
+    // seam test the unit cases cannot replace.
+    [Fact]
+    public void ANativePageSurvivesTheWindowOnlyWhereRetentionSaysSo()
+    {
+        var (sessions, total) = ParseNative();
+
+        Assert.Equal(9, total);
+        Assert.Equal(
+            new[]
+            {
+                "agent:alpha:dashboard:11111111-2222-3333-4444-555555555555",
+                "agent:alpha:discord:direct:1900000000000000003",
+            },
+            sessions.Select(s => s.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+
+        var dashboard = sessions.Single(s => s.Key.Contains(":dashboard:"));
+        Assert.Equal(SessionKind.Main, dashboard.Kind);
+        Assert.Equal(OpenClawNativeKind.Dashboard, dashboard.Native);
+        Assert.False(dashboard.Heartbeat);
+        Assert.False(dashboard.GatewayPinned);
+        Assert.Equal("Scratch pad", dashboard.Label);
+
+        var pinned = sessions.Single(s => s.Key.EndsWith("0003"));
+        Assert.Equal(SessionKind.Direct, pinned.Kind);
+        Assert.Equal(OpenClawNativeKind.None, pinned.Native);
+        Assert.True(pinned.GatewayPinned);
+    }
+
+    // Every row's native verdict, read through NativeOf because the recency
+    // filter dropped most of them from the result. Only the dashboard row and the
+    // native main are native; every Discord and WhatsApp row, the WhatsApp main
+    // included, is None, which is the negative control this classifier lives on.
+    [Fact]
+    public void OnlyTheDashboardAndTheNativeMainAreNative()
+    {
+        ParseNative();
+
+        var verdicts = new Dictionary<string, OpenClawNativeKind?>
+        {
+            ["agent:alpha:main"] = OpenClawNativeKind.Main,
+            ["agent:beta:main"] = OpenClawNativeKind.None,
+            ["agent:alpha:whatsapp:direct:+15550000002"] = OpenClawNativeKind.None,
+            ["agent:alpha:whatsapp:group:1555000000300000003@g.us"] = OpenClawNativeKind.None,
+            ["agent:alpha:discord:direct:1900000000000000001"] = OpenClawNativeKind.None,
+            ["agent:alpha:discord:channel:1900000000000000002"] = OpenClawNativeKind.None,
+            ["agent:alpha:cron:job-0001"] = OpenClawNativeKind.None,
+            ["agent:alpha:dashboard:11111111-2222-3333-4444-555555555555"] = OpenClawNativeKind.Dashboard,
+            ["agent:alpha:discord:direct:1900000000000000003"] = OpenClawNativeKind.None,
+        };
+
+        foreach (var (key, expected) in verdicts)
+            Assert.Equal(expected, OpenClawSessions.NativeOf(key));
+    }
+
+    // Hiding native sessions on the same page takes the dashboard row away and
+    // leaves the pinned Discord DM, which no native setting governs.
+    [Fact]
+    public void HidingNativeSessionsLeavesTheSurfaceRowsAlone()
+    {
+        var (sessions, _) = ParseNative(ClusterMode.Hidden);
+
+        Assert.Equal("agent:alpha:discord:direct:1900000000000000003", Assert.Single(sessions).Key);
     }
 
     // --- sessions.list, all the way to an address --------------------------
@@ -952,4 +1130,313 @@ public class OpenClawGatewayPayloadTests
         Assert.StartsWith("Couldn't post to #lobby:", note.Text);
         Assert.Contains("Nothing was sent", note.Text);
     }
+
+    // CB-274 / CB-275: a whole chat.history page in the gateway's envelope —
+    // display-projected content beside the automation carrier and the other
+    // keys the gateway really sends — walked into turns. Real structure,
+    // invented values; the success shapes are from the gateway's source.
+    [Fact]
+    public void AHistoryPageOfEveryAttachmentKindWalksIntoOneTurnEach()
+    {
+        var page = JsonDocument.Parse("""
+        {"messages":[
+         {"role":"assistant","provider":"openclaw","model":"automation-result","api":"openclaw-transcript",
+          "timestamp":1700000000001,"idempotencyKey":"cron-current-completion:cron:job-att0001:1",
+          "openclawAutomation":{"kind":"cron","jobId":"job-att0001","runId":"cron:job-att0001:1"},
+          "content":[{"type":"text","text":"soft light"},
+                     {"type":"attachment_error","attachment":{"code":"delivery-failed","kind":"video","label":"sample_clip.mp4","mimeType":"video/mp4"}}]},
+         {"role":"assistant","provider":"openclaw","model":"automation-result","timestamp":1700000000002,
+          "content":[{"type":"text","text":"a picture"},
+                     {"type":"image","url":"/api/chat/media/outgoing/agent%3Amain%3Adiscord%3Adirect%3A1/p1/full","alt":"pic.png","mimeType":"image/png","width":832,"height":1216,"sizeBytes":1021973}]},
+         {"role":"assistant","timestamp":1700000000003,
+          "content":[{"type":"video","url":"/api/chat/media/outgoing/agent%3Amain%3Adiscord%3Adirect%3A1/v1/full","fileName":"v.mp4","mimeType":"video/mp4","sizeBytes":1042813,"durationMs":12750,"width":544,"height":800}]},
+         {"role":"assistant","timestamp":1700000000004,
+          "content":[{"type":"audio","url":"/api/chat/media/outgoing/agent%3Amain%3Adiscord%3Adirect%3A1/a1/full","fileName":"a.m4a","mimeType":"audio/mp4","sizeBytes":240000,"durationMs":42000}]},
+         {"role":"assistant","timestamp":1700000000005,
+          "content":[{"type":"attachment","attachment":{"url":"/api/chat/media/outgoing/agent%3Amain%3Adiscord%3Adirect%3A1/d1/full","kind":"document","label":"r.pdf","mimeType":"application/pdf","sizeBytes":1258291}}]},
+         {"role":"assistant","timestamp":1700000000006,
+          "content":[{"type":"attachment_error","attachment":{"code":"unsupported-format","kind":"document","label":"x.pdf","mimeType":"application/pdf"}}]}]}
+        """).RootElement.GetProperty("messages");
+
+        var turns = OpenClawSessions.TurnsFromHistory(page, "agent:main:discord:direct:1");
+
+        // The picture message is two turns (the picture, then its caption —
+        // image blocks are read first), as it is today; every other message
+        // is exactly one.
+        Assert.Equal(7, turns.Count);
+        Assert.Equal(
+            new AttachmentKind?[]
+            {
+                AttachmentKind.Video, null, null, AttachmentKind.Video,
+                AttachmentKind.Audio, AttachmentKind.Document, AttachmentKind.Document
+            },
+            turns.Select(t => t.Attachment?.Kind).ToArray());
+
+        Assert.Equal("soft light", turns[0].Text);
+        Assert.True(turns[0].Attachment!.Value.Failed);
+        Assert.Equal("job-att0001", turns[0].Automation!.Value.JobId);
+
+        var picture = turns[1];
+        Assert.Equal("a picture", turns[2].Text);
+        Assert.Equal("/api/chat/media/outgoing/agent%3Amain%3Adiscord%3Adirect%3A1/p1/full", picture.ImageUrl);
+        Assert.Null(picture.Attachment);
+
+        Assert.All(turns.Skip(3).Take(3), t => Assert.Null(t.ImageSourcePath));
+        Assert.StartsWith("/api/chat/media/outgoing/", turns[3].ImageUrl);
+        Assert.StartsWith("/api/chat/media/outgoing/", turns[4].ImageUrl);
+        Assert.StartsWith("/api/chat/media/outgoing/", turns[5].ImageUrl);
+        Assert.True(turns[6].Attachment!.Value.Failed);
+        Assert.Equal("unsupported-format", turns[6].Attachment!.Value.FailureCode);
+    }
+
+    // CB-277: agents.list as the gateway lays it out — FROM SOURCE for the
+    // `workspace` field (openclaw 2026.10.5 session-utils: workspace is set on
+    // every row), because the probe is behind the Local Network gate on the
+    // machine this was written on. Invented values on that structure; if a
+    // real response names the field differently this is the fixture to fix.
+    [Fact]
+    public void AnAgentsListWalksIntoWorkspacesAndOwnersAChosenSessionForAClip()
+    {
+        var agentsList = JsonDocument.Parse("""
+        {"defaultId":"main","mainKey":"main","scope":"per-sender","agents":[
+          {"id":"main","name":"Sample One","workspace":"/Users/sample/.openclaw/workspace","identity":{"name":"Sample One","emoji":"x"}},
+          {"id":"comfyui","name":"Sample Two","workspace":"/Users/sample/.openclaw/workspace-sample-zara","workspaceGit":{"enabled":false}}]}
+        """).RootElement;
+
+        var workspaces = OpenClawSessions.WorkspacesFrom(agentsList);
+        var index = new OwnerIndex(workspaces, new[]
+        {
+            "agent:main:discord:direct:1", "agent:comfyui:discord:direct:1",
+        });
+
+        const string path = "/Users/sample/.openclaw/workspace-sample-zara/outputs/sample/clip_9.mp4";
+        var history = JsonDocument.Parse("""
+        [{"role":"assistant","provider":"claude-cli-example","timestamp":1700000900000,
+          "content":[{"type":"text","text":"here you go\nMEDIA:/Users/sample/.openclaw/workspace-sample-zara/outputs/sample/clip_9.mp4"}]}]
+        """).RootElement;
+
+        var turn = Assert.Single(OpenClawSessions.TurnsFromHistory(history, "agent:main:discord:direct:1", index));
+
+        Assert.Equal(
+            "/__openclaw__/assistant-media?source="
+            + "%2FUsers%2Fsample%2F.openclaw%2Fworkspace-sample-zara%2Foutputs%2Fsample%2Fclip_9.mp4"
+            + "&sessionKey=agent%3Acomfyui%3Adiscord%3Adirect%3A1",
+            turn.ImageUrl);
+        Assert.Equal(path, turn.ImageSourcePath);
+    }
+
+    // The control, same page: with no index the route is the one the app sent
+    // before CB-277, byte for byte.
+    [Fact]
+    public void TheSameHistoryPageWithoutAnIndexKeepsTheAskingSessionOnTheRoute()
+    {
+        var history = JsonDocument.Parse("""
+        [{"role":"assistant","content":[{"type":"text","text":"here you go\nMEDIA:/Users/sample/.openclaw/workspace-sample-zara/outputs/sample/clip_9.mp4"}]}]
+        """).RootElement;
+
+        var turn = Assert.Single(OpenClawSessions.TurnsFromHistory(history, "agent:main:discord:direct:1"));
+
+        Assert.EndsWith("&sessionKey=agent%3Amain%3Adiscord%3Adirect%3A1", turn.ImageUrl);
+    }
+
+    // The `&meta=1` answer for a video, field names and numbers as measured
+    // against a real gateway for a real clip (values: duration, size and
+    // dimensions only; the ticket is invented).
+    [Fact]
+    public void AVideoMetaAnswerWalksIntoATileSizedClip()
+    {
+        const string meta =
+            "{\"available\":true,\"mimeType\":\"video/mp4\",\"sizeBytes\":1042813,\"playback\":\"native\","
+            + "\"durationMs\":12750,\"width\":544,\"height\":800,\"mediaTicket\":\"v1.sample\"}";
+
+        var parsed = OpenClawVideo.ParseMeta(meta);
+
+        Assert.NotNull(parsed);
+        var clip = OpenClawVideo.FromMeta(parsed!.Value, "clip_9.mp4");
+        Assert.Equal(12750, clip.DurationMs);
+        Assert.Equal(544, clip.Width);
+        Assert.Equal(800, clip.Height);
+        Assert.Equal(1042813, clip.SizeBytes);
+        Assert.Equal("0:13", clip.Duration);
+    }
+
+    // CB-270: the send policy reads NativeOf, so every conversation on a chat
+    // surface in a real-shaped sessions.list must come out as not native —
+    // otherwise its reply would stop being delivered to its channel. The
+    // fixture's channel rows carry no classification at all, which is the
+    // fail-safe case: absent means today's behaviour.
+    [Fact]
+    public void EveryChannelRowInTheListIsClassifiedAsNotNative()
+    {
+        Parse(withinMinutes: 60);
+
+        var members = OpenClawSessions.MembersOfRoom(Room);
+        Assert.Equal(9, members.Count);
+        Assert.All(members, key =>
+            Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf(key)));
+    }
+
+    // The control for the test above: the same envelope with a native main, a
+    // dashboard session and the two surface shapes that look closest to them
+    // (a WhatsApp main, a Discord DM) does classify the first two as native and
+    // the others not, so the previous result is not just "nothing is ever
+    // native". Invented values on the structure measured in CB-270.
+    [Fact]
+    public void OnlyTheNativeRowsOfAMixedPageAreClassifiedAsNative()
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+
+        var at = new DateTimeOffset(Now.AddSeconds(-5)).ToUnixTimeMilliseconds();
+        OpenClawSessions.Parse(Json($$"""
+        {"sessions":[
+          {"key":"agent:alpha:main","classification":"main","isMain":true,"lastActivityAt":{{at}}},
+          {"key":"agent:alpha:dashboard:11111111-2222-3333-4444-555555555555","classification":"dashboard","lastActivityAt":{{at}}},
+          {"key":"agent:beta:main","classification":"main","isMain":true,"chatType":"direct",
+           "origin":{"provider":"whatsapp","to":"+15550000001"},
+           "deliveryContext":{"channel":"whatsapp","to":"+15550000001"},"lastChannel":"whatsapp","lastActivityAt":{{at}}},
+          {"key":"agent:alpha:discord:direct:1900000000000000001","classification":"direct","chatType":"direct",
+           "origin":{"provider":"discord"},"deliveryContext":{"channel":"discord","to":"user:1900000000000000001"},
+           "lastChannel":"discord","lastActivityAt":{{at}}}
+        ]}
+        """), Now);
+
+        Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:alpha:main"));
+        Assert.Equal(OpenClawNativeKind.Dashboard,
+            OpenClawSessions.NativeOf("agent:alpha:dashboard:11111111-2222-3333-4444-555555555555"));
+        Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf("agent:beta:main"));
+        Assert.Equal(OpenClawNativeKind.None,
+            OpenClawSessions.NativeOf("agent:alpha:discord:direct:1900000000000000001"));
+    }
+
+    // CB-270 S5: a WhatsApp sessions.list page in the gateway's envelope, the
+    // field structure of the live WhatsApp rows (2026.10.5) with every value
+    // invented: numbers are +1555000000N, group ids are 12000000000000000N@g.us,
+    // subjects are made up. By category: a native main (no origin at all), a
+    // WhatsApp-routed main with a channel-only deliveryContext, a DM, a group two
+    // agents are in, a group one agent is in whose chatType contradicts its
+    // classification, and a second DM peer. All recent, so the window is not
+    // what is under test.
+    private static string WhatsAppPage()
+    {
+        var recent = new DateTimeOffset(Now.AddSeconds(-5)).ToUnixTimeMilliseconds();
+
+        static string Group(string agent, string id, string subject, string chatType) =>
+            $$"""
+              {"key":"agent:{{agent}}:whatsapp:group:{{id}}","classification":"group","kind":"group",
+               "chatType":"{{chatType}}","peerKind":"group","subject":"{{subject}}","displayName":"{{subject}}",
+               "origin":{"provider":"whatsapp","chatType":"{{chatType}}","label":"{{id}}","from":"{{id}}",
+                         "to":"{{id}}","surface":"whatsapp","accountId":"default"},
+               "deliveryContext":{"channel":"whatsapp","to":"{{id}}","accountId":"default"},
+               "lastChannel":"whatsapp","lastTo":"{{id}}","lastAccountId":"default","lastActivityAt":RECENT}
+              """;
+
+        string Dm(string agent, string number) =>
+            $$"""
+              {"key":"agent:{{agent}}:whatsapp:direct:{{number}}","classification":"direct","kind":"direct",
+               "chatType":"direct","peerKind":"direct",
+               "origin":{"provider":"whatsapp","chatType":"direct","label":"{{number}}","from":"{{number}}",
+                         "to":"{{number}}","surface":"whatsapp","nativeDirectUserId":"{{number}}"},
+               "deliveryContext":{"channel":"whatsapp","to":"{{number}}"},
+               "lastChannel":"whatsapp","lastTo":"{{number}}","lastActivityAt":RECENT}
+              """;
+
+        var rows = new[]
+        {
+            // A native main: no origin, no delivery context, no last channel.
+            """{"key":"agent:nativeone:main","classification":"main","kind":"direct","chatType":"direct","isMain":true,"lastActivityAt":RECENT}""",
+
+            // A WhatsApp-routed main: a provider, a channel-only context, no address.
+            """{"key":"agent:alpha:main","classification":"main","kind":"direct","chatType":"direct","isMain":true,"origin":{"provider":"whatsapp"},"deliveryContext":{"channel":"whatsapp"},"lastChannel":"whatsapp","lastActivityAt":RECENT}""",
+
+            Dm("alpha", "+15550000001"),
+            Dm("beta", "+15550000002"),
+            Group("alpha", "120000000000000001@g.us", "Studio Crew", "group"),
+            Group("beta", "120000000000000001@g.us", "Studio Crew", "group"),
+            Group("gamma", "120000000000000002@g.us", "Night Shift", "direct"),
+        };
+
+        return "{\"count\":" + rows.Length + ",\"sessions\":[" + string.Join(",", rows).Replace("RECENT", recent.ToString()) + "]}";
+    }
+
+    private static IReadOnlyList<OpenClawSessions.Session> ParseWhatsApp()
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawNativeMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+
+        return OpenClawSessions.Parse(Json(WhatsAppPage()), Now).Sessions;
+    }
+
+    // Kinds, from the whole payload. The group whose chatType contradicts its
+    // classification is a Channel; every DM is Direct; both mains are Main.
+    [Fact]
+    public void AWhatsAppPageGivesGroupsAsChannelsDmsAsDirectAndMainsAsMain()
+    {
+        var sessions = ParseWhatsApp();
+
+        Assert.Equal(7, sessions.Count);
+        Assert.All(sessions.Where(s => s.Key.Contains(":group:")), s => Assert.Equal(SessionKind.Channel, s.Kind));
+        Assert.All(sessions.Where(s => s.Key.Contains(":direct:")), s => Assert.Equal(SessionKind.Direct, s.Kind));
+        Assert.All(sessions.Where(s => s.Key.EndsWith(":main")), s => Assert.Equal(SessionKind.Main, s.Kind));
+
+        // The contradicting row in particular, by name.
+        Assert.Equal(SessionKind.Channel, sessions.Single(s => s.Key.Contains("gamma")).Kind);
+    }
+
+    // The privacy pin over the whole page: no title carries five digits in a row,
+    // and the names the gateway does hold, the subjects, are what is shown.
+    [Fact]
+    public void NoWhatsAppTitleOnTheWholePageCarriesARunOfFiveOrMoreDigits()
+    {
+        var sessions = ParseWhatsApp();
+
+        foreach (var session in sessions)
+        {
+            Assert.False(
+                System.Text.RegularExpressions.Regex.IsMatch(session.Title, "[0-9]{5,}"),
+                $"a title carries an identifier: {session.Title}");
+        }
+
+        Assert.Equal("alpha — Studio Crew", sessions.Single(s => s.Key.StartsWith("agent:alpha:whatsapp:group")).Title);
+        Assert.Equal("alpha — whatsapp", sessions.Single(s => s.Key.StartsWith("agent:alpha:whatsapp:direct")).Title);
+    }
+
+    // S2's guarantee, re-pinned on the new fixture: every WhatsApp row has a
+    // provider, so none is native. Only the main with no origin at all is.
+    [Fact]
+    public void EveryWhatsAppRowIsNotNativeAndOnlyTheBareMainIs()
+    {
+        var sessions = ParseWhatsApp();
+
+        foreach (var session in sessions.Where(s => s.Key != "agent:nativeone:main"))
+            Assert.Equal(OpenClawNativeKind.None, OpenClawSessions.NativeOf(session.Key));
+
+        Assert.Equal(OpenClawNativeKind.Main, OpenClawSessions.NativeOf("agent:nativeone:main"));
+    }
+
+    // Two agents in one group are one room; the other group is a different room;
+    // a DM is in none. Exactly one room key is shared by two agents.
+    [Fact]
+    public void TwoAgentsInOneWhatsAppGroupShareExactlyOneRoom()
+    {
+        var sessions = ParseWhatsApp();
+
+        var rooms = sessions
+            .Select(s => OpenClawSessionKind.RoomOf(s.Key))
+            .Where(r => r is not null)
+            .GroupBy(r => r!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        Assert.Equal(2, rooms.Count);
+        Assert.Equal(2, rooms["whatsapp:120000000000000001@g.us"]);
+        Assert.Equal(1, rooms["whatsapp:120000000000000002@g.us"]);
+        Assert.Equal(
+            1,
+            rooms.Count(r => r.Value == 2));
+
+        Assert.Equal(2, OpenClawSessions.MembersOfRoom("whatsapp:120000000000000001@g.us").Count);
+    }
 }
+

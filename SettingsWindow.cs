@@ -113,7 +113,7 @@ namespace Orbweaver
             };
 
             BorrowFluentToggleSwitch();
-            EnsureColorPickerTheme();
+            EnsureColorPickerTheme(this);
 
             Rebuild();
 
@@ -298,19 +298,23 @@ namespace Orbweaver
         // assembly's layout has changed. Worst case the pickers come out
         // unstyled, which is a gap in one card rather than a crash — but neither
         // the load nor its failure can be arranged headlessly.
+        //
+        // Shared with GroupStyleWindow (CB-268), whose two pickers came out as
+        // exactly that empty gap on Windows until it called this too: any window
+        // that holds an ArmedColorPicker calls it from its constructor.
         [ExcludeFromCodeCoverage]
-        private void EnsureColorPickerTheme()
+        internal static void EnsureColorPickerTheme(Window window)
         {
             try
             {
                 var styles = Application.Current?.Styles;
                 if (styles is not null
-                    && styles.TryGetResource(typeof(ColorPicker), ActualThemeVariant, out _))
+                    && styles.TryGetResource(typeof(ColorPicker), window.ActualThemeVariant, out _))
                 {
                     return;
                 }
 
-                Styles.Add(new StyleInclude(new Uri($"avares://{Brand.AssemblyName}/"))
+                window.Styles.Add(new StyleInclude(new Uri($"avares://{Brand.AssemblyName}/"))
                 {
                     Source = new Uri(
                         "avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml")
@@ -690,6 +694,8 @@ namespace Orbweaver
 
             root.Children.Add(Group("auto-organize", "Auto-organize", Card(AutoOrganizeRows())));
 
+            root.Children.Add(Group("group-outlines", "Group outlines", Card(GroupOutlineRows())));
+
             root.Children.Add(Group("orb-colours", "Orb colours", Card(OrbColourRows())));
 
             // Between the orbs and the voice, because that is where the chat
@@ -909,7 +915,7 @@ namespace Orbweaver
                 + "you release, which is what the app has always done.")
         };
 
-        private static readonly (string Label, string Value)[] ShapeChoices =
+        internal static readonly (string Label, string Value)[] ShapeChoices =
         {
             ("Heart", "heart"),
             ("Circle", "circle"),
@@ -1011,6 +1017,45 @@ namespace Orbweaver
                     "How far apart the orbs sit inside the shape. Drag to see them move in real time.")
             };
         }
+
+        // CB-268's global outline style. The same four values a group's own
+        // override can replace field by field (GroupStyleWindow). Every setter
+        // goes through the S1 properties, which defer their write with SaveSoon
+        // for the colour and opacity ones, and then tells the manager so a
+        // backdrop already on screen repaints.
+        internal Control[] GroupOutlineRows() => new[]
+        {
+            Row("Outline groups", Switch(OrbweaverSettings.GroupOutlinesEnabled, on =>
+                {
+                    OrbweaverSettings.GroupOutlinesEnabled = on;
+                    SessionManager.Instance?.ReapplyGroupStyles();
+                }),
+                "Draw each group's shape behind its orbs. Groups can still be grabbed by the "
+                + "empty space inside them when this is off."),
+            ColorRow("Stroke colour",
+                () => GroupStyleControls.ColorOf(OrbweaverSettings.GroupOutlineStroke),
+                color => { OrbweaverSettings.GroupOutlineStroke = OrbColors.ToHex(color); SessionManager.Instance?.ReapplyGroupStyles(); },
+                "The line around a group. A group can override this from its own right-click menu."),
+            Row("Stroke opacity", GroupStyleControls.OpacityControl(
+                    OrbweaverSettings.GroupOutlineStrokeOpacity,
+                    v => { OrbweaverSettings.GroupOutlineStrokeOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
+                "0% hides the line, 100% draws it solid."),
+            ColorRow("Fill colour",
+                () => GroupStyleControls.ColorOf(OrbweaverSettings.GroupOutlineFill),
+                color => { OrbweaverSettings.GroupOutlineFill = OrbColors.ToHex(color); SessionManager.Instance?.ReapplyGroupStyles(); },
+                "The tint inside a group's shape."),
+            Row("Fill opacity", GroupStyleControls.OpacityControl(
+                    OrbweaverSettings.GroupOutlineFillOpacity,
+                    v => { OrbweaverSettings.GroupOutlineFillOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
+                "Keep this low to read the orbs through it."),
+            Row("Show group names", Switch(OrbweaverSettings.GroupNamesVisible, on =>
+                {
+                    OrbweaverSettings.GroupNamesVisible = on;
+                    SessionManager.Instance?.ReapplyGroupStyles();
+                }),
+                "Write each group's name in a small caption above its outline, in the outline's "
+                + "colour. Rename a group from its Group menu.")
+        };
 
         // internal for the same reason the rows above are: a test drives the
         // slider directly rather than hunting for it through whichever theme
@@ -1251,6 +1296,9 @@ namespace Orbweaver
                 + "to keep the card up. The figures come from Claude Code itself, asked "
                 + "once every five minutes per account; nothing here reads your login "
                 + "details, and asking costs no tokens."));
+
+            if (OrbweaverSettings.AccountUsageEnabled)
+                rows.AddRange(AccountOrbRows(AccountUsageSource.ClaudeCode));
 
             return rows.ToArray();
         }
@@ -1520,6 +1568,51 @@ namespace Orbweaver
                 + "card up. The figures come from the last session's own rollout — Codex "
                 + "writes them on every turn — and nothing here reads your login token."));
 
+            if (OrbweaverSettings.CodexAccountUsageEnabled)
+                rows.AddRange(AccountOrbRows(AccountUsageSource.Codex));
+
+            return rows.ToArray();
+        }
+
+        // CB-287: the accounts a CLI's usage orbs are currently drawn for. A seam
+        // rather than a direct SessionManager read so tests can name accounts
+        // without a running poller; the default asks the live orbs, which is why
+        // an account only appears here once it has answered a poll (listing config
+        // directories instead would derive labels from auth files a second way).
+        internal static Func<IReadOnlyList<AccountOrbIdentity>> UsageAccounts { get; set; } =
+            () => SessionManager.Instance?.AccountOrbList() ?? [];
+
+        // One row per account of this CLI: its derived label over the same editor
+        // the orb's "Customize…" opens. The editor panels refresh themselves when
+        // an override changes — from here or from that window — so this does not
+        // rebuild the whole page on Changed: a rebuild replaces the text box the
+        // user is typing in, and a LostFocus commit would then eat the click that
+        // moved focus to the next field.
+        internal Control[] AccountOrbRows(AccountUsageSource source)
+        {
+            var rows = new List<Control>();
+            foreach (var account in UsageAccounts())
+            {
+                if (account.Source != source) continue;
+
+                var stack = new StackPanel { Spacing = 8 };
+                stack.Children.Add(new TextBlock
+                {
+                    Text = account.DerivedLabel,
+                    FontSize = 13,
+                    FontWeight = FontWeight.SemiBold
+                });
+                stack.Children.Add(new AccountOrbEditorPanel(account));
+
+                var row = new SettingsRow
+                {
+                    Margin = new Thickness(14, 10),
+                    SearchText = SettingsFilter.TextOf($"{account.DerivedLabel} orb initials name icon", null)
+                };
+                row.Children.Add(stack);
+                rows.Add(row);
+            }
+
             return rows.ToArray();
         }
 
@@ -1560,6 +1653,8 @@ namespace Orbweaver
                 + "token."));
 
             if (!OrbweaverSettings.GrokAccountUsageEnabled) return rows.ToArray();
+
+            rows.AddRange(AccountOrbRows(AccountUsageSource.Grok));
 
             rows.Add(Row("Keep Grok usage fresh automatically",
                 Switch(OrbweaverSettings.GrokAutoRefreshEnabled, OnGrokAutoRefreshToggled),
@@ -1765,8 +1860,9 @@ namespace Orbweaver
                 Row("Show OpenClaw agents (experimental)",
                     Switch(OrbweaverSettings.OpenClawEnabled, OnOpenClawToggled),
                     "Shows an orb for each recently active session on an OpenClaw gateway, "
-                    + $"alongside your Claude Code ones. Read-only: {Brand.DisplayName} can see what "
-                    + "your agents are doing, and cannot ask them to do anything.")
+                    + $"alongside your Claude Code ones. Read-only unless \"Allow replying to agents\" "
+                    + $"below is on: {Brand.DisplayName} can see what your agents are doing, and "
+                    + "can only ask them to do something once you allow it.")
             };
 
             if (!OrbweaverSettings.OpenClawEnabled) return rows.ToArray();
@@ -1794,7 +1890,10 @@ namespace Orbweaver
                 + "every few minutes with nobody on the other end. They wear a beating "
                 + "heart. Hidden takes them off the screen; Own shape keeps them, arranged "
                 + "beside your conversations instead of among them. The agents keep their "
-                + "colours in any channel they are in whichever you pick."));
+                + "colours in any channel they are in whichever you pick. Pin one of "
+                + "these with Keep on screen and it shows whatever this says. One exception, "
+                + "and it changes what you see: with Allow approving agent actions on, a hidden "
+                + "session that is waiting for your approval shows its orb until you answer."));
 
             if (OrbweaverSettings.OpenClawHeartbeatMode == ClusterMode.OwnShape)
             {
@@ -1818,8 +1917,24 @@ namespace Orbweaver
                         () => OrbweaverSettings.OpenClawCronShape,
                         v => OrbweaverSettings.OpenClawCronShape = v),
                     "The pattern the cron orbs arrange into. Set both of these to Own shape "
-                    + "and the arrange button draws three patterns — your chats, the "
-                    + "heartbeats, and these — side by side rather than one."));
+                    + "and the arrange button draws up to four patterns — your chats, the "
+                    + "heartbeats, these and your agents' own sessions — side by side rather than one."));
+            }
+
+            // CB-270. After the cron rows because it is the same kind of setting;
+            // the label and tip live in OpenClawNativeText, which says why it is
+            // not called "Direct sessions".
+            rows.Add(Row(OpenClawNativeText.SettingLabel, ClusterModePicker(
+                    () => OrbweaverSettings.OpenClawNativeMode,
+                    OnOpenClawNativeModeChanged),
+                OpenClawNativeText.SettingTip));
+
+            if (OrbweaverSettings.OpenClawNativeMode == ClusterMode.OwnShape)
+            {
+                rows.Add(Row(OpenClawNativeText.ShapeLabel, ShapePicker(
+                        () => OrbweaverSettings.OpenClawNativeShape,
+                        v => OrbweaverSettings.OpenClawNativeShape = v),
+                    OpenClawNativeText.ShapeTip));
             }
 
             rows.Add(Row("Allow replying to agents",
@@ -1827,6 +1942,20 @@ namespace Orbweaver
                 "Off, this shows what your agents are doing. On, you can also reply to "
                 + "them from an orb — which asks the gateway for write permission, so you "
                 + "have to approve this device again there (`openclaw devices approve --latest`)."));
+
+            // CB-270 Stage 6. A third power, separate from the other two: replying
+            // can make an agent act, approving lets you decide when one asks first.
+            // The text says what it grants and what it never does, and that turning
+            // it on or off needs the device approved again on the gateway.
+            rows.Add(Row("Allow approving agent actions",
+                Switch(OrbweaverSettings.OpenClawApproveEnabled, OnOpenClawApproveToggled),
+                "Off, you can see your agents but not answer when one asks permission. "
+                + "On, an agent waiting for your say-so before it runs a command turns "
+                + "its orb amber, and its panel offers Allow once or Deny. Nothing is "
+                + "ever allowed automatically, and there is no \"always\" here. This asks "
+                + "the gateway for approval permission, so you have to approve this "
+                + "device again there (`openclaw devices approve --latest`), and again "
+                + "if you turn it off. It is independent of replying."));
 
             // Kept as a field and ticked, rather than rebuilt: the connection
             // changes state while you are looking at it — pairing gets approved,
@@ -2170,6 +2299,26 @@ namespace Orbweaver
         {
             OrbweaverSettings.OpenClawCronMode = mode;
             SessionManager.Instance?.ReapplyArrangement();
+        }
+
+        // CB-270: the same, for an agent's own sessions.
+        internal void OnOpenClawNativeModeChanged(ClusterMode mode)
+        {
+            OrbweaverSettings.OpenClawNativeMode = mode;
+            SessionManager.Instance?.ReapplyArrangement();
+        }
+
+        // CB-270 Stage 6. Not excluded from coverage, unlike the reply switch it
+        // mirrors: with no gateway address set, Restart is inert, which is how the
+        // suite drives it without a socket.
+        internal void OnOpenClawApproveToggled(bool enabled)
+        {
+            OrbweaverSettings.OpenClawApproveEnabled = enabled;
+
+            // Reconnects, because the scopes are part of the handshake and the
+            // gateway treats a changed scope set as a device to approve afresh.
+            OpenClawSessions.Restart();
+            Rebuild();
         }
 
         // Excluded from coverage: reconnects to the gateway, because the scopes
@@ -3869,11 +4018,29 @@ namespace Orbweaver
         // internal: the arming guard below is the fix for a bug that wrote three
         // colours nobody chose into settings.json, and it is decided entirely in
         // managed code — no OS call, no window needed.
-        internal Control ColorRow(string label, string state)
+        internal Control ColorRow(string label, string state) =>
+            ColorRow(label, () => OrbColors.For(state), color =>
+            {
+                OrbColors.Set(state, OrbColors.ToHex(color));
+
+                // Nothing observes the settings store, and a colour change isn't a
+                // state change, so the orbs and the tray icon have to be told.
+                SessionManager.Instance?.ReapplyStateColors();
+            });
+
+        // CB-268 generalised the row over a getter and a setter, because the
+        // group outline's stroke and fill are colours too and want exactly this
+        // control, arming guard and all. `set` is only ever called for a change
+        // the user made and that differs from `get()` in RGB; everything below
+        // is what ColorRow(label, state) always did, moved rather than rewritten.
+        internal Control ColorRow(string label, Func<Color> get, Action<Color> set, string? help = null) =>
+            Row(label, ArmedColorPicker(get, set), help);
+
+        internal static ColorPicker ArmedColorPicker(Func<Color> get, Action<Color> set)
         {
             var picker = new ColorPicker
             {
-                Color = OrbColors.For(state),
+                Color = get(),
 
                 // The orb builds its own alphas — the glow's gradient stops are
                 // 150/95/0 over the chosen RGB, and the tray icon's alpha channel
@@ -3915,7 +4082,7 @@ namespace Orbweaver
 
             picker.ColorChanged += (_, e) =>
             {
-                var current = OrbColors.For(state);
+                var current = get();
                 var same = e.NewColor.R == current.R
                            && e.NewColor.G == current.G
                            && e.NewColor.B == current.B;
@@ -3936,14 +4103,10 @@ namespace Orbweaver
                 // nobody chose. Compare RGB only — alpha isn't ours (see above).
                 if (same) return;
 
-                OrbColors.Set(state, OrbColors.ToHex(e.NewColor));
-
-                // Nothing observes the settings store, and a colour change isn't a
-                // state change, so the orbs and the tray icon have to be told.
-                SessionManager.Instance?.ReapplyStateColors();
+                set(e.NewColor);
             };
 
-            return Row(label, picker);
+            return picker;
         }
 
         // One button rather than a reset per row: the rows are narrow already, and

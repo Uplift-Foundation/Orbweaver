@@ -155,6 +155,48 @@ public class HotkeyRegistryTests
         Assert.Equal(Key.U, combo.Key);
     }
 
+    // CB-298: the fourth action, Ctrl+Alt+M, on the same terms as the rest.
+    [Fact]
+    public void Default_ToggleMute_IsControlAltM()
+    {
+        var combo = HotkeyRegistry.Default(HotkeyAction.ToggleMute);
+
+        Assert.Equal(KeyModifiers.Control | KeyModifiers.Alt, combo.Modifiers);
+        Assert.Equal(Key.M, combo.Key);
+        Assert.Equal("Ctrl+Alt+M", HotkeyRegistry.Format(combo));
+    }
+
+    [Fact]
+    public void Resolve_ToggleMute_UsesTheOverrideWhenItParses()
+    {
+        var combo = HotkeyRegistry.Resolve(HotkeyAction.ToggleMute, "Ctrl+Shift+M");
+
+        Assert.Equal(KeyModifiers.Control | KeyModifiers.Shift, combo.Modifiers);
+        Assert.Equal(Key.M, combo.Key);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("M")]
+    [InlineData("Ctrl+Alt+F5")]
+    public void Resolve_ToggleMute_FallsBackToItsOwnDefault(string? overrideSpec)
+    {
+        Assert.Equal(HotkeyRegistry.Default(HotkeyAction.ToggleMute),
+            HotkeyRegistry.Resolve(HotkeyAction.ToggleMute, overrideSpec));
+    }
+
+    [Fact]
+    public void Plan_MuteSpelledAsTheTogglesChord_FallsBackToCtrlAltMAndSaysWhy()
+    {
+        var plan = HotkeyRegistry.Plan(Overrides(mute: "Ctrl+Alt+H"));
+
+        var mute = For(plan, HotkeyAction.ToggleMute);
+        Assert.Equal(new HotkeyCombo(KeyModifiers.Control | KeyModifiers.Alt, Key.M), mute.Combo);
+        Assert.Contains("ToggleOrbsVisible's", mute.Note);
+        Assert.Equal(CtrlAltH, For(plan, HotkeyAction.ToggleOrbsVisible).Combo);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -303,12 +345,13 @@ public class HotkeyRegistryTests
     // CB-196 AC6: the collision rule, one case per arm. Plan takes the
     // overrides as a function so none of this reads settings.
     private static Func<HotkeyAction, string?> Overrides(
-        string? toggle = null, string? newChat = null, string? usage = null) =>
+        string? toggle = null, string? newChat = null, string? usage = null, string? mute = null) =>
         action => action switch
         {
             HotkeyAction.ToggleOrbsVisible => toggle,
             HotkeyAction.OpenNewChat => newChat,
             HotkeyAction.ToggleUsageOrbsVisible => usage,
+            HotkeyAction.ToggleMute => mute,
             _ => null
         };
 

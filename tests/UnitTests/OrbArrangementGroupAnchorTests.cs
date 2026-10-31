@@ -1,0 +1,961 @@
+using Avalonia;
+using Xunit;
+using static Orbweaver.OrbArrangement;
+
+namespace Orbweaver.Tests
+{
+    // CB-268: ComputeGroups' own promises, the ones a sweep of invariants
+    // cannot state — which route was taken, what Landed means, that a group's
+    // picture is its own and moves by exactly the delta a drag gave it, and
+    // that a member follows its root lead's slot whatever its own entry says.
+    // The sweep (ArrangementSweep.GroupCases) proves nothing overlaps and
+    // nothing leaves the screen across 112896 cases; this file proves the
+    // arrangement is the right one.
+    public class OrbArrangementGroupAnchorTests
+    {
+        private static readonly PixelRect Work = new(0, 0, 1920, 1080);
+
+        private static Layout LayoutAt(double scale = 1.0, double spacing = 0.85, PixelRect? work = null) =>
+            new(work ?? Work, scale, "circle", spacing);
+
+        private static GroupLayout[] Table(params (string Shape, PixelPoint? At)[] groups) =>
+            groups.Select(g => new GroupLayout(g.Shape, g.At)).ToArray();
+
+        private static int[] NoLeads(int n) => Enumerable.Repeat(-1, n).ToArray();
+
+        private static int[] Dealt(int n, int groups) => Enumerable.Range(0, n).Select(i => i % groups).ToArray();
+
+        private static bool Overlap(PixelRect a, PixelRect b) =>
+            a.X < b.Right && b.X < a.Right && a.Y < b.Bottom && b.Y < a.Bottom;
+
+        // --- routes ---
+
+        // leadOf shorter than the orb count reads as "no lead" for the orbs it
+        // does not cover — the same rule Compute has — on the anchored path too.
+        [Fact]
+        public void AShortLeadArrayReadsAsNoLeadForTheOrbsItMisses()
+        {
+            var table = Table(("circle", new PixelPoint(900, 500)));
+
+            var (shortLeads, _) = ComputeGroups(3, new[] { -1 }, new int[3], table, LayoutAt());
+            var (noLeads, _) = ComputeGroups(3, NoLeads(3), new int[3], table, LayoutAt());
+
+            Assert.Equal(noLeads, shortLeads);
+        }
+
+        [Fact]
+        public void NoOrbsIsNoPositionsAndNoGroups()
+        {
+            var (positions, groups) = ComputeGroups(
+                0, Array.Empty<int>(), Array.Empty<int>(), Table(("circle", null)), LayoutAt());
+
+            Assert.Empty(positions);
+            Assert.Empty(groups);
+        }
+
+        [Fact]
+        public void WithNoAnchorsEachGroupIsAskedForTheMiddleOfItsBand()
+        {
+            var table = Table(("circle", null), ("circle", null), ("circle", null));
+            var of = Dealt(9, 3);
+
+            var (_, groups, path) = Run(9, NoLeads(9), of, table);
+
+            Assert.Equal(GroupPath.Separated, path);
+
+            // The strip of screen Bands cuts for each: left to right in slot
+            // order, and each group landed in its own third.
+            var bands = Bands(Work, new[] { 3, 3, 3 }, 56);
+            for (var g = 0; g < 3; g++)
+                Assert.True(
+                    groups[g].Landed.X >= bands[g].X - 60 && groups[g].Landed.X <= bands[g].Right + 60,
+                    $"slot {g} landed at {groups[g].Landed} outside its band {bands[g]}");
+        }
+
+        [Fact]
+        public void TheFirstDrawIsAFunctionOfTheAnchorsSoFeedingLandedBackReproducesItOrbForOrb()
+        {
+            var leads = new[] { -1, 0, -1, -1, 3, -1, -1, -1, 6 };
+            var of = new[] { 0, 1, 1, 2, 0, 2, 3, 3, 0 };
+
+            // None anchored, then one anchored and the rest not, then all.
+            foreach (var anchors in new[]
+            {
+                new PixelPoint?[] { null, null, null, null },
+                new PixelPoint?[] { null, new PixelPoint(1500, 300), null, null },
+                new PixelPoint?[] { new PixelPoint(400, 300), new PixelPoint(900, 700), new PixelPoint(1500, 300), new PixelPoint(5000, 5000) },
+            })
+            {
+                var shapes = new[] { "heart", "star", "line", "heart" };
+                var (first, groups, path) = Run(9, leads, of, Table(shapes.Select((sh, i) => (sh, anchors[i])).ToArray()));
+
+                var fed = shapes.Select((sh, g) => (sh, (PixelPoint?)groups.FirstOrDefault(p => p.Slot == g).Landed)).ToArray();
+                var (second, groups2, path2) = Run(9, leads, of, Table(fed));
+
+                Assert.Equal(path, path2);
+                Assert.Equal(first, second);
+                Assert.Equal(groups.Select(g => g.Landed), groups2.Select(g => g.Landed));
+            }
+        }
+
+        [Fact]
+        public void AnEmptyGroupTableIsOneGroupDrawnInTheLayoutsShape()
+        {
+            var (positions, groups) = ComputeGroups(
+                4, NoLeads(4), new int[4], Array.Empty<GroupLayout>(), LayoutAt());
+
+            Assert.Equal(4, positions.Length);
+            var only = Assert.Single(groups);
+            Assert.Equal(0, only.Slot);
+            Assert.Equal("circle", only.DrawnShape);
+        }
+
+        [Fact]
+        public void ABlankShapeInTheTableFallsBackToTheLayoutsShape()
+        {
+            var (_, groups) = ComputeGroups(
+                4, NoLeads(4), new int[4], Table(("", new PixelPoint(900, 500))), LayoutAt());
+
+            Assert.Equal("circle", Assert.Single(groups).DrawnShape);
+        }
+
+        [Fact]
+        public void OneAnchorAmongNoneTakesTheAnchoredRoute()
+        {
+            var (_, groups, path) = Run(
+                6, NoLeads(6), Dealt(6, 2), Table(("circle", new PixelPoint(500, 300)), ("heart", null)));
+
+            Assert.Equal(GroupPath.Separated, path);
+            Assert.Equal(2, groups.Length);
+        }
+
+        private static (PixelPoint[] Positions, GroupPlacement[] Groups, GroupPath Path) Run(
+            int count, int[] leads, int[] of, GroupLayout[] table, Layout? layout = null, double[]? sizes = null)
+        {
+            var (positions, groups) = ComputeGroups(count, leads, of, table, layout ?? LayoutAt(), sizes, out var path);
+            return (positions, groups, path);
+        }
+
+        // A heart's anchor is not the middle of its box: an early draft read the
+        // first draw's Landed off the box middle and the redraw from the saved
+        // anchors put the heart 162 px lower (found by S7).
+        [Theory]
+        [InlineData("heart")]
+        [InlineData("circle")]
+        [InlineData("star")]
+        [InlineData("diamond")]
+        public void TheFirstDrawsLandedFedBackReproducesIt(string mainShape)
+        {
+            var table = Table((mainShape, null), ("circle", null), ("line", null), ("heart", null));
+            var of = new[] { 0, 0, 3 };
+
+            var (first, groups, _) = Run(3, NoLeads(3), of, table);
+
+            var fed = groups.ToDictionary(g => g.Slot, g => (PixelPoint?)g.Landed);
+            var again = Table((mainShape, fed[0]), ("circle", null), ("line", null), ("heart", fed[3]));
+
+            var (second, _, _) = Run(3, NoLeads(3), of, again);
+
+            Assert.Equal(first, second);
+        }
+
+        // --- anchors and Landed ---
+
+        [Fact]
+        public void AGroupThatFitsIsDrawnAroundItsAnchorAndLandsExactlyThere()
+        {
+            var asked = new PixelPoint(700, 500);
+
+            var (positions, groups, path) = Run(5, NoLeads(5), new int[5], Table(("circle", asked)));
+
+            Assert.Equal(GroupPath.Separated, path);
+            Assert.Equal(asked, Assert.Single(groups).Landed);
+
+            // And drawn about it: the box is centred within a window or so.
+            var box = groups[0].SlotBounds;
+            Assert.InRange(box.X + box.Width / 2.0, asked.X - 60, asked.X + 60);
+            Assert.InRange(box.Y + box.Height / 2.0, asked.Y - 60, asked.Y + 60);
+        }
+
+        [Fact]
+        public void AnAnchorThatCannotBeHonouredLandsWhereTheGroupActuallyIs()
+        {
+            var table = Table(("circle", new PixelPoint(-4000, -4000)));
+
+            var (positions, groups, _) = Run(8, NoLeads(8), new int[8], table);
+
+            var landed = groups[0].Landed;
+            var box = groups[0].SlotBounds;
+
+            // Flush against the top-left of the work area, and the saved anchor
+            // is the one that put it there — not the -4000 it was asked for.
+            Assert.Equal(Work.X, box.X);
+            Assert.Equal(Work.Y, box.Y);
+            Assert.InRange(landed.X, 0, Work.Width);
+            Assert.InRange(landed.Y, 0, Work.Height);
+
+            // Feeding it back is exact (CB-211, per group).
+            var (again, _, _) = Run(8, NoLeads(8), new int[8], Table(("circle", landed)));
+            Assert.Equal(positions, again);
+        }
+
+        [Fact]
+        public void LandedOfEveryGroupRoundTripsEvenWhenSeveralWereMoved()
+        {
+            var table = Table(
+                ("circle", new PixelPoint(900, 500)), ("heart", new PixelPoint(900, 500)), ("star", new PixelPoint(5000, 5000)));
+            var of = Dealt(12, 3);
+
+            var (positions, groups, path) = Run(12, NoLeads(12), of, table);
+            Assert.Equal(GroupPath.Separated, path);
+
+            var fed = Table(
+                ("circle", groups[0].Landed), ("heart", groups[1].Landed), ("star", groups[2].Landed));
+            var (again, again2, path2) = Run(12, NoLeads(12), of, fed);
+
+            Assert.Equal(GroupPath.Separated, path2);
+            Assert.Equal(positions, again);
+            Assert.Equal(groups.Select(g => g.Landed), again2.Select(g => g.Landed));
+        }
+
+        [Fact]
+        public void TheGroupWithoutAnAnchorIsAskedForItsBandsMiddleAndReportsWhereItLanded()
+        {
+            var table = Table(("circle", new PixelPoint(1500, 300)), ("grid", null));
+
+            var (_, groups, _) = Run(8, NoLeads(8), Dealt(8, 2), table);
+
+            Assert.False(Overlap(groups[0].SlotBounds, groups[1].SlotBounds));
+
+            // Slot 1 was nobody's anchor: it is asked for the middle of its
+            // band (the right half of two equal bands, 1440) and, being in the
+            // way of slot 0 at (1500,300) or not, reports what it landed at.
+            var band = Bands(Work, new[] { 4, 4 }, 56)[1];
+            Assert.InRange(groups[1].Landed.X, band.X - 400, band.Right + 400);
+        }
+
+        [Fact]
+        public void CollidingAnchorsAreSeparatedAndTheEarlierSlotKeepsItsPlace()
+        {
+            var at = new PixelPoint(960, 540);
+            var table = Table(("circle", at), ("circle", at), ("circle", at));
+
+            var (_, groups, path) = Run(9, NoLeads(9), Dealt(9, 3), table);
+
+            Assert.Equal(GroupPath.Separated, path);
+            Assert.Equal(at, groups[0].Landed);
+            Assert.False(Overlap(groups[0].SlotBounds, groups[1].SlotBounds));
+            Assert.False(Overlap(groups[0].SlotBounds, groups[2].SlotBounds));
+            Assert.False(Overlap(groups[1].SlotBounds, groups[2].SlotBounds));
+        }
+
+        [Fact]
+        public void DraggingOneGroupMovesItsOrbsByExactlyTheDeltaAndNobodyElse()
+        {
+            var one = new PixelPoint(500, 400);
+            var two = new PixelPoint(1400, 600);
+            var of = Dealt(10, 2);
+            var leads = new[] { -1, -1, 0, 1, 2, 3, -1, -1, -1, -1 };
+
+            var (before, _, _) = Run(10, leads, of, Table(("heart", one), ("star", two)));
+            var (after, _, _) = Run(10, leads, of, Table(("heart", new PixelPoint(one.X + 38, one.Y + 24)), ("star", two)));
+
+            for (var i = 0; i < 10; i++)
+            {
+                // Who moves is decided by the root: orbs 2 and 4 hang off
+                // orb 0 (slot 0), 3 and 5 off orb 1 (slot 1).
+                var inSlot0 = Root(i, leads, of) == 0;
+                Assert.Equal(inSlot0 ? new PixelPoint(before[i].X + 38, before[i].Y + 24) : before[i], after[i]);
+            }
+        }
+
+        private static int Root(int orb, int[] leads, int[] of)
+        {
+            var at = orb;
+            while (leads[at] >= 0) at = leads[at];
+            return of[at];
+        }
+
+        [Fact]
+        public void AGroupsPictureDoesNotDependOnTheGroupsBesideIt()
+        {
+            var a = Table(("heart", new PixelPoint(600, 500)));
+            var ab = Table(("heart", new PixelPoint(600, 500)), ("star", new PixelPoint(1500, 500)));
+
+            var (solo, _, _) = Run(7, NoLeads(7), new int[7], a);
+
+            // The same seven orbs in slot 0, plus six more in slot 1 far away.
+            var (both, groups, _) = Run(13, NoLeads(13), Enumerable.Range(0, 13).Select(i => i < 7 ? 0 : 1).ToArray(), ab);
+
+            Assert.Equal(solo, both.Take(7));
+            Assert.Equal(2, groups.Length);
+        }
+
+        // --- the curve the orbs sit on ---
+
+        private static double Residual(GroupPlacement group, PixelPoint[] positions, double scale, int[] leads)
+        {
+            var anchors = group.Orbs.Where(i => leads[i] < 0).ToArray();
+            var unit = Unit(group.DrawnShape, anchors.Length);
+            var worst = 0.0;
+
+            for (var k = 0; k < anchors.Length; k++)
+            {
+                var window = WindowFor(scale, 1.0);
+                var dx = positions[anchors[k]].X + window / 2.0 - (group.CurveCentre.X + group.CurveScale * unit[k].X);
+                var dy = positions[anchors[k]].Y + window / 2.0 - (group.CurveCentre.Y + group.CurveScale * unit[k].Y);
+                worst = Math.Max(worst, Math.Sqrt(dx * dx + dy * dy));
+            }
+
+            return worst;
+        }
+
+        [Theory]
+        [InlineData("heart", 5, 1.0)]
+        [InlineData("heart", 13, 1.0)]
+        [InlineData("heart", 13, 2.0)]
+        [InlineData("circle", 8, 1.0)]
+        [InlineData("diamond", 9, 1.0)]
+        [InlineData("star", 10, 1.0)]
+        [InlineData("star", 10, 2.0)]
+        public void EveryOrbOfAnUnfannedGroupLiesOnTheCurveItReports(string shape, int n, double scale)
+        {
+            var layout = LayoutAt(scale, work: scale > 1 ? new PixelRect(0, 0, 3024, 1890) : null);
+            var table = Table((shape, new PixelPoint(900, 500)), ("circle", new PixelPoint(1600, 500)));
+            var of = Enumerable.Range(0, n + 3).Select(i => i < n ? 0 : 1).ToArray();
+
+            var (positions, groups, _) = Run(n + 3, NoLeads(n + 3), of, table, layout);
+
+            var group = groups[0];
+            Assert.Equal(shape, group.DrawnShape);
+            Assert.True(group.CurveScale > 0);
+
+            // Pixel rounding plus the nudges that keep neighbours apart: a few
+            // pixels, nowhere near an orb's width. A star's valleys sit close
+            // to its points and are nudged the most (7.5 px measured at size
+            // 1), so it gets twice the allowance.
+            var allowed = (shape == "star" ? 8 : 4) * scale;
+            Assert.True(Residual(group, positions, scale, NoLeads(n + 3)) <= allowed,
+                $"worst orb is {Residual(group, positions, scale, NoLeads(n + 3)):0.0}px off the curve");
+        }
+
+        [Theory]
+        [InlineData("grid", 12)]
+        [InlineData("line", 7)]
+        [InlineData("vline", 7)]
+        public void ALineAColumnAndAGridHaveNoCurve(string shape, int n)
+        {
+            var table = Table((shape, new PixelPoint(900, 500)));
+
+            var (positions, groups, _) = Run(n, NoLeads(n), new int[n], table);
+
+            var only = Assert.Single(groups);
+            Assert.Equal(0, only.CurveScale);
+            Assert.Equal(positions.Average(p => p.X + 28.0), only.CurveCentre.X, 1e-6);
+            Assert.Equal(positions.Average(p => p.Y + 28.0), only.CurveCentre.Y, 1e-6);
+        }
+
+        [Fact]
+        public void ASqueezedGroupThatFellBackToAGridHasNoCurveEither()
+        {
+            var sizes = Enumerable.Repeat(2.0, 30).ToArray();
+            var small = new PixelRect(0, 0, 1280, 800);
+
+            var (_, groups, _) = Run(
+                30, NoLeads(30), new int[30], Table(("circle", new PixelPoint(640, 400))), LayoutAt(work: small), sizes);
+
+            var only = Assert.Single(groups);
+            Assert.Equal("grid", only.DrawnShape);
+            Assert.Equal(0, only.CurveScale);
+        }
+
+        [Fact]
+        public void TheCurveIsTranslatedByTheSameDeltaAsTheOrbsAfterSeparationToo()
+        {
+            // Two groups asked for the same spot: slot 1 is pushed out of
+            // slot 0's way, and its curve must move with it to the pixel.
+            var at = new PixelPoint(960, 540);
+            var alone = Table(("heart", at), ("heart", at));
+            var (positions, groups, _) = Run(12, NoLeads(12), Dealt(12, 2), alone);
+
+            // The same group fitted on its own at the middle, then compared
+            // with where it ended up: orbs and curve moved by the same delta.
+            var (solo, soloGroups, _) = Run(6, NoLeads(6), new int[6], Table(("heart", at)));
+            var slot1Orbs = groups[1].Orbs;
+            var dx = positions[slot1Orbs[0]].X - solo[0].X;
+            var dy = positions[slot1Orbs[0]].Y - solo[0].Y;
+
+            Assert.NotEqual(0, dx + dy);   // it really was moved
+            Assert.Equal(soloGroups[0].CurveCentre.X + dx, groups[1].CurveCentre.X, 1e-6);
+            Assert.Equal(soloGroups[0].CurveCentre.Y + dy, groups[1].CurveCentre.Y, 1e-6);
+            Assert.Equal(soloGroups[0].CurveScale, groups[1].CurveScale, 1e-9);
+        }
+
+        [Fact]
+        public void ALoneOrbHasNoCurveAndItsCentreIsTheOrbs()
+        {
+            var (positions, groups, _) = Run(1, NoLeads(1), new int[1], Table(("heart", new PixelPoint(700, 400))));
+
+            var only = Assert.Single(groups);
+            Assert.Equal(0, only.CurveScale);
+            Assert.Equal(positions[0].X + 28.0, only.CurveCentre.X);
+            Assert.Equal(positions[0].Y + 28.0, only.CurveCentre.Y);
+        }
+
+        [Fact]
+        public void ATeamIsLeftOffTheCurveItsLeadsSitOn()
+        {
+            // Leads 0 and 3 are anchors; 1, 2 and 4 are fanned members.
+            var leads = new[] { -1, 0, 0, -1, 3 };
+
+            var (positions, groups, _) = Run(5, leads, new int[5], Table(("circle", new PixelPoint(900, 500))));
+
+            var only = Assert.Single(groups);
+            var unit = Unit("circle", 2);
+
+            // Two anchors, two unit points: the leads fit, to the pixel rounding.
+            for (var k = 0; k < 2; k++)
+            {
+                var lead = new[] { 0, 3 }[k];
+                Assert.Equal(only.CurveCentre.X + only.CurveScale * unit[k].X, positions[lead].X + 28.0, 2.0);
+                Assert.Equal(only.CurveCentre.Y + only.CurveScale * unit[k].Y, positions[lead].Y + 28.0, 2.0);
+            }
+        }
+
+        [Fact]
+        public void TheCurveMovesWithTheGroupByExactlyTheDrag()
+        {
+            var table = Table(("heart", new PixelPoint(700, 400)));
+            var moved = Table(("heart", new PixelPoint(738, 424)));
+
+            var (_, before, _) = Run(8, NoLeads(8), new int[8], table);
+            var (_, after, _) = Run(8, NoLeads(8), new int[8], moved);
+
+            Assert.Equal(before[0].CurveScale, after[0].CurveScale);
+            Assert.Equal(before[0].CurveCentre.X + 38, after[0].CurveCentre.X, 1e-6);
+            Assert.Equal(before[0].CurveCentre.Y + 24, after[0].CurveCentre.Y, 1e-6);
+        }
+
+        // --- free mode: user groups beside fixed obstacles ---
+
+        [Fact]
+        public void UserGroupsAloneBesideAStackColumnAvoidItAndLandExactly()
+        {
+            // The three predefined slots are empty; slots 3 and 4 are user
+            // groups, one of them anchored on the stack column itself.
+            var stack = new PixelRect(1780, 60, 100, 960);
+            var table = Table(
+                ("circle", null), ("circle", null), ("circle", null),
+                ("heart", new PixelPoint(1800, 500)), ("star", new PixelPoint(1000, 500)));
+            var of = Enumerable.Range(0, 10).Select(i => 3 + i % 2).ToArray();
+
+            var (positions, groups) = ComputeGroups(10, NoLeads(10), of, table, LayoutAt(), null, GroupLayoutMode.Free, new[] { stack }, out var path);
+
+            Assert.Equal(GroupPath.Separated, path);
+            Assert.Equal(new[] { 3, 4 }, groups.Select(g => g.Slot));
+            Assert.All(groups, g => Assert.False(Overlap(g.SlotBounds, stack)));
+
+            // Landed is the anchor the pushed group ended up at, not the asked
+            // one, and feeding it back reproduces the layout.
+            Assert.NotEqual(new PixelPoint(1800, 500), groups[0].Landed);
+
+            var fed = Table(
+                ("circle", null), ("circle", null), ("circle", null),
+                ("heart", groups[0].Landed), ("star", groups[1].Landed));
+            var (again, againGroups) = ComputeGroups(10, NoLeads(10), of, fed, LayoutAt(), null, GroupLayoutMode.Free, new[] { stack }, out var againPath);
+
+            Assert.Equal(GroupPath.Separated, againPath);
+            Assert.Equal(positions, again);
+            Assert.Equal(groups.Select(g => g.Landed), againGroups.Select(g => g.Landed));
+        }
+
+        [Fact]
+        public void ArrangedModeWithAnEmptyObstacleListIsTodaysOutputBitForBit()
+        {
+            // The arranged call S7 makes for the predefined groups, with no
+            // user group on screen, passes an empty list. That must be the
+            // arrangement exactly as it was before obstacles existed — same
+            // route, positions and placements — including the Bands + Compact
+            // fallback.
+            var small = new PixelRect(0, 0, 1280, 800);
+            var sizes = Enumerable.Repeat(2.0, 60).ToArray();
+            var at = new PixelPoint(640, 400);
+
+            foreach (var (table, count, layout, size) in new[]
+            {
+                (Table(("heart", new PixelPoint(700, 400)), ("star", new PixelPoint(1300, 400))), 8, LayoutAt(), (double[]?)null),
+                (Table(("circle", null), ("circle", null)), 8, LayoutAt(), (double[]?)null),
+                (Table(("grid", (PixelPoint?)at), ("grid", at), ("grid", at)), 60, LayoutAt(work: small), (double[]?)sizes),
+            })
+            {
+                var of = Dealt(count, table.Length);
+
+                var plain = ComputeGroups(count, NoLeads(count), of, table, layout, size, out var plainPath);
+                var empty = ComputeGroups(
+                    count, NoLeads(count), of, table, layout, size, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), out var emptyPath);
+
+                Assert.Equal(plainPath, emptyPath);
+                Assert.Equal(plain.Positions, empty.Positions);
+                Assert.Equal(
+                    plain.Groups.Select(g => (g.Slot, g.Landed, g.SlotBounds, g.DrawnShape, g.CurveCentre, g.CurveScale)),
+                    empty.Groups.Select(g => (g.Slot, g.Landed, g.SlotBounds, g.DrawnShape, g.CurveCentre, g.CurveScale)));
+            }
+        }
+
+        [Fact]
+        public void ArrangedModeRespectsObstaclesButKeepsTheBandsFallbackWhenItCannotSeparate()
+        {
+            var table = Table(("heart", new PixelPoint(600, 400)), ("star", new PixelPoint(900, 400)));
+            var blocker = new PixelRect(160, 0, 1760, 1080);
+
+            // With room, an obstacle is avoided exactly as a group would be.
+            var stack = new PixelRect(1780, 60, 100, 960);
+            var (_, roomy) = ComputeGroups(10, NoLeads(10), Dealt(10, 2),
+                Table(("heart", new PixelPoint(1750, 500)), ("star", new PixelPoint(700, 500))), LayoutAt(), null,
+                GroupLayoutMode.Arranged, new[] { stack }, out var roomyPath);
+
+            Assert.Equal(GroupPath.Separated, roomyPath);
+            Assert.All(roomy, g => Assert.False(Overlap(g.SlotBounds, stack)));
+
+            // With none, Arranged falls back to Bands + Compact for the whole
+            // set (which cannot see the obstacle); Free keeps the groups near
+            // their anchors and says Fallback too. Same inputs, different
+            // pictures — which is why the mode is a parameter.
+            var (arrangedPositions, _) = ComputeGroups(
+                10, NoLeads(10), Dealt(10, 2), table, LayoutAt(), null, GroupLayoutMode.Arranged, new[] { blocker }, out var arrangedPath);
+            var (freePositions, _) = ComputeGroups(
+                10, NoLeads(10), Dealt(10, 2), table, LayoutAt(), null, GroupLayoutMode.Free, new[] { blocker }, out var freePath);
+
+            Assert.Equal(GroupPath.Fallback, arrangedPath);
+            Assert.Equal(GroupPath.Fallback, freePath);
+            Assert.NotEqual(arrangedPositions, freePositions);
+        }
+
+        [Fact]
+        public void AnObstacleThatLeavesNoRoomKeepsTheGroupWhereItWasAskedAndSaysSo()
+        {
+            // Ottilie's repro: obstacles cover all but a 100 px strip in the
+            // middle of the screen, and one user group of six is anchored at
+            // (200, 300), on the left obstacle. Nothing is clear for it. It
+            // must not be thrown to the middle of the screen (that is Bands,
+            // which cannot see obstacles): it stays at its anchor, overlapping,
+            // and the route says Fallback.
+            var left = new PixelRect(0, 0, 910, 1080);
+            var right = new PixelRect(1010, 0, 910, 1080);
+            var asked = new PixelPoint(200, 300);
+
+            var (positions, groups) = ComputeGroups(
+                6, NoLeads(6), new int[6], Table(("heart", asked)), LayoutAt(), null, GroupLayoutMode.Free, new[] { left, right }, out var path);
+
+            Assert.Equal(GroupPath.Fallback, path);
+
+            // Drawn near the anchor: every orb within a screen-fifth of it.
+            Assert.All(positions, p =>
+            {
+                Assert.InRange(p.X + 28, asked.X - 350, asked.X + 350);
+                Assert.InRange(p.Y + 28, asked.Y - 350, asked.Y + 350);
+            });
+
+            // Landed is where it was drawn, and asking again from there gives
+            // the same picture to the pixel.
+            Assert.InRange(groups[0].Landed.X, asked.X - 1, asked.X + 1);
+            Assert.InRange(groups[0].Landed.Y, asked.Y - 1, asked.Y + 1);
+
+            var (again, againGroups) = ComputeGroups(
+                6, NoLeads(6), new int[6], Table(("heart", groups[0].Landed)), LayoutAt(), null, GroupLayoutMode.Free, new[] { left, right }, out var againPath);
+
+            Assert.Equal(GroupPath.Fallback, againPath);
+            Assert.Equal(positions, again);
+            Assert.Equal(groups[0].SlotBounds, againGroups[0].SlotBounds);
+        }
+
+        [Fact]
+        public void WithTwoGroupsOneFindsRoomAndTheOtherStaysPutAndBothReproduce()
+        {
+            // Obstacles leave a 70x70 corner, room for one single-orb group.
+            // Slot 0 is placed in it; slot 1 has no clear spot and stays at its
+            // anchor.
+            var obstacles = new[] { new PixelRect(70, 0, 1850, 1080), new PixelRect(0, 70, 70, 1010) };
+            var table = Table(("circle", new PixelPoint(900, 500)), ("circle", new PixelPoint(1500, 500)));
+            var of = new[] { 0, 1 };
+
+            var (positions, groups) = ComputeGroups(2, NoLeads(2), of, table, LayoutAt(), null, GroupLayoutMode.Free, obstacles, out var path);
+
+            Assert.Equal(GroupPath.Fallback, path);
+            Assert.False(obstacles.Any(o => Overlap(groups[0].SlotBounds, o)));
+            Assert.True(obstacles.Any(o => Overlap(groups[1].SlotBounds, o)));
+
+            var fed = Table(("circle", groups[0].Landed), ("circle", groups[1].Landed));
+            var (again, _) = ComputeGroups(2, NoLeads(2), of, fed, LayoutAt(), null, GroupLayoutMode.Free, obstacles, out var againPath);
+
+            Assert.Equal(GroupPath.Fallback, againPath);
+            Assert.Equal(positions, again);
+        }
+
+        [Fact]
+        public void AnEmptyObstacleListIsFreeModeAndNeverRebands()
+        {
+            // Passing a list at all, even an empty one, is free mode: groups
+            // are placed clear of each other and never drawn through Bands.
+            // Two groups asked for the same spot are separated, with nothing
+            // else in the way.
+            var at = new PixelPoint(960, 540);
+            var table = Table(("circle", at), ("circle", at));
+
+            var (_, groups) = ComputeGroups(
+                6, NoLeads(6), Dealt(6, 2), table, LayoutAt(), null, GroupLayoutMode.Free, Array.Empty<PixelRect>(), out var path);
+
+            Assert.Equal(GroupPath.Separated, path);
+            Assert.False(Overlap(groups[0].SlotBounds, groups[1].SlotBounds));
+        }
+
+        // --- members placed by hand (T2) ---
+
+        private static (double, double)?[] Offsets(int count, params (int Orb, double Dx, double Dy)[] given)
+        {
+            var result = new (double, double)?[count];
+            foreach (var (orb, dx, dy) in given) result[orb] = (dx, dy);
+            return result;
+        }
+
+        private static double CentreX(PixelPoint[] p, int i) => p[i].X + 28.0;
+        private static double CentreY(PixelPoint[] p, int i) => p[i].Y + 28.0;
+
+        [Theory]
+        [InlineData(1.0, 150, 0)]
+        [InlineData(1.0, -120, 90)]
+        [InlineData(2.0, 100, -50)]
+        public void AMemberWithAnOffsetIsPlacedThatFarFromItsLeadsCentre(double scale, double dx, double dy)
+        {
+            var layout = LayoutAt(scale, work: new PixelRect(0, 0, 3024, 1890));
+            var table = Table(("circle", new PixelPoint(1500, 900)));
+            var leads = new[] { -1, 0 };
+
+            var (positions, _) = ComputeGroups(
+                2, leads, new int[2], table, layout, null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(2, (1, dx, dy)));
+
+            var window = WindowFor(scale, 1.0) / 2.0;
+            Assert.Equal(dx * scale, positions[1].X - positions[0].X, 0.5);
+            Assert.Equal(dy * scale, positions[1].Y - positions[0].Y, 0.5);
+            Assert.True(window > 0);
+        }
+
+        [Fact]
+        public void EverybodyElseStaysExactlyWhereTheLayoutPutThem()
+        {
+            var table = Table(("circle", new PixelPoint(900, 500)));
+            var leads = new[] { -1, 0, 0, 0 };
+
+            var (fanned, fannedGroups) = ComputeGroups(4, leads, new int[4], table, LayoutAt());
+            var (placed, groups) = ComputeGroups(4, leads, new int[4], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(4, (3, 300, 0)));
+
+            // The member went where it was told; the lead and its other
+            // members are where they were with nobody moved, and so are the
+            // group's box and anchor.
+            Assert.Equal(300, placed[3].X - placed[0].X);
+            Assert.Equal(fanned.Take(3), placed.Take(3));
+            Assert.Equal(fannedGroups[0].SlotBounds, groups[0].SlotBounds);
+            Assert.Equal(fannedGroups[0].Landed, groups[0].Landed);
+        }
+
+        [Fact]
+        public void AMembersOwnTeamFollowsItRigidly()
+        {
+            // 0 leads 1, 1 leads 2: moving 1 by hand takes 2 with it.
+            var table = Table(("circle", new PixelPoint(900, 500)));
+            var leads = new[] { -1, 0, 1 };
+
+            var (fanned, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt());
+            var (placed, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(3, (1, 250, 60)));
+
+            Assert.Equal(fanned[0], placed[0]);
+            Assert.Equal(250, placed[1].X - placed[0].X);
+            Assert.Equal(60, placed[1].Y - placed[0].Y);
+            Assert.Equal(fanned[2].X - fanned[1].X, placed[2].X - placed[1].X);
+            Assert.Equal(fanned[2].Y - fanned[1].Y, placed[2].Y - placed[1].Y);
+        }
+
+        [Fact]
+        public void ANestedHandPlacedMemberIsPlacedFromItsLeadsFinalPlace()
+        {
+            // 1 is by hand off 0; 2 is by hand off 1 and so is placed after it.
+            var table = Table(("circle", new PixelPoint(900, 500)));
+            var leads = new[] { -1, 0, 1 };
+
+            var (placed, _) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(),
+                Offsets(3, (1, 200, 0), (2, 0, 150)));
+
+            Assert.Equal(200, placed[1].X - placed[0].X);
+            Assert.Equal(150, placed[2].Y - placed[1].Y);
+            Assert.Equal(0, placed[2].X - placed[1].X);
+        }
+
+        [Fact]
+        public void AHandPlacedMemberAvoidsAnObstacleAnotherGroupAndAnOrb()
+        {
+            var table = Table(("circle", new PixelPoint(500, 500)), ("circle", new PixelPoint(1400, 500)));
+            var leads = new[] { -1, 0, -1, -1 };
+            var of = new[] { 0, 0, 1, 1 };
+            var pin = new PixelRect(700, 450, 120, 120);
+
+            // Orb 1 is dragged right onto the obstacle, 200 DIP from its lead.
+            var (placed, groups) = ComputeGroups(
+                4, leads, of, table, LayoutAt(), null, GroupLayoutMode.Free, new[] { pin }, Offsets(4, (1, 280, 0)));
+
+            var centre = (X: placed[1].X + 28.0, Y: placed[1].Y + 28.0);
+            var r = 36 * 0.72 / 2;
+            Assert.False(centre.X + r > pin.X && centre.X - r < pin.Right && centre.Y + r > pin.Y && centre.Y - r < pin.Bottom,
+                "the member is on the obstacle");
+
+            // And not inside the other group's box.
+            Assert.False(centre.X + r > groups[1].SlotBounds.X && centre.X - r < groups[1].SlotBounds.Right
+                && centre.Y + r > groups[1].SlotBounds.Y && centre.Y - r < groups[1].SlotBounds.Bottom);
+        }
+
+        [Fact]
+        public void AMemberOnTopOfItsLeadIsNudgedOffAndTheLeadDoesNotMove()
+        {
+            var table = Table(("circle", new PixelPoint(900, 500)));
+            var leads = new[] { -1, 0 };
+
+            var (fanned, _) = ComputeGroups(2, leads, new int[2], table, LayoutAt());
+            var (placed, _) = ComputeGroups(2, leads, new int[2], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(2, (1, 0, 0)));
+
+            Assert.Equal(fanned[0], placed[0]);
+
+            var apart = Math.Sqrt(
+                Math.Pow(CentreX(placed, 1) - CentreX(placed, 0), 2) + Math.Pow(CentreY(placed, 1) - CentreY(placed, 0), 2));
+            Assert.True(apart >= 36 * 0.72 / 2 + 36 / 2.0, $"only {apart:0}px apart");
+        }
+
+        [Fact]
+        public void AMemberDraggedOffTheScreenIsKeptOnItWithoutMovingItsLead()
+        {
+            var table = Table(("circle", new PixelPoint(900, 500)));
+            var leads = new[] { -1, 0 };
+
+            var (fanned, _) = ComputeGroups(2, leads, new int[2], table, LayoutAt());
+            var (placed, groups) = ComputeGroups(2, leads, new int[2], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), Offsets(2, (1, 9000, -9000)));
+
+            Assert.Equal(fanned[0], placed[0]);
+            Assert.True(placed[1].X >= 0 && placed[1].X + 56 <= 1920 && placed[1].Y >= 0 && placed[1].Y + 56 <= 1080);
+
+            // Nothing about the group moved for it: not the anchor, not the box.
+            Assert.Equal(new PixelPoint(900, 500), groups[0].Landed);
+        }
+
+        [Fact]
+        public void SeveralMembersWithTheSameOffsetEndUpApart()
+        {
+            var table = Table(("heart", new PixelPoint(900, 500)));
+            var leads = new[] { -1, 0, 0, 0, 0 };
+            var offsets = Offsets(5, (1, 60, 40), (2, 60, 40), (3, 60, 40), (4, 60, 40));
+
+            var (placed, _) = ComputeGroups(5, leads, new int[5], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), offsets);
+
+            for (var a = 0; a < 5; a++)
+            for (var b = a + 1; b < 5; b++)
+            {
+                var d = Math.Sqrt(Math.Pow(CentreX(placed, a) - CentreX(placed, b), 2) + Math.Pow(CentreY(placed, a) - CentreY(placed, b), 2));
+                var ra = (a == 0 ? 36 : 36 * 0.72) / 2;
+                var rb = (b == 0 ? 36 : 36 * 0.72) / 2;
+                Assert.True(d >= ra + rb, $"orbs {a} and {b} overlap");
+            }
+        }
+
+        [Fact]
+        public void ARootsOffsetAMissingEntryAndANonFiniteOneAreIgnored()
+        {
+            var table = Table(("circle", new PixelPoint(900, 500)));
+            var leads = new[] { -1, 0, 0 };
+
+            var (plain, plainGroups) = ComputeGroups(3, leads, new int[3], table, LayoutAt());
+
+            var odd = new (double, double)?[]
+            {
+                (500, 500),                       // a root: ignored
+                (double.NaN, 4),                  // not a number: ignored
+            };                                    // and orb 2 has no entry at all
+
+            var (placed, groups) = ComputeGroups(3, leads, new int[3], table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), odd);
+
+            Assert.Equal(plain, placed);
+            Assert.Equal(plainGroups.Select(g => g.Landed), groups.Select(g => g.Landed));
+        }
+
+        [Fact]
+        public void OffsetsDoNotChangeWhatFeedingLandedBackReproduces()
+        {
+            var table = Table(("heart", new PixelPoint(-3000, 500)), ("star", new PixelPoint(1300, 500)));
+            var leads = new[] { -1, 0, 0, -1, 3, 3 };
+            var of = new[] { 0, 0, 0, 1, 1, 1 };
+            var offsets = Offsets(6, (1, 200, 100), (2, 5000, 5000), (4, 0, 0));
+
+            var (first, groups) = ComputeGroups(6, leads, of, table, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), offsets);
+
+            var fed = Table(("heart", groups[0].Landed), ("star", groups[1].Landed));
+            var (again, _) = ComputeGroups(6, leads, of, fed, LayoutAt(), null, GroupLayoutMode.Arranged, Array.Empty<PixelRect>(), offsets);
+
+            Assert.Equal(first, again);
+        }
+
+        // --- membership ---
+
+        [Fact]
+        public void AMemberTakesItsRootLeadsSlotWhateverItsOwnEntrySays()
+        {
+            // Orb 0 leads 1, 1 leads 2: a chain. Lead in slot 1; the members'
+            // own entries say 0 and 2.
+            var leads = new[] { -1, 0, 1, -1 };
+            var of = new[] { 1, 0, 2, 0 };
+            var table = Table(("circle", new PixelPoint(500, 500)), ("circle", new PixelPoint(1300, 500)), ("circle", new PixelPoint(900, 200)));
+
+            var (_, groups, _) = Run(4, leads, of, table);
+
+            Assert.Equal(new[] { 0, 1 }, groups.Select(g => g.Slot));
+            Assert.Equal(new[] { 3 }, groups[0].Orbs);
+            Assert.Equal(new[] { 0, 1, 2 }, groups[1].Orbs);
+        }
+
+        [Fact]
+        public void ACycleAndADanglingLeadMakeAnchorsThatKeepTheirOwnSlots()
+        {
+            // 0 and 1 lead each other (both anchors), 2 points at nothing.
+            var leads = new[] { 1, 0, 40, -1 };
+            var of = new[] { 0, 1, 2, 2 };
+            var table = Table(("circle", new PixelPoint(500, 500)), ("circle", new PixelPoint(900, 500)), ("circle", new PixelPoint(1400, 500)));
+
+            var (_, groups, _) = Run(4, leads, of, table);
+
+            Assert.Equal(new[] { 0 }, groups[0].Orbs);
+            Assert.Equal(new[] { 1 }, groups[1].Orbs);
+            Assert.Equal(new[] { 2, 3 }, groups[2].Orbs);
+        }
+
+        [Fact]
+        public void AnIndexNothingHasAShapeForReadsAsSlotZeroAndAShortArrayToo()
+        {
+            var table = Table(("circle", new PixelPoint(800, 500)), ("heart", new PixelPoint(1400, 500)));
+
+            var (_, groups, _) = Run(4, NoLeads(4), new[] { 9, -3 }, table);
+
+            var only = Assert.Single(groups);
+            Assert.Equal(0, only.Slot);
+            Assert.Equal(new[] { 0, 1, 2, 3 }, only.Orbs);
+        }
+
+        [Fact]
+        public void EmptySlotsStayInTheTableSoTheOthersKeepTheirIds()
+        {
+            var table = Table(
+                ("circle", new PixelPoint(400, 300)), ("heart", new PixelPoint(900, 300)),
+                ("star", new PixelPoint(1400, 300)), ("diamond", new PixelPoint(1400, 800)));
+
+            var (_, groups, _) = Run(4, NoLeads(4), new[] { 0, 3, 0, 3 }, table);
+
+            Assert.Equal(new[] { 0, 3 }, groups.Select(g => g.Slot));
+            Assert.Equal("diamond", groups[1].DrawnShape);
+        }
+
+        // --- hostile inputs and mixed sizes ---
+
+        [Fact]
+        public void EachGroupsSlotsAreSizedByItsOwnLargestOrb()
+        {
+            var sizes = new[] { 2.0, 2.0, 0.7, 0.7 };
+            var table = Table(("circle", new PixelPoint(600, 500)), ("circle", new PixelPoint(1500, 500)));
+
+            var (positions, groups, _) = Run(4, NoLeads(4), new[] { 0, 0, 1, 1 }, table, sizes: sizes);
+
+            // Slots are 112 px at 200% and 39 px at 70%. Two orbs of the small
+            // group sit a slot or two apart — nowhere near 112 — which they
+            // would if the lattice were sized for the biggest orb on screen.
+            Assert.True(groups[1].SlotBounds.Width < groups[0].SlotBounds.Width);
+            Assert.True(positions[3].X - positions[2].X < 112 || positions[3].Y - positions[2].Y < 112);
+        }
+
+        [Fact]
+        public void ASqueezedGroupReportsItDrewAGrid()
+        {
+            // Thirty 200% orbs in a line: wider than any screen, so the retry
+            // draws a grid, and the placement says so.
+            var sizes = Enumerable.Repeat(2.0, 30).ToArray();
+            var small = new PixelRect(0, 0, 1280, 800);
+
+            var (_, groups, _) = Run(
+                30, NoLeads(30), new int[30], Table(("line", new PixelPoint(640, 400))), LayoutAt(work: small), sizes);
+
+            Assert.Equal("grid", Assert.Single(groups).DrawnShape);
+        }
+
+        [Fact]
+        public void TooManyBigGroupsFallBackAndStillPutEveryOrbOnTheScreen()
+        {
+            var small = new PixelRect(0, 0, 1280, 800);
+            var at = new PixelPoint(640, 400);
+            var table = Enumerable.Repeat(("grid", (PixelPoint?)at), 3).ToArray();
+            var sizes = Enumerable.Repeat(2.0, 60).ToArray();
+
+            var (positions, groups, path) = Run(60, NoLeads(60), Dealt(60, 3), Table(table), LayoutAt(work: small), sizes);
+
+            Assert.Equal(GroupPath.Fallback, path);
+            Assert.Equal(3, groups.Length);
+
+            // Landed is what was asked for (the fallback ignores anchors), so
+            // feeding it back asks the same question and gets the same layout.
+            var fed = groups.Select(g => ("grid", (PixelPoint?)g.Landed)).ToArray();
+            var (again, _, againPath) = Run(60, NoLeads(60), Dealt(60, 3), Table(fed), LayoutAt(work: small), sizes);
+            Assert.Equal(GroupPath.Fallback, againPath);
+            Assert.Equal(positions, again);
+            Assert.All(positions, p =>
+            {
+                Assert.True(p.X >= 0 && p.Y >= 0 && p.X + 112 <= 1280 && p.Y + 112 <= 800);
+            });
+        }
+
+        [Fact]
+        public void TheFallbackReportsGridForTheGroupsItRedrewAsOneAndTheAskedShapeForTheRest()
+        {
+            var small = new PixelRect(0, 0, 1280, 800);
+            var at = new PixelPoint(640, 400);
+            var sizes = Enumerable.Repeat(2.0, 60).ToArray();
+            var table = Table(("circle", at), ("circle", at), ("circle", at));
+
+            var (positions, groups, path) = Run(60, NoLeads(60), Dealt(60, 3), table, LayoutAt(work: small), sizes);
+
+            Assert.Equal(GroupPath.Fallback, path);
+
+            // Twenty 200% orbs in a ring each are squeezed on this screen, so
+            // the retry draws them as grids and the placements say so — with
+            // no curve, since there is none to offset.
+            Assert.All(groups, g =>
+            {
+                Assert.Equal("grid", g.DrawnShape);
+                Assert.Equal(0, g.CurveScale);
+            });
+
+            // Two single orbs that cannot be set apart on a 100x60 screen fall back
+            // too, but nothing is squeezed, so the asked shapes are reported.
+            var roomy = Run(2, NoLeads(2), Dealt(2, 2),
+                Table(("circle", new PixelPoint(50, 30)), ("heart", new PixelPoint(50, 30))),
+                LayoutAt(work: new PixelRect(0, 0, 100, 60)));
+
+            Assert.Equal(GroupPath.Fallback, roomy.Path);
+            Assert.Equal(new[] { "circle", "heart" }, roomy.Groups.Select(g => g.DrawnShape));
+        }
+
+        [Fact]
+        public void TheSameInputsGiveTheSameAnswer()
+        {
+            var table = Table(("heart", new PixelPoint(300, 300)), ("star", new PixelPoint(320, 310)));
+            var leads = new[] { -1, 0, -1, 2, -1, -1 };
+
+            var a = Run(6, leads, Dealt(6, 2), table);
+            var b = Run(6, leads, Dealt(6, 2), table);
+
+            Assert.Equal(a.Positions, b.Positions);
+            Assert.Equal(a.Path, b.Path);
+            Assert.Equal(a.Groups.Select(g => (g.Slot, g.Landed, g.SlotBounds, g.DrawnShape)), b.Groups.Select(g => (g.Slot, g.Landed, g.SlotBounds, g.DrawnShape)));
+        }
+    }
+}

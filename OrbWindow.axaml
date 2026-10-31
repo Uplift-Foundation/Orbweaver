@@ -122,6 +122,11 @@
                      submenus for the same reason — see
                      OrbWindow.RebuildSizeSubmenu. -->
                 <MenuItem x:Name="SizeMenuItem" Header="Size"/>
+                <!-- CB-268's group submenu: which group this orb's team is in,
+                     its shape, moving the team, and the rename and style
+                     dialog. Rebuilt on Opening — see
+                     OrbWindow.RebuildGroupSubmenu. -->
+                <MenuItem x:Name="GroupMenuItem" Header="Group"/>
                 <!-- The `claude agents` roster, for the orbs it lists. Above
                      the two lifecycle items because it is the harmless one of
                      the three, and hidden rather than greyed for the same
@@ -152,6 +157,22 @@
                           IsVisible="False"
                           StaysOpenOnClick="True"
                           Click="EndConversation_Click"/>
+                <!-- CB-270: the same conversation's other two, both
+                     sessions.patch — SessionPresence.CanPatchOpenClaw, set in
+                     UpdateFrom. "Keep on screen" is a checkbox that mirrors the
+                     gateway's pin and stays open so the answer lands on the row;
+                     "Rename conversation…" opens a window, so it closes the menu
+                     like any other row that does. (Not "Rename…": the Group
+                     submenu already has one, and it renames the group.) Header
+                     and tooltip are set in code; see OrbWindow.RestoreOpenClawRows. -->
+                <MenuItem x:Name="KeepOnScreenItem"
+                          IsVisible="False"
+                          StaysOpenOnClick="True"
+                          ToggleType="CheckBox"
+                          Click="KeepOnScreen_Click"/>
+                <MenuItem x:Name="RenameConversationItem"
+                          IsVisible="False"
+                          Click="RenameConversation_Click"/>
                 <!-- CB-225: a cloud session's two lifecycle verbs, which are
                      requests to the account API as the session's own login.
                      Hidden unless the orb is a cloud session with cloud
@@ -206,6 +227,17 @@
                 <MenuItem Header="{x:Static local:OrbWindow.ExitMenuHeader}" Click="Exit_Click"/>
             </ContextMenu>
         </Grid.ContextMenu>
+
+        <!-- CB-268 M4: the orb's visible disc — glow, context ring, picture and
+             circle — in one 56x56 cell exactly where it was in Root, so a drag
+             can squash it along its direction of travel with one render
+             transform. A render transform moves pixels only: nothing here
+             changes the window's size, Root's 56x56, or where the circle's
+             centre sits, and the badges, which sit outside this cell, do not
+             squash with it. At rest the transform is the identity. -->
+        <Grid x:Name="Disc" Width="56" Height="56"
+              HorizontalAlignment="Left" VerticalAlignment="Top"
+              RenderTransformOrigin="50%,50%">
 
         <!-- Soft glow behind the orb (fill assigned in code-behind, shared
              with the orb so color fades hit both) -->
@@ -271,6 +303,7 @@
                  Width="36" Height="36"
                  Stroke="#22FFFFFF"
                  StrokeThickness="1"/>
+        </Grid>
 
         <!-- What kind of conversation this is, for gateway sessions: a
              scheduled job, a private message, or a room with other people in

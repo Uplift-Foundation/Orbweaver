@@ -58,6 +58,7 @@ namespace Orbweaver
             HotkeyAction.ToggleOrbsVisible => TrayController.ToggleOrbsVisible,
             HotkeyAction.OpenNewChat => TrayController.OpenNewChat,
             HotkeyAction.ToggleUsageOrbsVisible => TrayController.ToggleUsageOrbsVisible,
+            HotkeyAction.ToggleMute => TrayController.ToggleMute,
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, null)
         };
 
@@ -66,8 +67,17 @@ namespace Orbweaver
             HotkeyAction.ToggleOrbsVisible => OrbweaverSettings.ToggleOrbsHotkey,
             HotkeyAction.OpenNewChat => OrbweaverSettings.NewChatHotkey,
             HotkeyAction.ToggleUsageOrbsVisible => OrbweaverSettings.ToggleUsageOrbsHotkey,
+            HotkeyAction.ToggleMute => OrbweaverSettings.ToggleMuteHotkey,
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, null)
         };
+
+        // The chord an action is actually registered under — after collision
+        // resolution, so a rebound or displaced key is reported as it is — or
+        // null when nothing registers. The chat panel's tooltip names this so
+        // it never advertises a key that is not bound. Pure: HotkeyRegistry.Plan
+        // writes nothing, unlike Plan() below, which logs to hotkeys.log.
+        internal static HotkeyCombo? Bound(HotkeyAction action) =>
+            HotkeyRegistry.Plan(OverrideFor).First(b => b.Action == action).Combo;
 
         // The registrations GlobalHotkeys.Start makes, from the live settings,
         // with anything that lost a collision written to hotkeys.log first.

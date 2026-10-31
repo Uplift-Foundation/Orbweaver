@@ -285,6 +285,18 @@ public class OpenClawSocketTests
         Assert.Equal(-1, OpenClawSocket.ContentLength("HTTP/1.1 200 OK\r\n\r\n"));
     }
 
+    // CB-272: a stream that ends short of its declared length is a dropped
+    // connection. Returning the partial body would let a half-downloaded clip
+    // be cached and opened.
+    [Fact]
+    public async Task AStreamThatEndsShortOfItsDeclaredLengthIsNull()
+    {
+        var stream = new ScriptedStream(_ => Ascii(
+            "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789"));
+
+        Assert.Null(await OpenClawSocket.ReadResponseAsync(stream, CancellationToken.None));
+    }
+
     // A non-200 is a null, not an exception: a picture that won't load is a
     // picture that won't load, and the message it belongs to still reads.
     [Theory]
@@ -312,7 +324,13 @@ public class OpenClawSocketTests
         var bytes = await OpenClawSocket.ReadResponseAsync(stream, CancellationToken.None);
 
         Assert.NotNull(bytes);
-        Assert.InRange(bytes!.Length, 32 * 1024 * 1024, 33 * 1024 * 1024);
+
+        // Cut at the ceiling and returned, not refused: the loop only stops once
+        // the body has exceeded it, so a body over MaxBodyBytes is a truncated
+        // one. CB-272's clip guard depends on exactly this, so it is asserted
+        // strictly rather than as "about 32MB".
+        Assert.True(bytes!.Length > OpenClawSocket.MaxBodyBytes);
+        Assert.InRange(bytes.Length, OpenClawSocket.MaxBodyBytes, OpenClawSocket.MaxBodyBytes + 64 * 1024);
     }
 
     // Serves a fixed prefix — headers, and optionally the whole body — and then

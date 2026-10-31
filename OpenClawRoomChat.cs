@@ -233,6 +233,15 @@ namespace Orbweaver
             chat.TurnUpdated += OnMemberChanged;
             chat.HistoryReplaced += ScheduleRebuild;
             chat.HistoryPrepended += OnMemberPrepended;
+            chat.TurnsRemoved += OnMemberRemoved;
+
+            // CB-270 Stage 6: an approval belongs to one member's session and is
+            // answered in that member's own panel, but the room is not silent about
+            // it. Said once per request, from the same record.
+            Action announce = () => AnnounceApprovals(chat);
+            _approvalHandlers[chat] = announce;
+            chat.ApprovalsChanged += announce;
+            announce();
         }
 
         private void Unsubscribe(OpenClawChatSession chat)
@@ -241,9 +250,31 @@ namespace Orbweaver
             chat.TurnUpdated -= OnMemberChanged;
             chat.HistoryReplaced -= ScheduleRebuild;
             chat.HistoryPrepended -= OnMemberPrepended;
+            chat.TurnsRemoved -= OnMemberRemoved;
+
+            if (_approvalHandlers.Remove(chat, out var announce)) chat.ApprovalsChanged -= announce;
+        }
+
+        private readonly Dictionary<OpenClawChatSession, Action> _approvalHandlers = new();
+        private readonly HashSet<string> _announcedApprovals = new(StringComparer.Ordinal);
+
+        // One System line per pending request, naming who is waiting.
+        private void AnnounceApprovals(OpenClawChatSession chat)
+        {
+            var agent = _members.FirstOrDefault(m => ReferenceEquals(m.Chat, chat))?.Agent ?? chat.DisplayName;
+
+            foreach (var approval in OpenClawSessions.PendingFor(chat.GatewayKey))
+            {
+                if (_announcedApprovals.Add(approval.Id)) Note(OpenClawApprovalText.RoomLine(agent));
+            }
         }
 
         private void OnMemberChanged(ChatTurn _) => ScheduleRebuild();
+
+        // CB-270: a member's live rows replaced by history at the end of a run.
+        // The turns that take their place raise TurnAdded, but a replacement that
+        // only removes would otherwise leave the merge showing what is gone.
+        private void OnMemberRemoved(int _, int __) => ScheduleRebuild();
 
         private bool _rebuildQueued;
 
@@ -327,6 +358,7 @@ namespace Orbweaver
                         // the view where several agents' pictures sit side by
                         // side.
                         ImageSourcePath = turn.ImageSourcePath,
+                        Attachment = turn.Attachment,
                         ImageUrl = turn.ImageUrl,
                         ImageAlt = turn.ImageAlt,
                         At = turn.At,
@@ -416,6 +448,7 @@ namespace Orbweaver
                             Role = ChatRole.User,
                             Text = turn.Text,
                             ImageSourcePath = turn.ImageSourcePath,
+                            Attachment = turn.Attachment,
                             ImageUrl = turn.ImageUrl,
                             ImageAlt = turn.ImageAlt,
                             At = turn.At,
@@ -445,6 +478,7 @@ namespace Orbweaver
                             Role = ChatRole.Assistant,
                             Text = turn.Text,
                             ImageSourcePath = turn.ImageSourcePath,
+                            Attachment = turn.Attachment,
                             ImageUrl = turn.ImageUrl,
                             ImageAlt = turn.ImageAlt,
                             At = turn.At,
@@ -476,6 +510,7 @@ namespace Orbweaver
                         Role = ChatRole.Assistant,
                         Text = turn.Text,
                         ImageSourcePath = turn.ImageSourcePath,
+                        Attachment = turn.Attachment,
                         ImageUrl = turn.ImageUrl,
                         ImageAlt = turn.ImageAlt,
                         At = turn.At,

@@ -1037,7 +1037,9 @@ public class MirrorEdgeCaseTests : IDisposable
             // A harness has no handshake to point at, so it says yes explicitly.
             // That is the honest shape: this file is testing what the server
             // does once a request is allowed, not who is allowed to make one.
-            PeerAllowed: _ => true));
+            PeerAllowed: _ => true,
+            // CB-252: never the developer's real persona files.
+            UserConfigDirs: () => Array.Empty<string>()));
 
         _client = new RemoteMirrorClient(Account, new RemoteMirrorClient.Seams(SendToServerAsync))
         {

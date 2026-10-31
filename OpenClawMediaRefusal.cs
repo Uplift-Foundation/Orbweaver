@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 
@@ -47,6 +48,14 @@ namespace Orbweaver
 
         private const string Prefix = "Picture not shown — ";
 
+        // CB-272: the same note for a video tile. The sentences below are
+        // the gateway's codes put into words and are the same for both kinds
+        // except where the word "picture" is itself the claim — see
+        // unsupported-media-type — so a clip's note is built from this
+        // prefix and a code table with that one row swapped, not from a second
+        // parallel Explain.
+        private const string VideoPrefix = "Video not shown — ";
+
         // Cap on a gateway-supplied reason, so a verbose message from the
         // other end doesn't blow out the bubble's width. 200 is generous for
         // a sentence and short of anything that would wrap more than a line
@@ -83,12 +92,17 @@ namespace Orbweaver
         // know" line rather than a fabricated cause; this project already
         // keeps that distinction between confirmed and assumed everywhere
         // else, and inventing a reason here would break it.
-        internal static string Explain(string? json)
+        //
+        // CB-275: `noun` names a kind that is neither a picture nor a clip
+        // ("Audio"), so its note neither claims "picture" nor "video".
+        internal static string Explain(string? json, bool video = false, string? noun = null)
         {
-            if (!TryParse(json, out var root)) return Prefix + "couldn't ask the gateway why.";
+            var prefix = noun is not null ? $"{noun} not shown — " : video ? VideoPrefix : Prefix;
+
+            if (!TryParse(json, out var root)) return prefix + "couldn't ask the gateway why.";
 
             if (root.TryGetProperty("available", out var a) && a.ValueKind == JsonValueKind.True)
-                return Prefix + "the gateway has the file but the fetch didn't finish.";
+                return prefix + "the gateway has the file but the fetch didn't finish.";
 
             var code = StringOrNull(root, "code");
             var reason = StringOrNull(root, "reason")?.Trim();
@@ -115,12 +129,26 @@ namespace Orbweaver
             // shipped. Do not tidy this away as unreachable.
             if (string.Equals(code, "outside-allowed-folders", StringComparison.Ordinal))
             {
-                return Prefix + "the gateway won't serve files from that folder. Ask the agent to "
+                return prefix + "the gateway won't serve files from that folder. Ask the agent to "
                     + "write it to ~/.openclaw/media/, which is allowed for every agent.";
             }
 
+            // CB-272: "isn't a picture this app can show" is wrong for a
+            // clip, and the gateway's own reason for it ("Not an image", seen
+            // on a video outside the session's allowed folders) reads as a
+            // contradiction beside a tile that says video. The gateway did
+            // refuse it, so say that and keep its reason.
+            if ((video || noun is not null)
+                && string.Equals(code, "unsupported-media-type", StringComparison.Ordinal))
+            {
+                var what = video ? "as a video" : "that way";
+                return prefix + (string.IsNullOrEmpty(reason)
+                    ? $"the gateway wouldn't serve that file {what}."
+                    : $"the gateway wouldn't serve that file {what} (it said: " + Truncate(reason!) + ").");
+            }
+
             if (code is not null && CodeSentences.TryGetValue(code, out var sentence))
-                return Prefix + sentence;
+                return prefix + sentence;
 
             // Below here the code (if any) isn't one this app has a specific
             // sentence for. "Refused" used to be the word for all of these,
@@ -131,25 +159,102 @@ namespace Orbweaver
             // word this app can't back up for an unknown code should be.
             if (!string.IsNullOrEmpty(reason))
             {
-                var trimmed = reason!.Length > MaxReasonLength ? reason[..MaxReasonLength] : reason;
-                return Prefix + "the gateway wouldn't serve it: " + trimmed;
+                return prefix + "the gateway wouldn't serve it: " + Truncate(reason!);
             }
 
             return string.IsNullOrEmpty(code)
-                ? Prefix + "the gateway wouldn't serve it."
-                : Prefix + $"the gateway wouldn't serve it ({code}).";
+                ? prefix + "the gateway wouldn't serve it."
+                : prefix + $"the gateway wouldn't serve it ({code}).";
         }
+
+        // CB-274 / CB-275: the note for an attachment the gateway told us it
+        // could not deliver (an attachment_error block, or a block the
+        // projection left without a url). Says what happened first, in words
+        // by kind and failure code; then, when the fetch of the file by the
+        // path recovered for it was also refused, why — so "the gateway never
+        // delivered it" and "and it won't serve it from there either" are two
+        // separate, both-true sentences rather than one invented cause.
+        //
+        // The code table is the gateway's own four (reply-media-paths,
+        // 2026.10.5) plus this app's "omitted". They were read off the
+        // gateway's source, not seen live except delivery-failed: the wording
+        // below states only what each code means, never why it happened.
+        internal static string ExplainDelivery(ChatAttachment attachment, string? gatewayJson)
+        {
+            var noun = attachment.Kind switch
+            {
+                AttachmentKind.Image => "Picture",
+                AttachmentKind.Video => "Video",
+                AttachmentKind.Audio => "Audio",
+                _ => "File"
+            };
+
+            // A block that named nothing says "the file" rather than an
+            // invented filename.
+            var name = string.IsNullOrWhiteSpace(attachment.Label) ? "the file" : attachment.Label;
+
+            var clause = attachment.FailureCode switch
+            {
+                "file-not-found" => "the file wasn't there when the gateway looked",
+                "unsupported-format" => "the gateway's attachment allowlist rejects that type",
+                "invalid-reference" => "the agent gave the gateway a reference it can't open",
+                "omitted" => $"the gateway left {name} out of this transcript",
+                _ => $"the gateway couldn't prepare {name} for this chat"
+            };
+
+            return $"{noun} not delivered — {clause}." + AlsoRefused(gatewayJson);
+        }
+
+        // The second sentence of ExplainDelivery: only when the meta answer is
+        // a real refusal. No answer at all adds nothing (not knowing is not a
+        // reason), and `available:true` adds nothing either — the file is
+        // reachable and the panel will have drawn it.
+        private static string AlsoRefused(string? json)
+        {
+            if (!TryParse(json, out var root)) return "";
+
+            if (root.TryGetProperty("available", out var a) && a.ValueKind == JsonValueKind.True) return "";
+
+            var code = StringOrNull(root, "code");
+            var reason = StringOrNull(root, "reason")?.Trim();
+            var said = string.IsNullOrEmpty(reason) ? "" : " (it said: " + Truncate(reason!) + ")";
+
+            return code switch
+            {
+                "file-not-found" => " It also couldn't find the file in the agent's folder.",
+                "outside-allowed-folders" => " It also won't serve the file from that folder.",
+                _ => " It also won't serve the file from the agent's folder" + said + "."
+            };
+        }
+
+        private static string Truncate(string reason) =>
+            reason.Length > MaxReasonLength ? reason[..MaxReasonLength] : reason;
 
         // The tooltip on that line: the path the agent named, plus the
         // gateway's own code when the meta answer had one. Never the reason —
         // that is already in the line above, and repeating it in the tooltip
         // says nothing new.
-        internal static string? Detail(string? json, string path)
+        //
+        // CB-277: when the route that was refused names a session, the tooltip
+        // says which. A clip is now asked for under the session of the agent
+        // whose workspace holds it, so "refused under the asking session" and
+        // "refused under the owner's session" are different findings and the
+        // reviewer should be able to tell them apart without a debugger. The
+        // visible sentence is unchanged.
+        internal static string? Detail(string? json, string path, string? url = null, string? askingKey = null)
         {
-            if (!TryParse(json, out var root)) return path;
+            // Only when the route's key is not the conversation's own: that is
+            // "the owner lookup re-keyed this", the one case worth naming. No
+            // asking key known (a room) says nothing rather than guessing.
+            var asked = OpenClawMediaSource.SessionKeyOf(url);
+            var rekeyed = asked is not null && askingKey is not null
+                && !string.Equals(asked, askingKey, StringComparison.Ordinal);
+            var suffix = rekeyed ? " — asked under " + asked : "";
+
+            if (!TryParse(json, out var root)) return path + suffix;
 
             var code = StringOrNull(root, "code");
-            return string.IsNullOrEmpty(code) ? path : $"{path} — {code}";
+            return (string.IsNullOrEmpty(code) ? path : $"{path} — {code}") + suffix;
         }
 
         private static bool TryParse(string? json, out JsonElement root)
@@ -173,7 +278,7 @@ namespace Orbweaver
 
         private static string? StringOrNull(JsonElement obj, string name) =>
             obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-                ? value.GetString()
+                ? value.SafeString()
                 : null;
     }
 }

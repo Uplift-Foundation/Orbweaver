@@ -85,9 +85,9 @@ public class CloudAccountBoardTests : IDisposable
             "https://claude.ai/code/" + id, "idle", false, null, null, null, null, OwnerRoot: owner);
 
     private static async Task<ClaudeCloudSessions.StepResult> Step(
-        Api api, ICloudCredentialSource creds, DateTime? now = null, TimeSpan? budget = null) =>
+        Api api, ICloudCredentialSource creds, DateTime? now = null, CredentialBudget? budget = null) =>
         await ClaudeCloudSessions.StepAsync(api, creds, ClaudeCloudSessions.ArmState.Initial,
-            now ?? Now, CancellationToken.None, budget);
+            now ?? Now, CancellationToken.None, budget ?? TestBudgets.AlwaysAnswers);
 
     // --- dedup ---------------------------------------------------------------
 
@@ -305,6 +305,7 @@ public class CloudAccountBoardTests : IDisposable
         var chat = new ClaudeCloudChatSession(
             bSession, chatApi, CloudAccounts.SourceFor(bSession.OwnerRoot), action => action())
         {
+            ReadBudget = TestBudgets.AlwaysAnswers,
             Enabled = () => true,
 
             // One live tick, then park until the panel closes: enough for one
@@ -320,6 +321,8 @@ public class CloudAccountBoardTests : IDisposable
         Assert.Equal(ChatSendOutcome.Sent, await chat.SendAsync("hello from b"));
         var statusPath = CloudRequest.CodeSessionPath("session_b1");
         for (var i = 0; i < 500 && !Snapshot(chatApi).Any(c => c.Path == statusPath); i++) await Task.Delay(10);
+        Assert.True(Snapshot(chatApi).Any(c => c.Path == statusPath),
+            "B's live loop never made its status read.");
 
         Assert.True(chat.CanInterrupt);
         chat.Cancel();
@@ -344,7 +347,10 @@ public class CloudAccountBoardTests : IDisposable
         var b = new Creds(TokenB);
         CloudAccounts.SetForTests(new[] { Account(RootA, a), Account(RootB, b) });
         var api = new Api((_, _) => Ok("{\"data\":[],\"has_more\":false,\"last_id\":null}"));
-        var chat = new ClaudeCloudChatSession(S("session_1", RootA), api, CloudAccounts.SourceFor(RootA), x => x());
+        var chat = new ClaudeCloudChatSession(S("session_1", RootA), api, CloudAccounts.SourceFor(RootA), x => x())
+        {
+            ReadBudget = TestBudgets.AlwaysAnswers,
+        };
 
         await chat.LoadAsync(CancellationToken.None);
         chat.UseCredentials(CloudAccounts.SourceFor(RootB + "/"));
@@ -449,10 +455,15 @@ public class CloudAccountBoardTests : IDisposable
         // "unanswered": A's own short budget expires while it is parked, which
         // only needs to happen eventually. "declined": A is released after B has
         // been started.
-        var stepA = Step(api, ga, budget: how == "unanswered" ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(30));
+        //
+        // The "unanswered" budget is expired by hand once B is queued behind A, so
+        // "B waited for A" no longer depends on a clock beating a scheduler.
+        var (manual, expire) = TestBudgets.Manual();
+        var stepA = Step(api, ga, budget: how == "unanswered" ? manual : TestBudgets.AlwaysAnswers);
         await a.Entered.Task;
-        var stepB = Step(api, gb, budget: TimeSpan.FromSeconds(30));
+        var stepB = Step(api, gb);
         if (how == "declined") a.Release();
+        else expire.SetResult();
 
         await stepA;
         var b = await stepB;
@@ -476,9 +487,9 @@ public class CloudAccountBoardTests : IDisposable
         var gb = new CloudAccountSource(new CloudAccount(RootB, "board", b, b), coord);
         var api = new Api((_, _) => Ok(Roster()));
 
-        var t1 = Step(api, ga, budget: TimeSpan.FromSeconds(30));
+        var t1 = Step(api, ga);
         await a.Entered.Task; // A is inside its read and holds the gate
-        var t2 = Step(api, gb, budget: TimeSpan.FromSeconds(30));
+        var t2 = Step(api, gb);
 
         // A negative that can only pass early, never fail late: however long B
         // takes to reach the gate, it cannot have entered its read while A is
@@ -564,15 +575,27 @@ public class CloudAccountBoardTests : IDisposable
         CloudAccounts.SetForTests(new[] { ga.Account, gb.Account });
         var api = new Api((_, _) => Ok("{\"data\":[],\"has_more\":false,\"last_id\":null}"));
         var chat = new ClaudeCloudChatSession(S("session_1", RootB), api,
-            CloudAccounts.SourceFor(RootB), a => a());
+            CloudAccounts.SourceFor(RootB), a => a())
+        {
+            ReadBudget = TestBudgets.AlwaysAnswers,
+        };
 
         // Someone else holds the gate: the panel's read must wait, not race.
         var held = CloudAccounts.Coordinator.Gate;
         await held.WaitAsync();
-        var load = chat.LoadAsync(CancellationToken.None);
-        await Task.Delay(100);
-        Assert.False(load.IsCompleted);
-        held.Release();
+        Task<bool> load;
+        try
+        {
+            load = chat.LoadAsync(CancellationToken.None);
+            await Task.Delay(100);
+            Assert.False(load.IsCompleted);
+        }
+        finally
+        {
+            // Process-wide gate: a failure above must not leave every later gated
+            // read in the process waiting for a release that never comes.
+            held.Release();
+        }
         Assert.True(await load);
 
         // And after A declined, B's panel reads its file only.
@@ -580,7 +603,7 @@ public class CloudAccountBoardTests : IDisposable
         CloudAccounts.Coordinator.Record(RootA, false,
             new CredentialRead(CredentialOutcome.Denied, null, null, "declined"), aKeychain.Stamp);
         var reads = CloudAccounts.SourceFor(RootB);
-        var read = await ClaudeCliCredentials.ReadWithinAsync(reads, TimeSpan.FromSeconds(5), CancellationToken.None);
+        var read = await ClaudeCliCredentials.ReadWithinAsync(reads, TestBudgets.AlwaysAnswers, CancellationToken.None);
         Assert.Equal(CredentialOutcome.Found, read.Outcome);
         Assert.Equal(keychainReadsBefore, bKeychain.Reads);
         Assert.True(bFile.Reads >= 1);
@@ -642,7 +665,7 @@ public class CloudAccountBoardTests : IDisposable
         for (var i = 0; i < 2; i++)
         {
             var read = await ClaudeCliCredentials.ReadWithinAsync(
-                CloudAccounts.SourceFor(RootA), TimeSpan.FromSeconds(5), CancellationToken.None);
+                CloudAccounts.SourceFor(RootA), TestBudgets.AlwaysAnswers, CancellationToken.None);
             Assert.Equal(CredentialOutcome.Found, read.Outcome);
         }
 
@@ -652,7 +675,7 @@ public class CloudAccountBoardTests : IDisposable
         aKeychain.StampValue = "s2";
         Assert.False(coord.KeychainSkippedFor());
         await ClaudeCliCredentials.ReadWithinAsync(
-            CloudAccounts.SourceFor(RootA), TimeSpan.FromSeconds(5), CancellationToken.None);
+            CloudAccounts.SourceFor(RootA), TestBudgets.AlwaysAnswers, CancellationToken.None);
         Assert.True(aKeychain.Reads > keychainReads);
     }
 

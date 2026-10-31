@@ -20,6 +20,16 @@ public class OpenClawMediaPathHarvestTests
         Assert.Equal(token, OpenClawSessions.AbsoluteImagePathIn(token));
     }
 
+    // CB-272: a clip's path is harvested the same way, with the same guards.
+    [Fact]
+    public void AHarvestFindsAClipPathAndStillRefusesTraversal()
+    {
+        Assert.Equal("/a/b/clip.mov", OpenClawSessions.AbsoluteImagePathIn("/a/b/clip.mov"));
+        Assert.Null(OpenClawSessions.AbsoluteImagePathIn("/a/../clip.mov"));
+        Assert.Null(OpenClawSessions.AbsoluteImagePathIn("//host/clip.mp4"));
+        Assert.Null(OpenClawSessions.AbsoluteImagePathIn("clip.mp4"));
+    }
+
     // Prose punctuation, which is how a path usually arrives when an agent
     // mentions one mid-sentence.
     [Theory]

@@ -88,6 +88,14 @@ namespace Orbweaver
                 // TUI rather than any chat surface, so it is its own kind rather
                 // than a direct message.
                 if (Is(parts[2], "main")) return SessionKind.Main;
+
+                // CB-270: a New Chat's session, "agent:<id>:dashboard:<uuid>", is
+                // the same thing by the same description — the agent's own session,
+                // reached through no chat surface. Structural, so a chatType on the
+                // row cannot turn it into a direct message. Nothing visible changes:
+                // Main and Unknown both wear no badge and both cluster as Chats.
+                // What changes is that the kind is now true.
+                if (Is(parts[2], "dashboard")) return SessionKind.Main;
             }
 
             // The key's fourth segment carries the same word when origin is
@@ -105,6 +113,32 @@ namespace Orbweaver
             if (Is(type, "channel") || Is(type, "group") || Is(type, "guild")) return SessionKind.Channel;
 
             return SessionKind.Unknown;
+        }
+
+        // CB-270: the same answer, with the gateway's own classification as a
+        // second opinion on the one mistake that matters.
+        //
+        // A WhatsApp group was measured carrying chatType "direct", top-level and
+        // in origin, while its classification, kind and peerKind all said group.
+        // chatType decides wherever the key is uninformative, so that row came out
+        // Direct, and Direct wears the "direct message" badge: a room other people
+        // read, labelled private.
+        //
+        // Overridden in that one direction only. A Direct answer where the
+        // classification says group or channel becomes Channel; nothing else
+        // changes, and in particular a classification of "direct" never turns a
+        // Channel into Direct. Calling a DM a room is the safe error and calling a
+        // room private is the dangerous one, which is the whole reason this does
+        // not simply trust classification both ways. A null or unrecognised
+        // classification gives exactly the two-argument answer.
+        public static SessionKind From(string? key, string? chatType, string? classification)
+        {
+            var kind = From(key, chatType);
+
+            return kind == SessionKind.Direct
+                   && (Is(classification ?? "", "group") || Is(classification ?? "", "channel"))
+                ? SessionKind.Channel
+                : kind;
         }
 
         // Which room a channel session is in, as a key stable across restarts

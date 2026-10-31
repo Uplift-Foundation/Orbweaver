@@ -339,9 +339,52 @@ public class HotkeyActionsTests : IDisposable
 
         HotkeyActions.RegisterAll(hook);
 
-        Assert.Equal(new[] { "Ctrl+Alt+H", "Ctrl+Alt+N", "Ctrl+Alt+U" },
+        Assert.Equal(new[] { "Ctrl+Alt+H", "Ctrl+Alt+N", "Ctrl+Alt+U", "Ctrl+Alt+M" },
             hook.Calls.Select(c => HotkeyRegistry.Format(c.Combo)).ToArray());
         Assert.Empty(LogLines());
+    }
+
+    // CB-298: the mute hotkey does what the tray item does, on the UI thread.
+    [AvaloniaFact]
+    public void Dispatch_ToggleMute_FlipsTheMuteOnTheUiThread()
+    {
+        try
+        {
+            HotkeyActions.Dispatch(HotkeyAction.ToggleMute);
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(AudioMute.IsMuted);
+
+            HotkeyActions.Dispatch(HotkeyAction.ToggleMute);
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(AudioMute.IsMuted);
+        }
+        finally { AudioMute.Set(false); }
+    }
+
+    [AvaloniaFact]
+    public void ToggleMute_HandlerAndOverrideArms()
+    {
+        Assert.Null(HotkeyActions.OverrideFor(HotkeyAction.ToggleMute));
+        OrbweaverSettings.ToggleMuteHotkey = "Ctrl+Shift+M";
+        Assert.Equal("Ctrl+Shift+M", HotkeyActions.OverrideFor(HotkeyAction.ToggleMute));
+        Assert.NotNull(HotkeyActions.HandlerFor(HotkeyAction.ToggleMute));
+    }
+
+    [AvaloniaFact]
+    public void Bound_IsTheDefaultTheOverrideOrTheFallback()
+    {
+        Assert.Equal("Ctrl+Alt+M",
+            HotkeyRegistry.Format(HotkeyActions.Bound(HotkeyAction.ToggleMute)!.Value));
+
+        OrbweaverSettings.ToggleMuteHotkey = "Ctrl+Shift+M";
+        Assert.Equal("Ctrl+Shift+M",
+            HotkeyRegistry.Format(HotkeyActions.Bound(HotkeyAction.ToggleMute)!.Value));
+
+        // Spelled as another action's chord, mute loses the collision and
+        // falls back — Bound reports what is registered, not what was asked.
+        OrbweaverSettings.ToggleMuteHotkey = "Ctrl+Alt+H";
+        Assert.Equal("Ctrl+Alt+M",
+            HotkeyRegistry.Format(HotkeyActions.Bound(HotkeyAction.ToggleMute)!.Value));
     }
 
     [AvaloniaFact]
@@ -382,7 +425,8 @@ public class HotkeyActionsTests : IDisposable
         HotkeyActions.RegisterAll(new FakeHook(accepts: _ => false));
 
         var lines = LogLines();
-        Assert.Equal(3, lines.Length);
+        Assert.Equal(4, lines.Length);
+        Assert.Contains(lines, l => l.Contains("ToggleMute") && l.Contains("Ctrl+Alt+M"));
         Assert.Contains(lines, l => l.Contains("ToggleOrbsVisible:") && l.Contains("Ctrl+Alt+H"));
         Assert.Contains(lines, l => l.Contains("OpenNewChat") && l.Contains("Ctrl+Alt+N"));
         Assert.Contains(lines, l => l.Contains("ToggleUsageOrbsVisible") && l.Contains("Ctrl+Alt+U"));
@@ -396,8 +440,8 @@ public class HotkeyActionsTests : IDisposable
 
         HotkeyActions.RegisterAll(hook);   // no exception escapes
 
-        Assert.Equal(3, hook.Calls.Count);
-        Assert.Equal(3, LogLines().Length);
+        Assert.Equal(4, hook.Calls.Count);
+        Assert.Equal(4, LogLines().Length);
     }
 
     [AvaloniaFact]
@@ -410,10 +454,10 @@ public class HotkeyActionsTests : IDisposable
         HotkeyActions.RegisterAll(hook);
 
         Assert.DoesNotContain(hook.Calls, c => c.Action == HotkeyAction.OpenNewChat);
-        // Two refusals (the toggle and the usage toggle) plus the collision
-        // note for New chat, which never reaches the hook at all.
+        // Three refusals (the toggle, the usage toggle and mute) plus the
+        // collision note for New chat, which never reaches the hook at all.
         var lines = LogLines();
-        Assert.Equal(3, lines.Length);
+        Assert.Equal(4, lines.Length);
         Assert.Contains(lines, l => l.Contains("OpenNewChat: no hotkey registered"));
         Assert.Contains(lines, l => l.Contains(HotkeyActions.RefusedNote(HotkeyAction.ToggleOrbsVisible,
             HotkeyRegistry.Default(HotkeyAction.OpenNewChat))));

@@ -5,8 +5,12 @@ Bin/
 obj/
 Obj/
 
-.claude/
+.claude/*
 .claude/persona/
+# The one file under .claude/ that is shared: project hooks every session in
+# this repo should run (CB-273). Everything else there — personas, worktrees,
+# settings.local.json — stays per-machine.
+!.claude/settings.json
 
 # Finder metadata. Written into any directory a Mac user so much as looks at, so
 # a `git add -A` picks it up without anyone noticing — which is exactly how one

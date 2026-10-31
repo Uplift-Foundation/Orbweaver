@@ -431,7 +431,7 @@ namespace Orbweaver
         // the UI layer constructs stays four arguments; tests set it to
         // milliseconds to drive the give-up path. See
         // ClaudeCliCredentials.ReadWithinAsync for why a budget exists at all.
-        internal TimeSpan ReadBudget { get; init; } = ClaudeCliCredentials.UnmeasuredReadBudget;
+        internal CredentialBudget ReadBudget { get; init; } = CredentialBudget.Unmeasured;
 
         // The clock the live loop and the one retry wait on. Task.Delay in
         // the app; a test hands in one that returns at once and records what it

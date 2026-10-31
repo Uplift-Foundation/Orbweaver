@@ -120,4 +120,45 @@ public class ChatTranscriptEdgeTests
 
         Assert.Equal("· tool", ChatTranscript.ToolSummary(block));
     }
+
+    // ---- ToolSummary(name, input), CB-270 --------------------------------
+
+    private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement;
+
+    // The OpenClaw shape: `{command, title}`. `command` outranks `title`
+    // (which is not a key at all), and the line is the one a Claude Code
+    // tool_use would have drawn.
+    [Fact]
+    public void ANameAndAnArgumentsObjectYieldTheSameLineAsABlock()
+    {
+        var args = Json("""{"command":"ls /home/op/workspace | wc -l","title":"Count workspace files"}""");
+        var block = Json("""{"type":"tool_use","name":"mcp__openclaw__exec","input":{"command":"ls /home/op/workspace | wc -l","title":"Count workspace files"}}""");
+
+        var line = ChatTranscript.ToolSummary("mcp__openclaw__exec", args);
+
+        Assert.Equal("· mcp__openclaw__exec  ls /home/op/workspace | wc -l", line);
+        Assert.Equal(ChatTranscript.ToolSummary(block), line);
+    }
+
+    [Fact]
+    public void APathArgumentIsReducedToItsBasenameInTheOverload() =>
+        Assert.Equal("· Read  Foo.cs",
+            ChatTranscript.ToolSummary("Read", Json("""{"file_path":"/a/b/Foo.cs"}""")));
+
+    [Fact]
+    public void AnArgumentLongerThanFortyEightCharactersIsCutInTheOverload() =>
+        Assert.Equal("· exec  " + new string('x', 48) + "…",
+            ChatTranscript.ToolSummary("exec", Json("{\"command\":\"" + new string('x', 60) + "\"}")));
+
+    [Fact]
+    public void AnObjectWithNoKnownArgumentIsTheNameAlone() =>
+        Assert.Equal("· exec", ChatTranscript.ToolSummary("exec", Json("""{"other":"x","command":3,"path":"  "}""")));
+
+    [Fact]
+    public void ANullNameAndDefaultArgumentsAreStillCalledSomething() =>
+        Assert.Equal("· tool", ChatTranscript.ToolSummary(null, default));
+
+    [Fact]
+    public void ANonObjectArgumentsValueIsTheNameAlone() =>
+        Assert.Equal("· exec", ChatTranscript.ToolSummary("exec", Json("\"ls\"")));
 }

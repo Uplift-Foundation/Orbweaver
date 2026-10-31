@@ -26,6 +26,11 @@
     <Compile Include="../../AgentPalette.cs" />
     <Compile Include="../../OpenClawSessionKind.cs" />
     <Compile Include="../../OpenClawHeartbeat.cs" />
+    <Compile Include="../../OpenClawHistoryShape.cs" />
+    <Compile Include="../../OpenClawJson.cs" />
+    <Compile Include="../../OpenClawVideoKind.cs" />
+    <Compile Include="../../OpenClawAttachmentKind.cs" />
+    <Compile Include="../../OpenClawAudioKind.cs" />
     <Compile Include="../../RemoteChat.cs" />
   </ItemGroup>
 

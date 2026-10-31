@@ -167,6 +167,20 @@ namespace Orbweaver
         [JsonIgnore]
         public bool Heartbeat { get; set; }
 
+        // CB-270: whether the gateway lists this session with no chat surface
+        // behind it. [JsonIgnore] for the same reason Heartbeat is — derived
+        // during the scan, and ResetSessionToIdle rewrites a status file from
+        // this object. Rides beside Kind and Heartbeat rather than inside either:
+        // a native main is still Main, and still a heartbeat target.
+        [JsonIgnore]
+        public OpenClawNativeKind Native { get; set; }
+
+        // Whether this OpenClaw session is exempt from the age rules: pinned on
+        // the gateway, or a dashboard session. See OpenClawRetention. [JsonIgnore]
+        // for the same reason Heartbeat is.
+        [JsonIgnore]
+        public bool KeptRegardlessOfAge { get; set; }
+
         // A stand-in orb for a channel, invented by this app rather than
         // reported by anything. It has no conversation of its own — it is the
         // thing the agents in that channel point at, so a room reads as one
@@ -327,7 +341,7 @@ namespace Orbweaver
     // deleted (SessionEnd hook, on graceful exit) or hasn't been touched in
     // StaleAfter (fallback for Ctrl+C and other ungraceful termination,
     // which SessionEnd isn't reliably delivered for).
-    public class SessionManager
+    public class SessionManager : IOrbDragHost
     {
         public static SessionManager? Instance { get; private set; }
 
@@ -473,7 +487,8 @@ namespace Orbweaver
             Action<int, SessionDependents.Verdict>? terminate = null,
             string? legacyStatusDir = null,
             Func<string, string?, bool>? stopJob = null,
-            Func<SessionStatus, string?>? desktopBridge = null)
+            Func<SessionStatus, string?>? desktopBridge = null,
+            Func<IEnumerable<(string SessionId, string TranscriptPath)>, IReadOnlyDictionary<string, AgentTeam.Membership>>? fileTeams = null)
         {
             _statusDir = statusDir;
             _legacyStatusDir = legacyStatusDir;
@@ -497,6 +512,7 @@ namespace Orbweaver
             _paneOwners = paneOwners ?? TerminalFocuser.TmuxPaneOwners;
             _agentViewer = agentViewer ?? AgentTeamViewer.For;
             _teams = teams ?? AgentTeam.OfAll;
+            _fileTeams = fileTeams ?? AgentTeamFiles.Default().ReadMany;
             _terminate = terminate ?? SessionTerminator.Terminate;
             _stopJob = stopJob ?? BackgroundJobs.Stop;
 
@@ -527,6 +543,11 @@ namespace Orbweaver
         // above, and so the scan suites can prove it is asked on the background
         // half only: the UI half reads the answer out of ScanProbes.TeamOf.
         private readonly Func<IReadOnlyList<int>, IReadOnlyDictionary<int, AgentTeam.Membership>> _teams;
+
+        // Which team a session with no pid is in, read from its transcript and
+        // team config (AgentTeamFiles). A seam for the reason _teams is one, and
+        // because the real read opens files in a WSL distro.
+        private readonly Func<IEnumerable<(string SessionId, string TranscriptPath)>, IReadOnlyDictionary<string, AgentTeam.Membership>> _fileTeams;
 
         // What ends a session's process once EndSession has decided it may
         // (CB-228). A seam so the scan suites can prove the kill runs off the
@@ -575,9 +596,15 @@ namespace Orbweaver
             // gates need the leads and the UI half needs the rest.
             var teams = _teams(ScanProbePlan.TeamPids(found));
 
+            // The sessions with no pid to ask about, from their files instead
+            // (AgentTeamFiles): a WSL session records none, so its team was
+            // unknowable and its orb drew alone. Asked here, off the UI thread,
+            // because it opens a file over a VM's share.
+            var fileTeams = _fileTeams(ScanProbePlan.FileTeamCandidates(found));
+
             return ScanProbes.Gather(
                 ScanProbePlan.For(found, pid => teams.TryGetValue(pid, out var m) ? m.Lead : ""),
-                teams, _paneOwners, _jobListing, _attachClients, _agentViewer);
+                teams, _paneOwners, _jobListing, _attachClients, _agentViewer, fileTeams);
         }
 
         internal static IEnumerable<string?> ClaudeTranscripts(IEnumerable<ScanEntry> found) =>
@@ -744,6 +771,12 @@ namespace Orbweaver
         public void Start()
         {
             Instance = this;
+            OrbDragHost.Current = this;
+
+            // Dragging the empty space inside a group's shape moves the group
+            // (CB-268 decision 5). The backdrop raises the press; the drag
+            // itself is S4's, the same session an orb press starts.
+            GroupBackdrops.BackdropPressed += OrbWindow.BeginBackdropDrag;
             Directory.CreateDirectory(_statusDir);
             SyncAutoColorMarker();
 
@@ -1349,6 +1382,12 @@ namespace Orbweaver
                 && status.Source != SessionSource.ClaudeCloud
                 && status.State != "waiting"
                 && !(status.Source == SessionSource.OpenClaw && status.State == "generating")
+
+                // CB-270: a pinned gateway session, or a dashboard one, is a
+                // durable conversation whose lifecycle is the gateway's archived
+                // flag, not a clock — CB-182's argument above, for the same
+                // reason. OpenClawRetention says which sessions qualify.
+                && !(status.Source == SessionSource.OpenClaw && status.KeptRegardlessOfAge)
                 && now - written > staleAfter)
             {
                 return ScanVerdict.Expired;
@@ -2376,6 +2415,8 @@ namespace Orbweaver
                         OpenClawSessions.AgentIdOf(session.Key) ?? session.Key),
                     Kind = session.Kind,
                     Heartbeat = session.Heartbeat,
+                    Native = session.Native,
+                    KeptRegardlessOfAge = session.KeptRegardlessOfAge,
                 };
 
                 // Namespaced because these ids share a dictionary with Claude
@@ -2710,7 +2751,7 @@ namespace Orbweaver
 
                 // From the background half's read, never AgentTeam itself: on
                 // Windows that is a WMI query (CB-212, see ScanProbes.TeamOf).
-                var agentLead = probes.LeadOf(entry.Status.SessionPid);
+                var agentLead = probes.LeadOf(entry.SessionId, entry.Status.SessionPid);
                 if (!string.IsNullOrEmpty(agentLead) && agentLead != entry.SessionId)
                 {
                     leadsWithLiveAgents.Add(agentLead);
@@ -2849,7 +2890,7 @@ namespace Orbweaver
                 // — by the background half, which asked about every pid in the
                 // pass in one read (CB-212). This only looks the answer up.
                 var membership = status.Source == SessionSource.ClaudeCode
-                    ? probes.TeamOf(status.SessionPid)
+                    ? probes.TeamOf(sessionId, status.SessionPid)
                     : AgentTeam.None;
 
                 // Guarded, where it used to run for everything. A gateway
@@ -3063,6 +3104,10 @@ namespace Orbweaver
             // than on a timer of its own, which would race this one over the same
             // directory and the same dictionary.
             SweepDeadFiles(found, dead, now);
+
+            // Before the reflow, so an orb that just arrived is arranged in the
+            // group its team is already in.
+            SyncOrbGroups();
 
             if (setChanged)
             {
@@ -3617,36 +3662,20 @@ namespace Orbweaver
             return claimed;
         }
 
-        // The orbs that follow this one when it's dragged: the members of the
-        // team it leads. Empty for everything else, including a member — a
-        // member is dragged on its own, which is how you pull one out of the
-        // group to look at it.
-        public List<OrbWindow> MembersOf(string leadSessionId)
-        {
-            var members = new List<OrbWindow>();
-
-            foreach (var id in _order)
-            {
-                if (!_statuses.TryGetValue(id, out var status)) continue;
-                if (status.Lead != leadSessionId || id == leadSessionId) continue;
-                if (_windows.TryGetValue(id, out var window)) members.Add(window);
-            }
-
-            return members;
-        }
-
+        // One arrow per orb with a lead on screen. The lead is TeamTree's, so
+        // a member whose own lead ended points at its nearest surviving
+        // ancestor (CB-268 T4) — the orb it now fans off in the arrangement
+        // and moves with in a drag — rather than losing its arrow.
         private void UpdateTeamLinks()
         {
             TeamLinks.SetVisible(OrbsVisible);
 
+            var tree = Teams();
             var pairs = new List<(OrbWindow Member, OrbWindow Lead)>();
-            foreach (var (id, status) in _statuses)
+            foreach (var id in tree.Present)
             {
-                if (string.IsNullOrEmpty(status.Lead) || status.Lead == id) continue;
-                if (!_windows.TryGetValue(id, out var member)) continue;
-                if (!_windows.TryGetValue(status.Lead, out var lead)) continue;
-
-                pairs.Add((member, lead));
+                if (tree.LeadOf(id) is not { } leadId) continue;
+                pairs.Add((_windows[id], _windows[leadId]));
             }
 
             TeamLinks.Update(pairs);
@@ -3671,8 +3700,11 @@ namespace Orbweaver
             }
 
             // Arrows go with the orbs they join — two invisible orbs joined by a
-            // visible arrow is a line from nowhere to nowhere.
+            // visible arrow is a line from nowhere to nowhere. Backdrops too:
+            // parked, not dropped, so showing the orbs again brings them back.
             TeamLinks.SetVisible(visible);
+            if (visible) GroupBackdrops.Refresh();
+            else GroupBackdrops.ParkAll();
 
             if (visible) ReflowPositions();
             UpdateTray();
@@ -3728,7 +3760,39 @@ namespace Orbweaver
             {
                 window.ReapplyGlyph();
             }
+
+            // CB-287: usage orbs wear letters too, and were never walked here,
+            // so flipping "two-letter initials" left them stale until the next
+            // five-minute poll.
+            _accountOrbs.RefreshLooks();
         }
+
+        // CB-268: the Group outlines card and the group style dialog land here
+        // when the switch, a stroke or a fill changed, the same shape as
+        // ReapplyGlyphs. Re-handing the backdrops their groups re-reads each
+        // group's own override and the global style, and the switch.
+        public void ReapplyGroupStyles() => UpdateGroupBackdrops();
+
+        // What an orb's Group submenu asks for: the group the orb's team is in
+        // and the keys a move has to write. The root and the team are
+        // TeamTree's — the same answer the drag and the arrangement use, T4's
+        // surviving ancestor included — and the rest is OrbGroupMenu.ContextFor.
+        internal GroupMenuContext GroupMenuContextFor(string sessionId)
+        {
+            var tree = Teams();
+            return OrbGroupMenu.ContextFor(
+                tree.RootOf(sessionId), tree.TeamOf(sessionId), AllStatuses,
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode);
+        }
+
+        // CB-287: an override was written elsewhere (the editor, a Settings
+        // row); redraw the usage orbs and cards without waiting for a poll.
+        internal void RefreshAccountOrbLooks() => _accountOrbs.RefreshLooks();
+
+        // CB-287: the accounts that currently have a usage orb, for the
+        // Settings rows.
+        internal IReadOnlyList<AccountOrbIdentity> AccountOrbList() => _accountOrbs.Accounts;
 
         // CB-198: the settings slider and the Size menu both land here, the
         // same shape as ReapplyGlyphs — one change, every orb. Each orb takes
@@ -3752,7 +3816,7 @@ namespace Orbweaver
 
             RescueOffscreenOrbs();
             RememberResizedPins();
-            TeamLinks.Refresh();
+            RefreshOverlays();
             ChatPanel.FollowOrbResize();
         }
 
@@ -3814,6 +3878,14 @@ namespace Orbweaver
                 return;
             }
 
+            // Free mode mid-glide (a drop settling): laying out now would yank
+            // the gliding orbs to their slots. The glide re-runs this as it lands.
+            if (_arrangeAnimTargets is not null)
+            {
+                _refitPending = true;
+                return;
+            }
+
             var first = _windows[_order[0]];
             var screen = first.Screens.Primary ?? first.Screens.All.FirstOrDefault();
             if (screen is null) return;
@@ -3826,6 +3898,16 @@ namespace Orbweaver
             int spacing = (int)(12 * scale);
             int margin = (int)(24 * scale);
 
+            // CB-268 F2: orbs in a user group are not the stack's. They are
+            // laid out by their group below, and never stacked or free-pinned.
+            var tree = Teams();
+            var loose = new List<OrbWindow>();
+            var grouped = new List<OrbWindow>();
+            foreach (var id in DisplayOrder())
+            {
+                (IsUserGroup(GroupIdOf(tree, id)) ? grouped : loose).Add(_windows[id]);
+            }
+
             // Orbs the user has placed by hand keep their spot and don't take up
             // a slot, so the rest of the stack closes up behind them.
             //
@@ -3834,9 +3916,8 @@ namespace Orbweaver
             // actually occupies. Right edges line up, the column keeps the
             // same margin from the screen edge at every size.
             int y = work.Y + margin;
-            foreach (var id in DisplayOrder())
+            foreach (var window in loose)
             {
-                var window = _windows[id];
                 if (window.IsPinned) continue;
 
                 int size = OrbPixels(window, scale);
@@ -3844,8 +3925,23 @@ namespace Orbweaver
                 y += size + spacing;
             }
 
+            // F1/F2: the user groups, laid out where the loose orbs are not —
+            // every loose orb, stacked or pinned, is a fixed obstacle — and
+            // given their backdrops, which must not take a loose orb's click.
+            var visibleLoose = loose.Where(w => w.IsVisible).ToList();
+            var obstacles = visibleLoose
+                .Select(w => new PixelRect(w.Position, new PixelSize(OrbPixels(w, scale), OrbPixels(w, scale))))
+                .ToList();
+            var (targets, userGroups) = LayoutSubset(
+                grouped.Where(w => w.IsVisible).ToList(), OrbArrangement.GroupLayoutMode.Free, obstacles);
+            foreach (var (orb, at) in targets) orb.Position = at;
+
+            _groupPlacements = userGroups;
+            GroupBackdrops.SetLooseOrbs(visibleLoose);
+            UpdateGroupBackdrops();
+
             // Every arrow's geometry just moved.
-            TeamLinks.Refresh();
+            RefreshOverlays();
         }
 
         // A new orb appeared or an old one vanished while the shape is active.
@@ -3922,7 +4018,7 @@ namespace Orbweaver
             if (allOrbs.All(o => _arrangedIds.Contains(o.SessionId)))
             {
                 _arrangedIds.IntersectWith(allOrbs.Select(o => o.SessionId));
-                TeamLinks.Refresh();
+                RefreshOverlays();
                 return;
             }
 
@@ -3938,7 +4034,7 @@ namespace Orbweaver
             // at all, including changes that do not move anybody.
             if (positioned.All(p => p.Orb.Position == p.Target))
             {
-                TeamLinks.Refresh();
+                RefreshOverlays();
                 return;
             }
 
@@ -3946,40 +4042,18 @@ namespace Orbweaver
             foreach (var (orb, target) in positioned)
                 _arrangeAnimTargets[orb.SessionId] = (orb.Position, target);
 
-            AnimateArrangement(PinEveryOrbAtItsTarget);
+            AnimateArrangement();
         }
 
-        // Excluded from coverage: this never runs, and that is a bug rather than a
-        // property of the tests.
-        //
-        // It closes over the _arrangeAnimTargets FIELD, and OnArrangeAnimTick sets
-        // that field to null before invoking the completion callback — so by the
-        // time this is called there is nothing left to walk and PinAt is never
-        // reached. The orbs still land correctly, because the interpolation loop
-        // writes Position before the field is cleared, which is exactly why nobody
-        // noticed: the visible result is right. What is missing is IsPinned, so
-        // after arranging, an orb's "Reset position" item never appears in its
-        // flyout.
-        //
-        // Recorded rather than fixed, because fixing behaviour belongs in a bugfix
-        // branch with its own ticket rather than folded into a coverage change
-        // where no reviewer would be looking for it. The test that pins it down is
-        // OrbArrangementAnimationTests.ArrangingAndCompletingTheGlidePinsEveryOrbAtItsTarget,
-        // and OrbWindowPulseAndPinTests covers what PinAt should do once it is
-        // reached again.
-        //
-        // Also now written once instead of twice: ArrangeOrbsInPattern and
-        // AbsorbIntoArrangement had identical copies, which is how a fix could be
-        // applied to one and not the other.
-        [ExcludeFromCodeCoverage]
-        private void PinEveryOrbAtItsTarget()
-        {
-            foreach (var (id, (_, to)) in _arrangeAnimTargets ?? new())
-            {
-                if (_windows.TryGetValue(id, out var window))
-                    window.PinAt(to);
-            }
-        }
+        // There used to be a PinEveryOrbAtItsTarget here, passed as the glide's
+        // completion. It never ran — it read _arrangeAnimTargets after
+        // OnArrangeAnimTick had cleared it — and CB-268 retires it rather than
+        // fixing it: an arranged orb is held by its group's anchor, and a pin
+        // would make the next arrange treat it as an exception again, which is
+        // the pull-back the plan removes. A dragged-out orb is not pinned
+        // either; it becomes a group of its own at the drop point
+        // (OrbDragCommit.Release). OrbArrangementAnimationTests pins "not
+        // pinned" as the intent now.
 
         // --- dragged orb positions -------------------------------------------
         // A dragged orb stays where it was put. Within a run that's the pinned
@@ -4305,7 +4379,14 @@ namespace Orbweaver
                 OrbweaverSettings.ClearOrbPosition(window.PositionKey);
             }
 
-            ReflowPositions();
+            // CB-268 T2 revised: "Reset this orb's position" also forgets a
+            // member's offset from its lead, so its group fans it again.
+            OrbweaverSettings.SetOrbMemberOffset(window.SoundKey, null);
+
+            // Arranged, a reflow takes CB-161's departure shortcut and would
+            // re-lay nothing; the offset change needs a real re-layout.
+            if (_isArranged) ReapplyArrangement();
+            else ReflowPositions();
         }
 
         public void ResetSessionToIdle(string sessionId)
@@ -4659,16 +4740,20 @@ namespace Orbweaver
             foreach (var orb in allOrbs)
                 _preArrangeState[orb.SessionId] = (orb.Position, orb.IsPinned);
 
+            // Arranged before the layout, not after: ComputeClusteredPositions
+            // hands the backdrops the new groups and the mode with them, and
+            // the predefined groups only have backdrops while arranged (F1).
+            _isArranged = true;
+
             var positioned = ComputeClusteredPositions(allOrbs);
 
             _arrangeAnimTargets = new();
             foreach (var (orb, target) in positioned)
                 _arrangeAnimTargets[orb.SessionId] = (orb.Position, target);
 
-            _isArranged = true;
             _arrangedIds.Clear();
             foreach (var orb in allOrbs) _arrangedIds.Add(orb.SessionId);
-            AnimateArrangement(PinEveryOrbAtItsTarget);
+            AnimateArrangement(spring: true);
 
             foreach (var w in _windows.Values)
                 w.SetFlyoutArranged(true);
@@ -4686,116 +4771,169 @@ namespace Orbweaver
         {
             if (allOrbs.Count == 0) return new List<(OrbWindow, PixelPoint)>();
 
-            var index = new Dictionary<string, int>(StringComparer.Ordinal);
-            for (var i = 0; i < allOrbs.Count; i++) index[allOrbs[i].SessionId] = i;
+            // CB-268 F4: user groups are laid out by a call of their own, first,
+            // so arranging can never move them — they are fed into nothing else.
+            // The predefined groups then go around them: the user groups' boxes
+            // are obstacles to that second call. With no user group on screen the
+            // second call has no obstacles, which is exactly the arrangement as it
+            // was before free-mode groups.
+            var tree = new TeamTree(allOrbs.Select(o => o.SessionId).ToList(), KnownLeads());
+            var user = allOrbs.Where(o => IsUserGroup(GroupIdOf(tree, o.SessionId))).ToList();
+            var rest = allOrbs.Where(o => !user.Contains(o)).ToList();
 
-            var leadOf = new int[allOrbs.Count];
-            for (var i = 0; i < allOrbs.Count; i++)
-            {
-                var lead = _statuses.TryGetValue(allOrbs[i].SessionId, out var status) ? status.Lead : "";
+            var (userTargets, userGroups) = LayoutSubset(
+                user, OrbArrangement.GroupLayoutMode.Arranged, Array.Empty<PixelRect>());
 
-                leadOf[i] = !string.IsNullOrEmpty(lead) && index.TryGetValue(lead, out var at) && at != i
-                    ? at
-                    : -1;
-            }
+            // The user groups' boxes, and every user-group orb where it is about
+            // to land: a hand-placed member (T2) sits outside its group's box,
+            // and the predefined groups must not land on it either.
+            var userObstacles = userGroups.Select(g => g.Bounds)
+                .Concat(userTargets.Select(t => new PixelRect(
+                    t.Value, new PixelSize(OrbPixels(t.Key, ScaleOf(t.Key)), OrbPixels(t.Key, ScaleOf(t.Key))))))
+                .ToList();
+            var (restTargets, restGroups) = LayoutSubset(
+                rest, OrbArrangement.GroupLayoutMode.Arranged,
+                user.Count > 0 ? userObstacles : Array.Empty<PixelRect>());
 
-            var screen = allOrbs[0].Screens.Primary ?? allOrbs[0].Screens.All.FirstOrDefault();
+            // Every caller applies what this returns (a glide, or straight
+            // away), so the backdrops are told the new groups here, once —
+            // Refresh then follows the orbs through the glide.
+            _groupPlacements = userGroups.Concat(restGroups).ToList();
+            UpdateGroupBackdrops();
+
+            return allOrbs
+                .Select(orb => (orb, userTargets.TryGetValue(orb, out var at) ? at : restTargets[orb]))
+                .ToList();
+        }
+
+        private static bool IsUserGroup(string groupId) => !OrbGroups.IsPredefined(groupId);
+
+        private static double ScaleOf(OrbWindow orb) =>
+            (orb.Screens.Primary ?? orb.Screens.All.FirstOrDefault())?.Scaling ?? 1.0;
+
+        // One ComputeGroups call over a subset of orbs: the full group table (so
+        // slots are stable) with only these orbs in it. A team is never split
+        // across a user group and a predefined one (T1 resolves both from the
+        // root), so a subset's own team tree is the whole team.
+        //
+        // CB-268 T2 revised: a member with a saved offset (keyed by its
+        // SoundKey) is handed to ComputeGroups to be placed at its lead plus that
+        // offset instead of fanned. Roots' entries are ignored by ComputeGroups.
+        private (Dictionary<OrbWindow, PixelPoint> Targets, List<GroupOnScreen> Groups) LayoutSubset(
+            List<OrbWindow> orbs, OrbArrangement.GroupLayoutMode mode, IReadOnlyList<PixelRect> obstacles)
+        {
+            var targets = new Dictionary<OrbWindow, PixelPoint>();
+            if (orbs.Count == 0) return (targets, new List<GroupOnScreen>());
+
+            // leadOf is TeamTree's, so a member whose lead ended fans off its
+            // nearest surviving ancestor (T4); groupOf is each orb's *root's*
+            // group as a slot in the group table's order (T1).
+            var tree = new TeamTree(orbs.Select(o => o.SessionId).ToList(), KnownLeads());
+            var leadOf = tree.LeadIndices();
+
+            var groups = OrbweaverSettings.OrbGroupList();
+            var slotOf = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (var i = 0; i < groups.Count; i++) slotOf[groups[i].Id] = i;
+
+            // GroupIdOf only ever answers a predefined id or a membership
+            // MembershipFor already checked against this table, so every id is
+            // in slotOf; slot 0 (main) is the answer for one that somehow is
+            // not, the same fallback OrbArrangement gives an out-of-range slot.
+            var groupOf = orbs
+                .Select(orb => slotOf.GetValueOrDefault(GroupIdOf(tree, orb.SessionId)))
+                .ToArray();
+
+            var screen = orbs[0].Screens.Primary ?? orbs[0].Screens.All.FirstOrDefault();
             var work = screen?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
 
-            var anchor = ArrangementAnchor(work);
+            // No Center: each group brings its own anchor (GroupLayout), and
+            // ComputeGroups ignores Layout's. Nothing is seeded before the
+            // layout either: an unanchored group is asked for its band's middle.
             var layout = new OrbArrangement.Layout(
                 work,
                 screen?.Scaling ?? 1.0,
-                OrbweaverSettings.ArrangeShape,
-                OrbweaverSettings.ArrangeSpacing,
-                anchor);
+                groups[0].Shape,
+                OrbweaverSettings.ArrangeSpacing);
 
-            var heartbeats = OrbweaverSettings.OpenClawHeartbeatMode;
-            var crons = OrbweaverSettings.OpenClawCronMode;
+            // CB-198: each orb's effective size, read off the window, so the
+            // arrangement lays out what is actually drawn.
+            var sizeOf = orbs.Select(orb => orb.OrbSize).ToArray();
 
-            var groupOf = new int[allOrbs.Count];
-            for (var i = 0; i < allOrbs.Count; i++)
+            // T2 revised: a member's saved offset from its lead (DIP, centre to
+            // centre, under its SoundKey). ComputeGroups ignores a root's entry.
+            var memberOffsetOf = orbs
+                .Select((orb, i) => leadOf[i] >= 0 ? OrbweaverSettings.OrbMemberOffsetFor(orb.SoundKey) : null)
+                .ToArray();
+
+            var (placed, placements) = PlaceGroups(
+                orbs.Count, leadOf, groupOf, groups, layout, sizeOf, mode, obstacles, memberOffsetOf);
+
+            for (var i = 0; i < orbs.Count; i++) targets[orbs[i]] = placed[i];
+
+            var onScreen = placements
+                .Select(p => new GroupOnScreen(
+                    groups[p.Slot].Id, p.DrawnShape, CurveOf(p), p.Orbs.Select(i => orbs[i]).ToList(), p.SlotBounds))
+                .ToList();
+
+            return (targets, onScreen);
+        }
+
+        // Where every orb goes, given the groups: S2's ComputeGroups, with one
+        // GroupLayout per entry of the group table — empty ones included, so a
+        // slot index means the same group whoever is on screen.
+        //
+        // CB-211, per group: save where each group actually landed, not where it
+        // was asked to go. ComputeGroups reports it already clamped and exact —
+        // fed back as the group's Center it reproduces the same layout — so it
+        // is saved whenever it differs from the anchor asked for, including
+        // the first time, when none was. A drag that carried a group past what
+        // the screen honours is repaired here on the next arrange instead of
+        // swallowing the next drag back.
+        private static (PixelPoint[] Positions, OrbArrangement.GroupPlacement[] Placements) PlaceGroups(
+            int count, int[] leadOf, int[] groupOf, IReadOnlyList<OrbGroup> groups,
+            OrbArrangement.Layout layout, double[] sizeOf,
+            OrbArrangement.GroupLayoutMode mode, IReadOnlyList<PixelRect> obstacles,
+            IReadOnlyList<(double Dx, double Dy)?> memberOffsetOf)
+        {
+            var layouts = groups
+                .Select(g => new OrbArrangement.GroupLayout(
+                    g.Shape, g.Anchor is { } a ? new PixelPoint(a.X, a.Y) : null))
+                .ToList();
+
+            var (positions, placed) = OrbArrangement.ComputeGroups(
+                count, leadOf, groupOf, layouts, layout, sizeOf, mode, obstacles, memberOffsetOf);
+
+            foreach (var group in placed)
             {
-                groupOf[i] = _statuses.TryGetValue(allOrbs[i].SessionId, out var status)
-                    ? OrbClusters.GroupOf(
-                        OrbClusters.Of(status.Heartbeat, status.Kind), heartbeats, crons)
-                    : 0;
+                if (layouts[group.Slot].Center == group.Landed) continue;
+                OrbweaverSettings.SetOrbGroupAnchor(
+                    groups[group.Slot].Id,
+                    new OrbweaverSettings.OrbPlacement(group.Landed.X, group.Landed.Y));
             }
 
-            // CB-198: each orb's effective size, in the same index order as
-            // leadOf and groupOf. Read off the window rather than recomputed
-            // from settings, so the arrangement lays out what is actually drawn
-            // — ReapplyOrbSizes applies the sizes before it arranges.
-            var sizeOf = allOrbs.Select(orb => orb.OrbSize).ToArray();
-
-            var shapes = Shapes();
-            var placed = OrbArrangement.Compute(allOrbs.Count, leadOf, groupOf, shapes, layout, sizeOf);
-
-            // CB-211: save where the shape actually landed, not where it was
-            // asked to go. The two can differ only while the shape sits against
-            // an edge of the screen, which is where a saved anchor dragged past
-            // what the screen honours ends up — and left alone, that overshoot
-            // would swallow the next drag back. See
-            // OrbArrangement.LandedCenter. Done on every arrange, so a value
-            // that drifted out before this existed is repaired the first time
-            // the shape is drawn rather than only prevented from here on.
-            //
-            // One consequence, and a change from before: a shape that *grows*
-            // into an edge — a wider spacing, an orb joining, a bigger orb —
-            // has its anchor pulled in with it, and keeps that centre when it
-            // shrinks again rather than drifting back out toward the edge. The
-            // shape stays where it is on the screen, which is what the saved
-            // anchor exists to do.
-            var landed = OrbArrangement.LandedCenter(placed, allOrbs.Count, leadOf, groupOf, shapes, layout, sizeOf);
-            if (landed != anchor)
-                OrbweaverSettings.ArrangeAnchor = new OrbweaverSettings.OrbPlacement(landed.X, landed.Y);
-
-            return allOrbs.Select((orb, i) => (orb, placed[i])).ToList();
+            return (positions, placed);
         }
 
-        // One shape name per group, in the order OrbClusters.GroupOf indexes
-        // them. Its *length* is what tells OrbArrangement how many bands it may
-        // cut, so the two have to be built together — a group added to
-        // OrbClusters without an entry here would have its orbs quietly folded
-        // back in with the chats, which is a setting that silently does nothing.
-        private static string[] Shapes() => new[]
-        {
-            OrbweaverSettings.ArrangeShape,
-            OrbweaverSettings.OpenClawHeartbeatShape,
-            OrbweaverSettings.OpenClawCronShape
-        };
-
-        // Where the shape gets drawn. The first time ever, that's the middle
-        // of the work area — same point OrbArrangement used to compute on its
-        // own — but saved from then on, so a later orb joining or leaving
-        // re-fits around where the shape already is rather than the screen's
-        // middle. ShiftArrangementAnchor below is the other way this moves:
-        // the user dragging the whole shape somewhere else.
-        internal static PixelPoint ArrangementAnchor(PixelRect work)
-        {
-            if (OrbweaverSettings.ArrangeAnchor is { } saved) return new PixelPoint(saved.X, saved.Y);
-
-            var center = new PixelPoint(work.X + work.Width / 2, work.Y + work.Height / 2);
-            OrbweaverSettings.ArrangeAnchor = new OrbweaverSettings.OrbPlacement(center.X, center.Y);
-            return center;
-        }
-
-        // A whole-shape drag (see OrbWindow.OnPointerReleased) moves every
-        // arranged orb by the same delta, so the shape's saved centre needs
-        // the same nudge or the next membership change would snap it back to
-        // wherever it was before the drag.
+        // A whole-group drag (OrbDragCommit.Release) moves every orb of the
+        // group by the same delta, so the group's saved centre needs the same
+        // nudge or the next membership change would snap it back to wherever it
+        // was before the drag. `main` by default, which is the one shape there
+        // was before groups.
         //
         // Unbounded here on purpose. A drag can carry the shape toward an edge
         // further than the screen will draw it, and clamping at this point
         // would mean repeating the whole arrangement's geometry to know where
         // "too far" is. The next arrange does know, and saves the anchor it
         // actually honoured (CB-211) — so the overshoot lasts only until then.
-        public void ShiftArrangementAnchor(int dx, int dy)
+        // A group with no anchor yet has nothing to shift: it is placed by the
+        // first-draw layout, which saves one.
+        public void ShiftArrangementAnchor(int dx, int dy, string groupId = OrbGroups.Main)
         {
             if (dx == 0 && dy == 0) return;
-            if (OrbweaverSettings.ArrangeAnchor is not { } anchor) return;
+            if (OrbweaverSettings.OrbGroupFor(groupId)?.Anchor is not { } anchor) return;
 
-            OrbweaverSettings.ArrangeAnchor = new OrbweaverSettings.OrbPlacement(anchor.X + dx, anchor.Y + dy);
+            OrbweaverSettings.SetOrbGroupAnchor(
+                groupId, new OrbweaverSettings.OrbPlacement(anchor.X + dx, anchor.Y + dy));
         }
 
         private void RestoreFromPattern()
@@ -4808,6 +4946,12 @@ namespace Orbweaver
                 ChatPanel.HideFor(w.SessionId);
             }
 
+            // F4: un-arranging restores only the orbs the arrangement moved — a
+            // user group's orbs were laid out by their own group and stay.
+            var tree = Teams();
+            foreach (var id in _preArrangeState.Keys.Where(id => IsUserGroup(GroupIdOf(tree, id))).ToList())
+                _preArrangeState.Remove(id);
+
             var targets = new Dictionary<string, (PixelPoint From, PixelPoint To)>();
             foreach (var (id, (origPos, _)) in _preArrangeState)
             {
@@ -4819,7 +4963,11 @@ namespace Orbweaver
             _isArranged = false;
             _arrangedIds.Clear();
 
-            AnimateArrangement(() =>
+            // The predefined groups are an arrangement's; user groups stay (F1).
+            _groupPlacements = _groupPlacements.Where(g => IsUserGroup(g.GroupId)).ToList();
+            UpdateGroupBackdrops();
+
+            AnimateArrangement(spring: true, onComplete: () =>
             {
                 foreach (var (id, (origPos, wasPinned)) in _preArrangeState)
                 {
@@ -4837,10 +4985,40 @@ namespace Orbweaver
                 w.SetFlyoutArranged(false);
         }
 
-        private void AnimateArrangement(Action? onComplete = null)
+        // CB-283 M2: a user-initiated move — arranging, un-arranging, a drop —
+        // springs each orb into its slot (S4's SpringGlide, Spring.Pop, about
+        // 8% overshoot), staggered StaggerMs apart with the arriving orbs first.
+        // A scan's re-fit (an orb arriving or leaving on its own) keeps the
+        // eased glide it always had: nobody asked for it, so it does not pop.
+        // With reduce motion on, SpringGlide is the plain ~150 ms glide and
+        // there is no stagger (M6). Every glide ends exactly on its slot.
+        internal const int StaggerMs = 20;
+
+        private Dictionary<string, (SpringGlide Glide, long DelayMs)>? _arrangeSprings;
+
+        // M2's pop: the arriving orbs of a drop, each with when its pop starts
+        // (its glide's stagger, or 0 for one already on its slot). DropPop has
+        // the curve. Null when nothing pops, and always under reduce motion.
+        private Dictionary<string, long>? _arrangePops;
+
+        // The animation's clock, a seam so tests step it by hand rather than
+        // waiting. Every glide is stepped with time since the animation began.
+        internal Func<long> Now { get; set; } = () => Environment.TickCount64;
+
+        private void AnimateArrangement(
+            Action? onComplete = null, bool spring = false, IReadOnlyCollection<string>? first = null,
+            Fling fling = default)
         {
             _arrangeAnimComplete = onComplete;
-            _arrangeAnimStart = Environment.TickCount64;
+            _arrangeAnimStart = Now();
+            _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first, fling) : null;
+
+            // The outlines measure every gliding orb at its slot, so they spring
+            // once to their final shape instead of chasing the orbs there.
+            GroupBackdrops.SetDestinations(_arrangeAnimTargets?
+                .Where(t => _windows.ContainsKey(t.Key))
+                .Select(t => (_windows[t.Key], t.Value.To)));
+            _arrangePops = _arrangeSprings is { } springs ? PopsFor(springs, first) : null;
 
             if (_arrangeAnimTimer is null)
             {
@@ -4853,6 +5031,71 @@ namespace Orbweaver
             _arrangeAnimTimer.Start();
         }
 
+        // One SpringGlide per moving orb: `first` (the orbs that just arrived)
+        // leads, then the orbs the drag threw, then the rest in display order,
+        // StaggerMs apart.
+        //
+        // M5: a thrown orb starts its glide at the release velocity, turned from
+        // DIP/s into its screen's units. SpringGlide caps it so the overshoot
+        // stays within max(8% of the distance, 12 DIP). Reduce motion ignores
+        // it: the plain glide has no velocity to carry.
+        private Dictionary<string, (SpringGlide Glide, long DelayMs)> SpringsFor(
+            Dictionary<string, (PixelPoint From, PixelPoint To)> targets, IReadOnlyCollection<string>? first,
+            Fling fling)
+        {
+            var reduce = MotionPolicy.ReduceMotion;
+            var thrown = Thrown(fling);
+            var order = (first ?? Array.Empty<string>()).Where(targets.ContainsKey)
+                .Concat(thrown.Where(targets.ContainsKey))
+                .Concat(DisplayOrder().Where(targets.ContainsKey))
+                .Concat(targets.Keys)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var springs = new Dictionary<string, (SpringGlide, long)>(StringComparer.Ordinal);
+            for (var i = 0; i < order.Count; i++)
+            {
+                var (from, to) = targets[order[i]];
+                var delay = reduce ? 0 : (long)i * StaggerMs;
+                // Thrown orbs are on screen by construction (Thrown).
+                var units = thrown.Contains(order[i]) ? UsableUnits(OrbWindow.UnitsPerDip(_windows[order[i]])) : 1;
+                var velocity = thrown.Contains(order[i]) ? (fling.X * units, fling.Y * units) : (0, 0);
+                springs[order[i]] = (new SpringGlide(from, to, velocity, delay, reduce, units), delay);
+            }
+
+            return springs;
+        }
+
+        // Screen units per DIP as measured (OrbWindow.UnitsPerDip), or 1 when
+        // the measurement is unusable. PointToScreen on a window with no
+        // platform position could answer 0, and a 0 would turn every throw into
+        // no throw at all.
+        internal static double UsableUnits(double measured) =>
+            Finite.All(measured) && measured > 0 ? measured : 1;
+
+        // The orbs a fling throws: those on screen, and none at all with no
+        // velocity or with reduce motion on.
+        private HashSet<string> Thrown(Fling fling) =>
+            fling.IsNone || MotionPolicy.ReduceMotion
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : fling.Ids!.Where(_windows.ContainsKey).ToHashSet(StringComparer.Ordinal);
+
+        // The arriving orbs that are on screen, each popping as its glide starts.
+        private Dictionary<string, long>? PopsFor(
+            Dictionary<string, (SpringGlide Glide, long DelayMs)> springs, IReadOnlyCollection<string>? arriving)
+        {
+            if (arriving is null || arriving.Count == 0 || MotionPolicy.ReduceMotion) return null;
+
+            var pops = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (var id in arriving)
+            {
+                if (_windows.ContainsKey(id))
+                    pops[id] = springs.TryGetValue(id, out var spring) ? spring.DelayMs : 0;
+            }
+
+            return pops.Count == 0 ? null : pops;
+        }
+
         private void OnArrangeAnimTick(object? sender, EventArgs e)
         {
             if (_arrangeAnimTargets is null)
@@ -4861,27 +5104,97 @@ namespace Orbweaver
                 return;
             }
 
-            var elapsed = Environment.TickCount64 - _arrangeAnimStart;
-            var t = Math.Min(1.0, elapsed / (double)ArrangeAnimMs);
-            var eased = 1 - Math.Pow(1 - t, 3);
+            var elapsed = Now() - _arrangeAnimStart;
+            bool finished;
 
-            foreach (var (id, (from, to)) in _arrangeAnimTargets)
+            if (_arrangeSprings is { } springs)
             {
-                if (!_windows.TryGetValue(id, out var window)) continue;
-                window.Position = new PixelPoint(
-                    (int)Math.Round(from.X + (to.X - from.X) * eased),
-                    (int)Math.Round(from.Y + (to.Y - from.Y) * eased));
+                // A glide is stepped only once its stagger has passed: stepping
+                // it earlier would count the wait as time already sprung.
+                //
+                // And it lands, exactly, ArrangeAnimMs after it starts, whatever
+                // the spring says. Spring.Pop is within about 6e-5 of the distance
+                // by then (under 0.06 px across 1000 px), so the snap cannot be
+                // seen, but SpringGlide's rest test also wants the velocity under
+                // 0.05 px/s, which a long move can miss for a while longer. A
+                // glide that ends when it ends, rather than when a threshold
+                // agrees, is what "every glide ends on its slot" needs.
+                var finishedAll = true;
+                foreach (var (id, (glide, delay)) in springs)
+                {
+                    // An orb whose window has gone (its session ended mid-glide)
+                    // has nothing left to land. Waiting on its glide would never
+                    // end: it is never stepped, so it is never Done.
+                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    if (elapsed < delay)
+                    {
+                        finishedAll = false;
+                        continue;
+                    }
+
+                    var at = glide.Step(elapsed);
+                    var landed = glide.Done || elapsed - delay >= ArrangeAnimMs;
+                    window.Position = landed ? glide.Target : at;
+                    finishedAll &= landed;
+                }
+
+                foreach (var (id, start) in _arrangePops ?? new Dictionary<string, long>())
+                {
+                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    window.SetPopScale(DropPop.ScaleAt(elapsed - start));
+                    finishedAll &= elapsed - start >= DropPop.DurationMs;
+                }
+
+                finished = finishedAll;
             }
-            TeamLinks.Refresh();
+            else
+            {
+                var t = Math.Min(1.0, elapsed / (double)ArrangeAnimMs);
+                var eased = 1 - Math.Pow(1 - t, 3);
 
-            if (t < 1.0) return;
+                foreach (var (id, (from, to)) in _arrangeAnimTargets)
+                {
+                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    window.Position = new PixelPoint(
+                        (int)Math.Round(from.X + (to.X - from.X) * eased),
+                        (int)Math.Round(from.Y + (to.Y - from.Y) * eased));
+                }
 
-            _arrangeAnimTimer!.Stop();
+                finished = t >= 1.0;
+            }
+
+            RefreshOverlays();
+
+            if (!finished) return;
+            FinishGlide();
+        }
+
+        // Lands the glide in flight: every orb on its slot, the completion run,
+        // and any re-fit that arrived meanwhile done now.
+        private void FinishGlide()
+        {
+            if (_arrangeAnimTargets is not { } targets) return;
+
+            foreach (var (id, (_, to)) in targets)
+            {
+                if (_windows.TryGetValue(id, out var window)) window.Position = to;
+            }
+
+            // A pop cut short by a second drop ends at rest, like its glide.
+            foreach (var id in _arrangePops?.Keys ?? Enumerable.Empty<string>())
+            {
+                if (_windows.TryGetValue(id, out var window)) window.SetPopScale(1.0);
+            }
+
+            _arrangeAnimTimer?.Stop();
             var complete = _arrangeAnimComplete;
             _arrangeAnimComplete = null;
-            var targets = _arrangeAnimTargets;
             _arrangeAnimTargets = null;
+            _arrangeSprings = null;
+            _arrangePops = null;
+            GroupBackdrops.SetDestinations(null);
             complete?.Invoke();
+            RefreshOverlays();
 
             // An orb arrived or left while that was flying. Fit it in now,
             // rather than leaving it as the one orb outside the shape.
@@ -4889,18 +5202,46 @@ namespace Orbweaver
 
             _refitPending = false;
             if (_isArranged) AbsorbIntoArrangement();
+            else ReflowPositions();
         }
 
-        public List<OrbWindow> ArrangedSiblings(string excludeSessionId)
-        {
-            if (!_isArranged) return new();
+        // CB-283 M2/M5: a drop. The current mode is laid out again and every
+        // orb that has somewhere new to be springs there from where it is now —
+        // the dropped team from where it was let go (M5's spring-back on a
+        // no-change drop is the same call), its group around it — with the
+        // arriving orbs leading the stagger. A glide already in flight lands
+        // first. Nothing that is already in place moves.
+        void IOrbDragHost.SettleAfterDrop(IReadOnlyCollection<string> arrivingIds) =>
+            ((IOrbDragHost)this).SettleAfterDrop(arrivingIds, default);
 
-            return _preArrangeState.Keys
-                .Where(id => id != excludeSessionId
-                          && _windows.ContainsKey(id)
-                          && _windows[id].IsVisible)
-                .Select(id => _windows[id])
-                .ToList();
+        // M5: the orbs the drag threw start their spring at its release
+        // velocity (see SpringsFor). One thrown on its own slot still moves:
+        // it carries on in the throw's direction and springs back.
+        void IOrbDragHost.SettleAfterDrop(IReadOnlyCollection<string> arrivingIds, Fling fling)
+        {
+            FinishGlide();
+
+            var before = _windows.ToDictionary(kv => kv.Key, kv => kv.Value.Position, StringComparer.Ordinal);
+            ReapplyArrangement();
+
+            var moves = new Dictionary<string, (PixelPoint From, PixelPoint To)>(StringComparer.Ordinal);
+            foreach (var (id, window) in _windows)
+            {
+                if (before.TryGetValue(id, out var from) && from != window.Position)
+                    moves[id] = (from, window.Position);
+            }
+
+            foreach (var id in Thrown(fling))
+                moves.TryAdd(id, (_windows[id].Position, _windows[id].Position));
+
+            // Nothing to glide and nobody arriving: no animation at all. An
+            // arriving orb that is already on its slot still pops (M2), on an
+            // animation with nothing to move.
+            if (moves.Count == 0 && (!arrivingIds.Any(_windows.ContainsKey) || MotionPolicy.ReduceMotion)) return;
+
+            foreach (var (id, (from, _)) in moves) _windows[id].Position = from;
+            _arrangeAnimTargets = moves;
+            AnimateArrangement(spring: true, first: arrivingIds, fling: fling);
         }
 
         // Called from the settings slider so the user sees orbs reposition
@@ -4908,7 +5249,14 @@ namespace Orbweaver
         // if they're not, the new spacing is just saved for next time.
         public void ReapplyArrangement()
         {
-            if (!_isArranged) return;
+            // Free mode has user groups to lay out (F1); the reflow does that
+            // and re-stacks the loose orbs around them.
+            if (!_isArranged)
+            {
+                ReflowPositions();
+                return;
+            }
+
             if (_arrangeAnimTargets is not null) return;
 
             var allOrbs = DisplayOrder()
@@ -4922,7 +5270,255 @@ namespace Orbweaver
             foreach (var (orb, target) in positioned)
                 orb.Position = target;
 
+            RefreshOverlays();
+        }
+
+        // --- CB-268 S7: teams and groups -----------------------------------------
+
+        // The last Lead every session reported, kept after it ends while
+        // something on screen still descends through it — what lets TeamTree
+        // find T4's nearest surviving ancestor. Refreshed and pruned once per
+        // scan by SyncOrbGroups.
+        private readonly Dictionary<string, string> _knownLead = new(StringComparer.Ordinal);
+
+        // Each session's last membership key, to notice CB-10's key change.
+        private readonly OrbGroupSync.KeyTracker _groupKeys = new();
+
+        // The remembered leads, with every live status's current Lead laid over
+        // them, so a tree built between scans is never a scan behind.
+        private Dictionary<string, string> KnownLeads()
+        {
+            var leads = new Dictionary<string, string>(_knownLead, StringComparer.Ordinal);
+            foreach (var (id, status) in _statuses)
+            {
+                if (string.IsNullOrEmpty(status.Lead)) leads.Remove(id);
+                else leads[id] = status.Lead;
+            }
+
+            return leads;
+        }
+
+        // The team tree over every orb that has a window, in display order.
+        internal TeamTree Teams() =>
+            new(DisplayOrder().Where(_windows.ContainsKey).ToList(), KnownLeads());
+
+        // The group an orb is in: its root's (T1). Explicit membership first,
+        // then the CB-14 classification — OrbGroupMenu.ContextFor's rule.
+        private string GroupIdOf(TeamTree tree, string id) =>
+            OrbGroupMenu.ContextFor(
+                tree.RootOf(id), Array.Empty<string>(), _statuses,
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode).GroupId;
+
+        // What every scan does for groups, before it lays anything out:
+        //  - remembers this scan's leads and forgets ones nothing descends from;
+        //  - carries a membership across a key that changed (CB-10), tracking
+        //    every known session rather than every orb on screen;
+        //  - gives a team member with no group of its own its root's (T3), so a
+        //    member that outlives its lead keeps the group.
+        // None of these moves an orb, so none of them breaks CB-161.
+        private void SyncOrbGroups()
+        {
+            foreach (var (id, status) in _statuses)
+            {
+                if (string.IsNullOrEmpty(status.Lead)) _knownLead.Remove(id);
+                else _knownLead[id] = status.Lead;
+            }
+
+            var tree = Teams();
+            var keep = TeamTree.Reachable(tree.Present, _knownLead);
+            foreach (var stale in _knownLead.Keys.Where(id => !keep.Contains(id)).ToList())
+                _knownLead.Remove(stale);
+
+            // Every session the manager knows, not only the orbs on screen: an
+            // entry is forgotten when its session ends — _statuses' own
+            // lifetime — so a key that changes while a session has no orb for
+            // a scan is still carried when the orb comes back.
+            foreach (var (old, renamed) in _groupKeys.Observe(
+                         _statuses.Keys.Select(id => (id, OrbGroupMenu.KeyOf(id, _statuses))).ToList()))
+            {
+                OrbweaverSettings.CarryOrbGroupMembership(old, renamed);
+            }
+
+            // T3: every team of more than one, root key first. Idempotent and
+            // conservative — it fills only member keys with no entry of their
+            // own, and does nothing for a root in its group by classification —
+            // so asking every scan costs a lookup, not a write. A team move
+            // that should overwrite goes through AssignTeamToGroup instead.
+            foreach (var root in tree.Present.Select(tree.RootOf).Distinct(StringComparer.Ordinal).ToList())
+            {
+                var team = tree.TeamOf(root);
+                if (team.Count < 2) continue;
+
+                OrbweaverSettings.EnsureTeamMembership(
+                    OrbGroupMenu.KeyOf(root, _statuses),
+                    team.Skip(1).Select(id => OrbGroupMenu.KeyOf(id, _statuses)),
+                    OrbGroupMenu.FallbackKeyOf(root, _statuses));
+            }
+        }
+
+        // --- IOrbDragHost: what the drag (S4) asks of the roster ----------------
+        // Explicit, so none of it widens SessionManager's public surface; the
+        // drag reaches it through OrbDragHost.Current, which Start assigns.
+        // Every list is over visible orbs, the ones a pointer can be on.
+
+        private TeamTree VisibleTeams() =>
+            new(DisplayOrder().Where(id => _windows.TryGetValue(id, out var w) && w.IsVisible).ToList(),
+                KnownLeads());
+
+        IReadOnlyList<string> IOrbDragHost.TeamIdsOf(string sessionId) => VisibleTeams().TeamOf(sessionId);
+
+        // The groups with at least one orb on screen: what an orb's "Move to"
+        // offers. A group whose every session has ended keeps its members (they
+        // rejoin it when they come back), but has nothing to move to.
+        internal IReadOnlySet<string> GroupsOnScreen()
+        {
+            var visible = DisplayOrder().Where(id => _windows.TryGetValue(id, out var w) && w.IsVisible).ToList();
+            var tree = new TeamTree(visible, KnownLeads());
+            return visible.Select(id => GroupIdOf(tree, id)).ToHashSet(StringComparer.Ordinal);
+        }
+
+        IReadOnlyList<string> IOrbDragHost.OrbIdsInGroup(string groupId)
+        {
+            var tree = VisibleTeams();
+            return tree.Present.Where(id => GroupIdOf(tree, id) == groupId).ToList();
+        }
+
+        OrbWindow? IOrbDragHost.WindowOf(string sessionId) =>
+            _windows.TryGetValue(sessionId, out var window) ? window : null;
+
+        string IOrbDragHost.GroupIdOf(string sessionId) => GroupIdOf(VisibleTeams(), sessionId);
+
+        string IOrbDragHost.PositionKeyOf(string sessionId) => OrbGroupMenu.KeyOf(sessionId, _statuses);
+
+        // The orb's visible circle, in Position units: its centre is CentreDip
+        // into the window and its radius OrbRadius (member scale and user size
+        // already in it), both scaled by OrbWindow.UnitsPerDip — the factor the
+        // drag divides back out (OrbDragCommit), so the two are one factor by
+        // construction. Measured on a Retina MacBook (tools/backdrop-probe
+        // --scales): UnitsPerDip 1, DesktopScaling 1, RenderScaling 2 — so
+        // RenderScaling is the one that would have been wrong.
+        (double X, double Y, double R) IOrbDragHost.DiscOf(string sessionId) =>
+            _windows.TryGetValue(sessionId, out var w) ? DiscOf(w) : (0, 0, 0);
+
+        internal static (double X, double Y, double R) DiscOf(OrbWindow w)
+        {
+            var scaling = OrbWindow.UnitsPerDip(w);
+            return (w.Position.X + w.CentreDip * scaling,
+                    w.Position.Y + w.CentreDip * scaling,
+                    w.OrbRadius * scaling);
+        }
+
+        // Every group with an orb on screen outside `excludedIds`, with those
+        // orbs' discs and the outline its backdrop last drew — the backdrop's,
+        // so the padding is decided in one place (GroupBackdrops.PaddingDip).
+        // Empty for a group with no backdrop yet; OrbSnap then uses the discs.
+        IReadOnlyList<SnapCandidate> IOrbDragHost.CandidatesFor(IReadOnlyCollection<string> excludedIds)
+        {
+            var tree = VisibleTeams();
+            var free = !_isArranged;
+            var discs = new Dictionary<string, List<(double X, double Y, double R)>>(StringComparer.Ordinal);
+            var loose = new Dictionary<string, List<(double X, double Y, double R)>>(StringComparer.Ordinal);
+
+            foreach (var id in tree.Present)
+            {
+                if (excludedIds.Contains(id)) continue;
+
+                // CB-268 F3: in free mode main and the clusters are no target —
+                // their orbs are, one loose team at a time, keyed by its root.
+                var group = GroupIdOf(tree, id);
+                var isLoose = free && !IsUserGroup(group);
+                var into = isLoose ? loose : discs;
+                var key = isLoose ? tree.RootOf(id) : group;
+
+                if (!into.TryGetValue(key, out var list)) into[key] = list = new();
+                list.Add(DiscOf(_windows[id]));
+            }
+
+            return discs
+                .Select(p => new SnapCandidate(p.Key, GroupBackdrops.OutlineOf(p.Key), p.Value))
+                .Concat(loose.Select(p => new SnapCandidate(p.Key, Array.Empty<Point>(), p.Value, Loose: true)))
+                .OrderBy(c => c.GroupId, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        // Which group the drag would join: its backdrop draws at full opacity
+        // and twice the stroke until the drag ends or aims elsewhere.
+        void IOrbDragHost.HighlightGroup(string? groupId) => GroupBackdrops.Highlight(groupId);
+
+        void IOrbDragHost.ShiftGroupAnchor(string groupId, int dx, int dy) =>
+            ShiftArrangementAnchor(dx, dy, groupId);
+
+        // CB-268 T2 revised: a member dragged within a laid-out group keeps
+        // where it was put, as an offset from its (effective) lead's centre in
+        // DIP, under its SoundKey so teammates sharing a directory don't collide.
+        void IOrbDragHost.SaveMemberOffset(string memberId)
+        {
+            if (!_windows.TryGetValue(memberId, out var member)) return;
+            if (Teams().LeadOf(memberId) is not { } leadId) return;
+
+            OrbweaverSettings.SetOrbMemberOffset(
+                member.SoundKey,
+                OrbDragCommit.MemberOffsetDip(DiscOf(member), DiscOf(_windows[leadId]), OrbWindow.UnitsPerDip(member)));
+        }
+
+        // CB-268 F3: while a free-mode drag would Pair two loose teams, a
+        // provisional outline around both — there is no backdrop to highlight
+        // for a group that does not exist yet. Null on either side clears it.
+        void IOrbDragHost.PreviewPair(IReadOnlyList<string>? draggedTeamIds, string? targetRootId)
+        {
+            if (draggedTeamIds is null || targetRootId is null)
+            {
+                GroupBackdrops.PreviewPair(null);
+                return;
+            }
+
+            var ids = draggedTeamIds.Concat(VisibleTeams().TeamOf(targetRootId)).Distinct(StringComparer.Ordinal);
+            GroupBackdrops.PreviewPair(ids.Where(_windows.ContainsKey).Select(id => _windows[id]).ToList());
+        }
+
+        // --- the backdrops (S5) ---------------------------------------------------
+
+        // One arranged group as the last arrange left it: what was drawn, the
+        // curve it was drawn on, and its orbs.
+        private sealed record GroupOnScreen(
+            string GroupId, string DrawnShape, GroupOutline.PlacedCurve? Curve, IReadOnlyList<OrbWindow> Orbs,
+            PixelRect Bounds);
+
+        private List<GroupOnScreen> _groupPlacements = new();
+
+        // The curve a group's orbs were placed on, for the outline to follow.
+        // ComputeGroups says "no curve" itself, with a CurveScale of 0 — a
+        // grid, a line, a column, a squeezed group that fell back to a grid,
+        // a lone orb — and GroupOutline draws a rounded rectangle, a stadium
+        // or a circle around the discs instead. Read off the placement rather
+        // than restated from shape names here, so the two cannot disagree.
+        internal static GroupOutline.PlacedCurve? CurveOf(OrbArrangement.GroupPlacement placement) =>
+            placement.CurveScale > 0
+                ? new GroupOutline.PlacedCurve(placement.CurveCentre, placement.CurveScale)
+                : null;
+
+        // Hands the backdrops the current groups with each group's style read
+        // fresh, so a style change and an arrange take the same path. An empty
+        // set — nothing arranged — parks them all.
+        private void UpdateGroupBackdrops()
+        {
+            // F1: user groups have backdrops in both modes, the predefined only
+            // while arranged — GroupBackdrops applies that from the mode. While
+            // arranged nothing is loose; free mode's reflow says who is.
+            GroupBackdrops.SetArranged(_isArranged);
+            if (_isArranged) GroupBackdrops.SetLooseOrbs(Array.Empty<OrbWindow>());
+            GroupBackdrops.SetOutlinesVisible(OrbweaverSettings.GroupOutlinesEnabled);
+            GroupBackdrops.SetNamesVisible(OrbweaverSettings.GroupNamesVisible);
+            GroupBackdrops.Update(_groupPlacements.Select(g => new BackdropSpec(
+                g.GroupId, g.DrawnShape, g.Orbs, OrbweaverSettings.OrbGroupFor(g.GroupId)?.Style, g.Curve)));
+        }
+
+        // Everything drawn from orb positions, re-read after the orbs moved.
+        private static void RefreshOverlays()
+        {
             TeamLinks.Refresh();
+            GroupBackdrops.Refresh();
         }
     }
 }

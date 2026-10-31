@@ -109,7 +109,57 @@ namespace Orbweaver
         // later by OpenClawSessions.CrossArmDuplicateMirrorIndices, once the
         // mirror side's bytes exist to compare -- see that method's header
         // for why the comparison cannot happen inside this pure parser.
-        MediaSourceArm Arm = MediaSourceArm.None);
+        MediaSourceArm Arm = MediaSourceArm.None,
+
+        // CB-274 / CB-275: the attachment block this turn was drawn from, when
+        // the gateway's display projection moved the file out of the text and
+        // into a video / audio / attachment / attachment_error block. Carried
+        // by every site that copies a history turn into a live one, because a
+        // copy that dropped it would send a clip or a pdf to the bitmap
+        // decoder, which does not throw on rubbish.
+        ChatAttachment? Attachment = null,
+
+        // CB-270: whether this is a tool line whose result reported an error,
+        // so the panel can tint it. Only a `toolcall` turn from
+        // TurnsFromHistory ever sets it; defaulted and trailing for the same
+        // reason every field above it is.
+        bool IsError = false,
+
+        // CB-270: this turn was drawn from a `cli` rollup message, which
+        // repeats the text of the run's steps. Needed only so a scroll-back
+        // can tell, when an older page ends in the steps of the run whose
+        // rollup is the head of the transcript, that the rollup is the double
+        // and must go (see PrependHistory).
+        bool FromRollup = false,
+
+        // CB-270 stage 3b, both set by TurnsFromHistory from the page's raw
+        // messages (a user message that renders to no turn is still a boundary
+        // there, which the turns alone would lose). OpenTail: a text step of the
+        // page's trailing run, with no rollup or user message after it, so the run
+        // an older page ends in. SeamRollup: the kept text of the first rollup with
+        // no user message before it, on a page an older one may precede; the rollup
+        // that closes that run. The page boundary compares exactly these two.
+        bool OpenTail = false,
+        bool SeamRollup = false,
+
+        // CB-270 stage 3b, set by TurnsFromHistory from the raw messages like the two
+        // above. RunTail / RunHead: any turn (a picture too) of the page's trailing
+        // run, with no rollup or user message after it / of its head run, before any
+        // user message or rollup closes it, on a page an older one may precede. The
+        // page boundary compares pictures across them by path. Blanked: the caption
+        // was blanked because its words are shown by the other half of a covered pair
+        // and the picture kept; with a delivery mirror (Arm) it is one of the only two
+        // kinds of turn the boundary may drop as a duplicate picture.
+        bool RunTail = false,
+        bool RunHead = false,
+        bool Blanked = false,
+
+        // CB-270 stage 3b: a named-path turn whose page did not pair it with a
+        // delivery-mirror, so it can still account for one on the page next to it.
+        // The collapse of a mirror into the message naming its file is page-wide and
+        // one named turn cancels one mirror, so across a page boundary only unpaired
+        // named turns count.
+        bool FreeNamed = false);
 
     // See HistoryTurn.Arm. Internal and small on purpose: this exists only to
     // let the post-parse dedup pass in OpenClawSessions tell an inline image
@@ -122,14 +172,15 @@ namespace Orbweaver
 
     // One OpenClaw session, as something the chat panel can talk to.
     //
-    // Reading works today. **Sending does not**, and says so rather than
-    // failing quietly: the app pairs itself with `operator.read` and nothing
-    // else, so `chat.send` would be refused by the gateway. Widening that is a
-    // deliberate act — it means re-pairing this device with `operator.write`,
-    // which a person has to approve on the gateway — and it is not something
-    // opening a window should do on their behalf. Until then this is a reader
-    // with an input box that explains itself.
-    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer
+    // Reading always works. Sending works when "Allow replying to agents" is on,
+    // which re-pairs this device with `operator.write` — a deliberate act a
+    // person approves on the gateway, never something opening a window does on
+    // their behalf. Without it, sending says so rather than failing quietly.
+    //
+    // A send is routed by OpenClawSendPolicy: a conversation on a chat surface
+    // is delivered back to that surface with the typed message mirrored into
+    // it, and a native session, which has no surface, is answered in place.
+    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages, IRemoteChatPrompts
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -142,6 +193,29 @@ namespace Orbweaver
         // to become two turns — appending one to the other would produce a
         // paragraph that says the same thing twice in different voices.
         private string? _streamingKind;
+
+        // CB-270 Stage 3: a run is rebuilt from the gateway's deltas, because on
+        // 2026.10.5 only the first and last assistant events of a run carry
+        // data.text and the rest carry data.delta alone (96 of 102 measured).
+        // _runText is the run so far; _closed is the part of it already drawn as
+        // finished bubbles, which a tool starting sets to everything so far. The
+        // bubble on screen is what follows it, so the text after a tool is a
+        // bubble of its own. That is what makes the live view equal history's
+        // [step, tool line, step] for the same run.
+        private string? _runId;
+        private string _runText = "";
+        private string _closed = "";
+
+        // Whether this session saw the run from its first event, which carries
+        // the text so far. A panel opened partway through sees a delta first, and
+        // then the final snapshot (the whole rollup, earlier steps included) would
+        // put steps the panel never drew, or history already holds, back into the
+        // last bubble. So a run joined late is built from its deltas alone.
+        private bool _sawRunStart = true;
+
+        // Tool lines awaiting their result, by toolCallId, so the result can mark
+        // the line it belongs to as an error.
+        private readonly Dictionary<string, ChatTurn> _tools = new();
 
         // Turns already asked about, or being asked about — so a streaming
         // snapshot that still carries the marker on its next delta doesn't
@@ -177,13 +251,36 @@ namespace Orbweaver
 
         internal bool HasOpenPanel => _panels > 0;
 
-        internal void PanelOpened() => _panels++;
+        // The message subscription follows the count: held from the first panel
+        // to the last, asked for by this chat itself so that a room's members,
+        // which the room fans PanelOpened out to, each hold their own.
+        internal void PanelOpened()
+        {
+            // What ended while no panel was watching is written up on opening.
+            RefreshApprovals();
+
+            if (_panels++ == 0) OpenClawSessions.MessagesWanted(this, true);
+        }
 
         internal void PanelClosed()
         {
-            if (_panels > 0) _panels--;
-            if (_panels == 0) IdleSince = DateTime.UtcNow;
+            var held = _panels > 0;
+            if (held) _panels--;
+            if (_panels == 0)
+            {
+                IdleSince = DateTime.UtcNow;
+
+                // Only the real 1 to 0 transition: a stray extra close has
+                // nothing to release.
+                if (held) OpenClawSessions.MessagesWanted(this, false);
+            }
         }
+
+        // A subscribe the gateway refused is a fact about this one conversation,
+        // not about the connection, so it is said here and not through the
+        // settings pane's connection line.
+        internal void NoteLiveUnavailable(string reason) =>
+            Note("Live updates aren't available for this conversation: " + reason);
 
         // What this transcript's decoded pictures are costing.
         internal long ResidentImageBytes => OpenClawChatMemory.ResidentBytes(_history);
@@ -233,13 +330,72 @@ namespace Orbweaver
         // signal not to mirror anything anywhere.
         public OpenClawSessions.Delivery? Delivery { get; set; }
 
+        // What the gateway last said this conversation is, and whether it has
+        // ever said it is a chat-surface one. Null Native is "never listed",
+        // which is not the same as listed-and-not-native. SeenAsSurface is
+        // sticky on purpose: a session that was a Discord DM a poll ago does not
+        // become native on a transient classification. See OpenClawSendPolicy.
+        internal OpenClawNativeKind? Native { get; private set; }
+        internal bool SeenAsSurface { get; private set; }
+
+        internal void Observe(OpenClawNativeKind? native)
+        {
+            if (native is null) return;
+
+            Native = native;
+            SeenAsSurface |= native == OpenClawNativeKind.None;
+        }
+
+        internal OpenClawSendRoute Route =>
+            OpenClawSendPolicy.RouteFor(Native, SeenAsSurface, Delivery);
+
         public IReadOnlyList<ChatTurn> History => _history;
 
         public event Action<ChatTurn>? TurnAdded;
         public event Action<ChatTurn>? TurnUpdated;
         public event Action<RemoteChatState>? StateChanged;
 
-        public async Task<ChatSendOutcome> SendAsync(string text)
+        public Task<ChatSendOutcome> SendAsync(string text) => SendCoreAsync(text, null, null);
+
+        // CB-270 Stage 4: a native conversation takes pictures with its message.
+        // The panel hands over files it already saved to disk; only the images
+        // among them are sent, by name and content, and the first one is drawn on
+        // the message's own bubble so it is not text-only until the gateway's
+        // copy comes back.
+        public async Task<ChatSendOutcome> SendWithImagesAsync(string text, IReadOnlyList<string> imagePaths)
+        {
+            var images = new List<OpenClawOutgoingImage>();
+            byte[]? thumbnail = null;
+
+            foreach (var path in imagePaths)
+            {
+                byte[] bytes;
+                try { bytes = await File.ReadAllBytesAsync(path); }
+                catch { continue; }
+
+                if (OpenClawOutgoingImage.From(path, bytes) is not { } image) continue;
+
+                images.Add(image);
+                thumbnail ??= bytes;
+            }
+
+            return await SendCoreAsync(text, images, thumbnail);
+        }
+
+        // Pictures go only to a conversation answered in place, and only when
+        // replying is allowed: anywhere else a pasted picture stays the ordinary
+        // paste it would have been, rather than becoming a message that then fails.
+        public bool CanSendImages
+        {
+            get
+            {
+                Observe(OpenClawSessions.NativeOf(GatewayKey));
+                return Route == OpenClawSendRoute.Native && OrbweaverSettings.OpenClawReplyEnabled;
+            }
+        }
+
+        private async Task<ChatSendOutcome> SendCoreAsync(
+            string text, IReadOnlyList<OpenClawOutgoingImage>? images, byte[]? thumbnail)
         {
             // The user's own turn is added here rather than by the panel, so one
             // thing owns the transcript and a send that fails leaves a message
@@ -261,10 +417,15 @@ namespace Orbweaver
             // read the same: your message is on screen, and the note under it
             // says why nothing happened, exactly like a room whose channel
             // has nobody to carry a message to.
+            Observe(OpenClawSessions.NativeOf(GatewayKey));
+            _pendingLimitMinutes = Route == OpenClawSendRoute.Native ? TimeoutMinutes : null;
             var mine = new ChatTurn
             {
-                Role = ChatRole.User, Text = text, IsComplete = true, Mine = true
+                Role = ChatRole.User, Text = text, IsComplete = true, Mine = true,
+                ImageBytes = thumbnail
             };
+            _sent.Add(mine);
+            if (_liveRunActive) _typedMidRun.Add(mine);
             Add(mine);
 
             if (!OrbweaverSettings.OpenClawReplyEnabled)
@@ -277,7 +438,7 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            var failure = await SendOrFailureAsync(text);
+            var failure = await SendOrFailureAsync(text, images);
             if (failure is not null)
             {
                 Note("Couldn't send: " + failure);
@@ -297,11 +458,11 @@ namespace Orbweaver
         // completes, and the decision that reads it — say so in the transcript —
         // is measured where it belongs.
         [ExcludeFromCodeCoverage]
-        private async Task<string?> SendOrFailureAsync(string text)
+        private async Task<string?> SendOrFailureAsync(string text, IReadOnlyList<OpenClawOutgoingImage>? images)
         {
             try
             {
-                await OpenClawSessions.SendAsync(this, text, CancellationToken.None);
+                await OpenClawSessions.SendAsync(this, text, CancellationToken.None, images);
                 return null;
             }
             catch (Exception ex)
@@ -310,12 +471,38 @@ namespace Orbweaver
             }
         }
 
-        private void Note(string text) => Add(new ChatTurn
+        // The notes this session wrote itself, as against a tool line the run drew.
+        // Both are System turns, and a reconciliation has to tell them apart: a
+        // note about a send belongs to the message it follows and is kept with it.
+        private readonly HashSet<ChatTurn> _notes = new();
+
+        // The messages this session added for the person who typed them, so an
+        // append can tell one a page has not shown yet from one it has.
+        private readonly HashSet<ChatTurn> _sent = new();
+
+        // Those of them typed while a run was already streaming. Such a message is
+        // not what the run began after, wherever a page happens to place it, so a
+        // reconciliation never takes it as the anchor: the run began before it.
+        private readonly HashSet<ChatTurn> _typedMidRun = new();
+
+        // Whether the stream says a run is going right now: any event of one since
+        // the last end. Wider than "has drawn something", because a panel opened
+        // partway through a run can be typed into before the next word draws, and
+        // that message still comes after the run began.
+        private bool _liveRunActive;
+
+        private void Note(string text)
         {
-            Role = ChatRole.System,
-            IsComplete = true,
-            Text = text
-        });
+            var note = new ChatTurn
+            {
+                Role = ChatRole.System,
+                IsComplete = true,
+                Text = text
+            };
+
+            _notes.Add(note);
+            Add(note);
+        }
 
         public void Cancel()
         {
@@ -331,17 +518,34 @@ namespace Orbweaver
         {
             switch (name)
             {
+                case "agent" when Str(payload, "stream") == "lifecycle":
+                    // The run's own end. Nothing else completes a native run's
+                    // bubble: without this the next run's first words overwrote
+                    // the previous reply in place.
+                    if (payload.TryGetProperty("data", out var life)
+                        && Str(life, "phase") is "end" or "error")
+                    {
+                        EndRun();
+                    }
+                    else
+                    {
+                        _liveRunActive = true;
+                    }
+                    break;
+
                 case "agent":
+                    _liveRunActive = true;
                     OnAgentText(payload);
                     break;
 
                 case "session.tool":
+                    _liveRunActive = true;
                     OnTool(payload);
                     break;
 
                 case "cron" when Str(payload, "action") == "finished":
                 case "task" when Str(payload, "action") == "upserted":
-                    Complete();
+                    EndRun();
                     break;
 
                 // CB-95: what the gateway calls a *delivery* rather than a
@@ -364,7 +568,20 @@ namespace Orbweaver
                 // history on a delivery signal". Appending only the turns the
                 // fetched page adds past what this transcript already has
                 // keeps a read position exactly where it was.
+                //
+                // A "chat" delta is not one of those doorbells (CB-270). Its text
+                // has already arrived on the agent stream, and treating every one
+                // as a reason to refetch history cost 25 round trips for one run.
+                case "chat" when Str(payload, "state") is "final" or "error" or "aborted":
+                    EndRun();
+                    RefreshTailAsync();
+                    break;
+
+                // Any other state of a run (a delta, a status) says one is going.
                 case "chat":
+                    _liveRunActive = true;
+                    break;
+
                 case "session.message":
                     RefreshTailAsync();
                     break;
@@ -385,7 +602,233 @@ namespace Orbweaver
             var page = await OpenClawSessions.FetchPageAsync(this, 0, CancellationToken.None);
             if (page is null) return;
 
-            AppendNewTail(page.Value.Turns);
+            ApplyFetchedTail(page.Value.Turns);
+        }
+
+        // CB-270. Live text is a best-effort drawing of a run: a panel opened
+        // partway through it holds a truncated first bubble and none of the tool
+        // lines that came before it, and no amount of appending repairs that. So
+        // a run the stream has drawn is replaced by what history says at its end,
+        // which makes the two agree under whatever rule TurnsFromHistory applies.
+        //
+        // Set when a run's event draws something and cleared by the reconciliation
+        // that follows its end. A run that has drawn nothing, a bare lifecycle
+        // start, has nothing to defer for. While it is set and the run has not ended, a doorbell
+        // does nothing: a page fetched mid-run holds a half-persisted run, and
+        // appending it would only add to what the end is about to replace.
+        // The deferral is bounded by the run state the app already trusts for the
+        // orb (OpenClawSessions.StateFor): a run that state no longer calls
+        // generating, because its end arrived on another signal, RunIdle passed
+        // after its last streaming event, RunCeiling after a start, or the
+        // connection dropped and cleared every run, is over for this purpose too.
+        // A missed lifecycle end or chat final therefore cannot stop the panel
+        // refreshing.
+        private bool _runDirty;
+        private bool _runEnded;
+
+        // CB-270 Stage 4. A run this session drew is waiting to be told how it
+        // ended, and the limit the last send asked for is what a timeout names.
+        // The row's status arrives with the next poll, so the note is written then:
+        // a timed-out run otherwise just stops, and the reply looks cut off for no
+        // reason. Only a run this panel saw counts, so a conversation opened on an
+        // old timeout does not announce it.
+        private static readonly HashSet<string> TerminalStatuses =
+            new(StringComparer.Ordinal) { "done", "failed", "error", "killed", "aborted", "timeout" };
+
+        private bool _awaitingStatus;
+
+        // The limit a send asked for belongs to the run that send starts, and to no
+        // other: it is pending from the send until the next run begins drawing, and
+        // that run keeps it. A run another client started has none, so its timeout
+        // is announced without a number rather than with this send's.
+        private int? _pendingLimitMinutes;
+        private int? _runLimitMinutes;
+
+        internal void OnRunStatus(string? status)
+        {
+            // Only a status that says the run is over settles it. One that says it is
+            // still going ("running", read on the first poll after a send) leaves it
+            // waiting, and so does anything not recognised.
+            if (!_awaitingStatus || status is null || !TerminalStatuses.Contains(status)) return;
+
+            // So a later timeout (another client's run, say) is not announced with
+            // this send's limit.
+            _awaitingStatus = false;
+            if (status != "timeout") return;
+
+            Note(_runLimitMinutes is { } minutes
+                ? $"The time limit ({minutes} minutes) was reached, so the run was stopped."
+                : "The run's time limit was reached, so the run was stopped.");
+        }
+
+        // The first row the live run drew in this transcript, by reference so a
+        // prepend or the cap cannot shift it. The run's user turn is before it,
+        // however much of the run was already on the page when the panel opened.
+        // Null until something is drawn after a wholesale replace.
+        private ChatTurn? _runFirst;
+
+        // The last row of the page SetHistory installed, by reference. Everything
+        // after it was added later, a message typed after the page landed among
+        // it, and none of it can be the user turn a run began after.
+        private ChatTurn? _pageLast;
+
+        // CB-270 stage 3b: the transcript's head rollup that closes a run whose
+        // earlier steps may be on an older page (see PrependHistory), or null.
+        private ChatTurn? _seamRollup;
+
+        // CB-270 stage 3b: the turns of the transcript's head run when an older page may
+        // precede it, so the page boundary can compare their pictures with the older
+        // page's trailing run.
+        private List<ChatTurn> _headRun = new();
+
+        // CB-270 stage 3b: every turn of the page next to the one about to be
+        // prepended, for the page-wide, budgeted collapse of a delivery-mirror into the
+        // message naming its file (see DedupePicturesAcrossTheSeam).
+        private List<ChatTurn> _headPage = new();
+
+        private void RunSeen()
+        {
+            // A run beginning: it takes the limit the last send asked for, if one
+            // is waiting, and nothing otherwise.
+            if (!_awaitingStatus)
+            {
+                _runLimitMinutes = _pendingLimitMinutes;
+                _pendingLimitMinutes = null;
+            }
+
+            _awaitingStatus = true;
+            if (!_runDirty) _runFirst = null;
+            _runDirty = true;
+            _runEnded = false;
+        }
+
+        private void EndRun()
+        {
+            _liveRunActive = false;
+            _runEnded = true;
+            Complete();
+        }
+
+        // Removed from the transcript: the index of the first, and how many. The
+        // panel drops the same rows; what replaces them arrives as TurnAdded.
+        internal event Action<int, int>? TurnsRemoved;
+
+        // What to do with a freshly fetched newest page: nothing mid-run, a
+        // reconciliation once a run the stream drew has ended, and the ordinary
+        // append for a delivery that is not part of a run.
+        internal void ApplyFetchedTail(IReadOnlyList<HistoryTurn> page)
+        {
+            if (_runDirty && !_runEnded
+                && OpenClawSessions.StateFor(GatewayKey) == "generating") return;
+
+            if (!_runDirty)
+            {
+                AppendNewTail(page);
+                return;
+            }
+
+            _runDirty = false;
+            ReconcileRun(page);
+        }
+
+        // The run is everything after the user turn that started it, and the live
+        // tail is swapped for the page's after that same turn.
+        //
+        // That turn is the last user turn before the first row the run drew, not
+        // simply the last user turn: a message typed while the reply streams is
+        // added at once and would otherwise become the anchor, which a page may
+        // not hold yet and which sits after a truncated first bubble that
+        // reconciling from it would never reach. Candidates are tried latest
+        // first and the first one the page also holds wins, so a message typed
+        // here that the page does not show yet is passed over rather than
+        // trusted. Not an index recorded when the run began, which a panel opened
+        // midway through has no way to know.
+        //
+        // Your own messages in the replaced range are kept: one the page now
+        // shows is the page's copy and is drawn once, one it does not show yet is
+        // put back after the page's turns until a page does. If no candidate is on
+        // the page (a run too long for it to reach back) the append is all that
+        // can be said safely.
+        private void ReconcileRun(IReadOnlyList<HistoryTurn> page)
+        {
+            var first = _runFirst is null ? -1 : _history.IndexOf(_runFirst);
+            var afterPage = _pageLast is null ? -1 : _history.IndexOf(_pageLast) + 1;
+            var before = first >= 0 ? first : afterPage > 0 ? afterPage : _history.Count;
+
+            var user = -1;
+            var at = -1;
+
+            for (var u = before - 1; u >= 0 && at < 0; u--)
+            {
+                if (_history[u].Role != ChatRole.User || _typedMidRun.Contains(_history[u])) continue;
+
+                for (var i = page.Count - 1; i >= 0; i--)
+                {
+                    if (page[i].Role == ChatRole.User
+                        && string.Equals(page[i].Text, _history[u].Text, StringComparison.Ordinal))
+                    {
+                        user = u;
+                        at = i;
+                        break;
+                    }
+                }
+            }
+
+            if (at < 0)
+            {
+                AppendNewTail(page);
+                return;
+            }
+
+            var from = user + 1;
+            var count = _history.Count - from;
+
+            // Sent here and not on the page yet: each page copy accounts for one.
+            var shown = page.Skip(at + 1).Where(t => t.Role == ChatRole.User).Select(t => t.Text).ToList();
+            // A note this session wrote straight after one of them, "Couldn't send"
+            // or "Replying is off", goes with it: the reason belongs to the message
+            // and the message is staying.
+            var unconfirmed = new List<ChatTurn>();
+            for (var i = from; i < _history.Count; i++)
+            {
+                var turn = _history[i];
+                if (turn.Role != ChatRole.User || shown.Remove(turn.Text)) continue;
+
+                unconfirmed.Add(turn);
+                while (i + 1 < _history.Count && _notes.Contains(_history[i + 1]))
+                {
+                    unconfirmed.Add(_history[++i]);
+                }
+            }
+
+            if (count > 0)
+            {
+                _history.RemoveRange(from, count);
+                TurnsRemoved?.Invoke(from, count);
+            }
+
+            // On the normal end path Complete() has already let go of the bubble
+            // in flight and the tool lines awaiting results. On the idle bound a
+            // doorbell reconciles while the stream may still be going, so they
+            // are let go of here: a delta would otherwise update a turn with no
+            // row and a result would mark one, and the reply would be invisible
+            // until the real end. _runText and _closed are left as they are, since
+            // the step in flight is not persisted until it ends: the page cannot
+            // hold it, and the next delta opens a fresh bubble from what follows
+            // _closed.
+            if (_streaming is not null && !_history.Contains(_streaming))
+            {
+                _streaming = null;
+                _streamingKind = null;
+            }
+
+            foreach (var id in _tools.Where(t => !_history.Contains(t.Value)).Select(t => t.Key).ToList())
+            {
+                _tools.Remove(id);
+            }
+
+            AppendFrom(page, at + 1);
+            foreach (var turn in unconfirmed) Add(turn);
         }
 
         // The actual live-update fix, and the half of it that is pure enough
@@ -417,22 +860,52 @@ namespace Orbweaver
 
             int startIndex;
 
-            if (_history.Count == 0)
+            // Without this session's own notes, and the messages it sent that no
+            // page shows yet: neither is on a page, so at the tail either would be
+            // the anchor, match nothing, and stop every later delivery appearing (a
+            // send that failed leaves both). Each copy a page does show accounts for
+            // one sent message, which is then ordinary again. They stay in the
+            // transcript; only the search for where the page joins looks past them.
+            var shown = freshTurns.Where(t => t.Role == ChatRole.User).Select(t => t.Text).ToList();
+            var live = new List<ChatTurn>();
+            foreach (var turn in _history)
+            {
+                if (_notes.Contains(turn)) continue;
+                if (_sent.Contains(turn) && !shown.Remove(turn.Text)) continue;
+                live.Add(turn);
+            }
+
+            if (live.Count == 0)
             {
                 startIndex = 0;
             }
             else
             {
-                var anchor = _history[^1];
+                // The page position whose turns before it also match this
+                // transcript's tail, best first and latest on a tie. Matching the
+                // last turn alone is ambiguous whenever two turns read the same,
+                // which two tool lines do once the summary's length cap has cut
+                // them to the same text: the later twin would be taken for the
+                // earlier and everything between them skipped.
                 var anchorIndex = -1;
+                var best = 0;
 
                 for (var i = freshTurns.Count - 1; i >= 0; i--)
                 {
-                    if (freshTurns[i].Role != anchor.Role) continue;
-                    if (!string.Equals(freshTurns[i].Text, anchor.Text, StringComparison.Ordinal)) continue;
+                    var matched = 0;
+                    while (matched <= i && matched < live.Count
+                           && freshTurns[i - matched].Role == live[^(matched + 1)].Role
+                           && string.Equals(freshTurns[i - matched].Text, live[^(matched + 1)].Text,
+                               StringComparison.Ordinal))
+                    {
+                        matched++;
+                    }
 
-                    anchorIndex = i;
-                    break;
+                    if (matched > best)
+                    {
+                        best = matched;
+                        anchorIndex = i;
+                    }
                 }
 
                 if (anchorIndex < 0) return;
@@ -440,6 +913,11 @@ namespace Orbweaver
                 startIndex = anchorIndex + 1;
             }
 
+            AppendFrom(freshTurns, startIndex);
+        }
+
+        private void AppendFrom(IReadOnlyList<HistoryTurn> freshTurns, int startIndex)
+        {
             for (var i = startIndex; i < freshTurns.Count; i++)
             {
                 var turn = freshTurns[i];
@@ -454,6 +932,7 @@ namespace Orbweaver
                     Role = turn.Role,
                     Text = turn.Text,
                     ImageSourcePath = turn.ImageSourcePath,
+                    Attachment = turn.Attachment,
                     Confidence = turn.Confidence,
                     ImageUrl = turn.ImageUrl,
                     ImageBytes = turn.ImageBytes,
@@ -462,6 +941,8 @@ namespace Orbweaver
                     Speaker = turn.Speaker,
                     SpeakerColor = turn.SpeakerColor,
                     Mine = turn.Mine,
+                    IsError = turn.IsError,
+                    FromRollup = turn.FromRollup,
                     IsComplete = true
                 });
             }
@@ -471,18 +952,19 @@ namespace Orbweaver
         {
             if (!payload.TryGetProperty("data", out var data)) return;
 
-            // data.text is a full snapshot of the turn so far, alongside a
-            // data.delta. Using the snapshot means a dropped or coalesced event
-            // costs nothing — which is exactly the property the panel is written
-            // against, so it is worth taking even though the delta is right
-            // there and looks cheaper.
-            var text = Str(data, "text");
-            if (string.IsNullOrEmpty(text)) return;
-
             // Thinking is shown — watching an agent think is most of the value
             // of an orb that pulses — but kept as its own turn rather than
             // mixed into the reply it will eventually give.
             var kind = Str(payload, "stream") ?? "assistant";
+
+            // The reply is rebuilt from deltas, with data.text taken as a full
+            // snapshot whenever one arrives (the first and last events of a run).
+            // A thinking event carries only progressTokens, never text, so it
+            // keeps the old snapshot-only reading.
+            var text = kind == "assistant" ? AssistantBubble(payload, data) : Str(data, "text");
+            if (string.IsNullOrEmpty(text)) return;
+
+            RunSeen();
 
             if (_streaming is null || _streaming.IsComplete || _streamingKind != kind)
             {
@@ -493,6 +975,7 @@ namespace Orbweaver
                 };
                 _streamingKind = kind;
                 Add(_streaming);
+                _runFirst ??= _streaming;
             }
             else
             {
@@ -645,6 +1128,7 @@ namespace Orbweaver
                 // silently promote whatever tier the matched turn actually
                 // carries to High.
                 turn.ImageSourcePath = match.Value.ImageSourcePath;
+                turn.Attachment = match.Value.Attachment;
                 turn.Confidence = match.Value.Confidence;
                 turn.ImageUrl = match.Value.ImageUrl;
             }
@@ -687,7 +1171,25 @@ namespace Orbweaver
             // was never missing here, only unused: the fetch below asked the
             // gateway about a file without saying which agent's media policy
             // to judge it against, and got a default agent's answer.
-            var media = new OpenClawMediaSource(path, GatewayKey);
+            var media = OpenClawSessions.MediaSourceFor(path, GatewayKey, OpenClawSessions.OwnerIndexSnapshot());
+
+            // CB-272: a clip is never fetched here. The panel draws a tile
+            // from the gateway's meta answer and fetches the bytes only when
+            // it is clicked, so all this does is hand the row what it needs
+            // to ask — the path and the finished route — and let TurnView
+            // take it from there. ImageUrl last, since its setter is what
+            // wakes the row (see TryResolveLiveImage's note on that order).
+            // The bytes must never land in ImageBytes: that is the picture
+            // path, which decodes whatever it is handed.
+            if (OpenClawVideo.IsVideoPath(path))
+            {
+                turn.ImageSourcePath = media.Path;
+                turn.ImageAlt = path[(path.LastIndexOf('/') + 1)..];
+                turn.ImageUrl = media.Route;
+
+                TurnUpdated?.Invoke(turn);
+                return;
+            }
 
             var bytes = await OpenClawSessions.FetchLocalMediaAsync(media, CancellationToken.None);
             if (bytes is { Length: > 0 })
@@ -729,26 +1231,120 @@ namespace Orbweaver
             TurnUpdated?.Invoke(turn);
         }
 
+        // The text of the bubble the run is in now, or null when there is none.
+        private string? AssistantBubble(JsonElement payload, JsonElement data)
+        {
+            // A different run never continues the previous one's bubble. Today's
+            // overwrite of run 1's reply by run 2's first words is what this is.
+            var runId = Str(payload, "runId");
+            if (!string.IsNullOrEmpty(runId) && runId != _runId)
+            {
+                Complete();
+                _runId = runId;
+            }
+
+            var snapshot = Str(data, "text");
+            var delta = Str(data, "delta");
+
+            // A snapshot is trusted only where it agrees with what has already
+            // been drawn as finished bubbles, and only for a run seen from its
+            // start. One that does not agree (never measured) cannot say where the
+            // current bubble starts, and guessing would either repeat a step or
+            // cut one short, so it is ignored.
+            if (!string.IsNullOrEmpty(snapshot))
+            {
+                if (_sawRunStart && snapshot.StartsWith(_closed, StringComparison.Ordinal)) _runText = snapshot;
+            }
+            else if (!string.IsNullOrEmpty(delta))
+            {
+                // A run's first event carries text; a delta with nothing before it
+                // means this session joined partway.
+                if (_runText.Length == 0) _sawRunStart = false;
+                _runText += delta;
+            }
+            else return null;
+
+            return _runText[_closed.Length..].Trim();
+        }
+
         private void OnTool(JsonElement payload)
         {
             if (!payload.TryGetProperty("data", out var data)) return;
-            if (Str(data, "phase") != "start") return;
 
+            var phase = Str(data, "phase");
             var tool = Str(data, "name");
-            if (string.IsNullOrEmpty(tool)) return;
+            var id = Str(data, "toolCallId");
 
-            // One line per tool call, in the transcript rather than in a status
-            // area: what an agent reached for is part of what it said.
-            Add(new ChatTurn
+            if (phase == "result")
+            {
+                if (id is not null && _tools.Remove(id, out var line))
+                {
+                    // The flag, never the text: AppendNewTail anchors on text, and
+                    // a line that reworded itself when its tool finished would not
+                    // match its history twin.
+                    if (Bool(data, "isError") == true)
+                    {
+                        line.IsError = true;
+                        TurnUpdated?.Invoke(line);
+                    }
+
+                    return;
+                }
+
+                // A result for a start this client never saw. If it says what the
+                // tool was, draw the line now rather than lose the call.
+                if (string.IsNullOrEmpty(tool)) return;
+                AddToolLine(tool, data, Bool(data, "isError") == true);
+                return;
+            }
+
+            if (phase != "start" || string.IsNullOrEmpty(tool)) return;
+
+            // The text so far is a step, and what comes after the tool is the
+            // next: close the bubble here so the tool line lands between them.
+            if (_streaming is { IsComplete: false } && _streamingKind == "assistant")
+            {
+                _streaming.IsComplete = true;
+                TurnUpdated?.Invoke(_streaming);
+                _streaming = null;
+                _streamingKind = null;
+                _closed = _runText;
+            }
+
+            var added = AddToolLine(tool, data, false);
+            if (id is not null) _tools[id] = added;
+        }
+
+        // One line per tool call, in the transcript rather than in a status
+        // area: what an agent reached for is part of what it said. The same
+        // summariser history uses, fed the same arguments object, so the two
+        // paths produce the identical line.
+        private ChatTurn AddToolLine(string tool, JsonElement data, bool isError)
+        {
+            var args = data.TryGetProperty("args", out var a) ? a : default;
+            var turn = new ChatTurn
             {
                 Role = ChatRole.System,
                 IsComplete = true,
-                Text = "· " + tool
-            });
+                IsError = isError,
+                Text = ChatTranscript.ToolSummary(tool, args)
+            };
+
+            RunSeen();
+            Add(turn);
+            _runFirst ??= turn;
+            return turn;
         }
 
         private void Complete()
         {
+            // A run is over whether or not a bubble was open for it.
+            _tools.Clear();
+            _runText = "";
+            _closed = "";
+            _runId = null;
+            _sawRunStart = true;
+
             if (_streaming is null) return;
 
             _streaming.IsComplete = true;
@@ -797,6 +1393,280 @@ namespace Orbweaver
         public Task<bool> LoadOlderAsync(CancellationToken ct) =>
             OpenClawSessions.LoadOlderAsync(this, ct);
 
+        // --- run controls (CB-270 Stage 4) -----------------------------------
+
+        public event Action? RunOptionsChanged;
+
+        public int? TimeoutMinutes { get; set; }
+
+        // Called on the UI thread when the run state or the model catalogue moved.
+        internal void OnRunOptionsChanged() => RunOptionsChanged?.Invoke();
+
+        // CB-270 Stage 6: the pending approvals for this session changed (one
+        // arrived, one was resolved, or the poll reconciled). Called on the UI
+        // thread by OpenClawSessions, which has already updated PendingFor(key); the
+        // panel side reads that and redraws its prompt, and drains TakeEnded for the
+        // lines about approvals it did not answer itself.
+        internal event Action? ApprovalsChanged;
+
+        internal void OnApprovalsChanged()
+        {
+            RefreshApprovals();
+            ApprovalsChanged?.Invoke();
+        }
+
+        // --- approvals (CB-270 Stage 6) ----------------------------------------
+        //
+        // The first unexpired pending approval to arrive for this conversation is
+        // the prompt, in the order the store gives and never sorted by the gateway's
+        // own createdAt (which a hostile gateway could set to jump the queue), read from OpenClawSessions every time it is asked, so a panel
+        // that opens after the request arrived shows it too. The rest queue behind
+        // it. The two answers are the client's, fixed, and every option is bound
+        // to the approval it was drawn for.
+
+        public event Action? PromptChanged;
+
+        // Ids with an answer in flight from this panel: hidden from the bar at the
+        // click so a second click has nothing to land on, and restored if the answer
+        // failed and the request is still pending.
+        private readonly HashSet<string> _answering = new(StringComparer.Ordinal);
+
+        private string? _shownPromptKey;
+
+        private OpenClawApproval? CurrentApproval() =>
+            OpenClawSessions.PendingFor(GatewayKey).FirstOrDefault(a => !_answering.Contains(a.Id));
+
+        // Who is asking: the agent's own name, from the record's agent id and failing
+        // that the one in this conversation's key, never the chat's label. DisplayName
+        // is what the orb and the panel header call the conversation, which can be any
+        // sentence (a session's title), and reading it as the agent's name made the
+        // prompt say "<whole title> wants to run". The header already shows the label.
+        //
+        // The conversation's own agent wins: when the key names one, the title uses
+        // that agent and a record's agentId that disagrees never reaches it. The
+        // record's id is only a fallback for a key that is not an agent key, and is
+        // used only if it is a plain id (letters, digits, dot, underscore, hyphen,
+        // 1 to 64): anything else is treated as absent, so an odd character from the
+        // gateway cannot reach the title.
+        internal static readonly System.Text.RegularExpressions.Regex PlainAgentId =
+            new(@"\A[A-Za-z0-9._-]{1,64}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private string AgentNameFor(OpenClawApproval approval)
+        {
+            // The key's agent is held to the same plain-id rule as the record's: a key
+            // whose agent segment is a sentence has no agent to name, and neither
+            // falls through to the record nor goes to the listed-name lookup.
+            var keyed = OpenClawSessions.AgentIdOf(GatewayKey);
+            if (keyed is not null) return PlainAgentId.IsMatch(keyed) ? OpenClawSessions.AgentNameOf(keyed) : "";
+
+            return approval.AgentId is { } recorded && PlainAgentId.IsMatch(recorded)
+                ? OpenClawSessions.AgentNameOf(recorded)
+                : "";
+        }
+
+        private ChatPrompt PromptFor(OpenClawApproval approval) =>
+            OpenClawApprovalText.Prompt(
+                approval.Id, AgentNameFor(approval), approval.Command, approval.Cwd, approval.Host,
+                commandTruncated: approval.CommandTruncated,
+                allowedDecisions: approval.AllowedDecisions, warning: approval.Warning,
+                unsafeToShow: approval.Unsafe, commandLength: approval.CommandLength > 0 ? approval.CommandLength : null);
+
+        // Remembers what it handed out, so PromptChanged is raised only when the bar
+        // would differ from what the panel last drew.
+        public ChatPrompt? Prompt
+        {
+            get
+            {
+                var approval = CurrentApproval();
+                var prompt = approval is null ? null : PromptFor(approval);
+                _shownPromptKey = approval is null ? null : approval.Id + "|" + prompt!.Title;
+                return prompt;
+            }
+        }
+
+        // Writes up what ended without this panel answering it, once each, and
+        // redraws the bar if what it shows changed.
+        private void RefreshApprovals()
+        {
+            foreach (var ended in OpenClawSessions.TakeEnded(GatewayKey)) Note(EndedLine(ended));
+
+            var key = CurrentApproval() is { } approval ? approval.Id + "|" + PromptFor(approval).Title : null;
+            if (key == _shownPromptKey) return;
+
+            _shownPromptKey = key;
+            PromptChanged?.Invoke();
+        }
+
+        private static string EndedLine(OpenClawApprovalEnded ended)
+        {
+            if (ended.Cause == "evicted") return OpenClawApprovalText.Evicted;
+
+            // The status the gateway declared; failing that, what a resolved event's
+            // decision says; failing that, the local clock's expiry.
+            var declared = ended.Status is null or OpenClawApprovals.UnknownStatus ? null : ended.Status;
+            var status = declared ?? ended.Decision switch
+            {
+                OpenClawApprovals.Deny => "denied",
+                OpenClawApprovals.AllowOnce or "allow-always" => "allowed",
+                _ => ended.Cause == "expired" ? "expired" : null
+            };
+
+            return OpenClawApprovalText.Ended(status, ended.Reason, ended.Decision);
+        }
+
+        // The one handler an answer comes through, reached only from a click on a
+        // button the person can see. Sends nothing unless the option is one this
+        // conversation's current prompt offered for the approval it shows now.
+        public async Task AnswerAsync(ChatPromptOption option)
+        {
+            if (!OrbweaverSettings.OpenClawApproveEnabled)
+            {
+                Note(OpenClawApprovalText.ApprovingOff);
+                return;
+            }
+
+            // A second click on a request already being answered has nothing to say.
+            if (option.ApprovalId is { } already && _answering.Contains(already)) return;
+
+            var approval = CurrentApproval();
+
+            // The queue moved between drawing the option and the click: the option
+            // is for a request that is no longer the one on the bar. Answering the
+            // new one with the old click would put "Allow once" on a command the
+            // person never saw.
+            if (approval is null || option.ApprovalId != approval.Id)
+            {
+                Note(OpenClawApprovalText.RequestChanged);
+                RefreshApprovals();
+                return;
+            }
+
+            // Only an option the prompt offers for this request: never a key the
+            // payload names, never allow-once on a request that can only be denied.
+            if (!PromptFor(approval).Options.Any(o => o.Key == option.Key && o.ApprovalId == option.ApprovalId))
+            {
+                return;
+            }
+
+            // Marked the moment the click lands: a second click has nothing to land on.
+            _answering.Add(approval.Id);
+            RefreshApprovals();
+
+            var outcome = await OpenClawSessions.ResolveApprovalAsync(this, approval.Id, option.Key);
+
+            switch (outcome.Result)
+            {
+                case OpenClawApprovalResult.Answered:
+                    Note(OpenClawApprovalText.Answered(option.Key));
+                    break;
+                case OpenClawApprovalResult.DecidedElsewhere:
+                    Note(OpenClawApprovalText.AlreadyDecided(outcome.Status, outcome.Reason));
+                    break;
+                case OpenClawApprovalResult.NoLongerPending:
+                    Note(OpenClawApprovalText.NoLongerPending);
+                    break;
+                case OpenClawApprovalResult.Failed:
+                    Note(OpenClawApprovalText.CouldntAnswer(outcome.Detail ?? ""));
+                    break;
+                    // Duplicate: already being answered, so nothing more to say.
+            }
+
+            // Back on the bar if it did not land and is still pending.
+            _answering.Remove(approval.Id);
+            RefreshApprovals();
+        }
+
+        // There is no terminal to focus: say how to answer it on the gateway, with
+        // the id as data.
+        public void AnswerElsewhere()
+        {
+            if (CurrentApproval() is { } approval) Note(OpenClawApprovalText.Elsewhere(approval.Id));
+        }
+
+        // Null unless every one of these holds, so the panel hides the picker
+        // rather than showing one that would be refused:
+        //   - the conversation is answered in place. A surface chat's model is the
+        //     channel's configuration, and patching it would change how the agent
+        //     answers everyone else there. This is the same predicate that decides
+        //     whether a reply is delivered, so the two cannot disagree.
+        //   - replying is allowed, which is what grants the write scope;
+        //   - the gateway granted write and lists sessions.patch (read through
+        //     CapabilitiesFor, the one source), and has listed this conversation;
+        //   - the gateway told us what it is running on, and which models it has.
+        public RemoteRunOptions? RunOptions
+        {
+            get
+            {
+                // What the gateway last said this conversation is, read now: a panel
+                // is opened before any send has asked, and Route is Surface until it
+                // has been told.
+                Observe(OpenClawSessions.NativeOf(GatewayKey));
+
+                if (Route != OpenClawSendRoute.Native) return null;
+                if (!OrbweaverSettings.OpenClawReplyEnabled) return null;
+
+                var context = OpenClawSessions.CapabilitiesFor(SessionId);
+                if (!context.Connected || context.SessionId is null
+                    || !context.Methods.Contains(OpenClawOrbActions.PatchMethod)
+                    || !context.Scopes.Contains(OpenClawOrbActions.WriteScope))
+                {
+                    return null;
+                }
+
+                if (OpenClawSessions.RunStateOf(GatewayKey) is not { Model: { } modelId } state) return null;
+
+                var catalogue = OpenClawSessions.OfferedModels;
+                if (catalogue.Count == 0) return null;
+
+                var models = catalogue.Select(m => new RemoteRunChoice(m.Id, m.Name)).ToList();
+
+                // The model in force may not be one that is offered (the gateway's
+                // default can be a model it will not let a patch choose): it is still
+                // what the chip must name, so it is listed rather than left out.
+                if (models.All(m => m.Id != modelId)) models.Insert(0, new RemoteRunChoice(modelId, modelId));
+
+                // The levels the gateway reports for this conversation's own model,
+                // else the catalogue's entry for it. Never the refusal text.
+                var levels = state.ThinkingLevels.Count > 0
+                    ? state.ThinkingLevels
+                    : catalogue.FirstOrDefault(m => m.Id == modelId)?.ThinkingLevels
+                      ?? Array.Empty<OpenClawRunOption>();
+
+                var modelName = models.First(m => m.Id == modelId).Label;
+                var defaultLabel = state.ThinkingDefault is { } d
+                    ? levels.FirstOrDefault(o => o.Id == d)?.Label ?? d
+                    : null;
+
+                return new RemoteRunOptions(
+                    modelId,
+                    models,
+                    state.ThinkingLevel,
+                    defaultLabel,
+                    levels.Select(o => new RemoteRunChoice(o.Id, o.Label)).ToList(),
+                    state.EffectiveFastMode,
+                    state.FastMode is not null,
+                    state.SelectionLocked,
+                    // Measured accepted on all three fields.
+                    true,
+                    OpenClawRunText.Chip(modelName, state.EffectiveThinkingLabel, state.EffectiveFastMode));
+            }
+        }
+
+        public async Task<string?> SetModelAsync(string? id) =>
+            Describe(await OpenClawSessions.SetModelAsync(SessionId, id, CancellationToken.None), OpenClawAction.Model);
+
+        public async Task<string?> SetThinkingAsync(string? id) =>
+            Describe(await OpenClawSessions.SetThinkingAsync(SessionId, id, CancellationToken.None), OpenClawAction.Thinking);
+
+        public async Task<string?> SetFastModeAsync(bool? on) =>
+            Describe(await OpenClawSessions.SetFastModeAsync(SessionId, on, CancellationToken.None), OpenClawAction.Fast);
+
+        // Null on success, otherwise the sentence the flyout shows.
+        private static string? Describe((OpenClawActionOutcome Outcome, string? Detail) result, OpenClawAction action) =>
+            result.Outcome == OpenClawActionOutcome.Done
+                ? null
+                : OpenClawActionText.For(result.Outcome, result.Detail, action);
+
         public string ComposerHint => OrbweaverSettings.OpenClawReplyEnabled
             ? "Message…"
             : "Replying is off";
@@ -805,37 +1675,261 @@ namespace Orbweaver
         // raising its own event, because the panel has to put the scroll
         // position back afterwards — content appearing above where you are
         // reading would otherwise throw you down the page.
+        //
+        // CB-270 stage 3b: a run's steps and its rollup can sit on two chat.history
+        // pages. Each page drops, on its own, the steps a kept rollup on it
+        // contains (TextsToDrop). The one thing a page cannot do is drop the steps
+        // of *this* rollup that sit on an older page, so that is done here, when the
+        // older page arrives: its trailing-run steps (OpenTail) that the
+        // transcript's head rollup (SeamRollup) contains are left out of the turns
+        // before they become rows, or keep their picture and lose their caption.
+        //
+        // Both sets come from the pages' raw messages, never from scanning turns,
+        // because a user message can render to no turn and a boundary read off turns
+        // would run past it into a different run. Nothing already on screen is
+        // removed: where the whole run is an exact join across the seam, the page's
+        // outcome stands (rollup kept, steps dropped) and the words are those of the
+        // whole-page parse. HistoryPrepended reports the rows inserted.
         public void PrependHistory(IReadOnlyList<HistoryTurn> turns)
         {
             if (turns.Count == 0) return;
 
-            var older = turns.Select(t => new ChatTurn
+            turns = FilterOlderTailSteps(turns);
+            turns = DedupePicturesAcrossTheSeam(turns);
+
+            var older = new List<ChatTurn>(turns.Count);
+            ChatTurn? seam = null;
+            var headRun = new List<ChatTurn>();
+
+            foreach (var t in turns)
             {
-                Role = t.Role,
-                Text = t.Text,
+                var turn = new ChatTurn
+                {
+                    Role = t.Role,
+                    Text = t.Text,
 
-                // Copied alongside ImageUrl, never instead of it: the url is
-                // what gets fetched, this is the file it names, and a turn
-                // that kept one without the other could no longer say why a
-                // picture did not load (CB-109).
-                ImageSourcePath = t.ImageSourcePath,
+                    // Copied alongside ImageUrl, never instead of it: the url is
+                    // what gets fetched, this is the file it names, and a turn
+                    // that kept one without the other could no longer say why a
+                    // picture did not load (CB-109).
+                    ImageSourcePath = t.ImageSourcePath,
+                    Attachment = t.Attachment,
 
-                // CB-116: carried the same way — the tier TurnsFromHistory
-                // already worked out for this turn, not re-guessed here from
-                // its text. See ChatTurn.Confidence's own header.
-                Confidence = t.Confidence,
-                ImageUrl = t.ImageUrl,
-                ImageBytes = t.ImageBytes,
-                ImageAlt = t.ImageAlt,
-                At = t.At,
-                Speaker = t.Speaker,
-                SpeakerColor = t.SpeakerColor,
-                Mine = t.Mine,
-                IsComplete = true
-            }).ToList();
+                    // CB-116: carried the same way — the tier TurnsFromHistory
+                    // already worked out for this turn, not re-guessed here from
+                    // its text. See ChatTurn.Confidence's own header.
+                    Confidence = t.Confidence,
+                    ImageUrl = t.ImageUrl,
+                    ImageBytes = t.ImageBytes,
+                    ImageAlt = t.ImageAlt,
+                    At = t.At,
+                    Speaker = t.Speaker,
+                    SpeakerColor = t.SpeakerColor,
+                    Mine = t.Mine,
+                    IsError = t.IsError,
+                    FromRollup = t.FromRollup,
+                    IsMirror = t.Arm == MediaSourceArm.Mirror,
+                    Blanked = t.Blanked,
+                    FreeNamed = t.FreeNamed,
+                    IsComplete = true
+                };
+
+                older.Add(turn);
+                if (t.SeamRollup) seam = turn;
+                if (t.RunHead) headRun.Add(turn);
+            }
 
             _history.InsertRange(0, older);
+
+            // The older page is now the head. Its own cut first run, if it has one,
+            // is the next seam; otherwise there is none.
+            _seamRollup = seam;
+            _headRun = headRun;
+            _headPage = older;
+
             HistoryPrepended?.Invoke(older.Count);
+        }
+
+        // The older page's trailing-run steps the transcript's head rollup contains
+        // are taken out; one that carries a picture or attachment keeps it, with an
+        // empty caption (and is then Blanked, a candidate for the picture dedupe).
+        private IReadOnlyList<HistoryTurn> FilterOlderTailSteps(IReadOnlyList<HistoryTurn> older)
+        {
+            var head = _seamRollup;
+            if (head is null || !_history.Contains(head)) return older;
+
+            var tail = new List<int>();
+            for (var i = 0; i < older.Count; i++)
+            {
+                if (older[i].OpenTail) tail.Add(i);
+            }
+
+            var covered = OpenClawHistoryShape.StepsCoveredBy(head.Text, tail.Select(i => older[i].Text).ToList());
+            if (covered.Count == 0) return older;
+
+            var filtered = older.ToList();
+            var gone = new HashSet<int>();
+
+            foreach (var j in covered)
+            {
+                var at = tail[j];
+                var step = older[at];
+
+                if (step.ImageUrl is null && step.ImageBytes is null && step.Attachment is null)
+                    gone.Add(at);
+                else
+                    filtered[at] = step with { Text = "", Blanked = true };
+            }
+
+            return filtered.Where((_, i) => !gone.Contains(i)).ToList();
+        }
+
+        // A picture is not drawn twice, and that includes across a page boundary. Only
+        // two kinds of turn are ever dropped for it: a turn whose caption was blanked
+        // (its words shown by the other half of a covered pair) and a delivery-mirror,
+        // the gateway's record of having delivered a file. A turn the agent sent is
+        // never dropped, even naming the same file, and the last copy always stays.
+        //
+        // A blanked turn goes when a turn of the other half of the *run* shows its
+        // resolved path: the older page's trailing run is compared with the
+        // transcript's head run (an older candidate is left out before it becomes a
+        // row, a head candidate is a row on screen and is removed).
+        //
+        // A mirror is different, because the collapse it takes part in is page-wide
+        // and budgeted: on one page each mirror is cancelled by one unpaired named
+        // turn for its file, wherever it sits (a user message between them does not
+        // matter), and a mirror with no unpaired named turn is a second genuine
+        // delivery and stays. Across the seam the same: the older page's mirrors are
+        // cancelled by the unpaired named turns of the page next to it, and that
+        // page's mirrors by the older page's, one for one, matched by file name (the
+        // page a mirror was parsed on may not hold the directory its picture sits in,
+        // so its own path is a guess). Two mirrors of one file with nothing named stay
+        // two.
+        private IReadOnlyList<HistoryTurn> DedupePicturesAcrossTheSeam(IReadOnlyList<HistoryTurn> older)
+        {
+            var headRun = _headRun.Where(t => _history.Contains(t)).ToList();
+            var headPage = _headPage.Where(t => _history.Contains(t)).ToList();
+
+            static bool IsPicture(HistoryTurn t) => t.ImageUrl is not null;
+
+            var gone = new HashSet<int>();
+
+            for (var i = 0; i < older.Count; i++)
+            {
+                var c = older[i];
+                if (!c.RunTail || !IsPicture(c) || !c.Blanked) continue;
+
+                if (headRun.Any(h => h.ImageUrl is not null && !string.IsNullOrEmpty(c.ImageSourcePath)
+                                     && string.Equals(c.ImageSourcePath, h.ImageSourcePath, StringComparison.Ordinal)))
+                    gone.Add(i);
+            }
+
+            var rows = new SortedSet<int>();
+            foreach (var h in headRun.Where(h => h.ImageUrl is not null && h.Blanked))
+            {
+                for (var i = 0; i < older.Count; i++)
+                {
+                    if (!older[i].RunTail || gone.Contains(i) || !IsPicture(older[i])) continue;
+
+                    if (!string.IsNullOrEmpty(older[i].ImageSourcePath)
+                        && string.Equals(older[i].ImageSourcePath, h.ImageSourcePath, StringComparison.Ordinal))
+                    {
+                        rows.Add(_history.IndexOf(h));
+                        break;
+                    }
+                }
+            }
+
+            // The older page's mirrors against the next page's unpaired named turns.
+            foreach (var file in older.Where(t => t.Arm == MediaSourceArm.Mirror && IsPicture(t) && !string.IsNullOrEmpty(t.ImageAlt))
+                         .Select(t => t.ImageAlt).Distinct().ToList())
+            {
+                var budget = headPage.Count(h => h.FreeNamed && h.ImageUrl is not null && h.ImageAlt == file);
+                for (var i = 0; i < older.Count && budget > 0; i++)
+                {
+                    if (older[i].Arm != MediaSourceArm.Mirror || !IsPicture(older[i]) || older[i].ImageAlt != file || gone.Contains(i)) continue;
+
+                    gone.Add(i);
+                    budget--;
+                }
+            }
+
+            // The next page's mirrors against the older page's unpaired named turns.
+            foreach (var file in headPage.Where(h => h.IsMirror && h.ImageUrl is not null && !string.IsNullOrEmpty(h.ImageAlt))
+                         .Select(h => h.ImageAlt).Distinct().ToList())
+            {
+                var budget = older.Where((t, i) => !gone.Contains(i) && t.FreeNamed && IsPicture(t) && t.ImageAlt == file).Count();
+                foreach (var h in headPage.Where(h => h.IsMirror && h.ImageUrl is not null && h.ImageAlt == file))
+                {
+                    if (budget == 0) break;
+
+                    rows.Add(_history.IndexOf(h));
+                    budget--;
+                }
+            }
+
+            if (rows.Count > 0) RemoveRows(rows);
+
+            var kept = gone.Count == 0 ? older.ToList() : older.Where((_, i) => !gone.Contains(i)).ToList();
+
+            // The whole page resolves a mirror's route against the directories every
+            // message on it names; parsed on its own, a mirror whose file is named on
+            // the other page falls back to a guess. A mirror that survives is given the
+            // route of the named turn for its file on the page next to it, so the copy
+            // that stays fetches the file the whole page would.
+            for (var i = 0; i < kept.Count; i++)
+            {
+                var m = kept[i];
+                if (m.Arm != MediaSourceArm.Mirror || !IsGuess(m.ImageSourcePath)) continue;
+
+                var named = headPage.FirstOrDefault(h => !h.IsMirror && h.ImageUrl is not null && h.ImageAlt == m.ImageAlt
+                                                       && !string.IsNullOrEmpty(h.ImageSourcePath) && !IsGuess(h.ImageSourcePath));
+                if (named is not null) kept[i] = m with { ImageUrl = named.ImageUrl, ImageSourcePath = named.ImageSourcePath };
+            }
+
+            foreach (var h in headPage.Where(h => h.IsMirror && h.ImageUrl is not null && IsGuess(h.ImageSourcePath)))
+            {
+                var named = kept.FirstOrDefault(o => o.Arm != MediaSourceArm.Mirror && o.ImageUrl is not null && o.ImageAlt == h.ImageAlt
+                                                    && !string.IsNullOrEmpty(o.ImageSourcePath) && !IsGuess(o.ImageSourcePath));
+                if (named.ImageUrl is null) continue;
+
+                h.ImageUrl = named.ImageUrl;
+                h.ImageSourcePath = named.ImageSourcePath;
+            }
+
+            return kept;
+        }
+
+        private static bool IsGuess(string? path) =>
+            path is not null && path.StartsWith(OpenClawSessions.SharedMediaDir, StringComparison.Ordinal);
+
+        // Removes rows already on screen, highest first and one TurnsRemoved per
+        // contiguous run, so the indices are the transcript's as it stood. The page's
+        // last row, held by reference (ReconcileRun anchors on it), moves to the row
+        // before it if it is removed.
+        private void RemoveRows(SortedSet<int> rows)
+        {
+            var pageLastAt = _pageLast is null ? -1 : _history.IndexOf(_pageLast);
+
+            var ordered = rows.Reverse().ToList();
+            var n = 0;
+            while (n < ordered.Count)
+            {
+                var top = ordered[n];
+                var run = 1;
+                while (n + run < ordered.Count && ordered[n + run] == top - run) run++;
+
+                var from = top - run + 1;
+                _history.RemoveRange(from, run);
+                TurnsRemoved?.Invoke(from, run);
+                n += run;
+            }
+
+            if (pageLastAt >= 0 && rows.Contains(pageLastAt))
+            {
+                var before = pageLastAt - rows.Count(r => r < pageLastAt) - 1;
+                _pageLast = before >= 0 ? _history[before] : null;
+            }
         }
 
         public event Action<int>? HistoryPrepended;
@@ -847,7 +1941,20 @@ namespace Orbweaver
             _history.Clear();
             _streaming = null;
             _streamingKind = null;
+            _runFirst = null;
+
+            // _runDirty is left alone: the page that just landed may be older than
+            // the run (a slow first load) or hold only part of it, and the run's
+            // end reconciles against a fresh page either way.
+
+            // Whatever the run had streamed in before the page landed is in the
+            // page or is not coming back by itself, so it is closed rather than
+            // drawn a second time as the start of a fresh bubble. The refetch at
+            // the run's end appends what the page did not hold.
+            _closed = _runText;
             HasMore = true;
+
+            _seamRollup = null;
 
             foreach (var turn in turns)
             {
@@ -859,6 +1966,7 @@ namespace Orbweaver
                     // See PrependHistory's twin above for why this travels
                     // with ImageUrl rather than being recovered from it.
                     ImageSourcePath = turn.ImageSourcePath,
+                    Attachment = turn.Attachment,
                     Confidence = turn.Confidence,
                     ImageUrl = turn.ImageUrl,
                     ImageBytes = turn.ImageBytes,
@@ -867,10 +1975,26 @@ namespace Orbweaver
                     Speaker = turn.Speaker,
                     SpeakerColor = turn.SpeakerColor,
                     Mine = turn.Mine,
+                    IsError = turn.IsError,
+                    FromRollup = turn.FromRollup,
+                    IsMirror = turn.Arm == MediaSourceArm.Mirror,
+                    Blanked = turn.Blanked,
+                    FreeNamed = turn.FreeNamed,
                     IsComplete = true
                 });
             }
 
+            // The page's own seam rollup, if it has one (a page an older one may
+            // precede, whose first run ends in a kept rollup), and its head run.
+            _headRun = new List<ChatTurn>();
+            _headPage = _history.ToList();
+            for (var i = 0; i < turns.Count; i++)
+            {
+                if (turns[i].SeamRollup) _seamRollup = _history[i];
+                if (turns[i].RunHead) _headRun.Add(_history[i]);
+            }
+
+            _pageLast = _history[^1];
             HistoryReplaced?.Invoke();
         }
 
@@ -888,11 +2012,18 @@ namespace Orbweaver
             StateChanged?.Invoke(state);
         }
 
+        private static bool? Bool(JsonElement e, string name) =>
+            e.ValueKind == JsonValueKind.Object
+            && e.TryGetProperty(name, out var v)
+            && v.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? v.GetBoolean()
+                : null;
+
         private static string? Str(JsonElement e, string name) =>
             e.ValueKind == JsonValueKind.Object
             && e.TryGetProperty(name, out var v)
             && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
+                ? v.SafeString()
                 : null;
     }
 }

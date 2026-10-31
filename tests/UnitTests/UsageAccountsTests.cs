@@ -21,6 +21,7 @@ namespace Orbweaver.Tests;
 // Verified against this machine before the rule was written: ~/.claude.json has
 // an oauthAccount, ~/.claude/.claude.json does not, and
 // ~/.claude-board/.claude.json does.
+[Collection("ConfigDirEnv")]
 public class UsageAccountsTests
 {
     private static string Home => Path.Combine("/Users", "someone");
@@ -141,28 +142,45 @@ public class UsageAccountsTests
         Assert.Null(dirs[0]);
     }
 
-    // ConfigDirs shares ExtraAccountDirs, so an inherited CLAUDE_CONFIG_DIR
-    // (CB-114) changes the orbs the same way it changes the background-job
-    // listing: the default account gets asked, and therefore gets an orb, even
-    // when it was not the account this app's own process inherited. The full
-    // matrix is BackgroundJobsAccountsTests' — this just confirms the sharing
-    // actually reaches usage orbs rather than staying a BackgroundJobs-only
-    // fix.
+    // CB-295. The poll's null read removes CLAUDE_CONFIG_DIR from the child's
+    // environment (UsagePollerTests pins that), so it always reaches the default
+    // account and ConfigDirs must not be told otherwise: no explicit ~/.claude
+    // entry, which would read the un-onboarded ~/.claude/.claude.json and draw a
+    // phantom "claude" orb. Named accounts still each get their own entry.
     [Fact]
-    public void AnInheritedAccountGetsTheDefaultAccountsOrbToo()
+    public void TheDefaultAccountIsNeverAddedExplicitlyBecauseTheNullReadIsIt()
     {
-        var dirs = UsageAccounts.ConfigDirs(
-            Home, Array.Empty<string>(), inheritedConfigDir: Path.Combine(Home, ".claude-board"));
+        var board = Path.Combine(Home, ".claude-board");
+        var loginid = Path.Combine(Home, ".claude-loginid");
 
-        Assert.Equal(new List<string?> { null, Path.Combine(Home, ".claude") }, dirs);
+        var dirs = UsageAccounts.ConfigDirs(
+            Home, new List<string> { ".claude-board", ".claude-loginid" });
+
+        Assert.Equal(new List<string?> { null, board, loginid }, dirs);
+        Assert.DoesNotContain(Path.Combine(Home, ".claude"), dirs);
     }
 
+    // The pairing that makes ignoring the inherited value correct: even with
+    // this process running under another account, the null entry builds a child
+    // with no CLAUDE_CONFIG_DIR at all.
     [Fact]
-    public void AnUnsetInheritedConfigDirChangesNothing()
+    public void TheNullEntryReachesTheDefaultAccountEvenWhenThisProcessHasAConfigDir()
     {
-        var dirs = UsageAccounts.ConfigDirs(Home, Array.Empty<string>(), inheritedConfigDir: null);
+        var previous = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                "CLAUDE_CONFIG_DIR", Path.Combine(Home, ".claude-board"));
 
-        Assert.Single(dirs);
-        Assert.Null(dirs[0]);
+            var dirs = UsageAccounts.ConfigDirs(Home, Array.Empty<string>());
+            var psi = UsagePoller.UsageProcess("/usr/local/bin/claude", dirs[0]);
+
+            Assert.Single(dirs);
+            Assert.False(psi.Environment.ContainsKey("CLAUDE_CONFIG_DIR"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", previous);
+        }
     }
 }

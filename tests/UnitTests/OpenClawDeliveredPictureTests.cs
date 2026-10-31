@@ -12,6 +12,23 @@ public class OpenClawDeliveredPictureTests
 {
     private const string Mirror = OpenClawSessions.DeliveryMirrorModel;
 
+    // CB-272: a mirror can name a clip, and is then a delivery of one.
+    [Theory]
+    [InlineData("clip_123.mp4")]
+    [InlineData("clip_123.MOV")]
+    [InlineData("clip_123.webm")]
+    [InlineData("clip_123.m4v")]
+    public void ADeliveryMirrorNamingAClipIsADelivery(string name)
+    {
+        Assert.Equal(name, OpenClawSessions.DeliveredPictureName(Mirror, name));
+    }
+
+    [Fact]
+    public void ADeliveryMirrorNamingNotesTxtIsNotADelivery()
+    {
+        Assert.Null(OpenClawSessions.DeliveredPictureName(Mirror, "notes.txt"));
+    }
+
     [Fact]
     public void ADeliveryMirrorCarryingABareImageFilenameIsADeliveredPicture()
     {

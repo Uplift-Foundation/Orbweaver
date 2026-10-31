@@ -172,6 +172,27 @@ public class ChatPanelScreenshots : IDisposable
         }
     }
 
+    // CB-298. The header's mute button in both looks, so the crossed-out
+    // speaker and the red fill are reviewed as pixels, not as a property.
+    [AvaloniaTheory]
+    [InlineData(true, "chat-panel-header-muted.png")]
+    [InlineData(false, "chat-panel-header-unmuted.png")]
+    public void ThePanelsMuteButton(bool muted, string file)
+    {
+        ChatPanel.OpenFor(KindOrb(SessionKind.Channel), NewFake());
+
+        try
+        {
+            AudioMute.Set(muted);
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, file);
+        }
+        finally
+        {
+            AudioMute.Set(false);
+        }
+    }
+
     private static OrbWindow KindOrb(SessionKind kind)
     {
         var orb = NewOrb();
@@ -224,6 +245,84 @@ public class ChatPanelScreenshots : IDisposable
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-parked-attach.png");
+    }
+
+    // CB-270 Stage 3: a gateway chat in which an agent ran two tools between the
+    // two halves of its reply, the second of which failed. One tool line in the
+    // quiet system ink and one in the panel's red, with the reply split around
+    // them the way the live view and history now agree on. Captured because the
+    // tint is a new visible surface and the thing worth judging is whether a
+    // failed tool is noticeable without being loud.
+    [AvaloniaFact]
+    public void AToolLineAndAFailedToolLineInAGatewayChat()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Count the files, then tidy the scratch folder." },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "On it, counting first." },
+            new ChatTurn { Role = ChatRole.System, IsComplete = true, Text = "· mcp__openclaw__exec  ls | wc -l" },
+            new ChatTurn { Role = ChatRole.System, IsComplete = true, IsError = true, Text = "· mcp__openclaw__exec  rm -r scratch" },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "18 files. The tidy failed: the folder is read-only." },
+        }, displayName: "main");
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-tool-lines.png");
+    }
+
+    // CB-270 Stage 4: the run controls of a native conversation. The chip in the
+    // header says what it is running on; the flyout, drawn here in a window of
+    // its own because a popup is not part of the panel's visual tree, is what a
+    // click opens. The locked variant is a model the gateway will not let be
+    // changed, with thinking and fast still open.
+    private static RemoteRunOptions RunOptions(bool locked = false) => new(
+        "claude-opus-4-6",
+        new[] { new RemoteRunChoice("claude-opus-4-6", "Claude Opus 4.6"), new RemoteRunChoice("claude-haiku-4-5", "Claude Haiku 4.5") },
+        "high", "adaptive",
+        new[] { new RemoteRunChoice("off", "off"), new RemoteRunChoice("adaptive", "adaptive"), new RemoteRunChoice("high", "high") },
+        true, true, locked, true,
+        "Claude Opus 4.6 · high · fast");
+
+    [AvaloniaFact]
+    public void ANativeChatsHeaderShowsTheRunControlsChip()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Summarise the open tickets." },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "Three are open; two are waiting on review." },
+        }, displayName: "main");
+        fake.RunOptions = RunOptions();
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, "chat-panel-run-chip.png");
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false, "chat-panel-run-flyout.png")]
+    [InlineData(true, "chat-panel-run-flyout-locked.png")]
+    public void TheRunControlsFlyout(bool locked, string name)
+    {
+        var fake = NewFake(displayName: "main");
+        fake.RunOptions = RunOptions(locked);
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+
+        var content = ChatPanelTestAccess.Instance!.BuildRunFlyout(fake, fake.RunOptions);
+        var window = new Window
+        {
+            Width = 300,
+            SizeToContent = SizeToContent.Height,
+            Content = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#FF2B2B30")),
+                Padding = new Thickness(12),
+                Child = content
+            }
+        };
+
+        ScreenshotHelper.Capture(window, name);
     }
 
     // A session Claude Desktop hosts (CB-265): the transcript reads like any
@@ -498,6 +597,237 @@ public class ChatPanelScreenshots : IDisposable
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-picture-refused.png");
+    }
+
+    // CB-272: a video the agent posted, as a tile. The meta answer is the
+    // shape the gateway really sends for a portrait clip, so the tile is the
+    // real proportions (clamped at 320 tall) with its play glyph and m:ss
+    // label. One ordinary turn above it for contrast; the judgement worth
+    // reviewing is whether the tile reads as "a clip, press to play" beside
+    // the caption, and whether the label stays legible over the dark fill.
+    [AvaloniaFact]
+    public void AVideoTheAgentPostedDrawsATile()
+    {
+        var realMeta = OpenClawVideo.FetchMeta;
+        OpenClawVideo.FetchMeta = (_, _) => Task.FromResult<string?>(
+            "{\"available\":true,\"mimeType\":\"video/mp4\",\"sizeBytes\":1042813,\"playback\":\"native\","
+            + "\"durationMs\":12750,\"width\":544,\"height\":800,\"mediaTicket\":\"v1.sample\"}");
+
+        try
+        {
+            var fake = NewFake(new[]
+            {
+                new ChatTurn { Role = ChatRole.User, Text = "send me something nice" },
+                VideoTurn(),
+            });
+
+            ChatPanel.OpenFor(NewOrb(), fake);
+            ScreenshotHelper.Flush();
+
+            // A portrait clip's tile is clamped to 320, which fills the
+            // default 340-high panel on its own and scrolls the caption and
+            // the user's turn out of the frame — the very thing the review
+            // question is about ("does it read as a clip beside its
+            // caption"). The panel is a process-wide singleton, so the extra
+            // height is put back afterwards rather than left for the next
+            // capture to inherit.
+            var panel = ChatPanelTestAccess.Instance!;
+            var realHeight = panel.Height;
+            try
+            {
+                panel.Height = 620;
+                ScreenshotHelper.Flush();
+                ScreenshotHelper.CaptureAlreadyShown(panel, "chat-panel-video-tile.png");
+            }
+            finally
+            {
+                panel.Height = realHeight;
+            }
+        }
+        finally
+        {
+            OpenClawVideo.FetchMeta = realMeta;
+        }
+    }
+
+    // CB-272: the same turn when the gateway will not serve the clip — the
+    // note in the slot the tile would have taken, the caption still above it.
+    [AvaloniaFact]
+    public void AVideoTheGatewayRefusedShowsWhy()
+    {
+        var realMeta = OpenClawVideo.FetchMeta;
+        OpenClawVideo.FetchMeta = (_, _) => Task.FromResult<string?>(
+            "{\"available\":false,\"code\":\"unsupported-media-type\",\"reason\":\"Not an image\"}");
+
+        try
+        {
+            var fake = NewFake(new[]
+            {
+                new ChatTurn { Role = ChatRole.User, Text = "send me something nice" },
+                VideoTurn(),
+            });
+
+            ChatPanel.OpenFor(NewOrb(), fake);
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.CaptureAlreadyShown(
+                ChatPanelTestAccess.Instance!, "chat-panel-video-refused.png");
+        }
+        finally
+        {
+            OpenClawVideo.FetchMeta = realMeta;
+        }
+    }
+
+    // CB-274: a clip the gateway could not deliver (the five cron posts on
+    // the requester's Discord session). The gateway moved the filename out of
+    // the caption into an attachment_error block, and refuses to serve the
+    // file from the agent's folder when asked — measured, "Not an image". The
+    // shape reviewed here is the caption, then the two-sentence note in the
+    // slot a tile would have taken, with the user's turn above for framing.
+    [AvaloniaFact]
+    public void AClipTheGatewayCouldNotDeliverSaysSo()
+    {
+        var realMeta = OpenClawVideo.FetchMeta;
+        OpenClawVideo.FetchMeta = (_, _) => Task.FromResult<string?>(
+            "{\"available\":false,\"code\":\"unsupported-media-type\",\"reason\":\"Not an image\"}");
+
+        try
+        {
+            var failed = VideoTurn();
+            failed.Text = "Pink fairy lights and a little message just for you 🌸";
+            failed.ImageAlt = "sample_afternoon_video.mp4";
+            failed.Attachment = new ChatAttachment(AttachmentKind.Video, null,
+                "sample_afternoon_video.mp4", "video/mp4", null, null, null, null, "delivery-failed");
+
+            var fake = NewFake(new[]
+            {
+                new ChatTurn { Role = ChatRole.User, Text = "send me something nice" },
+                failed,
+            });
+
+            ChatPanel.OpenFor(NewOrb(), fake);
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.CaptureAlreadyShown(
+                ChatPanelTestAccess.Instance!, "chat-panel-clip-not-delivered.png");
+        }
+        finally
+        {
+            OpenClawVideo.FetchMeta = realMeta;
+        }
+    }
+
+    // CB-277: the same failed-delivery clip, but its route names the session
+    // of the agent whose workspace holds the file, so the gateway serves it and
+    // the panel draws a playable tile instead of the note above.
+    [AvaloniaFact]
+    public void AClipAnotherAgentMadeDrawsAPlayableTile()
+    {
+        var realMeta = OpenClawVideo.FetchMeta;
+        OpenClawVideo.FetchMeta = (_, _) => Task.FromResult<string?>(
+            "{\"available\":true,\"mimeType\":\"video/mp4\",\"sizeBytes\":1042813,\"playback\":\"native\","
+            + "\"durationMs\":12750,\"width\":544,\"height\":800,\"mediaTicket\":\"v1.sample\"}");
+
+        try
+        {
+            var clip = VideoTurn();
+            clip.Text = "Pink fairy lights and a little message just for you 🌸";
+            clip.ImageAlt = "sample_afternoon_video.mp4";
+            clip.ImageSourcePath = "/Users/sample/.openclaw/workspace-sample-zara/outputs/sample_afternoon_video.mp4";
+            clip.ImageUrl = new OpenClawMediaSource(
+                clip.ImageSourcePath, "agent:comfyui:discord:direct:1").Route;
+            clip.Attachment = new ChatAttachment(AttachmentKind.Video, null,
+                "sample_afternoon_video.mp4", "video/mp4", null, null, null, null, "delivery-failed");
+
+            var fake = NewFake(new[]
+            {
+                new ChatTurn { Role = ChatRole.User, Text = "send me something nice" },
+                clip,
+            });
+
+            ChatPanel.OpenFor(NewOrb(), fake);
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.CaptureAlreadyShown(
+                ChatPanelTestAccess.Instance!, "chat-panel-clip-via-owner-session.png");
+        }
+        finally
+        {
+            OpenClawVideo.FetchMeta = realMeta;
+        }
+    }
+
+    // CB-275: an audio note, a file, and a file the gateway could not deliver.
+    // Block shapes are read off the gateway's source (no real rows exist), so
+    // these captures are of the app's drawing, not of a live gateway.
+    private void CaptureAttachments(string file, params ChatTurn[] turns)
+    {
+        var realMeta = OpenClawVideo.FetchMeta;
+        OpenClawVideo.FetchMeta = (_, _) => Task.FromResult<string?>(
+            "{\"available\":false,\"code\":\"unsupported-media-type\",\"reason\":\"Not an image\"}");
+
+        try
+        {
+            ChatPanel.OpenFor(NewOrb(), NewFake(turns));
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, file);
+        }
+        finally
+        {
+            OpenClawVideo.FetchMeta = realMeta;
+        }
+    }
+
+    private static ChatTurn AttachmentTurn(ChatAttachment a, string text) => new()
+    {
+        Role = ChatRole.Assistant, Text = text, IsComplete = true,
+        ImageAlt = a.Label, Attachment = a, ImageUrl = a.Url,
+    };
+
+    [AvaloniaFact]
+    public void AnAudioNoteTheAgentPostedDrawsAClickToOpenTile() =>
+        CaptureAttachments("chat-panel-audio-tile.png",
+            new ChatTurn { Role = ChatRole.User, Text = "say something nice" },
+            AttachmentTurn(new ChatAttachment(AttachmentKind.Audio, "/api/chat/media/outgoing/k/a/full",
+                "good_morning_voice_note.m4a", "audio/mp4", 240000, 42000, null, null, null),
+                "A little voice note for you"));
+
+    [AvaloniaFact]
+    public void AFileTheAgentPostedDrawsAChipWithItsNameAndSize() =>
+        CaptureAttachments("chat-panel-file-chip.png",
+            new ChatTurn { Role = ChatRole.User, Text = "send me the numbers" },
+            AttachmentTurn(new ChatAttachment(AttachmentKind.Document, "/api/chat/media/outgoing/k/b/full",
+                "quarterly-report.pdf", "application/pdf", 1_258_291, null, null, null, null),
+                "Here is the report"));
+
+    [AvaloniaFact]
+    public void AFileTheGatewayCouldNotDeliverDrawsTheChipWithANote()
+    {
+        const string path = "/Users/user/.openclaw/media/quarterly-report.pdf";
+
+        CaptureAttachments("chat-panel-file-not-delivered.png",
+            new ChatTurn { Role = ChatRole.User, Text = "send me the numbers" },
+            new ChatTurn
+            {
+                Role = ChatRole.Assistant, Text = "Here is the report", IsComplete = true,
+                ImageSourcePath = path, ImageAlt = "quarterly-report.pdf",
+                ImageUrl = "/__openclaw__/assistant-media?source=report",
+                Attachment = new ChatAttachment(AttachmentKind.Document, null, "quarterly-report.pdf",
+                    "application/pdf", null, null, null, null, "unsupported-format"),
+            });
+    }
+
+    private static ChatTurn VideoTurn()
+    {
+        const string path = "/Users/user/.openclaw/workspace-sample/outputs/sample_afternoon_video.mp4";
+
+        return new ChatTurn
+        {
+            Role = ChatRole.Assistant,
+            Text = "Pink fairy lights and a little message just for you 🌸\nMEDIA:" + path,
+            IsComplete = true,
+            ImageSourcePath = path,
+            ImageAlt = "sample_afternoon_video.mp4",
+            ImageUrl = "/__openclaw__/assistant-media?source=sample",
+        };
     }
 
     // A room with everyone in it drawn as themselves — the whole of CB-27 in one

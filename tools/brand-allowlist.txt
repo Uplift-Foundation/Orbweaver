@@ -100,6 +100,7 @@ tests/UnitTests/OpenClawSenderTests.cs	3	legacy mirror prefix: room history writ
 tests/UnitTests/PersonaAvatarValueTests.cs	1	comment records what happened under the old name; rewriting it would falsify the record
 tests/UnitTests/PersonaFencedFieldTests.cs	1	fixture: a recorded transcript or persona file written when the app was Claude Buddy; the parsers treat these names as opaque
 tests/UnitTests/PersonaSectionGrammarTests.cs	3	fixture: a recorded transcript or persona file written when the app was Claude Buddy; the parsers treat these names as opaque
+tests/UnitTests/ProbeResolveGuardTests.cs	2	legacy fixture: the CLAUDE_BUDDY_ spelling of the probe resolve opt-in, to prove the new name wins and a stale legacy "1" cannot override it
 tests/UnitTests/ProcArgsParsingTests.cs	1	comment records what happened under the old name; rewriting it would falsify the record
 tests/UnitTests/SessionMessageFrameTests.cs	7	fixture: the label an older peer sent; the framing code treats it as opaque text
 tests/UnitTests/SingleInstanceTests.cs	1	legacy fixtures for the phase 2/3 migrations: the old names each migration must recognise
@@ -110,7 +111,7 @@ tests/UnitTests/TranscriptIdentityTests.cs	2	fixture: a recorded transcript or p
 tests/UnitTests/TrayMenuTextTests.cs	3	sample data: a repository path or session name; the GitHub repository keeps its name
 tests/UnitTests/UrlRouterDecisionTests.cs	1	fixture: an opaque bundle id of some other app that was the remembered URL handler
 tests/UnitTests/WslIntegrationRulesTests.cs	5	legacy fixtures for the phase 2/3 migrations: the old names each migration must recognise
-tools/Orbweaver.iss	15	legacy arm: LegacyAppName, LegacyAppExe, the legacy task and firewall rule deletes, [InstallDelete] entries, the settings fallback and the Programs\ClaudeBuddy upgrade folder
+tools/Orbweaver.iss	14	legacy arm: LegacyAppName, LegacyAppExe, the legacy task delete, [InstallDelete] entries, the settings fallback and the Programs\ClaudeBuddy upgrade folder
 tools/build-macos-app.sh	12	legacy arm: LEGACY_EXE and INTERIM_EXE, the old bundle name stopped and removed on --install
 tools/build-macos-dmg.sh	9	legacy arm: the DMG Read Me says the app was called Claude Buddy, and Install Hooks.command still tries the old bundle
 tools/install-codex-hooks.ps1	5	legacy arm: names the pre-rename thing a phase 2 migration recognises (the legacy folder, marker and strip pattern)

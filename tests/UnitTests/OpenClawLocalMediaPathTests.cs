@@ -157,15 +157,24 @@ public class OpenClawLocalMediaPathTests
                 + "photo_773311913.png")?.Path);
     }
 
-    // Video is a real shape in the same corpus, but a deliberately separate
-    // gap: ImageExtensions has no video extensions, so this stays plain text
-    // rather than being silently treated as an image.
+    // Video is a real shape in the same corpus. It was a deliberately separate
+    // gap until CB-272: ImageExtensions has no video extensions, so this stayed
+    // plain text rather than being silently treated as an image. It is now a
+    // candidate of its own kind — a clip, never a picture: the image predicate
+    // still refuses the name, and OpenClawVideo.IsVideoPath is what routes it
+    // to the tile instead of the bitmap decoder.
     [Fact]
-    public void ACaptionWithATrailingVideoFilenameIsNotAPicture()
+    public void ACaptionWithATrailingVideoFilenameIsAClipNotAPicture()
     {
-        Assert.Null(OpenClawSessions.LocalMediaPathFrom(
+        var candidate = OpenClawSessions.LocalMediaPathFrom(
             "Fixed the clip, here you go.\n"
-            + "clip_v4_final.mp4"));
+            + "clip_v4_final.mp4");
+
+        Assert.NotNull(candidate);
+        Assert.Equal("clip_v4_final.mp4", candidate!.Value.Path);
+        Assert.False(candidate.Value.Explicit);
+        Assert.True(OpenClawVideo.IsVideoPath(candidate.Value.Path));
+        Assert.False(OpenClawSessions.LooksLikeAnImagePath(candidate.Value.Path));
     }
 
     // A bare trailing word still has to look like a filename — the relative-

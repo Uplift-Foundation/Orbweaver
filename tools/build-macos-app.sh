@@ -124,12 +124,21 @@ cp OrbweaverHook.sh \
    tools/install-hooks.sh \
    tools/install-macos-hooks.sh \
    tools/install-codex-hooks.sh \
-   tools/install-grok-hooks.sh "$CONTENTS/Resources/"
+   tools/install-grok-hooks.sh \
+   tools/install-skill.sh "$CONTENTS/Resources/"
 chmod +x "$CONTENTS/Resources/OrbweaverHook.sh" \
          "$CONTENTS/Resources/install-hooks.sh" \
          "$CONTENTS/Resources/install-macos-hooks.sh" \
          "$CONTENTS/Resources/install-codex-hooks.sh" \
-         "$CONTENTS/Resources/install-grok-hooks.sh"
+         "$CONTENTS/Resources/install-grok-hooks.sh" \
+         "$CONTENTS/Resources/install-skill.sh"
+
+# The orbweaver-team skill (CB-291), which install-skill.sh copies into each
+# Claude Code account. Beside the installers, where they look for it first.
+rm -rf "$CONTENTS/Resources/skills"
+mkdir -p "$CONTENTS/Resources/skills"
+cp -R skills/orbweaver-team "$CONTENTS/Resources/skills/"
+chmod +x "$CONTENTS/Resources/skills/orbweaver-team/orbweaver-team.sh"
 
 echo "==> Building icon"
 ICONSET="$DIST/$APP_NAME.iconset"

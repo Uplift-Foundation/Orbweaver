@@ -41,6 +41,25 @@ namespace Orbweaver.Tests
             Assert.Equal(SessionKind.Main, OpenClawSessionKind.From(key, chatType));
         }
 
+        // CB-270: a New Chat's session is the agent's own, reached through no
+        // surface, so it is Main too. The key is structural, so a chatType on the
+        // row (the gateway sends "direct" on these) must not override it.
+        [Theory]
+        [InlineData("agent:main:dashboard:9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b", null)]
+        [InlineData("agent:alexis:dashboard:9f1c2a3b", "direct")]
+        [InlineData("agent:alexis:DASHBOARD:9f1c2a3b", "channel")]
+        public void ADashboardKeyIsMainWhateverTheChatTypeSays(string key, string? chatType)
+        {
+            Assert.Equal(SessionKind.Main, OpenClawSessionKind.From(key, chatType));
+        }
+
+        // A dashboard session is not a room member, whatever else it carries.
+        [Fact]
+        public void ADashboardKeyBelongsToNoRoom()
+        {
+            Assert.Null(OpenClawSessionKind.RoomOf("agent:main:dashboard:9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b"));
+        }
+
         // --- From: chatType decides where the key is uninformative ---
 
         [Theory]
@@ -302,5 +321,71 @@ namespace Orbweaver.Tests
         {
             Assert.Equal(1100, OpenClawHeartbeat.PeriodMs);
         }
-    }
+    
+        // --- CB-270: the gateway's classification as a second opinion -----------
+
+        private const string WhatsAppGroup = "agent:alpha:whatsapp:group:120000000000000001@g.us";
+        private const string WhatsAppDm = "agent:alpha:whatsapp:direct:+15550000001";
+
+        // The measured bug: chatType says direct on a row whose classification
+        // says group.
+        [Theory]
+        [InlineData("group")]
+        [InlineData("channel")]
+        [InlineData("GROUP")]
+        public void AClassificationOfGroupOrChannelOverridesAContradictingDirect(string classification) =>
+            Assert.Equal(SessionKind.Channel, OpenClawSessionKind.From(WhatsAppGroup, "direct", classification));
+
+        // The controls: a DM that agrees with itself stays Direct, and a group
+        // that agrees with itself stays Channel.
+        [Fact]
+        public void AnAgreeingDmStaysDirectAndAnAgreeingGroupStaysChannel()
+        {
+            Assert.Equal(SessionKind.Direct, OpenClawSessionKind.From(WhatsAppDm, "direct", "direct"));
+            Assert.Equal(SessionKind.Channel, OpenClawSessionKind.From(WhatsAppGroup, "group", "group"));
+        }
+
+        // The safe-direction pin: classification never turns a room private.
+        [Theory]
+        [InlineData("direct")]
+        [InlineData("main")]
+        [InlineData("dm")]
+        public void AClassificationOfDirectNeverTurnsAChannelIntoDirect(string classification) =>
+            Assert.Equal(SessionKind.Channel,
+                OpenClawSessionKind.From(WhatsAppGroup, "channel", classification));
+
+        // No classification, or one nobody has seen, is exactly the old answer.
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("something-new")]
+        public void NoUsableClassificationGivesTheTwoArgumentAnswer(string? classification)
+        {
+            Assert.Equal(OpenClawSessionKind.From(WhatsAppDm, "direct"),
+                OpenClawSessionKind.From(WhatsAppDm, "direct", classification));
+            Assert.Equal(OpenClawSessionKind.From(WhatsAppGroup, "direct"),
+                OpenClawSessionKind.From(WhatsAppGroup, "direct", classification));
+        }
+
+        // A key that is structural is not overridden by anything: cron and main
+        // are decided before chatType is consulted, so the third argument has no
+        // Direct to correct.
+        [Fact]
+        public void AStructuralKeyIsNotTouchedByClassification()
+        {
+            Assert.Equal(SessionKind.Cron, OpenClawSessionKind.From("agent:a:cron:job1", "direct", "group"));
+            Assert.Equal(SessionKind.Main, OpenClawSessionKind.From("agent:a:main", "direct", "group"));
+        }
+
+        // RoomOf: two agents in one WhatsApp group are one room, and a DM has none.
+        [Fact]
+        public void RoomOfAWhatsAppGroupIsTheSurfaceAndTheGroupIdForEveryAgent()
+        {
+            const string room = "whatsapp:120000000000000001@g.us";
+
+            Assert.Equal(room, OpenClawSessionKind.RoomOf(WhatsAppGroup));
+            Assert.Equal(room, OpenClawSessionKind.RoomOf("agent:beta:whatsapp:group:120000000000000001@g.us"));
+            Assert.Null(OpenClawSessionKind.RoomOf(WhatsAppDm));
+        }
+}
 }

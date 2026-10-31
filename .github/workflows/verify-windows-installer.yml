@@ -110,6 +110,21 @@ jobs:
 
           if ($p.ExitCode -ne 0) { throw "Installer exited $($p.ExitCode)" }
 
+      - name: Check the install added no firewall rule
+        shell: pwsh
+        run: |
+          # CB-261: the installer adds no firewall rule. This runner is elevated, so
+          # a netsh step that crept back in ungated would SUCCEED here and leave a
+          # rule behind; that is why this is checked on a real install rather than
+          # trusted to the static test. The wildcard catches either brand's name.
+          $rules = @(Get-NetFirewallRule -DisplayName '* peer link' -ErrorAction SilentlyContinue)
+          if ($rules.Count -ne 0) {
+            $rules | Format-Table DisplayName, Direction, Action, Profile | Out-String | Write-Host
+            Write-Host "::error::the installer left $($rules.Count) peer link firewall rule(s) behind"
+            exit 1
+          }
+          Write-Host 'No peer link firewall rule after install, as intended.'
+
       - name: Check what landed on disk
         shell: pwsh
         run: |
@@ -533,6 +548,21 @@ jobs:
                  -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log"
           if (Test-Path $log) { Get-Content $log | Select-Object -Last 60 }
           if ($p.ExitCode -ne 0) { Write-Host "::error::upgrade installer exited $($p.ExitCode)"; exit 1 }
+
+      - name: Check the upgrade added no firewall rule
+        shell: pwsh
+        run: |
+          # CB-261: the installer adds no firewall rule. This runner is elevated, so
+          # a netsh step that crept back in ungated would SUCCEED here and leave a
+          # rule behind; that is why this is checked on a real install rather than
+          # trusted to the static test. The wildcard catches either brand's name.
+          $rules = @(Get-NetFirewallRule -DisplayName '* peer link' -ErrorAction SilentlyContinue)
+          if ($rules.Count -ne 0) {
+            $rules | Format-Table DisplayName, Direction, Action, Profile | Out-String | Write-Host
+            Write-Host "::error::the installer left $($rules.Count) peer link firewall rule(s) behind"
+            exit 1
+          }
+          Write-Host 'No peer link firewall rule after install, as intended.'
 
       - name: Check the upgrade migrated the name everywhere it lives
         shell: pwsh

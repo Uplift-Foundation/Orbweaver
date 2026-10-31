@@ -233,17 +233,18 @@ namespace Orbweaver.Tests
         // the sweep every shape appears in every slot — and no two slots ever
         // hold the same one, which is what makes a shape drawn in the wrong band
         // visible rather than a coincidence.
+        //
+        // Six slots since CB-268, up from three: the user-group sweep below runs
+        // up to six groups, and seven shapes means six rotations are still all
+        // different. The Bands-era cases only ever index the first three (or a
+        // slot nothing has a shape for), so widening this changes nothing they
+        // draw.
         internal static string[] ShapesFor(string shape)
         {
             var at = Array.IndexOf(Shapes, shape);
             if (at < 0) at = 0;
 
-            return new[]
-            {
-                Shapes[at],
-                Shapes[(at + 1) % Shapes.Length],
-                Shapes[(at + 2) % Shapes.Length]
-            };
+            return Enumerable.Range(0, 6).Select(k => Shapes[(at + k) % Shapes.Length]).ToArray();
         }
 
         // Two anchors well inside the work area, one hard against a corner, and
@@ -632,7 +633,618 @@ namespace Orbweaver.Tests
             return failures;
         }
 
-        // The whole sweep, for a caller that just wants the verdict.
+        // ---------------------------------------------------------------------
+        // CB-268: user groups, each with its own shape and its own anchor.
+        //
+        // A separate matrix rather than one more dimension on Case, because the
+        // question is different. Case asks "is this one arrangement sane";
+        // these ask it of several arrangements that must not get in each
+        // other's way, and the inputs that matter — how many groups, where each
+        // is anchored, how the teams straddle them — do not exist on Case.
+        // ---------------------------------------------------------------------
+
+        // Where each of N groups is anchored. A function of the screen and N
+        // for the same reason a Split is a function of the count.
+        //   none       nobody anchored: every group asked for its band's middle
+        //   partial    only group 0, so the rest are asked for the screen's middle
+        //   spread     evenly across the middle, each honoured as asked
+        //   colliding  all on the same point, which SeparateGroups must untangle
+        //   off-screen alternately past the right edge and past the bottom
+        //   negative   all far above and left of the screen
+        internal static readonly string[] AnchorKinds =
+            { "none", "partial", "spread", "colliding", "off-screen", "negative" };
+
+        internal static PixelPoint?[] AnchorsOf(string kind, int groups, Screen screen)
+        {
+            var work = screen.Work;
+            var at = new PixelPoint?[groups];
+
+            for (var g = 0; g < groups; g++)
+            {
+                at[g] = kind switch
+                {
+                    "none" => null,
+                    "partial" => g == 0 ? new PixelPoint(work.X + work.Width / 4, work.Y + work.Height / 4) : null,
+                    "spread" => new PixelPoint(work.X + work.Width * (g + 1) / (groups + 1), work.Y + work.Height / 2),
+                    "colliding" => new PixelPoint(work.X + work.Width / 2, work.Y + work.Height / 2),
+                    "off-screen" => g % 2 == 0
+                        ? new PixelPoint(work.Right + 800, work.Y + 40)
+                        : new PixelPoint(work.X + 40, work.Bottom + 800),
+                    _ => new PixelPoint(-4000, -4000),
+                };
+            }
+
+            return at;
+        }
+
+        // How the orbs are dealt to the groups. Round robin deliberately puts
+        // a team's members in different groups from their lead (T1: the
+        // members must follow the lead anyway); blocks keeps neighbours
+        // together, so most teams are whole already.
+        internal static readonly string[] GroupSplits = { "round robin", "blocks" };
+
+        internal static int[] DealTo(string split, int count, int groups) =>
+            Enumerable.Range(0, count)
+                .Select(i => split == "round robin" ? i % groups : Math.Min(groups - 1, i * groups / count))
+                .ToArray();
+
+        internal readonly record struct GroupCase(
+            Screen Screen,
+            string Shape,
+            double Spacing,
+            int Count,
+            TeamShape Team,
+            int Groups,
+            string Anchors,
+            string Split,
+            SizeMix? Mix = null,
+            string Obstacles = "none",
+            bool EmptyPredefined = false,
+            string Offsets = "none")
+        {
+            public override string ToString()
+                => $"{Screen.Name} / {Shape} / spacing {Spacing:0.00} / {Count} orbs / {Team.Name}"
+                 + $" / {Groups} groups, anchors {Anchors}, dealt {Split}"
+                 + (Mix is { } mix ? $" / sizes {mix.Name}" : "")
+                 + (Obstacles == "none" ? "" : $" / obstacles {Obstacles}")
+                 + (EmptyPredefined ? " / user groups only" : "")
+                 + (Offsets == "none" ? "" : $" / member offsets {Offsets}");
+        }
+
+        // Fixed rectangles no group may be drawn on (free mode, CB-268 F2):
+        //   stack    the stack column, hard against the right edge
+        //   pinned   six orbs left where the user dropped them
+        //   blocker  all but a narrow strip on the left, which two groups
+        //            cannot share: the case that has to take the fallback
+        //   free     an empty list: free mode with nothing in the way
+        //   arranged-stack, arranged-empty
+        //            the same stack column, and an empty list, in Arranged mode,
+        //            where a list that is empty must change nothing at all
+        // The first four are Free mode; the last two are Arranged.
+        internal static readonly string[] ObstacleKinds =
+            { "stack", "pinned", "blocker", "free", "arranged-stack", "arranged-empty" };
+
+        internal static PixelRect[] ObstaclesOf(string kind, Screen screen)
+        {
+            var work = screen.Work;
+            var s = screen.Scale;
+            int At(int origin, int length, double fraction) => origin + (int)Math.Round(length * fraction);
+            var pin = (int)Math.Round(OrbArrangement.WindowDip * s);
+
+            return kind switch
+            {
+                "stack" => new[]
+                {
+                    new PixelRect(work.Right - (int)Math.Round(120 * s), work.Y + (int)Math.Round(60 * s),
+                        (int)Math.Round(100 * s), work.Height - (int)Math.Round(120 * s)),
+                },
+                "pinned" => new[] { (0.2, 0.3), (0.35, 0.7), (0.5, 0.5), (0.6, 0.2), (0.75, 0.65), (0.9, 0.4) }
+                    .Select(f => new PixelRect(At(work.X, work.Width, f.Item1), At(work.Y, work.Height, f.Item2), pin, pin))
+                    .ToArray(),
+                "blocker" => new[]
+                {
+                    new PixelRect(work.X + (int)Math.Round(160 * s), work.Y, work.Width - (int)Math.Round(160 * s), work.Height),
+                },
+                _ => Array.Empty<PixelRect>(),   // "free", "arranged-empty" and "none"
+            };
+        }
+
+        // Hand-placed member offsets (CB-268 T2), in DIP from the lead:
+        //   small        a nudge off where a fan would put it
+        //   large        most of a screen away
+        //   off-screen   thousands of DIP away, alternating directions
+        //   overlapping  zero: on top of the lead, and of every sibling given
+        //                the same
+        // Only members get one — a root's entry would be ignored, which is the
+        // point of asking for it to be.
+        internal static readonly string[] OffsetKinds = { "small", "large", "off-screen", "overlapping" };
+
+        internal static (double Dx, double Dy)?[] OffsetsOf(string kind, int[] leads, int count)
+        {
+            var result = new (double, double)?[count];
+
+            for (var i = 0; i < count; i++)
+            {
+                if (kind == "none") break;
+
+                // A root gets one too, deliberately: it must be ignored.
+                result[i] = kind switch
+                {
+                    "small" => ((i % 3 - 1) * 30.0, (i % 2 * 2 - 1) * 25.0),
+                    "large" => (i % 2 == 0 ? 400.0 : -400.0, i % 3 == 0 ? 300.0 : -300.0),
+                    "off-screen" => (i % 2 == 0 ? 6000.0 : -6000.0, i % 3 == 0 ? -6000.0 : 6000.0),
+                    _ => (0.0, 0.0),
+                };
+            }
+
+            return result;
+        }
+
+        internal static readonly int[] GroupCounts = { 3, 8, 20 };
+
+        internal static readonly int[] GroupMixedCounts = { 5, 13 };
+
+        // The size mixes above, plus every orb at the top of the slider: the
+        // case that fills a screen with a few groups and is where the groups
+        // stop fitting side by side and the whole set has to be drawn through
+        // Bands + Compact instead.
+        internal static readonly SizeMix[] GroupMixes = Mixes
+            .Append(new SizeMix("everything at the top of the slider", n => Enumerable.Repeat(MaxSize, n).ToArray()))
+            .ToArray();
+
+        // 1–6 groups across every screen, shape, spacing and team shape, at
+        // three orb counts (fewer orbs than groups, so slots go empty, up to a
+        // crowd) and six anchor arrangements; then a smaller sweep with orbs of
+        // different sizes. Slot s draws ShapesFor(shape)[s], so every shape is
+        // exercised in every slot.
+        internal static IEnumerable<GroupCase> GroupCases()
+        {
+            foreach (var screen in Screens)
+            foreach (var groups in Enumerable.Range(1, 6))
+            foreach (var kind in AnchorKinds)
+            foreach (var shape in Shapes)
+            foreach (var spacing in Spacings)
+            foreach (var count in GroupCounts)
+            foreach (var team in TeamShapes)
+            foreach (var split in GroupSplits)
+                yield return new GroupCase(screen, shape, spacing, count, team, groups, kind, split);
+
+            foreach (var screen in Screens)
+            foreach (var groups in new[] { 2, 4, 6 })
+            foreach (var kind in new[] { "spread", "colliding" })
+            foreach (var shape in Shapes)
+            foreach (var count in GroupMixedCounts)
+            foreach (var team in TeamShapes)
+            foreach (var mix in GroupMixes)
+                yield return new GroupCase(screen, shape, 0.85, count, team, groups, kind, "round robin", mix);
+
+            // Free mode (CB-268 F2): user groups beside fixed obstacles, with
+            // the three predefined slots occupied and with them empty, so that
+            // the user groups are the whole table.
+            var obstacleTeams = TeamShapes
+                .Where(t => t.Name is "no teams" or "one team of 3" or "everything in one team"
+                    || t.Name.StartsWith("nested") || t.Name.StartsWith("lead cycle"))
+                .ToArray();
+
+            foreach (var screen in Screens)
+            foreach (var groups in new[] { 1, 2, 3, 6 })
+            foreach (var kind in new[] { "none", "spread", "colliding", "off-screen" })
+            foreach (var obstacles in ObstacleKinds)
+            foreach (var shape in Shapes)
+            foreach (var count in new[] { 3, 13 })
+            foreach (var team in obstacleTeams)
+            foreach (var userOnly in new[] { false, true })
+                yield return new GroupCase(
+                    screen, shape, 0.85, count, team, groups, kind, "round robin",
+                    Obstacles: obstacles, EmptyPredefined: userOnly);
+
+            // Members the user placed by hand, in teams, with and without an
+            // obstacle beside them.
+            var teamy = TeamShapes
+                .Where(t => t.Name is "one team of 3" or "two teams of 6" or "everything in one team"
+                    || t.Name.StartsWith("nested"))
+                .ToArray();
+
+            foreach (var screen in Screens)
+            foreach (var groups in new[] { 1, 3 })
+            foreach (var kind in new[] { "spread", "colliding" })
+            foreach (var offsets in OffsetKinds)
+            foreach (var obstacles in new[] { "none", "stack" })
+            foreach (var shape in Shapes)
+            foreach (var count in new[] { 8, 20 })
+            foreach (var team in teamy)
+                yield return new GroupCase(
+                    screen, shape, 0.85, count, team, groups, kind, "blocks",
+                    Obstacles: obstacles, Offsets: offsets);
+        }
+
+        // The invariants for one user-group case. Returns what went wrong,
+        // prefixed with the case, as Check does.
+        internal static IReadOnlyList<string> CheckGroups(GroupCase test)
+        {
+            var screen = test.Screen;
+            var count = test.Count;
+            var failures = new List<string>();
+            var where = test.ToString();
+
+            void Fail(string what) => failures.Add($"{where}: {what}");
+
+            var leads = test.Team.Build(count);
+            // With EmptyPredefined the table is the four predefined slots (main,
+            // heartbeats, crons and CB-270's native), none of which holds an
+            // orb, then the user groups: slot numbers are the table's, so the
+            // user groups start at 4. A literal rather than
+            // OrbGroups.PredefinedIds.Length because this exe does not compile
+            // OrbGroupTable.cs in; UnitTests pins the table at four.
+            var slotBase = test.EmptyPredefined ? 4 : 0;
+            var total = slotBase + test.Groups;
+
+            var groupOf = DealTo(test.Split, count, test.Groups).Select(g => g + slotBase).ToArray();
+            var shapes = Enumerable.Repeat("circle", slotBase)
+                .Concat(ShapesFor(test.Shape).Take(test.Groups)).ToArray();
+            var centres = Enumerable.Repeat((PixelPoint?)null, slotBase)
+                .Concat(AnchorsOf(test.Anchors, test.Groups, screen)).ToArray();
+            // "none" is passing no list at all — the layout as it was before
+            // free mode; any other kind, an empty one included, is free mode.
+            // "none" is the layout as it was before free mode: Arranged, no
+            // obstacles. Four kinds are Free (the stack, pinned orbs, a blocker
+            // and an empty list) and two are Arranged beside obstacles: the
+            // stack, and an empty list, which must be "none" bit for bit.
+            var freeMode = test.Obstacles is "stack" or "pinned" or "blocker" or "free";
+            var mode = freeMode ? OrbArrangement.GroupLayoutMode.Free : OrbArrangement.GroupLayoutMode.Arranged;
+            var obstacles = test.Obstacles switch
+            {
+                "none" or "arranged-empty" or "free" => Array.Empty<PixelRect>(),
+                "arranged-stack" => ObstaclesOf("stack", screen),
+                var kind => ObstaclesOf(kind, screen),
+            };
+            var offsets = OffsetsOf(test.Offsets, leads, count);
+
+            var sizes = test.Mix?.Build(count) ?? Enumerable.Repeat(1.0, count).ToArray();
+            double[]? sizeArgument = test.Mix is null ? null : sizes;
+
+            var layout = new OrbArrangement.Layout(screen.Work, screen.Scale, shapes[slotBase], test.Spacing);
+
+            List<OrbArrangement.GroupLayout> Table(PixelPoint?[] at) =>
+                shapes.Select((sh, g) => new OrbArrangement.GroupLayout(sh, at[g])).ToList();
+
+            (PixelPoint[] Positions, OrbArrangement.GroupPlacement[] Groups) result;
+            OrbArrangement.GroupPath path;
+
+            try
+            {
+                result = OrbArrangement.ComputeGroups(
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, mode, obstacles, test.Offsets == "none" ? null : offsets, out path);
+            }
+            catch (Exception ex)
+            {
+                Fail($"threw {ex.GetType().Name}: {ex.Message}");
+                return failures;
+            }
+
+            var (pts, placed) = result;
+
+            if (pts.Length != count)
+            {
+                Fail($"returned {pts.Length} positions for {count} orbs");
+                return failures;
+            }
+
+            var windowOf = sizes.Select(sz => (int)Math.Round(OrbArrangement.WindowDip * screen.Scale * sz)).ToArray();
+            var circleOf = sizes.Select(sz => OrbArrangement.CircleDip * screen.Scale * sz).ToArray();
+
+            // Written out, not asked of OrbArrangement: the expected slot of an
+            // orb is its root lead's own groupOf entry, where the root is the
+            // last orb on the lead chain, and an orb on a cycle or pointing at
+            // nothing is its own root.
+            int RootOf(int i)
+            {
+                var at = i;
+                for (var hops = 0; hops <= count; hops++)
+                {
+                    var lead = leads[at];
+                    if (lead < 0 || lead >= count || lead == at) return at;
+                    if (OrbArrangement.Resolves(at, leads, count) is false) return at;
+                    at = lead;
+                }
+
+                return at;
+            }
+
+            int ExpectedSlot(int i)
+            {
+                var g = groupOf[RootOf(i)];
+                return g >= 0 && g < total ? g : 0;
+            }
+
+            // 1. The table is right: one entry per non-empty slot, ascending,
+            //    each orb in exactly one, orbs ascending within a group.
+            var seen = new int[count];
+            var lastSlot = -1;
+
+            foreach (var group in placed)
+            {
+                if (group.Slot <= lastSlot) Fail($"slot {group.Slot} listed after slot {lastSlot}");
+                lastSlot = group.Slot;
+
+                if (group.Orbs.Length == 0) Fail($"slot {group.Slot} is listed but empty");
+                if (!group.Orbs.SequenceEqual(group.Orbs.OrderBy(o => o))) Fail($"slot {group.Slot}'s orbs are not ascending");
+
+                foreach (var orb in group.Orbs) seen[orb]++;
+            }
+
+            if (seen.Any(c => c != 1))
+            {
+                Fail($"orbs not in exactly one group: {string.Join(",", seen.Select((c, i) => (c, i)).Where(t => t.c != 1).Select(t => t.i))}");
+                return failures;
+            }
+
+            var expectedSlots = Enumerable.Range(0, count).Select(ExpectedSlot).Distinct().OrderBy(g => g).ToArray();
+            if (!placed.Select(g => g.Slot).SequenceEqual(expectedSlots))
+                Fail($"groups listed are [{string.Join(",", placed.Select(g => g.Slot))}], expected [{string.Join(",", expectedSlots)}]");
+
+            // 2. A member's slot is its root lead's, whatever its own groupOf says.
+            foreach (var group in placed)
+            foreach (var orb in group.Orbs)
+            {
+                if (ExpectedSlot(orb) == group.Slot) continue;
+                Fail($"orb {orb} is in slot {group.Slot}, its root lead {RootOf(orb)} puts it in {ExpectedSlot(orb)}");
+                break;
+            }
+
+            // 3. Every orb fully on screen.
+            for (var i = 0; i < count; i++)
+            {
+                if (pts[i].X < screen.Work.X || pts[i].Y < screen.Work.Y
+                    || pts[i].X + windowOf[i] > screen.Work.Right || pts[i].Y + windowOf[i] > screen.Work.Bottom)
+                {
+                    Fail($"orb {i} at ({pts[i].X},{pts[i].Y}) is outside the work area");
+                    break;
+                }
+            }
+
+            // 4. No two circles on top of each other — across groups too, which
+            //    is the point of separating them. Same radii and the same
+            //    allowance at the bottom of the spacing slider as Check.
+            double RadiusOf(int i) =>
+                (leads[i] >= 0 && leads[i] < count ? circleOf[i] * OrbArrangement.MemberScale : circleOf[i]) / 2;
+
+            double CentreX(int i) => pts[i].X + windowOf[i] / 2.0;
+            double CentreY(int i) => pts[i].Y + windowOf[i] / 2.0;
+
+            // With obstacles and groups that cannot all be got apart, the
+            // groups stay at their best-effort places and may overlap each
+            // other as well as the obstacles; the orbs of one group still may
+            // not (CB-268 F2 — a rebanded group on the stack column is worse).
+            var slotOfOrb = new int[count];
+            foreach (var group in placed) foreach (var orb in group.Orbs) slotOfOrb[orb] = group.Slot;
+            var crowded = path == OrbArrangement.GroupPath.Fallback && freeMode;
+
+            for (var i = 0; i < count; i++)
+            for (var j = i + 1; j < count; j++)
+            {
+                if (crowded && slotOfOrb[i] != slotOfOrb[j]) continue;
+
+                var dx = CentreX(i) - CentreX(j);
+                var dy = CentreY(i) - CentreY(j);
+                var gap = Math.Sqrt(dx * dx + dy * dy) - RadiusOf(i) - RadiusOf(j);
+                var allowed = test.Spacing <= 0.3 ? -Math.Max(circleOf[i], circleOf[j]) * 0.45 : 0;
+
+                if (gap - allowed >= 0) continue;
+
+                Fail($"orbs {i} and {j} overlap by {-gap:0}px (allowed {-allowed:0})");
+                i = count;
+                break;
+            }
+
+            // 5. Every group's slot box holds the windows of the orbs in it —
+            //    except a member the user placed by hand, which is put where
+            //    they left it after the group is laid out and is not part of
+            //    the box (CB-268 T2).
+            bool ByHand(int orb) =>
+                test.Offsets != "none" && offsets[orb] is not null && OrbArrangement.Resolves(orb, leads, count);
+
+            foreach (var group in placed)
+            foreach (var orb in group.Orbs)
+            {
+                if (ByHand(orb)) continue;
+
+                var box = group.SlotBounds;
+                if (pts[orb].X >= box.X && pts[orb].Y >= box.Y
+                    && pts[orb].X + windowOf[orb] <= box.Right && pts[orb].Y + windowOf[orb] <= box.Bottom) continue;
+
+                Fail($"orb {orb} sticks out of slot {group.Slot}'s box {box}");
+                break;
+            }
+
+            // 6. On the separated route, no two groups' boxes overlap and each
+            //    sits inside the work area — unless it is wider than the work
+            //    area, which no placement can cure. The other routes make no such
+            //    promise: Compact lays shapes out before their teams fan, and a
+            //    fan can reach past its box.
+            if (path == OrbArrangement.GroupPath.Separated)
+            {
+                for (var a = 0; a < placed.Length; a++)
+                {
+                    var box = placed[a].SlotBounds;
+
+                    var fits = box.Width <= screen.Work.Width && box.Height <= screen.Work.Height;
+                    if (fits && (box.X < screen.Work.X || box.Y < screen.Work.Y
+                        || box.Right > screen.Work.Right || box.Bottom > screen.Work.Bottom))
+                        Fail($"slot {placed[a].Slot}'s box {box} is outside the work area");
+
+                    for (var b = a + 1; b < placed.Length; b++)
+                    {
+                        var other = placed[b].SlotBounds;
+                        if (box.X < other.Right && other.X < box.Right && box.Y < other.Bottom && other.Y < box.Bottom)
+                        {
+                            Fail($"slot {placed[a].Slot}'s box {box} overlaps slot {placed[b].Slot}'s {other}");
+                            a = placed.Length;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 6b. On the separated route no group's box touches an obstacle,
+            //     to within the gap. Not promised on the fallback, which cannot
+            //     see them — and that is the only place it is not.
+            if (path == OrbArrangement.GroupPath.Separated)
+            {
+                foreach (var group in placed)
+                foreach (var obstacle in obstacles)
+                {
+                    var box = group.SlotBounds;
+                    if (!(box.X < obstacle.Right && obstacle.X < box.Right && box.Y < obstacle.Bottom && obstacle.Y < box.Bottom))
+                        continue;
+
+                    Fail($"slot {group.Slot}'s box {box} overlaps the obstacle {obstacle}");
+                    goto obstaclesChecked;
+                }
+
+                obstaclesChecked:;
+            }
+
+            // 7. DrawnShape is the shape asked for, or a grid.
+            foreach (var group in placed)
+            {
+                if (group.DrawnShape == shapes[group.Slot] || group.DrawnShape == "grid") continue;
+                Fail($"slot {group.Slot} reports drawing {group.DrawnShape}, asked for {shapes[group.Slot]}");
+                break;
+            }
+
+            // 7b. The curve each group reports is a real one: finite, never a
+            //     negative scale, and — where the group has no fanned members
+            //     and every orb is one size, so each orb is a point of the curve
+            //     — every anchor orb within half a window of the curve point it
+            //     was dealt. Loose on purpose: it is there to catch a curve
+            //     fitted to the wrong points or the wrong shape (which is off by
+            //     an orb or more), not the few pixels of rounding and nudging
+            //     that keep neighbours apart.
+            foreach (var group in placed)
+            {
+                if (!double.IsFinite(group.CurveCentre.X) || !double.IsFinite(group.CurveCentre.Y)
+                    || !double.IsFinite(group.CurveScale) || group.CurveScale < 0)
+                {
+                    Fail($"slot {group.Slot} reports a bad curve {group.CurveCentre} x {group.CurveScale}");
+                    break;
+                }
+
+                var anchorOrbs = group.Orbs.Where(o => !OrbArrangement.Resolves(o, leads, count)).ToArray();
+                // A lead cycle is two anchors that Separate still pulls toward
+                // each other as if one led the other, so they are off the curve
+                // by design; only a group with no lead links at all is a clean curve.
+                if (test.Mix is not null || group.Orbs.Any(o => leads[o] >= 0) || anchorOrbs.Length < 2
+                    || group.CurveScale == 0) continue;
+
+                var unit = OrbArrangement.Unit(group.DrawnShape, anchorOrbs.Length);
+                var worstOff = 0.0;
+
+                for (var k = 0; k < anchorOrbs.Length; k++)
+                {
+                    var o = anchorOrbs[k];
+                    var dx = pts[o].X + windowOf[o] / 2.0 - (group.CurveCentre.X + group.CurveScale * unit[k].X);
+                    var dy = pts[o].Y + windowOf[o] / 2.0 - (group.CurveCentre.Y + group.CurveScale * unit[k].Y);
+                    worstOff = Math.Max(worstOff, Math.Sqrt(dx * dx + dy * dy));
+                }
+
+                if (worstOff > windowOf.Max() / 2.0 && path == OrbArrangement.GroupPath.Separated)
+                {
+                    Fail($"slot {group.Slot}'s orbs are up to {worstOff:0}px off the curve it reports");
+                    break;
+                }
+            }
+
+            // 8. Deterministic.
+            var again = OrbArrangement.ComputeGroups(
+                count, leads, groupOf, Table(centres), layout, sizeArgument, mode, obstacles, test.Offsets == "none" ? null : offsets, out var againPath);
+
+            if (againPath != path || !pts.SequenceEqual(again.Positions) || !SamePlacements(placed, again.Groups))
+                Fail("not deterministic — two runs disagreed");
+
+            // 8a. Arranged mode with an empty obstacle list is the arrangement
+            //     as it was before obstacles existed, bit for bit: the same
+            //     route, positions and placements as the call that takes none.
+            if (test.Obstacles == "arranged-empty" && test.Offsets == "none")
+            {
+                var bare = OrbArrangement.ComputeGroups(
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, out var bareRoute);
+
+                if (bareRoute != path || !pts.SequenceEqual(bare.Positions) || !SamePlacements(placed, bare.Groups))
+                    Fail("an empty obstacle list in Arranged mode differs from passing none");
+            }
+
+            // 8b. Hand-placed members change nothing about the group: the same
+            //     case with no offsets gives the same route, the same
+            //     placements — Landed, box, shape and curve — and the same
+            //     positions for every orb that is not a hand-placed member or
+            //     hanging off one. A member drag cannot shift its group.
+            if (test.Offsets != "none")
+            {
+                var plain = OrbArrangement.ComputeGroups(
+                    count, leads, groupOf, Table(centres), layout, sizeArgument, mode, obstacles, null, out var plainPath);
+
+                if (plainPath != path)
+                    Fail($"offsets changed the route from {plainPath} to {path}");
+                else if (!SamePlacements(placed, plain.Groups))
+                    Fail("offsets changed a group's placement (Landed, box, shape or curve)");
+                else
+                {
+                    bool UnderHand(int orb)
+                    {
+                        for (var at = orb; ; at = leads[at])
+                        {
+                            if (ByHand(at)) return true;
+                            if (!OrbArrangement.Resolves(at, leads, count)) return false;
+                        }
+                    }
+
+                    var moved = Enumerable.Range(0, count).FirstOrDefault(o => !UnderHand(o) && pts[o] != plain.Positions[o], -1);
+                    if (moved >= 0) Fail($"offsets moved orb {moved}, which is not a hand-placed member or under one");
+                }
+            }
+
+            // 9. Feeding each group's Landed back as its anchor reproduces the
+            //    layout, orb for orb: what was reported is what was drawn, so
+            //    saving it neither moves a group nor leaves an overshoot hiding
+            //    in the settings (CB-211, per group). Holds for a first draw too
+            //    (no anchors, mixed anchored and unanchored, all of them): a
+            //    group nobody anchored is asked for its band's middle, and from
+            //    there it is the same as one that was. On the fallback route
+            //    Landed is what was asked for and the fallback ignores anchors,
+            //    so the same route and the same orbs come back.
+            {
+                var landed = Enumerable.Range(0, total)
+                    .Select(g => placed.Where(p => p.Slot == g).Select(p => (PixelPoint?)p.Landed).FirstOrDefault() ?? centres[g])
+                    .ToArray();
+
+                var round = OrbArrangement.ComputeGroups(
+                    count, leads, groupOf, Table(landed), layout, sizeArgument, mode, obstacles, test.Offsets == "none" ? null : offsets, out var roundPath);
+
+                if (roundPath != path)
+                    Fail($"feeding Landed back took the {roundPath} route, not {path}");
+                else if (!pts.SequenceEqual(round.Positions))
+                {
+                    var i = Enumerable.Range(0, count).First(k => pts[k] != round.Positions[k]);
+                    Fail($"feeding Landed back moved orb {i} from ({pts[i].X},{pts[i].Y}) to ({round.Positions[i].X},{round.Positions[i].Y})");
+                }
+                else if (!SamePlacements(placed, round.Groups))
+                    Fail("feeding Landed back reproduced the orbs but not the placements");
+            }
+
+            return failures;
+        }
+
+        private static bool SamePlacements(
+            IReadOnlyList<OrbArrangement.GroupPlacement> a, IReadOnlyList<OrbArrangement.GroupPlacement> b) =>
+            a.Count == b.Count
+            && Enumerable.Range(0, a.Count).All(i =>
+                a[i].Slot == b[i].Slot && a[i].Landed == b[i].Landed && a[i].SlotBounds == b[i].SlotBounds
+                && a[i].DrawnShape == b[i].DrawnShape && a[i].Orbs.SequenceEqual(b[i].Orbs)
+                && a[i].CurveCentre == b[i].CurveCentre && a[i].CurveScale == b[i].CurveScale);
+
+        // The whole sweep, for a caller that just wants the verdict. The
+        // user-group cases (CB-268) are counted in with the rest.
         internal static (int Cases, List<string> Failures) RunAll()
         {
             var cases = 0;
@@ -642,6 +1254,12 @@ namespace Orbweaver.Tests
             {
                 cases++;
                 failures.AddRange(Check(test));
+            }
+
+            foreach (var test in GroupCases())
+            {
+                cases++;
+                failures.AddRange(CheckGroups(test));
             }
 
             return (cases, failures);

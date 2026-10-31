@@ -24,7 +24,7 @@
          Version flows into AssemblyInformationalVersion, which is what
          actually shows the prerelease label. Version must stay a literal
          element here: the packaging scripts and release.yml parse it. -->
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <AssemblyVersion>$(Version.Split('-')[0]).0</AssemblyVersion>
     <FileVersion>$(Version.Split('-')[0]).0</FileVersion>
     <Product>Orbweaver</Product>
@@ -144,6 +144,9 @@
          is pure managed, so it has no packaging consequences at all. -->
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="PvRecorder" Version="1.2.13" />
+    <!-- CB-287: rasterises a picked SVG once, at pick time. Pinned to 5.1.x on
+         purpose: 5.2.x moves to SkiaSharp 4.x under Avalonia 12.1.1's 3.119. -->
+    <PackageReference Include="Svg.Skia" Version="5.1.1" />
     <PackageReference Include="System.Management" Version="8.0.0" />
     <!-- AppKit-shaped control styles (MIT, Devolutions). Loaded only on macOS —
          see App.Initialize — with Fluent kept for Windows. Hand-rolling this was

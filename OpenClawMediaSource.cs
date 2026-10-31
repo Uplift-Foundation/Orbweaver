@@ -1,3 +1,5 @@
+using System;
+
 namespace Orbweaver
 {
     // CB-109: the fully-formed assistant-media request for a picture on the
@@ -57,6 +59,12 @@ namespace Orbweaver
     // instead, and both properties go quietly, with no test failing and no
     // picture visibly breaking.
     //
+    // CB-277: that was measured for images. For audio and video the folder
+    // allowlist still applies under whatever session is named, and only a
+    // session of the agent whose workspace holds the file clears it — see
+    // OpenClawMediaOwner, which picks that session from agents.list rather
+    // than guessing.
+    //
     // What this does **not** do is guess at what the gateway will allow.
     // Measured from two directions: supplying a session does not scope the
     // request to that agent's own workspace, it disables the folder allowlist
@@ -115,6 +123,30 @@ namespace Orbweaver
         // CB-93 set out to remove. Appending a flag to the exact string that
         // was fetched is the only way the two cannot come apart.
         internal static string MetaOf(string route) => route + "&meta=1";
+
+        // The session a finished route was built with, or null when it names
+        // none (the no-session shape, or a url that is not one of these).
+        // Read back out of the query rather than stored beside it, so what a
+        // tooltip reports is what the request actually carried. Tolerates the
+        // &meta=1 suffix and any parameter order after `source`.
+        internal static string? SessionKeyOf(string? route)
+        {
+            if (string.IsNullOrEmpty(route)) return null;
+
+            var q = route.IndexOf('?');
+            if (q < 0) return null;
+
+            foreach (var pair in route[(q + 1)..].Split('&'))
+            {
+                const string Name = "sessionKey=";
+                if (!pair.StartsWith(Name, StringComparison.Ordinal)) continue;
+
+                var value = Uri.UnescapeDataString(pair[Name.Length..]);
+                return string.IsNullOrWhiteSpace(value) ? null : value;
+            }
+
+            return null;
+        }
 
         // The GET path for the bytes, fully formed — what ChatTurn.ImageUrl
         // holds and what TurnView.LoadImage fetches verbatim.

@@ -154,7 +154,7 @@ namespace Orbweaver
                 // every isMeta row was before: better a missing bubble than the
                 // provenance boilerplate shown as if the user had typed it.
                 if (content.ValueKind == JsonValueKind.String
-                    && UnwrapPeerMessage(content.GetString() ?? "") is { } ours)
+                    && UnwrapPeerMessage(content.SafeString() ?? "") is { } ours)
                     AddText(ours, ChatRole.User, uuid, at, into);
 
                 return;
@@ -162,7 +162,7 @@ namespace Orbweaver
 
             if (content.ValueKind == JsonValueKind.String)
             {
-                AddText(content.GetString(), ChatRole.User, uuid, at, into);
+                AddText(content.SafeString(), ChatRole.User, uuid, at, into);
                 return;
             }
 
@@ -359,9 +359,22 @@ namespace Orbweaver
 
         public static string ToolSummary(JsonElement block)
         {
-            var name = Str(block, "name") ?? "tool";
+            var name = Str(block, "name");
 
-            if (!block.TryGetProperty("input", out var input) || input.ValueKind != JsonValueKind.Object)
+            return block.TryGetProperty("input", out var input)
+                ? ToolSummary(name, input)
+                : ToolSummary(name, default);
+        }
+
+        // The same line from a name and an arguments object, for producers whose
+        // shape is not a Claude Code tool_use block: OpenClaw's `toolcall`
+        // history block and its live `session.tool` event both carry
+        // `{name, args}` and must draw the identical line (CB-270).
+        public static string ToolSummary(string? name, JsonElement input)
+        {
+            name ??= "tool";
+
+            if (input.ValueKind != JsonValueKind.Object)
                 return "· " + name;
 
             foreach (var key in ArgKeys)
@@ -369,7 +382,7 @@ namespace Orbweaver
                 if (!input.TryGetProperty(key, out var value)) continue;
                 if (value.ValueKind != JsonValueKind.String) continue;
 
-                var arg = value.GetString();
+                var arg = value.SafeString();
                 if (string.IsNullOrWhiteSpace(arg)) continue;
 
                 if (key is "file_path" or "notebook_path" or "path") arg = Path.GetFileName(arg);
@@ -494,7 +507,7 @@ namespace Orbweaver
             e.ValueKind == JsonValueKind.Object
             && e.TryGetProperty(name, out var v)
             && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
+                ? v.SafeString()
                 : null;
 
         private static bool Bool(JsonElement e, string name) =>

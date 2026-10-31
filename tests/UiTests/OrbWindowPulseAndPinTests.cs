@@ -49,13 +49,11 @@ public class OrbWindowPulseAndPinTests
     // fresh drag — there is nothing to write back, since the position came from
     // settings in the first place.
     //
-    // Worth having a direct test: this is currently dead in the running app.
-    // AnimateArrangement's completion callbacks close over a field that
-    // OnArrangeAnimTick nulls before invoking them, so PinAt is never actually
-    // reached after an arrange — see
-    // OrbArrangementAnimationTests.ArrangingAndCompletingTheGlidePinsEveryOrbAtItsTarget,
-    // which records that. When that bug is fixed this is the behaviour it should
-    // restore.
+    // Worth having a direct test: arranging no longer pins anything (CB-268
+    // retired that; see
+    // OrbArrangementAnimationTests.ArrangingAndCompletingTheGlideLeavesEveryOrbUnpinned),
+    // so PinAt is reached by a drag outside an arrangement and by
+    // RestoreFromPattern putting a hand-placed orb back.
     [AvaloniaFact]
     public void PinningPutsTheOrbWhereItIsToldAndMarksItPinned()
     {
