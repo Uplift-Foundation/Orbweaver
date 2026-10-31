@@ -25,11 +25,11 @@ namespace Orbweaver.Tests;
 [AttributeUsage(AttributeTargets.Assembly)]
 internal sealed class ResetOpenClawApprovalsAttribute : BeforeAfterTestAttribute
 {
-    public override void Before(MethodInfo methodUnderTest) => Reset(methodUnderTest);
+    public override void Before(MethodInfo methodUnderTest) => Reset(methodUnderTest, afterwards: false);
 
-    public override void After(MethodInfo methodUnderTest) => Reset(methodUnderTest);
+    public override void After(MethodInfo methodUnderTest) => Reset(methodUnderTest, afterwards: true);
 
-    private static void Reset(MethodInfo method)
+    private static void Reset(MethodInfo method, bool afterwards)
     {
         // Read from the attribute's constructor argument: the attribute type does not
         // expose its name in every xunit version this repository has used.
@@ -38,6 +38,20 @@ internal sealed class ResetOpenClawApprovalsAttribute : BeforeAfterTestAttribute
             && d.ConstructorArguments.Count > 0
             && d.ConstructorArguments[0].Value as string == "Settings");
 
-        if (inSettings) OpenClawSessions.ForgetApprovalsForTests();
+        if (!inSettings) return;
+
+        OpenClawSessions.ForgetApprovalsForTests();
+
+        // The agents list (display names) and identities are process-wide too, and a
+        // test that registers a name for an agent id leaves every later title test
+        // reading it: "alpha" became "Nova" in the WhatsApp title tests. Cleared only
+        // AFTER a test, never before it, because xunit runs this hook after the class
+        // constructor and a class that sets its names there must find them still set.
+        if (afterwards)
+        {
+            OpenClawSessions.SetIdentitiesForTests(
+                new System.Collections.Generic.Dictionary<string, OpenClawSessions.AgentIdentity>(),
+                new System.Collections.Generic.Dictionary<string, string>());
+        }
     }
 }
