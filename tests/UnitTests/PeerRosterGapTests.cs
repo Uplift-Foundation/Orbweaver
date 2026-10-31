@@ -258,7 +258,7 @@ public class PeerRosterGapTests
         var text = PeerSessions.GapSentence(new[] { G("~/.claude-loginid", 23) });
 
         Assert.Equal(
-            " — 23 sessions under ~/.claude-loginid aren't offered; add that folder under Claude Code profiles.",
+            " — 23 sessions under ~/.claude-loginid aren't offered; add that folder under Settings → Claude Code.",
             text);
     }
 
@@ -266,7 +266,7 @@ public class PeerRosterGapTests
     public void OneSessionReadsInTheSingular()
     {
         Assert.Equal(
-            " — 1 session under ~/.a isn't offered; add that folder under Claude Code profiles.",
+            " — 1 session under ~/.a isn't offered; add that folder under Settings → Claude Code.",
             PeerSessions.GapSentence(new[] { G("~/.a", 1) }));
     }
 
@@ -274,7 +274,7 @@ public class PeerRosterGapTests
     public void SeveralFoldersNameTheLargestAndCountTheRest()
     {
         Assert.Equal(
-            " — 10 sessions under ~/.big and 1 more folder aren't offered; add those folders under Claude Code profiles.",
+            " — 10 sessions under ~/.big and 1 more folder aren't offered; add those folders under Settings → Claude Code.",
             PeerSessions.GapSentence(new[] { G("~/.small", 3), G("~/.big", 7) }));
 
         Assert.Contains("and 2 more folders", PeerSessions.GapSentence(
@@ -316,7 +316,7 @@ public class PeerRosterGapTests
     {
         var gaps = new[] { G("~/.a", 4) };
 
-        Assert.EndsWith("under ~/.a aren't offered; add that folder under Claude Code profiles.",
+        Assert.EndsWith("under ~/.a aren't offered; add that folder under Settings → Claude Code.",
             PeerSessions.StatusText(true, true, 3, 1, 0, gaps));
         Assert.StartsWith("Connected to 1 machine, listening on 3 —",
             PeerSessions.StatusText(true, true, 3, 1, 0, gaps));

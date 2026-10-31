@@ -82,7 +82,7 @@ public class PeerRosterProfilesTests : IDisposable
                     ? sessions.Select(s => new AgentRoster.Entry("job-" + s.Item1, s.Item1, 0)).ToList()
                     : Array.Empty<AgentRoster.Entry>(), null);
 
-            // Only Agents and RosterDirs are the real wiring under test; every
+            // Only Agents and RosterSnapshot are the real wiring under test; every
             // other seam is replaced so nothing here reaches tmux or a socket.
             var seams = RemoteMirrorServer.AllAccountSeams(
                 dirs,

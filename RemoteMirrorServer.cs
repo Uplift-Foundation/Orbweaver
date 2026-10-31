@@ -87,13 +87,12 @@ namespace Orbweaver
             // entry.
             Func<IReadOnlyList<string>>? UserConfigDirs = null,
 
-            // CB-300: the Claude Code config dirs the Agents roster was read
-            // from, for the hello that just read it. Null means no gap
-            // analysis (every seam built before this existed), which is why
-            // it defaults to null rather than being required. AllAccountSeams
-            // answers it from the same snapshot Agents did, so the gaps are
-            // computed against exactly the dirs that were asked.
-            Func<IReadOnlyList<string>>? RosterDirs = null);
+            // CB-300: the roster together with the Claude Code config dirs it
+            // was read from, in one call, so a hello's gap analysis is against
+            // exactly the dirs that hello's roster used even when another
+            // peer's hello re-reads in between. Null means no gap analysis
+            // (every seam built before this existed), and Agents is used.
+            Func<(IReadOnlyList<AgentRoster.Entry> Agents, IReadOnlyList<string> Dirs)>? RosterSnapshot = null);
 
         private readonly string _account;
         private readonly Seams _seams;
@@ -184,7 +183,7 @@ namespace Orbweaver
                 profileDirs, readAgents ?? AgentRosterReader, now ?? (() => DateTime.UtcNow), RosterMemoTtl,
                 readLog ?? new RosterReadLog(MirrorLog.Say));
 
-            return one with { Agents = memo.Read, RosterDirs = () => memo.LastDirs };
+            return one with { Agents = memo.Read, RosterSnapshot = memo.Snapshot };
         }
 
         // The one line that launches `claude agents`, held apart so RosterMemo
@@ -254,14 +253,11 @@ namespace Orbweaver
                 _ttl = ttl;
             }
 
-            // The dirs the latest Read used — not a fresh evaluation, so the
-            // gap analysis is against what was actually asked.
-            internal IReadOnlyList<string> LastDirs
-            {
-                get { lock (_lock) return _lastDirs; }
-            }
+            internal IReadOnlyList<AgentRoster.Entry> Read() => Snapshot().Agents;
 
-            internal IReadOnlyList<AgentRoster.Entry> Read()
+            // The roster and the dirs it was read from, taken together under
+            // one lock so they cannot come from two different reads.
+            internal (IReadOnlyList<AgentRoster.Entry> Agents, IReadOnlyList<string> Dirs) Snapshot()
             {
                 // Held across the read on purpose: peers that arrive together
                 // wait for the one read instead of each launching their own.
@@ -273,7 +269,7 @@ namespace Orbweaver
                     if (_merged is not null
                         && now - _readAt < _ttl
                         && dirs.SequenceEqual(_lastDirs, StringComparer.Ordinal))
-                        return _merged;
+                        return (_merged, _lastDirs);
 
                     var all = new List<IReadOnlyList<AgentRoster.Entry>>();
 
@@ -305,7 +301,7 @@ namespace Orbweaver
                     _lastDirs = dirs;
                     _merged = MergeRosters(all);
                     _readAt = now;
-                    return _merged;
+                    return (_merged, _lastDirs);
                 }
             }
         }
@@ -483,8 +479,14 @@ namespace Orbweaver
                 ? null
                 : MirrorProtocol.UnpackRows(frame.Payload);
 
-            var agents = _seams.Agents();
-            var askedDirs = _seams.RosterDirs?.Invoke();
+            IReadOnlyList<AgentRoster.Entry> agents;
+            IReadOnlyList<string>? askedDirs = null;
+
+            if (_seams.RosterSnapshot is { } snapshot)
+                (agents, askedDirs) = snapshot();
+            else
+                agents = _seams.Agents();
+
             var sessions = _seams.LocalSessions();
 
             // Asking about nothing in particular means "what have you got?"

@@ -73,7 +73,7 @@ public class PeerRosterMemoTests
         f.Clock += TimeSpan.FromSeconds(1);
 
         Assert.Equal(3, f.Memo.Read().Count);
-        Assert.Equal(new[] { ".a", ".b", ".c" }, f.Memo.LastDirs);
+        Assert.Equal(new[] { ".a", ".b", ".c" }, f.Memo.Snapshot().Dirs);
     }
 
     [Fact]
@@ -86,13 +86,18 @@ public class PeerRosterMemoTests
 
         Assert.Equal("id.b", Assert.Single(merged).SessionId);
         // The dir was still asked, so the gap analysis counts it as asked.
-        Assert.Equal(new[] { ".a", ".b" }, f.Memo.LastDirs);
+        Assert.Equal(new[] { ".a", ".b" }, f.Memo.Snapshot().Dirs);
     }
 
     [Fact]
-    public void LastDirsIsEmptyBeforeTheFirstRead()
+    public void ASnapshotCarriesTheRosterAndTheDirsItWasReadFrom()
     {
-        Assert.Empty(new Fixture().Memo.LastDirs);
+        var f = new Fixture();
+
+        var (agents, dirs) = f.Memo.Snapshot();
+
+        Assert.Equal(2, agents.Count);
+        Assert.Equal(new[] { ".a", ".b" }, dirs);
     }
 
     // Order is the merge tie-break, so a reorder is a different answer.
@@ -106,20 +111,26 @@ public class PeerRosterMemoTests
         f.Memo.Read();
 
         Assert.Equal(4, f.Reads.Count);
-        Assert.Equal(new[] { ".b", ".a" }, f.Memo.LastDirs);
+        Assert.Equal(new[] { ".b", ".a" }, f.Memo.Snapshot().Dirs);
     }
 
-    // The gap analysis asks LastDirs after Read: it is what that read used,
-    // not a fresh evaluation that settings may have changed since.
+    // The gap analysis takes the roster and its dirs in one call, so they
+    // cannot come from two different reads.
     [Fact]
-    public void LastDirsIsWhatWasReadEvenIfSettingsChangeAfterwards()
+    public void ASnapshotsDirsAreTheOnesItsRosterUsedEvenIfSettingsChangeAfterwards()
     {
         var f = new Fixture();
-        f.Memo.Read();
+        var held = f.Memo.Snapshot();
 
         f.Dirs.Add(".added-after");
+        var next = f.Memo.Snapshot();
 
-        Assert.Equal(new[] { ".a", ".b" }, f.Memo.LastDirs);
+        // The earlier snapshot is unchanged, and the later one is a new read
+        // that names the new dir alongside the agents read from it.
+        Assert.Equal(new[] { ".a", ".b" }, held.Dirs);
+        Assert.Equal(2, held.Agents.Count);
+        Assert.Equal(new[] { ".a", ".b", ".added-after" }, next.Dirs);
+        Assert.Equal(3, next.Agents.Count);
     }
 
     [Fact]

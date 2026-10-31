@@ -696,7 +696,7 @@ namespace Orbweaver
             var verb = total == 1 ? "isn't" : "aren't";
             var folder = more == 0 ? "that folder" : "those folders";
 
-            return $" — {sessions} under {where} {verb} offered; add {folder} under Claude Code profiles.";
+            return $" — {sessions} under {where} {verb} offered; add {folder} under Settings → Claude Code.";
         }
 
         [ExcludeFromCodeCoverage]
