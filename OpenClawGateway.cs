@@ -144,7 +144,23 @@ namespace Orbweaver
         // WebSocket.CreateFromStream over BouncyCastle's TLS rather than by
         // ClientWebSocket — see OpenClawSocket for why — but the one-at-a-time
         // rule is the same.)
+        //
+        // **Never disposed, deliberately.** A SemaphoreSlim owns nothing unmanaged
+        // unless AvailableWaitHandle is touched, and this one is not, so Dispose
+        // would buy nothing — but it has a cost: once disposed, every Wait and
+        // every Release throws ObjectDisposedException. A request holding the gate
+        // while its frame is on the wire when the app quits would have its own
+        // `finally { Release() }` throw, replacing the real failure with that,
+        // and a fire-and-forget caller would never observe it. crash.log held 471
+        // of exactly those, unobserved, across twelve processes. Requests queued
+        // behind the gate are released by `_shutdown` instead (see RequestAsync).
         private readonly SemaphoreSlim _sendGate = new(1, 1);
+
+        // Cancelled by Dispose. Captured as a token rather than read back off
+        // `_cts`, which Dispose disposes: a disposed source throws on `.Token`.
+        private CancellationToken _shutdown;
+
+        private volatile bool _disposed;
 
         private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
         private long _nextId;
@@ -255,6 +271,7 @@ namespace Orbweaver
             var identity = OpenClawIdentity.Current();
 
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _shutdown = _cts.Token;
 
             try
             {
@@ -763,6 +780,10 @@ namespace Orbweaver
 
         public async Task<JsonElement> RequestAsync(string method, object? parameters, CancellationToken ct)
         {
+            // The same failure every request gets when the connection dies under
+            // it (see FailPending), rather than whatever a disposed part throws.
+            if (_disposed) throw new IOException("gateway connection closed");
+
             var id = Interlocked.Increment(ref _nextId).ToString();
 
             // RunContinuationsAsynchronously matters more than it looks: without
@@ -781,10 +802,15 @@ namespace Orbweaver
 
             try
             {
-                await _sendGate.WaitAsync(ct);
+                // Dispose cancels `_shutdown`, so a request queued behind the one on
+                // the wire is released with a cancellation instead of waiting on a
+                // gate nobody will open again.
+                using var sending = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdown);
+
+                await _sendGate.WaitAsync(sending.Token);
                 try
                 {
-                    await _socket!.SendAsync(frame, WebSocketMessageType.Text, true, ct);
+                    await _socket!.SendAsync(frame, WebSocketMessageType.Text, true, sending.Token);
                 }
                 finally
                 {
@@ -953,12 +979,15 @@ namespace Orbweaver
 
         public void Dispose()
         {
+            _disposed = true;
+
             try { _cts?.Cancel(); } catch { }
             try { _socket?.Abort(); } catch { }
             try { _socket?.Dispose(); } catch { }
             try { _transport?.Dispose(); } catch { }
             _cts?.Dispose();
-            _sendGate.Dispose();
+
+            // `_sendGate` is not disposed — see its declaration.
         }
     }
 

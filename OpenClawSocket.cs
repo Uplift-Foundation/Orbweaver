@@ -307,6 +307,13 @@ namespace Orbweaver
 
             // Network writes are ordered by their own gate: TLS records must
             // reach the wire in the order the protocol produced them.
+            //
+            // Never disposed, deliberately: it owns nothing unmanaged, and
+            // PumpOutAsync releases it in a `finally` that can run after Dispose
+            // while a drain is mid-write. A disposed semaphore throws on Release
+            // and on Wait, which replaced the write's real failure with an
+            // ObjectDisposedException. Waiters on a closed stream fail on the
+            // socket instead, which is the failure they should see.
             private readonly SemaphoreSlim _netWrite = new(1, 1);
 
             private readonly byte[] _cipherIn = new byte[16 * 1024];
@@ -457,7 +464,6 @@ namespace Orbweaver
                 if (disposing)
                 {
                     try { _net.Dispose(); } catch { }
-                    _netWrite.Dispose();
                 }
 
                 base.Dispose(disposing);

@@ -187,7 +187,51 @@ namespace Orbweaver
                 text.AppendLine(error.StackTrace!.TrimEnd());
             }
 
+            // The wrapper's stack is the useless one for a faulted task nobody
+            // observed: the finalizer thread throws the AggregateException, so it
+            // carries no frames at all, and the real fault's stack lives only on
+            // the inner exceptions. 471 unobserved ObjectDisposedExceptions on a
+            // SemaphoreSlim sat in this file with no way to say which semaphore,
+            // because only their messages were written. Each inner exception's own
+            // stack is recorded under a line naming it.
+            foreach (var each in InnerExceptions(error))
+            {
+                if (string.IsNullOrWhiteSpace(each.StackTrace)) continue;
+
+                text.Append("    stack of ").Append(each.GetType().FullName).AppendLine(":")
+                    .AppendLine(each.StackTrace!.TrimEnd());
+            }
+
             return text.ToString();
+        }
+
+        // The chain of inner exceptions, and every member of an aggregate, each
+        // once and no more than a handful: an aggregate of aggregates, or a cycle
+        // of wrappers, must not be allowed to turn one entry into a flood.
+        private static IEnumerable<Exception> InnerExceptions(Exception error)
+        {
+            var found = new List<Exception>();
+
+            void Add(Exception candidate)
+            {
+                if (found.Count >= 8 || found.Any(x => ReferenceEquals(x, candidate))) return;
+
+                found.Add(candidate);
+            }
+
+            var inner = error.InnerException;
+            for (var depth = 0; inner is not null && depth < 5; depth++)
+            {
+                Add(inner);
+                inner = inner.InnerException;
+            }
+
+            if (error is AggregateException aggregate)
+            {
+                foreach (var member in aggregate.InnerExceptions) Add(member);
+            }
+
+            return found;
         }
 
         // Write one entry, and never fail doing it.
