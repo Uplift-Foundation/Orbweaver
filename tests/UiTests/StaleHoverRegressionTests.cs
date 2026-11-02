@@ -151,6 +151,40 @@ public class StaleHoverRegressionTests : IDisposable
         }
     }
 
+    // The production case on a Mac, where the cursor can be read: the real
+    // cursor is on B, so A must never open its bubble at any point — not while
+    // B's delay runs, not on any frame after. A recorder on A's IsOpen catches
+    // an open that something else closed again before an assertion looked.
+    [AvaloniaFact]
+    public void WithTheCursorOnBAStaleOrbNeverOpensItsBubble()
+    {
+        var (a, b) = TwoOrbs();
+        var aOpened = false;
+        a.Root.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == ToolTip.IsOpenProperty && e.NewValue is true) aOpened = true;
+        };
+        HoverAThenB(a, b);
+        var onB = ScreenCentre(b);
+        CursorProbe.Read = () => onB;
+
+        PumpFor(150);   // several show delays, before B has necessarily opened
+        PumpUntil(() => ToolTip.GetIsOpen(b.Root));
+        Assert.True(ToolTip.GetIsOpen(b.Root));
+
+        for (var frame = 0; frame < 20; frame++)
+        {
+            FramesOn(a, 1);
+            Assert.True(ToolTip.GetIsOpen(b.Root), $"B's bubble closed on frame {frame}");
+        }
+
+        Assert.False(aOpened, "A's bubble opened at some point with the cursor on B");
+    }
+
+    // The fallback, with no cursor to read (another platform, or the probe
+    // unavailable): A may be armed on its stale flag, so this pins the
+    // one-at-a-time rule and the service being off — B stays open and A is not
+    // open on any frame drawn after B's bubble is up.
     [AvaloniaFact]
     public void AStaleOrbsFramesNeitherCloseTheHoveredBubbleNorOpenTheirOwn()
     {
