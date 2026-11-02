@@ -234,14 +234,16 @@ namespace Orbweaver
         // messages. Wrapping it tells the TUI to take the whole thing as one
         // paste.
         //
+        // **Only the Windows console still uses this one (CB-304).** Every
+        // emulator route brackets through ForTyping below, because "a single
+        // line does not need it" was measured false: see there.
+        //
         // Only for text that needs it. tmux can ask the pane's application
         // whether it wants bracketed paste and send the text unwrapped when it
         // does not; through an emulator's scripting interface there is nobody
         // to ask, so a wrapper is an assumption — a safe one for the two TUIs
         // this ever types into, both of which accept pasted input, but an
-        // assumption all the same. A single line does not need it and so does
-        // not take it, which leaves the common case with no escape sequences
-        // in it at all.
+        // assumption all the same.
         internal const string PasteStart = "\u001b[200~";
         internal const string PasteEnd = "\u001b[201~";
 
@@ -253,6 +255,22 @@ namespace Orbweaver
                 ? PasteStart + text + PasteEnd
                 : text;
         }
+
+        // CB-304. Every emulator route brackets the whole message, one line or
+        // many. Claude Code takes an unbracketed burst longer than roughly 60-70
+        // characters as a paste and swallows the Return that arrives with it
+        // (measured 0/25 on iTerm2 at 70+ chars); Codex does the same at 40.
+        // The paste-end marker is what makes the Return after it a keystroke
+        // again. Do not "optimise" this back to leaving short lines bare.
+        internal static string ForTyping(string text) =>
+            string.IsNullOrEmpty(text) ? text : PasteStart + text + PasteEnd;
+
+        // For the routes that send their own Enter as a byte (kitty, WezTerm).
+        // "\r", not "\n": LF is Ctrl+J, which both TUIs read as "insert a newline".
+        internal const string Return = "\r";
+
+        internal static string ForTypingAndSubmit(string text) =>
+            string.IsNullOrEmpty(text) ? text : ForTyping(text) + Return;
 
         // Why a session cannot be typed into, in words a person can act on.
         //

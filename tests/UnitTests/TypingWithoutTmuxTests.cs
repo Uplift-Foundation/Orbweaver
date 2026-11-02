@@ -348,10 +348,11 @@ public class TypingWithoutTmuxTests
     // --- bracketed paste -------------------------------------------------------
 
     [Fact]
-    public void ASingleLineIsSentWithNoEscapeSequencesAtAll()
+    public void ForPastingStillLeavesASingleLineBare_WindowsConsoleOnly()
     {
-        // The common case, and the one where a wrapper would be an assumption
-        // for no benefit: there is no second line to protect.
+        // CB-304: scoped down from "a single line is sent bare". That holds
+        // only for the Windows console route, which still uses ForPasting;
+        // every emulator route goes through ForTyping below.
         Assert.Equal("ship it", TerminalTyping.ForPasting("ship it"));
     }
 
@@ -384,6 +385,139 @@ public class TypingWithoutTmuxTests
     public void NothingToSendIsLeftAlone()
     {
         Assert.Equal("", TerminalTyping.ForPasting(""));
+    }
+
+    // --- CB-304: every emulator route brackets, and submits with CR ------------
+
+    private static readonly string Esc = "\u001b";
+
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    [InlineData("first\r\nsecond")]
+    [InlineData("trailing\n")]
+    public void ForTypingWrapsEverythingExactlyOnce(string text)
+    {
+        Assert.Equal(Esc + "[200~" + text + Esc + "[201~", TerminalTyping.ForTyping(text));
+    }
+
+    [Fact]
+    public void ForTypingWrapsA300CharacterSingleLine()
+    {
+        // The regression itself: unbracketed, Claude Code took anything over
+        // ~60-70 characters as a paste and swallowed the Return (0/25 submitted).
+        var line = new string('x', 300);
+
+        var sent = TerminalTyping.ForTyping(line);
+
+        Assert.StartsWith(TerminalTyping.PasteStart, sent, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd, sent, StringComparison.Ordinal);
+        Assert.Equal(300 + 12, sent.Length);
+    }
+
+    [Fact]
+    public void ForTypingLeavesNothingAlone()
+    {
+        Assert.Equal("", TerminalTyping.ForTyping(""));
+        Assert.Null(TerminalTyping.ForTyping(null!));
+    }
+
+    [Fact]
+    public void ReturnIsCarriageReturnNeverLineFeed()
+    {
+        // LF is Ctrl+J: "insert a newline" to both TUIs, so it never submits.
+        Assert.Equal("\r", TerminalTyping.Return);
+    }
+
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    public void ForTypingAndSubmitEndsWithCrAfterThePasteEnd(string text)
+    {
+        var sent = TerminalTyping.ForTypingAndSubmit(text);
+
+        Assert.Equal(TerminalTyping.ForTyping(text) + "\r", sent);
+        Assert.EndsWith(Esc + "[201~\r", sent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ForTypingAndSubmitAddsNoLineFeedOfItsOwn()
+    {
+        Assert.DoesNotContain('\n', TerminalTyping.ForTypingAndSubmit("one line"));
+    }
+
+    [Fact]
+    public void ForTypingAndSubmitOfNothingIsNothing()
+    {
+        Assert.Equal("", TerminalTyping.ForTypingAndSubmit(""));
+    }
+
+    [Theory]
+    [InlineData("short")]
+    [InlineData("a long single line, comfortably past the point where Claude Code reads an unbracketed burst as a paste")]
+    [InlineData("two\nlines")]
+    public void KittyBracketsAndSubmitsWithCr(string text)
+    {
+        var (stdin, args) = TerminalFocuser.KittySend(Claude(termId: "7"), text);
+
+        Assert.StartsWith(TerminalTyping.PasteStart + text, stdin, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd + "\r", stdin, StringComparison.Ordinal);
+        Assert.False(stdin.EndsWith('\n'));
+        Assert.Equal(new[] { "@", "send-text", "--match", "id:7", "--stdin" }, args);
+    }
+
+    [Theory]
+    [InlineData("short")]
+    [InlineData("a long single line, comfortably past the point where Claude Code reads an unbracketed burst as a paste")]
+    [InlineData("two\nlines")]
+    public void WezTermBracketsAndSubmitsWithCr(string text)
+    {
+        var (stdin, args) = TerminalFocuser.WezTermSend(Claude(termId: "3"), text);
+
+        Assert.StartsWith(TerminalTyping.PasteStart + text, stdin, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd + "\r", stdin, StringComparison.Ordinal);
+        Assert.False(stdin.EndsWith('\n'));
+        Assert.Equal(new[] { "cli", "send-text", "--pane-id", "3", "--no-paste" }, args);
+    }
+
+    [Fact]
+    public void OsascriptArgsAreDashEPerLineThenTheTwoArguments()
+    {
+        var args = TerminalFocuser.OsascriptArgs(new[] { "a", "b" }, "who", "body");
+
+        Assert.Equal(new[] { "-e", "a", "-e", "b", "--", "who", "body" }, args);
+    }
+
+    [Fact]
+    public void ITerm2ScriptWritesTheBodyWithItsOwnReturn()
+    {
+        // The AppleScript is unchanged by CB-304: write text's own trailing
+        // Return is the submit, correct now that the body is bracketed.
+        Assert.Contains("tell s to write text body", TerminalFocuser.ITerm2SendScript);
+        Assert.DoesNotContain(TerminalFocuser.ITerm2SendScript, l => l.Contains("newline NO"));
+    }
+
+    [Fact]
+    public void TerminalAppScriptUsesDoScriptWhichPressesReturn()
+    {
+        Assert.Contains("do script body in t", TerminalFocuser.TerminalAppSendScript);
+    }
+
+    [Theory]
+    [InlineData("short")]
+    [InlineData("a long single line, comfortably past the point where Claude Code reads an unbracketed burst as a paste")]
+    [InlineData("first\nsecond")]
+    public void TheITerm2AndTerminalAppBodiesAreBracketed(string text)
+    {
+        var iterm = TerminalFocuser.ITerm2Args(Claude(termId: "GUID-1"), text);
+        var term = TerminalFocuser.TerminalAppArgs(Claude(tty: "ttys004"), text);
+
+        Assert.Equal(TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd, iterm[^1]);
+        Assert.Equal("GUID-1", iterm[^2]);
+        Assert.Equal(TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd, term[^1]);
+        Assert.Equal("/dev/ttys004", term[^2]);
+        Assert.Equal("--", iterm[^3]);
+        Assert.Equal("--", term[^3]);
     }
 
     // --- what the user is told -------------------------------------------------
