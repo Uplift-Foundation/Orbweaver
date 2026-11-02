@@ -225,38 +225,20 @@ namespace Orbweaver
             return tty.StartsWith('/') ? tty : "/dev/" + tty;
         }
 
-        // Bracketed-paste markers, or not.
+        // Bracketed-paste markers.
         //
-        // **The one thing tmux does for free and this has to decide.** A
-        // literal newline sent as a keystroke is indistinguishable from
+        // A literal newline sent as a keystroke is indistinguishable from
         // pressing Return, so a multi-line message typed straight in would
         // submit its first line and leave the rest to arrive as separate
         // messages. Wrapping it tells the TUI to take the whole thing as one
-        // paste.
-        //
-        // **Only the Windows console still uses this one (CB-304).** Every
-        // emulator route brackets through ForTyping below, because "a single
-        // line does not need it" was measured false: see there.
-        //
-        // Only for text that needs it. tmux can ask the pane's application
-        // whether it wants bracketed paste and send the text unwrapped when it
-        // does not; through an emulator's scripting interface there is nobody
-        // to ask, so a wrapper is an assumption — a safe one for the two TUIs
-        // this ever types into, both of which accept pasted input, but an
-        // assumption all the same.
+        // paste. Through an emulator's scripting interface or a console there
+        // is nobody to ask whether the application wants bracketed paste, so
+        // the wrapper is an assumption — a safe one for the two TUIs this ever
+        // types into, both of which accept pasted input.
         internal const string PasteStart = "\u001b[200~";
         internal const string PasteEnd = "\u001b[201~";
 
-        internal static string ForPasting(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-
-            return text.Contains('\n') || text.Contains('\r')
-                ? PasteStart + text + PasteEnd
-                : text;
-        }
-
-        // CB-304. Every emulator route brackets the whole message, one line or
+        // CB-304. Every route, including the Windows console, brackets the whole message, one line or
         // many. Claude Code takes an unbracketed burst longer than roughly 60-70
         // characters as a paste and swallows the Return that arrives with it
         // (measured 0/25 on iTerm2 at 70+ chars); Codex does the same at 40.

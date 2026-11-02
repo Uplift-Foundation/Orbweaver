@@ -347,13 +347,17 @@ public class TypingWithoutTmuxTests
 
     // --- bracketed paste -------------------------------------------------------
 
-    [Fact]
-    public void ForPastingStillLeavesASingleLineBare_WindowsConsoleOnly()
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    public void TheWindowsConsoleBodyIsBracketedToo(string text)
     {
-        // CB-304: scoped down from "a single line is sent bare". That holds
-        // only for the Windows console route, which still uses ForPasting;
-        // every emulator route goes through ForTyping below.
-        Assert.Equal("ship it", TerminalTyping.ForPasting("ship it"));
+        // CB-304: measured on the Windows box, a bare 300-char line plus
+        // VK_RETURN submitted 0/3; bracketed, 3/3.
+        Assert.Equal(TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd,
+            TerminalFocuser.ConsoleBody(text));
+        Assert.Equal(TerminalTyping.PasteStart + new string('x', 300) + TerminalTyping.PasteEnd,
+            TerminalFocuser.ConsoleBody(new string('x', 300)));
     }
 
     [Theory]
@@ -365,7 +369,7 @@ public class TypingWithoutTmuxTests
         // Without this a literal newline is indistinguishable from pressing
         // Return, so Shift+Enter in the panel would submit half a sentence and
         // leave the rest to arrive as a second message.
-        var sent = TerminalTyping.ForPasting(many);
+        var sent = TerminalTyping.ForTyping(many);
 
         Assert.StartsWith(TerminalTyping.PasteStart, sent, StringComparison.Ordinal);
         Assert.EndsWith(TerminalTyping.PasteEnd, sent, StringComparison.Ordinal);
@@ -384,7 +388,7 @@ public class TypingWithoutTmuxTests
     [Fact]
     public void NothingToSendIsLeftAlone()
     {
-        Assert.Equal("", TerminalTyping.ForPasting(""));
+        Assert.Equal("", TerminalFocuser.ConsoleBody(""));
     }
 
     // --- CB-304: every emulator route brackets, and submits with CR ------------

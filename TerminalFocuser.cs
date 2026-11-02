@@ -777,13 +777,18 @@ namespace Orbweaver
         // Buddy later wrote into their session.
         private static readonly object ConsoleGate = new();
 
+        internal static string ConsoleBody(string text) => TerminalTyping.ForTyping(text);
+
         [SupportedOSPlatform("windows")]
         [ExcludeFromCodeCoverage]
         private static bool SendViaConsole(SessionStatus status, string text)
         {
             // The Enter is a keystroke here rather than a character, so the
-            // body and the submit are built separately.
-            var body = TerminalTyping.ForPasting(text);
+            // body and the submit are built separately. The body is bracketed
+            // for the reason given at ForTyping: measured on the Windows box
+            // (Claude Code 2.1.316), a bare 300-character line plus VK_RETURN
+            // submitted 0/3 and the bracketed one 3/3 (CB-304).
+            var body = ConsoleBody(text);
 
             lock (ConsoleGate)
             {
