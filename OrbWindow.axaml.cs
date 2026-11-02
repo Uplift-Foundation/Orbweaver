@@ -2507,6 +2507,11 @@ namespace Orbweaver
         // in an earlier one.
         public bool IsPinned { get; private set; }
 
+        // CB-303: true from the first move of a drag to its release. A reflow
+        // (a scan, a glide landing) leaves a held orb to the pointer; without
+        // this a scan during a still hold yanked it to its stack slot.
+        internal bool HeldByDrag { get; set; }
+
         private SessionStatus? _lastStatus;
         private bool _pressed;
         private bool _dragging;
@@ -2676,6 +2681,22 @@ namespace Orbweaver
                 OnClicked(_clickCount);
             }
 
+            _session = null;
+        }
+
+        // CB-303: a drag whose capture is lost without a release (another
+        // window grabbing the pointer) would never end, leaving HeldByDrag set
+        // and the orb out of every layout. Commit it where it is, as a release.
+        // Excluded like its siblings: it only forwards a real pointer event;
+        // the decision is OrbDragSession.End.
+        [ExcludeFromCodeCoverage]
+        protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+        {
+            base.OnPointerCaptureLost(e);
+            if (!_pressed || !_dragging) return;
+
+            _pressed = false;
+            _session?.End();
             _session = null;
         }
 
