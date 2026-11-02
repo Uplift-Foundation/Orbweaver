@@ -225,6 +225,11 @@ namespace Orbweaver
 
             ConfigureThoughtBubblePlacement(Root);
 
+            // CB-302: the bubble is opened and closed by ThoughtBubbles, not by
+            // Avalonia's tooltip service, which a stale orb window drives on
+            // every rendered frame. See that class's own comment.
+            ThoughtBubbles.Attach(this, Root);
+
             // Unlike WPF, Loaded fires *after* the first UpdateFrom here, so
             // honor any state that already arrived instead of stomping it.
             Loaded += (_, _) =>
@@ -293,6 +298,7 @@ namespace Orbweaver
             Closed += (_, _) =>
             {
                 _hideFlyoutTimer?.Stop();
+                HoverWatch.Unregister(this);
                 _flyout?.Close();
             };
         }
@@ -1920,6 +1926,40 @@ namespace Orbweaver
                 from: this.PointToScreen(from),
                 to: this.PointToScreen(target),
                 owner: this);
+
+            // CB-302: both halves of the bridge above are driven by
+            // PointerEntered/PointerExited, and an orb window that missed its
+            // leave has no exit to schedule a hide — its flyout stayed up with the
+            // pointer across the screen, several orbs at once. HoverWatch looks at
+            // the real cursor while the flyout is open; recording keeps it up, as
+            // the hide itself already does.
+            HoverWatch.Register(this, () => _recording || FlyoutStillHovered(), OnFlyoutHoverLost);
+        }
+
+        // Test-only: whether this orb's flyout is on HoverWatch.
+        internal bool FlyoutWatching => HoverWatch.IsWatching(this);
+
+        // "Is the pointer on this orb or its flyout", through RealHover on both
+        // windows. The flyout counts only while it is on screen.
+        internal bool FlyoutStillHovered() =>
+            RealHover.IsOver(this, Root) || (_flyout is { IsVisible: true } flyout && flyout.IsPointerOverFlyout);
+
+        // Hands a cursor that has left both windows to the ordinary hide, grace
+        // period and all, rather than hiding outright: the gap between the orb
+        // and its arc is crossed on every use, and the hide tick re-checks with
+        // the same rule before anything disappears. Not rescheduled while a hide
+        // is already pending, or the watch would keep pushing it back forever.
+        // A flyout that went away some other way just leaves the watch.
+        internal void OnFlyoutHoverLost()
+        {
+            if (_flyout?.IsVisible != true)
+            {
+                HoverWatch.Unregister(this);
+                return;
+            }
+
+            if (_hideFlyoutTimer?.IsEnabled == true) return;
+            ScheduleFlyoutHide();
         }
 
         // Centre of the orb in its own window's DIPs — half of Root's pinned
@@ -2206,6 +2246,7 @@ namespace Orbweaver
         {
             CancelFlyoutShow();
             _hideFlyoutTimer?.Stop();
+            HoverWatch.Unregister(this);
             _flyout?.Hide();
         }
 
@@ -2249,7 +2290,10 @@ namespace Orbweaver
             // PointerExited cancels this timer, but a drag that carries the orb
             // out from under a stationary cursor, or an orb closing mid-wait,
             // doesn't necessarily raise one — so confirm rather than assume.
-            if (!Root.IsPointerOver) return;
+            // Against the real cursor too (CB-302): a stale orb window can be
+            // handed a fresh PointerEntered by a frame, with the pointer nowhere
+            // near it, and its IsPointerOver never went false to begin with.
+            if (!RealHover.CanOpen(this, Root)) return;
 
             EnsureFlyoutShown();
         }
@@ -2277,8 +2321,9 @@ namespace Orbweaver
             // The grace period ends with the pointer having genuinely landed
             // on one of the two windows after all (a slow, deliberate move
             // across the gap) — nothing to hide in that case.
-            if (Root.IsPointerOver || (_flyout?.IsPointerOverFlyout ?? false)) return;
+            if (FlyoutStillHovered()) return;
 
+            HoverWatch.Unregister(this);
             _flyout?.Hide();
         }
 
@@ -2371,7 +2416,7 @@ namespace Orbweaver
             // click, but the recording that was forcing the flyout to stay
             // up just ended — re-derive from where the pointer actually is
             // now rather than assuming either way.
-            if (Root.IsPointerOver || (_flyout?.IsPointerOverFlyout ?? false))
+            if (FlyoutStillHovered())
             {
                 CancelFlyoutHide();
             }
@@ -2506,6 +2551,11 @@ namespace Orbweaver
         // True once the user has placed this orb by hand, whether in this run or
         // in an earlier one.
         public bool IsPinned { get; private set; }
+
+        // CB-303: true from the first move of a drag to its release. A reflow
+        // (a scan, a glide landing) leaves a held orb to the pointer; without
+        // this a scan during a still hold yanked it to its stack slot.
+        internal bool HeldByDrag { get; set; }
 
         private SessionStatus? _lastStatus;
         private bool _pressed;
@@ -2676,6 +2726,22 @@ namespace Orbweaver
                 OnClicked(_clickCount);
             }
 
+            _session = null;
+        }
+
+        // CB-303: a drag whose capture is lost without a release (another
+        // window grabbing the pointer) would never end, leaving HeldByDrag set
+        // and the orb out of every layout. Commit it where it is, as a release.
+        // Excluded like its siblings: it only forwards a real pointer event;
+        // the decision is OrbDragSession.End.
+        [ExcludeFromCodeCoverage]
+        protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+        {
+            base.OnPointerCaptureLost(e);
+            if (!_pressed || !_dragging) return;
+
+            _pressed = false;
+            _session?.End();
             _session = null;
         }
 

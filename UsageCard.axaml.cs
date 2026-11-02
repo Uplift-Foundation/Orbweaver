@@ -71,7 +71,8 @@ namespace Orbweaver
         // the pointer leaving the orb and arriving here. Reads the transparent
         // Root rather than the window, which is why that Root has a background
         // at all.
-        internal bool IsPointerOverCard => Root.IsPointerOver;
+        // Through RealHover (CB-302), for the reason on OrbFlyout.IsPointerOverFlyout.
+        internal bool IsPointerOverCard => RealHover.IsOver(this, Root);
 
         internal bool IsPinned => _pinned;
 

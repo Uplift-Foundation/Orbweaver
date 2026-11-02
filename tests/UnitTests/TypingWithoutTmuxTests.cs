@@ -347,12 +347,17 @@ public class TypingWithoutTmuxTests
 
     // --- bracketed paste -------------------------------------------------------
 
-    [Fact]
-    public void ASingleLineIsSentWithNoEscapeSequencesAtAll()
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    public void TheWindowsConsoleBodyIsBracketedToo(string text)
     {
-        // The common case, and the one where a wrapper would be an assumption
-        // for no benefit: there is no second line to protect.
-        Assert.Equal("ship it", TerminalTyping.ForPasting("ship it"));
+        // CB-304: measured on the Windows box, a bare 300-char line plus
+        // VK_RETURN submitted 0/3; bracketed, 3/3.
+        Assert.Equal(TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd,
+            TerminalFocuser.ConsoleBody(text));
+        Assert.Equal(TerminalTyping.PasteStart + new string('x', 300) + TerminalTyping.PasteEnd,
+            TerminalFocuser.ConsoleBody(new string('x', 300)));
     }
 
     [Theory]
@@ -364,7 +369,7 @@ public class TypingWithoutTmuxTests
         // Without this a literal newline is indistinguishable from pressing
         // Return, so Shift+Enter in the panel would submit half a sentence and
         // leave the rest to arrive as a second message.
-        var sent = TerminalTyping.ForPasting(many);
+        var sent = TerminalTyping.ForTyping(many);
 
         Assert.StartsWith(TerminalTyping.PasteStart, sent, StringComparison.Ordinal);
         Assert.EndsWith(TerminalTyping.PasteEnd, sent, StringComparison.Ordinal);
@@ -383,7 +388,181 @@ public class TypingWithoutTmuxTests
     [Fact]
     public void NothingToSendIsLeftAlone()
     {
-        Assert.Equal("", TerminalTyping.ForPasting(""));
+        Assert.Equal("", TerminalFocuser.ConsoleBody(""));
+    }
+
+    // --- CB-304: every emulator route brackets, and submits with CR ------------
+
+    private static readonly string Esc = "\u001b";
+
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    [InlineData("first\r\nsecond")]
+    [InlineData("trailing\n")]
+    public void ForTypingWrapsEverythingExactlyOnce(string text)
+    {
+        Assert.Equal(Esc + "[200~" + text + Esc + "[201~", TerminalTyping.ForTyping(text));
+    }
+
+    [Fact]
+    public void ForTypingWrapsA300CharacterSingleLine()
+    {
+        // The regression itself: unbracketed, Claude Code took anything over
+        // ~60-70 characters as a paste and swallowed the Return (0/25 submitted).
+        var line = new string('x', 300);
+
+        var sent = TerminalTyping.ForTyping(line);
+
+        Assert.StartsWith(TerminalTyping.PasteStart, sent, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd, sent, StringComparison.Ordinal);
+        Assert.Equal(300 + 12, sent.Length);
+    }
+
+    [Fact]
+    public void ForTypingLeavesNothingAlone()
+    {
+        Assert.Equal("", TerminalTyping.ForTyping(""));
+        Assert.Null(TerminalTyping.ForTyping(null!));
+    }
+
+    [Fact]
+    public void ReturnIsCarriageReturnNeverLineFeed()
+    {
+        // LF is Ctrl+J: "insert a newline" to both TUIs, so it never submits.
+        Assert.Equal("\r", TerminalTyping.Return);
+    }
+
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    public void ForTypingAndSubmitEndsWithCrAfterThePasteEnd(string text)
+    {
+        var sent = TerminalTyping.ForTypingAndSubmit(text);
+
+        Assert.Equal(TerminalTyping.ForTyping(text) + "\r", sent);
+        Assert.EndsWith(Esc + "[201~\r", sent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ForTypingAndSubmitAddsNoLineFeedOfItsOwn()
+    {
+        Assert.DoesNotContain('\n', TerminalTyping.ForTypingAndSubmit("one line"));
+    }
+
+    [Fact]
+    public void ForTypingAndSubmitOfNothingIsNothing()
+    {
+        Assert.Equal("", TerminalTyping.ForTypingAndSubmit(""));
+    }
+
+    [Theory]
+    [InlineData("short")]
+    [InlineData("a long single line, comfortably past the point where Claude Code reads an unbracketed burst as a paste")]
+    [InlineData("two\nlines")]
+    public void KittyBracketsAndSubmitsWithCr(string text)
+    {
+        var (stdin, args) = TerminalFocuser.KittySend(Claude(termId: "7"), text);
+
+        Assert.StartsWith(TerminalTyping.PasteStart + text, stdin, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd + "\r", stdin, StringComparison.Ordinal);
+        Assert.False(stdin.EndsWith('\n'));
+        Assert.Equal(new[] { "@", "send-text", "--match", "id:7", "--stdin" }, args);
+    }
+
+    [Theory]
+    [InlineData("short")]
+    [InlineData("a long single line, comfortably past the point where Claude Code reads an unbracketed burst as a paste")]
+    [InlineData("two\nlines")]
+    public void WezTermBracketsAndSubmitsWithCr(string text)
+    {
+        var (stdin, args) = TerminalFocuser.WezTermSend(Claude(termId: "3"), text);
+
+        Assert.StartsWith(TerminalTyping.PasteStart + text, stdin, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd + "\r", stdin, StringComparison.Ordinal);
+        Assert.False(stdin.EndsWith('\n'));
+        Assert.Equal(new[] { "cli", "send-text", "--pane-id", "3", "--no-paste" }, args);
+    }
+
+    [Fact]
+    public void OsascriptArgsAreDashEPerLineThenTheTwoArguments()
+    {
+        var args = TerminalFocuser.OsascriptArgs(new[] { "a", "b" }, "who", "body");
+
+        Assert.Equal(new[] { "-e", "a", "-e", "b", "--", "who", "body" }, args);
+    }
+
+    [Fact]
+    public void ITerm2ScriptWritesTheBodyWithItsOwnReturn()
+    {
+        // The AppleScript is unchanged by CB-304: write text's own trailing
+        // Return is the submit, correct now that the body is bracketed.
+        Assert.Contains("tell s to write text body", TerminalFocuser.ITerm2SendScript);
+        Assert.DoesNotContain(TerminalFocuser.ITerm2SendScript, l => l.Contains("newline NO"));
+    }
+
+    [Fact]
+    public void TerminalAppScriptUsesDoScriptWhichPressesReturn()
+    {
+        Assert.Contains("do script body in t", TerminalFocuser.TerminalAppSendScript);
+    }
+
+    [Theory]
+    [InlineData("short")]
+    [InlineData("a long single line, comfortably past the point where Claude Code reads an unbracketed burst as a paste")]
+    [InlineData("first\nsecond")]
+    public void TheITerm2AndTerminalAppBodiesAreBracketed(string text)
+    {
+        var iterm = TerminalFocuser.ITerm2Args(Claude(termId: "GUID-1"), text);
+        var term = TerminalFocuser.TerminalAppArgs(Claude(tty: "ttys004"), text);
+
+        Assert.Equal(TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd, iterm[^1]);
+        Assert.Equal("GUID-1", iterm[^2]);
+        Assert.Equal(TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd, term[^1]);
+        Assert.Equal("/dev/ttys004", term[^2]);
+        Assert.Equal("--", iterm[^3]);
+        Assert.Equal("--", term[^3]);
+    }
+
+    private static string Typed(System.Collections.Generic.List<TerminalFocuser.NativeMethods.InputRecord> r)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var x in r) if (x.KeyDown == 1) sb.Append(x.Char);
+        return sb.ToString();
+    }
+
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    public void TheWindowsConsoleTypesTheBracketedBodyThenVkReturn(string text)
+    {
+        var r = TerminalFocuser.ConsoleRecords(text);
+
+        // Body, one down+up pair per character, then the Enter.
+        var body = TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd;
+        Assert.Equal((body.Length + 1) * 2, r.Count);
+        Assert.Equal(body + "\r", Typed(r));
+
+        for (var i = 0; i < r.Count; i++)
+        {
+            Assert.Equal(i % 2 == 0 ? 1 : 0, r[i].KeyDown);
+            Assert.Equal(TerminalFocuser.NativeMethods.KeyEvent, r[i].EventType);
+        }
+
+        // Body characters carry no virtual key; the final pair is VK_RETURN.
+        Assert.All(r.GetRange(0, r.Count - 2), x => Assert.Equal(0, x.VirtualKeyCode));
+        Assert.Equal(0x0D, r[^2].VirtualKeyCode);
+        Assert.Equal(0x0D, r[^1].VirtualKeyCode);
+        Assert.Equal('\r', r[^2].Char);
+    }
+
+    [Fact]
+    public void ABare300CharLineIsNeverTypedToTheWindowsConsole()
+    {
+        var typed = Typed(TerminalFocuser.ConsoleRecords(new string('x', 300)));
+
+        Assert.StartsWith(TerminalTyping.PasteStart, typed, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd + "\r", typed, StringComparison.Ordinal);
     }
 
     // --- what the user is told -------------------------------------------------

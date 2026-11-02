@@ -135,6 +135,12 @@ namespace Orbweaver
             // OrbWindow.ConfigureThoughtBubblePlacement for the full
             // mechanism (CB-104).
             OrbWindow.ConfigureThoughtBubblePlacement(Root);
+
+            // CB-302: off Avalonia's tooltip service, for the reason on
+            // ThoughtBubbles — an account orb is a TopLevel that can miss its
+            // leave just like a session orb, and then fights over the same
+            // process-wide tip slot on every breath it draws.
+            ThoughtBubbles.Attach(this, Root);
         }
 
         // Which account this orb is for: the CLAUDE_CONFIG_DIR it was read
