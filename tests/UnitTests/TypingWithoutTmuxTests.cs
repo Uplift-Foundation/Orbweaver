@@ -524,6 +524,47 @@ public class TypingWithoutTmuxTests
         Assert.Equal("--", term[^3]);
     }
 
+    private static string Typed(System.Collections.Generic.List<TerminalFocuser.NativeMethods.InputRecord> r)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var x in r) if (x.KeyDown == 1) sb.Append(x.Char);
+        return sb.ToString();
+    }
+
+    [Theory]
+    [InlineData("ship it")]
+    [InlineData("first\nsecond")]
+    public void TheWindowsConsoleTypesTheBracketedBodyThenVkReturn(string text)
+    {
+        var r = TerminalFocuser.ConsoleRecords(text);
+
+        // Body, one down+up pair per character, then the Enter.
+        var body = TerminalTyping.PasteStart + text + TerminalTyping.PasteEnd;
+        Assert.Equal((body.Length + 1) * 2, r.Count);
+        Assert.Equal(body + "\r", Typed(r));
+
+        for (var i = 0; i < r.Count; i++)
+        {
+            Assert.Equal(i % 2 == 0 ? 1 : 0, r[i].KeyDown);
+            Assert.Equal(TerminalFocuser.NativeMethods.KeyEvent, r[i].EventType);
+        }
+
+        // Body characters carry no virtual key; the final pair is VK_RETURN.
+        Assert.All(r.GetRange(0, r.Count - 2), x => Assert.Equal(0, x.VirtualKeyCode));
+        Assert.Equal(0x0D, r[^2].VirtualKeyCode);
+        Assert.Equal(0x0D, r[^1].VirtualKeyCode);
+        Assert.Equal('\r', r[^2].Char);
+    }
+
+    [Fact]
+    public void ABare300CharLineIsNeverTypedToTheWindowsConsole()
+    {
+        var typed = Typed(TerminalFocuser.ConsoleRecords(new string('x', 300)));
+
+        Assert.StartsWith(TerminalTyping.PasteStart, typed, StringComparison.Ordinal);
+        Assert.EndsWith(TerminalTyping.PasteEnd + "\r", typed, StringComparison.Ordinal);
+    }
+
     // --- what the user is told -------------------------------------------------
 
     [Fact]

@@ -779,17 +779,25 @@ namespace Orbweaver
 
         internal static string ConsoleBody(string text) => TerminalTyping.ForTyping(text);
 
+        // The records SendViaConsole writes: the bracketed body one keystroke
+        // at a time, then VK_RETURN with '\r' as its character — a TUI reading
+        // characters sees the carriage return and one reading key events sees
+        // Enter, and both are correct. Pure, so the sequence is pinned in tests.
+        internal static List<NativeMethods.InputRecord> ConsoleRecords(string text)
+        {
+            var body = ConsoleBody(text);
+            var records = new List<NativeMethods.InputRecord>(body.Length * 2 + 2);
+
+            foreach (var c in body) AddKeystroke(records, c);
+            AddKeystroke(records, '\r', virtualKey: 0x0D);
+
+            return records;
+        }
+
         [SupportedOSPlatform("windows")]
         [ExcludeFromCodeCoverage]
         private static bool SendViaConsole(SessionStatus status, string text)
         {
-            // The Enter is a keystroke here rather than a character, so the
-            // body and the submit are built separately. The body is bracketed
-            // for the reason given at ForTyping: measured on the Windows box
-            // (Claude Code 2.1.316), a bare 300-character line plus VK_RETURN
-            // submitted 0/3 and the bracketed one 3/3 (CB-304).
-            var body = ConsoleBody(text);
-
             lock (ConsoleGate)
             {
                 // A GUI app normally has no console, so this is usually a
@@ -805,16 +813,10 @@ namespace Orbweaver
                     using var input = NativeMethods.OpenConsoleInput();
                     if (input.IsInvalid) return false;
 
-                    var records = new List<NativeMethods.InputRecord>(body.Length * 2 + 2);
-
-                    foreach (var c in body) AddKeystroke(records, c);
-
-                    // VK_RETURN, with '\r' as its character: a TUI reading
-                    // characters sees the carriage return and one reading key
-                    // events sees Enter, and both are correct.
-                    AddKeystroke(records, '\r', virtualKey: 0x0D);
-
-                    var all = records.ToArray();
+                    // Bracketed for the reason given at ForTyping: measured on the
+                    // Windows box (Claude Code 2.1.316), a bare 300-character line
+                    // plus VK_RETURN submitted 0/3 and the bracketed one 3/3 (CB-304).
+                    var all = ConsoleRecords(text).ToArray();
                     return NativeMethods.WriteConsoleInput(
                         input, all, (uint)all.Length, out var written)
                         && written == all.Length;
@@ -832,8 +834,6 @@ namespace Orbweaver
         // characters counts them: sending only the key-down leaves every key
         // logically held, and the first one to be checked for a modifier
         // behaves as though it were.
-        [SupportedOSPlatform("windows")]
-        [ExcludeFromCodeCoverage]
         private static void AddKeystroke(
             List<NativeMethods.InputRecord> into, char c, ushort virtualKey = 0)
         {
@@ -1662,7 +1662,7 @@ namespace Orbweaver
         // write key events, detach. See SendViaConsole for why the sequence
         // has to be exactly that and why it holds a lock while it runs.
         [ExcludeFromCodeCoverage]
-        private static class NativeMethods
+        internal static class NativeMethods
         {
             internal const ushort KeyEvent = 0x0001;
 
