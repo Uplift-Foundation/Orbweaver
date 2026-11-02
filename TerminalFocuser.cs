@@ -566,26 +566,37 @@ namespace Orbweaver
         // is the wrong place for it on every platform, doubly so on Windows
         // where quoting is the caller's problem rather than the shell's.
         //
-        // The trailing newline is the Enter. kitty sends exactly the bytes it
-        // is given, so the submit has to be one of them.
+        // The Enter is a "\r" appended after the paste-end marker (CB-304).
+        // kitty sends exactly the bytes it is given, so the submit has to be
+        // one of them — and it has to be CR: the "\n" this used to send is
+        // Ctrl+J, which Claude Code and Codex read as "insert a newline", so
+        // this route never submitted at any length.
+        internal static (string Stdin, string[] Args) KittySend(SessionStatus status, string text) =>
+            (TerminalTyping.ForTypingAndSubmit(text),
+                new[] { "@", "send-text", "--match", "id:" + status.TermId, "--stdin" });
+
         [ExcludeFromCodeCoverage]
-        private static bool SendViaKitty(SessionStatus status, string text) =>
-            Feed(
-                OnPath("kitty"),
-                TerminalTyping.ForPasting(text) + "\n",
-                "@", "send-text", "--match", "id:" + status.TermId, "--stdin");
+        private static bool SendViaKitty(SessionStatus status, string text)
+        {
+            var (stdin, args) = KittySend(status, text);
+            return Feed(OnPath("kitty"), stdin, args);
+        }
 
         // WezTerm, addressed by the pane id it exports as WEZTERM_PANE.
         //
-        // `--no-paste` because ForPasting has already decided whether this
-        // text needs bracketed-paste markers, and letting wezterm add its own
-        // as well would deliver them twice.
+        // `--no-paste` because ForTypingAndSubmit already brackets the text,
+        // and letting wezterm add its own markers as well would deliver them
+        // twice. The submit is "\r", not "\n", for the reason given at kitty.
+        internal static (string Stdin, string[] Args) WezTermSend(SessionStatus status, string text) =>
+            (TerminalTyping.ForTypingAndSubmit(text),
+                new[] { "cli", "send-text", "--pane-id", status.TermId, "--no-paste" });
+
         [ExcludeFromCodeCoverage]
-        private static bool SendViaWezTerm(SessionStatus status, string text) =>
-            Feed(
-                OnPath("wezterm"),
-                TerminalTyping.ForPasting(text) + "\n",
-                "cli", "send-text", "--pane-id", status.TermId, "--no-paste");
+        private static bool SendViaWezTerm(SessionStatus status, string text)
+        {
+            var (stdin, args) = WezTermSend(status, text);
+            return Feed(OnPath("wezterm"), stdin, args);
+        }
 
         // Runs a tool and hands it the message on stdin.
         //
@@ -642,31 +653,33 @@ namespace Orbweaver
         // backslashes and newlines correctly every time or executing whatever
         // the user happened to type. argv has no such failure mode, and
         // carries multi-line text unaltered.
+        internal static readonly string[] ITerm2SendScript =
+        {
+            "on run argv",
+            "set wanted to item 1 of argv",
+            "set body to item 2 of argv",
+            "tell application \"iTerm2\"",
+            "repeat with w in windows",
+            "repeat with t in tabs of w",
+            "repeat with s in sessions of t",
+            "if ((id of s) as string) is wanted then",
+            "tell s to write text body",
+            "return \"ok\"",
+            "end if",
+            "end repeat",
+            "end repeat",
+            "end repeat",
+            "end tell",
+            "return \"no\"",
+            "end run",
+        };
+
+        internal static string[] ITerm2Args(SessionStatus status, string text) =>
+            OsascriptArgs(ITerm2SendScript, status.TermId, TerminalTyping.ForTyping(text));
+
         [ExcludeFromCodeCoverage]
         private static bool SendViaITerm2(SessionStatus status, string text) =>
-            TellTerminal(
-                new[]
-                {
-                    "on run argv",
-                    "set wanted to item 1 of argv",
-                    "set body to item 2 of argv",
-                    "tell application \"iTerm2\"",
-                    "repeat with w in windows",
-                    "repeat with t in tabs of w",
-                    "repeat with s in sessions of t",
-                    "if ((id of s) as string) is wanted then",
-                    "tell s to write text body",
-                    "return \"ok\"",
-                    "end if",
-                    "end repeat",
-                    "end repeat",
-                    "end repeat",
-                    "end tell",
-                    "return \"no\"",
-                    "end run",
-                },
-                status.TermId,
-                TerminalTyping.ForPasting(text));
+            TellTerminal(status.TermId, ITerm2Args(status, text));
 
         // Terminal.app, addressed by tty.
         //
@@ -678,29 +691,34 @@ namespace Orbweaver
         // `do script … in <tab>` types the text into that tab and presses
         // Return, which is exactly the contract here, without activating
         // Terminal.
+        internal static readonly string[] TerminalAppSendScript =
+        {
+            "on run argv",
+            "set wanted to item 1 of argv",
+            "set body to item 2 of argv",
+            "tell application \"Terminal\"",
+            "repeat with w in windows",
+            "repeat with t in tabs of w",
+            "if ((tty of t) as string) is wanted then",
+            "do script body in t",
+            "return \"ok\"",
+            "end if",
+            "end repeat",
+            "end repeat",
+            "end tell",
+            "return \"no\"",
+            "end run",
+        };
+
+        internal static string[] TerminalAppArgs(SessionStatus status, string text) =>
+            OsascriptArgs(
+                TerminalAppSendScript,
+                TerminalTyping.DevicePath(status.Tty),
+                TerminalTyping.ForTyping(text));
+
         [ExcludeFromCodeCoverage]
         private static bool SendViaTerminalApp(SessionStatus status, string text) =>
-            TellTerminal(
-                new[]
-                {
-                    "on run argv",
-                    "set wanted to item 1 of argv",
-                    "set body to item 2 of argv",
-                    "tell application \"Terminal\"",
-                    "repeat with w in windows",
-                    "repeat with t in tabs of w",
-                    "if ((tty of t) as string) is wanted then",
-                    "do script body in t",
-                    "return \"ok\"",
-                    "end if",
-                    "end repeat",
-                    "end repeat",
-                    "end tell",
-                    "return \"no\"",
-                    "end run",
-                },
-                TerminalTyping.DevicePath(status.Tty),
-                TerminalTyping.ForPasting(text));
+            TellTerminal(TerminalTyping.DevicePath(status.Tty), TerminalAppArgs(status, text));
 
         // Runs one of the two scripts above and reports whether it found its
         // session.
@@ -716,11 +734,8 @@ namespace Orbweaver
         // consent prompt, and on a Mac nobody is looking at that prompt is
         // answered slowly or not at all. Failing is correct there; failing in
         // three seconds while the user is still reading the dialog is not.
-        [ExcludeFromCodeCoverage]
-        private static bool TellTerminal(string[] script, string wanted, string body)
+        internal static string[] OsascriptArgs(string[] script, string wanted, string body)
         {
-            if (string.IsNullOrEmpty(wanted)) return false;
-
             var args = new List<string>();
             foreach (var line in script)
             {
@@ -731,8 +746,15 @@ namespace Orbweaver
             args.Add("--");
             args.Add(wanted);
             args.Add(body);
+            return args.ToArray();
+        }
 
-            if (!TryRun("/usr/bin/osascript", 15000, out var answer, args.ToArray()))
+        [ExcludeFromCodeCoverage]
+        private static bool TellTerminal(string wanted, string[] args)
+        {
+            if (string.IsNullOrEmpty(wanted)) return false;
+
+            if (!TryRun("/usr/bin/osascript", 15000, out var answer, args))
                 return false;
 
             return answer.Trim() == "ok";
@@ -755,14 +777,27 @@ namespace Orbweaver
         // Buddy later wrote into their session.
         private static readonly object ConsoleGate = new();
 
+        internal static string ConsoleBody(string text) => TerminalTyping.ForTyping(text);
+
+        // The records SendViaConsole writes: the bracketed body one keystroke
+        // at a time, then VK_RETURN with '\r' as its character — a TUI reading
+        // characters sees the carriage return and one reading key events sees
+        // Enter, and both are correct. Pure, so the sequence is pinned in tests.
+        internal static List<NativeMethods.InputRecord> ConsoleRecords(string text)
+        {
+            var body = ConsoleBody(text);
+            var records = new List<NativeMethods.InputRecord>(body.Length * 2 + 2);
+
+            foreach (var c in body) AddKeystroke(records, c);
+            AddKeystroke(records, '\r', virtualKey: 0x0D);
+
+            return records;
+        }
+
         [SupportedOSPlatform("windows")]
         [ExcludeFromCodeCoverage]
         private static bool SendViaConsole(SessionStatus status, string text)
         {
-            // The Enter is a keystroke here rather than a character, so the
-            // body and the submit are built separately.
-            var body = TerminalTyping.ForPasting(text);
-
             lock (ConsoleGate)
             {
                 // A GUI app normally has no console, so this is usually a
@@ -778,16 +813,10 @@ namespace Orbweaver
                     using var input = NativeMethods.OpenConsoleInput();
                     if (input.IsInvalid) return false;
 
-                    var records = new List<NativeMethods.InputRecord>(body.Length * 2 + 2);
-
-                    foreach (var c in body) AddKeystroke(records, c);
-
-                    // VK_RETURN, with '\r' as its character: a TUI reading
-                    // characters sees the carriage return and one reading key
-                    // events sees Enter, and both are correct.
-                    AddKeystroke(records, '\r', virtualKey: 0x0D);
-
-                    var all = records.ToArray();
+                    // Bracketed for the reason given at ForTyping: measured on the
+                    // Windows box (Claude Code 2.1.316), a bare 300-character line
+                    // plus VK_RETURN submitted 0/3 and the bracketed one 3/3 (CB-304).
+                    var all = ConsoleRecords(text).ToArray();
                     return NativeMethods.WriteConsoleInput(
                         input, all, (uint)all.Length, out var written)
                         && written == all.Length;
@@ -805,8 +834,6 @@ namespace Orbweaver
         // characters counts them: sending only the key-down leaves every key
         // logically held, and the first one to be checked for a modifier
         // behaves as though it were.
-        [SupportedOSPlatform("windows")]
-        [ExcludeFromCodeCoverage]
         private static void AddKeystroke(
             List<NativeMethods.InputRecord> into, char c, ushort virtualKey = 0)
         {
@@ -1635,7 +1662,7 @@ namespace Orbweaver
         // write key events, detach. See SendViaConsole for why the sequence
         // has to be exactly that and why it holds a lock while it runs.
         [ExcludeFromCodeCoverage]
-        private static class NativeMethods
+        internal static class NativeMethods
         {
             internal const ushort KeyEvent = 0x0001;
 

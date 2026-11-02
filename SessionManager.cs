@@ -3918,7 +3918,7 @@ namespace Orbweaver
             int y = work.Y + margin;
             foreach (var window in loose)
             {
-                if (window.IsPinned) continue;
+                if (window.IsPinned || window.HeldByDrag) continue;
 
                 int size = OrbPixels(window, scale);
                 window.Position = new PixelPoint(work.Right - size - margin, y);
@@ -3934,7 +3934,10 @@ namespace Orbweaver
                 .ToList();
             var (targets, userGroups) = LayoutSubset(
                 grouped.Where(w => w.IsVisible).ToList(), OrbArrangement.GroupLayoutMode.Free, obstacles);
-            foreach (var (orb, at) in targets) orb.Position = at;
+            foreach (var (orb, at) in targets)
+            {
+                if (!orb.HeldByDrag) orb.Position = at;
+            }
 
             _groupPlacements = userGroups;
             GroupBackdrops.SetLooseOrbs(visibleLoose);
@@ -5125,7 +5128,7 @@ namespace Orbweaver
                     // An orb whose window has gone (its session ended mid-glide)
                     // has nothing left to land. Waiting on its glide would never
                     // end: it is never stepped, so it is never Done.
-                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    if (!_windows.TryGetValue(id, out var window) || window.HeldByDrag) continue;
                     if (elapsed < delay)
                     {
                         finishedAll = false;
@@ -5154,7 +5157,7 @@ namespace Orbweaver
 
                 foreach (var (id, (from, to)) in _arrangeAnimTargets)
                 {
-                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    if (!_windows.TryGetValue(id, out var window) || window.HeldByDrag) continue;
                     window.Position = new PixelPoint(
                         (int)Math.Round(from.X + (to.X - from.X) * eased),
                         (int)Math.Round(from.Y + (to.Y - from.Y) * eased));
@@ -5177,7 +5180,7 @@ namespace Orbweaver
 
             foreach (var (id, (_, to)) in targets)
             {
-                if (_windows.TryGetValue(id, out var window)) window.Position = to;
+                if (_windows.TryGetValue(id, out var window) && !window.HeldByDrag) window.Position = to;
             }
 
             // A pop cut short by a second drop ends at rest, like its glide.

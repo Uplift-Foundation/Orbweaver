@@ -98,6 +98,12 @@ internal static class TestBootstrap
         TextToSpeech.SilenceForTests = true;
         ChimePlayer.SilenceForTests = true;
 
+        // CB-302: no test reads the developer's real mouse. ThoughtBubbles and
+        // the flyout watch ask CursorProbe where the cursor is; null is "unknown",
+        // which falls back to IsPointerOver exactly as before. Tests that need a
+        // cursor set one and put this back.
+        CursorProbe.Read = () => null;
+
         OrbweaverSettings.ReloadForTests();
     }
 }

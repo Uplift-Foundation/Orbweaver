@@ -600,4 +600,103 @@ public class OrbDragCommitTests
         Assert.Single(h2.Settles);
         Assert.Empty(h2.Settles[0]);
     }
+
+    // --- CB-303: `landed` runs once, after membership is written, before the settle ---
+
+    // Runs Release with a callback that records how many settles had happened and
+    // what the host said about the orb's group at that moment.
+    private static (int Calls, int SettlesAtCall, string GroupAtCall) Landed(
+        FakeHost host, string pressed, bool whole)
+    {
+        int calls = 0, settles = -1;
+        var group = "";
+        OrbDragCommit.Release(host, pressed, whole, 5, 5, 1, default, () =>
+        {
+            calls++;
+            settles = host.Settles.Count;
+            group = host.GroupIdOf(pressed);
+        });
+        return (calls, settles, group);
+    }
+
+    [Fact]
+    public void LandedRunsOnceBeforeTheSettleOnAWholeGroupDrag()
+    {
+        var (host, orb, _, group) = FreeScene(5000, 5000);
+        host.Groups[orb] = group;
+
+        var (calls, settles, _) = Landed(host, orb, whole: true);
+
+        Assert.Equal((1, 0), (calls, settles));
+        Assert.Single(host.Settles);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LandedRunsOnceOnAMemberDragWhetherOrNotThereIsASettle(bool laidOut)
+    {
+        var (host, _, member) = TeamScene(laidOut);
+
+        var (calls, settles, _) = Landed(host, member, whole: false);
+
+        Assert.Equal((1, 0), (calls, settles));
+        Assert.Equal(laidOut ? 1 : 0, host.Settles.Count);
+    }
+
+    [Fact]
+    public void LandedRunsOnceBeforeTheSettleOnAJoin()
+    {
+        var (host, orb, _) = Scene(50);
+
+        var (calls, settles, _) = Landed(host, orb, whole: false);
+
+        Assert.Equal((1, 0), (calls, settles));
+        Assert.Single(host.Settles);
+    }
+
+    [Fact]
+    public void LandedRunsOnceBeforeTheSettleOnAPairLeaveAndNoChange()
+    {
+        var (hp, a, loose, _) = FreeScene(50, 5000);
+        hp.Teams[loose] = new[] { loose };
+        Assert.Equal((1, 0), Landed(hp, a, false).ToPair());
+
+        var (hl, la, _) = Scene(5000);
+        Assert.Equal((1, 0), Landed(hl, la, false).ToPair());
+
+        var (hn, na, _) = Scene(5000, mainX: 70);
+        Assert.Equal((1, 0), Landed(hn, na, false).ToPair());
+    }
+
+    [Fact]
+    public void LandedSeesTheNewMembershipOnLeaveToFree()
+    {
+        var (host, a, _, g) = FreeScene(5000, 5000);
+        host.Groups[a] = g;
+        host.Candidates.RemoveAt(0);
+        host.Candidates[0] = new SnapCandidate(g, Array.Empty<Point>(), new[] { (500.0, 0.0, 18.0) });
+        OrbweaverSettings.AssignTeamToGroup("key:" + a, Array.Empty<string>(), g);
+        var asked = "";
+        var outcome = OrbDragCommit.Release(host, a, false, 5, 5, 1, default, () =>
+            asked = OrbweaverSettings.OrbGroupMembershipFor("key:" + a) ?? "(loose)");
+
+        Assert.IsType<SnapOutcome.LeaveToFree>(outcome);
+        Assert.Equal("(loose)", asked);
+    }
+
+    [Fact]
+    public void ANullLandedBehavesAsBefore()
+    {
+        var (host, orb, _) = Scene(50);
+
+        OrbDragCommit.Release(host, orb, false, 5, 5, 1);
+
+        Assert.Single(host.Settles);
+    }
+}
+
+file static class LandedExt
+{
+    public static (int, int) ToPair(this (int Calls, int SettlesAtCall, string GroupAtCall) t) => (t.Calls, t.SettlesAtCall);
 }
