@@ -381,7 +381,9 @@ namespace Orbweaver
             // Re-confirm rather than trust the schedule: the pointer may have
             // left during the wait, and showing a card for an orb nobody is
             // pointing at is how a hover surface becomes a popup.
-            if (orb is null || !orb.Root.IsPointerOver) return;
+            // Against the real cursor too (CB-302): an account orb that missed
+            // its leave keeps IsPointerOver true with the pointer anywhere.
+            if (orb is null || !RealHover.CanOpen(orb, orb.Root)) return;
 
             _hovered = orb;
             OpenCard(orb);
@@ -411,10 +413,7 @@ namespace Orbweaver
             {
                 if (_pinned.Contains(key)) continue;
 
-                var overOrb = _orbs.TryGetValue(key, out var orb) && orb.Root.IsPointerOver;
-                var overCard = _cards[key].IsPointerOverCard;
-
-                if (overOrb || overCard) continue;
+                if (CardStillHovered(key)) continue;
 
                 CloseCard(key);
             }
@@ -445,12 +444,29 @@ namespace Orbweaver
 
             card.SetPinned(_pinned.Contains(key));
             card.ShowNear(orb);
+
+            // CB-302: a card whose orb missed its leave never gets the exit that
+            // schedules its hide. HoverWatch looks at the real cursor while it is
+            // open and hands a lost hover to the ordinary hide, grace and all. Not
+            // rescheduled while one is pending, or it would never fire.
+            HoverWatch.Register(card,
+                () => _pinned.Contains(key) || CardStillHovered(key),
+                () =>
+                {
+                    if (_hideTimer?.IsEnabled != true) ScheduleHide();
+                });
         }
+
+        // The real-cursor answer for the orb and its card together.
+        internal bool CardStillHovered(string key) =>
+            (_orbs.TryGetValue(key, out var orb) && RealHover.IsOver(orb, orb.Root)) ||
+            (_cards.TryGetValue(key, out var card) && card.IsPointerOverCard);
 
         private void CloseCard(string key)
         {
             if (!_cards.Remove(key, out var card)) return;
 
+            HoverWatch.Unregister(card);
             card.Hide();
             card.Close();
         }
@@ -464,11 +480,8 @@ namespace Orbweaver
                 // Unpinning while the pointer is elsewhere should put the card
                 // away immediately; unpinning while still hovering should not,
                 // or the card vanishes under the cursor that is still on it.
-                var stillThere = _orbs.TryGetValue(key, out var orb) && orb.Root.IsPointerOver;
-                var overCard = _cards.TryGetValue(key, out var card) && card.IsPointerOverCard;
-
-                if (!stillThere && !overCard) CloseCard(key);
-                else card?.SetPinned(false);
+                if (!CardStillHovered(key)) CloseCard(key);
+                else if (_cards.TryGetValue(key, out var card)) card.SetPinned(false);
             }
             else
             {

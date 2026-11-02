@@ -13,13 +13,17 @@ namespace Orbweaver
     // ignoresMouseEvents toggling, leaving onto an overlapping window — which
     // one is not established). The flag then stays true indefinitely, and
     // everything that trusts it answers about a pointer that left long ago:
-    // the thought bubble (see ThoughtBubbles) and the flyout's hover bridge
-    // (OrbWindow.OnFlyoutShowTick / OnFlyoutHideTick / OnFlyoutWatchTick). The
-    // real cursor is the cross-check. When it is unavailable the rules fall
-    // back to the flag, which is exactly the behaviour before this ticket.
+    // the thought bubble (see ThoughtBubbles), the flyout's hover bridge
+    // (OrbWindow.OnFlyoutShowTick / OnFlyoutHideTick, OrbFlyout), and the usage
+    // cards' (AccountOrbs, UsageCard). The real cursor is the cross-check, and
+    // every one of those decisions goes through CanOpen or IsOver below — do not
+    // swap one back to a bare IsPointerOver. When the cursor is unavailable the
+    // rules fall back to the flag, which is exactly the behaviour before this
+    // ticket. HoverWatch is what asks again while a surface is open.
     //
-    // Pure: no window, no clock, no cursor. The caller reads those and hands
-    // them in, so every arm here is a unit test.
+    // The rules are pure: no window, no clock, no cursor. The caller reads
+    // those and hands them in, so every arm is a unit test; CanOpen, IsOver and
+    // FrameOf(Window) are the thin UI-thread compositions over them.
     internal static class RealHover
     {
         // Opening needs both: Avalonia saying the pointer arrived (a real
@@ -51,17 +55,24 @@ namespace Orbweaver
             p.Y >= frame.Y && p.Y < frame.Y + frame.Height;
 
         // A window's frame in Window.Position's own units: Position is physical
-        // pixels on Windows and points on macOS, and UnitsPerDip is the measured
-        // ratio between those and the DIPs Bounds is in (1 on macOS).
-        internal static PixelRect FrameOf(Window window)
-        {
-            var scale = OrbWindow.UnitsPerDip(window);
-            return new PixelRect(
-                window.Position,
-                new PixelSize(
-                    (int)Math.Round(window.Bounds.Width * scale),
-                    (int)Math.Round(window.Bounds.Height * scale)));
-        }
+        // pixels on Windows and points on macOS, and unitsPerDip is the measured
+        // ratio between those and the DIPs a window's Bounds are in (1 on macOS).
+        internal static PixelRect FrameOf(PixelPoint position, Size dipSize, double unitsPerDip) =>
+            new(position, new PixelSize(
+                (int)Math.Round(dipSize.Width * unitsPerDip),
+                (int)Math.Round(dipSize.Height * unitsPerDip)));
+
+        internal static PixelRect FrameOf(Window window) =>
+            FrameOf(window.Position, window.Bounds.Size, OrbWindow.UnitsPerDip(window));
+
+        // The UI-thread compositions every hover decision goes through, so no
+        // caller reads IsPointerOver on its own any more. CanOpen for "should
+        // this start showing", IsOver for "is the pointer still here".
+        internal static bool CanOpen(Window window, Control root) =>
+            ShouldOpen(root.IsPointerOver, CursorProbe.Read(), FrameOf(window));
+
+        internal static bool IsOver(Window window, Control root) =>
+            ShouldStayOpen(root.IsPointerOver, CursorProbe.Read(), FrameOf(window));
     }
 
     // The one cursor read shared by the bubbles and the flyouts. A seam, so a

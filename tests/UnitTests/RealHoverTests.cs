@@ -99,4 +99,16 @@ public class RealHoverTests
     [Fact]
     public void AnEmptyFrameContainsNothing() =>
         Assert.False(RealHover.Inside(new PixelPoint(5, 5), new PixelRect(5, 5, 0, 0)));
+
+    // --- FrameOf --------------------------------------------------------------------
+
+    // macOS: Position and DIPs are both points.
+    [Fact]
+    public void AFrameAtOneUnitPerDipIsPositionPlusSize() =>
+        Assert.Equal(new PixelRect(100, 200, 72, 72), RealHover.FrameOf(new PixelPoint(100, 200), new Size(72, 72), 1));
+
+    // Windows at 150%: Position is physical pixels, so the size scales with it.
+    [Fact]
+    public void AFrameAtOneAndAHalfUnitsPerDipScalesTheSizeNotThePosition() =>
+        Assert.Equal(new PixelRect(100, 200, 108, 108), RealHover.FrameOf(new PixelPoint(100, 200), new Size(72, 72), 1.5));
 }

@@ -34,21 +34,13 @@ namespace Orbweaver
     // UI thread only, like everything else that touches a window.
     internal static class ThoughtBubbles
     {
-        // How often an open bubble checks the real cursor. A missed leave has
-        // to be caught by something other than the leave; a tenth of a second is
-        // well under what reads as "stuck", and the timer only runs while a
-        // bubble is actually open.
-        internal static readonly TimeSpan WatchInterval = TimeSpan.FromMilliseconds(100);
-
-        private static DispatcherTimer? _watch;
-
         // The one anchor whose bubble is open, or null. One at a time by
         // construction: Show closes the previous one first.
         internal static Control? Open { get; private set; }
 
-        // Whether the watch is running, for tests: it must stop once nothing is
-        // open, or every orb ever hovered leaves a 10 Hz timer behind.
-        internal static bool Watching => _watch?.IsEnabled == true;
+        // Whether the open bubble is on HoverWatch, for tests: it must come off
+        // once nothing is open, or every orb ever hovered leaves an entry behind.
+        internal static bool Watching => Open is { } open && HoverWatch.IsWatching(open);
 
         // Wires one orb's bubble: the window is taken off the tooltip service,
         // its context menu is put back on it (ServiceEnabled inherits, and the
@@ -67,22 +59,54 @@ namespace Orbweaver
             var show = new DispatcherTimer();
             show.Tick += (_, _) => OnShowTick(show, window, anchor);
 
-            anchor.PointerEntered += (_, _) =>
+            // Set by a press and cleared by the next exit: the service never
+            // brought a bubble back after a click until the pointer left and came
+            // back, and a drag must not grow one either.
+            var pressed = false;
+
+            void Arm()
             {
                 // The same delay the service used, read at the time so a style
                 // that changes it still applies.
                 show.Interval = TimeSpan.FromMilliseconds(ToolTip.GetShowDelay(anchor));
                 show.Stop();
                 show.Start();
+            }
+
+            anchor.PointerEntered += (_, _) =>
+            {
+                pressed = false;
+                Arm();
             };
-            anchor.PointerExited += (_, _) => Dismiss(show, anchor);
+
+            // A window that missed its leave never gets another PointerEntered:
+            // its IsPointerOver is already true, so coming back onto it raises
+            // none. Under the service, the next real move re-showed its bubble;
+            // a real move over it is still proof the pointer is here, so it arms
+            // the same delay — once, not on every move, and never mid-press.
+            anchor.PointerMoved += (_, e) =>
+            {
+                if (pressed || show.IsEnabled || Open == anchor) return;
+                if (e.GetCurrentPoint(anchor).Properties is { IsLeftButtonPressed: false, IsRightButtonPressed: false, IsMiddleButtonPressed: false })
+                    Arm();
+            };
+
+            anchor.PointerExited += (_, _) =>
+            {
+                pressed = false;
+                Dismiss(show, anchor);
+            };
 
             // The service closed tips on any button down; keep that, so a drag
             // never carries a bubble with it. handledEventsToo because the
             // window's own press handling captures the pointer.
             anchor.AddHandler(
                 InputElement.PointerPressedEvent,
-                (_, _) => Dismiss(show, anchor),
+                (_, _) =>
+                {
+                    pressed = true;
+                    Dismiss(show, anchor);
+                },
                 RoutingStrategies.Bubble,
                 handledEventsToo: true);
 
@@ -96,8 +120,7 @@ namespace Orbweaver
         internal static void OnShowTick(DispatcherTimer show, Window window, Control anchor)
         {
             show.Stop();
-            if (RealHover.ShouldOpen(anchor.IsPointerOver, CursorProbe.Read(), RealHover.FrameOf(window)))
-                Show(anchor);
+            if (RealHover.CanOpen(window, anchor)) Show(anchor);
         }
 
         private static void Dismiss(DispatcherTimer show, Control anchor)
@@ -108,26 +131,16 @@ namespace Orbweaver
 
         internal static void Show(Control anchor)
         {
-            if (Open is { } old && old != anchor) ToolTip.SetIsOpen(old, false);
+            if (Open is { } old && old != anchor) Hide(old);
 
-            Open = anchor;
             ToolTip.SetIsOpen(anchor, true);
 
             // IsOpen refuses itself when there is no Tip to show (an orb that has
             // not had its first UpdateFrom yet); nothing is open then.
-            if (!ToolTip.GetIsOpen(anchor))
-            {
-                Open = null;
-                _watch?.Stop();
-                return;
-            }
+            if (!ToolTip.GetIsOpen(anchor)) return;
 
-            if (_watch is null)
-            {
-                _watch = new DispatcherTimer { Interval = WatchInterval };
-                _watch.Tick += (_, _) => OnWatchTick();
-            }
-            _watch.Start();
+            Open = anchor;
+            HoverWatch.Register(anchor, () => StillHovered(anchor), () => Hide(anchor));
         }
 
         // A no-op unless this anchor's bubble is the open one, so a late exit
@@ -137,23 +150,12 @@ namespace Orbweaver
             if (Open != anchor) return;
 
             Open = null;
-            _watch?.Stop();
+            HoverWatch.Unregister(anchor);
             ToolTip.SetIsOpen(anchor, false);
         }
 
-        internal static void OnWatchTick()
-        {
-            if (Open is not { } anchor)
-            {
-                _watch?.Stop();
-                return;
-            }
-
-            if (TopLevel.GetTopLevel(anchor) is not Window window ||
-                !RealHover.ShouldStayOpen(anchor.IsPointerOver, CursorProbe.Read(), RealHover.FrameOf(window)))
-            {
-                Hide(anchor);
-            }
-        }
+        // An anchor that has left its window has nothing to be hovered in.
+        internal static bool StillHovered(Control anchor) =>
+            TopLevel.GetTopLevel(anchor) is Window window && RealHover.IsOver(window, anchor);
     }
 }
