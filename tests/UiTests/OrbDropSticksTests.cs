@@ -389,4 +389,28 @@ public class OrbDropSticksTests : IDisposable
 
         Assert.False(ws["ga"].HeldByDrag || ws["gb"].HeldByDrag);
     }
+
+    [AvaloniaFact]
+    public void AnArrangeGlideTickLeavesAHeldOrbAloneAndMovesTheRest()
+    {
+        var m = Scan(("a", "claude"), ("b", "codex"), ("c", "grok"));
+        var ws = Windows(m);
+        m.ArrangeOrbsInPattern();
+        Assert.NotNull(Targets(m));
+        var held = ws["a"];
+        var free = ws["b"];
+        var heldAt = held.Position;
+        var freeAt = free.Position;
+        held.HeldByDrag = true;
+
+        _clock += 100;
+        typeof(SessionManager).GetMethod("OnArrangeAnimTick", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(m, new object?[] { null, EventArgs.Empty });
+
+        Assert.Equal(heldAt, held.Position);
+        Assert.NotEqual(freeAt, free.Position);
+
+        held.HeldByDrag = false;
+        RunToEnd(m);
+    }
 }
