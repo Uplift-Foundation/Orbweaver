@@ -181,6 +181,27 @@ public class StaleHoverRegressionTests : IDisposable
         Assert.False(aOpened, "A's bubble opened at some point with the cursor on B");
     }
 
+    // Control for the pin above: the same stale scene with the real cursor on
+    // A opens A's bubble, so the pin is not passing because a stale scene can
+    // never open A at all. A's delay was armed by its own PointerEntered.
+    [AvaloniaFact]
+    public void ControlWithTheCursorOnAAStaleOrbOpensItsBubble()
+    {
+        var (a, b) = TwoOrbs();
+        var aOpened = false;
+        a.Root.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == ToolTip.IsOpenProperty && e.NewValue is true) aOpened = true;
+        };
+        HoverAThenB(a, b);
+        var onA = ScreenCentre(a);
+        CursorProbe.Read = () => onA;
+
+        PumpUntil(() => aOpened);
+
+        Assert.True(aOpened);
+    }
+
     // The fallback, with no cursor to read (another platform, or the probe
     // unavailable): A may be armed on its stale flag, so this pins the
     // one-at-a-time rule and the service being off — B stays open and A is not
