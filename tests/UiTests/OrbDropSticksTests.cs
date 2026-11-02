@@ -390,27 +390,60 @@ public class OrbDropSticksTests : IDisposable
         Assert.False(ws["ga"].HeldByDrag || ws["gb"].HeldByDrag);
     }
 
-    [AvaloniaFact]
-    public void AnArrangeGlideTickLeavesAHeldOrbAloneAndMovesTheRest()
+    // An arrival while arranged re-fits the shape with the eased glide (no
+    // springs), which is the loop at the end of OnArrangeAnimTick.
+    private (SessionManager M, Dictionary<string, OrbWindow> Ws) ArrivalGlide()
     {
         var m = Scan(("a", "claude"), ("b", "codex"), ("c", "grok"));
-        var ws = Windows(m);
         m.ArrangeOrbsInPattern();
+        RunToEnd(m);
+        File.WriteAllText(Path.Combine(_dir, "d.txt"), System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+        {
+            Cli = "claude", Cwd = "/Users/user/cb303-d", SessionPid = Environment.ProcessId,
+            TermProgram = "iTerm.app", Tty = "/dev/ttys004",
+        }));
+        m.ScanAndUpdate();
         Assert.NotNull(Targets(m));
-        var held = ws["a"];
-        var free = ws["b"];
-        var heldAt = held.Position;
-        var freeAt = free.Position;
-        held.HeldByDrag = true;
+        return (m, Windows(m));
+    }
 
+    private void Tick(SessionManager m)
+    {
         _clock += 100;
         typeof(SessionManager).GetMethod("OnArrangeAnimTick", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(m, new object?[] { null, EventArgs.Empty });
+    }
 
+    [AvaloniaFact]
+    public void AnEasedGlideTickLeavesAHeldOrbAloneAndMovesItOnceReleased()
+    {
+        var (m, ws) = ArrivalGlide();
+        var targets = (Dictionary<string, (PixelPoint From, PixelPoint To)>)Targets(m)!;
+        var held = ws[targets.First(t => t.Value.From != t.Value.To).Key];
+        var heldAt = held.Position;
+        held.HeldByDrag = true;
+
+        Tick(m);
         Assert.Equal(heldAt, held.Position);
-        Assert.NotEqual(freeAt, free.Position);
 
         held.HeldByDrag = false;
+        Tick(m);
+        Assert.NotEqual(heldAt, held.Position);
+        RunToEnd(m);
+    }
+
+    [AvaloniaFact]
+    public void AnEasedGlideTickSkipsAnOrbWhoseWindowHasGone()
+    {
+        var (m, ws) = ArrivalGlide();
+        var windows = Windows(m);
+        var gone = windows.First(w => ((Dictionary<string, (PixelPoint From, PixelPoint To)>)Targets(m)!).ContainsKey(w.Key)).Key;
+        var window = windows[gone];
+        windows.Remove(gone);
+
+        Tick(m);
+
+        windows[gone] = window;
         RunToEnd(m);
     }
 }
