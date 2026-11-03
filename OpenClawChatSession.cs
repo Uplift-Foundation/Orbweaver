@@ -180,7 +180,7 @@ namespace Orbweaver
     // A send is routed by OpenClawSendPolicy: a conversation on a chat surface
     // is delivered back to that surface with the typed message mirrored into
     // it, and a native session, which has no surface, is answered in place.
-    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages, IRemoteChatPrompts
+    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages, IRemoteChatPrompts, IRemoteChatSlashCommands, IRemoteChatSlashRunner
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -356,6 +356,35 @@ namespace Orbweaver
         public event Action<RemoteChatState>? StateChanged;
 
         public Task<ChatSendOutcome> SendAsync(string text) => SendCoreAsync(text, null, null);
+
+        // CB-306: the gateway parses a leading slash in chat.send itself, so a
+        // command that is allowed is sent as the text it was typed as; its reply
+        // (a card for a context-free command) comes back as an ordinary history
+        // row. What this adds is the catalogue to complete from, and a refusal —
+        // nothing sent, the box keeps its text — for a command the gateway does
+        // not list or one this device is not paired to run.
+        public IReadOnlyList<SlashCommand> SlashCommands
+        {
+            get
+            {
+                var catalogue = OpenClawSessions.Commands;
+                return OpenClawCommandCatalog.Offered(catalogue.Commands, catalogue.Scopes);
+            }
+        }
+
+        public Task<ChatSendOutcome> RunSlashAsync(string line)
+        {
+            var name = SlashRouting.Split(line)?.Name ?? line;
+            var catalogue = OpenClawSessions.Commands;
+
+            if (OpenClawCommandCatalog.RefusalFor(name, catalogue.Commands, catalogue.Scopes) is { } reason)
+            {
+                Note(SlashRouting.RefusalNote(name, reason));
+                return Task.FromResult(ChatSendOutcome.Failed);
+            }
+
+            return SendCoreAsync(line, null, null);
+        }
 
         // CB-270 Stage 4: a native conversation takes pictures with its message.
         // The panel hands over files it already saved to disk; only the images

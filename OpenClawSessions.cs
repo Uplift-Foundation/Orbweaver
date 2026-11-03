@@ -779,6 +779,54 @@ namespace Orbweaver
             NotifyRunOptions(OpenChats());
         }
 
+        // CB-306: the gateway's slash-command catalogue, from commands.list once per
+        // connection, with the scopes this connection was granted so the list a
+        // panel offers and the refusal in front of a typed command read the same
+        // permissions. Empty until it answers, or when the gateway does not
+        // advertise the method, and the panel then offers nothing rather than a
+        // list we made up.
+        internal sealed record CommandCatalogue(
+            IReadOnlyList<OpenClawCommand> Commands, IReadOnlyList<string> Scopes)
+        {
+            internal static readonly CommandCatalogue None =
+                new(Array.Empty<OpenClawCommand>(), Array.Empty<string>());
+        }
+
+        private static CommandCatalogue _commands = CommandCatalogue.None;
+
+        internal static CommandCatalogue Commands
+        {
+            get { lock (Gate) return _commands; }
+        }
+
+        internal static void SetCommandsForTests(CommandCatalogue commands)
+        {
+            lock (Gate) _commands = commands;
+        }
+
+        // Asks for the catalogue only when hello-ok advertised the method, and only
+        // once per connection. A failure leaves it empty and says nothing: slash
+        // autocomplete is an extra, and the text still goes through chat.send.
+        internal static async Task LoadCommandsAsync(OpenClawGateway gateway, CancellationToken ct)
+        {
+            if (!gateway.Methods.Contains(OpenClawCommandCatalog.ListMethod)) return;
+
+            IReadOnlyList<OpenClawCommand> commands;
+
+            try
+            {
+                var res = await gateway.RequestAsync(
+                    OpenClawCommandCatalog.ListMethod, new Dictionary<string, object>(), ct);
+                commands = OpenClawCommandCatalog.Parse(res);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            lock (Gate) _commands = new CommandCatalogue(commands, gateway.GrantedScopes);
+        }
+
         // Tells the chats whose run controls may now read differently. On the UI
         // thread, which is where the panel redraws from.
         private static void NotifyRunOptions(IEnumerable<OpenClawChatSession> chats)
@@ -1153,6 +1201,7 @@ namespace Orbweaver
 
                     await LoadAgentNamesAsync(gateway, ct);
                     await LoadModelsAsync(gateway, ct);
+                    await LoadCommandsAsync(gateway, ct);
                     await SubscribeAsync(gateway, ct);
                     await ResubscribeOpenPanelsAsync(gateway, OpenChats(), ct);
                     await PollAsync(gateway, ct);
@@ -1199,6 +1248,7 @@ namespace Orbweaver
                         if (ReferenceEquals(_gateway, gateway))
                         {
                             _gateway = null;
+                            _commands = CommandCatalogue.None;
                             Running.Clear();
                         }
                     }

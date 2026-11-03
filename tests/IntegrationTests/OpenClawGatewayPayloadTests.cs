@@ -1438,5 +1438,56 @@ public class OpenClawGatewayPayloadTests
 
         Assert.Equal(2, OpenClawSessions.MembersOfRoom("whatsapp:120000000000000001@g.us").Count);
     }
-}
 
+    // CB-306: the whole commands.list exchange, real shape, walked into what a
+    // panel would offer. The catalogue is the gateway's own — nothing in the
+    // offered list is a name this app made up — and the one permission-gated
+    // command is absent for a device without operator.admin and present with it.
+    [Fact]
+    public void ARealCommandsListWalksIntoTheOfferedListAtEachScope()
+    {
+        var commands = OpenClawCommandCatalog.Parse(JsonDocument.Parse(OpenClawSlashFixtures.CommandsList).RootElement);
+
+        var write = OpenClawCommandCatalog.Offered(commands, new[] { "operator.read", "operator.write" });
+        var admin = OpenClawCommandCatalog.Offered(commands, new[] { "operator.read", "operator.write", "operator.admin" });
+
+        Assert.Equal(commands.Count - 1, write.Count);
+        Assert.DoesNotContain(write, c => c.Name == "/reset");
+        Assert.Contains(admin, c => c.Name == "/reset");
+        Assert.All(write, c => Assert.Contains(commands, k => k.Name == c.Name));
+    }
+
+    // CB-306: a slash command goes to the gateway as the text it was typed as, on
+    // the wire shape the gateway parses ("message" starting "/" is its trigger),
+    // with no field added that would suppress interpretation.
+    [Theory]
+    [InlineData("/status")]
+    [InlineData("/model claude-haiku-4-5 -s")]
+    [InlineData("/t  high")]
+    public void ASlashCommandIsChatSendTextVerbatim(string line)
+    {
+        var request = OpenClawSendPolicy.ChatSendRequest(
+            "agent:main:dashboard:abc", line, OpenClawSendRoute.Native, "key-1");
+
+        Assert.Equal(line, request["message"]);
+        Assert.Equal(new[] { "sessionKey", "message", "deliver", "idempotencyKey" }, request.Keys);
+        Assert.DoesNotContain("suppressCommandInterpretation", request.Keys);
+    }
+
+    // CB-306: what a context-free command leaves in chat.history — the typed line
+    // as a user row flagged contextFreeCommand, then the gateway's own card as an
+    // assistant row — walks into two turns, so the reply to /status is drawn and
+    // is not mistaken for a model turn that never came.
+    [Fact]
+    public void AStatusCommandAndItsCardWalkIntoTwoTurns()
+    {
+        var messages = JsonDocument.Parse(OpenClawSlashFixtures.StatusCardHistory).RootElement.GetProperty("messages");
+
+        var turns = OpenClawSessions.TurnsFromHistory(messages, "agent:main:dashboard:abc");
+
+        Assert.Equal(new[] { ChatRole.User, ChatRole.Assistant }, turns.Select(t => t.Role));
+        Assert.Equal("/status", turns[0].Text);
+        Assert.StartsWith("\U0001F99E OpenClaw 2026.10.10", turns[1].Text);
+        Assert.Contains("Modes: think medium", turns[1].Text);
+    }
+}
