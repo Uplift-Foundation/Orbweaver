@@ -54,6 +54,9 @@ namespace Orbweaver
                 _ => Array.Empty<SlashCommand>(),
             };
 
+        internal static bool HasControl(string name) =>
+            ControlCommands.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+
         internal static readonly IReadOnlyList<SlashCommand> ControlCommands = new[]
         {
             new SlashCommand("/color", "Set the prompt bar colour", SlashRouteKind.Control),

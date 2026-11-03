@@ -671,7 +671,8 @@ namespace Orbweaver
         // session; Unavailable leaves a note and sends nothing at all.
         public async Task<ChatSendOutcome> RunSlashAsync(string line)
         {
-            if (SlashRouting.Split(line) is not { } cmd) return await SendAsync(line);
+            if (SlashRouting.Split(line) is not { } cmd || !KnowsCommand(cmd.Name))
+                return await SendAsync(line);
 
             var channel = SlashChannelNow;
             var route = SlashRouting.Resolve(channel, cmd.Name, cmd.Args);
@@ -693,6 +694,15 @@ namespace Orbweaver
                     return await SendAsync(line);
             }
         }
+
+        // A line is a command only when its first token is one this session's
+        // CLI knows — the whole local catalogue, including the built-ins this
+        // channel cannot run, plus the five control commands. A path or an
+        // unknown /word is ordinary prose and is delivered as such, not refused.
+        private bool KnowsCommand(string name) =>
+            LocalSlashChannel.HasControl(name)
+            || (_slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd))
+                .Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
 
         private async Task<ChatSendOutcome> RunControlAsync(string name, string args, string subtype)
         {

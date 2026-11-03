@@ -302,4 +302,20 @@ public class LocalCliChatSessionSlashTests : IDisposable
         Assert.Empty(api.Requests);
         Assert.Contains(session.History, t => t.Text.Contains("Handed to job-hunter", StringComparison.Ordinal));
     }
+
+    // The known-name rule: a path or an unknown /word is prose, delivered as an
+    // ordinary message (not refused, not a control request).
+    [AvaloniaTheory]
+    [InlineData("/Users/me/notes.txt please read")]
+    [InlineData("/definitely-not-a-command")]
+    public async Task AnUnknownSlashWordIsDeliveredAsAnOrdinaryMessage(string line)
+    {
+        var api = new Api();
+        var session = Headless(api, new Credentials(), Row(bridge: true));
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync(line));
+
+        Assert.Empty(api.Requests);
+        Assert.Contains(session.History, t => t.Text.Contains("Handed to job-hunter", StringComparison.Ordinal));
+    }
 }
