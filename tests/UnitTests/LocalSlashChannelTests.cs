@@ -93,15 +93,18 @@ public class LocalSlashChannelTests
         Assert.All(commands, c => Assert.Equal(SlashRouteKind.Unavailable, c.Route));
     }
 
+    // The known-name gate is SlashRouting.NamesKnownCommand over this list: a
+    // known-but-unavailable name is a command, a path or unknown word is not.
     [Theory]
-    [InlineData("/compact", true)]
+    [InlineData("/compact now", true)]
     [InlineData("/DEPLOY", true)]
-    [InlineData("/think", true)]
-    [InlineData("/tmp/x.log", false)]
+    [InlineData("/think 5", true)]
+    [InlineData("/tmp/x.log boom", false)]
     [InlineData("/", false)]
     [InlineData("/nonsense", false)]
-    public void OnlyAFirstTokenTheCliKnowsIsACommand(string name, bool expected)
-        => Assert.Equal(expected, LocalSlashChannel.Knows(Local, name));
+    public void TheBridgeListIsTheKnownSetForTheSharedGate(string line, bool expected)
+        => Assert.Equal(expected, SlashRouting.NamesKnownCommand(line,
+            LocalSlashChannel.CommandsFor(SlashChannel.Bridge, () => Local).Select(c => c.Name)));
 
     [Fact]
     public void ARegistryRowsBridgeIsReadAndAMalformedOneIsNot()

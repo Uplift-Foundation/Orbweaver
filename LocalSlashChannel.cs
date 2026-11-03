@@ -75,13 +75,6 @@ namespace Orbweaver
             }
         }
 
-        // Whether a typed first token is a command this CLI knows at all, runnable
-        // here or not. Anything else — a path, a bare "/", an unknown word — is
-        // ordinary prose and is delivered as such.
-        public static bool Knows(IReadOnlyList<SlashCommand> known, string name) =>
-            HasControl(name)
-            || known.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
-
         internal static bool HasControl(string name) =>
             ControlCommands.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
 

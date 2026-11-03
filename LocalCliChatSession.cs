@@ -672,14 +672,17 @@ namespace Orbweaver
         // session; Unavailable leaves a note and sends nothing at all.
         public async Task<ChatSendOutcome> RunSlashAsync(string line)
         {
-            if (SlashRouting.Split(line) is not { } cmd
-                || !LocalSlashChannel.Knows(LocalCatalogue(), cmd.Name))
-                return await SendAsync(line);
-
             // Read once: the registry row can change between two reads, and the
             // channel and the post must agree on which bridge this is.
             var bridge = BridgeId;
             var channel = ChannelWith(bridge);
+
+            // The same gate the panel uses, against the same full list.
+            var known = LocalSlashChannel.CommandsFor(channel, LocalCatalogue);
+            if (!SlashRouting.NamesKnownCommand(line, known.Select(c => c.Name)))
+                return await SendAsync(line);
+
+            var cmd = SlashRouting.Split(line)!.Value;
             var route = SlashRouting.Resolve(channel, cmd.Name, cmd.Args);
 
             switch (route.Kind)
