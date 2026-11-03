@@ -832,6 +832,46 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Empty(harness.SlashRan);
     }
 
+    // A headless job with a Remote Control bridge and no pane, through the real
+    // far resolver rather than a canned runner: /color is a control request,
+    // /compact is a command that cannot run there, and both are said so across
+    // the link. The only fakes are at the machine's edges.
+    [Fact]
+    public async Task APanelessBridgedJobRunsControlCommandsAndRefusesTheRestThroughTheRealResolver()
+    {
+        var posted = new List<(string Subtype, string Color)>();
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => "session_01ABCDEFGHJKMNPQRSTVWXYZ12",
+            _ => new[] { new SlashCommand("/compact", ""), new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            (_, subtype, request) =>
+            {
+                posted.Add((subtype, (string?)request["color"] ?? ""));
+                return Task.FromResult<string?>(null);
+            }));
+        harness.AddSession("job-hunter", WriteTranscript("real.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+        Assert.Contains("/compact", entry.Commands!);
+        Assert.Equal("unavailable", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/compact")]);
+        Assert.Equal("control", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/color")]);
+        // The panel offers only what runs.
+        Assert.Contains(RemoteControlSessions.CommandsFrom(entry), c => c.Name == "/color");
+        Assert.DoesNotContain(RemoteControlSessions.CommandsFrom(entry), c => c.Name == "/compact");
+
+        var ran = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+        Assert.Equal(MirrorProtocol.ViaControl, ran.Via);
+        Assert.Equal(("set_color", "pink"), Assert.Single(posted));
+
+        var refused = await harness.Client.SendInputDetailedAsync("job-hunter", "/compact", slash: true);
+        Assert.Equal(MirrorProtocol.ViaRefused, refused.Via);
+        Assert.Equal(SlashRouting.PeerMessageReason, refused.Why);
+        Assert.Single(posted);
+        Assert.Empty(harness.Typed);
+    }
+
     // The old-far-Buddy fallback. Such a Buddy never sees the flag, so it
     // types the line as ordinary text — which is why the near side only sets
     // the flag after the roster carried route kinds.
@@ -2365,6 +2405,9 @@ public class MirrorRoundTripTests : IDisposable
         public Func<SessionStatus, string, RemoteMirrorServer.SlashOutcome>? SlashRunner { get; set; }
         public IReadOnlyList<SlashCommand>? SlashCatalogue { get; set; }
         public bool SlashRunnerThrows { get; set; }
+
+        // CB-306: the real far resolver, in place of the canned runner.
+        public MirrorSlashHost? SlashHost { get; set; }
         public List<string> SlashRan { get; } = new();
 
         // A far Buddy that predates the slash flag: it never sees `slash`, so
@@ -2467,10 +2510,11 @@ public class MirrorRoundTripTests : IDisposable
                 // somebody pinned by typing a code. A harness says yes explicitly.
                 PeerAllowed: _ => true,
                 UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs,
-                SlashCommandsFor: wireSlash ? status => SlashCatalogue! : null,
+                SlashCommandsFor: wireSlash ? status => SlashHost?.CommandsFor(status) ?? SlashCatalogue! : null,
                 RunSlash: wireSlash
                     ? (status, line) =>
                     {
+                        if (SlashHost is { } host) return host.RunAsync(status, line);
                         if (SlashRunnerThrows) throw new InvalidOperationException("bridge went away");
                         SlashRan.Add(line);
                         return Task.FromResult(SlashRunner!(status, line));

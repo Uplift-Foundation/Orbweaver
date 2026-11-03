@@ -376,6 +376,34 @@ namespace Orbweaver
             // depending on which machine's Buddy happened to make the call.
             var fromName = SessionMessenger.FromName(MachineNames.Tag());
 
+            // CB-306: the same resolver a local panel uses, over this machine's
+            // own pane, registry and cloud login.
+            var cloudApi = new HttpCloudApi();
+            var slash = new MirrorSlashHost(new MirrorSlashHost.Seams(
+                status => TerminalFocuser.CanSendQuietly(status),
+                status => RegistryEntryFor(status) is { } e && SessionRegistry.Speaks(e),
+                status => LocalSlashChannel.BridgeIdFor(
+                    status.IsDesktopHosted ? status.BridgeSessionId : null,
+                    status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
+                status => SlashCommandCatalog.For(status.Source, status.Cwd),
+                (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
+                async (status, subtype, request) =>
+                {
+                    if (!OrbweaverSettings.ClaudeCloudEnabled)
+                        return LocalCliChatSession.CloudOffControlHint;
+
+                    var bridgeId = LocalSlashChannel.BridgeIdFor(
+                        status.IsDesktopHosted ? status.BridgeSessionId : null,
+                        status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId);
+                    if (bridgeId is null) return "this session has no Remote Control bridge";
+
+                    return await CloudTurnSender.PostControlAsync(
+                        cloudApi,
+                        CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
+                        CredentialBudget.Unmeasured, bridgeId, request, System.Threading.CancellationToken.None)
+                        .ConfigureAwait(false);
+                }));
+
             return new(
                 sendFrame,
                 localSessions,
@@ -391,7 +419,9 @@ namespace Orbweaver
 
                     return await messenger.DeliverAsync(entry.SessionId, fromName, text, CancellationToken.None)
                         .ConfigureAwait(false);
-                });
+                },
+                SlashCommandsFor: slash.CommandsFor,
+                RunSlash: slash.RunAsync);
         }
 
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
@@ -777,6 +807,10 @@ namespace Orbweaver
                     .Select(n => new SlashCommand(n, "", SlashRouting.Resolve(channel, n, "").Kind))
                     .ToList();
             }
+
+            // The cap the roster has always had, applied here so a runner's full
+            // catalogue cannot make one entry unbounded.
+            list = list.Take(120).ToList();
 
             return (list.Select(c => c.Name).ToList(),
                     list.Select(c => MirrorProtocol.RouteWord(c.Route)).ToList());

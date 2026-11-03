@@ -607,6 +607,19 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         public async Task<ChatSendOutcome> RunSlashAsync(string line)
         {
+            // A command is a line whose first token is a name the far session's
+            // CLI knows. `/tmp/x.log`, `/` and an unknown word are ordinary
+            // messages and go exactly as they would without this method — never
+            // refused, because the person was not typing a command. The far
+            // roster lists Unavailable commands too, so "known" means known,
+            // not "runnable".
+            var client = RemoteControlSessions.MirrorClientFor(_account);
+            var entry = client is null ? null : RemoteControlSessions.MirrorFor(_account, _remoteName);
+            if (client is null || entry is null
+                || SlashRouting.Split(line) is not { } cmd
+                || entry.Commands?.Contains(cmd.Name, StringComparer.OrdinalIgnoreCase) != true)
+                return await SendAsync(line).ConfigureAwait(true);
+
             var mine = new ChatTurn { Role = ChatRole.User, Text = line, IsComplete = true };
 
             if (!OrbweaverSettings.PeerLinkEnabled)
@@ -616,15 +629,7 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            var client = RemoteControlSessions.MirrorClientFor(_account);
-            if (client is null)
-            {
-                Add(mine);
-                Note(NotConnectedNote);
-                return ChatSendOutcome.Failed;
-            }
-
-            if (!RemoteControlSessions.SpeaksSlash(RemoteControlSessions.MirrorFor(_account, _remoteName)))
+            if (!RemoteControlSessions.SpeaksSlash(entry))
             {
                 // A live view that can type is where a slash line has always
                 // worked. SendAsync adds the turn itself, so this arm must not
@@ -639,9 +644,6 @@ namespace Orbweaver
 
             Add(mine);
 
-            // Marked pending only once we know it was typed — a control request
-            // has no transcript echo, and a pending turn that never matches
-            // would sit there waiting for one.
             var outcome = await client.SendInputDetailedAsync(_remoteName, line, slash: true).ConfigureAwait(true);
             return ApplySlashOutcome(mine, line, outcome);
         }

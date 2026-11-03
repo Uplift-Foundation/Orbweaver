@@ -306,6 +306,7 @@ public class RemoteMirrorChatSessionTests : IDisposable
     public async Task ARefusedCommandSaysWhyAndKeepsTheBoxText()
     {
         _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/compact", "", SlashRouteKind.Unavailable) };
         _slashOutcome = new(MirrorProtocol.ViaRefused, "it needs the terminal");
         Wire("a", "b");
         var session = await OpenAsync();
@@ -321,12 +322,60 @@ public class RemoteMirrorChatSessionTests : IDisposable
     public async Task ARefusalThatGaveNoReasonStillNamesTheCommand()
     {
         _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/compact", "", SlashRouteKind.Unavailable) };
         _slashOutcome = new(MirrorProtocol.ViaRefused, null);
         Wire("a", "b");
         var session = await OpenAsync();
 
         Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/compact"));
         Assert.Contains("Not sent: /compact", NotesOf(session));
+    }
+
+    // The known-name rule: a line is a command only if its first token is a
+    // name the far session's CLI knows. Everything else is an ordinary message,
+    // sent as it would be without a runner and never refused.
+    [AvaloniaTheory]
+    [InlineData("/tmp/build.log")]
+    [InlineData("/")]
+    [InlineData("/nonesuch run it")]
+    public async Task ALineThatIsNotAKnownCommandGoesAsAnOrdinaryMessage(string line)
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync(line);
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Empty(_slashRan);
+        Assert.Equal(line, Assert.Single(_typed).Text);
+    }
+
+    [AvaloniaFact]
+    public async Task AnUnknownSlashWordIsAMessageForAnOlderFarBuddyToo()
+    {
+        _oldFarRoster = true;
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/tmp/build.log");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Equal("/tmp/build.log", Assert.Single(_typed).Text);
+    }
+
+    [AvaloniaFact]
+    public async Task ACommandIsKnownWhateverItsCase()
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        await session.RunSlashAsync("/COLOR pink");
+
+        Assert.Equal("/COLOR pink", Assert.Single(_slashRan));
     }
 
     [AvaloniaFact]
@@ -405,7 +454,7 @@ public class RemoteMirrorChatSessionTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task ASlashLineWithNoLinkClientSaysNotConnected()
+    public async Task ASlashLineWithNoLinkClientIsLeftToTheOrdinarySend()
     {
         _wireSlash = true;
         Wire("a", "b");
@@ -416,6 +465,7 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         Assert.Equal(ChatSendOutcome.Failed, outcome);
         Assert.Contains(RemoteControlChatSession.NotConnectedNote, NotesOf(session));
+        Assert.Empty(_slashRan);
     }
 
     [AvaloniaFact]
