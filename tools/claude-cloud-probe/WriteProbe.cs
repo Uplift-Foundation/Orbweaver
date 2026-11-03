@@ -78,11 +78,13 @@ internal static class WriteProbe
             "  auth:  --auth real|none|bogus   (default real; none/bogus are the negative controls)\n" +
             "  opts:  --text <s>               message text (default: a fixed probe sentence)\n" +
             "         --uuid <u>               reuse an event uuid (dedupe check)\n" +
+            "         --client-platform <v>    add client_platform:<v> to the user payload (CB-306)\n" +
             "         --expect-uuid <u>        report whether <u> comes back, and where (never the value)\n" +
             "         --empty                  POST {\"events\":[]} and write nothing\n" +
             "         --beta                   add anthropic-beta: ccr-byoc-2025-07-29\n" +
             "         --org                    add x-organization-uuid from ~/.claude.json\n" +
             "         --platform <v>           add anthropic-client-platform: <v>\n" +
+            "         --user-agent <v>         add User-Agent: <v> (CB-306)\n" +
             "         --no-version             omit anthropic-version (ablation)\n");
 
     internal static async Task<int> RunAsync(string verb, string[] args,
@@ -214,7 +216,8 @@ internal static class WriteProbe
                     ? "{\"events\":[]}"
                     : ClaudeCloudSend.UserMessageBody(opts.Contains("--blank-session-id") ? "" : id,
                         Value(opts, "--text") ?? "CB-199 probe: please reply with the single word ok.",
-                        Value(opts, "--uuid") ?? Guid.NewGuid().ToString());
+                        Value(opts, "--uuid") ?? Guid.NewGuid().ToString(),
+                        Value(opts, "--client-platform"));
                 break;
             case "interrupt":
                 method = HttpMethod.Post;
@@ -296,6 +299,12 @@ internal static class WriteProbe
         if (Value(opts, "--platform") is { } platform)
         {
             request.Headers.TryAddWithoutValidation("anthropic-client-platform", platform);
+        }
+        if (Value(opts, "--user-agent") is { } agent)
+        {
+            // CB-306: the CLI sends its own User-Agent on a remote send; the app
+            // sends .NET's default. An ablation, like --platform.
+            request.Headers.TryAddWithoutValidation("User-Agent", agent);
         }
 
         Console.WriteLine($"request  {method} {CloudRequest.Host}{path}");

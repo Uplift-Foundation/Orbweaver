@@ -28,15 +28,24 @@ namespace Orbweaver
         // the same `sequence_num`, so a send whose answer was lost can be sent
         // again without typing the message into the session twice. The caller
         // mints it once per message and reuses it on the retry.
-        internal static string UserMessageBody(string sessionId, string text, string uuid) =>
-            Envelope(new JsonObject
+        internal static string UserMessageBody(string sessionId, string text, string uuid,
+            string? clientPlatform = null)
+        {
+            var payload = new JsonObject
             {
                 ["uuid"] = uuid,
                 ["session_id"] = sessionId,
                 ["type"] = "user",
                 ["parent_tool_use_id"] = null,
                 ["message"] = new JsonObject { ["role"] = "user", ["content"] = text },
-            });
+            };
+
+            // CB-306: the one field the CLI's own remote send carries that this
+            // body did not, measured 2026-11-03 — see docs/claude-cloud-findings.md.
+            if (clientPlatform is not null) payload["client_platform"] = clientPlatform;
+
+            return Envelope(payload);
+        }
 
         // An interrupt: a control_request with the `interrupt` subtype.
         // `cancel_queued` is the CLI's own value and is what the gate sent.
