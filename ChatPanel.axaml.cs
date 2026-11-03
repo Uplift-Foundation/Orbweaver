@@ -180,7 +180,20 @@ namespace Orbweaver
         // one kind of session that most needed it — the panel had to be closed
         // and reopened to see anything, which nobody would guess.
         private IReadOnlyList<SlashCommand> SlashCommands =>
-            (_session as IRemoteChatSlashCommands)?.SlashCommands ?? Array.Empty<SlashCommand>();
+            OfferedCommands((_session as IRemoteChatSlashCommands)?.SlashCommands);
+
+        // CB-306: a command the session says cannot run over its channel is not
+        // offered — typing it in full still reaches the runner, which refuses
+        // it with a reason, but autocomplete must not advertise a command the
+        // panel knows will be refused.
+        internal static IReadOnlyList<SlashCommand> OfferedCommands(IReadOnlyList<SlashCommand>? commands) =>
+            commands is null || commands.Count == 0
+                ? Array.Empty<SlashCommand>()
+                : commands.Where(c => c.Route != SlashRouteKind.Unavailable).ToList();
+
+        // A line that is a slash command: starts with "/" and has a name after
+        // it. "/" alone is a character someone typed, not a command.
+        internal static bool IsSlashLine(string text) => SlashRouting.Split(text) is not null;
 
         // The suggestions currently shown, and which one Up/Down has landed
         // on. Kept as a plain list rather than something observable: the
@@ -2778,9 +2791,16 @@ namespace Orbweaver
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            var outcome = images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
-                ? await withImages.SendWithImagesAsync(text, images)
-                : await session.SendAsync(text);
+            // CB-306: a slash command on a session that runs them itself goes
+            // to the runner, which decides the route — control request,
+            // pass-through, or a refusal note with nothing sent. A line with
+            // pictures attached is a message, not a command, and takes the
+            // picture path as before.
+            var outcome = images.Count == 0 && IsSlashLine(text) && session is IRemoteChatSlashRunner runner
+                ? await runner.RunSlashAsync(text)
+                : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
+                    ? await withImages.SendWithImagesAsync(text, images)
+                    : await session.SendAsync(text);
 
             if (outcome == ChatSendOutcome.Sent) Input.Text = "";
         }

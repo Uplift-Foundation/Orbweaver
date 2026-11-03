@@ -17,8 +17,23 @@ internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatImages, IRemoteChatSlashCommands,
     IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatFetchWait, IRemoteChatRoom,
     IRemoteChatReadOnly, IRemoteChatInterrupt, IRemoteChatPeerInbound, IRemoteChatGatewayKey,
-    IRemoteChatRunOptions
+    IRemoteChatRunOptions, IRemoteChatSlashRunner
 {
+    // CB-306: what RunSlashAsync was handed, in order, and what it answers.
+    // Implemented unconditionally, like IsRoom, so one fake can show both
+    // halves of the panel's decision: a slash line goes here and never to
+    // SendAsync, and a Failed answer leaves the box alone the way a failed
+    // send does. No test that predates CB-306 sends a slash line, so none is
+    // changed by this arriving.
+    public List<string> RanSlash { get; } = new();
+    public ChatSendOutcome SlashOutcome { get; set; } = ChatSendOutcome.Sent;
+
+    public Task<ChatSendOutcome> RunSlashAsync(string line)
+    {
+        RanSlash.Add(line);
+        return Task.FromResult(SlashOutcome);
+    }
+
     public string SessionId { get; init; } = "fake-session";
     public string DisplayName { get; init; } = "Fake Session";
 
