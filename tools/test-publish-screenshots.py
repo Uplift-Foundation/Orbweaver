@@ -36,8 +36,11 @@ def publish_step(text):
     return "\n".join(body)
 
 
-def substitute(script, run_id, pr):
-    """Replace ${{ ... }} expressions with what a workflow_dispatch run would supply."""
+def substitute(script, run_id, pr, head_branch="", head_owner="", event="workflow_dispatch"):
+    """Replace ${{ ... }} expressions the way Actions does: as TEXT, before bash parses
+    the script. The current workflow keeps none in the script (they arrive as env), so
+    this is a no-op there; an older copy that still splices them in gets the values
+    spliced in, which is what lets a test show that it was injectable."""
     def one(m):
         expr = m.group(0)
         if "github.repository" in expr:
@@ -46,8 +49,35 @@ def substitute(script, run_id, pr):
             return str(run_id)
         if "inputs.pr_number" in expr:
             return str(pr)
+        if "head_repository.owner.login" in expr:
+            return head_owner
+        if "head_branch" in expr:
+            return head_branch
+        if "workflow_run.event" in expr:
+            return event
         return ""
     return re.sub(r"\$\{\{.*?\}\}", one, script)
+
+
+def script_bodies(text):
+    """Every `run:` script in a workflow file, as text."""
+    lines = text.splitlines()
+    out = []
+    for i, l in enumerate(lines):
+        m = re.match(r"^(\s*)(?:- )?run:\s*(.*)$", l)
+        if not m:
+            continue
+        indent, rest = len(m.group(1)), m.group(2)
+        if rest and rest[0] not in "|>":
+            out.append(rest)
+            continue
+        body = []
+        for nxt in lines[i + 1:]:
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+                break
+            body.append(nxt)
+        out.append("\n".join(body))
+    return out
 
 
 def point_at_local_remote(script):
@@ -75,8 +105,12 @@ class PublishStep(unittest.TestCase):
         os.makedirs(self.bin)
         self.comments = os.path.join(self.tmp, "comments")
         os.makedirs(self.comments)
+        # `pr list` answers 7 and records each argument on its own line, so a test can see
+        # exactly what the step handed gh; `pr comment` saves the body it was given.
         with open(os.path.join(self.bin, "gh"), "w") as f:
-            f.write('#!/bin/sh\n[ "$1 $2" = "pr comment" ] && cat > "%s/pr-$3.md"\nexit 0\n' % self.comments)
+            f.write('#!/bin/sh\n'
+                    'if [ "$1 $2" = "pr list" ]; then printf \'%%s\\n\' "$@" > "%s/list-args"; echo 7; exit 0; fi\n'
+                    '[ "$1 $2" = "pr comment" ] && cat > "%s/pr-$3.md"\nexit 0\n' % (self.comments, self.comments))
         os.chmod(os.path.join(self.bin, "gh"), 0o755)
         with open(self.workflow_path()) as f:
             self.script = point_at_local_remote(publish_step(f.read()))
@@ -87,7 +121,9 @@ class PublishStep(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_step(self, pr, png, run_id):
+    def execute(self, pr, png, run_id, head_branch="", head_owner="", event="workflow_dispatch"):
+        """Run the step once the way Actions would: expressions still in the script text are
+        spliced in, and the values the workflow now passes as env are set too."""
         d = os.path.join(self.work, "downloaded", "ui-screenshots-osx-arm64")
         shutil.rmtree(os.path.join(self.work, "downloaded"), ignore_errors=True)
         os.makedirs(d)
@@ -95,9 +131,15 @@ class PublishStep(unittest.TestCase):
             f.write(png)
         env = dict(os.environ, **GIT_ENV, PATH=self.bin + os.pathsep + os.environ["PATH"],
                    GH_TOKEN="x", GITHUB_STEP_SUMMARY=os.path.join(self.tmp, "summary"),
-                   SCREENSHOTS_REMOTE_URL="file://" + self.remote)
-        r = subprocess.run(["bash", "-c", substitute(self.script, run_id, pr)], cwd=self.work,
-                           env=env, capture_output=True, text=True)
+                   SCREENSHOTS_REMOTE_URL="file://" + self.remote,
+                   REPO=REPO, RUN_ID=str(run_id), PR_INPUT=str(pr) if pr else "", PR_FROM_EVENT="",
+                   HEAD_OWNER=head_owner, HEAD_BRANCH=head_branch, TRIGGER_EVENT=event)
+        script = substitute(self.script, run_id, pr, head_branch, head_owner, event)
+        return subprocess.run(["bash", "-c", script], cwd=self.work, env=env,
+                              capture_output=True, text=True)
+
+    def run_step(self, pr, png, run_id):
+        r = self.execute(pr, png, run_id)
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
         with open(os.path.join(self.comments, "pr-%s.md" % pr)) as f:
             return r.stdout, f.read()
@@ -188,6 +230,63 @@ fi
         shown, ref = self.shown_by(comment)
         self.assertEqual(b"IMAGE-FROM-OUR-RUN", shown)
         self.assertNotEqual(self.git("rev-parse", "screenshots").stdout.decode().strip(), ref)
+
+    # --- Script injection through the triggering run's branch name -------------------------
+    # head_branch is chosen by whoever opens the PR, and git allows shell syntax in it. The
+    # step holds a contents: write token, so running that syntax was a write to main. Each
+    # payload below tries to create a file named for it; none may succeed.
+
+    HOSTILE_BRANCHES = [
+        '"; touch "{canary}"; "',
+        "$(touch {canary})",
+        "`touch {canary}`",
+        "x\";touch${{IFS}}{canary};\"",
+    ]
+
+    def hostile(self, template):
+        canary = os.path.join(self.tmp, "PWNED")
+        return template.format(canary=canary), canary
+
+    def test_a_branch_name_made_of_shell_syntax_is_never_run(self):
+        for template in self.HOSTILE_BRANCHES:
+            branch, canary = self.hostile(template)
+            with self.subTest(branch=branch):
+                r = self.execute(0, b"PNG", 1, head_branch=branch, head_owner="someone",
+                                 event="pull_request")
+                self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+                self.assertFalse(os.path.exists(canary), "the branch name was executed as shell")
+
+    def test_a_branch_name_made_of_shell_syntax_still_reaches_gh_as_one_literal_argument(self):
+        """The fix must not break the lookup it protects: the PR is still found and commented
+        on, and gh is handed the branch name byte for byte, as a single argument."""
+        branch, canary = self.hostile('"; touch "{canary}"; "')
+        r = self.execute(0, b"PNG", 1, head_branch=branch, head_owner="someone", event="pull_request")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        with open(os.path.join(self.comments, "list-args")) as f:
+            args = f.read().split("\n")
+        self.assertEqual(branch, args[args.index("--head") + 1])
+        self.assertTrue(os.path.exists(os.path.join(self.comments, "pr-7.md")))
+        self.assertFalse(os.path.exists(canary))
+
+    def test_an_owner_that_is_not_a_github_login_is_not_used_to_build_the_jq_filter(self):
+        r = self.execute(0, b"PNG", 1, head_branch="feature/x", event="pull_request",
+                         head_owner='x")|.[]|{n:1}|select(("1"=="1')
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.comments, "list-args")),
+                         "gh pr list ran with an owner that cannot be a login")
+
+    def test_a_pr_number_that_is_not_digits_is_dropped(self):
+        r = self.execute("--repo evil/repo", b"PNG", 1)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertEqual([], [n for n in os.listdir(self.comments) if n.startswith("pr-")])
+
+    def test_the_script_has_no_expression_in_it_for_a_value_a_pr_author_controls(self):
+        """The static half of the same rule, so a later edit that splices one back in fails
+        here by name instead of waiting for someone to craft a branch."""
+        with open(self.workflow_path()) as f:
+            text = f.read()
+        spliced = [b for b in script_bodies(text) if "${{" in b]
+        self.assertEqual([], spliced, "an expression is spliced into a run: script; pass it via env:")
 
     def test_the_resolver_would_catch_a_branch_tip_link(self):
         """Control for the checks above: build the OLD link form by hand and show that
