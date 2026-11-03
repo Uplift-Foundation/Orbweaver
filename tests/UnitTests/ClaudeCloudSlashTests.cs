@@ -65,13 +65,24 @@ public partial class ClaudeCloudEventsTests
         Assert.Equal(SlashRouteKind.Control, routes["/rename"]);
         Assert.Equal(SlashRouteKind.Control, routes["/model"]);
         Assert.Equal(SlashRouteKind.Control, routes["/think"]);
-        Assert.Equal(SlashRouteKind.Unavailable, routes["/permissions"]);
+        // A terminal-only listing does not take away a command the table runs.
+        Assert.Equal(SlashRouteKind.Control, routes["/permissions"]);
         Assert.Equal(SlashRouteKind.Unavailable, routes["/color"]);
         Assert.Equal(SlashRouteKind.Unavailable, routes["/doctor"]);
         Assert.Equal(SlashRouteKind.Unavailable, routes["/compact"]);
         Assert.Equal(SlashRouteKind.Unavailable, routes["/my-skill"]);
         Assert.NotEqual("", catalogue.Single(c => c.Name == "/rename").Description);
         Assert.Equal("", catalogue.Single(c => c.Name == "/compact").Description);
+    }
+
+    [Fact]
+    public void TheFourControlCommandsAreOfferedEvenWhenInitDoesNotListThem()
+    {
+        var catalogue = CloudSlashCatalog.Catalogue(new[] { "compact", "my-skill" }, new[] { "color" });
+
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" },
+            ChatPanel.OfferedCommands(catalogue).Select(c => c.Name));
+        Assert.Contains(catalogue, c => c.Name == "/compact" && c.Route == SlashRouteKind.Unavailable);
     }
 
     [Fact]
@@ -95,26 +106,29 @@ public partial class ClaudeCloudEventsTests
     public async Task TheLatestInitsListIsKeptAndAListlessInitLeavesIt()
     {
         var (chat, _, stream, _) = Streaming();
-        Assert.Empty(chat.SlashCommands);
+        // Before any init: just the four the routing table runs.
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" },
+            chat.SlashCommands.Select(c => c.Name));
 
         chat.PanelOpened();
         var events = await stream.NextOpenAsync();
 
         events.TryWrite(Init(42, InitRow("[\"rename\",\"compact\"]", "[]")));
-        await Until(() => chat.SlashCommands.Count == 2);
-        Assert.Equal(new[] { "/rename", "/compact" }, chat.SlashCommands.Select(c => c.Name));
+        await Until(() => chat.SlashCommands.Any(c => c.Name == "/compact"));
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think", "/compact" },
+            chat.SlashCommands.Select(c => c.Name));
 
         // Re-published with a different list: the newest wins.
         events.TryWrite(Init(43, InitRow("[\"model\",\"think\"]")));
-        await Until(() => chat.SlashCommands.Any(c => c.Name == "/model"));
-        Assert.Equal(new[] { "/model", "/think" }, chat.SlashCommands.Select(c => c.Name));
+        await Until(() => chat.SlashCommands.All(c => c.Name != "/compact"));
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" }, chat.SlashCommands.Select(c => c.Name));
 
         // An init with no list at all, and a status that is not an init, change nothing.
         events.TryWrite(Init(44, "{\"type\":\"system\",\"subtype\":\"init\"}"));
         events.TryWrite(Durable(45, "system", "status", "requesting"));
         events.TryWrite(Durable(46, "assistant", payload: AssistantRow("a1", "marker")));
         await Until(() => chat.History.Count == 1);
-        Assert.Equal(new[] { "/model", "/think" }, chat.SlashCommands.Select(c => c.Name));
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" }, chat.SlashCommands.Select(c => c.Name));
 
         await Close(chat);
     }
@@ -164,7 +178,7 @@ public partial class ClaudeCloudEventsTests
         chat.PanelOpened();
         var events = await stream.NextOpenAsync();
         events.TryWrite(Init(42, InitRow(commands, terminal)));
-        await Until(() => chat.SlashCommands.Count > 0 || commands == "[]");
+        await Until(() => chat.SlashCommands.Count > CloudSlashCatalog.ControlNames.Length);
         return (chat, api);
     }
 

@@ -701,15 +701,17 @@ namespace Orbweaver
 
         // --- slash commands (CB-306) ----------------------------------------
 
-        private IReadOnlyList<SlashCommand> _slashCommands = Array.Empty<SlashCommand>();
+        private IReadOnlyList<SlashCommand> _slashCommands =
+            CloudSlashCatalog.Catalogue(Array.Empty<string>(), Array.Empty<string>());
 
         // Every name in SlashCommands, with the slash: what makes a "/word" a command rather than prose. Empty
         // until an init has been seen, when only the routing table's own
         // commands count.
-        private HashSet<string> _knownSlash = new(StringComparer.OrdinalIgnoreCase);
+        private HashSet<string> _knownSlash = new(
+            CloudSlashCatalog.ControlNames.Select(n => "/" + n), StringComparer.OrdinalIgnoreCase);
 
         // The full catalogue with routes, Unavailable included — the panel hides
-        // those. Empty until an init has been seen; touched on the UI thread.
+        // those. The four control commands until an init has been seen; touched on the UI thread.
         public IReadOnlyList<SlashCommand> SlashCommands => _slashCommands;
 
         // Run `/cmd args`. A Control route posts the control request and says in

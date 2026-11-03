@@ -57,23 +57,34 @@ namespace Orbweaver
                 .ToList();
         }
 
-        // The whole catalogue: every name init lists, each with the route a cloud
-        // channel gives it. Terminal-only names are always Unavailable, whatever
-        // the table would say. The panel hides Unavailable ones from autocomplete
-        // and the session uses the same list to know which "/word" is a command.
+        // The four a cloud session runs by control request. Offered whether or
+        // not init lists them: the routing table, not the CLI's list, says they
+        // run here, and nobody has captured an init to show they are in it.
+        internal static readonly string[] ControlNames = { "rename", "model", "permissions", "think" };
+
+        // The whole catalogue: init's names plus the four above, each with the
+        // route a cloud channel gives it. Terminal-only names are Unavailable
+        // unless the table has a control request for them. The panel hides
+        // Unavailable ones from autocomplete and the session uses the same list
+        // to know which "/word" is a command at all.
         internal static IReadOnlyList<SlashCommand> Catalogue(
             IReadOnlyList<string> commands, IReadOnlyList<string> terminal)
         {
             var hidden = new HashSet<string>(terminal, StringComparer.OrdinalIgnoreCase);
 
-            return commands
+            return ControlNames
+                .Concat(commands)
                 .Concat(terminal)
                 .Select(n => "/" + n)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Select(n => new SlashCommand(n, DescriptionFor(n),
-                    hidden.Contains(n.TrimStart('/'))
-                        ? SlashRouteKind.Unavailable
-                        : SlashRouting.Resolve(SlashChannel.Cloud, n, "").Kind))
+                .Select(n =>
+                {
+                    var route = SlashRouting.Resolve(SlashChannel.Cloud, n, "").Kind;
+                    return new SlashCommand(n, DescriptionFor(n),
+                        hidden.Contains(n.TrimStart('/')) && route != SlashRouteKind.Control
+                            ? SlashRouteKind.Unavailable
+                            : route);
+                })
                 .ToList();
         }
 
