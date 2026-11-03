@@ -54,11 +54,19 @@ jobs:
 
       - name: Download released installer
         if: inputs.release_tag != ''
+        # The tag and repo reach the script as env, not spliced into its text:
+        # an expression inside run: is expanded before PowerShell parses it, so
+        # a tag containing a quote would break out of the string it sits in.
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REPO: ${{ github.repository }}
         run: |
+          # A release tag is letters, digits, dots, hyphens and underscores. Anything
+          # else is not one, and a leading hyphen would read as a gh flag.
+          if ($env:RELEASE_TAG -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "release_tag is not a release tag" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          gh release download '${{ inputs.release_tag }}' --repo '${{ github.repository }}' --pattern '*-win-x64-setup.exe' --dir dist
+          gh release download $env:RELEASE_TAG --repo $env:REPO --pattern '*-win-x64-setup.exe' --dir dist
           Get-ChildItem dist
         shell: pwsh
 
