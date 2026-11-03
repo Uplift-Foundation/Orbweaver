@@ -112,6 +112,17 @@ public class PanelOverTheLinkTests
     }
 
     [Fact]
+    public void ValidRoutesHandlesAMissingEntryAndAMissingCommandList()
+    {
+        Assert.False(RemoteControlSessions.ValidRoutes(null));
+
+        var noCommands = new MirrorProtocol.MirrorRosterEntry(
+            "job-hunter", "claude", true, true, Commands: null, CommandRoutes: Array.Empty<string>());
+        Assert.True(RemoteControlSessions.ValidRoutes(noCommands));
+        Assert.False(RemoteControlSessions.ValidRoutes(noCommands with { CommandRoutes = new[] { "typed" } }));
+    }
+
+    [Fact]
     public void ANewerFarBuddyIsRecognisedByItsRoutesEvenWhenThereAreNone()
     {
         Assert.False(RemoteControlSessions.SpeaksSlash(null));

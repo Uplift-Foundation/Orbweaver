@@ -442,6 +442,36 @@ public class RemoteMirrorChatSessionTests : IDisposable
     // cannot run must be refused with nothing sent, and a path must go as a
     // message.
     [AvaloniaFact]
+    public async Task ARefusalNamesTheLineWhenItIsNotEvenSplittable()
+    {
+        Wire("a", "b");
+        var session = await OpenAsync();
+        var turn = new ChatTurn { Role = ChatRole.User, Text = "plain", IsComplete = true };
+
+        var outcome = session.ApplySlashOutcome(turn, "plain",
+            new RemoteMirrorClient.InputOutcome(null, MirrorProtocol.ViaRefused, null));
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains("Not sent: plain", NotesOf(session));
+        Assert.Contains("can't run on that machine", NotesOf(session));
+    }
+
+    [AvaloniaFact]
+    public async Task ASlashLineBeforeTheRosterHasArrivedIsLeftToTheOrdinarySend()
+    {
+        _wireSlash = true;
+        Wire("a", "b");
+        var session = NewSession();
+        session.PanelOpened();
+        // No discovery yet: a client exists and knows nothing about the session.
+
+        var outcome = await session.RunSlashAsync("/color pink");
+
+        Assert.Empty(_slashRan);
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+    }
+
+    [AvaloniaFact]
     public async Task AKnownButUnrunnableCommandIsRefusedAndAPathIsAMessage()
     {
         _wireSlash = true;
@@ -486,6 +516,8 @@ public class RemoteMirrorChatSessionTests : IDisposable
     public async Task ASlashLineWithRemoteSessionsSwitchedOffIsRefusedButKept()
     {
         _wireSlash = true;
+        // Known, so it reaches the runner rather than the ordinary send.
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
         Wire("a", "b");
         var session = await OpenAsync();
         OrbweaverSettings.PeerLinkEnabled = false;

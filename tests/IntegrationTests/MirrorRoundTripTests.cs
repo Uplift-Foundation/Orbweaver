@@ -761,6 +761,20 @@ public class MirrorRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task ACatalogueSeamThatThrowsLeavesTheEntryWithNoCommandsRatherThanNoRoster()
+    {
+        var harness = new Harness(_dir, wireSlash: true) { SlashCatalogueThrows = true };
+        harness.AddSession("job-hunter", WriteTranscript("boom.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.True(entry.HasTranscript);
+        Assert.Empty(entry.Commands!);
+        Assert.Empty(entry.CommandRoutes!);
+    }
+
+    [Fact]
     public async Task ARunnerThatThrowsIsAnsweredAsARefusalNotATornDownLink()
     {
         var harness = new Harness(_dir, wireSlash: true)
@@ -2429,6 +2443,7 @@ public class MirrorRoundTripTests : IDisposable
         public Func<SessionStatus, string, RemoteMirrorServer.SlashOutcome>? SlashRunner { get; set; }
         public IReadOnlyList<SlashCommand>? SlashCatalogue { get; set; }
         public bool SlashRunnerThrows { get; set; }
+        public bool SlashCatalogueThrows { get; set; }
 
         // CB-306: the real far resolver, in place of the canned runner.
         public MirrorSlashHost? SlashHost { get; set; }
@@ -2534,7 +2549,11 @@ public class MirrorRoundTripTests : IDisposable
                 // somebody pinned by typing a code. A harness says yes explicitly.
                 PeerAllowed: _ => true,
                 UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs,
-                SlashCommandsFor: wireSlash ? status => SlashHost?.CommandsFor(status) ?? SlashCatalogue! : null,
+                SlashCommandsFor: wireSlash
+                    ? status => SlashCatalogueThrows
+                        ? throw new InvalidOperationException("catalogue scan failed")
+                        : SlashHost?.CommandsFor(status) ?? SlashCatalogue!
+                    : null,
                 RunSlash: wireSlash
                     ? (status, line) =>
                     {
