@@ -60,8 +60,10 @@ public partial class ClaudeCloudEventsTests
         var routes = catalogue.ToDictionary(c => c.Name, c => c.Route, StringComparer.OrdinalIgnoreCase);
 
         // Nothing dropped, a name listed twice kept once, terminal-only names
-        // (case-insensitively, and even where the table has a route) Unavailable.
-        Assert.Equal(8, catalogue.Count);
+        // (case-insensitively, unless the table has a route) Unavailable, and
+        // Claude Code's built-in names present whether init listed them or not.
+        Assert.Equal(catalogue.Count, catalogue.Select(c => c.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(SlashCommandCatalog.ClaudeCodeBuiltins, b => Assert.Contains(b.Name, routes.Keys));
         Assert.Equal(SlashRouteKind.Control, routes["/rename"]);
         Assert.Equal(SlashRouteKind.Control, routes["/model"]);
         Assert.Equal(SlashRouteKind.Control, routes["/think"]);
@@ -102,35 +104,54 @@ public partial class ClaudeCloudEventsTests
         new(CloudStreamEventKind.Durable, "client_event", seq, "{\"payload\":" + row + "}",
             PayloadType: "system", Subtype: "init", RowJson: row);
 
+    private static bool Knows(ClaudeCloudChatSession chat, string name) =>
+        chat.SlashCommands.Any(c => c.Name == name);
+
     [Fact]
     public async Task TheLatestInitsListIsKeptAndAListlessInitLeavesIt()
     {
         var (chat, _, stream, _) = Streaming();
-        // Before any init: just the four the routing table runs.
+        // Before any init: the built-ins are known (so /compact is refused, not
+        // sent as prose) and the four the routing table runs are offered.
+        Assert.True(Knows(chat, "/compact"));
         Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" },
-            chat.SlashCommands.Select(c => c.Name));
+            ChatPanel.OfferedCommands(chat.SlashCommands).Select(c => c.Name));
+        Assert.False(Knows(chat, "/first-skill"));
 
         chat.PanelOpened();
         var events = await stream.NextOpenAsync();
 
-        events.TryWrite(Init(42, InitRow("[\"rename\",\"compact\"]", "[]")));
-        await Until(() => chat.SlashCommands.Any(c => c.Name == "/compact"));
-        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think", "/compact" },
-            chat.SlashCommands.Select(c => c.Name));
+        events.TryWrite(Init(42, InitRow("[\"first-skill\"]", "[]")));
+        await Until(() => Knows(chat, "/first-skill"));
 
         // Re-published with a different list: the newest wins.
-        events.TryWrite(Init(43, InitRow("[\"model\",\"think\"]")));
-        await Until(() => chat.SlashCommands.All(c => c.Name != "/compact"));
-        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" }, chat.SlashCommands.Select(c => c.Name));
+        events.TryWrite(Init(43, InitRow("[\"second-skill\"]")));
+        await Until(() => Knows(chat, "/second-skill"));
+        Assert.False(Knows(chat, "/first-skill"));
 
         // An init with no list at all, and a status that is not an init, change nothing.
         events.TryWrite(Init(44, "{\"type\":\"system\",\"subtype\":\"init\"}"));
         events.TryWrite(Durable(45, "system", "status", "requesting"));
         events.TryWrite(Durable(46, "assistant", payload: AssistantRow("a1", "marker")));
         await Until(() => chat.History.Count == 1);
-        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" }, chat.SlashCommands.Select(c => c.Name));
+        Assert.True(Knows(chat, "/second-skill"));
 
         await Close(chat);
+    }
+
+    // The empty-catalogue case: a panel typed into before init has arrived.
+    [Fact]
+    public async Task BeforeAnyInitACompactIsRefusedAndARenameStillRuns()
+    {
+        var api = new RoutingApi(Answer(200, Receipt));
+        var chat = Sender(api);
+
+        Assert.Equal(ChatSendOutcome.Failed, await chat.RunSlashAsync("/compact"));
+        Assert.Empty(api.Posts);
+        Assert.StartsWith("Not sent: /compact can't run from here", Assert.Single(Notes(chat)).Text);
+
+        Assert.Equal(ChatSendOutcome.Sent, await chat.RunSlashAsync("/rename foo"));
+        Assert.Equal("rename_session", RequestOf(Assert.Single(api.Posts)).GetProperty("subtype").GetString());
     }
 
     // --- RunSlashAsync ------------------------------------------------------
@@ -165,10 +186,10 @@ public partial class ClaudeCloudEventsTests
         var api = new RoutingApi(Answer(200, Receipt));
         var chat = Sender(api);
 
-        Assert.Equal(ChatSendOutcome.Sent, await chat.RunSlashAsync("/model"));
+        Assert.Equal(ChatSendOutcome.Sent, await chat.RunSlashAsync("/think"));
 
-        Assert.Equal("default", RequestOf(Assert.Single(api.Posts)).GetProperty("model").GetString());
-        Assert.Equal("Sent /model.", Assert.Single(Notes(chat)).Text);
+        Assert.Equal("set_max_thinking_tokens", RequestOf(Assert.Single(api.Posts)).GetProperty("subtype").GetString());
+        Assert.Equal("Sent /think.", Assert.Single(Notes(chat)).Text);
     }
 
     // Teaches the session its command list by way of a real init on the stream.
@@ -177,8 +198,8 @@ public partial class ClaudeCloudEventsTests
         var (chat, api, stream, _) = Streaming();
         chat.PanelOpened();
         var events = await stream.NextOpenAsync();
-        events.TryWrite(Init(42, InitRow(commands, terminal)));
-        await Until(() => chat.SlashCommands.Count > CloudSlashCatalog.ControlNames.Length);
+        events.TryWrite(Init(42, InitRow(commands.Replace("]", ",\"init-marker\"]"), terminal)));
+        await Until(() => Knows(chat, "/init-marker"));
         return (chat, api);
     }
 

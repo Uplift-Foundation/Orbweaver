@@ -704,12 +704,6 @@ namespace Orbweaver
         private IReadOnlyList<SlashCommand> _slashCommands =
             CloudSlashCatalog.Catalogue(Array.Empty<string>(), Array.Empty<string>());
 
-        // Every name in SlashCommands, with the slash: what makes a "/word" a command rather than prose. Empty
-        // until an init has been seen, when only the routing table's own
-        // commands count.
-        private HashSet<string> _knownSlash = new(
-            CloudSlashCatalog.ControlNames.Select(n => "/" + n), StringComparer.OrdinalIgnoreCase);
-
         // The full catalogue with routes, Unavailable included — the panel hides
         // those. The four control commands until an init has been seen; touched on the UI thread.
         public IReadOnlyList<SlashCommand> SlashCommands => _slashCommands;
@@ -723,7 +717,7 @@ namespace Orbweaver
             // (or one the routing table maps). A path, an unknown word or a bare
             // slash is an ordinary message.
             if (SlashRouting.Split(line) is not { } parts
-                || !(_knownSlash.Contains(parts.Name) || SlashRouting.HasControl(parts.Name)))
+                || !_slashCommands.Any(c => string.Equals(c.Name, parts.Name, StringComparison.OrdinalIgnoreCase)))
             {
                 return await SendAsync(line).ConfigureAwait(false);
             }
@@ -1145,8 +1139,6 @@ namespace Orbweaver
                         if (init is { } lists)
                         {
                             _slashCommands = CloudSlashCatalog.Catalogue(lists.Commands, lists.Terminal);
-                            _knownSlash = new HashSet<string>(
-                                _slashCommands.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
                         }
                         SetBusy(true);
                     });

@@ -62,7 +62,9 @@ namespace Orbweaver
         // run here, and nobody has captured an init to show they are in it.
         internal static readonly string[] ControlNames = { "rename", "model", "permissions", "think" };
 
-        // The whole catalogue: init's names plus the four above, each with the
+        // The whole catalogue: init's names, Claude Code's built-in names and the
+        // four above (so /compact is known, and refused, even before an init has
+        // arrived), each with the
         // route a cloud channel gives it. Terminal-only names are Unavailable
         // unless the table has a control request for them. The panel hides
         // Unavailable ones from autocomplete and the session uses the same list
@@ -73,6 +75,7 @@ namespace Orbweaver
             var hidden = new HashSet<string>(terminal, StringComparer.OrdinalIgnoreCase);
 
             return ControlNames
+                .Concat(SlashCommandCatalog.ClaudeCodeBuiltins.Select(c => c.Name.TrimStart('/')))
                 .Concat(commands)
                 .Concat(terminal)
                 .Select(n => "/" + n)
