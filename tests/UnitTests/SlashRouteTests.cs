@@ -181,19 +181,38 @@ public class SlashRouteTests
     }
 
     [Fact]
-    public void ModelDefaultsToDefault()
+    public void ModelNeedsAName()
     {
-        Assert.Equal("default", Parse(SlashRouting.ControlRequest("set_model", "", out _)!).GetProperty("model").GetString());
+        // No bare /model: a mapping of empty-to-default was never measured, so
+        // it is refused rather than invented (Nadia's finding 2).
+        Assert.Null(SlashRouting.ControlRequest("set_model", "", out var problem));
+        Assert.Contains("/model opus", problem);
+
         Assert.Equal("opus", Parse(SlashRouting.ControlRequest("set_model", "opus", out _)!).GetProperty("model").GetString());
     }
 
-    [Fact]
-    public void PermissionsNeedsAMode()
+    [Theory]
+    [InlineData("default")]
+    [InlineData("acceptEdits")]
+    [InlineData("plan")]
+    [InlineData("bypassPermissions")]
+    public void PermissionsTakesAKnownMode(string mode)
     {
-        Assert.Equal("plan", Parse(SlashRouting.ControlRequest("set_permission_mode", "plan", out _)!).GetProperty("mode").GetString());
+        Assert.Equal(mode, Parse(SlashRouting.ControlRequest("set_permission_mode", mode, out var problem)!).GetProperty("mode").GetString());
+        Assert.Null(problem);
+    }
 
-        Assert.Null(SlashRouting.ControlRequest("set_permission_mode", "", out var problem));
-        Assert.Contains("/permissions plan", problem);
+    [Theory]
+    [InlineData("")]
+    [InlineData("plam")]        // a typo
+    [InlineData("AcceptEdits")] // wrong case — the modes are case-sensitive
+    [InlineData("ask")]         // a per-tool behaviour, not a session mode
+    public void PermissionsRefusesAnythingElse(string mode)
+    {
+        // Validated here rather than after a round trip (Nadia's finding 3).
+        Assert.Null(SlashRouting.ControlRequest("set_permission_mode", mode, out var problem));
+        Assert.NotNull(problem);
+        Assert.Contains("bypassPermissions", problem);
     }
 
     [Theory]
@@ -242,4 +261,40 @@ public class SlashRouteTests
         Assert.Equal(SlashRouteKind.Typed, new SlashCommand("/x", "").Route);
         Assert.Equal(SlashRouteKind.Control, new SlashCommand("/x", "", SlashRouteKind.Control).Route);
     }
+
+    // --- NamesKnownCommand: the gate for "command vs message" (Nadia 1) -------
+
+    private static readonly string[] Catalogue =
+        { "/color", "/rename", "/compact", "/clear", "/my-custom" };
+
+    [Theory]
+    [InlineData("/color pink")]
+    [InlineData("/compact")]         // known but may be Unavailable — still a command
+    [InlineData("/CLEAR")]           // case-insensitive name match
+    [InlineData("/my-custom args")]
+    public void AKnownFirstTokenIsACommand(string line)
+    {
+        Assert.True(SlashRouting.NamesKnownCommand(line, Catalogue));
+    }
+
+    [Theory]
+    [InlineData("/tmp/build.log has the error")]
+    [InlineData("/Users/x/foo.cs fails")]
+    [InlineData("/etc/hosts")]
+    [InlineData("/ hello")]          // the name is just "/"
+    [InlineData("/unknown-word do a thing")]
+    [InlineData("hello /color")]     // slash not at the start
+    [InlineData("")]
+    [InlineData("/tmp/x\nsecond line")] // a multi-line message starting with "/"
+    public void AnythingElseIsNotACommandAndIsSent(string line)
+    {
+        Assert.False(SlashRouting.NamesKnownCommand(line, Catalogue));
+    }
+
+    [Fact]
+    public void AnEmptyCatalogueKnowsNoCommands()
+    {
+        Assert.False(SlashRouting.NamesKnownCommand("/color pink", System.Array.Empty<string>()));
+    }
+
 }

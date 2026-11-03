@@ -191,9 +191,20 @@ namespace Orbweaver
                 ? Array.Empty<SlashCommand>()
                 : commands.Where(c => c.Route != SlashRouteKind.Unavailable).ToList();
 
-        // A line that is a slash command: starts with "/" and has a name after
-        // it. "/" alone is a character someone typed, not a command.
-        internal static bool IsSlashLine(string text) => SlashRouting.Split(text) is not null;
+        // Whether a typed line is a command THIS session would run — its first
+        // token matches a name in the session's full catalogue (CB-306, the
+        // lead's ruling on Nadia's finding). A path like "/tmp/build.log", a
+        // bare "/", or an unknown "/word" is not a command and falls through to
+        // an ordinary send, exactly as before this feature. The full list is
+        // used, not the offered one, so a known-but-Unavailable command is still
+        // recognised as a command and refused by the runner rather than sent to
+        // the model as prose.
+        internal bool IsKnownSlashCommand(string text)
+        {
+            var all = (_session as IRemoteChatSlashCommands)?.SlashCommands;
+            return all is { Count: > 0 }
+                && SlashRouting.NamesKnownCommand(text, all.Select(c => c.Name));
+        }
 
         // The suggestions currently shown, and which one Up/Down has landed
         // on. Kept as a plain list rather than something observable: the
@@ -2791,12 +2802,14 @@ namespace Orbweaver
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            // CB-306: a slash command on a session that runs them itself goes
-            // to the runner, which decides the route — control request,
-            // pass-through, or a refusal note with nothing sent. A line with
-            // pictures attached is a message, not a command, and takes the
-            // picture path as before.
-            var outcome = images.Count == 0 && IsSlashLine(text) && session is IRemoteChatSlashRunner runner
+            // CB-306: a line that names a command this session knows goes to the
+            // runner, which routes it — control request, pass-through, or a
+            // refusal note with nothing sent. Anything else (a path, an unknown
+            // word, ordinary prose) sends as before. A command typed with a
+            // picture attached is sent as a message, not run: a control request
+            // cannot carry an image, so the attachment decides it is prose, and
+            // the "nothing sent" guarantee is about refused commands, not this.
+            var outcome = images.Count == 0 && session is IRemoteChatSlashRunner runner && IsKnownSlashCommand(text)
                 ? await runner.RunSlashAsync(text)
                 : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
                     ? await withImages.SendWithImagesAsync(text, images)

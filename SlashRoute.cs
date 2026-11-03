@@ -107,6 +107,28 @@ namespace Orbweaver
 
         internal static bool HasControl(string name) => ControlSubtypes.ContainsKey(name);
 
+        // The session permission modes, case-sensitive (camelCase), read from the
+        // CLI 2.1.317 binary. "ask" is a per-tool behaviour, not a session mode,
+        // and is deliberately not here.
+        internal static readonly IReadOnlyList<string> PermissionModes =
+            new[] { "default", "acceptEdits", "plan", "bypassPermissions" };
+
+        // Whether a typed line names a command this session actually knows — the
+        // gate between "run/refuse this command" and "send this as an ordinary
+        // message" (CB-306, the lead's ruling on Nadia's finding). A path
+        // (`/tmp/build.log`), a bare "/", or an unknown `/word` is not a command
+        // and must be sent unchanged, exactly as before this feature; only a
+        // first token that matches a known name — including the Unavailable ones,
+        // so a known-but-unrunnable command is refused rather than sent as prose
+        // — is routed. The caller passes the session's *full* catalogue.
+        public static bool NamesKnownCommand(string line, IEnumerable<string> knownNames)
+        {
+            if (Split(line) is not { } split) return false;
+            foreach (var name in knownNames)
+                if (string.Equals(name, split.Name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         // `name` carries its leading slash, the way SlashCommand.Name does.
         public static SlashRoute Resolve(SlashChannel channel, string name, string args)
         {
@@ -170,12 +192,34 @@ namespace Orbweaver
                     return new JsonObject { ["subtype"] = subtype, ["title"] = value };
 
                 case "set_model":
-                    // Omitted means "back to the default", which is what the CLI
-                    // itself reads an empty /model as over the bridge.
-                    return new JsonObject { ["subtype"] = subtype, ["model"] = value.Length == 0 ? "default" : value };
+                    // No bare /model: the CLI's own /model with no argument opens
+                    // a picker, which this panel has no equivalent for, and a
+                    // guess at "reset to default" would silently un-set a model
+                    // someone chose. Measured: set_model answers success; a
+                    // mapping of empty→default was never measured, so it is not
+                    // invented here.
+                    if (value.Length == 0) { problem = "name a model, e.g. /model opus"; return null; }
+                    return new JsonObject { ["subtype"] = subtype, ["model"] = value };
 
                 case "set_permission_mode":
-                    if (value.Length == 0) { problem = "say which mode, e.g. /permissions plan"; return null; }
+                    if (value.Length == 0)
+                    {
+                        problem = "say which mode: " + string.Join(", ", PermissionModes);
+                        return null;
+                    }
+                    // Validated rather than passed through: the mode names are
+                    // case-sensitive camelCase, so a typo or a wrong case is a
+                    // control request the far side would only reject after the
+                    // round trip. Read from the CLI 2.1.317 binary's
+                    // permission-mode set; "default" was measured to answer
+                    // success (docs/claude-cloud-findings.md), the rest are
+                    // binary-read.
+                    if (!PermissionModes.Contains(value))
+                    {
+                        problem = $"\"{value}\" is not a permission mode; use one of: "
+                            + string.Join(", ", PermissionModes);
+                        return null;
+                    }
                     return new JsonObject { ["subtype"] = subtype, ["mode"] = value };
 
                 case "set_max_thinking_tokens":

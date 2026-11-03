@@ -1,31 +1,52 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Media.Imaging;
 using Orbweaver;
 using Xunit;
 
 namespace Orbweaver.Tests;
 
-// CB-306: the panel's one new decision — a slash line on a session that runs
-// slash commands itself goes to the runner, never to SendAsync — and the one
-// new filter: a command the session marks Unavailable is not offered.
+// CB-306: the panel's one new decision — a line that NAMES a command this
+// session knows goes to the runner; anything else (a path, an unknown word,
+// ordinary prose) sends as before (the lead's ruling on Nadia's finding 1).
+// Plus the autocomplete filter: an Unavailable command is not offered.
 [Collection("Settings")]
 public class ChatPanelSlashRunnerTests : IDisposable
 {
     private static void Flush() => Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
+    private static async Task FlushAsync()
+    {
+        for (var i = 0; i < 40; i++) { Flush(); await Task.Delay(10); }
+    }
+
     private static OrbWindow NewOrb() => new(Guid.NewGuid().ToString());
 
-    // One session id per test and its panel hidden afterwards, the way
-    // ChatPanelTests does, so a panel left open here cannot be the transient
-    // the next class finds.
+    // The catalogue a runner publishes — the full list, routes and all, so the
+    // panel's known-check sees the Unavailable ones too. /compact is deliberately
+    // Unavailable here to prove a known-but-unrunnable command is still routed to
+    // the runner (which refuses it) rather than sent to the model as prose.
+    private static SlashCommand[] Catalogue() => new[]
+    {
+        new SlashCommand("/color", "Set the prompt bar color", SlashRouteKind.Control),
+        new SlashCommand("/rename", "Rename the session", SlashRouteKind.Control),
+        new SlashCommand("/compact", "Free up context", SlashRouteKind.Unavailable),
+        new SlashCommand("/clear", "Start over"),
+    };
+
     private readonly List<string> _opened = new();
 
-    private FakeChatSession NewFake()
+    private FakeChatSession NewFake(bool withCatalogue = true)
     {
         var id = Guid.NewGuid().ToString();
         _opened.Add(id);
-        return new FakeChatSession { SessionId = id };
+        var fake = new FakeChatSession { SessionId = id };
+        if (withCatalogue) fake.SlashCommands = Catalogue();
+        return fake;
     }
 
     public void Dispose()
@@ -48,7 +69,7 @@ public class ChatPanelSlashRunnerTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void ASlashLineGoesToTheRunnerAndNotToSend()
+    public void AKnownCommandGoesToTheRunnerAndNotToSend()
     {
         var fake = NewFake();
         ChatPanel.OpenFor(NewOrb(), fake);
@@ -62,8 +83,11 @@ public class ChatPanelSlashRunnerTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void ARefusedSlashLineStaysInTheBox()
+    public void AKnownButUnavailableCommandIsRoutedNotSentAsProse()
     {
+        // /compact is Unavailable in the catalogue — it must still reach the
+        // runner (which writes the refusal), never SendAsync, or the command
+        // text would go to the model as an ordinary message.
         var fake = NewFake();
         fake.SlashOutcome = ChatSendOutcome.Failed;
         ChatPanel.OpenFor(NewOrb(), fake);
@@ -73,45 +97,84 @@ public class ChatPanelSlashRunnerTests : IDisposable
 
         Assert.Equal(new[] { "/compact" }, fake.RanSlash);
         Assert.Empty(fake.SentTexts);
-        Assert.Equal("/compact", input.Text);
+        Assert.Equal("/compact", input.Text);   // refused → kept
     }
 
-    [AvaloniaFact]
-    public void ALineThatIsNotACommandStillGoesToSend()
+    [AvaloniaTheory]
+    [InlineData("/tmp/build.log has the error")]
+    [InlineData("/Users/x/foo.cs fails")]
+    [InlineData("/frobnicate the widget")]   // an unknown /word
+    [InlineData("hello /color")]             // slash not at the start
+    public void AnythingThatIsNotAKnownCommandIsSentAsAMessage(string text)
     {
         var fake = NewFake();
         ChatPanel.OpenFor(NewOrb(), fake);
         Flush();
 
-        TypeAndEnter("hello /world");
+        TypeAndEnter(text);
 
         Assert.Empty(fake.RanSlash);
-        Assert.Equal(new[] { "hello /world" }, fake.SentTexts);
+        Assert.Equal(new[] { text }, fake.SentTexts);
     }
 
     [AvaloniaFact]
-    public void ABareSlashIsAMessageNotACommand()
+    public void WithNoCatalogueEverythingIsAMessage()
     {
+        // A runner that has not published a catalogue (e.g. a cloud session
+        // before its init replays) knows no commands, so a typed /rename is a
+        // message rather than a command refused into the void.
+        var fake = NewFake(withCatalogue: false);
+        ChatPanel.OpenFor(NewOrb(), fake);
+        Flush();
+
+        TypeAndEnter("/rename x");
+
+        Assert.Empty(fake.RanSlash);
+        Assert.Equal(new[] { "/rename x" }, fake.SentTexts);
+    }
+
+    [AvaloniaFact]
+    public async Task AKnownCommandWithAPictureAttachedIsSentAsAMessage()
+    {
+        // A control request cannot carry an image, so an attachment makes the
+        // line a message (today's path), not a command — documented, not a
+        // silent command run (Nadia's finding 4).
         var fake = NewFake();
         ChatPanel.OpenFor(NewOrb(), fake);
         Flush();
 
-        TypeAndEnter("/");
+        var panel = ChatPanelTestAccess.Instance!;
+        var input = panel.FindControl<TextBox>("Input")!;
+        var attachments = panel.FindControl<ItemsControl>("Attachments")!;
+        input.Focus();
+        Flush();
+
+        var bitmap = new WriteableBitmap(new PixelSize(4, 4), new Vector(96, 96));
+        await panel.Clipboard!.SetBitmapAsync(bitmap);
+        var gesture = TextBox.PasteGesture!;
+        input.RaiseEvent(new KeyEventArgs
+        {
+            RoutedEvent = InputElement.KeyDownEvent, Key = gesture.Key, KeyModifiers = gesture.KeyModifiers
+        });
+        await FlushAsync();
+        Assert.True(attachments.IsVisible);
+
+        input.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "/rename x" });
+        Flush();
+        input.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
+        Flush();
 
         Assert.Empty(fake.RanSlash);
-        Assert.Equal(new[] { "/" }, fake.SentTexts);
+        var sent = Assert.Single(fake.SentWithImages);
+        Assert.Equal("/rename x", sent.Text);
+        var path = Assert.Single(sent.ImagePaths);
+        if (File.Exists(path)) File.Delete(path);
     }
 
     [AvaloniaFact]
     public void AnUnavailableCommandIsNotOffered()
     {
         var fake = NewFake();
-        fake.SlashCommands = new[]
-        {
-            new SlashCommand("/color", "Set the prompt bar color", SlashRouteKind.Control),
-            new SlashCommand("/compact", "Free up context", SlashRouteKind.Unavailable),
-            new SlashCommand("/clear", "Start over"),
-        };
         ChatPanel.OpenFor(NewOrb(), fake);
         Flush();
 
@@ -128,7 +191,8 @@ public class ChatPanelSlashRunnerTests : IDisposable
             .Select(v => v.GetType().GetProperty("Name")!.GetValue(v) as string)
             .ToList();
 
-        Assert.Equal(new[] { "/color", "/clear" }, names);
+        // /color and /clear start with "/c"; /compact is Unavailable, so hidden.
+        Assert.Equal(new[] { "/clear", "/color" }, names.OrderBy(n => n).ToList());
     }
 
     [Fact]
@@ -145,16 +209,5 @@ public class ChatPanelSlashRunnerTests : IDisposable
         });
 
         Assert.Equal(new[] { "/a", "/c" }, offered.Select(c => c.Name));
-    }
-
-    [Theory]
-    [InlineData("/compact", true)]
-    [InlineData("/color pink", true)]
-    [InlineData("/", false)]
-    [InlineData("hi /there", false)]
-    [InlineData("", false)]
-    public void IsSlashLineIsSplitsAnswer(string text, bool expected)
-    {
-        Assert.Equal(expected, ChatPanel.IsSlashLine(text));
     }
 }
