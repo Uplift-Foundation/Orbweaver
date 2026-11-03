@@ -43,11 +43,22 @@ namespace Orbweaver
         // Measured harmless against an idle session, which is what lets a Stop
         // press that races the end of a turn go out without a check first.
         internal static string InterruptBody(string requestId, string uuid) =>
+            ControlRequestBody(requestId, uuid,
+                new JsonObject { ["subtype"] = "interrupt", ["cancel_queued"] = true });
+
+        // Any control request: the interrupt's envelope with the `request`
+        // object supplied by the caller. CB-306 adds the other subtypes the CLI's
+        // bridge handler accepts (`set_color`, `rename_session`, `set_model`,
+        // `set_permission_mode`, `set_max_thinking_tokens`, read out of the
+        // 2.1.317 binary's `[bridge:repl]` switch); which of those a slash
+        // command maps to, and with what fields, is SlashRoute's table, so this
+        // stays a plain envelope and knows no subtype by name.
+        internal static string ControlRequestBody(string requestId, string uuid, JsonObject request) =>
             Envelope(new JsonObject
             {
                 ["type"] = "control_request",
                 ["request_id"] = requestId,
-                ["request"] = new JsonObject { ["subtype"] = "interrupt", ["cancel_queued"] = true },
+                ["request"] = request,
                 ["uuid"] = uuid,
             });
 

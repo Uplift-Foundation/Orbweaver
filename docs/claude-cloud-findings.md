@@ -299,3 +299,25 @@ On macOS `read`, `list` and `roster` raise a Keychain consent prompt naming *thi
 ## What this file does not cover
 
 The `SessionManager` mapping and the orb itself — the UI half of CB-164. The privacy constraint from the ticket applies there and not here: an account's cloud sessions are not all work, and a title on an always-on-top overlay is a different act from a listing in a web UI somebody opened deliberately.
+
+## Slash commands and control requests from outside (CB-306)
+
+Measured 2026-11-03 on this Mac against Claude Code 2.1.317 and a throwaway cloud session made with `claude --cloud` in a non-git scratch folder (so it started empty), through `tools/claude-cloud-probe`'s `send`, the new `control` and `stream` verbs, and `v1-events --save`. Never a real session. The same measurements were taken on a throwaway `claude --bg` job's Remote Control bridge; those are in `docs/remote-control-findings.md`, and the two agree except where noted below.
+
+**A user event we POST is a peer message, not the user's typing.** `/compact`, `/help`, `/color pink` and `/rename …` sent as `ClaudeCloudSend.UserMessageBody` all answered 200 and landed, and every one was answered by the model as "The peer session sent `/x`. That's a built-in CLI command, so I can't run it from here." The `result` rows carry `origin.kind: "peer"`; the session's own creation turn carries `"human"`. Blanking `session_id` in the payload changes nothing. The CLI's own `--teleport` client does not post a slash command at all: `/color pink` typed in the teleported TUI printed "Session color set to: pink" locally and no event reached the session. So **PassThrough does not exist for a cloud session from this app**, and the plan's assumption that the bridge slash dispatcher (`resolveBridgeSlashOverride`) would see our text was wrong: that code runs only for input the CLI classifies as its Remote Control client's, and what classifies it is not in the payload. Our stored rows carry only the keys we sent plus two the server adds (`server_received_wall_ms`, `trace_context`); the envelope carries `source: client`, `sent_by_account_id`, `device_attestation_status` (`DEVICE_ATTESTATION_STATUS_UNSPECIFIED` on every row measured, ours and the worker's) and `session_agent_owned` (null), and the consumer of those fields is in a bytecode-only chunk the binary's strings cannot reach. Not established: what claude.ai's own web client sends into a session — the headless debug browser is refused by Cloudflare's interstitial, and restarting it headed would disturb the other agents sharing it.
+
+**Control requests run.** Same endpoint, `ClaudeCloudSend.ControlRequestBody`. Measured on the cloud session, each answered by a `control_response` row carrying the request's `request_id`:
+
+| request | response |
+| --- | --- |
+| `rename_session {title}` | `success`, followed by a `system/session_title_changed` row |
+| `set_model {model:"default"}` | `success` |
+| `set_permission_mode {mode:"default"}` | `success` |
+| `set_max_thinking_tokens {max_thinking_tokens:null}` | `success` |
+| `set_color {color:"pink"}` | **`error` "Unsupported control request subtype: set_color"** — the cloud worker has no colour; the bridge does |
+
+The full subtype set the CLI's bridge handler accepts, read from the 2.1.317 binary's `[bridge:repl]` switch: `set_model, set_permission_mode, interrupt, stop_task, background_tasks, cancel_async_message, set_max_thinking_tokens, rename_session, set_color, mcp_authenticate, mcp_oauth_callback_url, mcp_reconnect, apply_flag_settings, side_question, reload_plugins`. Only the five above plus `interrupt` (CB-199) are measured.
+
+**`system/init` is durable and replays.** `GET …/events` lists it, and `…/events/stream?from_sequence_num=0` replays every durable row from 1, init included; the worker re-publishes an init after every turn, so a late subscriber always finds one. The cloud init carried `slash_commands[101]` (the container's bundled plugins' skills plus the built-ins) and `terminal_slash_commands` = `doctor, color, focus, reload-plugins`, with `skills[68]` and `agents[6]`. That `color` is a terminal command there and `set_color` is unsupported agree with each other.
+
+**What this settles for CB-306.** On a cloud session the only commands that can run from this app are the ones with a control-request equivalent: `/rename`, `/model`, `/permissions` (mode) and `/think` (budget) — not `/color`, not `/compact`, not a custom or skill command. Everything else is Unavailable, and the panel must say so rather than send text the model will politely refuse as a peer.

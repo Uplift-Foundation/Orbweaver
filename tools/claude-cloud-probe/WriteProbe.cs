@@ -55,6 +55,7 @@ internal static class WriteProbe
         "worker_status", "status", "connection_status", "session_status", "status_bucket",
         "environment_kind", "type", "subtype", "duplicate", "sequence_num", "has_more",
         "message", "error", "code", "outcome", "cross_session_inbound",
+        "event_type", "device_attestation_status", "session_agent_owned", "source",
     };
 
     internal static void Usage() =>
@@ -67,6 +68,7 @@ internal static class WriteProbe
             "  v2-events  <id>                    GET  /v2/ccr-sessions/<id>/events via the app's own parser\n" +
             "  send <id> --throwaway [opts]       POST a user turn to .../events\n" +
             "  interrupt <id> --throwaway [opts]  POST a control_request interrupt to .../events\n" +
+            "  control <id> --throwaway --request <json> [opts]  POST any control_request (CB-306)\n" +
             "  archive <id> --throwaway [opts]    POST {} to /v1/code/sessions/<id>/archive (CB-225)\n" +
             "  delete <id> --throwaway [opts]     DELETE /v1/code/sessions/<id> (CB-225)\n" +
             "  route <id> --throwaway [opts]      POST to a sub-route that does not exist (control)\n" +
@@ -100,7 +102,7 @@ internal static class WriteProbe
         // writes for the guard's purposes even though `route` aims at a path
         // nobody claims exists: a probe that guessed wrong about what a route
         // does must not be able to guess wrong about a real session.
-        var isWrite = verb is "send" or "interrupt" or "archive" or "delete" or "route";
+        var isWrite = verb is "send" or "interrupt" or "control" or "archive" or "delete" or "route";
 
         if (isWrite && !opts.Contains("--throwaway"))
         {
@@ -210,7 +212,7 @@ internal static class WriteProbe
                 path = events;
                 body = opts.Contains("--empty")
                     ? "{\"events\":[]}"
-                    : ClaudeCloudSend.UserMessageBody(id,
+                    : ClaudeCloudSend.UserMessageBody(opts.Contains("--blank-session-id") ? "" : id,
                         Value(opts, "--text") ?? "CB-199 probe: please reply with the single word ok.",
                         Value(opts, "--uuid") ?? Guid.NewGuid().ToString());
                 break;
@@ -220,6 +222,27 @@ internal static class WriteProbe
                 body = ClaudeCloudSend.InterruptBody(Guid.NewGuid().ToString(),
                     Value(opts, "--uuid") ?? Guid.NewGuid().ToString());
                 break;
+            case "control":
+            {
+                // CB-306: any control_request, its `request` object given verbatim
+                // as JSON (`--request '{"subtype":"set_color","color":"pink"}'`), so
+                // the subtypes the binary's bridge handler lists can be measured
+                // one at a time without the probe knowing their fields.
+                var raw = Value(opts, "--request");
+                JsonObject? controlRequest = null;
+                try { controlRequest = raw is null ? null : JsonNode.Parse(raw) as JsonObject; }
+                catch (JsonException) { }
+                if (controlRequest is null || controlRequest["subtype"] is null)
+                {
+                    Console.Error.WriteLine("control needs --request '<json object with a subtype>'");
+                    return 2;
+                }
+                method = HttpMethod.Post;
+                path = events;
+                body = ClaudeCloudSend.ControlRequestBody(Guid.NewGuid().ToString(),
+                    Value(opts, "--uuid") ?? Guid.NewGuid().ToString(), controlRequest);
+                break;
+            }
             case "archive":
                 // Read out of the CLI 2.1.288 binary: `tR` posts `{}` here with
                 // the same header set as a send, and counts 200 *and* 409 as
