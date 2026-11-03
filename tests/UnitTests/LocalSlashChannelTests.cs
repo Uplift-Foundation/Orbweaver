@@ -49,36 +49,59 @@ public class LocalSlashChannelTests
         bool desktop, bool canType, bool canMessage, string? bridge, SlashChannel expected)
         => Assert.Equal(expected, LocalSlashChannel.ChannelFor(desktop, canType, canMessage, bridge));
 
-    [Fact]
-    public void TerminalOffersTheLocalCatalogue()
+    private static readonly IReadOnlyList<SlashCommand> Local = new[]
     {
-        var local = new[] { new SlashCommand("/compact", "Compact") };
-        Assert.Same(local, LocalSlashChannel.CommandsFor(SlashChannel.Terminal, () => local));
+        new SlashCommand("/compact", "Compact"),
+        new SlashCommand("/color", "Colour"),
+        new SlashCommand("/deploy", "Custom"),
+    };
+
+    [Fact]
+    public void TerminalOffersTheLocalCatalogueUntouched()
+        => Assert.Same(Local, LocalSlashChannel.CommandsFor(SlashChannel.Terminal, () => Local));
+
+    [Fact]
+    public void TheBridgeCarriesTheFullCatalogueWithControlForTheFiveAndUnavailableForTheRest()
+    {
+        var commands = LocalSlashChannel.CommandsFor(SlashChannel.Bridge, () => Local);
+
+        Assert.Equal(SlashRouteKind.Unavailable, commands.Single(c => c.Name == "/compact").Route);
+        Assert.Equal(SlashRouteKind.Unavailable, commands.Single(c => c.Name == "/deploy").Route);
+        // Listed in the catalogue: keeps its own description, gains the route.
+        Assert.Equal("Colour", commands.Single(c => c.Name == "/color").Description);
+        Assert.Equal(SlashRouteKind.Control, commands.Single(c => c.Name == "/color").Route);
+        // Not listed in the catalogue: added, once each.
+        Assert.Equal(new[] { "/color", "/model", "/permissions", "/rename", "/think" },
+            commands.Where(c => c.Route == SlashRouteKind.Control).Select(c => c.Name).Order().ToArray());
+        Assert.Equal(commands.Count, commands.Select(c => c.Name).Distinct().Count());
     }
 
     [Fact]
-    public void TheBridgeOffersTheFiveControlCommandsAndNeverReadsTheCatalogue()
-    {
-        var commands = LocalSlashChannel.CommandsFor(SlashChannel.Bridge,
-            () => throw new Xunit.Sdk.XunitException("catalogue read for a bridge"));
-
-        Assert.Equal(new[] { "/color", "/rename", "/model", "/permissions", "/think" },
-            commands.Select(c => c.Name));
-        Assert.All(commands, c =>
-        {
-            Assert.Equal(SlashRouteKind.Control, c.Route);
-            // Each one must actually route to a control request on this channel.
-            Assert.Equal(SlashRouteKind.Control, SlashRouting.Resolve(SlashChannel.Bridge, c.Name, "x").Kind);
-        });
-    }
+    public void EveryCommandOnAnEmptyCatalogueStillOffersTheFiveOnABridge()
+        => Assert.Equal(5, LocalSlashChannel.CommandsFor(SlashChannel.Bridge,
+            () => Array.Empty<SlashCommand>()).Count(c => c.Route == SlashRouteKind.Control));
 
     [Theory]
     [InlineData(SlashChannel.PeerSocket)]
     [InlineData(SlashChannel.Cloud)]
     [InlineData(SlashChannel.OpenClaw)]
-    public void EveryOtherChannelOffersNothingHere(SlashChannel channel)
-        => Assert.Empty(LocalSlashChannel.CommandsFor(channel,
-            () => throw new Xunit.Sdk.XunitException("catalogue read")));
+    public void EveryOtherChannelKnowsTheCatalogueAndRunsNoneOfIt(SlashChannel channel)
+    {
+        var commands = LocalSlashChannel.CommandsFor(channel, () => Local);
+
+        Assert.Equal(Local.Select(c => c.Name), commands.Select(c => c.Name));
+        Assert.All(commands, c => Assert.Equal(SlashRouteKind.Unavailable, c.Route));
+    }
+
+    [Theory]
+    [InlineData("/compact", true)]
+    [InlineData("/DEPLOY", true)]
+    [InlineData("/think", true)]
+    [InlineData("/tmp/x.log", false)]
+    [InlineData("/", false)]
+    [InlineData("/nonsense", false)]
+    public void OnlyAFirstTokenTheCliKnowsIsACommand(string name, bool expected)
+        => Assert.Equal(expected, LocalSlashChannel.Knows(Local, name));
 
     [Fact]
     public void ARegistryRowsBridgeIsReadAndAMalformedOneIsNot()

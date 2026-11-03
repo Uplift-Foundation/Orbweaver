@@ -21,7 +21,14 @@ public class LocalCliChatSessionSlashTests : IDisposable
 
     public LocalCliChatSessionSlashTests() => OrbweaverSettings.ClaudeCodeReplyEnabled = true;
 
-    public void Dispose() => OrbweaverSettings.ClaudeCodeReplyEnabled = _replyBefore;
+    public void Dispose()
+    {
+        OrbweaverSettings.ClaudeCodeReplyEnabled = _replyBefore;
+        foreach (var dir in _cleanup)
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
 
     private sealed class Api : ICloudApi
     {
@@ -49,7 +56,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
             + protocol + (bridge ? $",\"bridgeSessionId\":\"{Bridge}\"" : "") + "}", null)!.Value;
 
     private static LocalCliChatSession Headless(Api api, Credentials credentials,
-        SessionRegistry.Entry? entry, bool cloudOn = true, bool write = true)
+        SessionRegistry.Entry? entry, bool cloudOn = true, bool write = true, string cwd = "")
     {
         var messenger = new SessionMessenger(new SessionMessenger.Seams(
             Registry: () => entry is { } e ? new[] { e } : Array.Empty<SessionRegistry.Entry>(),
@@ -61,6 +68,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
             Shape = LocalSessionShape.Background,
             State = "idle",
             Title = "job-hunter",
+            Cwd = cwd,
         }, messenger: messenger, findRegistry: id => entry is { } f && f.SessionId == id ? f : null,
         cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn)
         {
@@ -69,7 +77,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
         };
     }
 
-    private static LocalCliChatSession Desktop(Api api, Credentials credentials, string bridge, bool cloudOn = true) =>
+    private static LocalCliChatSession Desktop(Api api, Credentials credentials, string bridge, bool cloudOn = true, string cwd = "") =>
         new("s1", new SessionStatus
         {
             Source = SessionSource.ClaudeCode,
@@ -77,6 +85,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
             BridgeSessionId = bridge,
             State = "idle",
             Title = "",
+            Cwd = cwd,
         }, cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn)
         {
             ReadBudget = TestBudgets.AlwaysAnswers,
@@ -91,6 +100,22 @@ public class LocalCliChatSessionSlashTests : IDisposable
         return payload.GetProperty("request").Clone();
     }
 
+    private static IEnumerable<string> Runnable(LocalCliChatSession s) =>
+        s.SlashCommands.Where(c => c.Route != SlashRouteKind.Unavailable).Select(c => c.Name);
+
+    // A project with one custom command in .claude/commands, so "known to the
+    // CLI" includes something no fixed list could name.
+    private string ProjectWithCustomCommand()
+    {
+        var cwd = Path.Combine(Path.GetTempPath(), "cb306-slash-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(cwd, ".claude", "commands"));
+        File.WriteAllText(Path.Combine(cwd, ".claude", "commands", "ship-it.md"), "Ship it.");
+        _cleanup.Add(cwd);
+        return cwd;
+    }
+
+    private readonly List<string> _cleanup = new();
+
     private static readonly string[] Five = { "/color", "/rename", "/model", "/permissions", "/think" };
 
     // --- what is offered ---
@@ -101,7 +126,10 @@ public class LocalCliChatSessionSlashTests : IDisposable
         var session = Headless(new Api(), new Credentials(), Row(bridge: true));
 
         Assert.Equal(SlashChannel.Bridge, session.SlashChannelNow);
-        Assert.Equal(Five, session.SlashCommands.Select(c => c.Name));
+        Assert.Equal(Five.Order(), Runnable(session).Order());
+        // The rest of what the CLI knows is listed but unavailable, for the
+        // panel to hide and the known-name check to use.
+        Assert.Equal(SlashRouteKind.Unavailable, session.SlashCommands.Single(c => c.Name == "/compact").Route);
         Assert.Equal(Bridge, session.BridgeId);
     }
 
@@ -113,15 +141,16 @@ public class LocalCliChatSessionSlashTests : IDisposable
         var session = Headless(new Api(), new Credentials(), Row(bridge: false));
 
         Assert.Equal(SlashChannel.PeerSocket, session.SlashChannelNow);
-        Assert.Empty(session.SlashCommands);
+        Assert.Empty(Runnable(session));
+        Assert.Contains(session.SlashCommands, c => c.Name == "/compact");
         Assert.Null(session.BridgeId);
     }
 
     [AvaloniaFact]
     public void ABridgedDesktopChatOffersTheFiveAndAnUnbridgedOneNothing()
     {
-        Assert.Equal(Five, Desktop(new Api(), new Credentials(), Bridge).SlashCommands.Select(c => c.Name));
-        Assert.Empty(Desktop(new Api(), new Credentials(), "").SlashCommands);
+        Assert.Equal(Five.Order(), Runnable(Desktop(new Api(), new Credentials(), Bridge)).Order());
+        Assert.Empty(Runnable(Desktop(new Api(), new Credentials(), "")));
     }
 
     // --- running ---
@@ -317,5 +346,83 @@ public class LocalCliChatSessionSlashTests : IDisposable
 
         Assert.Empty(api.Requests);
         Assert.Contains(session.History, t => t.Text.Contains("Handed to job-hunter", StringComparison.Ordinal));
+    }
+
+    // Known to the CLI but not runnable on the channel: refused, nothing sent —
+    // a built-in and a project's own custom command, on every channel.
+    [AvaloniaFact]
+    public async Task AKnownButUnavailableCommandIsRefusedOnEveryChannelWithNothingSent()
+    {
+        var cwd = ProjectWithCustomCommand();
+        var api = new Api();
+
+        foreach (var (session, reason) in new[]
+                 {
+                     (Headless(api, new Credentials(), Row(bridge: true), cwd: cwd), SlashRouting.PeerMessageReason),
+                     (Desktop(api, new Credentials(), Bridge, cwd: cwd), SlashRouting.PeerMessageReason),
+                     (Headless(api, new Credentials(), Row(bridge: false), cwd: cwd), SlashRouting.PeerSocketReason),
+                 })
+        {
+            Assert.Contains(session.SlashCommands, c => c.Name == "/ship-it");
+
+            foreach (var name in new[] { "/compact", "/ship-it" })
+            {
+                Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync(name + " now"));
+                Assert.Contains(session.History, t => t.Text == SlashRouting.RefusalNote(name, reason));
+            }
+        }
+
+        Assert.Empty(api.Requests);
+    }
+
+    // The same two channels that refuse a known command deliver a path, a bare
+    // "/" and an unknown word as the ordinary messages they are.
+    [AvaloniaTheory]
+    [InlineData("/tmp/x.log boom")]
+    [InlineData("/")]
+    [InlineData("/nonsense")]
+    public async Task PathsAndUnknownWordsAreDeliveredOnBridgeAndPeerSocketAlike(string line)
+    {
+        var api = new Api();
+
+        foreach (var session in new[]
+                 {
+                     Headless(api, new Credentials(), Row(bridge: true)),
+                     Headless(api, new Credentials(), Row(bridge: false)),
+                 })
+        {
+            Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync(line));
+            Assert.Contains(session.History, t => t.Text.Contains("Handed to job-hunter", StringComparison.Ordinal));
+            Assert.DoesNotContain(session.History, t => t.Text.StartsWith("Not sent", StringComparison.Ordinal));
+        }
+
+        Assert.Empty(api.Requests);
+    }
+
+    [AvaloniaFact]
+    public async Task APathToABridgedDesktopChatGoesThroughTheBridgeAsAMessage()
+    {
+        var api = new Api();
+        var session = Desktop(api, new Credentials(), Bridge);
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/tmp/x.log boom"));
+
+        var request = Assert.Single(api.Requests);
+        using var doc = JsonDocument.Parse(request.Body!);
+        var payload = doc.RootElement.GetProperty("events")[0].GetProperty("payload");
+        Assert.Equal("user", payload.GetProperty("type").GetString());
+        Assert.Equal("/tmp/x.log boom", payload.GetProperty("message").GetProperty("content").GetString());
+    }
+
+    // The one case that still lists commands it cannot send: no pane, no socket,
+    // no bridge. Its typed send must fail with a note a person can read.
+    [AvaloniaFact]
+    public async Task ASessionWithNowhereToSendFailsVisiblyNotSilently()
+    {
+        var session = Headless(new Api(), new Credentials(), entry: null);
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/compact"));
+
+        Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Length > 0);
     }
 }

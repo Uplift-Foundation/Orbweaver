@@ -42,17 +42,45 @@ namespace Orbweaver
             return SlashChannel.PeerSocket;
         }
 
-        // What the autocomplete offers on a channel. `terminalCatalogue` is the
-        // local scan, consulted only for Terminal — it is a disk read the other
-        // channels never need.
+        // The FULL catalogue a session knows, each command carrying the route it
+        // would take on this channel (CB-306): Typed on a pane, Control for the
+        // five that run over a bridge, Unavailable for everything else the CLI
+        // knows but this channel cannot run. The panel hides Unavailable ones
+        // from autocomplete; the same list is the known-name set (a typed line
+        // is a command only if its first token is in it) and what the mirror's
+        // roster carries. `catalogue` is the local scan.
         public static IReadOnlyList<SlashCommand> CommandsFor(
-            SlashChannel channel, Func<IReadOnlyList<SlashCommand>> terminalCatalogue) =>
-            channel switch
+            SlashChannel channel, Func<IReadOnlyList<SlashCommand>> catalogue)
+        {
+            var local = catalogue();
+            switch (channel)
             {
-                SlashChannel.Terminal => terminalCatalogue(),
-                SlashChannel.Bridge => ControlCommands,
-                _ => Array.Empty<SlashCommand>(),
-            };
+                case SlashChannel.Terminal:
+                    return local;
+
+                case SlashChannel.Bridge:
+                    var routed = local
+                        .Select(c => HasControl(c.Name)
+                            ? c with { Route = SlashRouteKind.Control }
+                            : c with { Route = SlashRouteKind.Unavailable })
+                        .ToList();
+                    // A control command the catalogue happens not to list is
+                    // still one the bridge runs.
+                    routed.AddRange(ControlCommands.Where(
+                        c => !routed.Any(r => string.Equals(r.Name, c.Name, StringComparison.OrdinalIgnoreCase))));
+                    return routed;
+
+                default:
+                    return local.Select(c => c with { Route = SlashRouteKind.Unavailable }).ToList();
+            }
+        }
+
+        // Whether a typed first token is a command this CLI knows at all, runnable
+        // here or not. Anything else — a path, a bare "/", an unknown word — is
+        // ordinary prose and is delivered as such.
+        public static bool Knows(IReadOnlyList<SlashCommand> known, string name) =>
+            HasControl(name)
+            || known.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
 
         internal static bool HasControl(string name) =>
             ControlCommands.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));

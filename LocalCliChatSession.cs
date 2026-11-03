@@ -642,8 +642,10 @@ namespace Orbweaver
         // <cross-session-message> that Claude Code never slash-dispatches
         // (CB-43, measured again 2026-11-03).
         public IReadOnlyList<SlashCommand> SlashCommands =>
-            LocalSlashChannel.CommandsFor(SlashChannelNow,
-                () => _slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd));
+            LocalSlashChannel.CommandsFor(SlashChannelNow, LocalCatalogue);
+
+        private IReadOnlyList<SlashCommand> LocalCatalogue() =>
+            _slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd);
 
         // The bridge id for this session: the Desktop record's, else the one a
         // headless job's registry row carries. Null when there is none.
@@ -652,18 +654,17 @@ namespace Orbweaver
                 _status.IsDesktopHosted ? _status.BridgeSessionId : null,
                 _status.IsDesktopHosted ? null : _findRegistry(SessionId)?.BridgeSessionId);
 
-        internal SlashChannel SlashChannelNow
+        internal SlashChannel SlashChannelNow => ChannelWith(BridgeId);
+
+        private SlashChannel ChannelWith(string? bridge)
         {
-            get
-            {
-                var canType = TerminalFocuser.CanSendQuietly(_status);
-                // A pane makes the registry irrelevant, so skip its disk scan.
-                if (!_status.IsDesktopHosted && canType) return SlashChannel.Terminal;
-                return LocalSlashChannel.ChannelFor(
-                    _status.IsDesktopHosted, canType,
-                    !_status.IsDesktopHosted && TerminalFocuser.CanDeliver(_status, SessionId, _findRegistry),
-                    BridgeId);
-            }
+            var canType = TerminalFocuser.CanSendQuietly(_status);
+            // A pane makes the registry irrelevant, so skip its disk scan.
+            if (!_status.IsDesktopHosted && canType) return SlashChannel.Terminal;
+            return LocalSlashChannel.ChannelFor(
+                _status.IsDesktopHosted, canType,
+                !_status.IsDesktopHosted && TerminalFocuser.CanDeliver(_status, SessionId, _findRegistry),
+                bridge);
         }
 
         // Runs a typed `/cmd args` by the route its channel gives it (CB-306).
@@ -671,10 +672,14 @@ namespace Orbweaver
         // session; Unavailable leaves a note and sends nothing at all.
         public async Task<ChatSendOutcome> RunSlashAsync(string line)
         {
-            if (SlashRouting.Split(line) is not { } cmd || !KnowsCommand(cmd.Name))
+            if (SlashRouting.Split(line) is not { } cmd
+                || !LocalSlashChannel.Knows(LocalCatalogue(), cmd.Name))
                 return await SendAsync(line);
 
-            var channel = SlashChannelNow;
+            // Read once: the registry row can change between two reads, and the
+            // channel and the post must agree on which bridge this is.
+            var bridge = BridgeId;
+            var channel = ChannelWith(bridge);
             var route = SlashRouting.Resolve(channel, cmd.Name, cmd.Args);
 
             switch (route.Kind)
@@ -688,23 +693,14 @@ namespace Orbweaver
                     return ChatSendOutcome.Failed;
 
                 case SlashRouteKind.Control:
-                    return await RunControlAsync(cmd.Name, cmd.Args, route.ControlSubtype!);
+                    return await RunControlAsync(cmd.Name, cmd.Args, route.ControlSubtype!, bridge!); // Control resolves only on Bridge, which needs a non-empty id.
 
                 default:
                     return await SendAsync(line);
             }
         }
 
-        // A line is a command only when its first token is one this session's
-        // CLI knows — the whole local catalogue, including the built-ins this
-        // channel cannot run, plus the five control commands. A path or an
-        // unknown /word is ordinary prose and is delivered as such, not refused.
-        private bool KnowsCommand(string name) =>
-            LocalSlashChannel.HasControl(name)
-            || (_slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd))
-                .Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
-
-        private async Task<ChatSendOutcome> RunControlAsync(string name, string args, string subtype)
+        private async Task<ChatSendOutcome> RunControlAsync(string name, string args, string subtype, string bridge)
         {
             var request = SlashRouting.ControlRequest(subtype, args, out var problem);
             if (request is null)
@@ -721,7 +717,7 @@ namespace Orbweaver
 
             var source = _credentialsFor!(ClaudeConfigRoots.RootOfTranscript(_status.TranscriptPath));
             var failure = await CloudTurnSender.PostControlAsync(
-                _cloudApi!, source, ReadBudget, BridgeId!, request, CancellationToken.None);
+                _cloudApi!, source, ReadBudget, bridge, request, CancellationToken.None);
             if (failure is not null)
             {
                 Note($"Not sent: {failure}.");
