@@ -45,21 +45,11 @@ namespace Orbweaver
         // The whole catalogue the session's CLI knows, each with the route it
         // would take here — Unavailable ones included, because the near side
         // decides what is a command by name, and a name left out would be sent
-        // to the far model as prose. On a bridge the five control commands lead,
-        // whether or not the local scan lists them.
-        public IReadOnlyList<SlashCommand> CommandsFor(SessionStatus status)
-        {
-            var channel = ChannelOf(status);
-            var names = new List<string>();
-            if (channel == SlashChannel.Bridge)
-                names.AddRange(LocalSlashChannel.ControlCommands.Select(c => c.Name));
-            names.AddRange(_seams.TerminalCatalogue(status).Select(c => c.Name));
-
-            return names
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Select(n => new SlashCommand(n, "", SlashRouting.Resolve(channel, n, "").Kind))
-                .ToList();
-        }
+        // to the far model as prose. LocalSlashChannel owns the list, so a
+        // change to it (a control command added, a channel's rule) reaches the
+        // roster without this file changing.
+        public IReadOnlyList<SlashCommand> CommandsFor(SessionStatus status) =>
+            LocalSlashChannel.CommandsFor(ChannelOf(status), () => _seams.TerminalCatalogue(status));
 
         public async Task<RemoteMirrorServer.SlashOutcome> RunAsync(SessionStatus status, string line)
         {

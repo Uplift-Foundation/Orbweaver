@@ -169,4 +169,71 @@ public class MirrorSlashHostTests
         Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
         Assert.Empty(edges.Typed);
     }
+
+    [Fact]
+    public void ABridgeListsEveryControlCommandEvenWhenTheCatalogueDoesNotHaveIt()
+    {
+        var edges = new Edges { Bridge = BridgeId, Catalogue = new[] { "/compact" } };
+
+        var names = edges.Host().CommandsFor(Status()).ToDictionary(c => c.Name, c => c.Route);
+
+        foreach (var control in new[] { "/color", "/rename", "/model", "/permissions", "/think" })
+            Assert.Equal(SlashRouteKind.Control, names[control]);
+        Assert.Equal(SlashRouteKind.Unavailable, names["/compact"]);
+    }
+
+    [Fact]
+    public async Task AKnownCommandPastAHundredAndTwentyNamesIsStillKnownAndRefused()
+    {
+        var edges = new Edges
+        {
+            Bridge = BridgeId,
+            Catalogue = Enumerable.Range(0, 300).Select(i => $"/cmd{i}").ToArray(),
+        };
+        var host = edges.Host();
+
+        var all = host.CommandsFor(Status());
+        var late = all.Single(c => c.Name == "/cmd250");
+        Assert.Equal(SlashRouteKind.Unavailable, late.Route);
+        Assert.Equal(SlashRouteKind.Control, all.Single(c => c.Name == "/think").Route);
+
+        var outcome = await host.RunAsync(Status(), "/cmd250");
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Empty(edges.Posted);
+        Assert.Empty(edges.Typed);
+    }
+
+    // The far side trusts the near side's known-name gate, so what it does with
+    // an unknown word is pinned per channel: typed on a pane (a Typed line is
+    // the keyboard's to judge), refused with the channel's reason elsewhere.
+    [Fact]
+    public async Task AnUnknownWordIsTypedOnATerminalAndRefusedOnABridgeAndASocket()
+    {
+        var pane = new Edges { CanType = true };
+        Assert.Equal(MirrorProtocol.ViaTyped, (await pane.Host().RunAsync(Status(), "/nonesuch x")).Via);
+        Assert.Equal("/nonesuch x", Assert.Single(pane.Typed));
+
+        var bridge = new Edges { Bridge = BridgeId };
+        var onBridge = await bridge.Host().RunAsync(Status(), "/nonesuch x");
+        Assert.Equal(MirrorProtocol.ViaRefused, onBridge.Via);
+        Assert.Equal(SlashRouting.PeerMessageReason, onBridge.Reason);
+
+        var socket = new Edges { CanMessage = true };
+        var onSocket = await socket.Host().RunAsync(Status(), "/nonesuch x");
+        Assert.Equal(MirrorProtocol.ViaRefused, onSocket.Via);
+        Assert.Equal(SlashRouting.PeerSocketReason, onSocket.Reason);
+    }
+
+    [Fact]
+    public async Task ThinkOnAJobWithNeitherPaneNorBridgeIsListedUnavailableAndRefused()
+    {
+        var edges = new Edges { CanMessage = true };
+        var host = edges.Host();
+
+        Assert.Equal(SlashRouteKind.Unavailable, host.CommandsFor(Status()).Single(c => c.Name == "/think").Route);
+
+        var outcome = await host.RunAsync(Status(), "/think 8000");
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Empty(edges.Posted);
+    }
 }

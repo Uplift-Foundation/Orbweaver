@@ -877,6 +877,25 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Empty(harness.Typed);
     }
 
+    // The roster carries the whole catalogue: a catalogue past the old 120-name
+    // cut still lists its last name, so the near side knows it as a command.
+    [Fact]
+    public async Task ARosterCarriesACatalogueLongerThanOneHundredAndTwentyNames()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = Enumerable.Range(0, 400).Select(i => new SlashCommand($"/cmd{i}", "", SlashRouteKind.Unavailable)).ToList(),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("long.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.Equal(400, entry.Commands!.Count);
+        Assert.Equal("/cmd399", entry.Commands![399]);
+        Assert.Equal(400, entry.CommandRoutes!.Count);
+    }
+
     // The old-far-Buddy fallback. Such a Buddy never sees the flag, so it
     // types the line as ordinary text — which is why the near side only sets
     // the flag after the roster carried route kinds.

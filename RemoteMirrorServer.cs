@@ -792,6 +792,8 @@ namespace Orbweaver
         // real ~/.claude on the machine the commands live on.
         // The catalogue and, parallel to it, how each command would run here
         // (CB-306). One call so the names and the kinds can never disagree.
+        internal const int MaxCatalogue = 1000;
+
         private (IReadOnlyList<string> Names, IReadOnlyList<string> Routes) Offered(SessionStatus status)
         {
             IReadOnlyList<SlashCommand> list;
@@ -808,9 +810,11 @@ namespace Orbweaver
                     .ToList();
             }
 
-            // The cap the roster has always had, applied here so a runner's full
-            // catalogue cannot make one entry unbounded.
-            list = list.Take(120).ToList();
+            // A safety bound, not a trim. The near side treats a name as a
+            // command only if the roster lists it, so a name cut off here would
+            // be sent to the far model as prose; the bound is far above any
+            // real catalogue (names are short, so 1000 is about 20 KB at worst).
+            list = list.Take(MaxCatalogue).ToList();
 
             return (list.Select(c => c.Name).ToList(),
                     list.Select(c => MirrorProtocol.RouteWord(c.Route)).ToList());
@@ -833,7 +837,7 @@ namespace Orbweaver
             {
                 return SlashCommandCatalog.For(status.Source, status.Cwd)
                     .Select(c => c.Name)
-                    .Take(120)
+                    .Take(MaxCatalogue)
                     .ToList();
             }
             catch
