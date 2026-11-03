@@ -100,32 +100,28 @@ namespace Orbweaver
             IEnumerable<OpenClawCommand> commands, IReadOnlyCollection<string> scopes) =>
             commands
                 .Where(c => Holds(ScopeFor(c), scopes))
-                .Select(c => new SlashCommand(c.Name, c.Description, SlashRouteKind.PassThrough))
+                .Select(c => new SlashCommand(c.Name, c.Description, SlashRouteKind.PassThrough, c.Aliases))
                 .ToList();
-
-        internal static string UnlistedReason =>
-            "the gateway doesn't list it among its commands";
 
         internal static string ScopeReason(string scope) =>
             $"it needs the {scope} permission, which this device wasn't paired with";
 
-        // Null to send the line as typed, or the reason it must not be.
+        // The catalogue row a typed name belongs to, under any of its aliases, or
+        // null. With no catalogue nothing is recognised.
+        internal static OpenClawCommand? Find(string name, IReadOnlyList<OpenClawCommand> commands) =>
+            commands.FirstOrDefault(c =>
+                c.Aliases.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)));
+
+        // Null to go ahead, or the reason this device may not run the command.
         //
-        // With a catalogue, a command the gateway does not list is refused rather
-        // than sent: it would reach the model as prose, or fail at the gateway
-        // with nothing explaining why. Without one — a gateway that does not
-        // advertise commands.list, or has not answered yet — nothing is known to
-        // be missing, so the line goes as it always did and the gateway is the
-        // judge; only the one permission that is known is still checked.
+        // Only a permission refuses. A `/word` the gateway does not list is not a
+        // command at all (a path, "/s" meant as prose), so it is an ordinary
+        // message and the gateway is the judge, exactly as with no catalogue; the
+        // one permission known to be missing is still checked by name in that case.
         internal static string? RefusalFor(
             string name, IReadOnlyList<OpenClawCommand> commands, IReadOnlyCollection<string> scopes)
         {
-            var listed = commands.FirstOrDefault(c =>
-                c.Aliases.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)));
-
-            if (listed is null && commands.Count > 0) return UnlistedReason;
-
-            var required = listed is not null
+            var required = Find(name, commands) is { } listed
                 ? ScopeFor(listed)
                 : RequiredScopes.GetValueOrDefault(name);
 

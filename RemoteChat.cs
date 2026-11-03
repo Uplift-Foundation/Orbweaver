@@ -729,7 +729,21 @@ namespace Orbweaver
     // it meant: keystrokes into a pane. An Unavailable command is one the
     // session knows of and cannot run here; the panel hides it, and a session
     // that would rather not list it at all simply leaves it out.
-    public sealed record SlashCommand(string Name, string Description, SlashRouteKind Route = SlashRouteKind.Typed);
+    public sealed record SlashCommand(
+        string Name, string Description, SlashRouteKind Route = SlashRouteKind.Typed,
+        IReadOnlyList<string>? Aliases = null)
+    {
+        // Other names the session accepts for the same command (`/t` for
+        // `/think`). Autocomplete matches on them; Name is what it inserts.
+        public bool Matches(string token) =>
+            Name.StartsWith(token, StringComparison.OrdinalIgnoreCase)
+            || (Aliases?.Any(a => a.StartsWith(token, StringComparison.OrdinalIgnoreCase)) ?? false);
+
+        // The token is the whole of one of this command's names already typed.
+        public bool IsTyped(string token) =>
+            string.Equals(Name, token, StringComparison.OrdinalIgnoreCase)
+            || (Aliases?.Any(a => string.Equals(a, token, StringComparison.OrdinalIgnoreCase)) ?? false);
+    }
 
     // The slash commands a session's underlying CLI understands, so the panel
     // can offer autocomplete for a message that is about to be typed straight

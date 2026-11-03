@@ -779,6 +779,23 @@ namespace Orbweaver
             NotifyRunOptions(OpenChats());
         }
 
+        // What a dropped connection takes with it, only if it is still the current
+        // one: see the long comment at the call site for why that guard matters.
+        // The command catalogue goes too, since the next connection may be a
+        // different gateway with a different list.
+        internal static void ReleaseGateway(OpenClawGateway? gateway)
+        {
+            lock (Gate)
+            {
+                if (ReferenceEquals(_gateway, gateway))
+                {
+                    _gateway = null;
+                    _commands = CommandCatalogue.None;
+                    Running.Clear();
+                }
+            }
+        }
+
         // CB-306: the gateway's slash-command catalogue, from commands.list once per
         // connection, with the scopes this connection was granted so the list a
         // panel offers and the refusal in front of a typed command read the same
@@ -1243,15 +1260,7 @@ namespace Orbweaver
                     // after its reply finished. Dropping it means a run still
                     // going across the gap goes dark early, which is the failure
                     // a person notices rather than one that quietly pins an orb.
-                    lock (Gate)
-                    {
-                        if (ReferenceEquals(_gateway, gateway))
-                        {
-                            _gateway = null;
-                            _commands = CommandCatalogue.None;
-                            Running.Clear();
-                        }
-                    }
+                    ReleaseGateway(gateway);
 
                     gateway?.Dispose();
                 }
@@ -2443,7 +2452,7 @@ namespace Orbweaver
         // SetGatewayForTests drives every path over an in-memory socket (CB-270).
         public static async Task SendAsync(
             OpenClawChatSession chat, string text, CancellationToken ct,
-            IReadOnlyList<OpenClawOutgoingImage>? images = null)
+            IReadOnlyList<OpenClawOutgoingImage>? images = null, bool isCommand = false)
         {
             OpenClawGateway? gateway;
             lock (Gate) gateway = _gateway;
@@ -2478,7 +2487,9 @@ namespace Orbweaver
                     throw new IOException("that picture is too large to send");
             }
 
-            if (route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
+            // CB-306: a slash command is not mirrored — the mirror posts the text into
+            // the channel, and "/status" or "/model x" is not something to say there.
+            if (!isCommand && route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
             {
                 try
                 {

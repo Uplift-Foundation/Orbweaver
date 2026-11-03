@@ -114,10 +114,80 @@ public class OpenClawSlashCommandsTests : IDisposable
         Assert.Null(OpenClawCommandCatalog.RefusalFor("/T", Real(), Write));
     }
 
+    // An unlisted /word is not a command (a path, a slash in prose): no refusal,
+    // it goes as the message it is.
     [Fact]
-    public void AnUnlistedCommandIsRefusedWhenACatalogueIsKnown() =>
-        Assert.Equal(OpenClawCommandCatalog.UnlistedReason,
-            OpenClawCommandCatalog.RefusalFor("/nonesuch", Real(), Write));
+    public void AnUnlistedWordIsNotRefusedEvenWithACatalogue() =>
+        Assert.Null(OpenClawCommandCatalog.RefusalFor("/nonesuch", Real(), Write));
+
+    [Fact]
+    public void FindRecognisesAnyAliasAndNothingElse()
+    {
+        Assert.Equal("/think", OpenClawCommandCatalog.Find("/thinking", Real())!.Name);
+        Assert.Null(OpenClawCommandCatalog.Find("/nonesuch", Real()));
+        Assert.Null(OpenClawCommandCatalog.Find("/status", Array.Empty<OpenClawCommand>()));
+    }
+
+    // --- autocomplete matches aliases as well as the name ---
+
+    [Fact]
+    public void OfferedCommandsCarryTheirAliasesAndMatchOnThem()
+    {
+        var think = OpenClawCommandCatalog.Offered(Real(), Write).Single(c => c.Name == "/think");
+
+        Assert.True(think.Matches("/thi"));
+        Assert.True(think.Matches("/t"));
+        Assert.True(think.Matches("/THINKING"));
+        Assert.False(think.Matches("/x"));
+        Assert.True(think.IsTyped("/thinking"));
+        Assert.True(think.IsTyped("/THINK"));
+        Assert.False(think.IsTyped("/thin"));
+    }
+
+    [Fact]
+    public void ACommandWithNoAliasesMatchesOnItsNameOnly()
+    {
+        var plain = new SlashCommand("/clear", "Start over");
+
+        Assert.True(plain.Matches("/cl"));
+        Assert.False(plain.Matches("/t"));
+        Assert.True(plain.IsTyped("/clear"));
+        Assert.False(plain.IsTyped("/cle"));
+    }
+
+    // --- a dropped connection ---
+
+    [Fact]
+    public async Task ReleasingTheCurrentGatewayDropsItAndItsCatalogue()
+    {
+        OpenClawSessions.SetCommandsForTests(new OpenClawSessions.CommandCatalogue(Real(), Write));
+        var (_, gateway) = await ConnectedAsync(new[] { "chat.send" }, Write);
+        using (gateway)
+        {
+            OpenClawSessions.ReleaseGateway(gateway);
+
+            Assert.Empty(OpenClawSessions.Commands.Commands);
+            await Assert.ThrowsAsync<IOException>(() =>
+                OpenClawSessions.SendAsync(Chat(), "hi", CancellationToken.None));
+        }
+    }
+
+    // A slow unwind of an old connection must not null out the new one.
+    [Fact]
+    public async Task ReleasingAnOldGatewayLeavesTheCurrentOneAndItsCatalogue()
+    {
+        var (_, old) = await ConnectedAsync(new[] { "chat.send" }, Write);
+        var (_, current) = await ConnectedAsync(new[] { "chat.send" }, Write);
+        using (old)
+        using (current)
+        {
+            OpenClawSessions.SetCommandsForTests(new OpenClawSessions.CommandCatalogue(Real(), Write));
+
+            OpenClawSessions.ReleaseGateway(old);
+
+            Assert.Equal(9, OpenClawSessions.Commands.Commands.Count);
+        }
+    }
 
     [Fact]
     public void ResetIsRefusedWithoutAdminWhetherListedOrNot()
@@ -273,7 +343,7 @@ public class OpenClawSlashCommandsTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUnlistedCommandIsRefusedAndNothingIsSent()
+    public async Task AnUnlistedWordGoesAsAnOrdinaryMessage()
     {
         OpenClawSessions.SetCommandsForTests(new OpenClawSessions.CommandCatalogue(Real(), Admin));
         var (socket, gateway) = await ConnectedAsync(new[] { "chat.send" }, Admin);
@@ -281,23 +351,69 @@ public class OpenClawSlashCommandsTests : IDisposable
         {
             var chat = Chat();
 
-            Assert.Equal(ChatSendOutcome.Failed, await chat.RunSlashAsync("/nonesuch now"));
+            Assert.Equal(ChatSendOutcome.Sent, await chat.RunSlashAsync("/home/me/notes.txt is where?"));
 
-            Assert.Empty(Sent(socket));
-            Assert.Contains(OpenClawCommandCatalog.UnlistedReason, Assert.Single(chat.History).Text);
+            Assert.Equal("/home/me/notes.txt is where?",
+                Assert.Single(Sent(socket)).Params.GetProperty("message").GetString());
         }
     }
 
-    // A line that is not a command at all (the panel never sends one, but the
-    // method is public) is named as typed rather than throwing.
+    // --- a command on a surface session is not mirrored into the channel ---
+
+    private static OpenClawChatSession DiscordChat()
+    {
+        OrbweaverSettings.OpenClawReplyEnabled = true;
+        var key = "agent:quill:discord:direct:2000000000000000001";
+        return new OpenClawChatSession("openclaw:" + key, key, "Quill")
+        {
+            Delivery = new OpenClawSessions.Delivery("discord", "user:2000000000000000001", "quillbot")
+        };
+    }
+
     [Fact]
-    public async Task ALineWithNoCommandInItIsRefusedByItsOwnText()
+    public async Task ARecognisedCommandOnADiscordSessionIsNotMirroredToTheChannel()
     {
         OpenClawSessions.SetCommandsForTests(new OpenClawSessions.CommandCatalogue(Real(), Write));
-        var chat = Chat();
+        var (socket, gateway) = await ConnectedAsync(new[] { "chat.send", "send" }, Write);
+        using (gateway)
+        {
+            await DiscordChat().RunSlashAsync("/status");
 
-        Assert.Equal(ChatSendOutcome.Failed, await chat.RunSlashAsync("hello"));
+            var send = Assert.Single(Sent(socket));
+            Assert.Equal("chat.send", send.Method);
+            Assert.Equal("/status", send.Params.GetProperty("message").GetString());
+            Assert.True(send.Params.GetProperty("deliver").GetBoolean());
+        }
+    }
 
-        Assert.Contains("hello", Assert.Single(chat.History).Text);
+    // The paired control: the same session and socket, a line the catalogue does
+    // not recognise, is mirrored exactly as any message is — so the absence above
+    // is the command and not a session that never mirrors.
+    [Fact]
+    public async Task AnOrdinaryLineOnTheSameSessionIsStillMirrored()
+    {
+        OpenClawSessions.SetCommandsForTests(new OpenClawSessions.CommandCatalogue(Real(), Write));
+        var (socket, gateway) = await ConnectedAsync(new[] { "chat.send", "send" }, Write);
+        using (gateway)
+        {
+            await DiscordChat().RunSlashAsync("/nonesuch");
+
+            Assert.Equal(new[] { "send", "chat.send" }, Sent(socket).Select(r => r.Method));
+        }
+    }
+
+    // A line with no command in it (the panel never sends one, but the method is
+    // public) is named as typed rather than throwing, and goes as a message.
+    [Fact]
+    public async Task ALineWithNoCommandInItGoesAsAMessage()
+    {
+        OpenClawSessions.SetCommandsForTests(new OpenClawSessions.CommandCatalogue(Real(), Write));
+        var (socket, gateway) = await ConnectedAsync(new[] { "chat.send" }, Write);
+        using (gateway)
+        {
+            Assert.Equal(ChatSendOutcome.Sent, await Chat().RunSlashAsync("hello"));
+
+            Assert.Equal("hello", Assert.Single(Sent(socket)).Params.GetProperty("message").GetString());
+        }
     }
 }

@@ -361,8 +361,8 @@ namespace Orbweaver
         // command that is allowed is sent as the text it was typed as; its reply
         // (a card for a context-free command) comes back as an ordinary history
         // row. What this adds is the catalogue to complete from, and a refusal —
-        // nothing sent, the box keeps its text — for a command the gateway does
-        // not list or one this device is not paired to run.
+        // nothing sent, the box keeps its text — for a command this device is not
+        // paired to run. A /word the gateway does not list is just a message.
         public IReadOnlyList<SlashCommand> SlashCommands
         {
             get
@@ -383,7 +383,12 @@ namespace Orbweaver
                 return Task.FromResult(ChatSendOutcome.Failed);
             }
 
-            return SendCoreAsync(line, null, null);
+            // A line the catalogue recognises is a command: it must not be mirrored
+            // into a channel, where "/status" would be posted publicly. Anything
+            // else — an unlisted /word, or any line with no catalogue — is an
+            // ordinary message and travels exactly as one.
+            var recognised = OpenClawCommandCatalog.Find(name, catalogue.Commands) is not null;
+            return SendCoreAsync(line, null, null, recognised);
         }
 
         // CB-270 Stage 4: a native conversation takes pictures with its message.
@@ -424,7 +429,8 @@ namespace Orbweaver
         }
 
         private async Task<ChatSendOutcome> SendCoreAsync(
-            string text, IReadOnlyList<OpenClawOutgoingImage>? images, byte[]? thumbnail)
+            string text, IReadOnlyList<OpenClawOutgoingImage>? images, byte[]? thumbnail,
+            bool isCommand = false)
         {
             // The user's own turn is added here rather than by the panel, so one
             // thing owns the transcript and a send that fails leaves a message
@@ -467,7 +473,7 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            var failure = await SendOrFailureAsync(text, images);
+            var failure = await SendOrFailureAsync(text, images, isCommand);
             if (failure is not null)
             {
                 Note("Couldn't send: " + failure);
@@ -487,11 +493,11 @@ namespace Orbweaver
         // completes, and the decision that reads it — say so in the transcript —
         // is measured where it belongs.
         [ExcludeFromCodeCoverage]
-        private async Task<string?> SendOrFailureAsync(string text, IReadOnlyList<OpenClawOutgoingImage>? images)
+        private async Task<string?> SendOrFailureAsync(string text, IReadOnlyList<OpenClawOutgoingImage>? images, bool isCommand)
         {
             try
             {
-                await OpenClawSessions.SendAsync(this, text, CancellationToken.None, images);
+                await OpenClawSessions.SendAsync(this, text, CancellationToken.None, images, isCommand);
                 return null;
             }
             catch (Exception ex)

@@ -2564,14 +2564,14 @@ namespace Orbweaver
             }
 
             _slashMatches = commands
-                .Where(c => c.Name.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+                .Where(c => c.Matches(token))
                 .ToList();
 
             // Also closes once the only match is exactly what's already
             // typed — otherwise finishing a command by hand and pressing
             // Enter would "accept" it into itself instead of sending.
             if (_slashMatches.Count == 0
-                || (_slashMatches.Count == 1 && string.Equals(_slashMatches[0].Name, token, StringComparison.OrdinalIgnoreCase)))
+                || (_slashMatches.Count == 1 && _slashMatches[0].IsTyped(token)))
             {
                 HideSlashSuggestions();
                 return;

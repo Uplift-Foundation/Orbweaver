@@ -165,4 +165,21 @@ public class ChatPanelOpenClawSlashTests : IDisposable
             Assert.Contains("operator.admin", chat.History.Single(t => t.Role == ChatRole.System).Text);
         }
     }
+
+    // An alias completes to the command's own name; typing the whole alias closes
+    // the box, so Enter sends it rather than accepting it into something else.
+    [AvaloniaFact]
+    public void AnAliasCompletesToTheCommandAndATypedAliasClosesTheBox()
+    {
+        var (_, panel) = OpenPanel();
+        var input = panel.FindControl<TextBox>("Input")!;
+
+        Type(input, "/thinki");
+        Assert.Equal(new List<string?> { "/think" }, Offered(panel));
+        Press(input, Key.Tab);
+        Assert.StartsWith("/think ", input.Text);
+
+        Type(input, "/thinking");
+        Assert.False(panel.FindControl<Control>("SlashBox")!.IsVisible);
+    }
 }
