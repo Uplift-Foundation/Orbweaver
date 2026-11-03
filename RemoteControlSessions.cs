@@ -211,13 +211,37 @@ namespace Orbweaver
             return CommandsFrom(MirrorFor(account, name));
         }
 
-        // The rule, pure: an entry's command list when it has one, nothing
-        // otherwise. An entry with no list is not hypothetical — `commands` is
-        // an optional field, so a far Buddy from before it existed sends none.
-        internal static IReadOnlyList<SlashCommand> CommandsFrom(MirrorProtocol.MirrorRosterEntry? entry) =>
-            entry?.Commands is { Count: > 0 } commands
+        // The rule, pure (CB-306): what the far Buddy said this session can
+        // run, as the panel should offer it.
+        //
+        //  * Route kinds present: the far Buddy resolved each command on its own
+        //    machine, so believe it — Unavailable ones are hidden, which is the
+        //    fix for messaging-mode panels offering /color that silently did
+        //    nothing. A routes list that does not line up with the commands is
+        //    treated as absent rather than guessed at.
+        //  * No route kinds: an older far Buddy, whose commands only ever meant
+        //    keystrokes into a pane. They are offered only when there is a pane
+        //    (a live view can exist); a session with none gets nothing, because
+        //    every one of them would be offered and then do nothing.
+        internal static IReadOnlyList<SlashCommand> CommandsFrom(MirrorProtocol.MirrorRosterEntry? entry)
+        {
+            if (entry?.Commands is not { Count: > 0 } commands) return Array.Empty<SlashCommand>();
+
+            if (entry.CommandRoutes is { } routes && routes.Count == commands.Count)
+                return commands
+                    .Select((c, i) => new SlashCommand(c, "", MirrorProtocol.RouteFromWord(routes[i])))
+                    .Where(c => c.Route != SlashRouteKind.Unavailable)
+                    .ToList();
+
+            return entry.HasPane
                 ? commands.Select(c => new SlashCommand(c, "")).ToList()
                 : Array.Empty<SlashCommand>();
+        }
+
+        // Whether the far Buddy understands the slash INPUT flag, which it
+        // announces by sending route kinds at all.
+        internal static bool SpeaksSlash(MirrorProtocol.MirrorRosterEntry? entry) =>
+            entry?.CommandRoutes is { Count: > 0 };
 
         // What the far Buddy said about one session, or null if none has.
         internal static MirrorProtocol.MirrorRosterEntry? MirrorFor(string account, string name) =>

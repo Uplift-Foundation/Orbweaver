@@ -110,6 +110,48 @@ namespace Orbweaver
         // this exists only to let the client tell the two apart.
         public const string ViaMessage = "msg";
 
+        // CB-306: how a slash line ran on the far machine, carried in the same
+        // `via` field an INPUT reply already has. Only ever sent in answer to an
+        // INPUT that carried the `slash` flag, so an older client never sees one.
+        //
+        // Typed: keystrokes into the session's pane. Control: a control request
+        // over the session's bridge. Refused: nothing ran and nothing was sent;
+        // the reply's `why` field says why in a sentence the far machine chose
+        // from SlashRouting, because it alone knows which channel the session
+        // is on.
+        public const string ViaTyped = "typed";
+        public const string ViaControl = "control";
+        public const string ViaRefused = "refused";
+
+        // The INPUT field that marks the payload as a slash line to be
+        // resolved on the far machine rather than text to be typed as-is. An
+        // older far Buddy ignores unknown fields and types it, which is exactly
+        // why the near side only sends it to a far Buddy whose roster carried
+        // route kinds — see RemoteControlChatSession.RunSlashAsync.
+        public const string SlashField = "slash";
+
+        // Roster route kinds travel as these lowercase words, parallel to
+        // MirrorRosterEntry.Commands. A word rather than an enum number so a
+        // far Buddy newer than this one can add a kind and have it read as
+        // "unknown" (treated as unavailable) instead of as a different command.
+        public static string RouteWord(SlashRouteKind kind) => kind switch
+        {
+            SlashRouteKind.Typed => "typed",
+            SlashRouteKind.PassThrough => "passthrough",
+            SlashRouteKind.Control => "control",
+            SlashRouteKind.Native => "native",
+            _ => "unavailable",
+        };
+
+        public static SlashRouteKind RouteFromWord(string? word) => word switch
+        {
+            "typed" => SlashRouteKind.Typed,
+            "passthrough" => SlashRouteKind.PassThrough,
+            "control" => SlashRouteKind.Control,
+            "native" => SlashRouteKind.Native,
+            _ => SlashRouteKind.Unavailable,
+        };
+
         // How much raw payload goes in one frame.
         //
         // **6KB, because a model had to retype it. Now the size of a message.**
@@ -542,7 +584,15 @@ namespace Orbweaver
             // roster with no teams in it keeps the same CB-216 hash.
             [property: JsonPropertyName("lead")] string? Lead = null,
             [property: JsonPropertyName("agent")] string? Agent = null,
-            [property: JsonPropertyName("agentColor")] string? AgentColor = null);
+            [property: JsonPropertyName("agentColor")] string? AgentColor = null,
+
+            // CB-306: how each of Commands would run over this session's
+            // channel, parallel to it (same length, same order), as
+            // MirrorProtocol.RouteWord words. Its presence is also how a near
+            // Buddy knows the far one understands the `slash` INPUT flag: an
+            // older Buddy sends no routes, and its Commands then mean what they
+            // always meant — keystrokes into a pane.
+            [property: JsonPropertyName("routes")] IReadOnlyList<string>? CommandRoutes = null);
 
         // The portable part of LocalPersona.Persona. Avatar is the already
         // bounded image bytes, never AvatarPath: the latter has meaning only
