@@ -89,7 +89,10 @@ public class LocalSlashChannelTests
     {
         var commands = LocalSlashChannel.CommandsFor(channel, () => Local);
 
-        Assert.Equal(Local.Select(c => c.Name), commands.Select(c => c.Name));
+        // The catalogue plus the control names it lacks (/think is not a built-in).
+        Assert.Equal(Local.Select(c => c.Name)
+                .Concat(new[] { "/rename", "/model", "/permissions", "/think" }).Order(),
+            commands.Select(c => c.Name).Order());
         Assert.All(commands, c => Assert.Equal(SlashRouteKind.Unavailable, c.Route));
     }
 

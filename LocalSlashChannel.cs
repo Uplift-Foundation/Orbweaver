@@ -53,27 +53,26 @@ namespace Orbweaver
             SlashChannel channel, Func<IReadOnlyList<SlashCommand>> catalogue)
         {
             var local = catalogue();
-            switch (channel)
-            {
-                case SlashChannel.Terminal:
-                    return local;
+            if (channel == SlashChannel.Terminal) return local;
 
-                case SlashChannel.Bridge:
-                    var routed = local
-                        .Select(c => HasControl(c.Name)
-                            ? c with { Route = SlashRouteKind.Control }
-                            : c with { Route = SlashRouteKind.Unavailable })
-                        .ToList();
-                    // A control command the catalogue happens not to list is
-                    // still one the bridge runs.
-                    routed.AddRange(ControlCommands.Where(
-                        c => !routed.Any(r => string.Equals(r.Name, c.Name, StringComparison.OrdinalIgnoreCase))));
-                    return routed;
-
-                default:
-                    return local.Select(c => c with { Route = SlashRouteKind.Unavailable }).ToList();
-            }
+            // Off a pane every command the CLI knows is listed with the route it
+            // would take, and the five control commands are always listed — the
+            // catalogue may omit one (/think is our name for
+            // set_max_thinking_tokens, not a built-in), and an unlisted name
+            // would be delivered to the model as prose instead of refused.
+            var routed = local
+                .Select(c => c with { Route = RouteOf(channel, c.Name) })
+                .ToList();
+            routed.AddRange(ControlCommands
+                .Where(c => !routed.Any(r => string.Equals(r.Name, c.Name, StringComparison.OrdinalIgnoreCase)))
+                .Select(c => c with { Route = RouteOf(channel, c.Name) }));
+            return routed;
         }
+
+        private static SlashRouteKind RouteOf(SlashChannel channel, string name) =>
+            channel == SlashChannel.Bridge && HasControl(name)
+                ? SlashRouteKind.Control
+                : SlashRouteKind.Unavailable;
 
         internal static bool HasControl(string name) =>
             ControlCommands.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));

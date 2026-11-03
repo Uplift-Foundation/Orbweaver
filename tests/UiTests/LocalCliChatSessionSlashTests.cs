@@ -424,4 +424,28 @@ public class LocalCliChatSessionSlashTests : IDisposable
 
         Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Length > 0);
     }
+
+    // /think is not in the CLI's built-in catalogue, but it is ours to refuse:
+    // off a bridge it is a known command, never prose for the model.
+    [AvaloniaFact]
+    public async Task ThinkIsRefusedNotDeliveredWhereNoBridgeRunsIt()
+    {
+        var api = new Api();
+
+        foreach (var session in new[]
+                 {
+                     Headless(api, new Credentials(), Row(bridge: false)),
+                     Desktop(api, new Credentials(), ""),
+                 })
+        {
+            Assert.Contains(session.SlashCommands, c => c.Name == "/think" && c.Route == SlashRouteKind.Unavailable);
+
+            Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/think 8000"));
+
+            Assert.Contains(session.History, t => t.Text.StartsWith("Not sent: ", StringComparison.Ordinal));
+            Assert.DoesNotContain(session.History, t => t.Text.Contains("Handed to", StringComparison.Ordinal));
+        }
+
+        Assert.Empty(api.Requests);
+    }
 }
