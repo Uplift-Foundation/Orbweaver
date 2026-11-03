@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Avalonia.Threading;
 
@@ -42,7 +43,7 @@ namespace Orbweaver
     //    trivially, since the whole turn is all there ever is.
     internal sealed class LocalCliChatSession :
         IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts,
-        IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatElsewhere, IRemoteChatReadOnly,
+        IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
         IRemoteChatPeerInbound, IDisposable
     {
         // How much of the tail to read when the panel first opens.
@@ -633,15 +634,97 @@ namespace Orbweaver
         // would be disk I/O for something that never differs between reads.
         private IReadOnlyList<SlashCommand>? _slashCommands;
 
-        // Empty once the channel is Messaging: a delivered message arrives as a
-        // <cross-session-message>, not as keystrokes, so a built-in slash
-        // command typed into the composer would be sent as plain text to a CLI
-        // that never sees it as a command — see CB-43's messaging-mode note in
-        // RemoteControlChatSession for the same rule over the wire.
+        // What the composer offers depends on the channel (CB-306), decided by
+        // LocalSlashChannel so the mirror's far side can ask the same question:
+        // a pane gets the local catalogue typed as before; a Remote Control
+        // bridge gets the five commands that run as control requests; a peer
+        // socket gets nothing, because a delivered message arrives as a
+        // <cross-session-message> that Claude Code never slash-dispatches
+        // (CB-43, measured again 2026-11-03).
         public IReadOnlyList<SlashCommand> SlashCommands =>
-            ChannelIsMessaging
-                ? Array.Empty<SlashCommand>()
-                : (_slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd));
+            LocalSlashChannel.CommandsFor(SlashChannelNow,
+                () => _slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd));
+
+        // The bridge id for this session: the Desktop record's, else the one a
+        // headless job's registry row carries. Null when there is none.
+        internal string? BridgeId =>
+            LocalSlashChannel.BridgeIdFor(
+                _status.IsDesktopHosted ? _status.BridgeSessionId : null,
+                _status.IsDesktopHosted ? null : _findRegistry(SessionId)?.BridgeSessionId);
+
+        internal SlashChannel SlashChannelNow
+        {
+            get
+            {
+                var canType = TerminalFocuser.CanSendQuietly(_status);
+                // A pane makes the registry irrelevant, so skip its disk scan.
+                if (!_status.IsDesktopHosted && canType) return SlashChannel.Terminal;
+                return LocalSlashChannel.ChannelFor(
+                    _status.IsDesktopHosted, canType,
+                    !_status.IsDesktopHosted && TerminalFocuser.CanDeliver(_status, SessionId, _findRegistry),
+                    BridgeId);
+            }
+        }
+
+        // Runs a typed `/cmd args` by the route its channel gives it (CB-306).
+        // Typed goes through the ordinary send; Control is posted to the bridge
+        // session; Unavailable leaves a note and sends nothing at all.
+        public async Task<ChatSendOutcome> RunSlashAsync(string line)
+        {
+            if (SlashRouting.Split(line) is not { } cmd) return await SendAsync(line);
+
+            var channel = SlashChannelNow;
+            var route = SlashRouting.Resolve(channel, cmd.Name, cmd.Args);
+
+            switch (route.Kind)
+            {
+                case SlashRouteKind.Unavailable:
+                    // A Desktop chat with no bridge has a more useful sentence
+                    // already: how to switch Remote Control on.
+                    Note(_status.IsDesktopHosted && channel == SlashChannel.PeerSocket
+                        ? "Not sent: " + ComposerHint
+                        : SlashRouting.RefusalNote(cmd.Name, route.Reason!));
+                    return ChatSendOutcome.Failed;
+
+                case SlashRouteKind.Control:
+                    return await RunControlAsync(cmd.Name, cmd.Args, route.ControlSubtype!);
+
+                default:
+                    return await SendAsync(line);
+            }
+        }
+
+        private async Task<ChatSendOutcome> RunControlAsync(string name, string args, string subtype)
+        {
+            var request = SlashRouting.ControlRequest(subtype, args, out var problem);
+            if (request is null)
+            {
+                Note($"Not sent: {problem}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            if (!CloudOn)
+            {
+                Note("Not sent: " + (_status.IsDesktopHosted ? DesktopCloudOffHint : CloudOffControlHint));
+                return ChatSendOutcome.Failed;
+            }
+
+            var source = _credentialsFor!(ClaudeConfigRoots.RootOfTranscript(_status.TranscriptPath));
+            var failure = await CloudTurnSender.PostControlAsync(
+                _cloudApi!, source, ReadBudget, BridgeId!, request, CancellationToken.None);
+            if (failure is not null)
+            {
+                Note($"Not sent: {failure}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            Note($"Sent {(args.Length == 0 ? name : name + " " + args)} over Remote Control.");
+            return ChatSendOutcome.Sent;
+        }
+
+        internal const string CloudOffControlHint =
+            "slash commands reach this job over Remote Control, which needs \"Show cloud sessions\" turned on in "
+            + "Orbweaver's Settings — it uses the Claude Code login stored on this machine.";
 
         // --- sending ---
 
