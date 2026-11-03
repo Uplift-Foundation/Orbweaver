@@ -832,8 +832,11 @@ namespace Orbweaver
 
             try
             {
+                // A literal, not the constant: the guard in OpenClawApprovalStateTests
+                // allows only literals at a RequestAsync call so that no method name
+                // is ever built at run time.
                 var res = await gateway.RequestAsync(
-                    OpenClawCommandCatalog.ListMethod, new Dictionary<string, object>(), ct);
+                    "commands.list", new Dictionary<string, object>(), ct);
                 commands = OpenClawCommandCatalog.Parse(res);
             }
             catch (Exception) when (!ct.IsCancellationRequested)
