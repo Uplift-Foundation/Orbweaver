@@ -11,12 +11,12 @@ namespace Orbweaver
     // publishes `slash_commands` and `terminal_slash_commands` on its
     // `system/init` row (measured: 101 and 4 on 2026-11-03), the second being
     // the commands only a terminal can run, which a remote UI is meant to hide.
-    // Each name left is then asked of SlashRouting.Resolve, because the CLI's
-    // own list says what *exists* and the routing table says what can run from
+    // Each name is then asked of SlashRouting.Resolve, because the CLI's own
+    // list says what *exists* and the routing table says what can run from
     // here — over a cloud session that is the control-request four, and
-    // everything else (every skill, /compact, /color) is Unavailable and is
-    // simply not offered. A typed-in-full command that is not offered is still
-    // refused by the session with its reason, never sent as prose.
+    // everything else (every skill, /compact, /color) is kept as Unavailable:
+    // the panel does not offer it, and typed in full it is refused with its
+    // reason rather than sent as prose.
     //
     // Pure, so the parse and the filter are unit cases with no session behind
     // them.
@@ -57,19 +57,23 @@ namespace Orbweaver
                 .ToList();
         }
 
-        // The offered commands: init's list minus the terminal-only ones, each
-        // kept only if a cloud channel can run it.
-        internal static IReadOnlyList<SlashCommand> Offered(
+        // The whole catalogue: every name init lists, each with the route a cloud
+        // channel gives it. Terminal-only names are always Unavailable, whatever
+        // the table would say. The panel hides Unavailable ones from autocomplete
+        // and the session uses the same list to know which "/word" is a command.
+        internal static IReadOnlyList<SlashCommand> Catalogue(
             IReadOnlyList<string> commands, IReadOnlyList<string> terminal)
         {
             var hidden = new HashSet<string>(terminal, StringComparer.OrdinalIgnoreCase);
 
             return commands
-                .Where(n => !hidden.Contains(n))
+                .Concat(terminal)
                 .Select(n => "/" + n)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Where(n => SlashRouting.Resolve(SlashChannel.Cloud, n, "").Kind != SlashRouteKind.Unavailable)
-                .Select(n => new SlashCommand(n, DescriptionFor(n), SlashRouteKind.Control))
+                .Select(n => new SlashCommand(n, DescriptionFor(n),
+                    hidden.Contains(n.TrimStart('/'))
+                        ? SlashRouteKind.Unavailable
+                        : SlashRouting.Resolve(SlashChannel.Cloud, n, "").Kind))
                 .ToList();
         }
 

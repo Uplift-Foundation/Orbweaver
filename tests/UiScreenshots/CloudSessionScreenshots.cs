@@ -399,7 +399,7 @@ public class CloudSessionScreenshots : IDisposable
     [AvaloniaFact]
     public void ACloudPanelsSlashBoxOffersOnlyWhatACloudSessionCanRun()
     {
-        var offered = CloudSlashCatalog.Offered(
+        var offered = CloudSlashCatalog.Catalogue(
             new[] { "compact", "rename", "model", "color", "permissions", "think", "doctor", "some-skill" },
             new[] { "doctor", "color" });
 

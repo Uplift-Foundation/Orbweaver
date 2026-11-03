@@ -51,27 +51,38 @@ public partial class ClaudeCloudEventsTests
     }
 
     [Fact]
-    public void OnlyWhatACloudChannelCanRunIsOffered()
+    public void TheCatalogueKeepsEveryNameWithItsCloudRoute()
     {
-        var offered = CloudSlashCatalog.Offered(
+        var catalogue = CloudSlashCatalog.Catalogue(
             new[] { "compact", "rename", "model", "color", "permissions", "think", "rename", "my-skill" },
-            new[] { "color", "PERMISSIONS" });
+            new[] { "color", "PERMISSIONS", "doctor" });
 
-        // /color is terminal-only (and refused for a cloud session anyway), /permissions is
-        // hidden by the terminal list ignoring case, /compact and a skill have no control
-        // request, and a name init lists twice is offered once.
-        Assert.Equal(new[] { "/rename", "/model", "/think" }, offered.Select(c => c.Name));
-        Assert.All(offered, c => Assert.Equal(SlashRouteKind.Control, c.Route));
-        Assert.All(offered, c => Assert.NotEqual("", c.Description));
+        var routes = catalogue.ToDictionary(c => c.Name, c => c.Route, StringComparer.OrdinalIgnoreCase);
+
+        // Nothing dropped, a name listed twice kept once, terminal-only names
+        // (case-insensitively, and even where the table has a route) Unavailable.
+        Assert.Equal(8, catalogue.Count);
+        Assert.Equal(SlashRouteKind.Control, routes["/rename"]);
+        Assert.Equal(SlashRouteKind.Control, routes["/model"]);
+        Assert.Equal(SlashRouteKind.Control, routes["/think"]);
+        Assert.Equal(SlashRouteKind.Unavailable, routes["/permissions"]);
+        Assert.Equal(SlashRouteKind.Unavailable, routes["/color"]);
+        Assert.Equal(SlashRouteKind.Unavailable, routes["/doctor"]);
+        Assert.Equal(SlashRouteKind.Unavailable, routes["/compact"]);
+        Assert.Equal(SlashRouteKind.Unavailable, routes["/my-skill"]);
+        Assert.NotEqual("", catalogue.Single(c => c.Name == "/rename").Description);
+        Assert.Equal("", catalogue.Single(c => c.Name == "/compact").Description);
     }
 
     [Fact]
-    public void ACommandOnlyTheRoutingTableKnowsStillGetsAnEmptyDescription()
+    public void ThePanelOffersOnlyTheControlCommandsOfTheCatalogue()
     {
-        // /permissions is in the table and described; this pins the fallback arm.
-        var offered = CloudSlashCatalog.Offered(new[] { "permissions" }, Array.Empty<string>());
-        Assert.Equal("Change the permission mode", Assert.Single(offered).Description);
-        Assert.Empty(CloudSlashCatalog.Offered(new[] { "compact" }, Array.Empty<string>()));
+        var catalogue = CloudSlashCatalog.Catalogue(
+            new[] { "compact", "rename", "model", "color", "permissions", "think", "my-skill" },
+            new[] { "color" });
+
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" },
+            ChatPanel.OfferedCommands(catalogue).Select(c => c.Name));
     }
 
     // --- init arrives on the stream ---------------------------------------
@@ -90,12 +101,12 @@ public partial class ClaudeCloudEventsTests
         var events = await stream.NextOpenAsync();
 
         events.TryWrite(Init(42, InitRow("[\"rename\",\"compact\"]", "[]")));
-        await Until(() => chat.SlashCommands.Count == 1);
-        Assert.Equal("/rename", chat.SlashCommands[0].Name);
+        await Until(() => chat.SlashCommands.Count == 2);
+        Assert.Equal(new[] { "/rename", "/compact" }, chat.SlashCommands.Select(c => c.Name));
 
         // Re-published with a different list: the newest wins.
         events.TryWrite(Init(43, InitRow("[\"model\",\"think\"]")));
-        await Until(() => chat.SlashCommands.Count == 2);
+        await Until(() => chat.SlashCommands.Any(c => c.Name == "/model"));
         Assert.Equal(new[] { "/model", "/think" }, chat.SlashCommands.Select(c => c.Name));
 
         // An init with no list at all, and a status that is not an init, change nothing.

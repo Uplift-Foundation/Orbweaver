@@ -703,13 +703,13 @@ namespace Orbweaver
 
         private IReadOnlyList<SlashCommand> _slashCommands = Array.Empty<SlashCommand>();
 
-        // Every name the session's CLI listed, terminal-only ones included, with
-        // the slash: what makes a "/word" a command rather than prose. Empty
+        // Every name in SlashCommands, with the slash: what makes a "/word" a command rather than prose. Empty
         // until an init has been seen, when only the routing table's own
         // commands count.
         private HashSet<string> _knownSlash = new(StringComparer.OrdinalIgnoreCase);
 
-        // Empty until an init has been seen; touched on the UI thread.
+        // The full catalogue with routes, Unavailable included — the panel hides
+        // those. Empty until an init has been seen; touched on the UI thread.
         public IReadOnlyList<SlashCommand> SlashCommands => _slashCommands;
 
         // Run `/cmd args`. A Control route posts the control request and says in
@@ -1142,10 +1142,9 @@ namespace Orbweaver
                     {
                         if (init is { } lists)
                         {
-                            _slashCommands = CloudSlashCatalog.Offered(lists.Commands, lists.Terminal);
+                            _slashCommands = CloudSlashCatalog.Catalogue(lists.Commands, lists.Terminal);
                             _knownSlash = new HashSet<string>(
-                                lists.Commands.Concat(lists.Terminal).Select(n => "/" + n),
-                                StringComparer.OrdinalIgnoreCase);
+                                _slashCommands.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
                         }
                         SetBusy(true);
                     });
