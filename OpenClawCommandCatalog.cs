@@ -94,13 +94,17 @@ namespace Orbweaver
         private static bool Holds(string? required, IReadOnlyCollection<string> scopes) =>
             required is null || scopes.Contains(required);
 
-        // What autocomplete offers: every command this device may run, once, under
-        // its primary alias, in the gateway's order.
+        // The whole known catalogue, once per command under its primary alias, in
+        // the gateway's order. A command this device may not run is still listed,
+        // as Unavailable, so the list is also the answer to "is this a command
+        // here"; the panel hides an Unavailable one from autocomplete.
         internal static IReadOnlyList<SlashCommand> Offered(
             IEnumerable<OpenClawCommand> commands, IReadOnlyCollection<string> scopes) =>
             commands
-                .Where(c => Holds(ScopeFor(c), scopes))
-                .Select(c => new SlashCommand(c.Name, c.Description, SlashRouteKind.PassThrough, c.Aliases))
+                .Select(c => new SlashCommand(
+                    c.Name, c.Description,
+                    Holds(ScopeFor(c), scopes) ? SlashRouteKind.PassThrough : SlashRouteKind.Unavailable,
+                    c.Aliases))
                 .ToList();
 
         internal static string ScopeReason(string scope) =>

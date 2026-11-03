@@ -93,19 +93,20 @@ public class OpenClawSlashCommandsTests : IDisposable
     }
 
     [Fact]
-    public void WithoutAdminResetIsNotOffered()
+    public void WithoutAdminResetIsListedAsUnavailable()
     {
         var offered = OpenClawCommandCatalog.Offered(Real(), Write);
 
-        Assert.DoesNotContain(offered, c => c.Name == "/reset");
-        Assert.Equal(8, offered.Count);
-        Assert.All(offered, c => Assert.Equal(SlashRouteKind.PassThrough, c.Route));
+        Assert.Equal(9, offered.Count);
+        Assert.Equal(SlashRouteKind.Unavailable, offered.Single(c => c.Name == "/reset").Route);
+        Assert.All(offered.Where(c => c.Name != "/reset"), c => Assert.Equal(SlashRouteKind.PassThrough, c.Route));
         Assert.Equal("Show current status.", offered.Single(c => c.Name == "/status").Description);
     }
 
     [Fact]
-    public void WithAdminResetIsOffered() =>
-        Assert.Contains(OpenClawCommandCatalog.Offered(Real(), Admin), c => c.Name == "/reset");
+    public void WithAdminResetIsPassThrough() =>
+        Assert.Equal(SlashRouteKind.PassThrough,
+            OpenClawCommandCatalog.Offered(Real(), Admin).Single(c => c.Name == "/reset").Route);
 
     [Fact]
     public void AListedCommandIsNotRefusedUnderAnyOfItsAliases()
@@ -297,7 +298,7 @@ public class OpenClawSlashCommandsTests : IDisposable
         var offered = Chat().SlashCommands;
 
         Assert.Contains(offered, c => c.Name == "/status");
-        Assert.DoesNotContain(offered, c => c.Name == "/reset");
+        Assert.Equal(SlashRouteKind.Unavailable, offered.Single(c => c.Name == "/reset").Route);
     }
 
     [Fact]

@@ -1451,9 +1451,9 @@ public class OpenClawGatewayPayloadTests
         var write = OpenClawCommandCatalog.Offered(commands, new[] { "operator.read", "operator.write" });
         var admin = OpenClawCommandCatalog.Offered(commands, new[] { "operator.read", "operator.write", "operator.admin" });
 
-        Assert.Equal(commands.Count - 1, write.Count);
-        Assert.DoesNotContain(write, c => c.Name == "/reset");
-        Assert.Contains(admin, c => c.Name == "/reset");
+        Assert.Equal(commands.Count, write.Count);
+        Assert.Equal(SlashRouteKind.Unavailable, write.Single(c => c.Name == "/reset").Route);
+        Assert.Equal(SlashRouteKind.PassThrough, admin.Single(c => c.Name == "/reset").Route);
         Assert.All(write, c => Assert.Contains(commands, k => k.Name == c.Name));
     }
 
