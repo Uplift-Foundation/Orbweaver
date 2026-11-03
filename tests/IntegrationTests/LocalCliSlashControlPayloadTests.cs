@@ -57,7 +57,7 @@ public class LocalCliSlashControlPayloadTests
     [Theory]
     [InlineData("/color pink", """{"subtype":"set_color","color":"pink"}""")]
     [InlineData("/rename Weekly triage", """{"subtype":"rename_session","title":"Weekly triage"}""")]
-    [InlineData("/model", """{"subtype":"set_model","model":"default"}""")]
+    [InlineData("/model opus", """{"subtype":"set_model","model":"opus"}""")]
     [InlineData("/permissions plan", """{"subtype":"set_permission_mode","mode":"plan"}""")]
     [InlineData("/think 8000", """{"subtype":"set_max_thinking_tokens","max_thinking_tokens":8000}""")]
     [InlineData("/think default", """{"subtype":"set_max_thinking_tokens","max_thinking_tokens":null}""")]

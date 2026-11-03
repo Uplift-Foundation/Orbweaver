@@ -186,17 +186,15 @@ public class LocalCliChatSessionSlashTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task ThinkTakesANumericBudgetAndABareModelMeansDefault()
+    public async Task ThinkTakesANumericBudget()
     {
         var api = new Api();
         var session = Headless(api, new Credentials(), Row(bridge: true));
 
         await session.RunSlashAsync("/think 8000");
-        await session.RunSlashAsync("/model");
 
-        Assert.Equal(8000, ControlRequestOf(api.Requests[0]).GetProperty("max_thinking_tokens").GetInt32());
-        Assert.Equal("default", ControlRequestOf(api.Requests[1]).GetProperty("model").GetString());
-        Assert.Contains(session.History, t => t.Text == "Sent /model over Remote Control.");
+        Assert.Equal(8000, ControlRequestOf(Assert.Single(api.Requests)).GetProperty("max_thinking_tokens").GetInt32());
+        Assert.Contains(session.History, t => t.Text == "Sent /think 8000 over Remote Control.");
     }
 
     // The negative control: /compact is not a control command, so it is refused
@@ -246,6 +244,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
 
     [AvaloniaTheory]
     [InlineData("/color")]
+    [InlineData("/model")]
     [InlineData("/rename")]
     [InlineData("/permissions")]
     [InlineData("/think soon")]
