@@ -678,7 +678,7 @@ public class MirrorRoundTripTests : IDisposable
         var entry = harness.Client.StateFor("job-hunter").Entry!;
 
         Assert.All(entry.CommandRoutes!, r => Assert.Equal("unavailable", r));
-        Assert.Empty(RemoteControlSessions.CommandsFrom(entry));
+        Assert.Empty(ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFrom(entry)));
     }
 
     [Fact]
@@ -699,7 +699,9 @@ public class MirrorRoundTripTests : IDisposable
 
         Assert.Equal(new[] { "/color", "/compact" }, entry.Commands);
         Assert.Equal(new[] { "control", "unavailable" }, entry.CommandRoutes);
-        var offered = Assert.Single(RemoteControlSessions.CommandsFrom(entry));
+        var all = RemoteControlSessions.CommandsFrom(entry);
+        Assert.Equal(2, all.Count);
+        var offered = Assert.Single(ChatPanel.OfferedCommands(all));
         Assert.Equal(SlashRouteKind.Control, offered.Route);
     }
 
@@ -858,8 +860,11 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal("unavailable", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/compact")]);
         Assert.Equal("control", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/color")]);
         // The panel offers only what runs.
-        Assert.Contains(RemoteControlSessions.CommandsFrom(entry), c => c.Name == "/color");
-        Assert.DoesNotContain(RemoteControlSessions.CommandsFrom(entry), c => c.Name == "/compact");
+        var offeredNames = ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFrom(entry)).Select(c => c.Name);
+        Assert.Contains("/color", offeredNames);
+        Assert.DoesNotContain("/compact", offeredNames);
+        // ...but it is still a known command, so typing it is refused, not sent.
+        Assert.Contains(RemoteControlSessions.CommandsFrom(entry), c => c.Name == "/compact");
 
         var ran = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
         Assert.Equal(MirrorProtocol.ViaControl, ran.Via);

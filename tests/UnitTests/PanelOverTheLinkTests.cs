@@ -49,17 +49,22 @@ public class PanelOverTheLinkTests
         new("job-hunter", "claude", HasTranscript: true, HasPane: hasPane, Commands: commands, CommandRoutes: routes);
 
     [Fact]
-    public void UnavailableCommandsAreHiddenAndTheRestKeepTheirKinds()
+    public void UnavailableCommandsAreKeptWithTheirKindsForThePanelToFilter()
     {
         var offered = RemoteControlSessions.CommandsFrom(Routed(
             new[] { "/color", "/compact", "/model", "/mystery" },
             new[] { "control", "unavailable", "control", "from-the-future" }));
 
-        // The regression: a messaging-mode panel used to be offered /compact
-        // and the rest, none of which ran. An unknown word from a newer far
-        // Buddy reads as unavailable rather than as a different command.
-        Assert.Equal(new[] { "/color", "/model" }, offered.Select(c => c.Name));
-        Assert.All(offered, c => Assert.Equal(SlashRouteKind.Control, c.Route));
+        // Kept, not dropped: the panel hides them from autocomplete but needs
+        // the names, so "/compact" typed in full is recognised as a command and
+        // refused instead of being sent to the far model as prose. An unknown
+        // word from a newer far Buddy reads as unavailable.
+        Assert.Equal(new[] { "/color", "/compact", "/model", "/mystery" }, offered.Select(c => c.Name));
+        Assert.Equal(
+            new[] { SlashRouteKind.Control, SlashRouteKind.Unavailable, SlashRouteKind.Control, SlashRouteKind.Unavailable },
+            offered.Select(c => c.Route));
+        Assert.Equal(new[] { "/color", "/model" },
+            ChatPanel.OfferedCommands(offered).Select(c => c.Name));
     }
 
     [Fact]
@@ -73,23 +78,37 @@ public class PanelOverTheLinkTests
     }
 
     [Fact]
-    public void RoutesThatDoNotLineUpWithTheCommandsAreTreatedAsAbsent()
+    public void RoutesThatDoNotLineUpWithTheCommandsAreTreatedAsAbsentEverywhere()
     {
-        // Absent means an older far Buddy: offered only where there is a pane.
-        Assert.Empty(RemoteControlSessions.CommandsFrom(
-            Routed(new[] { "/color", "/model" }, new[] { "control" }, hasPane: false)));
+        var noPane = Routed(new[] { "/color", "/model" }, new[] { "control" }, hasPane: false);
+        var pane = Routed(new[] { "/color", "/model" }, new[] { "control" }, hasPane: true);
 
-        var typed = RemoteControlSessions.CommandsFrom(
-            Routed(new[] { "/color", "/model" }, new[] { "control" }, hasPane: true));
+        // One definition, so the panel cannot offer typed commands while the
+        // session sends the slash flag.
+        Assert.False(RemoteControlSessions.ValidRoutes(pane));
+        Assert.False(RemoteControlSessions.SpeaksSlash(pane));
+        Assert.False(RemoteControlSessions.SpeaksSlash(noPane));
+
+        var typed = RemoteControlSessions.CommandsFrom(pane);
         Assert.Equal(new[] { "/color", "/model" }, typed.Select(c => c.Name));
         Assert.All(typed, c => Assert.Equal(SlashRouteKind.Typed, c.Route));
+
+        // Known, not offered: nothing here would run.
+        var known = RemoteControlSessions.CommandsFrom(noPane);
+        Assert.Equal(new[] { "/color", "/model" }, known.Select(c => c.Name));
+        Assert.All(known, c => Assert.Equal(SlashRouteKind.Unavailable, c.Route));
+        Assert.Empty(ChatPanel.OfferedCommands(known));
     }
 
     [Fact]
-    public void AnOlderFarBuddyOffersItsCommandsOnlyWhereThereIsAPane()
+    public void AnOlderFarBuddyKnowsItsCommandsAndOffersThemOnlyWhereThereIsAPane()
     {
-        Assert.Empty(RemoteControlSessions.CommandsFrom(Routed(new[] { "/color" }, null, hasPane: false)));
-        Assert.Single(RemoteControlSessions.CommandsFrom(Routed(new[] { "/color" }, null, hasPane: true)));
+        var noPane = RemoteControlSessions.CommandsFrom(Routed(new[] { "/color" }, null, hasPane: false));
+        Assert.Equal(SlashRouteKind.Unavailable, Assert.Single(noPane).Route);
+        Assert.Empty(ChatPanel.OfferedCommands(noPane));
+
+        var pane = RemoteControlSessions.CommandsFrom(Routed(new[] { "/color" }, null, hasPane: true));
+        Assert.Single(ChatPanel.OfferedCommands(pane));
     }
 
     [Fact]
@@ -98,6 +117,8 @@ public class PanelOverTheLinkTests
         Assert.False(RemoteControlSessions.SpeaksSlash(null));
         Assert.False(RemoteControlSessions.SpeaksSlash(Routed(new[] { "/color" }, null)));
         Assert.True(RemoteControlSessions.SpeaksSlash(Routed(Array.Empty<string>(), Array.Empty<string>())));
+        Assert.False(RemoteControlSessions.SpeaksSlash(Routed(new[] { "/a", "/b" }, new[] { "typed" })));
+        Assert.False(RemoteControlSessions.SpeaksSlash(Routed(Array.Empty<string>(), new[] { "typed" })));
         Assert.True(RemoteControlSessions.SpeaksSlash(Routed(new[] { "/color" }, new[] { "control" })));
     }
 

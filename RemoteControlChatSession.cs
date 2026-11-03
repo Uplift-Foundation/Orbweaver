@@ -604,7 +604,6 @@ namespace Orbweaver
         // has always done, so it takes the ordinary typed send. Without one
         // there is nothing to type into, and the line is refused with a note rather than
         // sent as a message the far model would read as prose.
-        [ExcludeFromCodeCoverage]
         public async Task<ChatSendOutcome> RunSlashAsync(string line)
         {
             // A command is a line whose first token is a name the far session's
@@ -616,8 +615,7 @@ namespace Orbweaver
             var client = RemoteControlSessions.MirrorClientFor(_account);
             var entry = client is null ? null : RemoteControlSessions.MirrorFor(_account, _remoteName);
             if (client is null || entry is null
-                || SlashRouting.Split(line) is not { } cmd
-                || entry.Commands?.Contains(cmd.Name, StringComparer.OrdinalIgnoreCase) != true)
+                || !SlashRouting.NamesKnownCommand(line, RemoteControlSessions.CommandsFrom(entry).Select(c => c.Name)))
                 return await SendAsync(line).ConfigureAwait(true);
 
             var mine = new ChatTurn { Role = ChatRole.User, Text = line, IsComplete = true };

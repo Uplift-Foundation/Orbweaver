@@ -435,7 +435,51 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(ChatSendOutcome.Failed, outcome);
         Assert.Contains(RemoteControlChatSession.OldFarBuddyNote(Name), NotesOf(session));
         Assert.Empty(_typed);
-        Assert.Empty(RemoteControlSessions.CommandsFor(Account, Name));
+        Assert.Empty(ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFor(Account, Name)));
+    }
+
+    // Nadia's case: a mirrored panel with no pane, where a known command that
+    // cannot run must be refused with nothing sent, and a path must go as a
+    // message.
+    [AvaloniaFact]
+    public async Task AKnownButUnrunnableCommandIsRefusedAndAPathIsAMessage()
+    {
+        _wireSlash = true;
+        _canType = false;
+        _slashCatalogue = new[]
+        {
+            new SlashCommand("/color", "", SlashRouteKind.Control),
+            new SlashCommand("/compact", "", SlashRouteKind.Unavailable),
+        };
+        _slashOutcome = new(MirrorProtocol.ViaRefused, SlashRouting.PeerMessageReason);
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/compact"));
+        Assert.Equal("/compact", Assert.Single(_slashRan));
+        Assert.Empty(_typed);
+        Assert.Empty(_delivered);
+
+        _slashRan.Clear();
+        await session.RunSlashAsync("/tmp/x.log boom");
+        Assert.Empty(_slashRan);
+    }
+
+    [AvaloniaFact]
+    public async Task AnOlderFarBuddysKnownCommandIsRefusedWithoutAPaneAndNothingIsSent()
+    {
+        _oldFarRoster = true;
+        _canType = false;
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        // /compact is in its catalogue: known, so refused rather than sent on.
+        var outcome = await session.RunSlashAsync("/compact");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains(RemoteControlChatSession.OldFarBuddyNote(Name), NotesOf(session));
+        Assert.Empty(_typed);
+        Assert.Empty(_delivered);
     }
 
     [AvaloniaFact]
@@ -480,7 +524,9 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Wire("a", "b");
         var session = await OpenAsync();
 
-        Assert.Equal(new[] { "/color" }, session.SlashCommands.Select(c => c.Name));
+        // The session knows both; the panel offers the one that runs.
+        Assert.Equal(new[] { "/color", "/compact" }, session.SlashCommands.Select(c => c.Name));
+        Assert.Equal(new[] { "/color" }, ChatPanel.OfferedCommands(session.SlashCommands).Select(c => c.Name));
     }
 
     // The far transcript will produce the message back, because it went in
