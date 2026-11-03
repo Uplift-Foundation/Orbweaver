@@ -182,4 +182,31 @@ public class ChatPanelOpenClawSlashTests : IDisposable
         Type(input, "/thinking");
         Assert.False(panel.FindControl<Control>("SlashBox")!.IsVisible);
     }
+
+    // The panel's known-name gate counts a command's aliases, so /t typed in full
+    // is routed as the command it is; a path is a message and the runner never
+    // sees it (no note, and the text goes out as typed).
+    [AvaloniaFact]
+    public async Task ATypedAliasIsRoutedAsACommandAndAPathAsAMessage()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var (chat, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+
+            Type(input, "/t high");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+
+            Type(input, "/tmp/build.log has the error");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 2);
+
+            Assert.Equal(new[] { "/t high", "/tmp/build.log has the error" },
+                socket.Requests.Where(r => r.Method == "chat.send")
+                    .Select(r => r.Params.GetProperty("message").GetString()));
+            Assert.DoesNotContain(chat.History, t => t.Role == ChatRole.System);
+        }
+    }
 }
