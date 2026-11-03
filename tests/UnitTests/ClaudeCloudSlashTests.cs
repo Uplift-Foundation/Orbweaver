@@ -146,23 +146,66 @@ public partial class ClaudeCloudEventsTests
         Assert.Equal("Sent /model.", Assert.Single(Notes(chat)).Text);
     }
 
+    // Teaches the session its command list by way of a real init on the stream.
+    private static async Task<(ClaudeCloudChatSession Chat, RoutingApi Api)> WithInit(string commands, string terminal)
+    {
+        var (chat, api, stream, _) = Streaming();
+        chat.PanelOpened();
+        var events = await stream.NextOpenAsync();
+        events.TryWrite(Init(42, InitRow(commands, terminal)));
+        await Until(() => chat.SlashCommands.Count > 0 || commands == "[]");
+        return (chat, api);
+    }
+
     [Theory]
     [InlineData("/compact")]
-    [InlineData("/color pink")]
+    [InlineData("/doctor")]
     [InlineData("/some-skill do it")]
-    public async Task AnUnavailableCommandIsRefusedWithItsReasonAndNothingIsSent(string line)
+    public async Task AKnownButUnavailableCommandIsRefusedWithItsReasonAndNothingIsSent(string line)
     {
-        var api = new RoutingApi(Answer(200, Receipt));
-        var chat = Sender(api);
+        var (chat, api) = await WithInit("[\"compact\",\"doctor\",\"some-skill\",\"rename\"]", "[\"doctor\"]");
 
         Assert.Equal(ChatSendOutcome.Failed, await chat.RunSlashAsync(line));
 
-        Assert.Empty(api.Requests);
+        Assert.Empty(api.Posts);
         var name = line.Split(' ')[0];
         var expected = SlashRouting.RefusalNote(name,
             SlashRouting.Resolve(SlashChannel.Cloud, name, "").Reason!);
         Assert.Equal(expected, Assert.Single(Notes(chat)).Text);
         Assert.Empty(chat.History.Where(t => t.Role == ChatRole.User));
+        await Close(chat);
+    }
+
+    // Before any init has arrived the routing table's own commands still count
+    // as commands: /color is refused for a cloud session even then.
+    [Fact]
+    public async Task ARoutedCommandIsRecognisedBeforeAnyInitHasArrived()
+    {
+        var api = new RoutingApi(Answer(200, Receipt));
+        var chat = Sender(api);
+
+        Assert.Equal(ChatSendOutcome.Failed, await chat.RunSlashAsync("/color pink"));
+
+        Assert.Empty(api.Posts);
+        Assert.Equal(SlashRouting.RefusalNote("/color", SlashRouting.CloudNoColorReason),
+            Assert.Single(Notes(chat)).Text);
+    }
+
+    [Theory]
+    [InlineData("/Users/me/notes.txt please read")]
+    [InlineData("/not-a-command")]
+    public async Task ASlashWordTheCliDoesNotKnowIsAnOrdinaryMessage(string line)
+    {
+        var (chat, api) = await WithInit("[\"compact\",\"rename\"]", "[]");
+
+        Assert.Equal(ChatSendOutcome.Sent, await chat.RunSlashAsync(line));
+
+        var post = Assert.Single(api.Posts);
+        using var doc = JsonDocument.Parse(post.Body!);
+        var payload = doc.RootElement.GetProperty("events")[0].GetProperty("payload");
+        Assert.Equal("user", payload.GetProperty("type").GetString());
+        Assert.Equal(line, payload.GetProperty("message").GetProperty("content").GetString());
+        await Close(chat);
     }
 
     [Fact]

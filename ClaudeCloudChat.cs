@@ -703,6 +703,12 @@ namespace Orbweaver
 
         private IReadOnlyList<SlashCommand> _slashCommands = Array.Empty<SlashCommand>();
 
+        // Every name the session's CLI listed, terminal-only ones included, with
+        // the slash: what makes a "/word" a command rather than prose. Empty
+        // until an init has been seen, when only the routing table's own
+        // commands count.
+        private HashSet<string> _knownSlash = new(StringComparer.OrdinalIgnoreCase);
+
         // Empty until an init has been seen; touched on the UI thread.
         public IReadOnlyList<SlashCommand> SlashCommands => _slashCommands;
 
@@ -711,9 +717,12 @@ namespace Orbweaver
         // table's reason and nothing is sent. Failed keeps the text in the box.
         public async Task<ChatSendOutcome> RunSlashAsync(string line)
         {
-            if (SlashRouting.Split(line) is not { } parts)
+            // A line is a command only if its first token is a name the CLI knows
+            // (or one the routing table maps). A path, an unknown word or a bare
+            // slash is an ordinary message.
+            if (SlashRouting.Split(line) is not { } parts
+                || !(_knownSlash.Contains(parts.Name) || SlashRouting.HasControl(parts.Name)))
             {
-                // Not a command at all ("/" alone): a message, as before.
                 return await SendAsync(line).ConfigureAwait(false);
             }
 
@@ -1131,7 +1140,13 @@ namespace Orbweaver
                     var init = e.Subtype == "init" ? CloudSlashCatalog.ParseInit(e.RowJson) : null;
                     _post(() =>
                     {
-                        if (init is { } lists) _slashCommands = CloudSlashCatalog.Offered(lists.Commands, lists.Terminal);
+                        if (init is { } lists)
+                        {
+                            _slashCommands = CloudSlashCatalog.Offered(lists.Commands, lists.Terminal);
+                            _knownSlash = new HashSet<string>(
+                                lists.Commands.Concat(lists.Terminal).Select(n => "/" + n),
+                                StringComparer.OrdinalIgnoreCase);
+                        }
                         SetBusy(true);
                     });
                     break;
