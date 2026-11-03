@@ -1929,6 +1929,8 @@ machines before any of this was built — including what the relay does and does
 not expose, and the two things a stronger test caught that a weaker one had
 passed.
 
+**A few built-ins run even without a live view — the ones with a control-request form (CB-306).** `/rename`, `/model`, `/permissions <mode>` and `/think <budget>` reach a Remote Control-bridged or cloud session as a *control request* on the session's own channel rather than as a message to its model, so they take effect where `/compact` and the rest still cannot; `/color` is among them for a bridged local or Desktop session but not for a cloud one, whose worker has no prompt bar to colour. Everything else — `/compact`, custom commands, skills — stays unavailable over these channels: the panel hides it from autocomplete, and typing it in full is refused with a plain reason rather than sent to the model as prose, because a slash command posted from here arrives as a teammate's message and Claude Code runs its own slash commands only from its keyboard or claude.ai. For a **local Desktop or headless job reached over Remote Control**, that control-request path uses the Claude Code login on this machine, so it needs **"Show cloud sessions"** turned on — the same setting that gates sending to a bridged session at all; with it off the panel says so and nothing goes out. The claude.ai-client investigation behind all of this — why the fuller path is not reachable and is deliberately not pursued — is in `docs/claude-cloud-findings.md`.
+
 ### Connecting directly instead (both platforms, off by default)
 
 Everything above goes through Anthropic's Remote Control cloud, carried by a

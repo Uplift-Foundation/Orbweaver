@@ -297,4 +297,22 @@ public class SlashRouteTests
         Assert.False(SlashRouting.NamesKnownCommand("/color pink", System.Array.Empty<string>()));
     }
 
+    // The alias-aware overload: a first token matching a Name or an Alias is a
+    // command (so "/t" is "/think").
+    [Theory]
+    [InlineData("/think 5000", true)]
+    [InlineData("/t 5000", true)]
+    [InlineData("/thinking off", true)]
+    [InlineData("/thonk", false)]
+    [InlineData("/tmp/x.log", false)]
+    public void AnAliasCountsAsAKnownCommand(string line, bool known)
+    {
+        var commands = new[]
+        {
+            new SlashCommand("/think", "", SlashRouteKind.Control, new[] { "/t", "/thinking" }),
+            new SlashCommand("/color", "", SlashRouteKind.Control),
+        };
+        Assert.Equal(known, SlashRouting.NamesKnownCommand(line, commands));
+    }
+
 }

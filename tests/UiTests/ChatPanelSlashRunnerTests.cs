@@ -133,22 +133,9 @@ public class ChatPanelSlashRunnerTests : IDisposable
         Assert.Equal(new[] { "/rename x" }, fake.SentTexts);
     }
 
-    [AvaloniaFact]
-    public async Task AKnownCommandWithAPictureAttachedIsSentAsAMessage()
+    private static async Task PasteABitmap(TextBox input, ItemsControl attachments)
     {
-        // A control request cannot carry an image, so an attachment makes the
-        // line a message (today's path), not a command — documented, not a
-        // silent command run (Nadia's finding 4).
-        var fake = NewFake();
-        ChatPanel.OpenFor(NewOrb(), fake);
-        Flush();
-
         var panel = ChatPanelTestAccess.Instance!;
-        var input = panel.FindControl<TextBox>("Input")!;
-        var attachments = panel.FindControl<ItemsControl>("Attachments")!;
-        input.Focus();
-        Flush();
-
         var bitmap = new WriteableBitmap(new PixelSize(4, 4), new Vector(96, 96));
         await panel.Clipboard!.SetBitmapAsync(bitmap);
         var gesture = TextBox.PasteGesture!;
@@ -158,6 +145,21 @@ public class ChatPanelSlashRunnerTests : IDisposable
         });
         await FlushAsync();
         Assert.True(attachments.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public async Task AKnownCommandWithAPictureAttachedIsRefusedAndNothingIsSent()
+    {
+        // A control request carries no image and a command must never reach the
+        // model as prose, so a known command with an attachment is refused with
+        // a note, not run and not sent (Nadia's finding 4, the lead's ruling).
+        var fake = NewFake();
+        ChatPanel.OpenFor(NewOrb(), fake);
+        Flush();
+
+        var panel = ChatPanelTestAccess.Instance!;
+        var input = panel.FindControl<TextBox>("Input")!;
+        await PasteABitmap(input, panel.FindControl<ItemsControl>("Attachments")!);
 
         input.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "/rename x" });
         Flush();
@@ -165,10 +167,57 @@ public class ChatPanelSlashRunnerTests : IDisposable
         Flush();
 
         Assert.Empty(fake.RanSlash);
+        Assert.Empty(fake.SentWithImages);
+        Assert.Empty(fake.SentTexts);
+        Assert.Equal("/rename x", input.Text);   // kept for a retry without the picture
+
+        var turns = (System.Collections.IEnumerable)panel.FindControl<ItemsControl>("Turns")!.ItemsSource!;
+        var last = turns.Cast<object>().Last();
+        var noteText = last.GetType().GetProperty("Text")!.GetValue(last) as string;
+        Assert.Equal(ChatPanel.SlashCommandAndPictureNote, noteText);
+    }
+
+    [AvaloniaFact]
+    public async Task AnUnknownWordWithAPictureStillSendsAsAMessage()
+    {
+        var fake = NewFake();
+        ChatPanel.OpenFor(NewOrb(), fake);
+        Flush();
+
+        var panel = ChatPanelTestAccess.Instance!;
+        var input = panel.FindControl<TextBox>("Input")!;
+        await PasteABitmap(input, panel.FindControl<ItemsControl>("Attachments")!);
+
+        input.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "/frobnicate" });
+        Flush();
+        input.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
+        Flush();
+
+        Assert.Empty(fake.RanSlash);
         var sent = Assert.Single(fake.SentWithImages);
-        Assert.Equal("/rename x", sent.Text);
+        Assert.Equal("/frobnicate", sent.Text);
         var path = Assert.Single(sent.ImagePaths);
         if (File.Exists(path)) File.Delete(path);
+    }
+
+    [AvaloniaFact]
+    public void AnAliasIsAKnownCommand()
+    {
+        // "/t" is an alias of "/think" — it must be recognised as a command and
+        // routed, not sent as a message (alias-awareness after wren's change).
+        var fake = NewFake(withCatalogue: false);
+        fake.SlashCommands = new[]
+        {
+            new SlashCommand("/think", "Set the thinking budget", SlashRouteKind.Control,
+                new[] { "/t", "/thinking" }),
+        };
+        ChatPanel.OpenFor(NewOrb(), fake);
+        Flush();
+
+        TypeAndEnter("/t 5000");
+
+        Assert.Equal(new[] { "/t 5000" }, fake.RanSlash);
+        Assert.Empty(fake.SentTexts);
     }
 
     [AvaloniaFact]

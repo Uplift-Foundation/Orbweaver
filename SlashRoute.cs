@@ -129,6 +129,19 @@ namespace Orbweaver
             return false;
         }
 
+        // The alias-aware form: a command is known if the first token matches its
+        // Name or any of its Aliases (CB-306, after wren's alias support). This is
+        // the one the panel uses, so "/t" is recognised as "/think" and routed
+        // rather than sent as a message. Callers that hold only names use the
+        // overload above.
+        public static bool NamesKnownCommand(string line, IEnumerable<SlashCommand> commands)
+        {
+            if (Split(line) is not { } split) return false;
+            foreach (var command in commands)
+                if (command.IsTyped(split.Name)) return true;
+            return false;
+        }
+
         // `name` carries its leading slash, the way SlashCommand.Name does.
         public static SlashRoute Resolve(SlashChannel channel, string name, string args)
         {

@@ -202,9 +202,17 @@ namespace Orbweaver
         internal bool IsKnownSlashCommand(string text)
         {
             var all = (_session as IRemoteChatSlashCommands)?.SlashCommands;
-            return all is { Count: > 0 }
-                && SlashRouting.NamesKnownCommand(text, all.Select(c => c.Name));
+            // The alias-aware overload, so "/t" is known as "/think".
+            return all is { Count: > 0 } && SlashRouting.NamesKnownCommand(text, all);
         }
+
+        // CB-306: a control request cannot carry a picture, so a known command
+        // typed with an attachment is neither run nor sent — the ticket's rule
+        // is that a command never reaches the model as prose. The panel refuses
+        // it here with a note and keeps the text (an unknown "/word" or a path
+        // with a picture is not a command and still sends as a message).
+        internal const string SlashCommandAndPictureNote =
+            "A slash command can't carry a picture — send the picture on its own.";
 
         // The suggestions currently shown, and which one Up/Down has landed
         // on. Kept as a plain list rather than something observable: the
@@ -2802,13 +2810,21 @@ namespace Orbweaver
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            // CB-306: a line that names a command this session knows goes to the
-            // runner, which routes it — control request, pass-through, or a
-            // refusal note with nothing sent. Anything else (a path, an unknown
-            // word, ordinary prose) sends as before. A command typed with a
-            // picture attached is sent as a message, not run: a control request
-            // cannot carry an image, so the attachment decides it is prose, and
-            // the "nothing sent" guarantee is about refused commands, not this.
+            // CB-306: a known command typed with a picture attached is refused,
+            // not run and not sent — a control request carries no image, and a
+            // command must never reach the model as prose. The note says why and
+            // the text stays for a retry without the picture. An unknown "/word"
+            // or a path with a picture is not a command and still sends below.
+            if (images.Count > 0 && session is IRemoteChatSlashRunner && IsKnownSlashCommand(text))
+            {
+                OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = SlashCommandAndPictureNote });
+                return;
+            }
+
+            // A line that names a command this session knows goes to the runner,
+            // which routes it — control request, pass-through, or a refusal note
+            // with nothing sent. Anything else (a path, an unknown word, ordinary
+            // prose) sends as before.
             var outcome = images.Count == 0 && session is IRemoteChatSlashRunner runner && IsKnownSlashCommand(text)
                 ? await runner.RunSlashAsync(text)
                 : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
