@@ -241,7 +241,7 @@ namespace Orbweaver
         // Whether the far Buddy understands the slash INPUT flag, which it
         // announces by sending route kinds at all.
         internal static bool SpeaksSlash(MirrorProtocol.MirrorRosterEntry? entry) =>
-            entry?.CommandRoutes is { Count: > 0 };
+            entry?.CommandRoutes is not null;
 
         // What the far Buddy said about one session, or null if none has.
         internal static MirrorProtocol.MirrorRosterEntry? MirrorFor(string account, string name) =>

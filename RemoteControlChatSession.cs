@@ -600,29 +600,18 @@ namespace Orbweaver
         // none and can still have its colour set.
         //
         // An older far Buddy ignores the flag and would type the line as plain
-        // text. In a live view that is exactly what a slash line has always
-        // done, so it takes the ordinary typed send. Without one there is
-        // nothing to type into, and the line is refused with a note rather than
+        // text. In a live view with a pane that is exactly what a slash line
+        // has always done, so it takes the ordinary typed send. Without one
+        // there is nothing to type into, and the line is refused with a note rather than
         // sent as a message the far model would read as prose.
         [ExcludeFromCodeCoverage]
         public async Task<ChatSendOutcome> RunSlashAsync(string line)
         {
-            var entry = RemoteControlSessions.MirrorFor(_account, _remoteName);
-
-            if (!RemoteControlSessions.SpeaksSlash(entry))
-            {
-                if (_mirroring) return await SendAsync(line).ConfigureAwait(true);
-
-                Add(new ChatTurn { Role = ChatRole.User, Text = line, IsComplete = true });
-                Note(OldFarBuddyNote(_remoteName));
-                return ChatSendOutcome.Failed;
-            }
-
             var mine = new ChatTurn { Role = ChatRole.User, Text = line, IsComplete = true };
-            Add(mine);
 
             if (!OrbweaverSettings.PeerLinkEnabled)
             {
+                Add(mine);
                 Note(RemoteControlOffNote);
                 return ChatSendOutcome.Failed;
             }
@@ -630,9 +619,25 @@ namespace Orbweaver
             var client = RemoteControlSessions.MirrorClientFor(_account);
             if (client is null)
             {
+                Add(mine);
                 Note(NotConnectedNote);
                 return ChatSendOutcome.Failed;
             }
+
+            if (!RemoteControlSessions.SpeaksSlash(RemoteControlSessions.MirrorFor(_account, _remoteName)))
+            {
+                // A live view that can type is where a slash line has always
+                // worked. SendAsync adds the turn itself, so this arm must not
+                // first. A transcript-only view cannot type, and falling to the
+                // message path would hand the far model the line as prose.
+                if (_mirroring && _canType) return await SendAsync(line).ConfigureAwait(true);
+
+                Add(mine);
+                Note(OldFarBuddyNote(_remoteName));
+                return ChatSendOutcome.Failed;
+            }
+
+            Add(mine);
 
             // Marked pending only once we know it was typed — a control request
             // has no transcript echo, and a pending turn that never matches
