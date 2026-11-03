@@ -84,9 +84,12 @@ namespace Orbweaver
             // The first move is where a press becomes a drag (a click never gets
             // here). Lift the orbs before moving them, so the group's outline
             // keeps them where they were rather than stretching after them.
-            if (!_lifted && !WholeGroup)
+            if (!_lifted)
             {
-                GroupBackdrops.Lift(_moving.Select(m => m.Orb));
+                if (!WholeGroup) GroupBackdrops.Lift(_moving.Select(m => m.Orb));
+
+                // CB-303: while held, no reflow (a scan) may move these orbs.
+                foreach (var (orb, _) in _moving) orb.HeldByDrag = true;
                 _lifted = true;
             }
 
@@ -166,6 +169,7 @@ namespace Orbweaver
 
         internal SnapOutcome End()
         {
+            foreach (var (orb, _) in _moving) orb.HeldByDrag = false;
             _timer?.Stop();
             _pressedWindow?.SquashRelease();
             GroupBackdrops.Drop();
@@ -175,16 +179,23 @@ namespace Orbweaver
             var (vx, vy) = _fling.VelocityAt(OrbWindow.MotionClock());
             var fling = new Fling(_moving.Select(m => m.Orb.SessionId).ToList(), vx, vy);
 
-            var outcome = OrbDragCommit.Release(_host, _anchorId, WholeGroup, _dx, _dy, _unitsPerDip, fling);
+            // CB-303: the drop is committed where the orbs are drawn. A reflow
+            // while the pointer was held still (a scan) must not decide it.
+            Place(_pullX.Value, _pullY.Value);
 
-            // Whatever is not in a user group after the release is loose and
-            // stays where it was dropped: pinned, unless something is arranging
-            // it. A user group's orbs are laid out by the group (F2), so neither
-            // a pin nor a remembered spot belongs to them.
-            //
-            // Positions are keyed by directory and a team usually runs in one,
-            // so writing every member's spot would overwrite the lead's with an
-            // offset copy of itself. First orb with a key wins.
+            return OrbDragCommit.Release(_host, _anchorId, WholeGroup, _dx, _dy, _unitsPerDip, fling, PinLoose);
+        }
+
+        // Whatever is not in a user group after the release is loose and
+        // stays where it was dropped: pinned, unless something is arranging
+        // it. A user group's orbs are laid out by the group (F2), so neither
+        // a pin nor a remembered spot belongs to them.
+        //
+        // Positions are keyed by directory and a team usually runs in one,
+        // so writing every member's spot would overwrite the lead's with an
+        // offset copy of itself. First orb with a key wins.
+        private void PinLoose()
+        {
             var seen = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
             foreach (var (orb, _) in _moving)
             {
@@ -194,8 +205,6 @@ namespace Orbweaver
                 if (!string.IsNullOrEmpty(orb.PositionKey) && seen.Add(orb.PositionKey))
                     SessionManager.Instance?.RememberOrbPosition(orb);
             }
-
-            return outcome;
         }
     }
 }

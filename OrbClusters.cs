@@ -27,7 +27,11 @@ namespace Orbweaver
 
         // Scheduled jobs. See OpenClawSessionKind, which reads these off the
         // session key's third segment.
-        Crons
+        Crons,
+
+        // Sessions with no chat surface behind them: an agent's main session
+        // reached through none, and a New Chat. See OpenClawNative.
+        Native
     }
 
     // What the user has asked for one of the two timer-driven clusters.
@@ -78,10 +82,24 @@ namespace Orbweaver
         // differently. Hiding the heartbeat when the user asked to hide
         // heartbeats is what they asked for; showing it among the crons they
         // wanted separated is a surprise.
-        public static OrbCluster Of(bool heartbeat, SessionKind kind)
+        //
+        // CB-270: native comes last of the three. An agent's own main session is a
+        // heartbeat target by OpenClawHeartbeat's structural rule, and the
+        // gateway's heartbeat job wakes it every few minutes, so it is a heartbeat
+        // first and native only if it is not one. CB-270's first version put
+        // native ahead of heartbeat so the native setting could govern those
+        // mains, and the result was the opposite of what a person who hid
+        // heartbeats wanted: the main session kept coming back because the very
+        // timer they had hidden kept waking it. So "Heartbeat sessions" governs an
+        // agent's main sessions, and "Agents' own sessions" governs the native
+        // sessions that are not heartbeats, in practice a New Chat. A session the
+        // gateway reports pinned is shown whatever its cluster says; see
+        // OpenClawSessions.Parse.
+        public static OrbCluster Of(bool heartbeat, SessionKind kind, bool native)
         {
             if (heartbeat) return OrbCluster.Heartbeats;
             if (kind == SessionKind.Cron) return OrbCluster.Crons;
+            if (native) return OrbCluster.Native;
 
             return OrbCluster.Chats;
         }
@@ -90,20 +108,28 @@ namespace Orbweaver
         // — there is no setting that hides every conversation, and the shape
         // they gather into is the main ArrangeShape — so they always answer
         // WithChats, which is exactly what "group 0, and it exists" means below.
-        public static ClusterMode ModeOf(OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons)
+        //
+        // The native mode is a required parameter, not a defaulted one: two
+        // callers disagreeing about it puts an orb in a shape and then takes it
+        // off the screen, and a required parameter makes the compiler find every
+        // caller.
+        public static ClusterMode ModeOf(
+            OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons, ClusterMode native)
             => cluster switch
             {
                 OrbCluster.Heartbeats => heartbeats,
                 OrbCluster.Crons => crons,
+                OrbCluster.Native => native,
                 _ => ClusterMode.WithChats
             };
 
         // Whether this orb exists at all.
-        public static bool Visible(OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons)
-            => ModeOf(cluster, heartbeats, crons) != ClusterMode.Hidden;
+        public static bool Visible(
+            OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons, ClusterMode native)
+            => ModeOf(cluster, heartbeats, crons, native) != ClusterMode.Hidden;
 
         // Which shape this orb joins, as an index into the shapes array
-        // OrbArrangement is handed: 0 chats, 1 heartbeats, 2 crons.
+        // OrbArrangement is handed: 0 chats, 1 heartbeats, 2 crons, 3 native. User groups follow at 4.
         //
         // Fixed slots rather than a dense count of the groups actually in use,
         // because a dense index would mean group 1 is heartbeats on a screen
@@ -125,11 +151,17 @@ namespace Orbweaver
         // that will read as a coverage gap forever and can never be defended
         // with a test. Asking the question ModeOf already answers is the way not
         // to have one.
-        public static int GroupOf(OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons)
+        public static int GroupOf(
+            OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons, ClusterMode native)
         {
-            if (ModeOf(cluster, heartbeats, crons) != ClusterMode.OwnShape) return 0;
+            if (ModeOf(cluster, heartbeats, crons, native) != ClusterMode.OwnShape) return 0;
 
-            return cluster == OrbCluster.Heartbeats ? 1 : 2;
+            return cluster switch
+            {
+                OrbCluster.Heartbeats => 1,
+                OrbCluster.Crons => 2,
+                _ => 3
+            };
         }
 
         // --- settings wire format ---------------------------------------------

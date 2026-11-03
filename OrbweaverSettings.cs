@@ -81,14 +81,14 @@ namespace Orbweaver
             "speakCommand", "speakCommandArgs",
             "speakVoicesCommand", "speakVoicesCommandArgs", "speakCommandVoice", "speakEngine",
             "speakScope",
-            "turnSoundsEnabled", "turnFinishedSound", "needsAttentionSound", "orbTurnSounds",
+            "muted", "turnSoundsEnabled", "turnFinishedSound", "needsAttentionSound", "orbTurnSounds",
             "orbColors", "claudeCodeProfileDirs", "codexHomes", "grokHomes", "profiles", "orbPositions",
             "collapsedSettingsSections",
             "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale",
             "orbSize", "orbSizes", "orbMemberOffsets", "accountOrbOverrides",
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
-            "openclawReplyEnabled", "openclawActiveWithinMinutes",
+            "openclawReplyEnabled", "openclawApproveEnabled", "openclawActiveWithinMinutes",
             "claudeCloudEnabled",
             // Still written, though nothing reads it into the model any more —
             // see OpenClawHeartbeatMode. Listed here so it does not also
@@ -97,6 +97,7 @@ namespace Orbweaver
             "openclawShowHeartbeats",
             "openclawHeartbeatMode", "openclawHeartbeatShape",
             "openclawCronMode", "openclawCronShape",
+            "openclawNativeMode", "openclawNativeShape",
             // CB-268. The legacy shape and anchor keys above stay written next
             // to orbGroups, so an older build still reads the file.
             "orbGroups", "groupOutlinesEnabled", "groupNamesVisible", "groupOutlineStroke",
@@ -116,7 +117,7 @@ namespace Orbweaver
             // list from CB-155 until the new-chat hotkey was added beside it;
             // Save's ContainsKey guard kept that from throwing, but it meant
             // the value was carried in _unknownKeys as well as the model.
-            "toggleOrbsHotkey", "newChatHotkey", "toggleUsageOrbsHotkey"
+            "toggleOrbsHotkey", "newChatHotkey", "toggleUsageOrbsHotkey", "toggleMuteHotkey"
         };
 
         // JsonNode.ToJsonString(options) needs a TypeInfoResolver on the
@@ -239,6 +240,10 @@ namespace Orbweaver
         public const string DefaultOpenClawHeartbeatShape = "circle";
         public const string DefaultOpenClawCronShape = "line";
 
+        // CB-270: a diamond for an agent's own sessions, the only one of the
+        // seven shapes no other group uses by default.
+        public const string DefaultOpenClawNativeShape = "diamond";
+
         // CB-268's global outline style. Outlines are off by default; these are
         // what a group inherits for any field it does not override.
         public const string DefaultGroupOutlineStroke = "#FFFFFF";
@@ -335,6 +340,14 @@ namespace Orbweaver
             // for. Turning it on widens the scopes this device requests, which
             // the gateway treats as a new pairing to approve.
             public bool OpenClawReplyEnabled { get; set; }
+
+            // CB-270 Stage 6: a third, separate power. Allowing replies grants
+            // operator.write; this grants operator.approvals, which lets the app
+            // see what the gateway is holding for a person's say-so and answer it
+            // allow-once or deny. Off by default, independent of replying, and
+            // turning it on widens the scopes this device requests, which the
+            // gateway treats as a new pairing to approve on its own host.
+            public bool OpenClawApproveEnabled { get; set; }
 
             // The chat panel on a local Claude Code orb. On by default, unlike
             // everything else here that is off: it opens no socket, starts no
@@ -466,6 +479,18 @@ namespace Orbweaver
                 set => Groups.SetShape(OrbGroups.Crons, value);
             }
 
+            // CB-270: the same three answers for an agent's own sessions — its
+            // main session and chats started from Orbweaver. See OpenClawNative.
+            // WithChats by default, so nothing moves for anyone who does not
+            // touch it.
+            public ClusterMode OpenClawNativeMode { get; set; } = ClusterMode.WithChats;
+
+            public string OpenClawNativeShape
+            {
+                get => Groups.Get(OrbGroups.Native)!.Shape;
+                set => Groups.SetShape(OrbGroups.Native, value);
+            }
+
             // Whether to show Claude Code sessions running on *other* machines,
             // reached through a hidden local bridge session that has Remote
             // Control on. Off by default, and deliberately more than a display
@@ -510,6 +535,10 @@ namespace Orbweaver
             // same terms again: null or unparseable means Ctrl+Alt+U.
             public string? ToggleUsageOrbsHotkey { get; set; }
 
+            // Overrides HotkeyRegistry.Default(ToggleMute), on the same
+            // terms again: null or unparseable means Ctrl+Alt+M.
+            public string? ToggleMuteHotkey { get; set; }
+
             // Which port to listen on. Zero means "let the operating system
             // choose", which is the sensible default because discovery
             // announces whatever was chosen — a fixed port only matters to
@@ -534,6 +563,12 @@ namespace Orbweaver
             public string? RemoteControlProfileDir { get; set; }
 
             // Every account to run a relay for.
+            //
+            // CB-300: still read, as one part of a union, by the peer link
+            // (PeerRosterDirs) — no screen writes it any more, but whatever it
+            // holds is still offered, so nothing shared before drops out. A
+            // profile added in Settings → Claude Code is offered by the same
+            // union through ClaudeCodeProfileDirs.
             //
             // Replaces the single RemoteControlProfileDir above, which is kept
             // only so an existing setting isn't silently dropped — see the
@@ -632,6 +667,13 @@ namespace Orbweaver
             // setting would miss the entire point of an ambient cue, which is
             // to tell you something before you go looking.
             public bool TurnSoundsEnabled { get; set; } = true;
+
+            // CB-298: the global mute. One flag that silences every sound
+            // the app makes, kept apart from the two volumes and the turn
+            // sounds switch on purpose — unmuting must put back exactly what
+            // was there, and a mute that rewrote those would lose them to a
+            // crash between mute and unmute. Off on a fresh install.
+            public bool Muted { get; set; }
 
             // null = the platform default (Glass / Windows Notify Messaging),
             // "off", "summary", a system-sound name, or an absolute path. See
@@ -1002,6 +1044,14 @@ namespace Orbweaver
 
         // ---- turn sounds (CB-167) --------------------------------------------
 
+        // The persisted half of AudioMute (CB-298). Everything else goes
+        // through AudioMute, which also stops what is already playing.
+        public static bool Muted
+        {
+            get { Load(); lock (Gate) return _model.Muted; }
+            set { Load(); lock (Gate) _model.Muted = value; Save(); }
+        }
+
         public static bool TurnSoundsEnabled
         {
             get { Load(); lock (Gate) return _model.TurnSoundsEnabled; }
@@ -1262,6 +1312,18 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.OpenClawCronShape = value; Save(); }
         }
 
+        public static ClusterMode OpenClawNativeMode
+        {
+            get { Load(); lock (Gate) return _model.OpenClawNativeMode; }
+            set { Load(); lock (Gate) _model.OpenClawNativeMode = value; Save(); }
+        }
+
+        public static string OpenClawNativeShape
+        {
+            get { Load(); lock (Gate) return _model.OpenClawNativeShape; }
+            set { Load(); lock (Gate) _model.OpenClawNativeShape = value; Save(); }
+        }
+
         public static bool RemoteControlEnabled
         {
             get { Load(); lock (Gate) return _model.RemoteControlEnabled; }
@@ -1457,6 +1519,12 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.NewChatHotkey = value; Save(); }
         }
 
+        public static string? ToggleMuteHotkey
+        {
+            get { Load(); lock (Gate) return _model.ToggleMuteHotkey; }
+            set { Load(); lock (Gate) _model.ToggleMuteHotkey = value; Save(); }
+        }
+
         public static string? ToggleUsageOrbsHotkey
         {
             get { Load(); lock (Gate) return _model.ToggleUsageOrbsHotkey; }
@@ -1508,6 +1576,12 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.OpenClawReplyEnabled; }
             set { Load(); lock (Gate) _model.OpenClawReplyEnabled = value; Save(); }
+        }
+
+        public static bool OpenClawApproveEnabled
+        {
+            get { Load(); lock (Gate) return _model.OpenClawApproveEnabled; }
+            set { Load(); lock (Gate) _model.OpenClawApproveEnabled = value; Save(); }
         }
 
         public static bool ClaudeCodeChatEnabled
@@ -2277,6 +2351,7 @@ namespace Orbweaver
                         OpenClawPort = root["openclawPort"]?.GetValue<int>() ?? DefaultOpenClawPort,
                         OpenClawFingerprint = Text(root["openclawFingerprint"]),
                         OpenClawReplyEnabled = root["openclawReplyEnabled"]?.GetValue<bool>() ?? false,
+                        OpenClawApproveEnabled = root["openclawApproveEnabled"]?.GetValue<bool>() ?? false,
                         OpenClawActiveWithinMinutes =
                             root["openclawActiveWithinMinutes"]?.GetValue<int>() ?? DefaultOpenClawActiveWithin,
                         OpenClawHeartbeatMode = ClusterModeFrom(
@@ -2286,6 +2361,9 @@ namespace Orbweaver
                         OpenClawCronMode = ClusterModeFrom(root["openclawCronMode"], null),
                         OpenClawCronShape = Shape(
                             root["openclawCronShape"], DefaultOpenClawCronShape),
+                        OpenClawNativeMode = ClusterModeFrom(root["openclawNativeMode"], null),
+                        OpenClawNativeShape = Shape(
+                            root["openclawNativeShape"], DefaultOpenClawNativeShape),
                         RemoteControlEnabled = root["remoteControlEnabled"]?.GetValue<bool>() ?? false,
                         PersonaPoolDir = Text(root["personaPoolDir"]),
                         RemoteControlProfileDir = Text(root["remoteControlProfileDir"]),
@@ -2298,6 +2376,7 @@ namespace Orbweaver
                         ToggleOrbsHotkey = Text(root["toggleOrbsHotkey"]),
                         NewChatHotkey = Text(root["newChatHotkey"]),
                         ToggleUsageOrbsHotkey = Text(root["toggleUsageOrbsHotkey"]),
+                        ToggleMuteHotkey = Text(root["toggleMuteHotkey"]),
                         ClaudeCodeChatEnabled = root["claudeCodeChatEnabled"]?.GetValue<bool>() ?? true,
                         ClaudeCodeReplyEnabled = root["claudeCodeReplyEnabled"]?.GetValue<bool>() ?? false,
                         CodexChatEnabled = root["codexChatEnabled"]?.GetValue<bool>() ?? true,
@@ -2358,6 +2437,7 @@ namespace Orbweaver
                         SpeakEngine = Text(root["speakEngine"]),
                         SpeakScope = Text(root["speakScope"]),
                         TurnSoundsEnabled = Bool(root["turnSoundsEnabled"], true),
+                        Muted = Bool(root["muted"], false),
                         TurnFinishedSound = Text(root["turnFinishedSound"]),
                         NeedsAttentionSound = Text(root["needsAttentionSound"]),
                         NewChatLastCli = Text(root["newChatLastCli"])
@@ -2936,6 +3016,7 @@ namespace Orbweaver
                         ["openclawPort"] = _model.OpenClawPort,
                         ["openclawFingerprint"] = _model.OpenClawFingerprint,
                         ["openclawReplyEnabled"] = _model.OpenClawReplyEnabled,
+                        ["openclawApproveEnabled"] = _model.OpenClawApproveEnabled,
                         ["openclawActiveWithinMinutes"] = _model.OpenClawActiveWithinMinutes,
                         // Still written, and derived rather than stored: an older
                         // build reading this file has no idea what
@@ -2951,12 +3032,15 @@ namespace Orbweaver
                         ["openclawHeartbeatShape"] = _model.OpenClawHeartbeatShape,
                         ["openclawCronMode"] = OrbClusters.Name(_model.OpenClawCronMode),
                         ["openclawCronShape"] = _model.OpenClawCronShape,
+                        ["openclawNativeMode"] = OrbClusters.Name(_model.OpenClawNativeMode),
+                        ["openclawNativeShape"] = _model.OpenClawNativeShape,
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,
                         ["toggleOrbsHotkey"] = _model.ToggleOrbsHotkey,
                         ["newChatHotkey"] = _model.NewChatHotkey,
                         ["toggleUsageOrbsHotkey"] = _model.ToggleUsageOrbsHotkey,
+                        ["toggleMuteHotkey"] = _model.ToggleMuteHotkey,
                         // Null when never chosen rather than a copy of the
                         // current default, the same as speakVoice below — so
                         // changing which profile ships as the default still
@@ -3006,6 +3090,7 @@ namespace Orbweaver
                         ["speakEngine"] = _model.SpeakEngine,
                         ["speakScope"] = _model.SpeakScope,
                         ["turnSoundsEnabled"] = _model.TurnSoundsEnabled,
+                        ["muted"] = _model.Muted,
                         ["turnFinishedSound"] = _model.TurnFinishedSound,
                         ["needsAttentionSound"] = _model.NeedsAttentionSound,
                         ["newChatRecentFolders"] = newChatRecentFolders,

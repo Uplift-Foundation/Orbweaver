@@ -21,8 +21,10 @@ namespace Orbweaver
     //  2. TurnUpdated carries the whole turn, already mutated — not a delta. A
     //     dropped or coalesced event then costs nothing, because the panel
     //     re-reads Text. Deltas make the view desyncable with no way to notice.
-    //     (The gateway obliges: its `agent` events carry data.text as a full
-    //     snapshot alongside data.delta.)
+    //     (The gateway does not oblige: on 2026.10.5 only the first and last
+    //     assistant events of a run carry data.text, and the rest carry
+    //     data.delta alone, so an implementation reassembles the deltas itself
+    //     and hands the panel the whole turn.)
     //  3. SendAsync raises TurnAdded for the user's own turn. The panel never
     //     inserts optimistically, so exactly one thing owns the transcript and a
     //     failed send leaves no ghost behind.
@@ -112,6 +114,39 @@ namespace Orbweaver
         }
 
         public bool IsComplete { get; set; }
+
+        // CB-270: drawn from a gateway rollup message; see HistoryTurn.FromRollup.
+        public bool FromRollup { get; init; }
+
+        // CB-270 stage 3b: a delivery-mirror turn, and a turn whose caption was blanked
+        // because its words are shown by the other half of a covered pair (its picture
+        // kept). The page boundary may drop either as a duplicate picture, never any
+        // other turn.
+        public bool IsMirror { get; init; }
+
+        public bool Blanked { get; init; }
+
+        // CB-270 stage 3b: a named-path turn not paired with a delivery-mirror on its
+        // own page, so it can account for one on the next page over.
+        public bool FreeNamed { get; init; }
+
+        private bool _isError;
+
+        // CB-270: a tool line whose result reported an error. Mutable and
+        // notifying, like Text, because a live tool line learns it failed only
+        // when the result arrives, after the row is already on screen. It never
+        // changes Text: AppendNewTail anchors on (Role, Text), and a line that
+        // reworded itself on failure would no longer match its history twin.
+        public bool IsError
+        {
+            get => _isError;
+            set
+            {
+                if (_isError == value) return;
+                _isError = value;
+                Raise();
+            }
+        }
 
         // When this turn happened, in local time. The gateway records a
         // timestamp per message and the panel shows it, so a conversation that
@@ -586,6 +621,57 @@ namespace Orbweaver
         event Action? WaitChanged;
     }
 
+    // One choice in a run-controls picker: the id that is sent and the label that
+    // is shown. They differ in the gateway's own data, so the panel sends one and
+    // displays the other.
+    public sealed record RemoteRunChoice(string Id, string Label);
+
+    // What the run-controls chip and flyout draw, with nothing in it that needs a
+    // gateway to understand.
+    //
+    // ThinkingId is null when nobody chose a level and the model's default applies,
+    // and FastIsSet likewise says whether fast mode was chosen or is the default.
+    // CanResetToDefault is whether a "Default" choice may be offered at all.
+    public sealed record RemoteRunOptions(
+        string ModelId,
+        IReadOnlyList<RemoteRunChoice> Models,
+        string? ThinkingId,
+        string? ThinkingDefaultLabel,
+        IReadOnlyList<RemoteRunChoice> ThinkingChoices,
+        bool Fast,
+        bool FastIsSet,
+        bool Locked,
+        bool CanResetToDefault,
+        string ChipText);
+
+    // A session whose model, thinking level and fast mode a person may change from
+    // the panel (CB-270 Stage 4).
+    //
+    // A property, not a marker interface, because the same class serves
+    // conversations that have these controls and conversations that must not: a
+    // surface chat's model is the channel's configuration, so changing it would
+    // change how the agent answers everyone else in that channel. RunOptions is
+    // null when the picker should not show, which is the IsRoom pattern.
+    //
+    // Each Set returns null on success or the sentence to show. A null argument
+    // means "back to the default", which the gateway accepts as a JSON null on all
+    // three fields (measured).
+    public interface IRemoteChatRunOptions
+    {
+        RemoteRunOptions? RunOptions { get; }
+
+        // Raised on the UI thread when what RunOptions would answer has changed.
+        event Action? RunOptionsChanged;
+
+        Task<string?> SetModelAsync(string? id);
+        Task<string?> SetThinkingAsync(string? id);
+        Task<string?> SetFastModeAsync(bool? on);
+
+        // How long the agent may run for a send, in minutes; null is the gateway's
+        // own default. Held in memory only and never zero.
+        int? TimeoutMinutes { get; set; }
+    }
+
     // A session where a pasted picture can actually go somewhere.
     //
     // Not on IRemoteChatSession itself, for the same reason the three
@@ -599,6 +685,13 @@ namespace Orbweaver
     // cannot open.
     public interface IRemoteChatImages
     {
+        // Whether pictures can be sent right now. The panel asks before it takes a
+        // paste as a picture, so a session that implements this for one kind of
+        // conversation (a native gateway chat) and not another does not turn the
+        // other's pastes into pictures that then fail. Defaults to true, which is
+        // what every implementation before this one meant.
+        bool CanSendImages => true;
+
         // Sends text together with pictures already saved to disk. Called
         // instead of SendAsync exactly when the panel is holding at least
         // one pasted picture; a message with none still goes through
@@ -609,9 +702,23 @@ namespace Orbweaver
     // One option in a dialog the session is blocked on. Key is what gets sent —
     // a digit, for the numbered lists Claude Code puts up — and Label is the
     // dialog's own wording, read off the screen rather than guessed at.
-    public sealed record ChatPromptOption(string Key, string Label);
+    // ApprovalId binds an option to the one request it was drawn for (CB-270 Stage
+    // 6): a click answers that request or nothing, never whichever one happens to
+    // be showing by the time it lands. Null for every other kind of prompt.
+    public sealed record ChatPromptOption(string Key, string Label, string? ApprovalId = null);
 
-    public sealed record ChatPrompt(string Title, IReadOnlyList<ChatPromptOption> Options);
+    // ArmedActivation marks a prompt whose answer cannot be undone and must not be
+    // given by accident: its options ignore presses for a moment after the prompt
+    // first shows or changes, and activate on release over the same option. False
+    // for a permission bar read off a terminal, which answers on a press.
+    //
+    // ElsewhereLabel replaces the "Answer in the terminal" link's words for a
+    // prompt that has no terminal to go to, and a prompt that sets it keeps the
+    // panel open when that link is used, since the answer to "where else" is a note
+    // in the transcript and not another window.
+    public sealed record ChatPrompt(
+        string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false,
+        string? ElsewhereLabel = null);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can

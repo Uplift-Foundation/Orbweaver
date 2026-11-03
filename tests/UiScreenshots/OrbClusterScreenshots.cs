@@ -52,6 +52,16 @@ public class OrbClusterScreenshots
             new[] { "heart", "circle", "line" },
             "arrangement-three-shapes.png");
 
+    // CB-270: the fourth predefined group. Chats a heart, heartbeats a circle,
+    // crons a line and an agent's own sessions a diamond, each in its own colour,
+    // none on top of another — the picture the setting exists to make possible.
+    [AvaloniaFact]
+    public void FourShapesWhenAnAgentsOwnSessionsAreGivenTheirOwnToo()
+        => Plot(
+            new[] { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3 },
+            new[] { "heart", "circle", "line", "diamond" },
+            "arrangement-four-shapes.png");
+
     // Heartbeats separated and crons left with the chats — the mixed case, and
     // the one that shows the bands are cut from the groups actually in use
     // rather than from all three slots.
@@ -110,7 +120,8 @@ public class OrbClusterScreenshots
         {
             Color.FromRgb(0xd9, 0x77, 0x57),   // chats — the app's own orange
             Color.FromRgb(0x6f, 0xa8, 0xdc),   // heartbeats
-            Color.FromRgb(0x93, 0xc4, 0x7d)    // crons
+            Color.FromRgb(0x93, 0xc4, 0x7d),   // crons
+            Color.FromRgb(0xe0, 0xb0, 0x4a)    // agents' own sessions (CB-270)
         };
 
         for (var i = 0; i < placed.Length; i++)
@@ -188,12 +199,14 @@ public class OrbClusterScreenshots
         var enabled = OrbweaverSettings.OpenClawEnabled;
         var heartbeats = OrbweaverSettings.OpenClawHeartbeatMode;
         var crons = OrbweaverSettings.OpenClawCronMode;
+        var native = OrbweaverSettings.OpenClawNativeMode;
 
         try
         {
             OrbweaverSettings.OpenClawEnabled = true;
             OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.OwnShape;
             OrbweaverSettings.OpenClawCronMode = ClusterMode.OwnShape;
+            OrbweaverSettings.OpenClawNativeMode = ClusterMode.OwnShape;
 
             var ctor = typeof(SettingsWindow).GetConstructor(
                 BindingFlags.NonPublic | BindingFlags.Instance,
@@ -221,7 +234,7 @@ public class OrbClusterScreenshots
             window.Show();
             ScreenshotHelper.Flush();
 
-            // The four rows this feature adds are in there, which is what the
+            // The rows this feature adds are in there, which is what the
             // capture is of — asserted so a framing change cannot quietly turn
             // this into a photograph of something else.
             var labels = panel.GetLogicalDescendants().OfType<TextBlock>()
@@ -232,6 +245,8 @@ public class OrbClusterScreenshots
             Assert.Contains("Heartbeat shape", labels);
             Assert.Contains("Cron sessions", labels);
             Assert.Contains("Cron shape", labels);
+            Assert.Contains(OpenClawNativeText.SettingLabel, labels);
+            Assert.Contains(OpenClawNativeText.ShapeLabel, labels);
 
             // The window, not the panel: see the note above this test.
             ScreenshotHelper.CaptureAlreadyShown(window, "settings-openclaw-cluster-rows.png");
@@ -245,6 +260,7 @@ public class OrbClusterScreenshots
         }
         finally
         {
+            OrbweaverSettings.OpenClawNativeMode = native;
             OrbweaverSettings.OpenClawCronMode = crons;
             OrbweaverSettings.OpenClawHeartbeatMode = heartbeats;
             OrbweaverSettings.OpenClawEnabled = enabled;

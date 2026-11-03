@@ -738,6 +738,19 @@ namespace Orbweaver
             && !context.IsMain && context.SessionId is not null
             && context.Methods.Contains(OpenClawOrbActions.PatchMethod);
 
+        // CB-270: Keep on screen and Rename conversation. Both are sessions.patch,
+        // so they need the method and write scope the End row does, and a session
+        // id to send as expectedSessionId, but not the abort method and not a
+        // non-main session: pinning or renaming an agent's main session is
+        // allowed, and there is no run to stop first. A room orb stands for
+        // several sessions and neither means anything for it. In practice the
+        // write scope is there exactly when "Allow replying to agents" is on.
+        internal static bool CanPatchOpenClaw(SessionStatus status, OpenClawActionContext context) =>
+            status.Source == SessionSource.OpenClaw && !status.IsRoom
+            && context.Connected && context.Key is not null && context.SessionId is not null
+            && context.Methods.Contains(OpenClawOrbActions.PatchMethod)
+            && context.Scopes.Contains(OpenClawOrbActions.WriteScope);
+
         // --- the hygiene sweep ------------------------------------------------
         // Nothing but the SessionEnd hook's `rm -f` has ever deleted a status
         // file, and SessionEnd only fires on a graceful exit. So a Ctrl+C'd

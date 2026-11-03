@@ -27,5 +27,7 @@
          can be driven through OpenClawGateway here without a second copy of
          it to keep in step. -->
     <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
+    <!-- CB-270 Stage 3: the captured native runs, as one scrubbed constant. -->
+    <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
   </ItemGroup>
 </Project>

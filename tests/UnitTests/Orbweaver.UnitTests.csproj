@@ -20,6 +20,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Orbweaver.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- CB-270: scrubbed real chat.history pages, read at test time. -->
+    <Content Include="Fixtures\pages\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- The orb-geometry sweep's case matrix and invariants, shared with

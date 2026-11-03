@@ -271,6 +271,35 @@ public class TurnSoundScanTests : IDisposable
         Assert.Single(_played);
     }
 
+    // CB-298: the same transition, muted, plays nothing and stamps nothing —
+    // so the identical one after unmuting plays exactly what it always did,
+    // with no backlog of stale chimes released and no rate-limit gap spent.
+    [AvaloniaFact]
+    public async Task AFinishedTurnWhileMutedIsSilentAndTheSameOneAfterUnmutingPlaysOnce()
+    {
+        using var scratch = new Scratch();
+        scratch.Write("session-a", state: "generating");
+        var manager = Scan(scratch);
+
+        try
+        {
+            AudioMute.Set(true);
+            scratch.Write("session-a", state: "idle");
+            manager.ScanAndUpdate();
+            await TurnSounds.ChimesEnqueuedSoFar();
+            Assert.Empty(_played);
+
+            AudioMute.Set(false);
+            scratch.Write("session-a", state: "generating");
+            manager.ScanAndUpdate();
+            scratch.Write("session-a", state: "idle");
+            manager.ScanAndUpdate();
+            await WaitForChimeAsync();
+            Assert.Single(_played);
+        }
+        finally { AudioMute.Set(false); }
+    }
+
     [AvaloniaFact]
     public async Task ARepeatScanOfTheSameIdleStateDoesNotReplay()
     {

@@ -167,6 +167,20 @@ namespace Orbweaver
         [JsonIgnore]
         public bool Heartbeat { get; set; }
 
+        // CB-270: whether the gateway lists this session with no chat surface
+        // behind it. [JsonIgnore] for the same reason Heartbeat is — derived
+        // during the scan, and ResetSessionToIdle rewrites a status file from
+        // this object. Rides beside Kind and Heartbeat rather than inside either:
+        // a native main is still Main, and still a heartbeat target.
+        [JsonIgnore]
+        public OpenClawNativeKind Native { get; set; }
+
+        // Whether this OpenClaw session is exempt from the age rules: pinned on
+        // the gateway, or a dashboard session. See OpenClawRetention. [JsonIgnore]
+        // for the same reason Heartbeat is.
+        [JsonIgnore]
+        public bool KeptRegardlessOfAge { get; set; }
+
         // A stand-in orb for a channel, invented by this app rather than
         // reported by anything. It has no conversation of its own — it is the
         // thing the agents in that channel point at, so a room reads as one
@@ -1368,6 +1382,12 @@ namespace Orbweaver
                 && status.Source != SessionSource.ClaudeCloud
                 && status.State != "waiting"
                 && !(status.Source == SessionSource.OpenClaw && status.State == "generating")
+
+                // CB-270: a pinned gateway session, or a dashboard one, is a
+                // durable conversation whose lifecycle is the gateway's archived
+                // flag, not a clock — CB-182's argument above, for the same
+                // reason. OpenClawRetention says which sessions qualify.
+                && !(status.Source == SessionSource.OpenClaw && status.KeptRegardlessOfAge)
                 && now - written > staleAfter)
             {
                 return ScanVerdict.Expired;
@@ -2395,6 +2415,8 @@ namespace Orbweaver
                         OpenClawSessions.AgentIdOf(session.Key) ?? session.Key),
                     Kind = session.Kind,
                     Heartbeat = session.Heartbeat,
+                    Native = session.Native,
+                    KeptRegardlessOfAge = session.KeptRegardlessOfAge,
                 };
 
                 // Namespaced because these ids share a dictionary with Claude
@@ -3760,7 +3782,8 @@ namespace Orbweaver
             var tree = Teams();
             return OrbGroupMenu.ContextFor(
                 tree.RootOf(sessionId), tree.TeamOf(sessionId), AllStatuses,
-                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode);
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode);
         }
 
         // CB-287: an override was written elsewhere (the editor, a Settings
@@ -3895,7 +3918,7 @@ namespace Orbweaver
             int y = work.Y + margin;
             foreach (var window in loose)
             {
-                if (window.IsPinned) continue;
+                if (window.IsPinned || window.HeldByDrag) continue;
 
                 int size = OrbPixels(window, scale);
                 window.Position = new PixelPoint(work.Right - size - margin, y);
@@ -3911,7 +3934,10 @@ namespace Orbweaver
                 .ToList();
             var (targets, userGroups) = LayoutSubset(
                 grouped.Where(w => w.IsVisible).ToList(), OrbArrangement.GroupLayoutMode.Free, obstacles);
-            foreach (var (orb, at) in targets) orb.Position = at;
+            foreach (var (orb, at) in targets)
+            {
+                if (!orb.HeldByDrag) orb.Position = at;
+            }
 
             _groupPlacements = userGroups;
             GroupBackdrops.SetLooseOrbs(visibleLoose);
@@ -5102,7 +5128,7 @@ namespace Orbweaver
                     // An orb whose window has gone (its session ended mid-glide)
                     // has nothing left to land. Waiting on its glide would never
                     // end: it is never stepped, so it is never Done.
-                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    if (!_windows.TryGetValue(id, out var window) || window.HeldByDrag) continue;
                     if (elapsed < delay)
                     {
                         finishedAll = false;
@@ -5131,7 +5157,7 @@ namespace Orbweaver
 
                 foreach (var (id, (from, to)) in _arrangeAnimTargets)
                 {
-                    if (!_windows.TryGetValue(id, out var window)) continue;
+                    if (!_windows.TryGetValue(id, out var window) || window.HeldByDrag) continue;
                     window.Position = new PixelPoint(
                         (int)Math.Round(from.X + (to.X - from.X) * eased),
                         (int)Math.Round(from.Y + (to.Y - from.Y) * eased));
@@ -5154,7 +5180,7 @@ namespace Orbweaver
 
             foreach (var (id, (_, to)) in targets)
             {
-                if (_windows.TryGetValue(id, out var window)) window.Position = to;
+                if (_windows.TryGetValue(id, out var window) && !window.HeldByDrag) window.Position = to;
             }
 
             // A pop cut short by a second drop ends at rest, like its glide.
@@ -5284,7 +5310,8 @@ namespace Orbweaver
         private string GroupIdOf(TeamTree tree, string id) =>
             OrbGroupMenu.ContextFor(
                 tree.RootOf(id), Array.Empty<string>(), _statuses,
-                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode).GroupId;
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode).GroupId;
 
         // What every scan does for groups, before it lays anything out:
         //  - remembers this scan's leads and forgets ones nothing descends from;

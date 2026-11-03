@@ -1,0 +1,1062 @@
+{
+ "messages": [
+  {
+   "role": "user",
+   "content": "U0",
+   "idempotencyKey": "msg0:user",
+   "timestamp": 1793290000000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S1"
+    }
+   ],
+   "timestamp": 1793290001000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc2",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd2"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc2",
+     "content": [
+      {
+       "type": "text",
+       "text": "result2"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290002000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S3"
+    }
+   ],
+   "timestamp": 1793290003000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run4",
+   "content": [
+    {
+     "type": "text",
+     "text": "S1\n\nS3"
+    }
+   ],
+   "timestamp": 1793290004000
+  },
+  {
+   "role": "user",
+   "content": "U5",
+   "idempotencyKey": "msg5:user",
+   "timestamp": 1793290005000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S6 alpha"
+    }
+   ],
+   "timestamp": 1793290006000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc7",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd7"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc7",
+     "content": [
+      {
+       "type": "text",
+       "text": "result7"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290007000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S8 beta"
+    }
+   ],
+   "timestamp": 1793290008000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run9",
+   "content": [
+    {
+     "type": "text",
+     "text": "S6   alpha\nS8\tbeta "
+    }
+   ],
+   "timestamp": 1793290009000
+  },
+  {
+   "role": "user",
+   "content": "U10",
+   "idempotencyKey": "msg10:user",
+   "timestamp": 1793290010000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S11"
+    }
+   ],
+   "timestamp": 1793290011000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc12",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd12"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc12",
+     "content": [
+      {
+       "type": "text",
+       "text": "result12"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290012000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S13"
+    }
+   ],
+   "timestamp": 1793290013000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run14",
+   "content": [
+    {
+     "type": "text",
+     "text": "S13\n\nEXTRA14"
+    }
+   ],
+   "timestamp": 1793290014000
+  },
+  {
+   "role": "user",
+   "content": "U15",
+   "idempotencyKey": "msg15:user",
+   "timestamp": 1793290015000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S16"
+    }
+   ],
+   "timestamp": 1793290016000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc17",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd17"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc17",
+     "content": [
+      {
+       "type": "text",
+       "text": "result17"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290017000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run18",
+   "content": [
+    {
+     "type": "text",
+     "text": "R18"
+    }
+   ],
+   "timestamp": 1793290018000
+  },
+  {
+   "role": "user",
+   "content": "U19",
+   "idempotencyKey": "msg19:user",
+   "timestamp": 1793290019000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME"
+    }
+   ],
+   "timestamp": 1793290020000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc21",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd21"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc21",
+     "content": [
+      {
+       "type": "text",
+       "text": "result21"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290021000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME"
+    }
+   ],
+   "timestamp": 1793290022000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run23",
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME\n\nSAME"
+    }
+   ],
+   "timestamp": 1793290023000
+  },
+  {
+   "role": "user",
+   "content": "U24",
+   "idempotencyKey": "msg24:user",
+   "timestamp": 1793290024000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME"
+    }
+   ],
+   "timestamp": 1793290025000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc26",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd26"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc26",
+     "content": [
+      {
+       "type": "text",
+       "text": "result26"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290026000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME"
+    }
+   ],
+   "timestamp": 1793290027000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run28",
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME"
+    }
+   ],
+   "timestamp": 1793290028000
+  },
+  {
+   "role": "user",
+   "content": "U29",
+   "idempotencyKey": "msg29:user",
+   "timestamp": 1793290029000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME"
+    }
+   ],
+   "timestamp": 1793290030000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc31",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd31"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc31",
+     "content": [
+      {
+       "type": "text",
+       "text": "result31"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290031000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run32",
+   "content": [
+    {
+     "type": "text",
+     "text": "SAME\n\nSAME"
+    }
+   ],
+   "timestamp": 1793290032000
+  },
+  {
+   "role": "user",
+   "content": "U33",
+   "idempotencyKey": "msg33:user",
+   "timestamp": 1793290033000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S34 here it is\nMEDIA:/home/op/media/pic34.png"
+    }
+   ],
+   "timestamp": 1793290034000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc35",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd35"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc35",
+     "content": [
+      {
+       "type": "text",
+       "text": "result35"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290035000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run36",
+   "content": [
+    {
+     "type": "text",
+     "text": "S34 here it is\nMEDIA:/home/op/media/pic34.png"
+    }
+   ],
+   "timestamp": 1793290036000
+  },
+  {
+   "role": "user",
+   "content": "U37",
+   "idempotencyKey": "msg37:user",
+   "timestamp": 1793290037000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S38 working on it"
+    }
+   ],
+   "timestamp": 1793290038000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc39",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd39"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc39",
+     "content": [
+      {
+       "type": "text",
+       "text": "result39"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290039000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run40",
+   "content": [
+    {
+     "type": "text",
+     "text": "S38 working on it\n\nEXTRA40 /home/op/media/pic40.png"
+    }
+   ],
+   "timestamp": 1793290040000
+  },
+  {
+   "role": "user",
+   "content": "U41",
+   "idempotencyKey": "msg41:user",
+   "timestamp": 1793290041000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S42 clip"
+    }
+   ],
+   "timestamp": 1793290042000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc43",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd43"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc43",
+     "content": [
+      {
+       "type": "text",
+       "text": "result43"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290043000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run44",
+   "content": [
+    {
+     "type": "text",
+     "text": "S42 clip"
+    },
+    {
+     "type": "video",
+     "fileName": "clip44.mp4",
+     "mimeType": "video/mp4",
+     "url": "/api/media/clip44.mp4"
+    }
+   ],
+   "timestamp": 1793290044000
+  },
+  {
+   "role": "user",
+   "content": "U45",
+   "idempotencyKey": "msg45:user",
+   "timestamp": 1793290045000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S46"
+    }
+   ],
+   "timestamp": 1793290046000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc47",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd47"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc47",
+     "content": [
+      {
+       "type": "text",
+       "text": "result47"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290047000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run48",
+   "content": [
+    {
+     "type": "text",
+     "text": "S46\n\nEXTRA48"
+    },
+    {
+     "type": "attachment_error",
+     "fileName": "clip48.mp4",
+     "mimeType": "video/mp4",
+     "reason": "delivery-failed"
+    }
+   ],
+   "timestamp": 1793290048000
+  },
+  {
+   "role": "user",
+   "content": "U49",
+   "idempotencyKey": "msg49:user",
+   "timestamp": 1793290049000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S50 look"
+    }
+   ],
+   "timestamp": 1793290050000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc51",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd51"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc51",
+     "content": [
+      {
+       "type": "text",
+       "text": "result51"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290051000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run52",
+   "content": [
+    {
+     "type": "text",
+     "text": "S50 look"
+    },
+    {
+     "type": "image",
+     "data": "iVBORw0KGgo=",
+     "mimeType": "image/png"
+    }
+   ],
+   "timestamp": 1793290052000
+  },
+  {
+   "role": "user",
+   "content": "U53",
+   "idempotencyKey": "msg53:user",
+   "timestamp": 1793290053000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S54"
+    }
+   ],
+   "timestamp": 1793290054000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc55",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd55"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc55",
+     "content": [
+      {
+       "type": "text",
+       "text": "result55"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290055000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S56"
+    }
+   ],
+   "timestamp": 1793290056000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run57",
+   "content": [
+    {
+     "type": "text",
+     "text": "S54\n\nS56"
+    }
+   ],
+   "timestamp": 1793290057000
+  },
+  {
+   "role": "assistant",
+   "api": "cli",
+   "provider": "claude-cli",
+   "stopReason": "stop",
+   "idempotencyKey": "cli-assistant:run58",
+   "content": [
+    {
+     "type": "text",
+     "text": "R58 lone"
+    }
+   ],
+   "timestamp": 1793290058000
+  },
+  {
+   "role": "user",
+   "content": "U59",
+   "idempotencyKey": "msg59:user",
+   "timestamp": 1793290059000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "S60"
+    }
+   ],
+   "timestamp": 1793290060000
+  },
+  {
+   "role": "assistant",
+   "api": "anthropic-messages",
+   "provider": "claude-cli",
+   "stopReason": "tool_use",
+   "__openclaw": {
+    "importedFrom": "claude-cli"
+   },
+   "content": [
+    {
+     "type": "toolcall",
+     "id": "tc61",
+     "name": "exec",
+     "arguments": {
+      "command": "cmd61"
+     }
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "tc61",
+     "content": [
+      {
+       "type": "text",
+       "text": "result61"
+      }
+     ]
+    }
+   ],
+   "timestamp": 1793290061000
+  }
+ ],
+ "totalMessages": 62,
+ "cases": {
+  "drop": [
+   4,
+   9,
+   23,
+   28,
+   36,
+   44,
+   52,
+   57
+  ],
+  "keep": [
+   14,
+   18,
+   32,
+   40,
+   48,
+   58
+  ]
+ }
+}

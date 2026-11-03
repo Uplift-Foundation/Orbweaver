@@ -28,8 +28,9 @@ namespace Orbweaver
         // changes to that same object's Items.
         private readonly NativeMenu _menu = new();
 
-        // Keyed by state, not by colour: there are only ever three live entries,
-        // and a colour change clears the lot (see ReapplyStateColors).
+        // Keyed by asset name (TrayIconLook.AssetName), not by colour: there are
+        // only ever six live entries — three states, muted or not — and a colour
+        // change clears the lot (see ReapplyStateColors).
         //
         // This cache is what keeps the re-tint's pixel loop off the 2s tick.
         // Apply() is signature-gated, Rebuild calls UpdateIcon, and UpdateIcon
@@ -68,11 +69,17 @@ namespace Orbweaver
 
             _tray = new TrayIcon
             {
-                Icon = LoadIcon("idle"),
+                Icon = LoadIcon("idle", AudioMute.IsMuted),
                 ToolTipText = Brand.DisplayName,
                 IsVisible = true,
                 Menu = _menu
             };
+
+            // A mute from the hotkey or a chat panel has to reach the menu's
+            // checkbox and the icon too. Refresh is the existing way in, so the
+            // open-menu hold-back still applies to the menu — the icon, set
+            // before it, flips regardless (CB-298).
+            AudioMute.Changed += _ => Refresh();
 
             _menu.Opening += (_, _) =>
             {
@@ -134,6 +141,7 @@ namespace Orbweaver
                                 sessions.Select(s => $"{s.SessionId}:{s.Status.State}:{s.Status.Cwd}:{s.Status.Title}"))
                             + $"|orbs={SessionManager.Instance?.OrbsVisible}"
                             + $"|usage={SessionManager.Instance?.UsageOrbsVisible}"
+                            + $"|muted={AudioMute.IsMuted}"
                             + $"|{ClaudeDesktopManager.Digest()}";
             if (signature == _lastSignature) return;
 
@@ -163,8 +171,9 @@ namespace Orbweaver
             var waiting = sessions.Count(s => s.Status.State == "waiting");
             var generating = sessions.Count(s => s.Status.State == "generating");
 
-            _tray.Icon = LoadIcon(waiting > 0 ? "waiting" : generating > 0 ? "generating" : "idle");
-            _tray.ToolTipText = Summary(sessions.Count, waiting, generating);
+            var muted = AudioMute.IsMuted;
+            _tray.Icon = LoadIcon(TrayIconLook.State(waiting, generating), muted);
+            _tray.ToolTipText = Summary(sessions.Count, waiting, generating, muted);
         }
 
         // A colour change doesn't change the session list, so Apply's signature is
@@ -246,6 +255,16 @@ namespace Orbweaver
             usageOrbsItem.Click += (_, _) => ToggleUsageOrbsVisible();
             menu.Add(usageOrbsItem);
 
+            // The same switch as the hotkey and the chat panel's speaker button
+            // (CB-298): one flag, three surfaces, all through ToggleMute.
+            var muteItem = new NativeMenuItem("Mute")
+            {
+                ToggleType = MenuItemToggleType.CheckBox,
+                IsChecked = AudioMute.IsMuted
+            };
+            muteItem.Click += (_, _) => ToggleMute();
+            menu.Add(muteItem);
+
             var resetItem = new NativeMenuItem("Reset all sessions to idle")
             {
                 IsEnabled = sessions.Count > 0
@@ -302,6 +321,12 @@ namespace Orbweaver
         // Safe to call for the same reason as ToggleOrbsVisible.
         internal static void ToggleUsageOrbsVisible() =>
             SessionManager.Instance?.SetUsageOrbsVisible(!SessionManager.Instance.UsageOrbsVisible);
+
+        // The hotkey and the tray item both land here, as do the chat panel's
+        // button and anything else that mutes (CB-298). Unlike the toggles
+        // above it needs no SessionManager, so it works — and is tested — in
+        // a headless run.
+        internal static void ToggleMute() => AudioMute.Toggle();
 
         internal static void ResetAllSessions() =>
             SessionManager.Instance?.ResetAllSessionsToIdle();
@@ -372,14 +397,17 @@ namespace Orbweaver
         // rather than waiting out the next ten-second tick.
         internal static void ConnectToOtherMachines() => PeerSessions.Restart();
 
-        internal static string Summary(int total, int waiting, int generating)
+        // A mute left on is readable from the hover text too, not only from
+        // the slash on the icon (CB-298).
+        internal static string Summary(int total, int waiting, int generating, bool muted = false)
         {
-            if (total == 0) return $"{Brand.DisplayName} — no sessions";
+            var muteSuffix = muted ? ", muted" : "";
+            if (total == 0) return $"{Brand.DisplayName} — no sessions{muteSuffix}";
 
             var parts = new List<string> { total == 1 ? "1 session" : $"{total} sessions" };
             if (waiting > 0) parts.Add($"{waiting} needs you");
             if (generating > 0) parts.Add($"{generating} working");
-            return $"{Brand.DisplayName} — " + string.Join(", ", parts);
+            return $"{Brand.DisplayName} — " + string.Join(", ", parts) + muteSuffix;
         }
 
         // An agent's name within its team if it has one, else the chat name if
@@ -430,14 +458,15 @@ namespace Orbweaver
             return $"{folder} — {state}";
         }
 
-        private WindowIcon LoadIcon(string state)
+        private WindowIcon LoadIcon(string state, bool muted)
         {
-            if (_iconCache.TryGetValue(state, out var cached)) return cached;
+            var asset = TrayIconLook.AssetName(state, muted);
+            if (_iconCache.TryGetValue(asset, out var cached)) return cached;
 
-            var icon = Tinted(state)
+            var icon = Tinted(state, muted)
                        ?? new WindowIcon(AssetLoader.Open(
-                           new Uri($"avares://{Brand.AssemblyName}/Assets/tray-{state}.png")));
-            _iconCache[state] = icon;
+                           new Uri($"avares://{Brand.AssemblyName}/Assets/{asset}.png")));
+            _iconCache[asset] = icon;
             return icon;
         }
 
@@ -463,7 +492,11 @@ namespace Orbweaver
         // something about the re-tint failed, and then the baked PNG is a
         // graceful answer: the icon still says which state we're in, just not in
         // the chosen hue.
-        internal static WindowIcon? Tinted(string state)
+        //
+        // The muted variants (CB-298) are the same single-colour alpha mask with
+        // a slash cut through it, so this works on them unchanged; the colour is
+        // still the base state's.
+        internal static WindowIcon? Tinted(string state, bool muted = false)
         {
             if (OrbColors.IsDefault(state)) return null;
 
@@ -472,7 +505,7 @@ namespace Orbweaver
             try
             {
                 using var source = new Bitmap(AssetLoader.Open(
-                    new Uri($"avares://{Brand.AssemblyName}/Assets/tray-{state}.png")));
+                    new Uri($"avares://{Brand.AssemblyName}/Assets/{TrayIconLook.AssetName(state, muted)}.png")));
 
                 // 64x64, which is what make-icons.py renders so the menu bar has
                 // retina pixels to downsample from.

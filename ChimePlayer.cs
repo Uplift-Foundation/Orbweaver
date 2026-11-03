@@ -193,7 +193,9 @@ namespace Orbweaver
             var factory = ProcessFactoryForTests;
             if (factory is not null) return factory(path);
 
-            if (SilenceForTests) return null;
+            // CB-298: the mute, after the factory check for the reason the
+            // comment on SilenceForTests gives — a fake process makes no sound.
+            if (SilenceForTests || AudioMute.IsMuted) return null;
 
             var proc = BuildProcess(path);
             if (proc is null) return null;
@@ -777,6 +779,11 @@ namespace Orbweaver
         // Round 5, finding 3: no longer excluded — a one-line delegation
         // to KillEverythingLive.
         internal static void KillCurrentlyPlayingForCancellableShutdown() => KillEverythingLive();
+
+        // CB-298: the mute's stop. Same kill as the shutdown path above, under
+        // a name that says what it is for — and, like it, non-sticky: StopAll
+        // would leave the app deaf after the user unmutes.
+        internal static void StopPlaying() => KillEverythingLive();
 
         // CB-168: no longer mentions KillTree — that method's real-OS half
         // moved onto RealChimeProcess.Kill (excluded there); the

@@ -996,6 +996,10 @@ the panel. And sending from the panel types into the session's tmux pane, so
 anything you send from the orb shows up in the terminal too, exactly as if you
 had typed it there. There is no second conversation to get out of step.
 
+**A conversation on an OpenClaw gateway is live while its panel is open (CB-270).** The app holds that conversation's own message stream for as long as a panel is open on it and lets go when the last one closes, so a run streams into the panel word by word instead of freezing at its first few. The reply is drawn the way history draws it: each tool the agent reached for is one line in the transcript (`· name  argument`, the same idiom Claude Code's own transcripts use), between the part of the reply before it and the part after, and a tool that reported an error turns its line red, with the reason on hover. A tool-using run appears once, not as its steps and then the gateway's rollup of them. This applies to every chat surface, Discord and WhatsApp included, in history as well as live; with no panel open nothing is held, and a gateway that refuses the stream leaves a one-line note in that conversation and carries on without it.
+
+**A conversation an agent answers in place has run controls (CB-270).** A chip below the header names the model, thinking level and (when on) fast mode the conversation is running on, and clicking it opens a flyout to change any of them, with a Default choice for each that sends the setting back to what applies when nobody chose, and a time limit of 2, 10, 30 or 60 minutes on what you send next (never "no limit"; the default is the gateway's own). The changes are the gateway's, so every client sees them. The thinking levels offered are the model's own, shown by their labels and sent by their ids. On an agent's main session the model also changes the model its scheduled reminders and heartbeats run on, which the chip's tooltip says. Pasting a picture into such a conversation sends it with your message. None of this appears on a Discord or WhatsApp conversation, where the model is the channel's configuration and changing it would change how the agent answers everyone else there, or when replying is off.
+
 **The header says which conversation this is, and where it is happening.** The
 name and the picture on the first line, the room or the place on the second,
 and under those the facts that are true whether or not anybody has named the
@@ -1076,13 +1080,14 @@ OpenClaw shows up disabled, with a reason stated directly under the row rather t
 
 ## Global hotkeys
 
-Three system-wide hotkeys, all working whether or not Orbweaver has focus:
+Four system-wide hotkeys, all working whether or not Orbweaver has focus:
 
 | Default | Does | Override key |
 | --- | --- | --- |
 | **Ctrl+Alt+H** | hides or shows every orb, usage orbs included — the tray menu's "Show orbs" checkbox | `toggleOrbsHotkey` |
 | **Ctrl+Alt+N** | opens **New chat**, or brings the one already open to the front — the tray menu's "New chat…" | `newChatHotkey` |
 | **Ctrl+Alt+U** | hides or shows only the account usage orbs — the tray menu's "Show usage orbs" checkbox | `toggleUsageOrbsHotkey` |
+| **Ctrl+Alt+M** | mutes or unmutes every sound Orbweaver makes — the tray menu's "Mute" checkbox | `toggleMuteHotkey` |
 
 Each is reachable without finding the menu bar icon first. **Ctrl+Alt+N never opens a second New chat window** and never closes the one that's open: pressed again, it un-minimises the dialog if needed and brings it forward, wherever it was opened from.
 
@@ -1091,10 +1096,10 @@ macOS registers them through Carbon's `RegisterEventHotKey`, which asks the wind
 Override any of them in `settings.json`:
 
 ```json
-{ "toggleOrbsHotkey": "Ctrl+Shift+H", "newChatHotkey": "Ctrl+Shift+N", "toggleUsageOrbsHotkey": "Ctrl+Shift+U" }
+{ "toggleOrbsHotkey": "Ctrl+Shift+H", "newChatHotkey": "Ctrl+Shift+N", "toggleUsageOrbsHotkey": "Ctrl+Shift+U", "toggleMuteHotkey": "Ctrl+Shift+M" }
 ```
 
-Modifiers are `Ctrl`/`Control`, `Alt`/`Option`, `Shift`, and `Cmd`/`Command`/`Win`/`Windows`/`Super`/`Meta` (all four spellings mean the same physical key, whichever platform you're on), joined with `+` and ending in one letter or one digit (`Ctrl+Alt+5` is the 5 key). Other keys — `F5`, `Space`, punctuation, a modifier used as the key — are rejected, because neither platform's hook has a code for them yet, and a rejected value falls back like any other. An unparseable value falls back to that hotkey's built-in default rather than leaving it unregistered, so a typo costs you the override, not the feature. If two overrides resolve to the same combination, however they're spelled, the hotkey listed first in the table above keeps it and the later one falls back to its own default — so if `newChatHotkey` names the orb toggle's combination, New chat falls back to Ctrl+Alt+N, and a `toggleUsageOrbsHotkey` that clashes with either of the other two falls back to Ctrl+Alt+U. If that default is taken too — the toggle moved to Ctrl+Alt+N, say — the later hotkey registers nothing at all rather than registering one combination twice. Either way a line saying so goes into `hotkeys.log`, beside `crash.log` in the app's log directory. So does a combination the operating system refuses — usually because another app already holds it — naming the hotkey and the combination it tried, so a hotkey that does nothing always leaves a reason behind. There is no settings-window control for any of them yet — `settings.json` is the only place to change them.
+Modifiers are `Ctrl`/`Control`, `Alt`/`Option`, `Shift`, and `Cmd`/`Command`/`Win`/`Windows`/`Super`/`Meta` (all four spellings mean the same physical key, whichever platform you're on), joined with `+` and ending in one letter or one digit (`Ctrl+Alt+5` is the 5 key). Other keys — `F5`, `Space`, punctuation, a modifier used as the key — are rejected, because neither platform's hook has a code for them yet, and a rejected value falls back like any other. An unparseable value falls back to that hotkey's built-in default rather than leaving it unregistered, so a typo costs you the override, not the feature. If two overrides resolve to the same combination, however they're spelled, the hotkey listed first in the table above keeps it and the later one falls back to its own default — so if `newChatHotkey` names the orb toggle's combination, New chat falls back to Ctrl+Alt+N, a `toggleUsageOrbsHotkey` that clashes with either of the other two falls back to Ctrl+Alt+U, and a `toggleMuteHotkey` that clashes with any of the three falls back to Ctrl+Alt+M. If that default is taken too — the toggle moved to Ctrl+Alt+N, say — the later hotkey registers nothing at all rather than registering one combination twice. Either way a line saying so goes into `hotkeys.log`, beside `crash.log` in the app's log directory. So does a combination the operating system refuses — usually because another app already holds it — naming the hotkey and the combination it tried, so a hotkey that does nothing always leaves a reason behind. There is no settings-window control for any of them yet — `settings.json` is the only place to change them.
 
 ## Personas from CLAUDE.md
 
@@ -1599,15 +1604,34 @@ orbs do, and there are three answers rather than two:
 
 | | |
 | --- | --- |
-| **Hidden** | No orb at all. |
+| **Hidden** | No orb at all, except while that session is asking you to approve something (see below). |
 | **With the chats** | An orb, gathered into the same shape as everything else when you press the arrange button. The default, and what the app has always done. |
 | **Own shape** | An orb, gathered into a shape of its own, drawn beside your conversations rather than among them. |
 
-Set both to *Own shape* and the arrange button draws three patterns side by side
-— your chats, the heartbeats, the crons — each with its own entry in Settings
-picking from the same six shapes. Leave both alone and it is one shape, exactly
-as before. The agents keep their colours in any channel they are in whichever you
-pick.
+Set them all to *Own shape* and the arrange button draws up to four patterns side
+by side — your chats, the heartbeats, the crons and your agents' own sessions
+(below) — each with its own entry in Settings picking from the same shapes. Leave
+them alone and it is one shape, exactly as before. The agents keep their colours
+in any channel they are in whichever you pick.
+
+**Agents' own sessions** takes the same three answers for chats that have no chat
+app behind them: any chat you start from Orbweaver's New Chat. It does not touch
+an agent's Discord or WhatsApp conversations, direct messages included, and it
+does not govern an agent's *main* session. That is the one the gateway's
+heartbeat keeps waking, so it follows **Heartbeat sessions**: hide heartbeats and
+the main sessions go with them, and they stay gone, with one exception.
+
+**A hidden session that is asking you to approve something shows its orb anyway (a change to what is on screen, CB-270).** When **Allow approving agent actions** is on and a hidden heartbeat, cron or agent session has an approval waiting, its orb comes back in the waiting colour the moment the request arrives, and goes again the moment you answer the last one, without waiting for the next refresh. A hidden orb cannot ask you anything, which is why this one overrides **Hidden**. With approving off nothing comes back, and a session you archived stays gone.
+
+To keep one on screen the rest of the time, pin it with **Keep on screen** (below): a pinned session is shown even when its setting is *Hidden*, sitting with your chats, or in its own shape if that setting is *Own shape*. The default is *With the chats*, and the shape, when you give it one, is a diamond.
+
+Two things keep a conversation on screen however long it has been quiet, and both
+are the gateway's own: a chat started from New Chat (which ends only when you
+**End the conversation**), and anything pinned. An orb's menu has **Keep on
+screen** to pin or unpin a conversation on the gateway, so it is pinned in every
+client, and **Rename conversation…** to change its name there. Both need "Allow
+replying to agents", and a conversation pinned from another client is kept here
+too — a pinned Discord DM stops timing out.
 
 The shapes sit beside each other rather than anywhere you place them
 individually: each gets a share of the screen in proportion to how many orbs it
@@ -1682,6 +1706,10 @@ treats as a new pairing — so approve the device again there
 waiting until you do. Seeing what your agents are doing and being able to make
 them do things are different powers, which is why the second one is asked for
 separately rather than coming along with the first.
+
+Answering an agent's approval request is a **third switch**, off by default: **Allow approving agent actions**. Turning it on asks the gateway for the `operator.approvals` scope, which it treats as another new pairing, so approve the device there again. With it on, an agent waiting on an approval shows in its chat panel as a prompt: what it wants to run, where, and two buttons, **Deny** first and **Allow once** second. **Allow always is never offered** — it mints a standing grant this app has no way to list or revoke, so the prompt's "How to answer on the gateway" link names the `openclaw` CLI verb and shows the request id as quoted data for anyone who wants one. Nothing answers from the keyboard: the buttons cannot be focused and there is no default one, and a button ignores presses for half a second after a prompt appears or changes, answering on release, so a request that replaces another under the pointer cannot be answered by the click meant for the first. Each button is tied to the request it was drawn for; if that request has gone by the time of the click, nothing is sent and the panel says "That request changed before you clicked; look again".
+
+Two kinds of request can only be denied here. A request with a control, format or line-separator character in any field it would show is not shown at all (nothing is repaired or flattened, since a person must not approve something other than what the agent asked for) and reads "A request couldn't be shown safely; answer it on the gateway". A command is shown whole up to 4,000 characters in a scrollable block; past that, or if the gateway cut it, the prompt says how many characters are missing and offers Deny only. Other long fields (agent, working directory, host) are cut at 240 characters with a count. A request that ends without you (decided by someone else, expired, dropped by the gateway) is written into the transcript as a one-line note, and a room's transcript says "<member> is waiting for an approval" once per request, since an approval belongs to one member's session and is answered in that member's own panel. The request shapes behind all of this are as the gateway documents them and have not yet been measured against a running gateway.
 
 **If the status row says `can't reach the gateway: No route to host`, check
 macOS's Local Network permission before you check your network.** macOS grants
@@ -1924,6 +1952,8 @@ happen once:
 2. **Say yes to the permission.** The first time it listens, macOS asks for
    Local Network access and Windows raises a firewall prompt. Both are the
    feature working; a "no" here looks exactly like the network being broken.
+
+**Every Claude Code profile you have added is offered.** Over a direct link a machine offers the sessions of every profile listed under **Settings → Claude Code** (the extra-accounts card), plus the default `~/.claude`, and a profile added while Orbweaver is running is picked up within a few seconds with no restart. (Profiles listed in the old `remoteControlProfileDirs` key, which no screen writes any more, still count.) If live sessions are running under a Claude Code folder that is *not* in that list, the **Other machines** status line says so: "23 sessions under ~/.claude-loginid aren't offered; add that folder under Settings → Claude Code." Add the folder there and the next refresh offers them. Adding it also wires Orbweaver's hooks into that account, so it does more than record a path. The sentence is only shown for folders under your home directory; a session hosted by Claude Desktop, or one under WSL, is never named in it.
 
 **Agent teams on the other machine show as teams.** Over a direct link, a team running on the other machine draws an orb for its lead and one for each member, linked by the same arrows a team on this machine gets, each member wearing its own agent name and team colour rather than the title every member inherits from its lead. A member is shown only when its lead is: a team whose lead has Remote Control off stays hidden, members and all. This needs Orbweaver on both machines, since it is the Buddy over there that knows which session belongs to which team.
 
@@ -2857,6 +2887,7 @@ outside the app (a launchd agent, an installer replacing the bundle) stopped it.
   only, every system sound, or a chosen file); an individual orb can override
   either trigger from its right-click "Sound" submenu, keyed by
   `SessionManager.SoundKeyFor`.
+- **Mute** (CB-298): one switch for every sound the app makes, reachable from the tray menu's "Mute" checkbox, the Ctrl+Alt+M hotkey and the speaker button in every chat panel's header, all three the same flag, so flipping one moves the others. Muting stops what is already playing mid-sentence, then keeps speech, chimes and the vibe summary silent — a muted turn does not even pay for the summariser — until unmuted. It is persisted as `muted` in `settings.json` and survives a restart, and it writes that one key: `speechVolume`, `alertVolume`, `turnSoundsEnabled` and every per-orb sound override are left exactly as they were, so unmuting puts back what was there. While it is on, the tray icon wears a slash and its hover text ends in ", muted". The gate is the two places that start a sound process, so the previews in Settings (the voice and chime buttons) are silent while muted too — deliberately. Voice input is not affected.
 - **Volume** (CB-200): two independent levels in settings, `speechVolume` and `alertVolume`, each 0 to 1 and defaulting to 1 — at which every backend gets exactly the argv, script and text it got before the sliders existed. `AudioVolume.cs` owns every rule turning a level into a backend's units: `[[volm N]]` embedded in the text for `say` (which has no volume flag), `SpeechSynthesizer.Volume` 0–100 for SAPI, a `CLAUDEBUDDY_SPEECH_VOLUME` environment variable for the Kokoro engine (which hands it to `afplay -v` on macOS and KokoroSharp's own `SetVolume` on Windows), `afplay -v` for macOS chimes, and a sample-scaled cached copy of the WAV for Windows chimes, since `Media.SoundPlayer` has no volume. A custom `speakCommand` gets the same `CLAUDEBUDDY_SPEECH_VOLUME`, always set, and applies it only if it reads it. The slider is never greyed out; a note under it says so whenever the engine that will speak is a custom command — globally, or for any orb whose persona voice resolves to one (`SessionIdentity.OrbEngines`, from the in-memory persona registries and the already-built voice list; if no list has been built yet, the note states both caveats as rules). A `speakEngine` of `custom` with no command configured speaks with a system voice and gets no note; the Alert slider does not depend on the engine.
   - **What the levels do not promise.** A percentage is a position on the slider, not a decibel figure. `say`'s `[[volm]]` is not linear for every voice: measured by rendering to a file, Ava (Premium) scaled linearly, but Samantha, Karen and Susan (Enhanced) at 50% came out at about 25% amplitude. SAPI applies its own curve too. On Windows, a chime is made quieter by scaling a copy of the WAV's samples, which works for uncompressed PCM and 32-bit float only — every sound under `C:\Windows\Media` qualifies, but a compressed WAV you chose yourself (ADPCM, MP3-in-WAV and the like) plays at full volume, and the Alert volume row says so on Windows. A malformed WAV plays unscaled the same way rather than failing.
   - **The high-quality voice needs this version's engine.** Kokoro receives the level through `CLAUDEBUDDY_SPEECH_VOLUME`, which engines from before CB-200 ignore — they speak at full volume. Right after an upgrade, until the new engine finishes downloading (and on a development build whose engine was never published), Buddy speaks through the older engine it already has, and the Speech volume row says "Takes effect once the updated voice engine is installed" beneath a slider that still saves the level for when it arrives — and says the same for orbs whose own voice is Kokoro when the global one is not. Which engine can honour it is judged by what the engine *is*, not where it sits: its build writes `engine-contract.txt` beside the executable (from `SpeechEngineContract.ContractVersion`, currently `1` = honours the volume variable), and an engine folder without one — any engine released before CB-200, including one that shares this build's version number and so its folder — is treated as ignoring the level. The variable's name and the stamp's live in `tools/OrbweaverSpeech/SpeechEngineContract.cs`, the one file compiled into both the app and the engine.

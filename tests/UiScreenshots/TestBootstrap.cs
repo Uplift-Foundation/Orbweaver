@@ -75,6 +75,10 @@ internal static class TestBootstrap
         TextToSpeech.SilenceForTests = true;
         ChimePlayer.SilenceForTests = true;
 
+        // CB-302: no capture reads the developer's real mouse — see CursorProbe
+        // and the same line in tests/UiTests/TestBootstrap.cs.
+        CursorProbe.Read = () => null;
+
         OrbweaverSettings.ReloadForTests();
     }
 }

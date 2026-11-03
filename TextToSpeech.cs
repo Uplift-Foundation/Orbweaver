@@ -56,6 +56,12 @@ namespace Orbweaver
         // is never silenced by a line that exists only for the test suite.
         internal static bool SilenceForTests;
 
+        // The one question Speak asks before it does anything: the test guard
+        // above, or the user's mute (CB-298). A property of its own, not
+        // inlined, because Speak is excluded from coverage for starting a real
+        // engine and this decision is worth a test.
+        internal static bool Suppressed => SilenceForTests || AudioMute.IsMuted;
+
         private static List<string>? _cachedVoices;
         private static List<VoiceOption>? _cachedOptions;
 
@@ -727,7 +733,10 @@ namespace Orbweaver
             // has no side effects at all, not even stopping whatever a real
             // (non-test) utterance elsewhere might be doing. See
             // SilenceForTests' own comment on why this exists.
-            if (SilenceForTests) return;
+            // CB-298: the mute sits on the same line, for the same reason —
+            // every way of speaking comes through here, so this is the one
+            // place "muted" cannot be bypassed by a caller that forgot to ask.
+            if (Suppressed) return;
 
             Cancel();
 

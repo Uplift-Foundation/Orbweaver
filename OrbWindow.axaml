@@ -157,6 +157,22 @@
                           IsVisible="False"
                           StaysOpenOnClick="True"
                           Click="EndConversation_Click"/>
+                <!-- CB-270: the same conversation's other two, both
+                     sessions.patch — SessionPresence.CanPatchOpenClaw, set in
+                     UpdateFrom. "Keep on screen" is a checkbox that mirrors the
+                     gateway's pin and stays open so the answer lands on the row;
+                     "Rename conversation…" opens a window, so it closes the menu
+                     like any other row that does. (Not "Rename…": the Group
+                     submenu already has one, and it renames the group.) Header
+                     and tooltip are set in code; see OrbWindow.RestoreOpenClawRows. -->
+                <MenuItem x:Name="KeepOnScreenItem"
+                          IsVisible="False"
+                          StaysOpenOnClick="True"
+                          ToggleType="CheckBox"
+                          Click="KeepOnScreen_Click"/>
+                <MenuItem x:Name="RenameConversationItem"
+                          IsVisible="False"
+                          Click="RenameConversation_Click"/>
                 <!-- CB-225: a cloud session's two lifecycle verbs, which are
                      requests to the account API as the session's own login.
                      Hidden unless the orb is a cloud session with cloud

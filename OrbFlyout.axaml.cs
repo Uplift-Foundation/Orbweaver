@@ -262,7 +262,10 @@ namespace Orbweaver
             }, null, compact: true));
         }
 
-        public bool IsPointerOverFlyout => Root.IsPointerOver;
+        // Through RealHover (CB-302): the flyout is a window of its own and can
+        // miss its leave just like an orb, after which Root.IsPointerOver alone
+        // would hold it open for a pointer that is long gone.
+        public bool IsPointerOverFlyout => RealHover.IsOver(this, Root);
 
         public void ShowNear(PixelPoint from, PixelPoint to, Window owner)
         {

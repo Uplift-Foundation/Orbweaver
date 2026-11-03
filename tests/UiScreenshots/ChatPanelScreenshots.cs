@@ -172,6 +172,27 @@ public class ChatPanelScreenshots : IDisposable
         }
     }
 
+    // CB-298. The header's mute button in both looks, so the crossed-out
+    // speaker and the red fill are reviewed as pixels, not as a property.
+    [AvaloniaTheory]
+    [InlineData(true, "chat-panel-header-muted.png")]
+    [InlineData(false, "chat-panel-header-unmuted.png")]
+    public void ThePanelsMuteButton(bool muted, string file)
+    {
+        ChatPanel.OpenFor(KindOrb(SessionKind.Channel), NewFake());
+
+        try
+        {
+            AudioMute.Set(muted);
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, file);
+        }
+        finally
+        {
+            AudioMute.Set(false);
+        }
+    }
+
     private static OrbWindow KindOrb(SessionKind kind)
     {
         var orb = NewOrb();
@@ -224,6 +245,84 @@ public class ChatPanelScreenshots : IDisposable
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-parked-attach.png");
+    }
+
+    // CB-270 Stage 3: a gateway chat in which an agent ran two tools between the
+    // two halves of its reply, the second of which failed. One tool line in the
+    // quiet system ink and one in the panel's red, with the reply split around
+    // them the way the live view and history now agree on. Captured because the
+    // tint is a new visible surface and the thing worth judging is whether a
+    // failed tool is noticeable without being loud.
+    [AvaloniaFact]
+    public void AToolLineAndAFailedToolLineInAGatewayChat()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Count the files, then tidy the scratch folder." },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "On it, counting first." },
+            new ChatTurn { Role = ChatRole.System, IsComplete = true, Text = "· mcp__openclaw__exec  ls | wc -l" },
+            new ChatTurn { Role = ChatRole.System, IsComplete = true, IsError = true, Text = "· mcp__openclaw__exec  rm -r scratch" },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "18 files. The tidy failed: the folder is read-only." },
+        }, displayName: "main");
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-tool-lines.png");
+    }
+
+    // CB-270 Stage 4: the run controls of a native conversation. The chip in the
+    // header says what it is running on; the flyout, drawn here in a window of
+    // its own because a popup is not part of the panel's visual tree, is what a
+    // click opens. The locked variant is a model the gateway will not let be
+    // changed, with thinking and fast still open.
+    private static RemoteRunOptions RunOptions(bool locked = false) => new(
+        "claude-opus-4-6",
+        new[] { new RemoteRunChoice("claude-opus-4-6", "Claude Opus 4.6"), new RemoteRunChoice("claude-haiku-4-5", "Claude Haiku 4.5") },
+        "high", "adaptive",
+        new[] { new RemoteRunChoice("off", "off"), new RemoteRunChoice("adaptive", "adaptive"), new RemoteRunChoice("high", "high") },
+        true, true, locked, true,
+        "Claude Opus 4.6 · high · fast");
+
+    [AvaloniaFact]
+    public void ANativeChatsHeaderShowsTheRunControlsChip()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Summarise the open tickets." },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "Three are open; two are waiting on review." },
+        }, displayName: "main");
+        fake.RunOptions = RunOptions();
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, "chat-panel-run-chip.png");
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false, "chat-panel-run-flyout.png")]
+    [InlineData(true, "chat-panel-run-flyout-locked.png")]
+    public void TheRunControlsFlyout(bool locked, string name)
+    {
+        var fake = NewFake(displayName: "main");
+        fake.RunOptions = RunOptions(locked);
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+
+        var content = ChatPanelTestAccess.Instance!.BuildRunFlyout(fake, fake.RunOptions);
+        var window = new Window
+        {
+            Width = 300,
+            SizeToContent = SizeToContent.Height,
+            Content = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#FF2B2B30")),
+                Padding = new Thickness(12),
+                Child = content
+            }
+        };
+
+        ScreenshotHelper.Capture(window, name);
     }
 
     // A session Claude Desktop hosts (CB-265): the transcript reads like any

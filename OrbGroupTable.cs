@@ -19,10 +19,10 @@ namespace Orbweaver
         // are repeated here rather than read from OrbweaverSettings so that
         // Ordered, which is handed a dictionary and nothing else, can still
         // answer for a predefined group the dictionary does not hold.
-        internal static readonly string[] PredefinedIds = { Main, Heartbeats, Crons };
+        internal static readonly string[] PredefinedIds = { Main, Heartbeats, Crons, Native };
 
         internal static bool IsPredefined(string? id) =>
-            id == Main || id == Heartbeats || id == Crons;
+            id == Main || id == Heartbeats || id == Crons || id == Native;
 
         // The CB-14 classification, as a group id. An explicit membership wins
         // outright: an orb dragged out of the heartbeats cluster into `main` is
@@ -35,14 +35,16 @@ namespace Orbweaver
         // already thrown out one naming a group that was deleted — so a blank is
         // the only "none" this needs to recognise.
         internal static string GroupIdFor(
-            string? membership, OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons)
+            string? membership, OrbCluster cluster,
+            ClusterMode heartbeats, ClusterMode crons, ClusterMode native)
         {
             if (!string.IsNullOrWhiteSpace(membership)) return membership;
 
-            return OrbClusters.GroupOf(cluster, heartbeats, crons) switch
+            return OrbClusters.GroupOf(cluster, heartbeats, crons, native) switch
             {
                 1 => Heartbeats,
                 2 => Crons,
+                3 => Native,
                 _ => Main
             };
         }
@@ -92,7 +94,7 @@ namespace Orbweaver
         // Slot order is the group table's, never the sessions': main,
         // heartbeats, crons, then user groups by ordinal id. A predefined group
         // missing from the dictionary is synthesised rather than skipped, so
-        // slots 0-2 can never shift under a caller that indexes by them — the
+        // slots 0-3 can never shift under a caller that indexes by them — the
         // reason OrbClusters.GroupOf gives for fixed slots.
         internal static IReadOnlyList<OrbGroup> Ordered(IReadOnlyDictionary<string, OrbGroup> groups)
         {
@@ -115,6 +117,8 @@ namespace Orbweaver
                 Heartbeats, "Heartbeats", OrbweaverSettings.DefaultOpenClawHeartbeatShape, null, null),
             Crons => new OrbGroup(
                 Crons, "Crons", OrbweaverSettings.DefaultOpenClawCronShape, null, null),
+            Native => new OrbGroup(
+                Native, OpenClawNativeText.GroupName, OrbweaverSettings.DefaultOpenClawNativeShape, null, null),
             _ => new OrbGroup(Main, "Main", OrbweaverSettings.DefaultArrangeShape, null, null)
         };
 

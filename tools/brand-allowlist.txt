@@ -100,6 +100,7 @@ tests/UnitTests/OpenClawSenderTests.cs	3	legacy mirror prefix: room history writ
 tests/UnitTests/PersonaAvatarValueTests.cs	1	comment records what happened under the old name; rewriting it would falsify the record
 tests/UnitTests/PersonaFencedFieldTests.cs	1	fixture: a recorded transcript or persona file written when the app was Claude Buddy; the parsers treat these names as opaque
 tests/UnitTests/PersonaSectionGrammarTests.cs	3	fixture: a recorded transcript or persona file written when the app was Claude Buddy; the parsers treat these names as opaque
+tests/UnitTests/ProbeResolveGuardTests.cs	2	legacy fixture: the CLAUDE_BUDDY_ spelling of the probe resolve opt-in, to prove the new name wins and a stale legacy "1" cannot override it
 tests/UnitTests/ProcArgsParsingTests.cs	1	comment records what happened under the old name; rewriting it would falsify the record
 tests/UnitTests/SessionMessageFrameTests.cs	7	fixture: the label an older peer sent; the framing code treats it as opaque text
 tests/UnitTests/SingleInstanceTests.cs	1	legacy fixtures for the phase 2/3 migrations: the old names each migration must recognise

@@ -42,10 +42,11 @@ public class GroupSettingsRoundTripTests
 
         var groups = OrbweaverSettings.OrbGroupList();
 
-        Assert.Equal(new[] { "main", "heartbeats", "crons" }, groups.Select(g => g.Id));
+        Assert.Equal(new[] { "main", "heartbeats", "crons", "native" }, groups.Select(g => g.Id));
         Assert.Equal(OrbweaverSettings.DefaultArrangeShape, groups[0].Shape);
         Assert.Equal(OrbweaverSettings.DefaultOpenClawHeartbeatShape, groups[1].Shape);
         Assert.Equal(OrbweaverSettings.DefaultOpenClawCronShape, groups[2].Shape);
+        Assert.Equal(OrbweaverSettings.DefaultOpenClawNativeShape, groups[3].Shape);
         Assert.False(OrbweaverSettings.GroupOutlinesEnabled);
         Assert.Equal("#FFFFFF", OrbweaverSettings.GroupOutlineStroke);
         Assert.Equal(0.35, OrbweaverSettings.GroupOutlineStrokeOpacity, 3);
@@ -98,6 +99,45 @@ public class GroupSettingsRoundTripTests
         Assert.Equal("grid", groups["heartbeats"]!["shape"]!.GetValue<string>());
         Assert.Equal("vline", groups["crons"]!["shape"]!.GetValue<string>());
         Assert.True(root["groupOutlinesEnabled"]!.GetValue<bool>());
+    }
+
+    // CB-270. A file written before the native group existed has no `native`
+    // entry anywhere; it must load the default one, not lose the other three.
+    [Fact]
+    public void AFileWrittenBeforeTheNativeGroupLoadsTheDefaultNativeGroup()
+    {
+        Stage("""
+            { "orbGroups": { "groups": {
+                "main": { "name": "Main", "shape": "heart" },
+                "heartbeats": { "name": "Pulse", "shape": "grid" },
+                "crons": { "name": "Crons", "shape": "vline" } } } }
+            """);
+
+        var native = OrbweaverSettings.OrbGroupFor("native")!;
+        Assert.Equal(OrbweaverSettings.DefaultOpenClawNativeShape, native.Shape);
+        Assert.Equal(OrbweaverSettings.DefaultOpenClawNativeShape, OrbweaverSettings.OpenClawNativeShape);
+        Assert.Equal("Pulse", OrbweaverSettings.OrbGroupFor("heartbeats")!.Name);
+    }
+
+    // The native shape is written to both places and the legacy key wins when
+    // they disagree, the same rule as heartbeats and crons: an older build edits
+    // only the legacy key. The block says "star", the legacy key says "grid".
+    [Fact]
+    public void TheLegacyNativeShapeKeyWinsOverTheBlocksCopyAndBothAreWritten()
+    {
+        var dir = Stage("""
+            { "openclawNativeShape": "grid",
+              "orbGroups": { "groups": { "native": { "name": "Mine", "shape": "star" } } } }
+            """);
+
+        Assert.Equal("grid", OrbweaverSettings.OpenClawNativeShape);
+        Assert.Equal("grid", OrbweaverSettings.OrbGroupFor("native")!.Shape);
+        Assert.Equal("Mine", OrbweaverSettings.OrbGroupFor("native")!.Name);
+
+        OrbweaverSettings.GroupOutlinesEnabled = true;
+        var root = OnDisk(dir);
+        Assert.Equal("grid", root["openclawNativeShape"]!.GetValue<string>());
+        Assert.Equal("grid", root["orbGroups"]!["groups"]!["native"]!["shape"]!.GetValue<string>());
     }
 
     [Fact]
@@ -282,7 +322,7 @@ public class GroupSettingsRoundTripTests
               "orbPositions": { "/some/where": { "x": 11, "y": 22 } } }
             """);
 
-        Assert.Equal(3, OrbweaverSettings.OrbGroupList().Count);
+        Assert.Equal(OrbGroups.PredefinedIds.Length, OrbweaverSettings.OrbGroupList().Count);
         Assert.Equal("star", OrbweaverSettings.ArrangeShape);
         Assert.Equal(1.5, OrbweaverSettings.OrbSize, 3);
         Assert.Equal(new OrbweaverSettings.OrbPlacement(11, 22), OrbweaverSettings.OrbPositionFor("/some/where"));

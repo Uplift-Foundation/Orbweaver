@@ -62,4 +62,15 @@ namespace Orbweaver
         public static double Clamp(double level) =>
             double.IsNaN(level) ? Default : Math.Clamp(level, 0.0, 1.0);
     }
+
+    // OrbGroupTable (compiled in because OrbweaverSettings now holds a group
+    // table) asks OrbArrangement whether a lead chain resolves. The real class
+    // is 2,200 lines of Avalonia geometry. The probe never reads or writes an
+    // orb group, so this throws rather than restating the rule: a copy that
+    // answered would be a second implementation that could drift unseen.
+    internal static class OrbArrangement
+    {
+        internal static bool Resolves(int start, int[] leadOf, int count) =>
+            throw new System.NotSupportedException("The probe does not arrange orbs.");
+    }
 }

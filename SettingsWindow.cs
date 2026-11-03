@@ -1860,8 +1860,9 @@ namespace Orbweaver
                 Row("Show OpenClaw agents (experimental)",
                     Switch(OrbweaverSettings.OpenClawEnabled, OnOpenClawToggled),
                     "Shows an orb for each recently active session on an OpenClaw gateway, "
-                    + $"alongside your Claude Code ones. Read-only: {Brand.DisplayName} can see what "
-                    + "your agents are doing, and cannot ask them to do anything.")
+                    + $"alongside your Claude Code ones. Read-only unless \"Allow replying to agents\" "
+                    + $"below is on: {Brand.DisplayName} can see what your agents are doing, and "
+                    + "can only ask them to do something once you allow it.")
             };
 
             if (!OrbweaverSettings.OpenClawEnabled) return rows.ToArray();
@@ -1889,7 +1890,10 @@ namespace Orbweaver
                 + "every few minutes with nobody on the other end. They wear a beating "
                 + "heart. Hidden takes them off the screen; Own shape keeps them, arranged "
                 + "beside your conversations instead of among them. The agents keep their "
-                + "colours in any channel they are in whichever you pick."));
+                + "colours in any channel they are in whichever you pick. Pin one of "
+                + "these with Keep on screen and it shows whatever this says. One exception, "
+                + "and it changes what you see: with Allow approving agent actions on, a hidden "
+                + "session that is waiting for your approval shows its orb until you answer."));
 
             if (OrbweaverSettings.OpenClawHeartbeatMode == ClusterMode.OwnShape)
             {
@@ -1913,8 +1917,24 @@ namespace Orbweaver
                         () => OrbweaverSettings.OpenClawCronShape,
                         v => OrbweaverSettings.OpenClawCronShape = v),
                     "The pattern the cron orbs arrange into. Set both of these to Own shape "
-                    + "and the arrange button draws three patterns — your chats, the "
-                    + "heartbeats, and these — side by side rather than one."));
+                    + "and the arrange button draws up to four patterns — your chats, the "
+                    + "heartbeats, these and your agents' own sessions — side by side rather than one."));
+            }
+
+            // CB-270. After the cron rows because it is the same kind of setting;
+            // the label and tip live in OpenClawNativeText, which says why it is
+            // not called "Direct sessions".
+            rows.Add(Row(OpenClawNativeText.SettingLabel, ClusterModePicker(
+                    () => OrbweaverSettings.OpenClawNativeMode,
+                    OnOpenClawNativeModeChanged),
+                OpenClawNativeText.SettingTip));
+
+            if (OrbweaverSettings.OpenClawNativeMode == ClusterMode.OwnShape)
+            {
+                rows.Add(Row(OpenClawNativeText.ShapeLabel, ShapePicker(
+                        () => OrbweaverSettings.OpenClawNativeShape,
+                        v => OrbweaverSettings.OpenClawNativeShape = v),
+                    OpenClawNativeText.ShapeTip));
             }
 
             rows.Add(Row("Allow replying to agents",
@@ -1922,6 +1942,20 @@ namespace Orbweaver
                 "Off, this shows what your agents are doing. On, you can also reply to "
                 + "them from an orb — which asks the gateway for write permission, so you "
                 + "have to approve this device again there (`openclaw devices approve --latest`)."));
+
+            // CB-270 Stage 6. A third power, separate from the other two: replying
+            // can make an agent act, approving lets you decide when one asks first.
+            // The text says what it grants and what it never does, and that turning
+            // it on or off needs the device approved again on the gateway.
+            rows.Add(Row("Allow approving agent actions",
+                Switch(OrbweaverSettings.OpenClawApproveEnabled, OnOpenClawApproveToggled),
+                "Off, you can see your agents but not answer when one asks permission. "
+                + "On, an agent waiting for your say-so before it runs a command turns "
+                + "its orb amber, and its panel offers Allow once or Deny. Nothing is "
+                + "ever allowed automatically, and there is no \"always\" here. This asks "
+                + "the gateway for approval permission, so you have to approve this "
+                + "device again there (`openclaw devices approve --latest`), and again "
+                + "if you turn it off. It is independent of replying."));
 
             // Kept as a field and ticked, rather than rebuilt: the connection
             // changes state while you are looking at it — pairing gets approved,
@@ -2265,6 +2299,26 @@ namespace Orbweaver
         {
             OrbweaverSettings.OpenClawCronMode = mode;
             SessionManager.Instance?.ReapplyArrangement();
+        }
+
+        // CB-270: the same, for an agent's own sessions.
+        internal void OnOpenClawNativeModeChanged(ClusterMode mode)
+        {
+            OrbweaverSettings.OpenClawNativeMode = mode;
+            SessionManager.Instance?.ReapplyArrangement();
+        }
+
+        // CB-270 Stage 6. Not excluded from coverage, unlike the reply switch it
+        // mirrors: with no gateway address set, Restart is inert, which is how the
+        // suite drives it without a socket.
+        internal void OnOpenClawApproveToggled(bool enabled)
+        {
+            OrbweaverSettings.OpenClawApproveEnabled = enabled;
+
+            // Reconnects, because the scopes are part of the handshake and the
+            // gateway treats a changed scope set as a device to approve afresh.
+            OpenClawSessions.Restart();
+            Rebuild();
         }
 
         // Excluded from coverage: reconnects to the gateway, because the scopes

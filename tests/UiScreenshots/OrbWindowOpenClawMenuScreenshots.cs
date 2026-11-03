@@ -16,7 +16,7 @@ namespace Orbweaver.Tests;
 public class OrbWindowOpenClawMenuScreenshots
 {
     private static OrbWindow OpenClawOrb(
-        Func<Task<(OpenClawActionOutcome, string?)>>? end = null)
+        Func<Task<(OpenClawActionOutcome, string?)>>? end = null, bool pinned = false)
     {
         var orb = new OrbWindow("openclaw:agent:main:dashboard:abc")
         {
@@ -24,7 +24,7 @@ public class OrbWindowOpenClawMenuScreenshots
                 true,
                 new HashSet<string> { "chat.abort", "sessions.patch" },
                 new[] { "operator.read", "operator.write" },
-                false, "sid-1", "agent:main:dashboard:abc"),
+                false, "sid-1", "agent:main:dashboard:abc", pinned, "Scratch pad"),
             EndAction = (_, _) => end?.Invoke()
                 ?? Task.FromResult((OpenClawActionOutcome.Done, (string?)null)),
         };
@@ -94,5 +94,42 @@ public class OrbWindowOpenClawMenuScreenshots
         await orb.EndConversationClickAsync();
 
         CaptureMenu(orb, "orb-window-openclaw-menu-end-refused.png");
+    }
+
+    // CB-270: the conversation's other two rows. Keep on screen is a checkbox
+    // mirroring the gateway's pin, so the capture is of the checked state, which
+    // is the one that shows the row is doing something; Rename conversation… sits
+    // beneath it.
+    [AvaloniaFact]
+    public void ThePatchRowsShowKeepOnScreenCheckedAndRenameConversation()
+    {
+        CaptureMenu(OpenClawOrb(pinned: true), "orb-window-openclaw-menu-keep-and-rename.png");
+    }
+
+    // CB-270: the Rename window, prefilled with the conversation's current name.
+    // Built through the constructor and captured without a Show(), the way the
+    // group style window is.
+    [AvaloniaFact]
+    public void TheRenameWindowIsPrefilledWithTheCurrentName()
+    {
+        var window = new OpenClawRenameWindow(
+            "openclaw:agent:main:dashboard:abc", "Scratch pad",
+            (_, _, _) => Task.FromResult((OpenClawActionOutcome.Done, (string?)null)));
+
+        ScreenshotHelper.Capture(window, "openclaw-rename-window.png");
+    }
+
+    // ...and after a refusal, which is the state a person needs the wording of.
+    [AvaloniaFact]
+    public async Task TheRenameWindowShowsTheGatewaysSentenceAfterARefusal()
+    {
+        var window = new OpenClawRenameWindow(
+            "openclaw:agent:main:dashboard:abc", "Scratch pad",
+            (_, _, _) => Task.FromResult((OpenClawActionOutcome.Refused, (string?)"label too long")));
+
+        window.NameBox.Text = "A name the gateway will not take";
+        await window.SaveAsync();
+
+        ScreenshotHelper.Capture(window, "openclaw-rename-window-refused.png");
     }
 }

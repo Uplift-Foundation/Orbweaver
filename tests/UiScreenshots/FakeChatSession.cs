@@ -8,8 +8,30 @@ namespace Orbweaver.Tests;
 internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatRoom,
     IRemoteChatReadOnly, IRemoteChatInterrupt,
-    IRemoteChatMachine, IRemoteChatPeerInbound
+    IRemoteChatMachine, IRemoteChatPeerInbound, IRemoteChatRunOptions, IRemoteChatPrompts
 {
+    // CB-270 Stage 6: a prompt posed for a capture; answering does nothing.
+    public ChatPrompt? Prompt { get; set; }
+
+    public event Action? PromptChanged { add { } remove { } }
+
+    public Task AnswerAsync(ChatPromptOption option) => Task.CompletedTask;
+
+    public void AnswerElsewhere() { }
+
+    // CB-270 Stage 4: run controls, posed for a capture. See the UiTests copy.
+    public RemoteRunOptions? RunOptions { get; set; }
+
+    public event Action? RunOptionsChanged { add { } remove { } }
+
+    public int? TimeoutMinutes { get; set; }
+
+    public Task<string?> SetModelAsync(string? id) => Task.FromResult<string?>(null);
+
+    public Task<string?> SetThinkingAsync(string? id) => Task.FromResult<string?>(null);
+
+    public Task<string?> SetFastModeAsync(bool? on) => Task.FromResult<string?>(null);
+
     // Both default to what an ordinary typeable session answers — an ordinary
     // hint and no button — so every capture that predates them is unchanged.
     public string ComposerHint { get; set; } = "Message…";

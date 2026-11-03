@@ -17,6 +17,9 @@ namespace Orbweaver
     // (usage) orbs, leaving the session orbs where they are. The orb toggle
     // above still means every orb, usage ones included.
     //
+    // ToggleMute is the fourth (CB-298): the global mute, the same switch as
+    // the tray's "Mute" item and the chat panel's speaker button.
+    //
     // Declaration order is also priority: HotkeyRegistry.Plan gives a chord
     // two actions both resolve to to whichever is declared first, so a new
     // action goes at the end, where it can never take a chord from one that
@@ -25,7 +28,8 @@ namespace Orbweaver
     {
         ToggleOrbsVisible,
         OpenNewChat,
-        ToggleUsageOrbsVisible
+        ToggleUsageOrbsVisible,
+        ToggleMute
     }
 
     // One action's registration, as HotkeyRegistry.Plan decided it: the combo
@@ -82,11 +86,20 @@ namespace Orbweaver
         private static readonly HotkeyCombo ToggleUsageOrbsDefault =
             new(KeyModifiers.Control | KeyModifiers.Alt, Key.U);
 
+        // Ctrl+Alt+M, for "mute". Neither platform has a standing system
+        // claim on it. Where Ctrl+Alt doubles as AltGr (German, Polish and
+        // Hungarian layouts on Windows) AltGr+M types a µ and RegisterHotKey
+        // will take it — the three defaults above share that exposure, the key
+        // is rebindable, and hotkeys.log records a refusal.
+        private static readonly HotkeyCombo ToggleMuteDefault =
+            new(KeyModifiers.Control | KeyModifiers.Alt, Key.M);
+
         public static HotkeyCombo Default(HotkeyAction action) => action switch
         {
             HotkeyAction.ToggleOrbsVisible => ToggleOrbsDefault,
             HotkeyAction.OpenNewChat => OpenNewChatDefault,
             HotkeyAction.ToggleUsageOrbsVisible => ToggleUsageOrbsDefault,
+            HotkeyAction.ToggleMute => ToggleMuteDefault,
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, null)
         };
 

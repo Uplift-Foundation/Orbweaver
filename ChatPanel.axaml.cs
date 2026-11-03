@@ -211,6 +211,7 @@ namespace Orbweaver
             // button's mark.
             AttachMark.Data = StreamGeometry.Parse(SymbolMarks.Gear);
             HeartChipMark.Data = StreamGeometry.Parse(SymbolMarks.Heart);
+            RunOptionsChip.PointerPressed += RunOptionsChip_PointerPressed;
 
             _defaultWidth = Width;
             _defaultHeight = Height;
@@ -340,6 +341,7 @@ namespace Orbweaver
             };
             MicButton.PointerPressed += (_, e) => { e.Handled = true; _owner?.ToggleRecording(); };
             SpeakButton.PointerPressed += (_, e) => { e.Handled = true; SpeakLatest(); };
+            MuteButton.PointerPressed += (_, e) => { e.Handled = true; AudioMute.Toggle(); };
 
             // Tunnel, not bubble. TextBox handles Return in a class handler that
             // runs before any instance handler on the same element, so a plain
@@ -476,7 +478,14 @@ namespace Orbweaver
             // stale entry is not a visible bug — it is Transient or PanelFor
             // handing out a panel whose window is gone, which shows up later
             // and somewhere else.
-            Closed += (_, _) => Panels.Remove(this);
+            Closed += (_, _) => { Panels.Remove(this); AudioMute.Changed -= ApplyMuted; };
+
+            // Every open panel mirrors the one global flag, so the tray, the
+            // hotkey and a click on any panel's button all leave every header
+            // saying the same thing. Unsubscribed beside Panels.Remove: a
+            // closed panel left on a static event is a leak that also keeps
+            // repainting a window that is gone.
+            AudioMute.Changed += ApplyMuted;
 
             ApplyPinAffordance();
 
@@ -666,6 +675,7 @@ namespace Orbweaver
             _session.TurnAdded -= OnTurnAdded;
             _session.TurnUpdated -= OnTurnUpdated;
             _session.StateChanged -= OnStateChanged;
+            if (_session is OpenClawChatSession gatewayChat) gatewayChat.TurnsRemoved -= OnTurnsRemoved;
 
             if (_session is IRemoteChatBacklog previous)
             {
@@ -684,6 +694,11 @@ namespace Orbweaver
             // taking the box away from an unrelated one.
             if (_session is IRemoteChatReadOnly wasReadOnly) wasReadOnly.ReadOnlyChanged -= OnReadOnlyChanged;
             if (_session is IRemoteChatInterrupt wasInterruptible) wasInterruptible.InterruptChanged -= OnInterruptChanged;
+            if (_session is IRemoteChatRunOptions wasRunnable) wasRunnable.RunOptionsChanged -= OnRunOptionsChanged;
+
+            // The flyout belongs to the conversation it was built for.
+            _runFlyout?.Hide();
+            _runFlyout = null;
             if (_session is IRemoteChatPeerInbound wasInbound) wasInbound.InboundChanged -= OnInboundChanged;
 
             // Nobody is looking any more, so its live loop stops.
@@ -777,6 +792,7 @@ namespace Orbweaver
 
             session.TurnAdded += OnTurnAdded;
             session.TurnUpdated += OnTurnUpdated;
+            if (session is OpenClawChatSession gateway) gateway.TurnsRemoved += OnTurnsRemoved;
             session.StateChanged += OnStateChanged;
 
             if (session is RemoteControlChatSession remote)
@@ -823,6 +839,8 @@ namespace Orbweaver
             // ApplyComposerAffordances below for the initial state.
             if (session is IRemoteChatReadOnly readOnlyNow) readOnlyNow.ReadOnlyChanged += OnReadOnlyChanged;
             if (session is IRemoteChatInterrupt interruptible) interruptible.InterruptChanged += OnInterruptChanged;
+            if (session is IRemoteChatRunOptions runnable) runnable.RunOptionsChanged += OnRunOptionsChanged;
+            ApplyRunOptions(session);
 
             // CB-267: the offer comes and goes under an open panel — the
             // transcript's mode row lands after bind, settings.json is edited
@@ -878,6 +896,7 @@ namespace Orbweaver
             Input.Text = Drafts.GetValueOrDefault(session.SessionId, "");
             MicButton.IsVisible = OrbweaverSettings.VoiceInputEnabled;
             ApplySpeakState(TextToSpeech.State);
+            ApplyMuted(AudioMute.IsMuted);
 
             // The box stays enabled even when sending won't work, and says why
             // on itself instead. A disabled box can't be pasted into or drafted
@@ -1010,6 +1029,207 @@ namespace Orbweaver
         private void OnReadOnlyChanged() => ApplyComposerAffordances(_session);
 
         private void OnInterruptChanged() => ApplyStop(_session);
+
+        // --- CB-270 Stage 4: run controls --------------------------------------
+
+        private void OnRunOptionsChanged() => ApplyRunOptions(_session);
+
+        // The chip says what the conversation is running on; a click opens the
+        // flyout. Hidden whenever the session offers nothing, which is also what
+        // closes a flyout left open when the options go away under it.
+        private void ApplyRunOptions(IRemoteChatSession? session)
+        {
+            var options = (session as IRemoteChatRunOptions)?.RunOptions;
+
+            RunOptionsChip.IsVisible = options is not null;
+
+            if (options is null)
+            {
+                _runFlyout?.Hide();
+                return;
+            }
+
+            RunOptionsChipText.Text = options.ChipText;
+            // The whole text in the tip as well, since a long model name can be cut
+            // by the column's width.
+            ToolTip.SetTip(RunOptionsChip, options.ChipText + "\n" + OpenClawRunText.ChipTip);
+
+            if (_runFlyout is not null) _runFlyout.Content = BuildRunFlyout((IRemoteChatRunOptions)session!, options);
+        }
+
+        private Flyout? _runFlyout;
+
+        // The controls of the flyout, kept so a test can reach what a real person
+        // would click without a pointer. Rebuilt from the options every time they
+        // change; _runApplying holds the handlers off while it is being set.
+        internal ComboBox? RunModelBox { get; private set; }
+        internal ComboBox? RunThinkingBox { get; private set; }
+        internal ToggleSwitch? RunFastSwitch { get; private set; }
+        internal Button? RunFastDefault { get; private set; }
+        internal ComboBox? RunLimitBox { get; private set; }
+        internal TextBlock? RunStatus { get; private set; }
+        private bool _runApplying;
+
+        private void RunOptionsChip_PointerPressed(object? sender, PointerPressedEventArgs e) => OpenRunOptions();
+
+        internal void OpenRunOptions()
+        {
+            if (_session is not IRemoteChatRunOptions run || run.RunOptions is not { } options) return;
+
+            _runFlyout ??= new Flyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+            _runFlyout.Content = BuildRunFlyout(run, options);
+            _runFlyout.ShowAt(RunOptionsChip);
+        }
+
+        internal Control BuildRunFlyout(IRemoteChatRunOptions run, RemoteRunOptions options)
+        {
+            _runApplying = true;
+            try
+            {
+                var panel = new StackPanel { Spacing = 8, MinWidth = 240 };
+
+                // Model. "Default" first when it can be reset, so it is the same
+                // gesture as choosing any other.
+                RunModelBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                if (options.CanResetToDefault) RunModelBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.DefaultLabel, Tag = null });
+                foreach (var m in options.Models) RunModelBox.Items.Add(new ComboBoxItem { Content = m.Label, Tag = m.Id });
+                RunModelBox.IsEnabled = !options.Locked;
+                if (options.Locked) ToolTip.SetTip(RunModelBox, OpenClawRunText.LockedModelTip);
+                // The handler before the selection, so setting the selection from
+                // the options is held off by _runApplying like any other.
+                RunModelBox.SelectionChanged += async (_, _) =>
+                {
+                    if (_runApplying || RunModelBox.SelectedItem is not ComboBoxItem item) return;
+                    await ChangeAsync(RunModelBox, () => run.SetModelAsync((string?)item.Tag));
+                };
+                RunModelBox.SelectedIndex = IndexOfTag(RunModelBox, options.ModelId);
+                panel.Children.Add(Labelled(OpenClawRunText.ModelLabel, RunModelBox));
+
+                // Thinking: the model's own levels, id sent and label shown.
+                RunThinkingBox = null;
+                if (options.ThinkingChoices.Count > 0)
+                {
+                    RunThinkingBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                    if (options.CanResetToDefault)
+                    {
+                        var label = options.ThinkingDefaultLabel is { } d
+                            ? $"{OpenClawRunText.DefaultLabel} ({d})"
+                            : OpenClawRunText.DefaultLabel;
+                        RunThinkingBox.Items.Add(new ComboBoxItem { Content = label, Tag = null });
+                    }
+
+                    foreach (var t in options.ThinkingChoices) RunThinkingBox.Items.Add(new ComboBoxItem { Content = t.Label, Tag = t.Id });
+                    RunThinkingBox.SelectionChanged += async (_, _) =>
+                    {
+                        if (_runApplying || RunThinkingBox.SelectedItem is not ComboBoxItem item) return;
+                        await ChangeAsync(RunThinkingBox, () => run.SetThinkingAsync((string?)item.Tag));
+                    };
+                    RunThinkingBox.SelectedIndex = IndexOfTag(RunThinkingBox, options.ThinkingId);
+                    panel.Children.Add(Labelled(OpenClawRunText.ThinkingLabel, RunThinkingBox));
+                }
+
+                // Fast mode, with its own way back to the default.
+                RunFastSwitch = new ToggleSwitch { IsChecked = options.Fast, OnContent = "", OffContent = "" };
+                RunFastSwitch.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_runApplying) return;
+                    var on = RunFastSwitch.IsChecked == true;
+                    await ChangeAsync(RunFastSwitch, () => run.SetFastModeAsync(on));
+                };
+                RunFastDefault = new Button
+                {
+                    Content = OpenClawRunText.DefaultLabel,
+                    IsVisible = options.CanResetToDefault && options.FastIsSet,
+                    Padding = new Thickness(6, 1)
+                };
+                RunFastDefault.Click += async (_, _) => await ChangeAsync(RunFastDefault, () => run.SetFastModeAsync(null));
+                var fastRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                fastRow.Children.Add(RunFastSwitch);
+                fastRow.Children.Add(RunFastDefault);
+                panel.Children.Add(Labelled(OpenClawRunText.FastLabel, fastRow));
+
+                // Time limit for the next sends: held on the session, never zero.
+                RunLimitBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(null), Tag = null });
+                foreach (var minutes in OpenClawRunText.TimeLimitMinutes)
+                {
+                    RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(minutes), Tag = minutes });
+                }
+
+                RunLimitBox.SelectionChanged += (_, _) =>
+                {
+                    if (_runApplying || RunLimitBox.SelectedItem is not ComboBoxItem item) return;
+                    run.TimeoutMinutes = (int?)item.Tag;
+                };
+                RunLimitBox.SelectedIndex = IndexOfTag(RunLimitBox, run.TimeoutMinutes);
+                panel.Children.Add(Labelled(OpenClawRunText.TimeLimitLabel, RunLimitBox));
+
+                RunStatus = new TextBlock
+                {
+                    FontSize = 11, TextWrapping = TextWrapping.Wrap, IsVisible = false,
+                    Foreground = RecordingFill
+                };
+                panel.Children.Add(RunStatus);
+
+                return panel;
+            }
+            finally
+            {
+                _runApplying = false;
+            }
+        }
+
+        private static int IndexOfTag(ComboBox box, object? tag)
+        {
+            // Every item is one this panel added, so each is a ComboBoxItem.
+            for (var i = 0; i < box.Items.Count; i++)
+            {
+                if (Equals(((ComboBoxItem)box.Items[i]!).Tag, tag)) return i;
+            }
+
+            return -1;
+        }
+
+        private static Control Labelled(string label, Control control)
+        {
+            var row = new StackPanel { Spacing = 2 };
+            row.Children.Add(new TextBlock { Text = label, FontSize = 10.5, Opacity = 0.7 });
+            row.Children.Add(control);
+            return row;
+        }
+
+        // One change: the control is held off while the request is out, and the
+        // sentence the session returns, if any, goes in the status line. Success
+        // returns null, and the session's own RunOptionsChanged then redraws the
+        // chip and rebuilds the flyout from what really happened.
+        private async Task ChangeAsync(Control control, Func<Task<string?>> change)
+        {
+            // Always built by the time a control can be changed: the handlers that
+            // call this belong to the flyout that builds it.
+            var status = RunStatus!;
+
+            control.IsEnabled = false;
+            status.IsVisible = false;
+
+            var failure = await change();
+
+            control.IsEnabled = true;
+
+            if (failure is null) return;
+
+            status.Text = failure;
+            status.IsVisible = true;
+
+            // A refusal changed nothing, so put the controls back to what is true.
+            // The panel may have been rebound, or the options gone, while the
+            // request was out, and then there is nothing to put back.
+            if (_session is IRemoteChatRunOptions run && run.RunOptions is { } options && _runFlyout is not null)
+            {
+                _runFlyout.Content = BuildRunFlyout(run, options);
+                RunStatus!.Text = failure;
+                RunStatus.IsVisible = true;
+            }
+        }
 
         // --- CB-267: a message the session would hold ---
 
@@ -1969,7 +2189,7 @@ namespace Orbweaver
             // paste intercepted at all — see IRemoteChatImages. Anything
             // else falls straight through to the TextBox's own paste, which
             // is exactly what happened here before this feature existed.
-            if (_session is IRemoteChatImages && IsPasteGesture(e))
+            if (_session is IRemoteChatImages { CanSendImages: true } && IsPasteGesture(e))
             {
                 e.Handled = true;
                 _ = HandlePasteAsync();
@@ -2445,6 +2665,14 @@ namespace Orbweaver
             // carries the size for its items, which have no handle of their own
             // (see the template's comment).
             PromptTitle.FontSize = 11 * scale;
+
+            // A whole-number line height, so n lines are a whole number of pixels
+            // tall. At the font's own height (13.431 at 11 pt) three lines measure
+            // 40.29, layout rounding makes the box 40, and the text is then laid out
+            // again to fit 40: the third line no longer fits and is not drawn. That
+            // would drop the last line of an approval, which is where the request
+            // id sits, on a display without sub-pixel layout.
+            PromptTitle.LineHeight = Math.Ceiling(PromptTitle.FontSize * 1.25);
             PromptOptions.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 
@@ -2550,7 +2778,7 @@ namespace Orbweaver
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            var outcome = images.Count > 0 && session is IRemoteChatImages withImages
+            var outcome = images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
                 ? await withImages.SendWithImagesAsync(text, images)
                 : await session.SendAsync(text);
 
@@ -2591,6 +2819,18 @@ namespace Orbweaver
             SpeakGlyph.IsVisible = glyph is not null;
             SpeakStopMark.Data = mark is null ? null : StreamGeometry.Parse(mark);
             SpeakStopMark.IsVisible = mark is not null;
+        }
+
+        private static readonly IBrush MuteActiveFill = new SolidColorBrush(Color.Parse("#E0A04040"));
+
+        // The mute button's whole look, from the one flag: glyph, a desaturated
+        // red fill while muted (readable beside the amber Preparing and blue
+        // Speaking fills), and a tooltip naming the chord that is really bound.
+        private void ApplyMuted(bool muted)
+        {
+            MuteGlyph.Text = SymbolMarks.MuteLook(muted);
+            MuteFill.Fill = muted ? MuteActiveFill : IdleFill;
+            ToolTip.SetTip(MuteButton, SymbolMarks.MuteTip(muted, HotkeyActions.Bound(HotkeyAction.ToggleMute)));
         }
 
         private bool _loadingOlder;
@@ -2685,6 +2925,13 @@ namespace Orbweaver
             }
 
             ScrollToEndIfPinned();
+        }
+
+        // CB-270: a run's live rows replaced by what history says at its end.
+        // The rows that take their place arrive as ordinary TurnAdded.
+        private void OnTurnsRemoved(int from, int count)
+        {
+            for (var i = 0; i < count && from < _turns.Count; i++) _turns.RemoveAt(from);
         }
 
         private void OnTurnUpdated(ChatTurn turn)
@@ -2839,18 +3086,57 @@ namespace Orbweaver
         // composer: the panel doesn't hide what is happening because you can't
         // act on it yet, and the session — which owns the rule — is the thing
         // that states it.
+        // CB-270 Stage 6. A prompt marked ArmedActivation (an approval: an answer cannot
+        // be taken back) is armed, not instant: its options ignore presses for a
+        // moment after the prompt first shows or its content changes, so a click
+        // that was aimed at something else, or at what was there a moment ago,
+        // cannot answer it; and it answers on release over the same option that was
+        // pressed, so a press that slid off, or a press and release on different
+        // options, answers nothing. A permission bar read off a terminal is not
+        // marked, and answers on a press as it always has.
+        //
+        // The clock is a seam so a test does not sleep.
+        internal static Func<DateTime> PromptClock { get; set; } = () => DateTime.UtcNow;
+        internal static readonly TimeSpan PromptArmDelay = TimeSpan.FromMilliseconds(500);
+
+        private string? _promptSignature;
+        private DateTime _promptShownAt;
+        private bool _promptArmed;
+        private Control? _pressedPromptOption;
+        // What the bar was asking when the press landed: a release answers only the
+        // question that was on the bar when the press began, however the controls
+        // are rebuilt in between (the same id can come back with another command).
+        private string? _pressedPromptSignature;
+
         private void ApplyPrompt()
         {
             var prompt = (_session as IRemoteChatPrompts)?.Prompt;
 
             if (prompt is null)
             {
+                _promptSignature = null;
+                _promptArmed = false;
+                _pressedPromptOption = null;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
                 return;
             }
 
+            // The arming clock restarts whenever what is being asked changes, not
+            // only when the box first appears: a new request replacing one under
+            // the pointer is exactly the moment a click must not carry over.
+            var signature = prompt.Title + "\n" + string.Join("\n",
+                prompt.Options.Select(o => o.Key + "|" + o.ApprovalId));
+            if (signature != _promptSignature)
+            {
+                _promptSignature = signature;
+                _promptShownAt = PromptClock();
+            }
+
+            _promptArmed = prompt.ArmedActivation;
+
             PromptTitle.Text = prompt.Title;
+            PromptElsewhere.Text = prompt.ElsewhereLabel ?? "Answer in the terminal";
 
             // No options means the screen couldn't be read. The box still
             // appears — something is waiting and the transcript won't say so —
@@ -2865,7 +3151,46 @@ namespace Orbweaver
         {
             e.Handled = true;
 
-            if ((sender as Control)?.DataContext is not ChatPromptOption option) return;
+            if (_promptArmed)
+            {
+                // Only remembered: the answer is given on release. And only a press
+                // that itself came after the arming window is remembered, so one
+                // that began inside it and is held past it answers nothing.
+                _pressedPromptOption = PromptClock() - _promptShownAt < PromptArmDelay ? null : sender as Control;
+                _pressedPromptSignature = _promptSignature;
+                return;
+            }
+
+            ChoosePromptOption(sender as Control);
+        }
+
+        private void PromptOption_PointerReleased(object? sender, PointerReleasedEventArgs e)
+        {
+            if (!_promptArmed) return;
+
+            e.Handled = true;
+
+            var pressed = _pressedPromptOption;
+            _pressedPromptOption = null;
+
+            var pressedSignature = _pressedPromptSignature;
+            _pressedPromptSignature = null;
+
+            if (sender is not Control option || !ReferenceEquals(pressed, option)) return;
+            if (pressedSignature is null || pressedSignature != _promptSignature) return;
+
+            // Released over the same option, not merely delivered to it by capture.
+            var at = e.GetPosition(option);
+            if (at.X < 0 || at.Y < 0 || at.X > option.Bounds.Width || at.Y > option.Bounds.Height) return;
+
+            if (PromptClock() - _promptShownAt < PromptArmDelay) return;
+
+            ChoosePromptOption(option);
+        }
+
+        private void ChoosePromptOption(Control? control)
+        {
+            if (control?.DataContext is not ChatPromptOption option) return;
             if (_session is not IRemoteChatPrompts prompts) return;
 
             _ = prompts.AnswerAsync(option);
@@ -2877,7 +3202,14 @@ namespace Orbweaver
 
             if (_session is not IRemoteChatPrompts prompts) return;
 
+            // Read before the call: answering may change the prompt.
+            var staysOpen = prompts.Prompt?.ElsewhereLabel is not null;
+
             prompts.AnswerElsewhere();
+
+            // A prompt with no terminal to go to answers "where else" with a note in
+            // the transcript, which is the thing to read, so the panel stays.
+            if (staysOpen) return;
 
             // Dismissed, because this asked to be somewhere else. Leaving the
             // panel up over the terminal it just brought forward would be
@@ -3114,6 +3446,7 @@ namespace Orbweaver
             // reads Transient on the very next line sees the truth even if the
             // platform defers the event.
             Panels.Remove(this);
+            AudioMute.Changed -= ApplyMuted;
             Close();
         }
 
@@ -3193,6 +3526,18 @@ namespace Orbweaver
                     {
                         _body = null;
                         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Body)));
+                    }
+
+                    // CB-270: a tool line learns it failed only when the result
+                    // arrives, after its row is drawn. The body is rebuilt because
+                    // its runs carry the ink they were made with.
+                    if (e.PropertyName == nameof(ChatTurn.IsError))
+                    {
+                        _body = null;
+                        foreach (var name in new[] { nameof(Body), nameof(Ink), nameof(ErrorTip) })
+                        {
+                            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                        }
                     }
 
                     // A live turn can start with no picture and gain one once
@@ -4107,7 +4452,15 @@ namespace Orbweaver
                     ? new SolidColorBrush(Color.FromArgb(0x3D, c.R, c.G, c.B))
                     : IsUser ? UserBubble : AgentBubble;
 
-            public IBrush Ink => IsSystem ? SystemInk : BubbleInk;
+            // A tool line whose result reported an error is the same row in the
+            // red the panel already uses for trouble; nothing else about it moves.
+            private bool IsToolError => IsSystem && _turn.IsError;
+
+            public IBrush Ink => IsToolError ? ErrorInk : IsSystem ? SystemInk : BubbleInk;
+
+            public string? ErrorTip => IsToolError ? "The tool reported an error" : null;
+
+            private static readonly IBrush ErrorInk = new SolidColorBrush(Color.Parse("#E0D93B3B"));
 
             // The corner nearest the speaker is squared off. It is the one
             // detail that makes a column of bubbles read as two people talking

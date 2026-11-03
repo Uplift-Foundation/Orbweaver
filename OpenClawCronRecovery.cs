@@ -345,7 +345,7 @@ namespace Orbweaver
 
         private static string? StringOrNull(JsonElement obj, string name) =>
             obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-                ? value.GetString()
+                ? value.SafeString()
                 : null;
     }
 }

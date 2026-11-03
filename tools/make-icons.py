@@ -8,6 +8,9 @@ Outputs (PNG, RGBA, straight alpha — except the .ico, noted below):
   Assets/tray-idle.png        menu-bar / notification-area icon, one per state
   Assets/tray-generating.png
   Assets/tray-waiting.png
+  Assets/tray-idle-muted.png  the same three with a slash through them, shown
+  Assets/tray-generating-muted.png  while the global mute is on (CB-298)
+  Assets/tray-waiting-muted.png
   Assets/appicon-1024.png     source art for the .app bundle's .icns
   Assets/Orbweaver.ico        multi-size Windows icon: the .exe's embedded icon
                               (csproj ApplicationIcon) and the installer's
@@ -267,11 +270,36 @@ TRAY_CUT = {"w": 34, "rings": (185,), "orb": 78}
 TRAY_WEB_ALPHA = 0.7
 
 
-def draw_tray(size, color):
+def draw_tray(size, color, muted=False):
+    """muted=True adds the no-sound shape (CB-298): a diagonal bar from upper left
+    to lower right over the web, with a transparent gap either side so it reads as
+    a slash over the mark rather than merging into it. It is still one constant RGB
+    with only alpha varying, which is the invariant TrayController.Tinted depends
+    on: the re-tint reproduces the muted icon exactly, slash and all."""
     cv = Canvas(size)
     scale = 0.94 * size / (2 * (WEB_REACH + TRAY_CUT["w"] / 2))
     draw_web(cv, size / 2, size / 2, scale, TRAY_CUT, (*color, TRAY_WEB_ALPHA), (*color, 1.0))
-    return cv.pixels()
+    pixels = cv.pixels()
+    if not muted:
+        return pixels
+
+    bar, gap, reach = 0.13, 0.22, 0.95  # in half-canvas units
+    half = size / 2.0
+    px_unit = 1.0 / half  # one pixel, for the antialiased edges
+    out = []
+    for i, (r, g, b, a) in enumerate(pixels):
+        u = ((i % size) + 0.5 - half) / half
+        v = ((i // size) + 0.5 - half) / half
+        if math.hypot(u, v) <= reach:
+            across = abs(u - v) / math.sqrt(2)
+            bar_cov = max(0.0, min(1.0, (bar - across) / px_unit + 0.5))
+            gap_cov = max(0.0, min(1.0, (gap - across) / px_unit + 0.5))
+            af = a / 255.0 * (1.0 - gap_cov)  # clear the gap (bar included)
+            af = max(af, bar_cov)             # then lay the bar on top
+            out.append((0, 0, 0, 0) if af <= 0.0005 else (*color, min(255, round(af * 255))))
+        else:
+            out.append((r, g, b, a))
+    return out
 
 
 def main():
@@ -281,6 +309,10 @@ def main():
     for name, color in (("idle", IDLE), ("generating", GENERATING), ("waiting", WAITING)):
         path = os.path.join(ASSETS, f"tray-{name}.png")
         write_png(path, 64, draw_tray(64, color))
+        print("wrote", os.path.relpath(path, HERE))
+
+        path = os.path.join(ASSETS, f"tray-{name}-muted.png")
+        write_png(path, 64, draw_tray(64, color, muted=True))
         print("wrote", os.path.relpath(path, HERE))
 
     path = os.path.join(ASSETS, "appicon-1024.png")

@@ -142,9 +142,16 @@ namespace Orbweaver
         // key and every member's (T3), so the team is never split across groups.
         // Every path ends by reapplying, because a team dropped inside its own
         // group's shape would otherwise stay wherever the pointer left it.
+        //
+        // CB-303: `landed` runs exactly once on every path, after membership is
+        // written and before the settle. The caller pins whatever is loose
+        // there: the settle's reflow stacks every orb that is not pinned, so
+        // pinning afterwards sent a freshly dropped orb gliding back to the
+        // stack. It cannot run before Release, since whether an orb is loose is
+        // answered from the membership this writes.
         internal static SnapOutcome Release(
             IOrbDragHost host, string pressedId, bool wholeGroup, int dx, int dy, double unitsPerDip,
-            Fling fling = default)
+            Fling fling = default, Action? landed = null)
         {
             host.HighlightGroup(null);
             host.PreviewPair(null, null);
@@ -152,12 +159,14 @@ namespace Orbweaver
             if (wholeGroup)
             {
                 host.ShiftGroupAnchor(host.GroupIdOf(pressedId), dx, dy);
+                landed?.Invoke();
                 host.SettleAfterDrop(Array.Empty<string>(), fling);
                 return new SnapOutcome.NoChange();
             }
 
             if (!host.IsRoot(pressedId))
             {
+                landed?.Invoke();
                 if (host.IsLaidOut(pressedId))
                 {
                     host.SaveMemberOffset(pressedId);
@@ -230,6 +239,7 @@ namespace Orbweaver
                 _ => Array.Empty<string>(),
             };
 
+            landed?.Invoke();
             host.SettleAfterDrop(arriving, fling);
             return outcome;
         }

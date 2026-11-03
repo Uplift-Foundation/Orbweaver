@@ -175,4 +175,78 @@ public class CrashLogFormatTests
             Environment.SetEnvironmentVariable("ORBWEAVER_LOG_DIR", was);
         }
     }
+
+    // ---- the stacks of what an unobserved task wrapped --------------------------------
+
+    private static ObjectDisposedException ThrownOnADisposedSemaphore()
+    {
+        var gate = new SemaphoreSlim(1, 1);
+        gate.Dispose();
+
+        try
+        {
+            gate.Release();
+            throw new InvalidOperationException("Release did not throw");
+        }
+        catch (ObjectDisposedException caught)
+        {
+            return caught;
+        }
+    }
+
+    // What a faulted task nobody observed arrives as: the finalizer thread throws the
+    // aggregate, so it has no frames of its own, and the fault's stack exists only on
+    // the exception inside it. 471 entries said "disposed SemaphoreSlim" and not which.
+    [Fact]
+    public void Records_the_stack_of_the_exception_an_unobserved_task_wrapped()
+    {
+        var inner = ThrownOnADisposedSemaphore();
+        var wrapper = new AggregateException("A Task's exception(s) were not observed", inner);
+        Assert.Null(wrapper.StackTrace);
+
+        var entry = CrashLog.Format(When, "TaskScheduler.UnobservedTaskException", wrapper);
+
+        Assert.Contains("stack of System.ObjectDisposedException:", entry);
+        Assert.Contains(nameof(ThrownOnADisposedSemaphore), entry);
+        Assert.Equal(1, entry.Split("stack of").Length - 1);
+    }
+
+    [Fact]
+    public void Records_the_stack_of_every_member_of_an_aggregate()
+    {
+        var wrapper = new AggregateException(Thrown("first"), ThrownOnADisposedSemaphore());
+
+        var entry = CrashLog.Format(When, "TaskScheduler.UnobservedTaskException", wrapper);
+
+        Assert.Contains("stack of System.InvalidOperationException:", entry);
+        Assert.Contains("stack of System.ObjectDisposedException:", entry);
+    }
+
+    [Fact]
+    public void Records_the_stack_of_an_inner_exception_in_a_chain()
+    {
+        var entry = CrashLog.Format(When, "Dispatcher.UnhandledException",
+            new InvalidOperationException("an error occurred", Thrown("the real fault")));
+
+        Assert.Contains("stack of System.InvalidOperationException:", entry);
+    }
+
+    [Fact]
+    public void Leaves_out_the_stack_of_an_inner_exception_that_was_never_thrown()
+    {
+        var entry = CrashLog.Format(When, "Dispatcher.UnhandledException",
+            new InvalidOperationException("an error occurred", new UnauthorizedAccessException("never thrown")));
+
+        Assert.DoesNotContain("stack of", entry);
+    }
+
+    [Fact]
+    public void Bounds_how_many_inner_stacks_one_entry_carries()
+    {
+        var wrapper = new AggregateException(Enumerable.Range(0, 30).Select(i => Thrown("member " + i)));
+
+        var entry = CrashLog.Format(When, "TaskScheduler.UnobservedTaskException", wrapper);
+
+        Assert.Equal(8, entry.Split("stack of").Length - 1);
+    }
 }

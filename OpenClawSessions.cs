@@ -15,7 +15,7 @@ namespace Orbweaver
     // AgentTeamViewer), and an interface whose second implementation is
     // permanently off would be ceremony. Off means Snapshot() returns an empty
     // array — no socket, no task, no key, nothing constructed at all.
-    internal static class OpenClawSessions
+    internal static partial class OpenClawSessions
     {
         private static readonly object Gate = new();
 
@@ -55,6 +55,13 @@ namespace Orbweaver
         // not working rather than as a stale timestamp.
         private static readonly Dictionary<string, DateTime> LastSeen =
             new(StringComparer.Ordinal);
+
+        // CB-270. The last poll's rows that the cluster filter dropped, and the keys of
+        // rows it kept only because a pending approval asked for them. Replaced by
+        // every poll; read and changed (under Gate) by RefreshSnapshotState, which is
+        // how an approval shows or removes such a row without waiting for the poll.
+        private static Dictionary<string, Session> _hiddenByCluster = new(StringComparer.Ordinal);
+        private static HashSet<string> _keptByApproval = new(StringComparer.Ordinal);
 
         // One chat session per gateway key, created the first time an orb is
         // clicked and kept afterwards so its transcript survives the panel being
@@ -485,6 +492,7 @@ namespace Orbweaver
         // in Settings should take effect on the next poll.
         private static ClusterMode HeartbeatMode => OrbweaverSettings.OpenClawHeartbeatMode;
         private static ClusterMode CronMode => OrbweaverSettings.OpenClawCronMode;
+        private static ClusterMode NativeMode => OrbweaverSettings.OpenClawNativeMode;
 
         internal sealed record Session(
             string Key,
@@ -513,7 +521,24 @@ namespace Orbweaver
             // test, a fixture) is an ordinary non-main one with no id, which
             // offers Interrupt and not End.
             string? SessionId = null,
-            bool IsMain = false);
+            bool IsMain = false,
+
+            // CB-270: whether this session has no chat surface behind it. Carried
+            // beside Kind and Heartbeat rather than folded into either, for the
+            // reason Heartbeat is: a native main is still Main, a WhatsApp main
+            // is too, and only this tells them apart. See OpenClawNative.
+            OpenClawNativeKind Native = OpenClawNativeKind.None,
+
+            // CB-270: the gateway's own `pinned` flag and the row's `label`. A
+            // pinned session, like a dashboard one, is exempt from the recency
+            // rules (see OpenClawRetention); the label is what Rename shows as
+            // the current name.
+            bool GatewayPinned = false,
+            string? Label = null)
+        {
+            public bool KeptRegardlessOfAge =>
+                OpenClawRetention.KeptRegardlessOfAge(GatewayPinned, Native);
+        }
 
         // Where a reply in this session is supposed to end up. The gateway
         // resolves this itself when asked to deliver an agent's answer, but a
@@ -659,6 +684,120 @@ namespace Orbweaver
         // stopped listing has no address any more, and holding the last one
         // known would be inventing a destination.
         private static Dictionary<string, Delivery?> _deliveries = new(StringComparer.Ordinal);
+
+        // CB-270: every listed session's native kind, recency filter or not, for
+        // the same reason _deliveries is: "is this conversation native" is a
+        // fact about the conversation, and a send to one the filter dropped still
+        // has to be routed. Replaced whole per poll.
+        private static Dictionary<string, OpenClawNativeKind> _natives = new(StringComparer.Ordinal);
+
+        // Null means "the gateway has not listed this key", which is a different
+        // answer from None ("listed, and not native"): a caller that is about to
+        // decide how to send must be able to tell an unknown session from a
+        // known surface one.
+        internal static OpenClawNativeKind? NativeOf(string key)
+        {
+            lock (Gate)
+                return _natives.TryGetValue(key, out var native) ? native : null;
+        }
+
+        // CB-270 Stage 4: what each listed session is running on, read off its row
+        // for every listed session, native or not (the gate on whether to offer
+        // controls is the route, never whether this exists). Replaced whole per
+        // poll; a row with no model has no entry.
+        private static Dictionary<string, OpenClawRunState> _runStates = new(StringComparer.Ordinal);
+
+        // Test seams, in the way of SetSnapshotForTests.
+        internal static void SetModelsForTests(IReadOnlyList<OpenClawModel> models)
+        {
+            lock (Gate) _models = models;
+        }
+
+        // How the conversation's last run ended, as the row's own `status` says
+        // ("done", "timeout", ...), for every listed row. Replaced whole per poll.
+        private static Dictionary<string, string> _runStatuses = new(StringComparer.Ordinal);
+
+        internal static string? RunStatusOf(string key)
+        {
+            lock (Gate)
+                return _runStatuses.TryGetValue(key, out var status) ? status : null;
+        }
+
+        // After a poll: every open chat is told how its conversation's last run
+        // ended, on the UI thread. The chat decides whether that is news.
+        internal static void NotifyRunStatuses(IEnumerable<OpenClawChatSession> chats)
+        {
+            foreach (var chat in chats)
+            {
+                var status = RunStatusOf(chat.GatewayKey);
+                Dispatcher.UIThread.Post(() => chat.OnRunStatus(status));
+            }
+        }
+
+        internal static IReadOnlyDictionary<string, OpenClawRunState> RunStatesSnapshot()
+        {
+            lock (Gate) return new Dictionary<string, OpenClawRunState>(_runStates, StringComparer.Ordinal);
+        }
+
+        internal static OpenClawRunState? RunStateOf(string key)
+        {
+            lock (Gate)
+                return _runStates.TryGetValue(key, out var state) ? state : null;
+        }
+
+        // The models the gateway offers, from models.list once per connection. Empty
+        // until it answers, or if it never does, and the picker is then hidden.
+        private static IReadOnlyList<OpenClawModel> _models = Array.Empty<OpenClawModel>();
+
+        internal static IReadOnlyList<OpenClawModel> OfferedModels
+        {
+            get { lock (Gate) return _models; }
+        }
+
+        // Asks the gateway which models it runs and keeps the ones it vouches for. A
+        // failure leaves the catalogue empty and says nothing: the controls are an
+        // extra, and a conversation is no worse off without them. Open panels are
+        // told so a chip that was waiting for the catalogue appears.
+        //
+        // Not excluded from coverage: the gateway is a constructor argument, so the
+        // in-memory socket reaches both arms.
+        internal static async Task LoadModelsAsync(OpenClawGateway gateway, CancellationToken ct)
+        {
+            IReadOnlyList<OpenClawModel> offered;
+
+            try
+            {
+                var res = await gateway.RequestAsync("models.list", new Dictionary<string, object>(), ct);
+                offered = OpenClawModelCatalog.Offered(OpenClawModelCatalog.Parse(res));
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            lock (Gate) _models = offered;
+            NotifyRunOptions(OpenChats());
+        }
+
+        // Tells the chats whose run controls may now read differently. On the UI
+        // thread, which is where the panel redraws from.
+        private static void NotifyRunOptions(IEnumerable<OpenClawChatSession> chats)
+        {
+            foreach (var chat in chats)
+            {
+                Dispatcher.UIThread.Post(chat.OnRunOptionsChanged);
+            }
+        }
+
+        // After a poll: the open chats whose run state is not what it was.
+        internal static IReadOnlyList<OpenClawChatSession> ChatsWithChangedRunState(
+            IReadOnlyDictionary<string, OpenClawRunState> before,
+            IReadOnlyDictionary<string, OpenClawRunState> after,
+            IEnumerable<OpenClawChatSession> chats) =>
+            chats.Where(c =>
+                    before.TryGetValue(c.GatewayKey, out var was) != after.TryGetValue(c.GatewayKey, out var now)
+                    || (was is not null && !was.Equals(now)))
+                .ToList();
 
         public static IReadOnlyList<string> MembersOfRoom(string roomKey)
         {
@@ -892,6 +1031,7 @@ namespace Orbweaver
                 _supervisor = null;
                 _snapshot = Array.Empty<Session>();
                 Running.Clear();
+                ClearPendingLocked();
 
                 // LastSeen deliberately survives a reconnect: a session that was
                 // busy ten seconds before the socket dropped is still a session
@@ -1012,7 +1152,9 @@ namespace Orbweaver
                     foreach (var chat in OpenChats()) _ = LoadHistoryAsync(chat, ct);
 
                     await LoadAgentNamesAsync(gateway, ct);
+                    await LoadModelsAsync(gateway, ct);
                     await SubscribeAsync(gateway, ct);
+                    await ResubscribeOpenPanelsAsync(gateway, OpenChats(), ct);
                     await PollAsync(gateway, ct);
                     }
                 }
@@ -1225,7 +1367,32 @@ namespace Orbweaver
             while (!ct.IsCancellationRequested)
             {
                 var res = await gateway.RequestAsync("sessions.list", new Dictionary<string, object>(), ct);
+
+                // CB-270 Stage 6: the approvals lists, before Parse reads each
+                // session's state so a pending approval is amber in this very poll.
+                //
+                // Isolated: whatever goes wrong in here, of any kind, must not skip
+                // the session parse below or force a reconnect, which would stall
+                // every OpenClaw orb, not only the approvals. A failure is dropped
+                // here and tried again at the next poll. (Cancellation is not a
+                // failure and passes through.)
+                try
+                {
+                    await PollApprovalsOnceAsync(gateway, ct);
+                }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                {
+                }
+
+                var before = RunStatesSnapshot();
                 var (sessions, total) = Parse(res);
+                NotifyRunOptions(ChatsWithChangedRunState(before, RunStatesSnapshot(), OpenChats()));
+                NotifyRunStatuses(OpenChats());
+
+                // CB-270 Stage 6: Parse has just recorded every session the gateway
+                // listed, so a pending approval on one it no longer lists, or one
+                // invented under a key it never listed, can go.
+                PurgeUnlistedApprovals();
 
                 _snapshot = sessions;
                 Report(total == sessions.Count
@@ -1277,6 +1444,14 @@ namespace Orbweaver
                 StringComparer.Ordinal);
 
             var deliveries = new Dictionary<string, Delivery?>(StringComparer.Ordinal);
+            var natives = new Dictionary<string, OpenClawNativeKind>(StringComparer.Ordinal);
+            var runStates = new Dictionary<string, OpenClawRunState>(StringComparer.Ordinal);
+            var runStatuses = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            // Rows the cluster filter dropped, and rows it would have dropped that a
+            // pending approval kept (CB-270): see the filter below.
+            var hiddenByCluster = new Dictionary<string, Session>(StringComparer.Ordinal);
+            var keptByApproval = new HashSet<string>(StringComparer.Ordinal);
 
             // Every agent the gateway knows of, filtered or not, so that a
             // colour is reserved for one whose orb isn't drawn — their messages
@@ -1337,12 +1512,33 @@ namespace Orbweaver
                 // skipping exactly those.
                 deliveries[key] = DeliveryFor(s);
 
+                // ...and its native kind, before the filter, for the same reason.
+                var native = OpenClawNative.Of(
+                    Str(s, "classification"),
+                    Str(origin, "provider"),
+                    s.TryGetProperty("deliveryContext", out var dc) && dc.ValueKind == JsonValueKind.Object,
+                    Str(s, "lastChannel"));
+                natives[key] = native;
+
+                // ...and what it is running on, likewise.
+                if (OpenClawRunState.From(s) is { } runState) runStates[key] = runState;
+                if (Str(s, "status") is { Length: > 0 } runStatus) runStatuses[key] = runStatus;
+
                 everyAgent.Add(AgentIdOf(key) ?? key);
 
                 // A session mid-run is current whatever its timestamps say —
                 // it is the one thing an orb is most worth showing.
                 var within = ActiveWithin;
-                if (state != "generating" && within is not null && asOf - activity > within) continue;
+                //
+                // CB-270: a pinned session or a dashboard one is exempt, however
+                // quiet. See OpenClawRetention for why those two and no others.
+                var pinned = Bool(s, "pinned") == true;
+                // CB-270 Stage 6: a session waiting on an approval is exempt like one
+                // mid-run, however quiet the gateway says it is: the orb that is
+                // asking for a person is the one that must not vanish.
+                if (state is not ("generating" or "waiting")
+                    && !OpenClawRetention.KeptRegardlessOfAge(pinned, native)
+                    && within is { } limit && asOf - activity > limit) continue;
 
                 // Timer-driven sessions the user has asked not to see —
                 // heartbeats, scheduled jobs, or both. Deliberately below the
@@ -1368,9 +1564,53 @@ namespace Orbweaver
                 var heartbeat = OpenClawHeartbeat.Is(key, Str(s, "label"));
                 var kind = KindFor(s, origin, key);
 
-                if (!OrbClusters.Visible(
-                        OrbClusters.Of(heartbeat, kind), HeartbeatMode, CronMode))
-                    continue;
+                // A pinned session is shown even when its cluster is Hidden,
+                // heartbeat or cron. Pinning is the person's own explicit "keep
+                // this" (OpenClawRetention), and it is how an agent's main
+                // session is kept as a chat while heartbeats are hidden. It joins
+                // the chats' shape unless its cluster has a shape of its own:
+                // OrbClusters.GroupOf answers 0 for a Hidden cluster, so nothing
+                // here has to place it.
+                //
+                // CB-270, Warren's ruling: a session asking a person for an approval
+                // is shown the same way, because a hidden orb cannot ask. Only while
+                // approving is on (nothing is held for a device that did not opt in),
+                // and the row is remembered as kept by the approval, so that it goes
+                // the moment the approval ends and a pinned row, which was never
+                // kept by it, does not. An archived row was dropped at the top of the
+                // loop and never gets here.
+                var session = new Session(
+                    key,
+                    TitleFor(s, origin, key),
+                    channel,
+                    state,
+                    activity,
+                    DeliveryFor(s),
+                    kind,
+                    heartbeat,
+                    Str(s, "sessionId"),
+                    Bool(s, "isMain") == true,
+                    native,
+                    pinned,
+                    Str(s, "label"));
+
+                if (!pinned
+                    && !OrbClusters.Visible(
+                        OrbClusters.Of(heartbeat, kind, native != OpenClawNativeKind.None),
+                        HeartbeatMode, CronMode, NativeMode))
+                {
+                    if (state == "waiting" && OrbweaverSettings.OpenClawApproveEnabled)
+                    {
+                        keptByApproval.Add(key);
+                    }
+                    else
+                    {
+                        // Remembered so an approval that arrives before the next poll
+                        // can show this row at once (RefreshSnapshotState).
+                        hiddenByCluster[key] = session;
+                        continue;
+                    }
+                }
 
                 // Recorded here, past every filter above, rather than beside
                 // the membership at the top of the loop — which is the whole
@@ -1393,17 +1633,7 @@ namespace Orbweaver
                     standing.Add((key, activity));
                 }
 
-                result.Add(new Session(
-                    key,
-                    TitleFor(s, origin, key),
-                    channel,
-                    state,
-                    activity,
-                    DeliveryFor(s),
-                    kind,
-                    heartbeat,
-                    Str(s, "sessionId"),
-                    Bool(s, "isMain") == true));
+                result.Add(session);
             }
 
             AssignColours(everyAgent);
@@ -1436,6 +1666,11 @@ namespace Orbweaver
                 _roomMembers = Ordered(roomMembers);
                 _roomColours = roomColours;
                 _deliveries = deliveries;
+                _natives = natives;
+                _runStates = runStates;
+                _runStatuses = runStatuses;
+                _hiddenByCluster = hiddenByCluster;
+                _keptByApproval = keptByApproval;
             }
 
             return (result, list.GetArrayLength());
@@ -1461,7 +1696,8 @@ namespace Orbweaver
         // from and is absent on 12 of the 70 sessions this was measured against,
         // while chatType is the gateway's own answer to the question being asked.
         internal static SessionKind KindFor(JsonElement session, JsonElement origin, string key) =>
-            OpenClawSessionKind.From(key, Str(session, "chatType") ?? Str(origin, "chatType"));
+            OpenClawSessionKind.From(
+                key, Str(session, "chatType") ?? Str(origin, "chatType"), Str(session, "classification"));
 
         // What to call a session. Two halves: who is talking, and where.
         //
@@ -1520,11 +1756,29 @@ namespace Orbweaver
         // necessary before anyone looked at what else sessions.list carries.
         // This field needs none of that and cannot be thrown off by a label
         // whose shape changes, so it is asked first and Where is the fallback.
+        //
+        // CB-270: a WhatsApp group has no groupChannel, and its name is in
+        // `subject`, so that is asked next. Discord rows carry no subject, so
+        // Discord titles are unchanged.
         internal static string? Group(JsonElement session)
         {
             var group = Str(session, "groupChannel");
-            return string.IsNullOrWhiteSpace(group) ? null : group!.Trim();
+            if (!string.IsNullOrWhiteSpace(group)) return group!.Trim();
+
+            var subject = Str(session, "subject");
+            return string.IsNullOrWhiteSpace(subject) ? null : subject!.Trim();
         }
+
+        // CB-270: whether a label is nothing but an identifier: a phone number,
+        // or a raw WhatsApp group id. On every WhatsApp row origin.label is
+        // exactly that, and a number in an orb title lands in every screenshot
+        // and screen share. A label that is a number plus words is a name.
+        // The trade is that two WhatsApp DMs with two people would then share a
+        // title; today's gateway has one DM peer, and a partial number is still
+        // an identifier in a screenshot.
+        internal static bool IsBareIdentifier(string label) =>
+            System.Text.RegularExpressions.Regex.IsMatch(label.Trim(), @"^\+?[0-9]{5,}$")
+            || System.Text.RegularExpressions.Regex.IsMatch(label.Trim(), @"^[0-9]+@g\.us$");
 
         // origin.label is written for a log, not for a person: "#general channel
         // id:1900000000000000001", "riverbend user id:200000000000000001",
@@ -1536,6 +1790,11 @@ namespace Orbweaver
 
             var label = Str(origin, "label");
             if (string.IsNullOrWhiteSpace(label)) return null;
+
+            // A bare number or group id is not a name; the title falls back to
+            // the surface word, the same fallback a Discord row with no label
+            // already gets.
+            if (IsBareIdentifier(label!)) return null;
 
             var text = label!;
 
@@ -1590,6 +1849,12 @@ namespace Orbweaver
         {
             lock (Gate)
             {
+                // CB-270 Stage 6: a session with an unanswered approval is waiting
+                // on a person, ahead of working or idle. A session mid-run that is
+                // blocked on a click is waiting, not working.
+                if (HasPending(key, new DateTimeOffset(DateTime.SpecifyKind(now ?? DateTime.UtcNow, DateTimeKind.Utc))))
+                    return "waiting";
+
                 if (!Running.TryGetValue(key, out var track)) return "idle";
                 if (!OpenClawRunSignal.IsGenerating(track, now ?? DateTime.UtcNow))
                 {
@@ -1635,6 +1900,15 @@ namespace Orbweaver
         internal static void OnEvent(string name, JsonElement payload, DateTime now)
         {
             if (name is "tick" or "health" or "presence" or "connect.challenge") return;
+
+            // CB-270 Stage 6: approval broadcasts carry the session in
+            // request.sessionKey, not at the top, so they are routed before the run
+            // signal looks for one. They never touch a run's state.
+            if (OpenClawApprovals.KindOfEvent(name) is not null || OpenClawApprovals.IsSessionEvent(name))
+            {
+                OnApprovalEvent(name, payload, now);
+                return;
+            }
 
             var key = OpenClawRunSignal.SessionOf(payload);
             if (key is null) return;
@@ -1703,7 +1977,24 @@ namespace Orbweaver
             // IRemoteChatSession can promise its events arrive on the UI thread.
             if (chat is not null)
             {
-                Dispatcher.UIThread.Post(() => chat.OnAgentEvent(name, payload));
+                Dispatcher.UIThread.Post(() => RunUiJobGuarded(() => chat.OnAgentEvent(name, payload)));
+            }
+        }
+
+        // A job posted to the UI thread runs after the socket loop's own catch has
+        // gone out of scope, so an exception thrown by one is not a skipped frame:
+        // CrashLog only records an unhandled UI exception, and Avalonia's default
+        // then ends the process. One gateway payload must not be able to do that, so
+        // each event's delivery is its own try. The next event still arrives.
+        internal static void RunUiJobGuarded(Action job)
+        {
+            try
+            {
+                job();
+            }
+            catch (Exception ex)
+            {
+                CrashLog.Record("OpenClaw event", ex);
             }
         }
 
@@ -1720,7 +2011,7 @@ namespace Orbweaver
                 return (null, "gateway didn't return a session key");
             }
 
-            var key = keyEl.GetString();
+            var key = keyEl.SafeString();
             return string.IsNullOrWhiteSpace(key)
                 ? (null, "gateway returned an empty session key")
                 : (key, null);
@@ -1798,7 +2089,8 @@ namespace Orbweaver
             var session = _snapshot.FirstOrDefault(s => s.Key == key);
             return new OpenClawActionContext(
                 true, gateway.Methods, gateway.GrantedScopes,
-                session?.IsMain ?? false, session?.SessionId, key);
+                session?.IsMain ?? false, session?.SessionId, key,
+                session?.GatewayPinned ?? false, session?.Label);
         }
 
         private static string? KeyOfOrb(string orbSessionId)
@@ -1866,14 +2158,10 @@ namespace Orbweaver
             {
                 try
                 {
-                    var res = await gateway.RequestAsync(OpenClawOrbActions.PatchMethod, new Dictionary<string, object>
-                    {
-                        ["key"] = key,
-                        ["archived"] = true,
-                        ["expectedSessionId"] = sessionId
-                    }, ct);
-
-                    var result = OpenClawOrbActions.ParsePatchResult(res);
+                    var result = await PatchAsync(
+                        gateway, OpenClawSessionPatch.Archive(key, sessionId),
+                        "the gateway didn't confirm the archive", ct,
+                        retry: attempt < ArchiveAttempts);
                     if (result.Outcome == OpenClawActionOutcome.Done) Forget(key);
                     return result;
                 }
@@ -1881,11 +2169,194 @@ namespace Orbweaver
                 {
                     await Task.Delay(retryDelay ?? ArchiveRetryDelay, ct);
                 }
-                catch (Exception ex)
-                {
-                    return OpenClawOrbActions.ClassifyFailure(ex);
-                }
             }
+        }
+
+        // The one place in the app that sends sessions.patch. Takes a built
+        // OpenClawSessionPatch, never loose fields, so what can be patched is
+        // decided in that file. A retryable refusal is rethrown when `retry` is
+        // set so the archive loop above can ask again; every other failure is
+        // classified here into the outcome the row shows.
+        private static async Task<(OpenClawActionOutcome Outcome, string? Detail)> PatchAsync(
+            OpenClawGateway gateway, OpenClawSessionPatch patch, string unconfirmed,
+            CancellationToken ct, bool retry = false)
+        {
+            try
+            {
+                var res = await gateway.RequestAsync(
+                    OpenClawOrbActions.PatchMethod, new Dictionary<string, object?>(patch.Params), ct);
+
+                return OpenClawOrbActions.ParsePatchResult(res, unconfirmed);
+            }
+            catch (Exception ex) when (retry && OpenClawOrbActions.IsRetryable(ex))
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return OpenClawOrbActions.ClassifyFailure(ex);
+            }
+        }
+
+        // CB-270: pins or unpins a conversation on the gateway. The pin lives
+        // there, so every client sees it, and it is what keeps a session past the
+        // age rules (OpenClawRetention). Never throws; the orb's row shows what
+        // this returns.
+        internal static async Task<(OpenClawActionOutcome Outcome, string? Detail)> SetGatewayPinnedAsync(
+            string orbSessionId, bool pinned, CancellationToken ct)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            var key = KeyOfOrb(orbSessionId);
+            if (gateway is null || key is null) return (OpenClawActionOutcome.NotConnected, null);
+
+            var sessionId = _snapshot.FirstOrDefault(s => s.Key == key)?.SessionId;
+            if (sessionId is null)
+                return (OpenClawActionOutcome.Refused, "the gateway hasn't listed this conversation");
+
+            var result = await PatchAsync(
+                gateway, OpenClawSessionPatch.Pin(key, sessionId, pinned),
+                "the gateway didn't confirm the change", ct);
+
+            // The list catching up with a fact, as Forget puts it: the checkbox
+            // and the age exemption hold before the next poll says the same.
+            if (result.Outcome == OpenClawActionOutcome.Done)
+                _snapshot = _snapshot.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
+
+            return result;
+        }
+
+        // CB-270: renames a conversation (its `label`). The new title appears on
+        // the next poll, because the title is TitleFor's "Agent — label" and
+        // needs the agents table. A blank name is refused here and nothing is
+        // sent: the gateway would accept it and the conversation would lose its
+        // name.
+        internal static async Task<(OpenClawActionOutcome Outcome, string? Detail)> RenameAsync(
+            string orbSessionId, string label, CancellationToken ct)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            var key = KeyOfOrb(orbSessionId);
+            if (gateway is null || key is null) return (OpenClawActionOutcome.NotConnected, null);
+
+            var trimmed = (label ?? "").Trim();
+            if (trimmed.Length == 0) return (OpenClawActionOutcome.Refused, "a name can't be blank");
+
+            var sessionId = _snapshot.FirstOrDefault(s => s.Key == key)?.SessionId;
+            if (sessionId is null)
+                return (OpenClawActionOutcome.Refused, "the gateway hasn't listed this conversation");
+
+            return await PatchAsync(
+                gateway, OpenClawSessionPatch.Rename(key, sessionId, trimmed),
+                "the gateway didn't confirm the change", ct);
+        }
+
+        // CB-270 Stage 4: the run controls of a native conversation. Each sends one
+        // sessions.patch field, or JSON null to send it back to the default (measured
+        // accepted for all three). Never throws; the flyout shows what this returns.
+
+        internal static Task<(OpenClawActionOutcome Outcome, string? Detail)> SetModelAsync(
+            string orbSessionId, string? modelId, CancellationToken ct)
+        {
+            if (modelId is not null && string.IsNullOrWhiteSpace(modelId))
+                return Task.FromResult((OpenClawActionOutcome.Refused, (string?)"choose a model"));
+
+            return RunControlAsync(
+                orbSessionId,
+                (key, sid) => modelId is null
+                    ? OpenClawSessionPatch.ClearModel(key, sid)
+                    : OpenClawSessionPatch.Model(key, sid, modelId),
+                // The default model is not known here, so clearing waits for the next
+                // poll. A chosen one moves the thinking choices with it, since those
+                // belong to the model; whether the gateway keeps a level the new model
+                // does not list is unmeasured, so one it does not list is dropped and
+                // the poll corrects whichever way it went.
+                state => modelId is null ? state : WithModel(state, modelId),
+                ct);
+        }
+
+        internal static Task<(OpenClawActionOutcome Outcome, string? Detail)> SetThinkingAsync(
+            string orbSessionId, string? levelId, CancellationToken ct)
+        {
+            if (levelId is not null && string.IsNullOrWhiteSpace(levelId))
+                return Task.FromResult((OpenClawActionOutcome.Refused, (string?)"choose a level"));
+
+            return RunControlAsync(
+                orbSessionId,
+                (key, sid) => levelId is null
+                    ? OpenClawSessionPatch.ClearThinking(key, sid)
+                    : OpenClawSessionPatch.Thinking(key, sid, levelId),
+                state => state with { ThinkingLevel = levelId },
+                ct);
+        }
+
+        internal static Task<(OpenClawActionOutcome Outcome, string? Detail)> SetFastModeAsync(
+            string orbSessionId, bool? on, CancellationToken ct) =>
+            RunControlAsync(
+                orbSessionId,
+                (key, sid) => on is { } value
+                    ? OpenClawSessionPatch.Fast(key, sid, value)
+                    : OpenClawSessionPatch.ClearFast(key, sid),
+                // Unset reads back as off: effectiveFastMode was false on a default row.
+                state => state with { FastMode = on, EffectiveFastMode = on == true },
+                ct);
+
+        private static OpenClawRunState WithModel(OpenClawRunState state, string modelId)
+        {
+            var entry = OfferedModels.FirstOrDefault(m => m.Id == modelId);
+            if (entry is null) return state with { Model = modelId };
+
+            var keeps = state.ThinkingLevel is { } level && entry.ThinkingLevels.Any(o => o.Id == level);
+            return state with
+            {
+                Model = modelId,
+                ThinkingLevels = entry.ThinkingLevels,
+                ThinkingDefault = entry.ThinkingDefault,
+                ThinkingLevel = keeps ? state.ThinkingLevel : null
+            };
+        }
+
+        // The shared shape of the three: the connection and session id guards that
+        // pin and rename use, the one patch call, and on Done the list catching up
+        // with a fact, with the chat told so its chip redraws before the next poll.
+        private static async Task<(OpenClawActionOutcome Outcome, string? Detail)> RunControlAsync(
+            string orbSessionId,
+            Func<string, string, OpenClawSessionPatch> build,
+            Func<OpenClawRunState, OpenClawRunState> optimistic,
+            CancellationToken ct)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            var key = KeyOfOrb(orbSessionId);
+            if (gateway is null || key is null) return (OpenClawActionOutcome.NotConnected, null);
+
+            var sessionId = _snapshot.FirstOrDefault(s => s.Key == key)?.SessionId;
+            if (sessionId is null)
+                return (OpenClawActionOutcome.Refused, "the gateway hasn't listed this conversation");
+
+            var result = await PatchAsync(
+                gateway, build(key, sessionId), "the gateway didn't confirm the change", ct);
+
+            if (result.Outcome == OpenClawActionOutcome.Done)
+            {
+                lock (Gate)
+                {
+                    if (_runStates.TryGetValue(key, out var state))
+                    {
+                        _runStates = new Dictionary<string, OpenClawRunState>(_runStates, StringComparer.Ordinal)
+                        {
+                            [key] = optimistic(state)
+                        };
+                    }
+                }
+
+                NotifyRunOptions(OpenChats().Where(c => c.GatewayKey == key));
+            }
+
+            return result;
         }
 
         private static async Task<(OpenClawActionOutcome Outcome, string? Detail)> AbortAsync(
@@ -1917,9 +2388,12 @@ namespace Orbweaver
         // panel puts whatever comes back in front of the person who typed it,
         // because a message that didn't arrive and didn't say so is the worst
         // outcome a chat window can produce.
-        // Excluded from coverage: sends a message to a real gateway.
-        [ExcludeFromCodeCoverage]
-        public static async Task SendAsync(OpenClawChatSession chat, string text, CancellationToken ct)
+        //
+        // Not excluded from coverage: the gateway is a constructor argument, so
+        // SetGatewayForTests drives every path over an in-memory socket (CB-270).
+        public static async Task SendAsync(
+            OpenClawChatSession chat, string text, CancellationToken ct,
+            IReadOnlyList<OpenClawOutgoingImage>? images = null)
         {
             OpenClawGateway? gateway;
             lock (Gate) gateway = _gateway;
@@ -1937,28 +2411,29 @@ namespace Orbweaver
             // Ordering matters and is why this is awaited: the reply can come
             // back fast, and a mirror that lands after it puts the question
             // below its own answer.
-            if (chat.Delivery is { } delivery)
+            // Where this goes is decided by OpenClawSendPolicy, which fails toward
+            // the surface payload on any doubt. The classification is looked at
+            // here, at send time, rather than held from when the panel opened.
+            chat.Observe(NativeOf(chat.GatewayKey));
+            var route = chat.Route;
+
+            // Refused before anything is sent, so a picture that cannot go does not
+            // leave a mirrored message behind it.
+            if (images is { Count: > 0 })
+            {
+                if (route != OpenClawSendRoute.Native)
+                    throw new IOException("pictures can only be sent to a conversation answered in place");
+
+                if (!OpenClawOutgoingImage.Fits(images, gateway.MaxPayload))
+                    throw new IOException("that picture is too large to send");
+            }
+
+            if (route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
             {
                 try
                 {
-                    var mirror = new Dictionary<string, object>
-                    {
-                        ["to"] = delivery.To,
-                        // The same constant the recognizer reads back, not a
-                        // second literal saying the same thing. Two of them is
-                        // how a mirror stops being recognisable as ours — which
-                        // it silently was, for one release.
-                        ["message"] = OpenClawSender.MirrorPrefix + text,
-                        ["channel"] = delivery.Channel,
-                        ["idempotencyKey"] = Guid.NewGuid().ToString()
-                    };
-
-                    if (!string.IsNullOrWhiteSpace(delivery.AccountId))
-                    {
-                        mirror["accountId"] = delivery.AccountId!;
-                    }
-
-                    await gateway.RequestAsync("send", mirror, ct);
+                    await gateway.RequestAsync("send",
+                        OpenClawSendPolicy.MirrorRequest(delivery, text, Guid.NewGuid().ToString()), ct);
                 }
                 catch
                 {
@@ -1969,33 +2444,16 @@ namespace Orbweaver
                 }
             }
 
-            await gateway.RequestAsync("chat.send", new Dictionary<string, object>
-            {
-                ["sessionKey"] = chat.GatewayKey,
-                ["message"] = text,
+            // The time limit and the pictures belong to a conversation answered in
+            // place. A surface send never carries either: its limits and its
+            // channel are not this person's to set from here.
+            int? timeoutMs = route == OpenClawSendRoute.Native && chat.TimeoutMinutes is { } minutes
+                ? minutes * 60_000
+                : null;
 
-                // Without this the gateway routes the reply to its internal
-                // channel — the agent answers, the transcript records it, and
-                // nothing ever reaches Discord. Its own routing reads:
-                //
-                //   if (!(params.deliver === true)) return { originatingChannel: INTERNAL_MESSAGE_CHANNEL, … }
-                //   const sessionDeliveryContext = deliveryContextFromSession(entry)
-                //
-                // so `true` is what makes it look up where this conversation
-                // actually lives and deliver there. We don't have to carry the
-                // channel or recipient ourselves; the session already knows, and
-                // the gateway is connected to Discord whether or not anything is
-                // open on this machine.
-                //
-                // Always on rather than a choice: a reply typed into a Discord
-                // conversation is a reply *to* that conversation. Anything else
-                // would be a message that looked sent and wasn't.
-                ["deliver"] = true,
-
-                // Side-effecting methods want one of these; a fresh id per send
-                // means a retry after a timeout can't post the message twice.
-                ["idempotencyKey"] = Guid.NewGuid().ToString()
-            }, ct);
+            await gateway.RequestAsync("chat.send",
+                OpenClawSendPolicy.ChatSendRequest(
+                    chat.GatewayKey, text, route, Guid.NewGuid().ToString(), timeoutMs, images), ct);
         }
 
         // --- posting to a room -------------------------------------------
@@ -2086,20 +2544,8 @@ namespace Orbweaver
 
             try
             {
-                var mirror = new Dictionary<string, object>
-                {
-                    ["to"] = delivery.To,
-                    ["message"] = OpenClawSender.MirrorPrefix + text,
-                    ["channel"] = delivery.Channel,
-                    ["idempotencyKey"] = Guid.NewGuid().ToString()
-                };
-
-                if (!string.IsNullOrWhiteSpace(delivery.AccountId))
-                {
-                    mirror["accountId"] = delivery.AccountId!;
-                }
-
-                await gateway.RequestAsync("send", mirror, ct);
+                await gateway.RequestAsync("send",
+                    OpenClawSendPolicy.MirrorRequest(delivery, text, Guid.NewGuid().ToString()), ct);
             }
             catch (Exception ex)
             {
@@ -2108,13 +2554,12 @@ namespace Orbweaver
 
             try
             {
-                await gateway.RequestAsync("chat.send", new Dictionary<string, object>
-                {
-                    ["sessionKey"] = carrier.GatewayKey,
-                    ["message"] = text,
-                    ["deliver"] = true,
-                    ["idempotencyKey"] = Guid.NewGuid().ToString()
-                }, ct);
+                // A room's carrier is a channel member, never a native session,
+                // so the route is a constant rather than a lookup.
+                await gateway.RequestAsync("chat.send",
+                    OpenClawSendPolicy.ChatSendRequest(
+                        carrier.GatewayKey, text, OpenClawSendRoute.Surface,
+                        Guid.NewGuid().ToString()), ct);
             }
             catch (Exception ex)
             {
@@ -2151,7 +2596,7 @@ namespace Orbweaver
         // things to keep in step.
         internal static string TextOf(JsonElement content) => content.ValueKind switch
         {
-            JsonValueKind.String => content.GetString() ?? "",
+            JsonValueKind.String => content.SafeString() ?? "",
 
             JsonValueKind.Array => string.Join("\n", content.EnumerateArray()
                 .Where(b => Str(b, "type") == "text")
@@ -2177,8 +2622,14 @@ namespace Orbweaver
         // (FetchHistoryPageAsync, which has chat.GatewayKey in hand). Nullable
         // so a fixture or a caller with genuinely no session gets exactly the
         // routes this built before.
+        //
+        // startsMidRun (CB-270): an older page may precede this one, so the turns of
+        // the first rollup with no user message before it are marked SeamRollup,
+        // for the page boundary (PrependHistory) to compare against the older
+        // page's trailing steps. The turns of the page's trailing run, with no
+        // rollup or user message after them, are always marked OpenTail.
         internal static List<HistoryTurn> TurnsFromHistory(
-            JsonElement messages, string? sessionKey, OwnerIndex? owners = null)
+            JsonElement messages, string? sessionKey, OwnerIndex? owners = null, bool startsMidRun = false)
         {
             // CB-277: null keeps every route exactly as it was built before —
             // the asking key — so a caller or fixture that does not know the
@@ -2213,13 +2664,58 @@ namespace Orbweaver
             var namedIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
             var mirrorDrawn = new List<(int Index, string Source)>();
 
+            // CB-270: turns whose caption was blanked because the words are shown by
+            // the other half of a covered pair (a dropped rollup, or a step a kept
+            // rollup contains). Their picture stays; see the dedupe after the loop.
+            var blanked = new HashSet<int>();
+
+            // CB-270: a tool-using run is stored as its steps and then a rollup
+            // repeating their text. Decided once, over the whole page, because
+            // the rule is positional: a rollup its steps cover is dropped, and a
+            // rollup that holds more is kept and the steps it contains are
+            // dropped instead — see OpenClawHistoryShape.TextsToDrop.
+            var drop = OpenClawHistoryShape.TextsToDrop(messages);
+            var messageIndex = -1;
+
+            // CB-270: the turns a rollup message produced, whichever arm built
+            // them (plain text, a named picture, an attachment, an inline
+            // image), carry FromRollup so a scroll-back can find the one that
+            // doubles a split run. Marked at the top of the next iteration and
+            // after the loop rather than at each of the arms' `continue`s.
+            var rollupFrom = -1;
+
+            void MarkRollupTurns()
+            {
+                if (rollupFrom < 0) return;
+                for (var i = rollupFrom; i < turns.Count; i++)
+                    turns[i] = turns[i] with { FromRollup = true };
+                rollupFrom = -1;
+            }
+
+            // Where each message's turns start, for marking the page boundary's
+            // turns below (a message can produce none, one, or several).
+            var turnStarts = new List<int>();
+
             foreach (var message in messages.EnumerateArray())
             {
+                MarkRollupTurns();
+                messageIndex++;
+                turnStarts.Add(turns.Count);
+
+                // A dropped message (a covered rollup, or a step a kept rollup
+                // contains) loses its *text* turn only. Its words are shown by
+                // the other half, but a picture or attachment it carries is not
+                // shown by anything else, and a loss is worse than a picture
+                // drawn twice. Its tool lines are emitted regardless.
+                var dropText = drop.Contains(messageIndex);
+                if (OpenClawHistoryShape.IsRollup(message)) rollupFrom = turns.Count;
+
                 var role = Str(message, "role") == "user" ? ChatRole.User : ChatRole.Assistant;
 
-                // content is a list of blocks; only the text ones are worth
-                // showing. Tool calls arrive live as their own turns, and a
-                // replayed tool_use block would be a wall of JSON.
+                // content is a list of blocks; the text ones are the message and
+                // the `toolcall` ones are drawn as one line each below. A
+                // tool_result's body is never drawn: it is the wall of output the
+                // line exists to stand in for.
                 if (!message.TryGetProperty("content", out var content)) continue;
 
                 // The two roles are shaped differently, which is easy to miss
@@ -2290,6 +2786,74 @@ namespace Orbweaver
                     }
                 }
 
+                // CB-270 Stage 4: a picture sent with a user turn is not a content
+                // block. Measured on 2026.10.5: the turn's `content` is the message
+                // text alone and the picture is under `__openclaw.media`, as
+                // `{url, contentType, kind, fileName, sizeBytes}`, where url is
+                // `media://inbound/<name>`: not something that can be requested as a
+                // path (every plain http form of it was measured to answer nothing).
+                // The same file is served by the assistant-media route, which takes
+                // that `media://` string as its `source`, asked with this
+                // conversation's key like every other picture it serves (CB-109).
+                // One bubble per image, before the text.
+                if (role == ChatRole.User
+                    && message.TryGetProperty("__openclaw", out var mediaOwner)
+                    && mediaOwner.ValueKind == JsonValueKind.Object
+                    && mediaOwner.TryGetProperty("media", out var mediaList)
+                    && mediaList.ValueKind == JsonValueKind.Array)
+                {
+                    var pictureSender = OpenClawSender.Classify(
+                        Bool(mediaOwner, "senderIsOwner"),
+                        Str(mediaOwner, "senderName"),
+                        Str(message, "idempotencyKey") ?? Str(mediaOwner, "idempotencyKey"),
+                        "",
+                        // The same provenance the text below is classified with: a
+                        // turn the gateway labels as its own machinery is not a
+                        // person's picture.
+                        Str(
+                            message.TryGetProperty("provenance", out var pictureProvenance)
+                            && pictureProvenance.ValueKind == JsonValueKind.Object
+                                ? pictureProvenance
+                                : default,
+                            "kind"));
+                    var pictureMine = pictureSender.Kind == OpenClawSender.SenderKind.Mine;
+                    var pictureMs = Num(message, "timestamp");
+
+                    foreach (var item in mediaList.EnumerateArray())
+                    {
+                        if (pictureSender.Kind == OpenClawSender.SenderKind.Machine) break;
+                        if (Str(item, "kind") != "image") continue;
+
+                        var pictureUrl = CleanUrl(Str(item, "url"));
+                        if (pictureUrl is null) continue;
+
+                        turns.Add(new HistoryTurn(role, "",
+                            new OpenClawMediaSource(pictureUrl, sessionKey).Route,
+                            Str(item, "fileName") ?? "",
+                            pictureMs <= 0
+                                ? DateTimeOffset.Now
+                                : DateTimeOffset.FromUnixTimeMilliseconds(pictureMs).ToLocalTime(),
+                            null, null, pictureMine, null, ImageSourcePath: null));
+                    }
+                }
+
+                // One System line per tool call, in `· name  arg` — built by the
+                // same ToolSummary the live session uses, from the same
+                // `{command, title}` object, so AppendNewTail can match the two.
+                // Before TextOf so the line falls where the call happened: a
+                // toolcall message has no text of its own, and one that does has
+                // spoken before it acted.
+                foreach (var call in OpenClawHistoryShape.ToolCalls(content))
+                {
+                    var callMs = Num(message, "timestamp");
+                    turns.Add(new HistoryTurn(ChatRole.System,
+                        ChatTranscript.ToolSummary(call.Name, call.Args), null, "",
+                        callMs > 0
+                            ? DateTimeOffset.FromUnixTimeMilliseconds(callMs).ToLocalTime()
+                            : DateTimeOffset.Now,
+                        null, null, IsError: call.IsError));
+                }
+
                 var text = TextOf(content);
 
                 // CB-274 / CB-275: read before the empty-text guard, because a
@@ -2337,10 +2901,47 @@ namespace Orbweaver
                         // first because __openclaw is the undocumented half and
                         // the one likelier to move.
                         Str(message, "idempotencyKey") ?? Str(meta, "idempotencyKey"),
-                        text);
+                        text,
+
+                        // CB-270: provenance is an object on the message itself,
+                        // not inside __openclaw, so Str(message, "provenance")
+                        // would answer null: read the object, then its kind.
+                        Str(
+                            message.TryGetProperty("provenance", out var provenance)
+                            && provenance.ValueKind == JsonValueKind.Object
+                                ? provenance
+                                : default,
+                            "kind"));
 
                     text = sender.Text;
                     mine = sender.Kind == OpenClawSender.SenderKind.Mine;
+
+                    // CB-270: the gateway's own machinery is not a person. A turn it
+                    // labels internal_system, or one of its two plain-text
+                    // injections (a reminder, a System: line) that arrives with no
+                    // attribution at all, is drawn as the dim note the panel already
+                    // has for System turns, and the room merge already drops those.
+                    //
+                    // The plain-text check runs only when nobody is named: a turn
+                    // the gateway attributed to the operator or to a named sender is
+                    // trusted over what it happens to start with, so a person who
+                    // types the sentence is still themselves.
+                    //
+                    // **Deliberately not done: attributing a bare user turn to the
+                    // WhatsApp peer.** Every user turn read off the two mains a
+                    // WhatsApp DM is routed into (2026.10.5) was machine output and
+                    // none a person's message, so the shape of a real inbound DM is
+                    // unknown. Naming the peer on a reminder would draw a reminder
+                    // as somebody's words. Revisit when one is captured.
+                    if (sender.Kind == OpenClawSender.SenderKind.Machine
+                        || (sender.Kind == OpenClawSender.SenderKind.Unknown
+                            && OpenClawSender.IsGatewayInjected(text)))
+                    {
+                        role = ChatRole.System;
+                        mine = false;
+                        speaker = null;
+                        colour = null;
+                    }
 
                     // A name only where Readable did not already find a better
                     // one. Its answer is an agent *id*, which resolves to the
@@ -2381,7 +2982,9 @@ namespace Orbweaver
                 // would stop matching a turn it produced a page earlier.
                 if (attachment is { } a)
                 {
-                    var caption = text.Trim();
+                    // A covered rollup's words are on screen as its steps; the
+                    // attachment is not, so it stays as a caption-less turn.
+                    var caption = dropText ? "" : text.Trim();
 
                     if (a.Fetchable)
                     {
@@ -2572,10 +3175,12 @@ namespace Orbweaver
                     // decides what identity goes on it.
                     var namedMedia = MediaSourceFor(named, sessionKey, ownerIndex);
 
-                    turns.Add(new HistoryTurn(role, text.Trim(), namedMedia.Route,
+                    turns.Add(new HistoryTurn(role, dropText ? "" : text.Trim(), namedMedia.Route,
                         named[(named.LastIndexOf('/') + 1)..],
                         at, speaker, colour, mine, null, namedMedia.Path,
                         Automation: cronAutomation, Confidence: confidence));
+
+                    if (dropText) blanked.Add(turns.Count - 1);
 
                     // Recorded after the Add, as the index of the turn just
                     // pushed — see the merge below for why this needs the
@@ -2592,9 +3197,115 @@ namespace Orbweaver
                 // same automation-based tier is set here too rather than left
                 // at the default. See that method's own Confidence: High for
                 // why a recovered path does not need to re-derive this.
-                turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
-                    speaker, colour, mine, Automation: cronAutomation,
-                    Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
+                if (!dropText)
+                {
+                    turns.Add(new HistoryTurn(role, text.Trim(), null, "", at,
+                        speaker, colour, mine, Automation: cronAutomation,
+                        Confidence: cronAutomation is not null ? MediaConfidence.High : MediaConfidence.Low));
+                }
+            }
+
+            MarkRollupTurns();
+            turnStarts.Add(turns.Count);
+
+            // CB-270: the page boundary compares the steps of the page's trailing
+            // run (OpenTail) with the rollup that closes the head run (SeamRollup).
+            // Both are found from the raw messages, where a user message is a
+            // boundary even when it renders to no turn, and marked on the turns
+            // those messages produced: the text ones only, since a picture turn
+            // has nothing to compare. The flags are values on the turns, so the
+            // removals below do not disturb them.
+            void MarkText(int message, bool seam)
+            {
+                for (var i = turnStarts[message]; i < turnStarts[message + 1]; i++)
+                {
+                    if (turns[i].Role != ChatRole.Assistant || string.IsNullOrWhiteSpace(turns[i].Text)) continue;
+
+                    turns[i] = seam ? turns[i] with { SeamRollup = true } : turns[i] with { OpenTail = true };
+                }
+            }
+
+            foreach (var i in OpenClawHistoryShape.OpenTailSteps(messages)) MarkText(i, seam: false);
+
+            var head = startsMidRun ? OpenClawHistoryShape.HeadRollupIndex(messages) : -1;
+            if (head >= 0) MarkText(head, seam: true);
+
+            // CB-270: the raw messages' runs (a user message or a rollup closes one),
+            // for the picture checks here and at the page boundary. The runs of the
+            // page's trailing end and head are marked on every turn they produced,
+            // pictures included; turns whose caption was blanked are marked as well.
+            var spanOfMessage = new int[turnStarts.Count - 1];
+            var span = 0;
+            var lastClosed = false;
+            var firstIsUser = false;
+            var m = 0;
+            foreach (var raw in messages.EnumerateArray())
+            {
+                spanOfMessage[m] = span;
+                lastClosed = Str(raw, "role") == "user" || OpenClawHistoryShape.IsRollup(raw);
+                if (m == 0) firstIsUser = Str(raw, "role") == "user";
+                if (lastClosed) span++;
+                m++;
+            }
+
+            var spanOfTurn = new int[turns.Count];
+            for (var msg = 0; msg < spanOfMessage.Length; msg++)
+            {
+                for (var t = turnStarts[msg]; t < turnStarts[msg + 1]; t++) spanOfTurn[t] = spanOfMessage[msg];
+            }
+
+            var lastSpan = spanOfMessage.Length == 0 ? -1 : spanOfMessage[^1];
+            for (var t = 0; t < turns.Count; t++)
+            {
+                var tail = !lastClosed && spanOfTurn[t] == lastSpan;
+                var headRun = startsMidRun && !firstIsUser && spanOfTurn[t] == 0;
+
+                if (tail || headRun || blanked.Contains(t))
+                    turns[t] = turns[t] with { RunTail = tail, RunHead = headRun, Blanked = blanked.Contains(t) };
+            }
+
+            // CB-270: a covered pair can show one picture twice. An equal-join rollup
+            // and its last step both end in the same MEDIA: path, or a kept rollup
+            // and a step it contains do; the covered side has lost its caption but
+            // kept its picture, so the picture would be drawn twice in one run. A
+            // blanked turn whose resolved path another turn of the same run still
+            // shows is removed; the last copy is always kept, so a picture is never
+            // drawn zero times. Runs are the raw messages' (a user message or a
+            // rollup closes one). Two different pictures both stay, and so do two
+            // genuine deliveries of one file, which are not blanked turns.
+            if (blanked.Count > 0)
+            {
+                var redundant = new HashSet<int>();
+                foreach (var b in blanked.OrderBy(i => i))
+                {
+                    var path = turns[b].ImageSourcePath;
+                    if (string.IsNullOrEmpty(path)) continue;
+
+                    var shownElsewhere = false;
+                    for (var j = 0; j < turns.Count && !shownElsewhere; j++)
+                    {
+                        shownElsewhere = j != b && !redundant.Contains(j) && spanOfTurn[j] == spanOfTurn[b]
+                            && string.Equals(turns[j].ImageSourcePath, path, StringComparison.Ordinal);
+                    }
+
+                    if (shownElsewhere) redundant.Add(b);
+                }
+
+                if (redundant.Count > 0)
+                {
+                    var newIndex = new int[turns.Count];
+                    var next = 0;
+                    for (var i = 0; i < turns.Count; i++) newIndex[i] = redundant.Contains(i) ? -1 : next++;
+
+                    foreach (var key in namedIndices.Keys.ToList())
+                        namedIndices[key] = namedIndices[key].Where(i => newIndex[i] >= 0).Select(i => newIndex[i]).ToList();
+
+                    var keptMirrors = mirrorDrawn.Where(x => newIndex[x.Index] >= 0).Select(x => (newIndex[x.Index], x.Source)).ToList();
+                    mirrorDrawn.Clear();
+                    mirrorDrawn.AddRange(keptMirrors);
+
+                    foreach (var i in redundant.OrderByDescending(i => i)) turns.RemoveAt(i);
+                }
             }
 
             // One delivery, two arms, one bubble — CB-98's cross-arm case,
@@ -2665,6 +3376,14 @@ namespace Orbweaver
                     }
 
                     doomed.Add(index);
+                }
+
+                // CB-270: the named turns that paired with no mirror on this page can
+                // account for one on the page next to it. Marked before the paired
+                // mirrors are removed, while the indices still hold.
+                foreach (var left in namedIndices.Values)
+                {
+                    foreach (var i in left) turns[i] = turns[i] with { FreeNamed = true };
                 }
 
                 for (var i = doomed.Count - 1; i >= 0; i--) turns.RemoveAt(doomed[i]);
@@ -4292,6 +5011,100 @@ namespace Orbweaver
             }
         }
 
+        // CB-270 Stage 3: a conversation's own message stream is held for exactly
+        // as long as a panel is open on it. The roster subscription says a
+        // session changed and, for a run on anything but a cron session, nothing
+        // else; the session's own subscription is what carries its text and tool
+        // calls (measured, see docs/openclaw-findings.md).
+        //
+        // Two call sites and no others: a chat's panel count going 0 to 1 or 1 to
+        // 0, and the reconnect loop re-subscribing the chats that are open. Never
+        // across the roster, which would hold a stream per conversation whether
+        // anyone was looking or not.
+        //
+        // Not excluded from coverage, on the SendAsync precedent: the gateway is
+        // a constructor argument, so an in-memory socket reaches every arm.
+        internal static void MessagesWanted(OpenClawChatSession chat, bool wanted)
+        {
+            OpenClawGateway? gateway;
+            lock (Gate) gateway = _gateway;
+
+            // No connection: nothing to ask. A panel opened while disconnected is
+            // caught by the reconnect, which subscribes every open one.
+            if (gateway is null) return;
+
+            _ = Task.Run(async () =>
+            {
+                var failure = await MessagesRequestAsync(gateway, chat.GatewayKey, wanted, CancellationToken.None);
+                if (failure is null) return;
+
+                Dispatcher.UIThread.Post(() => chat.NoteLiveUnavailable(failure));
+            });
+        }
+
+        // Returns why a *subscribe* failed, or null. An unsubscribe that fails is
+        // not reported at all: the panel is gone, and the gateway drops a
+        // connection's subscriptions with the connection anyway.
+        internal static async Task<string?> MessagesRequestAsync(
+            OpenClawGateway gateway, string key, bool wanted, CancellationToken ct)
+        {
+            try
+            {
+                var parameters = new Dictionary<string, object> { ["key"] = key };
+
+                // CB-270 Stage 6: ask for the session-scoped replay of its pending
+                // approvals, only for a device that chose to approve and was granted
+                // the scope. Never on an unsubscribe, and never otherwise, so a
+                // device that did not opt in sends the frame it always did.
+                if (wanted
+                    && OrbweaverSettings.OpenClawApproveEnabled
+                    && gateway.GrantedScopes.Contains(ApprovalsScope))
+                    parameters["includeApprovals"] = true;
+
+                var response = await gateway.RequestAsync(
+                    wanted ? "sessions.messages.subscribe" : "sessions.messages.unsubscribe", parameters, ct);
+
+                // The subscribe's answer carries the authoritative pending set for
+                // the session when approvals were asked for. An unsubscribe hands
+                // what the panel taught this app back to the list.
+                if (parameters.ContainsKey("includeApprovals"))
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    if (OpenClawApprovals.ParseReplay(response, key, now) is { } replay) ApplyReplay(key, replay, now);
+                }
+                else if (!wanted)
+                {
+                    ReleaseSessionSourced(key);
+                }
+
+                return null;
+            }
+            catch (Exception ex) when (wanted)
+            {
+                return ex.Message;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        // The keys that deserve a subscription: those with a panel open.
+        internal static IReadOnlyList<string> MessageSubscriptionsFor(IEnumerable<OpenClawChatSession> chats) =>
+            chats.Where(c => c.HasOpenPanel).Select(c => c.GatewayKey).ToList();
+
+        // Subscriptions belong to the connection, so a reconnect has dropped every
+        // one of them and the open panels have to ask again. Without this a panel
+        // that was streaming goes quiet after a gateway restart and nothing says so.
+        internal static async Task ResubscribeOpenPanelsAsync(
+            OpenClawGateway gateway, IEnumerable<OpenClawChatSession> chats, CancellationToken ct)
+        {
+            foreach (var key in MessageSubscriptionsFor(chats))
+            {
+                await MessagesRequestAsync(gateway, key, true, ct);
+            }
+        }
+
         // The panel telling us it has bound, or let go of, a conversation.
         //
         // Here rather than in ChatPanel so the panel does not have to know
@@ -4433,7 +5246,10 @@ namespace Orbweaver
                 // be told whose conversation they belong to (CB-109), and
                 // this is the one place that knows.
                 var owners = OwnerIndexSnapshot();
-                var turns = TurnsFromHistory(messages, chat.GatewayKey, owners);
+                // A full page means an older one may exist, so the page's first run
+                // may be cut (CB-270): a short page is the start of the conversation.
+                var turns = TurnsFromHistory(messages, chat.GatewayKey, owners,
+                    startsMidRun: messages.GetArrayLength() >= PageSize);
 
                 // CB-115: recover a cron-delivered picture whose transcript
                 // lost its directory. Only turns TurnsFromHistory tagged with
@@ -4559,7 +5375,7 @@ namespace Orbweaver
             e.ValueKind == JsonValueKind.Object
             && e.TryGetProperty(name, out var v)
             && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
+                ? v.SafeString()
                 : null;
 
         // Null rather than false when absent, because the three answers are

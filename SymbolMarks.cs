@@ -148,5 +148,21 @@ namespace Orbweaver
             TextToSpeech.SpeakState.Preparing => ("\u23F3", null),
             _ => ("\U0001F508", null)
         };
+
+        // What the mute button wears (CB-298): the speaker with a stroke
+        // through it when everything is muted, the plain loud speaker when
+        // it is not. Both are colour emoji on both platforms, the same family
+        // SpeakLook chose its speaker from, so no drawn mark is needed and the
+        // two buttons sit side by side without disagreeing about style.
+        internal static string MuteLook(bool muted) => muted ? "\U0001F507" : "\U0001F50A";
+
+        // The mute button's tooltip. The combo is whatever is really bound
+        // (HotkeyActions.Bound), or null when nothing registered, so the
+        // tooltip never names a chord that would do nothing.
+        internal static string MuteTip(bool muted, HotkeyCombo? combo)
+        {
+            var verb = muted ? "Unmute" : "Mute";
+            return combo is { } c ? $"{verb} \u2014 {HotkeyRegistry.Format(c)}" : verb;
+        }
     }
 }

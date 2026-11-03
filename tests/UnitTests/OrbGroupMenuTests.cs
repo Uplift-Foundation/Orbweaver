@@ -59,7 +59,7 @@ public class OrbGroupMenuTests : IDisposable
         rows.ToDictionary(r => r.Id, r => r.Status, StringComparer.Ordinal);
 
     private static GroupMenuContext Resolve(IReadOnlyDictionary<string, SessionStatus> statuses, string id) =>
-        OrbGroupMenu.Resolve(id, statuses, ClusterMode.WithChats, ClusterMode.WithChats);
+        OrbGroupMenu.Resolve(id, statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats);
 
     [Fact]
     public void ASoloOrbIsInMainWithItsOwnKeyAndNoMembers()
@@ -182,7 +182,7 @@ public class OrbGroupMenuTests : IDisposable
 
         var context = OrbGroupMenu.ContextFor(
             "root", new[] { "root", "m1", "m1", "root", "m2" }, statuses,
-            ClusterMode.WithChats, ClusterMode.WithChats);
+            ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats);
 
         Assert.Equal(group.Id, context.GroupId);
         Assert.Equal(SessionManager.PositionKeyFor(statuses["root"], "root"), context.LeadKey);
@@ -245,9 +245,45 @@ public class OrbGroupMenuTests : IDisposable
             Heartbeat = true
         }));
 
-        var context = OrbGroupMenu.Resolve("hb", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape);
+        var context = OrbGroupMenu.Resolve("hb", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats);
 
         Assert.Equal(OrbGroups.Heartbeats, context.GroupId);
+    }
+
+    // CB-270: a native root that is not a heartbeat (a New Chat) is in the native
+    // group under Own shape and in main under WithChats.
+    [Fact]
+    public void ANativeNonHeartbeatRootIsInTheNativeGroupOnlyUnderOwnShape()
+    {
+        var statuses = Of(("n", new SessionStatus
+        {
+            Source = SessionSource.OpenClaw,
+            Native = OpenClawNativeKind.Dashboard
+        }));
+
+        Assert.Equal(OrbGroups.Native, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape).GroupId);
+        Assert.Equal(OrbGroups.Main, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats).GroupId);
+    }
+
+    // Warren's ruling: a native main is also a heartbeat by key, and the heartbeat
+    // setting wins, so it is in the heartbeat group under Own shape there and not
+    // in the native group whatever the native setting says.
+    [Fact]
+    public void ANativeHeartbeatMainFollowsTheHeartbeatSettingNotTheNativeOne()
+    {
+        var statuses = Of(("n", new SessionStatus
+        {
+            Source = SessionSource.OpenClaw,
+            Heartbeat = true,
+            Native = OpenClawNativeKind.Main
+        }));
+
+        Assert.Equal(OrbGroups.Heartbeats, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.OwnShape, ClusterMode.WithChats, ClusterMode.WithChats).GroupId);
+        Assert.Equal(OrbGroups.Main, OrbGroupMenu.Resolve(
+            "n", statuses, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape).GroupId);
     }
 
     // Value equality on the key list, which a record's default does not give.

@@ -864,4 +864,102 @@ public class GatewayScanTests
             PublishNothing();
         }
     }
+
+    // --- CB-270: pinned and dashboard sessions outlive "Keep orbs for" ---
+
+    // Three days quiet against the shortest lifetime the picker offers, so nothing
+    // longer can be what carried the orb. Parse is given the "all" window by
+    // Publish, so these rows reach the scan, which is where the lifetime clock
+    // lives.
+    private static readonly long ThreeDaysAgo =
+        new DateTimeOffset(DateTime.UtcNow.AddDays(-3)).ToUnixTimeMilliseconds();
+
+    private static HashSet<string> ScanOldRows(string rows)
+    {
+        using var scratch = new Scratch();
+        var wasLifetime = OrbweaverSettings.OrbLifetimeMinutes;
+        try
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = 1;
+            Publish("{\"sessions\":[" + rows + "]}");
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+            // Twice: surviving one scan and expiring on the next is a different
+            // bug from never getting an orb.
+            manager.ScanAndUpdate();
+
+            return new HashSet<string>(Orbs(manager).Keys);
+        }
+        finally
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = wasLifetime;
+            PublishNothing();
+        }
+    }
+
+    // One scan holds all three, which is what makes the control mean something:
+    // the exemption is a clause too wide the moment the unpinned DM survives too.
+    [AvaloniaFact]
+    public void ADashboardAndAPinnedDmSurviveWhileAnUnpinnedDmOfTheSameAgeExpires()
+    {
+        var orbs = ScanOldRows($$"""
+            {"key":"agent:a:dashboard:u1","classification":"dashboard","lastActivityAt":{{ThreeDaysAgo}}},
+            {"key":"agent:a:discord:direct:1","classification":"direct","chatType":"direct","pinned":true,"lastActivityAt":{{ThreeDaysAgo}}},
+            {"key":"agent:a:discord:direct:2","classification":"direct","chatType":"direct","lastActivityAt":{{ThreeDaysAgo}}}
+            """);
+
+        Assert.Contains("openclaw:agent:a:dashboard:u1", orbs);
+        Assert.Contains("openclaw:agent:a:discord:direct:1", orbs);
+        Assert.DoesNotContain("openclaw:agent:a:discord:direct:2", orbs);
+    }
+
+    // CB-270 S5: a WhatsApp group two agents are in is one room orb, both agents
+    // point at it, and it is titled with the group's name, not its id. The rows
+    // keep the real field structure with every number and id invented; the
+    // subject is where the gateway holds the name and there is no groupChannel.
+    [AvaloniaFact]
+    public void TwoAgentsInOneWhatsAppGroupGetOneRoomOrbTitledWithTheSubject()
+    {
+        using var scratch = new Scratch();
+        try
+        {
+            string Row(string agent) => $$"""
+                {"key":"agent:{{agent}}:whatsapp:group:120000000000000001@g.us","classification":"group",
+                 "kind":"group","chatType":"group","peerKind":"group","subject":"Studio Crew",
+                 "origin":{"provider":"whatsapp","chatType":"group","label":"120000000000000001@g.us",
+                           "to":"120000000000000001@g.us","accountId":"default"},
+                 "deliveryContext":{"channel":"whatsapp","to":"120000000000000001@g.us","accountId":"default"},
+                 "lastChannel":"whatsapp","lastTo":"120000000000000001@g.us","lastAccountId":"default",
+                 "lastActivityAt":{{JustNow}}}
+                """;
+
+            Publish("{\"sessions\":[" + Row("alpha") + "," + Row("beta") + "]}");
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+
+            var orbs = Orbs(manager);
+            var roomId = SessionManager.RoomId("whatsapp:120000000000000001@g.us");
+
+            Assert.Equal(3, orbs.Count);
+            Assert.Single(orbs.Keys, id => id == roomId);
+            Assert.Equal("Studio Crew", manager.StatusFor(roomId)!.Title);
+
+            foreach (var agent in new[] { "alpha", "beta" })
+            {
+                var status = manager.StatusFor($"openclaw:agent:{agent}:whatsapp:group:120000000000000001@g.us");
+                Assert.Equal(roomId, status!.Lead);
+
+                // A WhatsApp group is a channel, never a direct message, and no
+                // orb title carries the raw id.
+                Assert.Equal(SessionKind.Channel, status.Kind);
+                Assert.DoesNotContain("120000000000000001", status.Title);
+            }
+        }
+        finally
+        {
+            PublishNothing();
+        }
+    }
 }

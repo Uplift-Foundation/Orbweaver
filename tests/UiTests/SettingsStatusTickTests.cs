@@ -135,4 +135,49 @@ public class SettingsStatusTickTests
 
         Assert.Equal(first, window.OpenClawStatusText);
     }
+
+    // CB-300: a live session under a Claude Code folder the link was never told
+    // to read is otherwise an empty roster on the far machine with nothing to
+    // say why. The line says so, and drops it again once there is nothing left.
+    [AvaloniaFact]
+    public void TheLinkLineNamesAFolderWhoseSessionsAreNotOffered()
+    {
+        OrbweaverSettings.ReloadForTests();
+        OrbweaverSettings.PeerLinkEnabled = true;
+
+        try
+        {
+            var window = NewWindow();
+            _ = window.PeerLinkRows();
+
+            // The control: a gap that is normal (asked) or not the user's to
+            // fix leaves the line exactly as it would be with no gap at all.
+            PeerSessions.UseRosterGapsForTests(new[]
+            {
+                new RemoteMirrorServer.RosterGap("~/.claude-board", 5, Asked: true, Actionable: false),
+                new RemoteMirrorServer.RosterGap("(outside home)", 2, Asked: false, Actionable: false)
+            });
+            window.OnStatusTick(null, EventArgs.Empty);
+            var plain = PeerSessions.StatusText(true, true, 0, 0, 0);
+            Assert.Equal(plain, window.PeerLinkStatusText);
+
+            PeerSessions.UseRosterGapsForTests(new[]
+            {
+                new RemoteMirrorServer.RosterGap("~/.claude-loginid", 23, Asked: false, Actionable: true)
+            });
+            window.OnStatusTick(null, EventArgs.Empty);
+
+            Assert.StartsWith(plain, window.PeerLinkStatusText);
+            Assert.Contains("23 sessions under ~/.claude-loginid", window.PeerLinkStatusText);
+
+            // Cleared, the sentence is gone.
+            PeerSessions.UseRosterGapsForTests(Array.Empty<RemoteMirrorServer.RosterGap>());
+            window.OnStatusTick(null, EventArgs.Empty);
+            Assert.Equal(plain, window.PeerLinkStatusText);
+        }
+        finally
+        {
+            PeerSessions.UseRosterGapsForTests(null);
+        }
+    }
 }

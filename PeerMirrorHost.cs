@@ -91,10 +91,13 @@ namespace Orbweaver
         // is still passed because RemoteMirrorServer's local seams use it to
         // read this machine's own agent roster, which *is* per-account.
         internal void Serve(
-            IReadOnlyList<string> accounts,
+            Func<IReadOnlyList<string>> accounts,
             Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> localSessions)
         {
-            var label = accounts.Count > 0 ? accounts[0] : ".claude";
+            // Evaluated once: a label, not a scope. The roster itself re-reads
+            // `accounts` on every build (CB-300).
+            var first = accounts();
+            var label = first.Count > 0 ? first[0] : ".claude";
 
             lock (_gate)
             {
