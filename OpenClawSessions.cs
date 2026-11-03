@@ -779,6 +779,74 @@ namespace Orbweaver
             NotifyRunOptions(OpenChats());
         }
 
+        // What a dropped connection takes with it, only if it is still the current
+        // one: see the long comment at the call site for why that guard matters.
+        // The command catalogue goes too, since the next connection may be a
+        // different gateway with a different list.
+        internal static void ReleaseGateway(OpenClawGateway? gateway)
+        {
+            lock (Gate)
+            {
+                if (ReferenceEquals(_gateway, gateway))
+                {
+                    _gateway = null;
+                    _commands = CommandCatalogue.None;
+                    Running.Clear();
+                }
+            }
+        }
+
+        // CB-306: the gateway's slash-command catalogue, from commands.list once per
+        // connection, with the scopes this connection was granted so the list a
+        // panel offers and the refusal in front of a typed command read the same
+        // permissions. Empty until it answers, or when the gateway does not
+        // advertise the method, and the panel then offers nothing rather than a
+        // list we made up.
+        internal sealed record CommandCatalogue(
+            IReadOnlyList<OpenClawCommand> Commands, IReadOnlyList<string> Scopes)
+        {
+            internal static readonly CommandCatalogue None =
+                new(Array.Empty<OpenClawCommand>(), Array.Empty<string>());
+        }
+
+        private static CommandCatalogue _commands = CommandCatalogue.None;
+
+        internal static CommandCatalogue Commands
+        {
+            get { lock (Gate) return _commands; }
+        }
+
+        internal static void SetCommandsForTests(CommandCatalogue commands)
+        {
+            lock (Gate) _commands = commands;
+        }
+
+        // Asks for the catalogue only when hello-ok advertised the method, and only
+        // once per connection. A failure leaves it empty and says nothing: slash
+        // autocomplete is an extra, and the text still goes through chat.send.
+        internal static async Task LoadCommandsAsync(OpenClawGateway gateway, CancellationToken ct)
+        {
+            if (!gateway.Methods.Contains(OpenClawCommandCatalog.ListMethod)) return;
+
+            IReadOnlyList<OpenClawCommand> commands;
+
+            try
+            {
+                // A literal, not the constant: the guard in OpenClawApprovalStateTests
+                // allows only literals at a RequestAsync call so that no method name
+                // is ever built at run time.
+                var res = await gateway.RequestAsync(
+                    "commands.list", new Dictionary<string, object>(), ct);
+                commands = OpenClawCommandCatalog.Parse(res);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            lock (Gate) _commands = new CommandCatalogue(commands, gateway.GrantedScopes);
+        }
+
         // Tells the chats whose run controls may now read differently. On the UI
         // thread, which is where the panel redraws from.
         private static void NotifyRunOptions(IEnumerable<OpenClawChatSession> chats)
@@ -1153,6 +1221,7 @@ namespace Orbweaver
 
                     await LoadAgentNamesAsync(gateway, ct);
                     await LoadModelsAsync(gateway, ct);
+                    await LoadCommandsAsync(gateway, ct);
                     await SubscribeAsync(gateway, ct);
                     await ResubscribeOpenPanelsAsync(gateway, OpenChats(), ct);
                     await PollAsync(gateway, ct);
@@ -1194,14 +1263,7 @@ namespace Orbweaver
                     // after its reply finished. Dropping it means a run still
                     // going across the gap goes dark early, which is the failure
                     // a person notices rather than one that quietly pins an orb.
-                    lock (Gate)
-                    {
-                        if (ReferenceEquals(_gateway, gateway))
-                        {
-                            _gateway = null;
-                            Running.Clear();
-                        }
-                    }
+                    ReleaseGateway(gateway);
 
                     gateway?.Dispose();
                 }
@@ -2393,7 +2455,7 @@ namespace Orbweaver
         // SetGatewayForTests drives every path over an in-memory socket (CB-270).
         public static async Task SendAsync(
             OpenClawChatSession chat, string text, CancellationToken ct,
-            IReadOnlyList<OpenClawOutgoingImage>? images = null)
+            IReadOnlyList<OpenClawOutgoingImage>? images = null, bool isCommand = false)
         {
             OpenClawGateway? gateway;
             lock (Gate) gateway = _gateway;
@@ -2428,7 +2490,9 @@ namespace Orbweaver
                     throw new IOException("that picture is too large to send");
             }
 
-            if (route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
+            // CB-306: a slash command is not mirrored — the mirror posts the text into
+            // the channel, and "/status" or "/model x" is not something to say there.
+            if (!isCommand && route == OpenClawSendRoute.Surface && chat.Delivery is { } delivery)
             {
                 try
                 {

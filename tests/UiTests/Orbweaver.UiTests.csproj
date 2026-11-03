@@ -69,5 +69,7 @@
          real OpenClawGateway and the real events without second copies. -->
     <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
     <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
+    <!-- CB-306: real commands.list and a /status card, as constants. -->
+    <Compile Include="..\UnitTests\OpenClawSlashFixtures.cs" Link="OpenClawSlashFixtures.cs" />
   </ItemGroup>
 </Project>

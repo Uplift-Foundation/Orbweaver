@@ -1,5 +1,6 @@
 using System;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -88,6 +89,40 @@ namespace Orbweaver
             return result.Outcome.Kind == CloudOutcomeKind.Ok
                 ? new CloudSendAttempt(CloudSendResult.Sent, uuid, null, result.Outcome)
                 : new CloudSendAttempt(CloudSendResult.NotSent, uuid, NotSentNote(result.Outcome), result.Outcome);
+        }
+
+        // One control request on the session's events channel: the credential
+        // read and the POST that ClaudeCloudChatSession's interrupt used to do
+        // inline, lifted out (CB-306) so the Desktop/headless bridge arm posts
+        // its control requests the same way and the two cannot drift.
+        //
+        // Returns null on a 2xx and otherwise the clause a note can finish —
+        // "the credential is missing", "the id is malformed", the API's own
+        // Detail — with no retry, for the reason the interrupt had none: a
+        // control request is a command about *now*, and resending one whose
+        // answer was lost is not known to be harmless for every subtype.
+        internal static async Task<string?> PostControlAsync(
+            ICloudApi api, ICloudCredentialSource credentials, CredentialBudget readBudget,
+            string sessionId, JsonObject request, CancellationToken ct)
+        {
+            var read = await ClaudeCliCredentials
+                .ReadWithinAsync(credentials, readBudget, ct).ConfigureAwait(false);
+
+            if (read.Outcome != CredentialOutcome.Found || read.AccessToken is not { } token)
+                return ClaudeCliCredentials.StatusFor(read);
+
+            // Null for a malformed id: the roster can report a session this app
+            // never sent to, so the refusal is handled rather than assumed away.
+            if (CloudRequest.CodeEventsPath(sessionId) is not { } path)
+                return $"this session's id is not in a shape {Brand.ShortName} will write to";
+
+            var result = await api.SendAsync(
+                new CloudRequestContext(token, path, HttpMethod.Post,
+                    ClaudeCloudSend.ControlRequestBody(
+                        Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), request)),
+                ct).ConfigureAwait(false);
+
+            return result.Outcome.Kind == CloudOutcomeKind.Ok ? null : result.Outcome.Detail;
         }
 
         internal static string AdviceFor(CloudOutcomeKind kind) => kind switch

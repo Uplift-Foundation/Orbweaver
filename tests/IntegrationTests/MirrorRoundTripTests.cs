@@ -650,6 +650,297 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Empty(harness.Typed);
     }
 
+
+    // --- CB-306: slash lines over the link ---------------------------------------
+
+    [Fact]
+    public async Task TheRosterCarriesARouteKindForEachCommandWhenNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("s1.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.NotNull(entry.CommandRoutes);
+        Assert.Equal(entry.Commands!.Count, entry.CommandRoutes!.Count);
+        // A pane to type into: today's catalogue, offered as keystrokes.
+        Assert.All(entry.CommandRoutes, r => Assert.Equal("typed", r));
+    }
+
+    [Fact]
+    public async Task ACommandOnAPanelessSessionIsOfferedAsUnavailableWhenNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir) { CanType = false };
+        harness.AddSession("job-hunter", WriteTranscript("s2.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.All(entry.CommandRoutes!, r => Assert.Equal("unavailable", r));
+        Assert.Empty(ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFrom(entry)));
+    }
+
+    [Fact]
+    public async Task TheRosterCarriesTheRunnersRouteKinds()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[]
+            {
+                new SlashCommand("/color", "", SlashRouteKind.Control),
+                new SlashCommand("/compact", "", SlashRouteKind.Unavailable),
+            }
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s3.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.Equal(new[] { "/color", "/compact" }, entry.Commands);
+        Assert.Equal(new[] { "control", "unavailable" }, entry.CommandRoutes);
+        var all = RemoteControlSessions.CommandsFrom(entry);
+        Assert.Equal(2, all.Count);
+        var offered = Assert.Single(ChatPanel.OfferedCommands(all));
+        Assert.Equal(SlashRouteKind.Control, offered.Route);
+    }
+
+    [Fact]
+    public async Task AControlSlashLineRunsOnTheFarMachineAndSaysHow()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s4.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaControl, outcome.Via);
+        Assert.Equal("/color pink", Assert.Single(harness.SlashRan));
+        Assert.Empty(harness.Typed);
+    }
+
+    [Fact]
+    public async Task ARefusedSlashLineCarriesItsReasonAcrossTheLink()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/compact", "", SlashRouteKind.Unavailable) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(
+                MirrorProtocol.ViaRefused, "a message from here arrives as a teammate's request, with \"quotes\" and ünicode"),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s5.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/compact", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal("a message from here arrives as a teammate's request, with \"quotes\" and ünicode", outcome.Why);
+    }
+
+    [Fact]
+    public async Task ARefusalWithNoReasonStillSaysSomething()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/x", "", SlashRouteKind.Unavailable) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaRefused, null),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s6.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/x", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.False(string.IsNullOrWhiteSpace(outcome.Why));
+    }
+
+    [Fact]
+    public async Task ACatalogueSeamThatThrowsLeavesTheEntryWithNoCommandsRatherThanNoRoster()
+    {
+        var harness = new Harness(_dir, wireSlash: true) { SlashCatalogueThrows = true };
+        harness.AddSession("job-hunter", WriteTranscript("boom.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.True(entry.HasTranscript);
+        Assert.Empty(entry.Commands!);
+        Assert.Empty(entry.CommandRoutes!);
+    }
+
+    [Fact]
+    public async Task ARunnerThatThrowsIsAnsweredAsARefusalNotATornDownLink()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) },
+            SlashRunnerThrows = true,
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s7.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsTypedWhenThereIsAPaneAndNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("s8.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaTyped, outcome.Via);
+        Assert.Equal("/color pink", Assert.Single(harness.Typed).Text);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsRefusedWhenThereIsNoPaneAndNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir) { CanType = false };
+        harness.AddSession("job-hunter", WriteTranscript("s9.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(SlashRouting.PeerSocketReason, outcome.Why);
+        Assert.Empty(harness.Typed);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsRefusedWhenThePaneRefusesTheKeystrokes()
+    {
+        var harness = new Harness(_dir) { TypeFails = true };
+        harness.AddSession("job-hunter", WriteTranscript("s10.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsStillRefusedWhenReplyingIsOffOnTheFarMachine()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null),
+            ReplyEnabled = false,
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s11.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ErrReplyOff, outcome.Error);
+        Assert.Empty(harness.SlashRan);
+    }
+
+    // A headless job with a Remote Control bridge and no pane, through the real
+    // far resolver rather than a canned runner: /color is a control request,
+    // /compact is a command that cannot run there, and both are said so across
+    // the link. The only fakes are at the machine's edges.
+    [Fact]
+    public async Task APanelessBridgedJobRunsControlCommandsAndRefusesTheRestThroughTheRealResolver()
+    {
+        var posted = new List<(string Subtype, string Color)>();
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => "session_01ABCDEFGHJKMNPQRSTVWXYZ12",
+            _ => new[] { new SlashCommand("/compact", ""), new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            (_, subtype, request) =>
+            {
+                posted.Add((subtype, (string?)request["color"] ?? ""));
+                return Task.FromResult<string?>(null);
+            }));
+        harness.AddSession("job-hunter", WriteTranscript("real.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+        Assert.Contains("/compact", entry.Commands!);
+        Assert.Equal("unavailable", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/compact")]);
+        Assert.Equal("control", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/color")]);
+        // The panel offers only what runs.
+        var offeredNames = ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFrom(entry)).Select(c => c.Name);
+        Assert.Contains("/color", offeredNames);
+        Assert.DoesNotContain("/compact", offeredNames);
+        // ...but it is still a known command, so typing it is refused, not sent.
+        Assert.Contains(RemoteControlSessions.CommandsFrom(entry), c => c.Name == "/compact");
+
+        var ran = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+        Assert.Equal(MirrorProtocol.ViaControl, ran.Via);
+        Assert.Equal(("set_color", "pink"), Assert.Single(posted));
+
+        var refused = await harness.Client.SendInputDetailedAsync("job-hunter", "/compact", slash: true);
+        Assert.Equal(MirrorProtocol.ViaRefused, refused.Via);
+        Assert.Equal(SlashRouting.PeerMessageReason, refused.Why);
+        Assert.Single(posted);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The roster carries the whole catalogue: a catalogue past the old 120-name
+    // cut still lists its last name, so the near side knows it as a command.
+    [Fact]
+    public async Task ARosterCarriesACatalogueLongerThanOneHundredAndTwentyNames()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = Enumerable.Range(0, 400).Select(i => new SlashCommand($"/cmd{i}", "", SlashRouteKind.Unavailable)).ToList(),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("long.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.Equal(400, entry.Commands!.Count);
+        Assert.Equal("/cmd399", entry.Commands![399]);
+        Assert.Equal(400, entry.CommandRoutes!.Count);
+    }
+
+    // The old-far-Buddy fallback. Such a Buddy never sees the flag, so it
+    // types the line as ordinary text — which is why the near side only sets
+    // the flag after the roster carried route kinds.
+    [Fact]
+    public async Task AFarBuddyThatPredatesTheFlagTypesTheLineAsText()
+    {
+        var harness = new Harness(_dir) { FarPredatesSlash = true };
+        harness.AddSession("job-hunter", WriteTranscript("s12.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Null(outcome.Via);
+        Assert.Equal("/color pink", Assert.Single(harness.Typed).Text);
+    }
+
+    [Fact]
+    public async Task AnOrdinaryInputFrameCarriesNoSlashFlag()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("s13.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        await harness.Client.SendInputDetailedAsync("job-hunter", "hello");
+
+        var input = harness.ToServer.Select(MirrorProtocol.TryParseFrame)
+            .Single(f => f is { Type: MirrorProtocol.Input })!;
+        Assert.False(input.Fields.ContainsKey(MirrorProtocol.SlashField));
+    }
+
     // --- CB-105: delivering to a session with no pane at all --------------------
 
     [Fact]
@@ -2146,6 +2437,22 @@ public class MirrorRoundTripTests : IDisposable
         // How many pictures the client has asked for.
         public int PictureAsks => ToServer.Count(line => line.Contains(";t=" + MirrorProtocol.Avatar + ";"));
 
+        // CB-306: the far runner, wired only when a test sets it, so every
+        // other test keeps the null seams an older harness has. SlashRan
+        // records what reached it.
+        public Func<SessionStatus, string, RemoteMirrorServer.SlashOutcome>? SlashRunner { get; set; }
+        public IReadOnlyList<SlashCommand>? SlashCatalogue { get; set; }
+        public bool SlashRunnerThrows { get; set; }
+        public bool SlashCatalogueThrows { get; set; }
+
+        // CB-306: the real far resolver, in place of the canned runner.
+        public MirrorSlashHost? SlashHost { get; set; }
+        public List<string> SlashRan { get; } = new();
+
+        // A far Buddy that predates the slash flag: it never sees `slash`, so
+        // it types the line as ordinary text, which is what such a Buddy did.
+        public bool FarPredatesSlash { get; set; }
+
         public int ChunkFrames { get; private set; }
 
         // The handshake pays for its own roster chunk, and a test about the
@@ -2155,6 +2462,7 @@ public class MirrorRoundTripTests : IDisposable
 
         public bool ReplyEnabled { get; init; } = true;
         public bool CanType { get; init; } = true;
+        public bool TypeFails { get; init; }
 
         // CB-105's messaging fallback. Only wired at all when the constructor
         // is told to (see wireDelivery below) — every test written before
@@ -2204,7 +2512,7 @@ public class MirrorRoundTripTests : IDisposable
         // Harness never reads the developer's real persona (CB-252).
         public IReadOnlyList<string> UserConfigDirs { get; set; } = Array.Empty<string>();
 
-        public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false)
+        public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false)
         {
             _dir = dir;
 
@@ -2219,7 +2527,7 @@ public class MirrorRoundTripTests : IDisposable
                 (status, text) =>
                 {
                     Typed.Add((NameOf(status), text));
-                    return Task.FromResult(true);
+                    return Task.FromResult(!TypeFails);
                 },
                 // Left null unless a test asks for CB-105's messaging path —
                 // see wireDelivery's own comment on CanDeliverAnswer above.
@@ -2240,7 +2548,21 @@ public class MirrorRoundTripTests : IDisposable
                 // because a peer has completed a TLS handshake with a certificate
                 // somebody pinned by typing a code. A harness says yes explicitly.
                 PeerAllowed: _ => true,
-                UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs));
+                UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs,
+                SlashCommandsFor: wireSlash
+                    ? status => SlashCatalogueThrows
+                        ? throw new InvalidOperationException("catalogue scan failed")
+                        : SlashHost?.CommandsFor(status) ?? SlashCatalogue!
+                    : null,
+                RunSlash: wireSlash
+                    ? (status, line) =>
+                    {
+                        if (SlashHost is { } host) return host.RunAsync(status, line);
+                        if (SlashRunnerThrows) throw new InvalidOperationException("bridge went away");
+                        SlashRan.Add(line);
+                        return Task.FromResult(SlashRunner!(status, line));
+                    }
+                    : null));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -2397,6 +2719,16 @@ public class MirrorRoundTripTests : IDisposable
             if (frame is null) return false;
 
             if (frame.Type == MirrorProtocol.Resend) Resends++;
+
+            if (FarPredatesSlash && frame.Fields.ContainsKey(MirrorProtocol.SlashField))
+            {
+                frame = frame with
+                {
+                    Fields = frame.Fields
+                        .Where(field => field.Key != MirrorProtocol.SlashField)
+                        .ToDictionary(field => field.Key, field => field.Value, StringComparer.Ordinal)
+                };
+            }
 
             if (RefusePictures && frame.Type == MirrorProtocol.Avatar)
             {

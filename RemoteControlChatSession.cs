@@ -34,7 +34,7 @@ namespace Orbweaver
     // find out it could have been a live view all along. HistoryReplaced is what
     // makes that free — the panel already redraws from History when it fires.
     internal sealed class RemoteControlChatSession :
-        IRemoteChatSession, IRemoteChatComposer, IRemoteChatSlashCommands, IRemoteChatBacklog,
+        IRemoteChatSession, IRemoteChatComposer, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatBacklog,
         IRemoteChatFetchWait, IRemoteChatMachine, IDisposable
     {
         private readonly List<ChatTurn> _history = new();
@@ -590,6 +590,99 @@ namespace Orbweaver
             Note(NoWayToSendNote(_remoteName));
             return ChatSendOutcome.Failed;
         }
+
+        // CB-306: a slash line typed into this panel.
+        //
+        // A far Buddy that sent route kinds understands the slash flag, so the
+        // line goes to it as one and it decides, on the machine that owns the
+        // session, whether to type it, run it as a control request or refuse.
+        // That works with or without a live view: a job reached by a bridge has
+        // none and can still have its colour set.
+        //
+        // An older far Buddy ignores the flag and would type the line as plain
+        // text. In a live view with a pane that is exactly what a slash line
+        // has always done, so it takes the ordinary typed send. Without one
+        // there is nothing to type into, and the line is refused with a note rather than
+        // sent as a message the far model would read as prose.
+        public async Task<ChatSendOutcome> RunSlashAsync(string line)
+        {
+            // A command is a line whose first token is a name the far session's
+            // CLI knows. `/tmp/x.log`, `/` and an unknown word are ordinary
+            // messages and go exactly as they would without this method — never
+            // refused, because the person was not typing a command. The far
+            // roster lists Unavailable commands too, so "known" means known,
+            // not "runnable".
+            var client = RemoteControlSessions.MirrorClientFor(_account);
+            var entry = client is null ? null : RemoteControlSessions.MirrorFor(_account, _remoteName);
+            if (client is null || entry is null
+                || !SlashRouting.NamesKnownCommand(line, RemoteControlSessions.CommandsFrom(entry).Select(c => c.Name)))
+                return await SendAsync(line).ConfigureAwait(true);
+
+            var mine = new ChatTurn { Role = ChatRole.User, Text = line, IsComplete = true };
+
+            if (!OrbweaverSettings.PeerLinkEnabled)
+            {
+                Add(mine);
+                Note(RemoteControlOffNote);
+                return ChatSendOutcome.Failed;
+            }
+
+            if (!RemoteControlSessions.SpeaksSlash(entry))
+            {
+                // A live view that can type is where a slash line has always
+                // worked. SendAsync adds the turn itself, so this arm must not
+                // first. A transcript-only view cannot type, and falling to the
+                // message path would hand the far model the line as prose.
+                if (_mirroring && _canType) return await SendAsync(line).ConfigureAwait(true);
+
+                Add(mine);
+                Note(OldFarBuddyNote(_remoteName));
+                return ChatSendOutcome.Failed;
+            }
+
+            Add(mine);
+
+            var outcome = await client.SendInputDetailedAsync(_remoteName, line, slash: true).ConfigureAwait(true);
+            return ApplySlashOutcome(mine, line, outcome);
+        }
+
+        // The panel's reaction to what the far machine said, pure enough to be
+        // driven from a test with a hand-built outcome.
+        internal ChatSendOutcome ApplySlashOutcome(ChatTurn mine, string line, RemoteMirrorClient.InputOutcome outcome)
+        {
+            if (outcome.Error is not null)
+            {
+                Note(TypingRefusal(outcome.Error, _remoteName));
+                return ChatSendOutcome.Failed;
+            }
+
+            switch (outcome.Via)
+            {
+                case MirrorProtocol.ViaRefused:
+                    var name = SlashRouting.Split(line)?.Name ?? line;
+                    Note(SlashRouting.RefusalNote(name, outcome.Why ?? "it can't run on that machine"));
+                    return ChatSendOutcome.Failed;
+
+                case MirrorProtocol.ViaControl:
+                    Note(SlashRanNote(line, _remoteName));
+                    return ChatSendOutcome.Sent;
+
+                default:
+                    // Typed: it went in through the input line, so the far
+                    // transcript will echo it and Echoes reconciles that.
+                    _pending = mine;
+                    _pendingText = line.Trim();
+                    _pendingAt = DateTimeOffset.Now;
+                    return ChatSendOutcome.Sent;
+            }
+        }
+
+        internal static string SlashRanNote(string line, string remoteName) =>
+            $"Ran {line} on {remoteName}.";
+
+        internal static string OldFarBuddyNote(string remoteName) =>
+            $"Not sent: {remoteName} is on a version of {Brand.DisplayName} that can't run slash commands "
+          + "without a live view of the session. Update it, or open the session in a terminal there.";
 
         // Said when there is a session on screen and no way to reach it.
         //

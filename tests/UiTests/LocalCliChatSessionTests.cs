@@ -1389,16 +1389,19 @@ public class LocalCliChatSessionTests : IDisposable
         Assert.Equal("Message it — it reads this at its next turn", session.ComposerHint);
     }
 
-    // Slash commands don't survive a delivered message — see the property's
-    // own comment — so the catalogue is empty rather than offering commands
-    // that would be sent as plain text to a CLI that never sees them as one.
+    // Slash commands don't survive a delivered message — see
+    // LocalSlashChannel — so on a messaging channel with no bridge the session
+    // still *knows* the whole catalogue (so a typed one is refused, not sent as
+    // prose) but every command is Unavailable and none is offered.
     [AvaloniaFact]
-    public void SlashCommandsAreEmptyWhenTheChannelIsMessaging()
+    public void NoSlashCommandIsOfferedWhenTheChannelIsMessaging()
     {
         var (messenger, find) = FakeMessaging(RegistryEntry("s1"));
         var session = BackgroundSession(Transcript(User("seed", "seed")), messenger, find);
 
-        Assert.Empty(session.SlashCommands);
+        Assert.NotEmpty(session.SlashCommands);
+        Assert.All(session.SlashCommands, c => Assert.Equal(SlashRouteKind.Unavailable, c.Route));
+        Assert.Empty(ChatPanel.OfferedCommands(session.SlashCommands));
     }
 
     // Sending it for real: the note left afterwards is DeliveryNote's own

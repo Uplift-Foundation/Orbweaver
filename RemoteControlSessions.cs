@@ -211,13 +211,44 @@ namespace Orbweaver
             return CommandsFrom(MirrorFor(account, name));
         }
 
-        // The rule, pure: an entry's command list when it has one, nothing
-        // otherwise. An entry with no list is not hypothetical — `commands` is
-        // an optional field, so a far Buddy from before it existed sends none.
-        internal static IReadOnlyList<SlashCommand> CommandsFrom(MirrorProtocol.MirrorRosterEntry? entry) =>
-            entry?.Commands is { Count: > 0 } commands
-                ? commands.Select(c => new SlashCommand(c, "")).ToList()
-                : Array.Empty<SlashCommand>();
+        // The rule, pure (CB-306): every command the far session's CLI knows,
+        // each with how it would run. Unavailable ones are kept — the panel
+        // hides them from autocomplete but still needs the names, because a
+        // line whose first token is a known command that cannot run is refused
+        // with nothing sent, while a path or an unknown word is a message.
+        //
+        //  * Valid routes (ValidRoutes): the far Buddy resolved each command on
+        //    its own machine, so believe it. An unknown word from a newer Buddy
+        //    reads as Unavailable.
+        //  * Otherwise an older far Buddy (or a routes list that does not line
+        //    up, which is not trusted): its commands only ever meant keystrokes
+        //    into a pane, so they are Typed where there is a pane and
+        //    Unavailable where there is none — known either way, offered only
+        //    where they would run.
+        internal static IReadOnlyList<SlashCommand> CommandsFrom(MirrorProtocol.MirrorRosterEntry? entry)
+        {
+            if (entry?.Commands is not { Count: > 0 } commands) return Array.Empty<SlashCommand>();
+
+            if (ValidRoutes(entry))
+                return commands
+                    .Select((c, i) => new SlashCommand(c, "", MirrorProtocol.RouteFromWord(entry!.CommandRoutes![i])))
+                    .ToList();
+
+            var kind = entry.HasPane ? SlashRouteKind.Typed : SlashRouteKind.Unavailable;
+            return commands.Select(c => new SlashCommand(c, "", kind)).ToList();
+        }
+
+        // One definition of "this entry's route kinds can be believed": present,
+        // and exactly one per command. CommandsFrom and SpeaksSlash both ask it,
+        // so the panel can never offer typed commands while sending the slash
+        // flag, or the reverse.
+        internal static bool ValidRoutes(MirrorProtocol.MirrorRosterEntry? entry) =>
+            entry?.CommandRoutes is { } routes && routes.Count == (entry.Commands?.Count ?? 0);
+
+        // Whether the far Buddy understands the slash INPUT flag, which it
+        // announces by sending valid route kinds (an empty list for an empty
+        // catalogue counts).
+        internal static bool SpeaksSlash(MirrorProtocol.MirrorRosterEntry? entry) => ValidRoutes(entry);
 
         // What the far Buddy said about one session, or null if none has.
         internal static MirrorProtocol.MirrorRosterEntry? MirrorFor(string account, string name) =>

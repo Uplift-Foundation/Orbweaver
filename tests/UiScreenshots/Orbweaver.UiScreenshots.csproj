@@ -101,6 +101,8 @@
     <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
   </ItemGroup>
   <ItemGroup>
+    <!-- CB-306: the real commands.list and /status card, as constants. -->
+    <Compile Include="..\UnitTests\OpenClawSlashFixtures.cs" Link="OpenClawSlashFixtures.cs" />
     <ProjectReference Include="..\..\Orbweaver.csproj" />
   </ItemGroup>
 </Project>

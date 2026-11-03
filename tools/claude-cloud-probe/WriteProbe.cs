@@ -55,6 +55,7 @@ internal static class WriteProbe
         "worker_status", "status", "connection_status", "session_status", "status_bucket",
         "environment_kind", "type", "subtype", "duplicate", "sequence_num", "has_more",
         "message", "error", "code", "outcome", "cross_session_inbound",
+        "event_type", "device_attestation_status", "session_agent_owned", "source",
     };
 
     internal static void Usage() =>
@@ -67,6 +68,7 @@ internal static class WriteProbe
             "  v2-events  <id>                    GET  /v2/ccr-sessions/<id>/events via the app's own parser\n" +
             "  send <id> --throwaway [opts]       POST a user turn to .../events\n" +
             "  interrupt <id> --throwaway [opts]  POST a control_request interrupt to .../events\n" +
+            "  control <id> --throwaway --request <json> [opts]  POST any control_request (CB-306)\n" +
             "  archive <id> --throwaway [opts]    POST {} to /v1/code/sessions/<id>/archive (CB-225)\n" +
             "  delete <id> --throwaway [opts]     DELETE /v1/code/sessions/<id> (CB-225)\n" +
             "  route <id> --throwaway [opts]      POST to a sub-route that does not exist (control)\n" +
@@ -76,11 +78,13 @@ internal static class WriteProbe
             "  auth:  --auth real|none|bogus   (default real; none/bogus are the negative controls)\n" +
             "  opts:  --text <s>               message text (default: a fixed probe sentence)\n" +
             "         --uuid <u>               reuse an event uuid (dedupe check)\n" +
+            "         --client-platform <v>    add client_platform:<v> to the user payload (CB-306)\n" +
             "         --expect-uuid <u>        report whether <u> comes back, and where (never the value)\n" +
             "         --empty                  POST {\"events\":[]} and write nothing\n" +
             "         --beta                   add anthropic-beta: ccr-byoc-2025-07-29\n" +
             "         --org                    add x-organization-uuid from ~/.claude.json\n" +
             "         --platform <v>           add anthropic-client-platform: <v>\n" +
+            "         --user-agent <v>         add User-Agent: <v> (CB-306)\n" +
             "         --no-version             omit anthropic-version (ablation)\n");
 
     internal static async Task<int> RunAsync(string verb, string[] args,
@@ -100,7 +104,7 @@ internal static class WriteProbe
         // writes for the guard's purposes even though `route` aims at a path
         // nobody claims exists: a probe that guessed wrong about what a route
         // does must not be able to guess wrong about a real session.
-        var isWrite = verb is "send" or "interrupt" or "archive" or "delete" or "route";
+        var isWrite = verb is "send" or "interrupt" or "control" or "archive" or "delete" or "route";
 
         if (isWrite && !opts.Contains("--throwaway"))
         {
@@ -210,9 +214,10 @@ internal static class WriteProbe
                 path = events;
                 body = opts.Contains("--empty")
                     ? "{\"events\":[]}"
-                    : ClaudeCloudSend.UserMessageBody(id,
+                    : ClaudeCloudSend.UserMessageBody(opts.Contains("--blank-session-id") ? "" : id,
                         Value(opts, "--text") ?? "CB-199 probe: please reply with the single word ok.",
-                        Value(opts, "--uuid") ?? Guid.NewGuid().ToString());
+                        Value(opts, "--uuid") ?? Guid.NewGuid().ToString(),
+                        Value(opts, "--client-platform"));
                 break;
             case "interrupt":
                 method = HttpMethod.Post;
@@ -220,6 +225,27 @@ internal static class WriteProbe
                 body = ClaudeCloudSend.InterruptBody(Guid.NewGuid().ToString(),
                     Value(opts, "--uuid") ?? Guid.NewGuid().ToString());
                 break;
+            case "control":
+            {
+                // CB-306: any control_request, its `request` object given verbatim
+                // as JSON (`--request '{"subtype":"set_color","color":"pink"}'`), so
+                // the subtypes the binary's bridge handler lists can be measured
+                // one at a time without the probe knowing their fields.
+                var raw = Value(opts, "--request");
+                JsonObject? controlRequest = null;
+                try { controlRequest = raw is null ? null : JsonNode.Parse(raw) as JsonObject; }
+                catch (JsonException) { }
+                if (controlRequest is null || controlRequest["subtype"] is null)
+                {
+                    Console.Error.WriteLine("control needs --request '<json object with a subtype>'");
+                    return 2;
+                }
+                method = HttpMethod.Post;
+                path = events;
+                body = ClaudeCloudSend.ControlRequestBody(Guid.NewGuid().ToString(),
+                    Value(opts, "--uuid") ?? Guid.NewGuid().ToString(), controlRequest);
+                break;
+            }
             case "archive":
                 // Read out of the CLI 2.1.288 binary: `tR` posts `{}` here with
                 // the same header set as a send, and counts 200 *and* 409 as
@@ -273,6 +299,12 @@ internal static class WriteProbe
         if (Value(opts, "--platform") is { } platform)
         {
             request.Headers.TryAddWithoutValidation("anthropic-client-platform", platform);
+        }
+        if (Value(opts, "--user-agent") is { } agent)
+        {
+            // CB-306: the CLI sends its own User-Agent on a remote send; the app
+            // sends .NET's default. An ablation, like --platform.
+            request.Headers.TryAddWithoutValidation("User-Agent", agent);
         }
 
         Console.WriteLine($"request  {method} {CloudRequest.Host}{path}");

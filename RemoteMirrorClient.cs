@@ -840,7 +840,7 @@ namespace Orbweaver
         // messaging socket also carries which channel was used and that
         // session's own agent status, which the composer hint and the
         // delivered-note both need to say something honest.
-        internal readonly record struct InputOutcome(string? Error, string? Via, string? AgentStatus);
+        internal readonly record struct InputOutcome(string? Error, string? Via, string? AgentStatus, string? Why = null);
 
         // Types a line into the far session's own terminal, or — since
         // CB-105 — hands it to that session's own messaging socket when
@@ -853,7 +853,7 @@ namespace Orbweaver
         // exactly as it would locally. A delivered send has no such
         // guarantee — see MirrorProtocol's note on why there is no ack on
         // this wire at all.
-        public async Task<InputOutcome> SendInputDetailedAsync(string name, string text)
+        public async Task<InputOutcome> SendInputDetailedAsync(string name, string text, bool slash = false)
         {
             string relay;
 
@@ -867,7 +867,7 @@ namespace Orbweaver
 
             var reply = await RequestAsync(
                 relay, MirrorProtocol.Input,
-                new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) },
+                SlashFields(name, slash),
                 System.Text.Encoding.UTF8.GetBytes(text),
                 TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds))
                 .ConfigureAwait(false);
@@ -877,7 +877,18 @@ namespace Orbweaver
             return new InputOutcome(
                 null,
                 reply.Fields is not null && reply.Fields.TryGetValue("via", out var via) ? via : null,
-                reply.Fields is not null && reply.Fields.TryGetValue("agent", out var agent) ? agent : null);
+                reply.Fields is not null && reply.Fields.TryGetValue("agent", out var agent) ? agent : null,
+                reply.Fields is not null && reply.Fields.TryGetValue("why", out var why)
+                    ? MirrorProtocol.Decode(why) : null);
+        }
+
+        // CB-306: the INPUT's fields, with the slash flag only when it is set,
+        // so an ordinary send is byte-for-byte the frame it always was.
+        internal static Dictionary<string, string> SlashFields(string name, bool slash)
+        {
+            var fields = new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) };
+            if (slash) fields[MirrorProtocol.SlashField] = "1";
+            return fields;
         }
 
         // Kept for callers that only ever cared whether a send worked.

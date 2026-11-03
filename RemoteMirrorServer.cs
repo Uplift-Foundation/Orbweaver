@@ -92,7 +92,27 @@ namespace Orbweaver
             // exactly the dirs that hello's roster used even when another
             // peer's hello re-reads in between. Null means no gap analysis
             // (every seam built before this existed), and Agents is used.
-            Func<(IReadOnlyList<AgentRoster.Entry> Agents, IReadOnlyList<string> Dirs)>? RosterSnapshot = null);
+            Func<(IReadOnlyList<AgentRoster.Entry> Agents, IReadOnlyList<string> Dirs)>? RosterSnapshot = null,
+
+            // CB-306: the slash commands this session offers and how each would
+            // run on THIS machine, and the act of running one. Both answer from
+            // the session's own channel routing (the LocalCliChatSession
+            // bridge/peer-socket runner), which is the only code that knows
+            // whether the session has a pane, a bridge or neither.
+            //
+            // Null on both is what a build that predates the runner looks like,
+            // and it has to stay honest rather than optimistic: the catalogue
+            // is then offered as Typed where the session has a pane and
+            // Unavailable where it does not, and a slash INPUT is typed or
+            // refused on the same test. The seam is where the runner plugs in
+            // without this file changing.
+            Func<SessionStatus, IReadOnlyList<SlashCommand>>? SlashCommandsFor = null,
+            Func<SessionStatus, string, Task<SlashOutcome>>? RunSlash = null);
+
+        // What running a slash line on the far machine came to: one of
+        // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
+        // sentence that says why.
+        internal readonly record struct SlashOutcome(string Via, string? Reason);
 
         private readonly string _account;
         private readonly Seams _seams;
@@ -356,6 +376,34 @@ namespace Orbweaver
             // depending on which machine's Buddy happened to make the call.
             var fromName = SessionMessenger.FromName(MachineNames.Tag());
 
+            // CB-306: the same resolver a local panel uses, over this machine's
+            // own pane, registry and cloud login.
+            var cloudApi = new HttpCloudApi();
+            var slash = new MirrorSlashHost(new MirrorSlashHost.Seams(
+                status => TerminalFocuser.CanSendQuietly(status),
+                status => RegistryEntryFor(status) is { } e && SessionRegistry.Speaks(e),
+                status => LocalSlashChannel.BridgeIdFor(
+                    status.IsDesktopHosted ? status.BridgeSessionId : null,
+                    status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
+                status => SlashCommandCatalog.For(status.Source, status.Cwd),
+                (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
+                async (status, subtype, request) =>
+                {
+                    if (!OrbweaverSettings.ClaudeCloudEnabled)
+                        return LocalCliChatSession.CloudOffControlHint;
+
+                    var bridgeId = LocalSlashChannel.BridgeIdFor(
+                        status.IsDesktopHosted ? status.BridgeSessionId : null,
+                        status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId);
+                    if (bridgeId is null) return "this session has no Remote Control bridge";
+
+                    return await CloudTurnSender.PostControlAsync(
+                        cloudApi,
+                        CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
+                        CredentialBudget.Unmeasured, bridgeId, request, System.Threading.CancellationToken.None)
+                        .ConfigureAwait(false);
+                }));
+
             return new(
                 sendFrame,
                 localSessions,
@@ -371,7 +419,9 @@ namespace Orbweaver
 
                     return await messenger.DeliverAsync(entry.SessionId, fromName, text, CancellationToken.None)
                         .ConfigureAwait(false);
-                });
+                },
+                SlashCommandsFor: slash.CommandsFor,
+                RunSlash: slash.RunAsync);
         }
 
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
@@ -575,17 +625,19 @@ namespace Orbweaver
                     continue;
                 }
 
+                var offered = Offered(status);
                 entries.Add(new MirrorProtocol.MirrorRosterEntry(
                     name,
                     MirrorProtocol.CliFor(status.Source),
                     hasTranscript,
                     _seams.CanType(status),
                     string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
-                    Commands(status),
+                    offered.Names,
                     status.State,
                     _seams.CanDeliver?.Invoke(status),
                     RouteFor(resolved.Value.SessionId),
-                    ResolvePeerPersona(status, userConfigDirs, picturesById)));
+                    ResolvePeerPersona(status, userConfigDirs, picturesById),
+                    CommandRoutes: offered.Routes));
             }
 
             // AgentRoster is Claude Code's authority, not a universal session
@@ -605,10 +657,12 @@ namespace Orbweaver
                         : status.Title;
                     var hasTranscript = !string.IsNullOrEmpty(status.TranscriptPath) && File.Exists(status.TranscriptPath);
                     if (hasTranscript && !LivelyEnough(status)) continue;
+                    var offered = Offered(status);
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
-                        Commands(status), status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById)));
+                        offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
+                        ResolvePeerPersona(status, userConfigDirs, picturesById),
+                    CommandRoutes: offered.Routes));
                 }
             }
 
@@ -631,11 +685,13 @@ namespace Orbweaver
                     var name = string.IsNullOrWhiteSpace(status.Title)
                         ? (string.IsNullOrWhiteSpace(status.Cwd) ? MirrorProtocol.CliFor(status.Source) : Path.GetFileName(status.Cwd))
                         : status.Title;
+                    var offered = Offered(status);
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         HasTranscript(status), _seams.CanType(status),
                         string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
-                        Commands(status), status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById)));
+                        offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
+                        ResolvePeerPersona(status, userConfigDirs, picturesById),
+                    CommandRoutes: offered.Routes));
                 }
             }
 
@@ -734,9 +790,34 @@ namespace Orbweaver
         // the input is typed into the session's own input line, so every
         // built-in works exactly as it does locally; and the catalogue reads the
         // real ~/.claude on the machine the commands live on.
-        private static IReadOnlyList<string> Commands(SessionStatus status)
+        // The catalogue and, parallel to it, how each command would run here
+        // (CB-306). One call so the names and the kinds can never disagree.
+        internal const int MaxCatalogue = 1000;
+
+        private (IReadOnlyList<string> Names, IReadOnlyList<string> Routes) Offered(SessionStatus status)
         {
-            return SafeCommandNames(status);
+            IReadOnlyList<SlashCommand> list;
+            if (_seams.SlashCommandsFor is { } routed)
+            {
+                try { list = routed(status); }
+                catch { list = Array.Empty<SlashCommand>(); }
+            }
+            else
+            {
+                var channel = _seams.CanType(status) ? SlashChannel.Terminal : SlashChannel.PeerSocket;
+                list = SafeCommandNames(status)
+                    .Select(n => new SlashCommand(n, "", SlashRouting.Resolve(channel, n, "").Kind))
+                    .ToList();
+            }
+
+            // A safety bound, not a trim. The near side treats a name as a
+            // command only if the roster lists it, so a name cut off here would
+            // be sent to the far model as prose; the bound is far above any
+            // real catalogue (names are short, so 1000 is about 20 KB at worst).
+            list = list.Take(MaxCatalogue).ToList();
+
+            return (list.Select(c => c.Name).ToList(),
+                    list.Select(c => MirrorProtocol.RouteWord(c.Route)).ToList());
         }
 
         // Excluded from coverage: exists to be the try/catch. SlashCommandCatalog
@@ -756,7 +837,7 @@ namespace Orbweaver
             {
                 return SlashCommandCatalog.For(status.Source, status.Cwd)
                     .Select(c => c.Name)
-                    .Take(120)
+                    .Take(MaxCatalogue)
                     .ToList();
             }
             catch
@@ -1705,6 +1786,14 @@ namespace Orbweaver
                 return;
             }
 
+            // CB-306: a slash line is resolved HERE, on the machine that owns
+            // the session, because only this machine knows its channel.
+            if (frame.Num(MirrorProtocol.SlashField) == 1)
+            {
+                await SlashAsync(fromPeer, frame, status, text).ConfigureAwait(false);
+                return;
+            }
+
             if (!_seams.CanType(status))
             {
                 // No pane to type into is no longer the end of it. A
@@ -1772,6 +1861,46 @@ namespace Orbweaver
                     ["code"] = MirrorProtocol.ErrTypeFailed,
                     ["msg"] = MirrorProtocol.Encode("the terminal refused the text")
                 })).ConfigureAwait(false);
+        }
+
+        // A slash INPUT. Answered with OK and a `via` saying how it ran, or
+        // `refused` with a `why` — refusal is a normal answer to a slash line,
+        // not an error, so it is not an ERR frame (those are for a request that
+        // could not be served at all).
+        private async Task SlashAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame, SessionStatus status, string line)
+        {
+            SlashOutcome outcome;
+            try
+            {
+                outcome = _seams.RunSlash is { } run
+                    ? await run(status, line).ConfigureAwait(false)
+                    : await RunSlashByDefaultAsync(status, line).ConfigureAwait(false);
+            }
+            catch
+            {
+                outcome = new SlashOutcome(MirrorProtocol.ViaRefused, "that machine failed while running it");
+            }
+
+            var fields = new Dictionary<string, string> { ["via"] = outcome.Via };
+            if (outcome.Via == MirrorProtocol.ViaRefused)
+                fields["why"] = MirrorProtocol.Encode(outcome.Reason ?? "it can't run there");
+
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields))
+                .ConfigureAwait(false);
+        }
+
+        // No runner wired: type it where there is a pane, refuse where there is
+        // not. The same split Offered makes for the roster, so what was offered
+        // is what runs.
+        private async Task<SlashOutcome> RunSlashByDefaultAsync(SessionStatus status, string line)
+        {
+            if (!_seams.CanType(status))
+                return new SlashOutcome(MirrorProtocol.ViaRefused, SlashRouting.PeerSocketReason);
+
+            return await _seams.TypeInto(status, line).ConfigureAwait(false)
+                ? new SlashOutcome(MirrorProtocol.ViaTyped, null)
+                : new SlashOutcome(MirrorProtocol.ViaRefused, "the terminal refused the text");
         }
 
         // --- sending ------------------------------------------------------------

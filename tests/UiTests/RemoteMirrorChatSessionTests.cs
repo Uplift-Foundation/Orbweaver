@@ -63,6 +63,16 @@ public class RemoteMirrorChatSessionTests : IDisposable
     private bool _deliverThrows;
     private readonly List<(string Name, string Text)> _delivered = new();
 
+    // CB-306. Wired only when a test sets _wireSlash before Wire(), so every
+    // other test keeps the null seams a server built before the runner has.
+    private bool _wireSlash;
+    private IReadOnlyList<SlashCommand> _slashCatalogue = Array.Empty<SlashCommand>();
+    private RemoteMirrorServer.SlashOutcome _slashOutcome = new(MirrorProtocol.ViaControl, null);
+    private readonly List<string> _slashRan = new();
+
+    // A far Buddy from before route kinds: its roster arrives without them.
+    private bool _oldFarRoster;
+
     private readonly bool _remoteWasEnabled;
 
     public RemoteMirrorChatSessionTests()
@@ -255,6 +265,300 @@ public class RemoteMirrorChatSessionTests : IDisposable
         // one path that reports Sent — everything else in this file is a
         // reason the text never reached anywhere.
         Assert.Equal(ChatSendOutcome.Sent, outcome);
+    }
+
+
+    // --- CB-306: slash lines -------------------------------------------------------
+
+    private static string NotesOf(RemoteControlChatSession session) =>
+        string.Join("\n", session.History.Where(t => t.Role == ChatRole.System).Select(t => t.Text));
+
+    [AvaloniaFact]
+    public async Task ASlashLineInALiveViewIsTypedAndWaitsForItsEcho()
+    {
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/color green");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Equal("/color green", Assert.Single(_typed).Text);
+        Assert.Equal(1, Turns(session).Count(t => t.Text == "/color green"));
+    }
+
+    [AvaloniaFact]
+    public async Task AControlCommandRunsOnTheFarSideAndIsReportedNotTyped()
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/color green");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Equal("/color green", Assert.Single(_slashRan));
+        Assert.Empty(_typed);
+        Assert.Contains(RemoteControlChatSession.SlashRanNote("/color green", Name), NotesOf(session));
+    }
+
+    [AvaloniaFact]
+    public async Task ARefusedCommandSaysWhyAndKeepsTheBoxText()
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/compact", "", SlashRouteKind.Unavailable) };
+        _slashOutcome = new(MirrorProtocol.ViaRefused, "it needs the terminal");
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/compact now");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains(SlashRouting.RefusalNote("/compact", "it needs the terminal"), NotesOf(session));
+        Assert.Empty(_typed);
+    }
+
+    [AvaloniaFact]
+    public async Task ARefusalThatGaveNoReasonStillNamesTheCommand()
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/compact", "", SlashRouteKind.Unavailable) };
+        _slashOutcome = new(MirrorProtocol.ViaRefused, null);
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/compact"));
+        Assert.Contains("Not sent: /compact", NotesOf(session));
+    }
+
+    // The known-name rule: a line is a command only if its first token is a
+    // name the far session's CLI knows. Everything else is an ordinary message,
+    // sent as it would be without a runner and never refused.
+    [AvaloniaTheory]
+    [InlineData("/tmp/build.log")]
+    [InlineData("/")]
+    [InlineData("/nonesuch run it")]
+    public async Task ALineThatIsNotAKnownCommandGoesAsAnOrdinaryMessage(string line)
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync(line);
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Empty(_slashRan);
+        Assert.Equal(line, Assert.Single(_typed).Text);
+    }
+
+    [AvaloniaFact]
+    public async Task AnUnknownSlashWordIsAMessageForAnOlderFarBuddyToo()
+    {
+        _oldFarRoster = true;
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/tmp/build.log");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Equal("/tmp/build.log", Assert.Single(_typed).Text);
+    }
+
+    [AvaloniaFact]
+    public async Task ACommandIsKnownWhateverItsCase()
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        await session.RunSlashAsync("/COLOR pink");
+
+        Assert.Equal("/COLOR pink", Assert.Single(_slashRan));
+    }
+
+    [AvaloniaFact]
+    public async Task ASlashLineNeedsNoPaneWhenTheFarBuddySpeaksSlash()
+    {
+        // A headless job reached over its bridge: a transcript to read but no
+        // pane to type into.
+        _wireSlash = true;
+        _canType = false;
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/color pink");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Equal("/color pink", Assert.Single(_slashRan));
+    }
+
+    [AvaloniaFact]
+    public async Task AFarMachineThatRefusesTheRequestOutrightIsReportedAsATypingRefusal()
+    {
+        _replyEnabled = false;
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/color green");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains(RemoteControlChatSession.TypingRefusal(MirrorProtocol.ErrReplyOff, Name), NotesOf(session));
+    }
+
+    [AvaloniaFact]
+    public async Task AnOlderFarBuddyInALiveViewKeepsTodaysTypedBehaviour()
+    {
+        _oldFarRoster = true;
+        Wire("a", "b");
+        var session = await OpenAsync();
+        Assert.False(RemoteControlSessions.SpeaksSlash(RemoteControlSessions.MirrorFor(Account, Name)));
+
+        var outcome = await session.RunSlashAsync("/color green");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Equal("/color green", Assert.Single(_typed).Text);
+    }
+
+    [AvaloniaFact]
+    public async Task AnOlderFarBuddyWithNoPaneRefusesTheLineWithANote()
+    {
+        _oldFarRoster = true;
+        _canType = false;
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        var outcome = await session.RunSlashAsync("/color green");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains(RemoteControlChatSession.OldFarBuddyNote(Name), NotesOf(session));
+        Assert.Empty(_typed);
+        Assert.Empty(ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFor(Account, Name)));
+    }
+
+    // Nadia's case: a mirrored panel with no pane, where a known command that
+    // cannot run must be refused with nothing sent, and a path must go as a
+    // message.
+    [AvaloniaFact]
+    public async Task ARefusalNamesTheLineWhenItIsNotEvenSplittable()
+    {
+        Wire("a", "b");
+        var session = await OpenAsync();
+        var turn = new ChatTurn { Role = ChatRole.User, Text = "plain", IsComplete = true };
+
+        var outcome = session.ApplySlashOutcome(turn, "plain",
+            new RemoteMirrorClient.InputOutcome(null, MirrorProtocol.ViaRefused, null));
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains("Not sent: plain", NotesOf(session));
+        Assert.Contains("can't run on that machine", NotesOf(session));
+    }
+
+    [AvaloniaFact]
+    public async Task ASlashLineBeforeTheRosterHasArrivedIsLeftToTheOrdinarySend()
+    {
+        _wireSlash = true;
+        Wire("a", "b");
+        var session = NewSession();
+        session.PanelOpened();
+        // No discovery yet: a client exists and knows nothing about the session.
+
+        var outcome = await session.RunSlashAsync("/color pink");
+
+        Assert.Empty(_slashRan);
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+    }
+
+    [AvaloniaFact]
+    public async Task AKnownButUnrunnableCommandIsRefusedAndAPathIsAMessage()
+    {
+        _wireSlash = true;
+        _canType = false;
+        _slashCatalogue = new[]
+        {
+            new SlashCommand("/color", "", SlashRouteKind.Control),
+            new SlashCommand("/compact", "", SlashRouteKind.Unavailable),
+        };
+        _slashOutcome = new(MirrorProtocol.ViaRefused, SlashRouting.PeerMessageReason);
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/compact"));
+        Assert.Equal("/compact", Assert.Single(_slashRan));
+        Assert.Empty(_typed);
+        Assert.Empty(_delivered);
+
+        _slashRan.Clear();
+        await session.RunSlashAsync("/tmp/x.log boom");
+        Assert.Empty(_slashRan);
+    }
+
+    [AvaloniaFact]
+    public async Task AnOlderFarBuddysKnownCommandIsRefusedWithoutAPaneAndNothingIsSent()
+    {
+        _oldFarRoster = true;
+        _canType = false;
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        // /compact is in its catalogue: known, so refused rather than sent on.
+        var outcome = await session.RunSlashAsync("/compact");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains(RemoteControlChatSession.OldFarBuddyNote(Name), NotesOf(session));
+        Assert.Empty(_typed);
+        Assert.Empty(_delivered);
+    }
+
+    [AvaloniaFact]
+    public async Task ASlashLineWithRemoteSessionsSwitchedOffIsRefusedButKept()
+    {
+        _wireSlash = true;
+        // Known, so it reaches the runner rather than the ordinary send.
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+        OrbweaverSettings.PeerLinkEnabled = false;
+
+        var outcome = await session.RunSlashAsync("/color green");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains(RemoteControlChatSession.RemoteControlOffNote, NotesOf(session));
+        Assert.Empty(_slashRan);
+    }
+
+    [AvaloniaFact]
+    public async Task ASlashLineWithNoLinkClientIsLeftToTheOrdinarySend()
+    {
+        _wireSlash = true;
+        Wire("a", "b");
+        var session = await OpenAsync();
+        RemoteControlSessions.UseMirrorClientForTests(Account, null);
+
+        var outcome = await session.RunSlashAsync("/color green");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Contains(RemoteControlChatSession.NotConnectedNote, NotesOf(session));
+        Assert.Empty(_slashRan);
+    }
+
+    [AvaloniaFact]
+    public async Task ThePanelOffersOnlyWhatTheFarSideCanRun()
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[]
+        {
+            new SlashCommand("/color", "", SlashRouteKind.Control),
+            new SlashCommand("/compact", "", SlashRouteKind.Unavailable),
+        };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        // The session knows both; the panel offers the one that runs.
+        Assert.Equal(new[] { "/color", "/compact" }, session.SlashCommands.Select(c => c.Name));
+        Assert.Equal(new[] { "/color" }, ChatPanel.OfferedCommands(session.SlashCommands).Select(c => c.Name));
     }
 
     // The far transcript will produce the message back, because it went in
@@ -1117,6 +1421,14 @@ public class RemoteMirrorChatSessionTests : IDisposable
                 _typed.Add((status.Title, text));
                 return Task.FromResult(true);
             },
+            SlashCommandsFor: _wireSlash ? _ => _slashCatalogue : null,
+            RunSlash: _wireSlash
+                ? (_, line) =>
+                {
+                    _slashRan.Add(line);
+                    return Task.FromResult(_slashOutcome);
+                }
+                : null,
             CanDeliver: status => _canDeliver,
             Deliver: async (status, text) =>
             {
@@ -1165,6 +1477,20 @@ public class RemoteMirrorChatSessionTests : IDisposable
         // test is about. A window carries wfrom; a roster does not.
         if (_mangle && frame.Type == MirrorProtocol.Chunk && frame.Get("wfrom") is not null)
             frame = Mangle(line) ?? frame;
+
+        // The roster as a far Buddy from before CB-306 would have sent it:
+        // re-encoded without the route kinds, with its hashes recomputed so it
+        // arrives as a perfectly valid roster that simply says less.
+        if (_oldFarRoster && frame.Type == MirrorProtocol.Chunk && frame.Get("wfrom") is null
+            && frame.Payload is not null && MirrorProtocol.DecodeRoster(frame.Payload) is { } entries)
+        {
+            var payload = MirrorProtocol.EncodeRoster(
+                entries.Select(e => e with { CommandRoutes = null }).ToList());
+            var fields = frame.Fields.ToDictionary(f => f.Key, f => f.Value, StringComparer.Ordinal);
+            fields["H"] = MirrorProtocol.Hash(payload);
+            frame = MirrorProtocol.TryParseFrame(
+                MirrorProtocol.BuildFrame(MirrorProtocol.Chunk, frame.Id, fields, payload))!;
+        }
 
         await _client.OnFrameAsync(FarRelay, frame);
         return true;

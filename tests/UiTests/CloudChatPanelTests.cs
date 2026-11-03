@@ -1042,4 +1042,113 @@ public class CloudChatPanelTests : IDisposable
         Hover(link, InputElement.PointerExitedEvent);
         Assert.Null(link.TextDecorations);
     }
+
+    // --- slash commands over a cloud session (CB-306) ---
+
+    // Answers the stream's starting-point read, and records every write.
+    private sealed class SlashApi : ICloudApi
+    {
+        internal List<CloudRequestContext> Posts { get; } = new();
+
+        public Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
+        {
+            if (context.Method == HttpMethod.Post)
+            {
+                Posts.Add(context);
+                return Task.FromResult(new CloudApiResult(CloudOutcomes.OutcomeFor(200, "{}"), "{}"));
+            }
+
+            return Task.FromResult(new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""),
+                context.Path.EndsWith("?limit=1&sort_order=desc", StringComparison.Ordinal)
+                    ? "{\"data\":[{\"sequence_num\":\"7\"}]}"
+                    : Envelope()));
+        }
+    }
+
+    // A cloud init as the worker publishes it: the container's bundled skills and
+    // built-ins, and the commands only a terminal can run.
+    private const string CloudInitRow =
+        "{\"type\":\"system\",\"subtype\":\"init\",\"slash_commands\":[\"compact\",\"rename\",\"model\",\"color\",\"permissions\",\"think\",\"doctor\",\"some-skill\"],\"terminal_slash_commands\":[\"doctor\",\"color\"]}";
+
+    private async Task<(ChatPanel Panel, SlashApi Api, ClaudeCloudChatSession Chat)> OpenCloudWithInit(string prefix)
+    {
+        var id = prefix + Guid.NewGuid().ToString("N");
+        _toClean.Add(id);
+        var api = new SlashApi();
+        var stream = new PanelStream();
+        var chat = new ClaudeCloudChatSession(Session(id), api, new FakeCredentials(),
+            action => Dispatcher.UIThread.Post(action))
+        {
+            ReadBudget = TestBudgets.AlwaysAnswers,
+            Stream = stream,
+            Enabled = () => true,
+        };
+
+        ChatPanel.OpenFor(NewOrb(), chat);
+        FlushRender();
+        var events = await stream.NextOpenAsync();
+        events.TryWrite(new CloudStreamEvent(CloudStreamEventKind.Durable, "client_event", 8,
+            "{\"payload\":" + CloudInitRow + "}", PayloadType: "system", Subtype: "init", RowJson: CloudInitRow));
+        await PumpUntil(() => chat.SlashCommands.Count > 0);
+        return (ChatPanelTestAccess.Instance!, api, chat);
+    }
+
+    private static List<string> Suggested(ChatPanel panel) =>
+        ((System.Collections.IEnumerable)panel.FindControl<ItemsControl>("SlashList")!.ItemsSource!)
+        .Cast<object>()
+        .Select(v => (string)v.GetType().GetProperty("Name")!.GetValue(v)!)
+        .ToList();
+
+    [AvaloniaFact]
+    public async Task ASlashOnACloudPanelOffersOnlyWhatACloudSessionCanRun()
+    {
+        var (panel, _, _) = await OpenCloudWithInit("session_slash_list_");
+        var input = Input(panel);
+
+        input.Text = "/";
+        input.CaretIndex = 1;
+        FlushRender();
+
+        // init listed eight; terminal-only ones, /compact and a skill are not here.
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" }, Suggested(panel));
+    }
+
+    [AvaloniaFact]
+    public async Task AcceptingASuggestionAndSendingPostsTheControlRequestAndClearsTheBox()
+    {
+        var (panel, api, _) = await OpenCloudWithInit("session_slash_accept_");
+        var input = Input(panel);
+
+        input.Text = "/ren";
+        input.CaretIndex = 4;
+        FlushRender();
+        input.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Tab });
+        FlushRender();
+        Assert.Equal("/rename ", input.Text);
+
+        input.Text = "/rename a better name";
+        PressEnter(input);
+        await PumpUntil(() => api.Posts.Count == 1 && input.Text == "");
+
+        using var doc = System.Text.Json.JsonDocument.Parse(api.Posts[0].Body!);
+        var payload = doc.RootElement.GetProperty("events")[0].GetProperty("payload");
+        Assert.Equal("control_request", payload.GetProperty("type").GetString());
+        Assert.Equal("rename_session", payload.GetProperty("request").GetProperty("subtype").GetString());
+        Assert.Equal("a better name", payload.GetProperty("request").GetProperty("title").GetString());
+        await PumpUntil(() => ShownText(panel).Contains("Sent /rename a better name."));
+    }
+
+    [AvaloniaFact]
+    public async Task ACompactTypedInFullIsRefusedWithAReasonAndNothingIsPosted()
+    {
+        var (panel, api, _) = await OpenCloudWithInit("session_slash_refuse_");
+        var input = Input(panel);
+
+        input.Text = "/compact";
+        PressEnter(input);
+        await PumpUntil(() => ShownText(panel).Contains("Not sent: /compact can't run from here"));
+
+        Assert.Empty(api.Posts);
+        Assert.Equal("/compact", input.Text);
+    }
 }

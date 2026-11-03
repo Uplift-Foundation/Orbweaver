@@ -723,16 +723,49 @@ namespace Orbweaver
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can
     // compare it against the input box's text directly.
-    public sealed record SlashCommand(string Name, string Description);
+    //
+    // Route says how it would run over this session's channel (CB-306). Typed
+    // is the default so every list built before routes existed still means what
+    // it meant: keystrokes into a pane. An Unavailable command is one the
+    // session knows of and cannot run here; the panel hides it, and a session
+    // that would rather not list it at all simply leaves it out.
+    public sealed record SlashCommand(
+        string Name, string Description, SlashRouteKind Route = SlashRouteKind.Typed,
+        IReadOnlyList<string>? Aliases = null)
+    {
+        // Other names the session accepts for the same command (`/t` for
+        // `/think`). Autocomplete matches on them; Name is what it inserts.
+        public bool Matches(string token) =>
+            Name.StartsWith(token, StringComparison.OrdinalIgnoreCase)
+            || (Aliases?.Any(a => a.StartsWith(token, StringComparison.OrdinalIgnoreCase)) ?? false);
+
+        // The token is the whole of one of this command's names already typed.
+        public bool IsTyped(string token) =>
+            string.Equals(Name, token, StringComparison.OrdinalIgnoreCase)
+            || (Aliases?.Any(a => string.Equals(a, token, StringComparison.OrdinalIgnoreCase)) ?? false);
+    }
 
     // The slash commands a session's underlying CLI understands, so the panel
     // can offer autocomplete for a message that is about to be typed straight
-    // into that CLI's own input line. Only a local CLI session has an answer:
-    // an OpenClaw conversation isn't parsed by a command grammar on the far
-    // end, so there is nothing to suggest.
+    // into that CLI's own input line — or, since CB-306, sent by whichever
+    // route the command's Route names.
     public interface IRemoteChatSlashCommands
     {
         IReadOnlyList<SlashCommand> SlashCommands { get; }
+    }
+
+    // A session that runs a slash command itself rather than having it typed
+    // (CB-306). The panel hands over the whole typed line, `/cmd args`, and the
+    // session resolves the route (SlashRouting.Resolve) and acts on it: a
+    // control request, a pass-through send, or a refusal note with nothing
+    // sent. Failed means the box keeps its text, exactly as for SendAsync.
+    //
+    // The line, not a parsed command, because a command typed in full that is
+    // not in SlashCommands is still a slash command and still the session's
+    // call — the panel must not turn it into prose for the model.
+    public interface IRemoteChatSlashRunner
+    {
+        Task<ChatSendOutcome> RunSlashAsync(string line);
     }
 
     // A session that has stopped and is waiting to be answered.

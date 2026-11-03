@@ -32,6 +32,11 @@
     <Compile Include="../../OpenClawAttachmentKind.cs" />
     <Compile Include="../../OpenClawAudioKind.cs" />
     <Compile Include="../../RemoteChat.cs" />
+    <!-- RemoteChat.cs's SlashCommand references SlashRouteKind, which lives in
+         SlashRoute.cs (CB-306). This console exe compiles RemoteChat.cs in
+         rather than referencing the app, so the enum has to come in with it;
+         SlashRoute.cs needs only System.Text.Json.Nodes, already available. -->
+    <Compile Include="../../SlashRoute.cs" />
   </ItemGroup>
 
 </Project>

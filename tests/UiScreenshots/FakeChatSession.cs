@@ -8,8 +8,12 @@ namespace Orbweaver.Tests;
 internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatRoom,
     IRemoteChatReadOnly, IRemoteChatInterrupt,
-    IRemoteChatMachine, IRemoteChatPeerInbound, IRemoteChatRunOptions, IRemoteChatPrompts
+    IRemoteChatMachine, IRemoteChatPeerInbound, IRemoteChatRunOptions, IRemoteChatPrompts,
+    IRemoteChatSlashCommands
 {
+    // CB-306: commands posed for a capture of the slash box. See the UiTests copy.
+    public IReadOnlyList<SlashCommand> SlashCommands { get; set; } = Array.Empty<SlashCommand>();
+
     // CB-270 Stage 6: a prompt posed for a capture; answering does nothing.
     public ChatPrompt? Prompt { get; set; }
 
