@@ -389,4 +389,36 @@ public class CloudSessionScreenshots : IDisposable
             OrbweaverSettings.ClaudeCloudEnabled = was;
         }
     }
+
+    // CB-306: the slash box on a cloud panel. The list is what a real cloud
+    // init yields once it has been through the cloud catalogue (the same
+    // CloudSlashCatalog the session uses), so the picture shows the four
+    // commands a cloud session can run and none of the ninety-odd it lists.
+    // The session behind the panel is the fake: this suite renders through real
+    // Skia and has no live stream to feed an init.
+    [AvaloniaFact]
+    public void ACloudPanelsSlashBoxOffersOnlyWhatACloudSessionCanRun()
+    {
+        var offered = CloudSlashCatalog.Offered(
+            new[] { "compact", "rename", "model", "color", "permissions", "think", "doctor", "some-skill" },
+            new[] { "doctor", "color" });
+
+        var id = "screenshot-cloud-slash-" + Guid.NewGuid();
+        _panelsToClean.Add(id);
+        ChatPanel.OpenFor(new OrbWindow(Guid.NewGuid().ToString()), new FakeChatSession
+        {
+            SessionId = id,
+            DisplayName = "Refactor the parser",
+            SlashCommands = offered,
+        });
+
+        var panel = ChatPanelTestAccess.Instance!;
+        var input = panel.FindControl<Avalonia.Controls.TextBox>("Input")!;
+        input.Focus();
+        input.Text = "/";
+        input.CaretIndex = 1;
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        ScreenshotHelper.CaptureAlreadyShown(panel, "chat-panel-cloud-slash-box.png");
+    }
 }

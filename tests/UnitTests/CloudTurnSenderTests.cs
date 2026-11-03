@@ -195,4 +195,61 @@ public class CloudTurnSenderTests
         Assert.Equal("Not sent: the message is too large. Try a shorter message.",
             CloudTurnSender.NotSentNote(outcome));
     }
+
+    // --- PostControlAsync (CB-306) ---------------------------------------
+
+    private static Task<string?> Control(ICloudApi api, ICloudCredentialSource credentials, string id = SessionId) =>
+        CloudTurnSender.PostControlAsync(api, credentials, TestBudgets.AlwaysAnswers, id,
+            new System.Text.Json.Nodes.JsonObject { ["subtype"] = "set_model", ["model"] = "default" },
+            CancellationToken.None);
+
+    [Fact]
+    public async Task AControlRequestIsPostedAsAControlRequestEnvelopeAndReturnsNullOnA2xx()
+    {
+        var api = new ScriptedApi(Ok);
+
+        Assert.Null(await Control(api, new FakeCredentials()));
+
+        var request = Assert.Single(api.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal(CloudRequest.CodeEventsPath(SessionId), request.Path);
+        using var doc = JsonDocument.Parse(request.Body!);
+        var payload = doc.RootElement.GetProperty("events")[0].GetProperty("payload");
+        Assert.Equal("control_request", payload.GetProperty("type").GetString());
+        Assert.Equal("set_model", payload.GetProperty("request").GetProperty("subtype").GetString());
+        Assert.NotEqual(payload.GetProperty("request_id").GetString(), payload.GetProperty("uuid").GetString());
+        Assert.DoesNotContain(Token, request.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AControlRequestIsNeverRetried()
+    {
+        var api = new ScriptedApi(Unavailable);
+
+        Assert.Equal("the endpoint was unavailable", await Control(api, new FakeCredentials()));
+
+        Assert.Single(api.Requests);
+    }
+
+    [Fact]
+    public async Task AControlRequestWithNoLoginMakesNoRequest()
+    {
+        var api = new ScriptedApi();
+        var creds = new FakeCredentials { Reading = new CredentialRead(CredentialOutcome.Denied, null, null, "denied") };
+
+        Assert.Equal(ClaudeCliCredentials.Describe(CredentialOutcome.Denied), await Control(api, creds));
+
+        Assert.Empty(api.Requests);
+    }
+
+    [Fact]
+    public async Task AControlRequestToAMalformedIdMakesNoRequest()
+    {
+        var api = new ScriptedApi();
+
+        var failure = await Control(api, new FakeCredentials(), "../not a session");
+
+        Assert.Contains("not in a shape", failure);
+        Assert.Empty(api.Requests);
+    }
 }
