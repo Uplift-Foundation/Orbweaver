@@ -97,12 +97,29 @@ jobs:
       # there's only one job doing the pushing, since two workflow_run
       # events close together (e.g. two quick pushes to develop) could
       # still race on the same branch.
+      # Every GitHub expression this step reads comes in through env:, never
+      # spliced into the script text. An expression inside run: is expanded
+      # BEFORE bash parses the script, so a value that carries shell syntax
+      # runs as shell. head_branch is the one that matters: for a pull_request
+      # run it is the name of the PR's branch, which whoever opens the PR
+      # chooses, and git allows quotes, $( ), backticks and ; in a branch name.
+      # This job holds a contents: write token, so a branch named to break out
+      # of the quotes was a write to main. As env values they are only ever
+      # data. The script below also checks the two that reach jq/gh against
+      # the shape they must have.
       - name: Publish to the screenshots branch and comment on the PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.inputs.run_id || github.event.workflow_run.id }}
+          PR_INPUT: ${{ github.event.inputs.pr_number }}
+          PR_FROM_EVENT: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
         run: |
           set -e
-          repo="${{ github.repository }}"
+          repo="$REPO"
           branch="screenshots"
           # SCREENSHOTS_REMOTE_URL exists only so tools/test-publish-screenshots.py
           # can run this exact step against a local bare repository; the
@@ -151,7 +168,7 @@ jobs:
           git add -A
           pushed=1
           if [ -n "$(git status --porcelain)" ]; then
-            git commit --quiet -m "Screenshots from run ${{ github.event.inputs.run_id || github.event.workflow_run.id }}"
+            git commit --quiet -m "Screenshots from run $RUN_ID"
             pushed=0
             for attempt in 1 2 3 4 5; do
               if git push --quiet origin "HEAD:$branch" 2>/dev/null; then
@@ -229,13 +246,20 @@ jobs:
           #
           # A manual workflow_dispatch run skips all of that and just uses
           # whatever PR number was passed in, if any.
-          pr_number="${{ github.event.inputs.pr_number }}"
+          pr_number="$PR_INPUT"
           if [ -z "$pr_number" ]; then
-            pr_number="${{ github.event.workflow_run.pull_requests[0].number }}"
+            pr_number="$PR_FROM_EVENT"
           fi
-          head_owner="${{ github.event.workflow_run.head_repository.owner.login }}"
-          head_branch="${{ github.event.workflow_run.head_branch }}"
-          if [ -z "$pr_number" ] && [ "${{ github.event.workflow_run.event }}" = "pull_request" ]; then
+          head_owner="$HEAD_OWNER"
+          head_branch="$HEAD_BRANCH"
+          # A PR number is digits and a GitHub login is letters, digits and
+          # hyphens. Anything else is not a value this step can have been
+          # given, so drop it rather than hand it to gh or build a jq program
+          # around it. head_branch needs no such check: it is passed to gh as
+          # one quoted argument and never interpreted.
+          case "$pr_number" in *[!0-9]*) pr_number="" ;; esac
+          case "$head_owner" in *[!A-Za-z0-9-]*) head_owner="" ;; esac
+          if [ -z "$pr_number" ] && [ "$TRIGGER_EVENT" = "pull_request" ]; then
             if [ -n "$head_owner" ] && [ -n "$head_branch" ]; then
               pr_number="$(gh pr list --repo "$repo" --head "$head_branch" --state open \
                 --json number,headRepositoryOwner \
@@ -252,11 +276,11 @@ jobs:
           # that commented. A workflow_run from a push to main/develop
           # legitimately has no PR, so only the pull_request case is worth
           # flagging as a miss.
-          echo "resolved pr_number='${pr_number}' (event=${{ github.event.workflow_run.event }}, head=${head_owner}:${head_branch})"
+          echo "resolved pr_number='${pr_number}' (event=${TRIGGER_EVENT}, head=${head_owner}:${head_branch})"
 
           if [ -n "$pr_number" ]; then
             echo "$body" | gh pr comment "$pr_number" --repo "$repo" --body-file -
-          elif [ "${{ github.event.workflow_run.event }}" = "pull_request" ]; then
+          elif [ "$TRIGGER_EVENT" = "pull_request" ]; then
             {
               echo "_Screenshots published to the branch, but no open PR was found for ${head_owner}:${head_branch} — the comment was not posted._"
             } >> "$GITHUB_STEP_SUMMARY"
