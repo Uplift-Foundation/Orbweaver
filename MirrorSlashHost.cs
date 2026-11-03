@@ -75,11 +75,13 @@ namespace Orbweaver
                         : Refused(failure);
 
                 default:
-                    return Refused(route.Reason ?? "it can't run on that machine");
+                    // Unavailable, the only kind left for the channels this resolves, always
+                    // carries a reason; the server words a missing one itself.
+                    return Refused(route.Reason);
             }
         }
 
-        private static RemoteMirrorServer.SlashOutcome Refused(string reason) =>
+        private static RemoteMirrorServer.SlashOutcome Refused(string? reason) =>
             new(MirrorProtocol.ViaRefused, reason);
     }
 }
