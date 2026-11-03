@@ -281,4 +281,40 @@ public partial class ClaudeCloudEventsTests
         Assert.Equal("user", doc.RootElement.GetProperty("events")[0].GetProperty("payload")
             .GetProperty("type").GetString());
     }
+
+    [Fact]
+    public async Task ARenameWithNoNameIsRefusedBeforeAnyPost()
+    {
+        var api = new RoutingApi(Answer(200, Receipt));
+        var chat = Sender(api);
+
+        Assert.Equal(ChatSendOutcome.Failed, await chat.RunSlashAsync("/rename"));
+
+        Assert.Empty(api.Requests);
+        Assert.StartsWith("Not sent: /rename — give the session a name", Assert.Single(Notes(chat)).Text);
+    }
+
+    // The interrupt posts through the shared poster with its own request object;
+    // this pins its wire body to ClaudeCloudSend.InterruptBody's, which the probe
+    // and the send tests use, so the two cannot drift apart.
+    [Fact]
+    public async Task TheInterruptsWireBodyMatchesInterruptBodyExceptItsIds()
+    {
+        var api = new RoutingApi(Answer(200, Receipt));
+        var chat = Sender(api, session: BusyRow());
+
+        chat.Cancel();
+        await chat.InterruptTask!;
+
+        static JsonElement Request(string body)
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.GetProperty("events")[0].GetProperty("payload")
+                .GetProperty("request").Clone();
+        }
+
+        var posted = Request(Assert.Single(api.Posts).Body!);
+        var reference = Request(ClaudeCloudSend.InterruptBody("r", "u"));
+        Assert.Equal(reference.GetRawText(), posted.GetRawText());
+    }
 }
