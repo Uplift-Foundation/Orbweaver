@@ -44,6 +44,22 @@ public class SessionRegistryTests : IDisposable
         Assert.Equal("/some/key", entry.Value.KeyPath);
     }
 
+    // CB-306's product-readiness round: the CLI version that wrote the row,
+    // quoted back on a rejected control request. Absent or blank is null, and
+    // surrounding whitespace is dropped.
+    [Theory]
+    [InlineData(",\"version\":\"2.1.318\"", "2.1.318")]
+    [InlineData(",\"version\":\" 2.1.318 \"", "2.1.318")]
+    [InlineData(",\"version\":\"  \"", null)]
+    [InlineData(",\"version\":2", null)]
+    [InlineData("", null)]
+    public void TheVersionIsReadWhenTheRowCarriesOne(string field, string? expected)
+    {
+        var json = "{\"pid\":1,\"sessionId\":\"abc\",\"messagingSocketPath\":\"/tmp/x.sock\"" + field + "}";
+
+        Assert.Equal(expected, SessionRegistry.Parse(json, null)!.Value.Version);
+    }
+
     [Fact]
     public void MissingMessagingSocketPathIsRejected()
     {

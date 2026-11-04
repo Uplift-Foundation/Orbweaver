@@ -87,15 +87,25 @@ namespace Orbweaver
         // its own toggle is the one that decides), then a bridge to post to.
         // Lifted out of RemoteMirrorServer.LiveSeams so the round-trip harness
         // drives the real gate with only the post itself faked.
+        //
+        // A rejection from the CLI itself comes back worded with the session's
+        // Claude Code version beside the one the requests were measured on;
+        // versionFor reads it off this machine's registry row.
         internal static Func<SessionStatus, string, JsonObject, Task<string?>> GatedPost(
             Func<bool> commandsEnabled,
             Func<SessionStatus, string?> bridgeIdFor,
-            Func<SessionStatus, string, JsonObject, Task<string?>> post) =>
+            Func<SessionStatus, string?> versionFor,
+            Func<SessionStatus, string, JsonObject, Task<CloudTurnSender.ControlAttempt>> post) =>
             async (status, _, request) =>
             {
                 if (!commandsEnabled()) return LocalCliChatSession.BridgeCommandsOffHint;
                 if (bridgeIdFor(status) is not { } id) return NoBridgeReason;
-                return await post(status, id, request).ConfigureAwait(false);
+
+                var attempt = await post(status, id, request).ConfigureAwait(false);
+                return attempt.Failure
+                    ?? (attempt.CliError is { } refused
+                        ? CloudTurnSender.RejectionClause(refused, versionFor(status))
+                        : null);
             };
 
         internal const string NoBridgeReason = "this session has no Remote Control bridge";

@@ -166,8 +166,18 @@ public class DesktopChatPanelTests : IDisposable
 
         internal List<CloudRequestContext> Requests { get; } = new();
 
+        // The GETs that read a control request's answer back (CB-306's
+        // product-readiness round), kept apart from Requests.
+        internal List<CloudRequestContext> Reads { get; } = new();
+
         public Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
         {
+            if (context.Method is null)
+            {
+                Reads.Add(context);
+                return Task.FromResult(new CloudApiResult(new CloudOutcome(CloudOutcomeKind.Ok, 200), "{\"data\":[]}"));
+            }
+
             Requests.Add(context);
             return Task.FromResult(_answer());
         }

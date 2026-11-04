@@ -60,8 +60,19 @@ public class LocalCliChatSessionDesktopTests : IDisposable
 
         internal List<CloudRequestContext> Requests { get; } = new();
 
+        // The GETs that read a control request's answer back (CB-306's
+        // product-readiness round), kept apart from Requests, which means
+        // "what was posted". They answer an empty page.
+        internal List<CloudRequestContext> Reads { get; } = new();
+
         public async Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
         {
+            if (context.Method is null)
+            {
+                Reads.Add(context);
+                return new CloudApiResult(new CloudOutcome(CloudOutcomeKind.Ok, 200), "{\"data\":[]}");
+            }
+
             Requests.Add(context);
             return new CloudApiResult(await _answer(context), null);
         }

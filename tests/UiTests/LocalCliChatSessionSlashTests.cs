@@ -34,9 +34,35 @@ public class LocalCliChatSessionSlashTests : IDisposable
     {
         internal int Status { get; set; } = 200;
         internal List<CloudRequestContext> Requests { get; } = new();
+        internal List<CloudRequestContext> Reads { get; } = new();
+        internal string? AnswerError { get; set; }
 
         public Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
         {
+            // CB-306's product-readiness round: the GET that reads a control
+            // request's answer. Kept out of Requests ("what was posted"). With
+            // AnswerError set, the page answers the last posted request with
+            // that CLI error; otherwise it holds no answer.
+            if (context.Method is null)
+            {
+                Reads.Add(context);
+                var body = "{\"data\":[]}";
+                if (AnswerError is { } error && Requests.Count > 0)
+                {
+                    using var posted = JsonDocument.Parse(Requests[^1].Body!);
+                    var rid = posted.RootElement.GetProperty("events")[0].GetProperty("payload")
+                        .GetProperty("request_id").GetString();
+                    body = JsonSerializer.Serialize(new
+                    {
+                        data = new[]
+                        {
+                            new { payload = new { type = "control_response", response = new { subtype = "error", request_id = rid, error } } },
+                        },
+                    });
+                }
+                return Task.FromResult(new CloudApiResult(new CloudOutcome(CloudOutcomeKind.Ok, 200), body));
+            }
+
             Requests.Add(context);
             var outcome = CloudOutcomes.OutcomeFor(Status, Status == 200 ? "{}" : "<html></html>");
             return Task.FromResult(new CloudApiResult(outcome, null));
@@ -50,10 +76,11 @@ public class LocalCliChatSessionSlashTests : IDisposable
         public CredentialRead Read() => Reading;
     }
 
-    private static SessionRegistry.Entry Row(bool bridge, int protocol = 1) =>
+    private static SessionRegistry.Entry Row(bool bridge, int protocol = 1, string? version = null) =>
         SessionRegistry.Parse(
             "{\"pid\":4242,\"sessionId\":\"s1\",\"messagingSocketPath\":\"/tmp/a.sock\",\"peerProtocol\":"
-            + protocol + (bridge ? $",\"bridgeSessionId\":\"{Bridge}\"" : "") + "}", null)!.Value;
+            + protocol + (bridge ? $",\"bridgeSessionId\":\"{Bridge}\"" : "")
+            + (version is null ? "" : $",\"version\":\"{version}\"") + "}", null)!.Value;
 
     private static LocalCliChatSession Headless(Api api, Credentials credentials,
         SessionRegistry.Entry? entry, bool cloudOn = true, bool write = true, string cwd = "",
@@ -302,6 +329,43 @@ public class LocalCliChatSessionSlashTests : IDisposable
         Assert.Contains(desktop.History, t => t.Text == note);
         Assert.Contains(LocalCliChatSession.BridgeCommandsToggleLabel, note);
         Assert.Empty(api.Requests);
+    }
+
+    // CB-306's product-readiness round: the CLI answering "error" is a
+    // rejection, not a send, and the note carries the CLI's sentence beside
+    // this session's Claude Code version and the one the requests were
+    // measured on. Nothing is said about versions the row does not name.
+    [AvaloniaTheory]
+    [InlineData("2.1.318", true)]
+    [InlineData(null, false)]
+    public async Task ARejectionFromTheCliNamesTheVersions(string? version, bool named)
+    {
+        var api = new Api { AnswerError = "Unknown color \"teal\". Available: red, blue" };
+        var session = Headless(api, new Credentials(), Row(bridge: true, version: version));
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/color teal"));
+
+        var note = Assert.Single(session.History, t => t.Text.StartsWith("Not run: ", StringComparison.Ordinal)).Text;
+        Assert.Contains("Claude Code refused it: Unknown color \"teal\". Available: red, blue", note);
+        Assert.Equal(named, note.Contains("This session runs Claude Code 2.1.318; Orbweaver's commands were measured on 2.1.317."));
+        Assert.Equal(named, note.Contains("2.1.317"));
+        Assert.DoesNotContain(session.History, t => t.Text.StartsWith("Sent ", StringComparison.Ordinal));
+        Assert.Single(api.Requests);
+        Assert.Single(api.Reads);
+    }
+
+    // No answer within the polls keeps today's "Sent" note: the command was
+    // delivered, and silence is not a refusal.
+    [AvaloniaFact]
+    public async Task NoAnswerFromTheCliStillReadsAsSent()
+    {
+        var api = new Api();
+        var session = Headless(api, new Credentials(), Row(bridge: true, version: "2.1.318"));
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/color pink"));
+
+        Assert.Contains(session.History, t => t.Text == "Sent /color pink over Remote Control.");
+        Assert.Equal(CloudTurnSender.AnswerPolls, api.Reads.Count);
     }
 
     // ...and with cloud off but commands on — a fresh install — both post.

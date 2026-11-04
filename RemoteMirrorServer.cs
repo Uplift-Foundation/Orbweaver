@@ -405,10 +405,12 @@ namespace Orbweaver
                     status => LocalSlashChannel.BridgeIdFor(
                         status.IsDesktopHosted ? status.BridgeSessionId : null,
                         status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
-                    (status, bridgeId, request) => CloudTurnSender.PostControlAsync(
+                    status => RegistryEntryFor(status)?.Version,
+                    (status, bridgeId, request) => CloudTurnSender.PostControlAndReadAnswerAsync(
                         cloudApi,
                         CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
-                        CredentialBudget.Unmeasured, bridgeId, request, System.Threading.CancellationToken.None))));
+                        CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
+                        System.Threading.CancellationToken.None))));
 
             return new(
                 sendFrame,

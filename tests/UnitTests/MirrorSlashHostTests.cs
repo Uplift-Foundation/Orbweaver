@@ -239,12 +239,15 @@ public class MirrorSlashHostTests
 
     // --- GatedPost (CB-306's product-readiness round) ----------------------
 
+    private static Task<CloudTurnSender.ControlAttempt> Answer(string? failure = null, string? cliError = null) =>
+        Task.FromResult(new CloudTurnSender.ControlAttempt(failure, cliError));
+
     [Fact]
     public async Task GatedPostRefusesWithTheToggleSentenceWhenCommandsAreOff()
     {
         var calls = 0;
-        var post = MirrorSlashHost.GatedPost(() => false, _ => BridgeId,
-            (_, _, _) => { calls++; return Task.FromResult<string?>(null); });
+        var post = MirrorSlashHost.GatedPost(() => false, _ => BridgeId, _ => "2.1.318",
+            (_, _, _) => { calls++; return Answer(); });
 
         Assert.Equal(LocalCliChatSession.BridgeCommandsOffHint,
             await post(Status(), "set_color", new JsonObject()));
@@ -255,21 +258,45 @@ public class MirrorSlashHostTests
     public async Task GatedPostRefusesASessionWithNoBridge()
     {
         var calls = 0;
-        var post = MirrorSlashHost.GatedPost(() => true, _ => null,
-            (_, _, _) => { calls++; return Task.FromResult<string?>(null); });
+        var post = MirrorSlashHost.GatedPost(() => true, _ => null, _ => "2.1.318",
+            (_, _, _) => { calls++; return Answer(); });
 
         Assert.Equal(MirrorSlashHost.NoBridgeReason, await post(Status(), "set_color", new JsonObject()));
         Assert.Equal(0, calls);
     }
 
     [Fact]
-    public async Task GatedPostPostsToTheBridgeAndPassesTheAnswerBack()
+    public async Task GatedPostPostsToTheBridgeAndAnswersNullWhenItRan()
     {
         string? sentTo = null;
-        var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId,
-            (_, id, _) => { sentTo = id; return Task.FromResult<string?>("the far side said no"); });
+        var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => "2.1.318",
+            (_, id, _) => { sentTo = id; return Answer(); });
 
-        Assert.Equal("the far side said no", await post(Status(), "set_color", new JsonObject()));
+        Assert.Null(await post(Status(), "set_color", new JsonObject()));
         Assert.Equal(BridgeId, sentTo);
+    }
+
+    // A transport or credential failure is passed back as it was, with no
+    // version sentence: the CLI never saw the request.
+    [Fact]
+    public async Task GatedPostPassesATransportFailureBackWithoutVersions()
+    {
+        var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => "2.1.318",
+            (_, _, _) => Answer(failure: "the service is unavailable"));
+
+        Assert.Equal("the service is unavailable", await post(Status(), "set_color", new JsonObject()));
+    }
+
+    // The CLI's own refusal carries both versions when the registry row
+    // names one, and only the CLI's sentence when it does not.
+    [Theory]
+    [InlineData("2.1.318", "Claude Code refused it: Unknown color \"x\". This session runs Claude Code 2.1.318; Orbweaver's commands were measured on 2.1.317")]
+    [InlineData(null, "Claude Code refused it: Unknown color \"x\"")]
+    public async Task GatedPostWordsACliRejectionWithTheVersions(string? version, string expected)
+    {
+        var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => version,
+            (_, _, _) => Answer(cliError: "Unknown color \"x\"."));
+
+        Assert.Equal(expected, await post(Status(), "set_color", new JsonObject()));
     }
 }

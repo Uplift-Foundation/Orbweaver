@@ -966,10 +966,11 @@ public class MirrorRoundTripTests : IDisposable
             MirrorSlashHost.GatedPost(
                 () => enabled,
                 _ => bridge,
+                _ => "2.1.318",
                 (_, id, request) =>
                 {
                     posted.Add((id, (string?)request["subtype"] ?? ""));
-                    return Task.FromResult<string?>(null);
+                    return Task.FromResult(new CloudTurnSender.ControlAttempt(null, null));
                 })));
         harness.AddSession("job-hunter", WriteTranscript("gate-" + enabled + ".jsonl", Conversation(2)));
         await harness.HandshakeAsync("job-hunter");
@@ -988,6 +989,31 @@ public class MirrorRoundTripTests : IDisposable
             Assert.Empty(posted);
         }
         Assert.Empty(harness.Typed);
+    }
+
+    // CB-306's product-readiness round: the far CLI refusing a control
+    // request reaches the near panel as a refusal that carries the far
+    // session's Claude Code version and the one the requests were measured on.
+    [Fact]
+    public async Task AFarCliRejectionCrossesTheLinkWithBothVersions()
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(() => true, _ => bridge, _ => "2.1.318",
+                (_, _, _) => Task.FromResult(new CloudTurnSender.ControlAttempt(null,
+                    "Unknown color \"teal\". Available: red, blue, green, yellow, purple, orange, pink, cyan, default")))));
+        harness.AddSession("job-hunter", WriteTranscript("reject.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color teal", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.StartsWith("Claude Code refused it: Unknown color \"teal\"", outcome.Why);
+        Assert.EndsWith("This session runs Claude Code 2.1.318; Orbweaver's commands were measured on 2.1.317", outcome.Why);
     }
 
     // The roster carries the whole catalogue: a catalogue past the old 120-name

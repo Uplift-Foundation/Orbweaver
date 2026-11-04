@@ -82,6 +82,14 @@ namespace Orbweaver
 
     public static class SlashRouting
     {
+        // The Claude Code version the control-request table below was measured
+        // on (CB-306, 2026-11-03; see the header). Quoted back, beside the
+        // session's own version, when the CLI rejects one of these requests,
+        // so a rename or a dropped subtype in a later CLI reads as that rather
+        // than as Orbweaver being broken. Move it only when the table is
+        // re-measured.
+        internal const string MeasuredOnClaudeCode = "2.1.317";
+
         // The reasons, as the sentence the panel's note will carry. One per
         // cause rather than one generic refusal, because the fix differs.
         internal const string PeerMessageReason =

@@ -732,11 +732,19 @@ namespace Orbweaver
             }
 
             var source = _credentialsFor!(ClaudeConfigRoots.RootOfTranscript(_status.TranscriptPath));
-            var failure = await CloudTurnSender.PostControlAsync(
-                _cloudApi!, source, ReadBudget, bridge, request, CancellationToken.None);
-            if (failure is not null)
+            var attempt = await CloudTurnSender.PostControlAndReadAnswerAsync(
+                _cloudApi!, source, ReadBudget, bridge, request, Delay, CancellationToken.None);
+            if (attempt.Failure is not null)
             {
-                Note($"Not sent: {failure}.");
+                Note($"Not sent: {attempt.Failure}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            // The CLI got it and said no. Its version comes off the registry
+            // row, read only now, so a command that ran costs no disk walk.
+            if (attempt.CliError is { } refused)
+            {
+                Note($"Not run: {CloudTurnSender.RejectionClause(refused, _findRegistry(SessionId)?.Version)}.");
                 return ChatSendOutcome.Failed;
             }
 
