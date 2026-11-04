@@ -1324,7 +1324,7 @@ namespace Orbweaver
         {
             try
             {
-                Process.GetProcessById(pid).Kill(entireProcessTree: true);
+                ProcessTreeKill.Kill(Process.GetProcessById(pid));
                 return true;
             }
             catch
@@ -2043,7 +2043,7 @@ namespace Orbweaver
 
                 if (!process.WaitForExit(ProcessTimeoutMs))
                 {
-                    try { process.Kill(true); } catch { /* already gone */ }
+                    try { ProcessTreeKill.Kill(process); } catch { /* already gone */ }
                     return false;
                 }
 

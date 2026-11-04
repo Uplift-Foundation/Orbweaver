@@ -58,6 +58,10 @@ namespace Orbweaver
                 // rather than a probe (CB-44).
                 installCrashLog: CrashLog.Install,
 
+                // Absorb a SIGHUP on macOS instead of dying of it (CB-306).
+                // See HangupGuard.cs and docs/sighup-findings.md.
+                installHangupGuard: HangupGuard.Install,
+
                 // Whether this is the one Buddy that gets to run. See
                 // SingleInstance.cs for the enum and the reasoning; this is
                 // just the glue that keeps the acquired mutexes alive for the

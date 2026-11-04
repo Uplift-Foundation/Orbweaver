@@ -33,6 +33,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => order.Add("hup"),
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
@@ -43,7 +44,7 @@ public class StartupOrderTests
             waitForUnlock: () => order.Add("wait"),
             startUi: () => order.Add("ui"));
 
-        Assert.Equal(new[] { "log", "single", "claim", "serve", "wait", "ui" }, order);
+        Assert.Equal(new[] { "log", "hup", "single", "claim", "serve", "wait", "ui" }, order);
     }
 
     [Fact]
@@ -56,6 +57,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
@@ -80,6 +82,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => { },
             claimUiThread: () => { },
@@ -104,6 +107,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
@@ -130,6 +134,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
@@ -155,6 +160,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => counts["log"]++,
+            installHangupGuard: () => { },
             claimSingleInstance: () => { counts["single"]++; return true; },
             migrateUserData: () => counts["migrate"]++,
             claimUiThread: () => counts["claim"]++,
@@ -180,6 +186,7 @@ public class StartupOrderTests
 
         Assert.Throws<InvalidOperationException>(() => Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => { },
             claimUiThread: () => { },
@@ -205,6 +212,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => false,
             migrateUserData: () => reached.Add("migrate"),
             claimUiThread: () => reached.Add("claim"),
@@ -229,6 +237,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => logged = true,
+            installHangupGuard: () => { },
             claimSingleInstance: () => false,
             migrateUserData: () => { },
             claimUiThread: () => { },
@@ -251,6 +260,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => order.Add("migrate"),
             claimUiThread: () => order.Add("claim"),
@@ -277,6 +287,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => order.Add("migrate"),
             claimUiThread: () => order.Add("claim"),
@@ -301,6 +312,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => order.Add("migrate"),
             claimUiThread: () => order.Add("claim"),
@@ -326,6 +338,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => { },
@@ -353,6 +366,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => { },
             claimUiThread: () => { },
@@ -378,6 +392,7 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => { },
