@@ -124,7 +124,7 @@ if ($Agent -eq 'claude' -and $State -ne 'ended' -and $transcript -and (Test-Path
 # a private status directory through that seam hands this script the same one
 # (CB-306). -TempDir stays baked, per the param block: Windows's per-user temp
 # is stable across reboots, which is what lets the installer compute it once.
-# macOS cannot do that — its per-user directory carries a per-boot token — so
+# macOS cannot do that -- its per-user directory carries a per-boot token -- so
 # the bash twin asks the C library on every call instead.
 $statusRoot = $env:ORBWEAVER_STATUS_ROOT
 $resolvedTempDir = if ($statusRoot) { $statusRoot } elseif ($TempDir) { $TempDir } else { [System.IO.Path]::GetTempPath() }
