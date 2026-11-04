@@ -169,8 +169,15 @@ namespace Orbweaver
         // a real named mutex, and a lifetime that owns the process until it
         // exits — while the order (and, now, the short-circuit) is the part
         // that broke and the part a test can hold on to.
+        //
+        // `installHangupGuard` (CB-306) follows `installCrashLog` directly: it
+        // writes its one line through the crash log, and it has to be in place
+        // before anything is spawned that could be killed (and so before
+        // `claimSingleInstance`, whose loser exits and needs none of it — a
+        // registration costs nothing there).
         internal static void Run(
             Action installCrashLog,
+            Action installHangupGuard,
             Func<bool> claimSingleInstance,
             Action migrateUserData,
             Action claimUiThread,
@@ -182,6 +189,7 @@ namespace Orbweaver
             Action startUi)
         {
             installCrashLog();
+            installHangupGuard();
             if (!claimSingleInstance())
             {
                 // Another live Buddy holds the single-instance claim. Exit

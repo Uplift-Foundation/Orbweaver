@@ -376,7 +376,7 @@ namespace Orbweaver
 
                 if (!process.WaitForExit(10_000))
                 {
-                    try { process.Kill(true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     return false;
                 }
 

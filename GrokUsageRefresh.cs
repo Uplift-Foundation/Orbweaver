@@ -242,7 +242,7 @@ namespace Orbweaver
                     // the real Grok process, and killing only the parent would
                     // leave Grok running unsupervised in the background, which
                     // is the one outcome this whole design exists to avoid.
-                    try { process.Kill(entireProcessTree: true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     process.Dispose();
                 }
             }

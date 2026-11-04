@@ -227,7 +227,7 @@ namespace Orbweaver
 
                 if (!process.WaitForExit(timeoutMs))
                 {
-                    try { process.Kill(entireProcessTree: true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
 
                     // Whatever it had said by then is the best clue to where it
                     // hung; the kill closes the pipes, so this is a short wait.

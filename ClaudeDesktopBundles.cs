@@ -539,7 +539,7 @@ namespace Orbweaver
                 // generous rather than tight.
                 if (!process.WaitForExit(20_000))
                 {
-                    try { process.Kill(true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     return null;
                 }
 
