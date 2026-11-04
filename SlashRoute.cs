@@ -82,16 +82,37 @@ namespace Orbweaver
 
     public static class SlashRouting
     {
+        // The Claude Code version the control-request table below was measured
+        // on (CB-306, 2026-11-03; see the header). Quoted back, beside the
+        // session's own version, when the CLI rejects one of these requests,
+        // so a rename or a dropped subtype in a later CLI reads as that rather
+        // than as Orbweaver being broken. Move it only when the table is
+        // re-measured.
+        internal const string MeasuredOnClaudeCode = "2.1.317";
+
         // The reasons, as the sentence the panel's note will carry. One per
         // cause rather than one generic refusal, because the fix differs.
         internal const string PeerMessageReason =
             "a message from here arrives in that session as a teammate's request, and Claude Code runs slash commands only from its own keyboard or claude.ai";
 
+        // The same refusal for a Claude Desktop chat, which is not a "job" and
+        // is put on Remote Control a different way (CB-306's product-readiness
+        // round). The local panel says this through DesktopNoBridgeHint; this
+        // is the clause a linked machine's panel gets.
+        internal const string DesktopNoBridgeReason =
+            "this Desktop chat has no Remote Control connection, so slash commands can't reach it. "
+            + "Turn Remote Control on for it: type /rc in its Code tab in Claude Desktop";
+
         internal const string CloudNoColorReason =
             "a cloud session has no prompt bar to colour";
 
+        // A job reached only over its peer socket is one whose registry row
+        // names no Remote Control bridge (CB-306's product-readiness round).
+        // Said as that, with the two ways out, rather than as a fact about
+        // sockets the person cannot act on.
         internal const string PeerSocketReason =
-            "this job is reached over its messaging socket, which carries messages only";
+            "this job has no Remote Control connection, so slash commands can't reach it. "
+            + "Start it with Remote Control on (claude --remote-control), or from a terminal pane, to run them";
 
         // Measured 2026-11-03: the command's control-request subtype, where one
         // exists. `/permissions` here means the mode form only.

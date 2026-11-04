@@ -30,7 +30,7 @@ public class SettingsSectionCollapseTests
     {
         "orbs", "orb-click", "auto-organize", "orb-colours", "chat-panel",
         "voice", "sounds", "claude-code", "codex", "grok", "openclaw", "claude-cloud",
-        "peer-link", "claude-desktop"
+        "bridge-commands", "peer-link", "claude-desktop"
     };
 
     private static SettingsWindow NewWindow()

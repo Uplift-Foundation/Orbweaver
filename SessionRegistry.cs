@@ -53,7 +53,11 @@ namespace Orbweaver
             string? ConfigRoot = null,
             // The Remote Control bridge session a headless job registered, when
             // it has one (CB-306). Null when absent or not a well-formed id.
-            string? BridgeSessionId = null);
+            string? BridgeSessionId = null,
+            // The Claude Code version that wrote the row ("version", e.g.
+            // "2.1.317"; read off live rows 2026-11-03). Null when absent. Only
+            // ever quoted back to the person, never compared (CB-306).
+            string? Version = null);
 
         // The messaging protocol version this build of Buddy knows how to
         // speak. A registry entry naming a higher number is a newer Claude
@@ -107,7 +111,8 @@ namespace Orbweaver
                     Str(root, "status"),
                     keyPath,
                     BridgeSessionId: ClaudeCloudRoster.IsWellFormedId(Str(root, "bridgeSessionId"))
-                        ? Str(root, "bridgeSessionId") : null);
+                        ? Str(root, "bridgeSessionId") : null,
+                    Version: string.IsNullOrWhiteSpace(Str(root, "version")) ? null : Str(root, "version")!.Trim());
             }
             catch (JsonException)
             {

@@ -103,27 +103,138 @@ namespace Orbweaver
         // answer was lost is not known to be harmless for every subtype.
         internal static async Task<string?> PostControlAsync(
             ICloudApi api, ICloudCredentialSource credentials, CredentialBudget readBudget,
+            string sessionId, JsonObject request, CancellationToken ct) =>
+            (await PostControlCoreAsync(api, credentials, readBudget, sessionId, request, ct)
+                .ConfigureAwait(false)).Failure;
+
+        private readonly record struct Posted(string? Failure, string Token, string Path, string RequestId);
+
+        private static async Task<Posted> PostControlCoreAsync(
+            ICloudApi api, ICloudCredentialSource credentials, CredentialBudget readBudget,
             string sessionId, JsonObject request, CancellationToken ct)
         {
             var read = await ClaudeCliCredentials
                 .ReadWithinAsync(credentials, readBudget, ct).ConfigureAwait(false);
 
             if (read.Outcome != CredentialOutcome.Found || read.AccessToken is not { } token)
-                return ClaudeCliCredentials.StatusFor(read);
+                return new Posted(ClaudeCliCredentials.StatusFor(read), "", "", "");
 
             // Null for a malformed id: the roster can report a session this app
             // never sent to, so the refusal is handled rather than assumed away.
             if (CloudRequest.CodeEventsPath(sessionId) is not { } path)
-                return $"this session's id is not in a shape {Brand.ShortName} will write to";
+                return new Posted($"this session's id is not in a shape {Brand.ShortName} will write to", "", "", "");
 
+            var requestId = Guid.NewGuid().ToString();
             var result = await api.SendAsync(
                 new CloudRequestContext(token, path, HttpMethod.Post,
-                    ClaudeCloudSend.ControlRequestBody(
-                        Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), request)),
+                    ClaudeCloudSend.ControlRequestBody(requestId, Guid.NewGuid().ToString(), request)),
                 ct).ConfigureAwait(false);
 
-            return result.Outcome.Kind == CloudOutcomeKind.Ok ? null : result.Outcome.Detail;
+            return new Posted(result.Outcome.Kind == CloudOutcomeKind.Ok ? null : result.Outcome.Detail,
+                token, path, requestId);
         }
+
+        // --- the CLI's own answer (CB-306's product-readiness round) ---------
+        //
+        // A 2xx on the POST says the event was stored, not that the CLI ran
+        // it: the CLI answers afterwards with a `control_response` row carrying
+        // our request_id, `subtype` "success" or "error" and, for an error, its
+        // own sentence. Measured 2026-11-03 against a throwaway `claude --bg
+        // --remote-control` job on Claude Code 2.1.318, read back with
+        // `GET /v1/code/sessions/<bridge>/events?limit=20&sort_order=desc`:
+        // three answers, 160-220 ms after their requests, newest first, each
+        // request_id matching. `set_color not-a-colour` answered `Unknown color
+        // "not-a-colour". Available: …`; an unknown subtype answered `REPL
+        // bridge does not handle control_request subtype: …`.
+        //
+        // So the bridge path reads the answer back, asynchronously and for up
+        // to about five seconds — long enough for a session in the middle of a
+        // turn, by the lead's call; the measured idle answer took a fifth of a
+        // second. Confirmed is true only when the CLI answered "success". No
+        // answer in that time is not a failure (the command was delivered),
+        // but it is not a success either, and the caller says so.
+        internal sealed record ControlAttempt(string? Failure, string? CliError, bool Confirmed = false);
+
+        internal static readonly TimeSpan AnswerPollInterval = TimeSpan.FromMilliseconds(500);
+        internal const int AnswerPolls = 10;
+
+        // Newest first and twenty deep: the answer lands within a second of
+        // the request, so it is near the top of a busy session too.
+        internal static string AnswerPath(string eventsPath) => eventsPath + "?limit=20&sort_order=desc";
+
+        internal static async Task<ControlAttempt> PostControlAndReadAnswerAsync(
+            ICloudApi api, ICloudCredentialSource credentials, CredentialBudget readBudget,
+            string sessionId, JsonObject request, Func<TimeSpan, CancellationToken, Task> delay,
+            CancellationToken ct)
+        {
+            var posted = await PostControlCoreAsync(api, credentials, readBudget, sessionId, request, ct)
+                .ConfigureAwait(false);
+            if (posted.Failure is not null) return new ControlAttempt(posted.Failure, null);
+
+            for (var i = 0; i < AnswerPolls; i++)
+            {
+                await delay(AnswerPollInterval, ct).ConfigureAwait(false);
+
+                var page = await api.SendAsync(
+                    new CloudRequestContext(posted.Token, AnswerPath(posted.Path)), ct).ConfigureAwait(false);
+                if (page.Outcome.Kind != CloudOutcomeKind.Ok) break;
+
+                if (ControlAnswerIn(page.Body, posted.RequestId) is { } answer)
+                    return new ControlAttempt(null, answer.Error, Confirmed: answer.Error is null);
+            }
+
+            return new ControlAttempt(null, null);
+        }
+
+        internal readonly record struct ControlAnswer(string? Error);
+
+        // The answer to one request in an events page, or null when the page
+        // holds none (or is not a page). Error is null for "success", and the
+        // CLI's own sentence for "error" — capped, since it is quoted into a
+        // note, and given a stand-in when the CLI sent none.
+        internal static ControlAnswer? ControlAnswerIn(string? body, string requestId)
+        {
+            if (string.IsNullOrEmpty(body)) return null;
+            try
+            {
+                if (JsonNode.Parse(body) is not JsonObject root || root["data"] is not JsonArray rows) return null;
+                foreach (var row in rows)
+                {
+                    // A row that is not an object (a null, a number) is skipped:
+                    // the indexer on a non-object throws rather than answering null.
+                    if (row is not JsonObject r || r["payload"] is not JsonObject payload) continue;
+                    if (Text(payload["type"]) != "control_response") continue;
+                    if (payload["response"] is not JsonObject response) continue;
+                    if (Text(response["request_id"]) != requestId) continue;
+
+                    if (Text(response["subtype"]) == "success") return new ControlAnswer(null);
+                    var error = Text(response["error"])?.Trim();
+                    if (string.IsNullOrEmpty(error)) error = "it gave no reason";
+                    return new ControlAnswer(error.Length > MaxErrorLength ? error[..MaxErrorLength] + "…" : error);
+                }
+            }
+            catch (System.Text.Json.JsonException)
+            {
+            }
+            return null;
+        }
+
+        internal const int MaxErrorLength = 300;
+
+        private static string? Text(JsonNode? node) =>
+            node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+        // The clause a rejected command's note carries: the CLI's sentence and,
+        // when the registry row says which Claude Code this is, that version
+        // beside the one the control requests were measured on. This replaces
+        // a startup warning, which would fire on almost every daily CLI update
+        // whether or not anything had changed.
+        internal static string RejectionClause(string cliError, string? version) =>
+            "Claude Code refused it: " + cliError.TrimEnd('.', ' ')
+            + (string.IsNullOrWhiteSpace(version)
+                ? ""
+                : $". This session runs Claude Code {version.Trim()}; {Brand.ShortName}'s commands were measured on "
+                  + SlashRouting.MeasuredOnClaudeCode);
 
         internal static string AdviceFor(CloudOutcomeKind kind) => kind switch
         {

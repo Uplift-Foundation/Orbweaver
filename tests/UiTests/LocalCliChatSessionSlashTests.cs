@@ -34,9 +34,38 @@ public class LocalCliChatSessionSlashTests : IDisposable
     {
         internal int Status { get; set; } = 200;
         internal List<CloudRequestContext> Requests { get; } = new();
+        internal List<CloudRequestContext> Reads { get; } = new();
+        internal string? AnswerError { get; set; }
+        internal bool AnswerOk { get; set; }
 
         public Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
         {
+            // CB-306's product-readiness round: the GET that reads a control
+            // request's answer. Kept out of Requests ("what was posted"). With
+            // AnswerError set, the page answers the last posted request with
+            // that CLI error; otherwise it holds no answer.
+            if (context.Method is null)
+            {
+                Reads.Add(context);
+                var body = "{\"data\":[]}";
+                if ((AnswerError is not null || AnswerOk) && Requests.Count > 0)
+                {
+                    using var posted = JsonDocument.Parse(Requests[^1].Body!);
+                    var rid = posted.RootElement.GetProperty("events")[0].GetProperty("payload")
+                        .GetProperty("request_id").GetString();
+                    body = AnswerOk
+                        ? JsonSerializer.Serialize(new
+                        {
+                            data = new[] { new { payload = new { type = "control_response", response = new { subtype = "success", request_id = rid } } } },
+                        })
+                        : JsonSerializer.Serialize(new
+                        {
+                            data = new[] { new { payload = new { type = "control_response", response = new { subtype = "error", request_id = rid, error = AnswerError } } } },
+                        });
+                }
+                return Task.FromResult(new CloudApiResult(new CloudOutcome(CloudOutcomeKind.Ok, 200), body));
+            }
+
             Requests.Add(context);
             var outcome = CloudOutcomes.OutcomeFor(Status, Status == 200 ? "{}" : "<html></html>");
             return Task.FromResult(new CloudApiResult(outcome, null));
@@ -50,13 +79,15 @@ public class LocalCliChatSessionSlashTests : IDisposable
         public CredentialRead Read() => Reading;
     }
 
-    private static SessionRegistry.Entry Row(bool bridge, int protocol = 1) =>
+    private static SessionRegistry.Entry Row(bool bridge, int protocol = 1, string? version = null) =>
         SessionRegistry.Parse(
             "{\"pid\":4242,\"sessionId\":\"s1\",\"messagingSocketPath\":\"/tmp/a.sock\",\"peerProtocol\":"
-            + protocol + (bridge ? $",\"bridgeSessionId\":\"{Bridge}\"" : "") + "}", null)!.Value;
+            + protocol + (bridge ? $",\"bridgeSessionId\":\"{Bridge}\"" : "")
+            + (version is null ? "" : $",\"version\":\"{version}\"") + "}", null)!.Value;
 
     private static LocalCliChatSession Headless(Api api, Credentials credentials,
-        SessionRegistry.Entry? entry, bool cloudOn = true, bool write = true, string cwd = "")
+        SessionRegistry.Entry? entry, bool cloudOn = true, bool write = true, string cwd = "",
+        bool commandsOn = true)
     {
         var messenger = new SessionMessenger(new SessionMessenger.Seams(
             Registry: () => entry is { } e ? new[] { e } : Array.Empty<SessionRegistry.Entry>(),
@@ -70,14 +101,16 @@ public class LocalCliChatSessionSlashTests : IDisposable
             Title = "job-hunter",
             Cwd = cwd,
         }, messenger: messenger, findRegistry: id => entry is { } f && f.SessionId == id ? f : null,
-        cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn)
+        cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn,
+        bridgeCommandsEnabled: () => commandsOn)
         {
             ReadBudget = TestBudgets.AlwaysAnswers,
             Delay = (_, _) => Task.CompletedTask,
         };
     }
 
-    private static LocalCliChatSession Desktop(Api api, Credentials credentials, string bridge, bool cloudOn = true, string cwd = "") =>
+    private static LocalCliChatSession Desktop(Api api, Credentials credentials, string bridge, bool cloudOn = true,
+        string cwd = "", bool commandsOn = true, Func<string, SessionRegistry.Entry?>? findRegistry = null) =>
         new("s1", new SessionStatus
         {
             Source = SessionSource.ClaudeCode,
@@ -86,7 +119,8 @@ public class LocalCliChatSessionSlashTests : IDisposable
             State = "idle",
             Title = "",
             Cwd = cwd,
-        }, cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn)
+        }, findRegistry: findRegistry, cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn,
+        bridgeCommandsEnabled: () => commandsOn)
         {
             ReadBudget = TestBudgets.AlwaysAnswers,
             Delay = (_, _) => Task.CompletedTask,
@@ -180,7 +214,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
             var body = ControlRequestOf(request);
             Assert.Equal(subtype, body.GetProperty("subtype").GetString());
             Assert.Equal(value, body.GetProperty(field).GetString());
-            Assert.Contains(session.History, t => t.Text == $"Sent {line} over Remote Control.");
+            Assert.Contains(session.History, t => t.Text == $"Sent {line} over Remote Control — no confirmation yet.");
             Assert.DoesNotContain(Token, request.Body!, StringComparison.Ordinal);
         }
     }
@@ -194,7 +228,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
         await session.RunSlashAsync("/think 8000");
 
         Assert.Equal(8000, ControlRequestOf(Assert.Single(api.Requests)).GetProperty("max_thinking_tokens").GetInt32());
-        Assert.Contains(session.History, t => t.Text == "Sent /think 8000 over Remote Control.");
+        Assert.Contains(session.History, t => t.Text == "Sent /think 8000 over Remote Control — no confirmation yet.");
     }
 
     // The negative control: /compact is not a control command, so it is refused
@@ -230,6 +264,27 @@ public class LocalCliChatSessionSlashTests : IDisposable
         Assert.Empty(api.Requests);
     }
 
+    // CB-306's product-readiness round: a job whose registry row names no
+    // bridge is told so plainly, with the two ways out. A plain-text line to
+    // the same job is not a command and still goes over the socket.
+    [AvaloniaFact]
+    public async Task AJobWithNoBridgeSaysItHasNoRemoteControlAndPlainTextStillDelivers()
+    {
+        var api = new Api();
+        var session = Headless(api, new Credentials(), Row(bridge: false));
+
+        await session.RunSlashAsync("/model opus");
+
+        var note = Assert.Single(session.History, t => t.Text.StartsWith("Not sent: /model", StringComparison.Ordinal)).Text;
+        Assert.Contains("no Remote Control connection", note);
+        Assert.Contains("--remote-control", note);
+        Assert.Contains("terminal pane", note);
+        Assert.DoesNotContain("socket", note);
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("please carry on"));
+        Assert.Empty(api.Requests);
+    }
+
     [AvaloniaFact]
     public async Task ADesktopChatWithNoBridgeSaysHowToSwitchRemoteControlOn()
     {
@@ -259,19 +314,119 @@ public class LocalCliChatSessionSlashTests : IDisposable
         Assert.Empty(api.Requests);
     }
 
+    // CB-306's product-readiness round: the bridge-commands setting, not
+    // "Show cloud sessions", is the gate. Off, both kinds of session refuse
+    // with a note naming the toggle and post nothing.
     [AvaloniaFact]
-    public async Task WithCloudSessionsOffTheCommandIsRefusedAndTheReasonIsTheSetting()
+    public async Task WithBridgeCommandsOffTheCommandIsRefusedAndTheNoteNamesTheToggle()
+    {
+        var api = new Api();
+        var headless = Headless(api, new Credentials(), Row(bridge: true), commandsOn: false);
+        var desktop = Desktop(api, new Credentials(), Bridge, commandsOn: false);
+
+        Assert.Equal(ChatSendOutcome.Failed, await headless.RunSlashAsync("/color pink"));
+        Assert.Equal(ChatSendOutcome.Failed, await desktop.RunSlashAsync("/color pink"));
+
+        var note = "Not sent: " + LocalCliChatSession.BridgeCommandsOffHint;
+        Assert.Contains(headless.History, t => t.Text == note);
+        Assert.Contains(desktop.History, t => t.Text == note);
+        Assert.Contains(LocalCliChatSession.BridgeCommandsToggleLabel, note);
+        Assert.Empty(api.Requests);
+    }
+
+    // CB-306's product-readiness round: the CLI answering "error" is a
+    // rejection, not a send, and the note carries the CLI's sentence beside
+    // this session's Claude Code version and the one the requests were
+    // measured on. Nothing is said about versions the row does not name.
+    [AvaloniaTheory]
+    [InlineData("2.1.318", true)]
+    [InlineData(null, false)]
+    public async Task ARejectionFromTheCliNamesTheVersions(string? version, bool named)
+    {
+        var api = new Api { AnswerError = "Unknown color \"teal\". Available: red, blue" };
+        var session = Headless(api, new Credentials(), Row(bridge: true, version: version));
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/color teal"));
+
+        var note = Assert.Single(session.History, t => t.Text.StartsWith("Not run: ", StringComparison.Ordinal)).Text;
+        Assert.Contains("Claude Code refused it: Unknown color \"teal\". Available: red, blue", note);
+        Assert.Equal(named, note.Contains("This session runs Claude Code 2.1.318; Orbweaver's commands were measured on 2.1.317."));
+        Assert.Equal(named, note.Contains("2.1.317"));
+        Assert.DoesNotContain(session.History, t => t.Text.StartsWith("Sent ", StringComparison.Ordinal));
+        Assert.Single(api.Requests);
+        Assert.Single(api.Reads);
+    }
+
+    // No answer within the budget is said as exactly that — never a plain
+    // "Sent", which reads as success — and the CLI's "success" is "Done".
+    [AvaloniaFact]
+    public async Task NoAnswerFromTheCliSaysNoConfirmationYet()
+    {
+        var api = new Api();
+        var session = Headless(api, new Credentials(), Row(bridge: true, version: "2.1.318"));
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/color pink"));
+
+        Assert.Contains(session.History, t => t.Text == "Sent /color pink over Remote Control — no confirmation yet.");
+        Assert.DoesNotContain(session.History, t => t.Text.StartsWith("Done", StringComparison.Ordinal));
+        Assert.Equal(CloudTurnSender.AnswerPolls, api.Reads.Count);
+    }
+
+    // A Desktop chat has its bridge on its own record and may have no
+    // registry row at all; a refusal then carries the CLI's sentence and no
+    // version sentence, rather than a guess.
+    [AvaloniaFact]
+    public async Task ARejectionWithNoRegistryRowLeavesTheVersionsOut()
+    {
+        var api = new Api { AnswerError = "Unknown color \"teal\"" };
+        var session = Desktop(api, new Credentials(), Bridge, findRegistry: _ => null);
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/color teal"));
+
+        Assert.Contains(session.History, t => t.Text == "Not run: Claude Code refused it: Unknown color \"teal\".");
+    }
+
+    // A command with no argument (/think resets the budget) is worded
+    // without a trailing space, confirmed or not.
+    [AvaloniaTheory]
+    [InlineData(true, "Done: /think.")]
+    [InlineData(false, "Sent /think over Remote Control — no confirmation yet.")]
+    public async Task ACommandWithNoArgumentIsWordedBare(bool confirmed, string expected)
+    {
+        var api = new Api { AnswerOk = confirmed };
+        var session = Headless(api, new Credentials(), Row(bridge: true));
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/think"));
+
+        Assert.Contains(session.History, t => t.Text == expected);
+    }
+
+    [AvaloniaFact]
+    public async Task ASuccessAnswerFromTheCliSaysDone()
+    {
+        var api = new Api { AnswerOk = true };
+        var session = Headless(api, new Credentials(), Row(bridge: true));
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/rename tidy"));
+
+        Assert.Contains(session.History, t => t.Text == "Done: /rename tidy.");
+        Assert.Single(api.Reads);
+    }
+
+    // ...and with cloud off but commands on — a fresh install — both post.
+    [AvaloniaFact]
+    public async Task WithCloudSessionsOffButCommandsOnBothKindsPostTheCommand()
     {
         var api = new Api();
         var headless = Headless(api, new Credentials(), Row(bridge: true), cloudOn: false);
         var desktop = Desktop(api, new Credentials(), Bridge, cloudOn: false);
 
-        Assert.Equal(ChatSendOutcome.Failed, await headless.RunSlashAsync("/color pink"));
-        Assert.Equal(ChatSendOutcome.Failed, await desktop.RunSlashAsync("/color pink"));
+        Assert.Equal(ChatSendOutcome.Sent, await headless.RunSlashAsync("/color pink"));
+        Assert.Equal(ChatSendOutcome.Sent, await desktop.RunSlashAsync("/rename tidy"));
 
-        Assert.Contains(headless.History, t => t.Text == "Not sent: " + LocalCliChatSession.CloudOffControlHint);
-        Assert.Contains(desktop.History, t => t.Text == "Not sent: " + LocalCliChatSession.DesktopCloudOffHint);
-        Assert.Empty(api.Requests);
+        Assert.Equal(2, api.Requests.Count);
+        Assert.Equal("set_color", ControlRequestOf(api.Requests[0]).GetProperty("subtype").GetString());
+        Assert.Equal("rename_session", ControlRequestOf(api.Requests[1]).GetProperty("subtype").GetString());
     }
 
     [AvaloniaFact]

@@ -740,6 +740,12 @@ namespace Orbweaver
             // them living beside the gateway.
             root.Children.Add(Group("claude-cloud", "Claude Code in the cloud", Card(ClaudeCloudRows())));
 
+            // Beside the cloud section and not inside it (CB-306's
+            // product-readiness round): it is on by default and governs
+            // sessions on this machine, so it must not hide behind "Show cloud
+            // sessions" being on, the way that card's other rows do.
+            root.Children.Add(Group("bridge-commands", "Remote Control commands", Card(BridgeCommandsRows())));
+
             // Straight after the CLI sections and before the Desktop app,
             // because that is what it is about: the same Claude Code sessions
             // those two sections govern, just not on this machine.
@@ -1846,6 +1852,25 @@ namespace Orbweaver
             ClaudeCloudSessions.Restart();
             Rebuild();
         }
+
+        internal Control[] BridgeCommandsRows() => new Control[]
+        {
+            Row(LocalCliChatSession.BridgeCommandsToggleLabel,
+                Switch(OrbweaverSettings.BridgeCommandsEnabled, OnBridgeCommandsToggled),
+
+                // The Keychain prompt is named for the reason the cloud row
+                // names it: a prompt nobody expected is a prompt people decline.
+                // It comes on the first command sent, not when this is on.
+                "Lets /color, /rename, /model, /permissions and /think reach a background job or a "
+                + "Claude Desktop chat that has Remote Control on, typed into its chat panel here or on "
+                + "another machine linked to this one. Sending one uses the Claude Code login stored on "
+                + "this machine, so the first time, macOS will ask permission to read it from your "
+                + "Keychain. Ordinary messages to a Desktop chat still need \u201CShow cloud sessions\u201D.")
+        };
+
+        // Read on every send, so nothing needs restarting.
+        internal void OnBridgeCommandsToggled(bool enabled) =>
+            OrbweaverSettings.BridgeCommandsEnabled = enabled;
 
         private void OnClaudeCloudRetryClicked()
         {

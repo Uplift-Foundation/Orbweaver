@@ -133,6 +133,7 @@ namespace Orbweaver
                                    ICloudApi? cloudApi = null,
                                    Func<string?, ICloudCredentialSource>? credentialsFor = null,
                                    Func<bool>? cloudEnabled = null,
+                                   Func<bool>? bridgeCommandsEnabled = null,
                                    Func<SessionStatus, bool>? focusDesktop = null,
                                    Action<SessionStatus, string>? focusTerminal = null,
                                    Func<string, string?>? readSettings = null,
@@ -150,6 +151,7 @@ namespace Orbweaver
             _cloudApi = cloudApi;
             _credentialsFor = credentialsFor;
             _cloudEnabled = cloudEnabled ?? (() => OrbweaverSettings.ClaudeCloudEnabled);
+            _bridgeCommandsEnabled = bridgeCommandsEnabled ?? (() => OrbweaverSettings.BridgeCommandsEnabled);
             _focusDesktop = focusDesktop ?? FocusDesktopWindow;
             _focusTerminal = focusTerminal ?? FocusTerminalWindow;
             _readSettings = readSettings ?? PeerInboundSettingsFile.ReadText;
@@ -166,6 +168,7 @@ namespace Orbweaver
         private readonly ICloudApi? _cloudApi;
         private readonly Func<string?, ICloudCredentialSource>? _credentialsFor;
         private readonly Func<bool> _cloudEnabled;
+        private readonly Func<bool> _bridgeCommandsEnabled;
         private readonly Func<SessionStatus, bool> _focusDesktop;
         private readonly Action<SessionStatus, string> _focusTerminal;
 
@@ -722,28 +725,53 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            if (!CloudOn)
+            if (!BridgeCommandsOn)
             {
-                Note("Not sent: " + (_status.IsDesktopHosted ? DesktopCloudOffHint : CloudOffControlHint));
+                Note("Not sent: " + BridgeCommandsOffHint);
                 return ChatSendOutcome.Failed;
             }
 
             var source = _credentialsFor!(ClaudeConfigRoots.RootOfTranscript(_status.TranscriptPath));
-            var failure = await CloudTurnSender.PostControlAsync(
-                _cloudApi!, source, ReadBudget, bridge, request, CancellationToken.None);
-            if (failure is not null)
+            var attempt = await CloudTurnSender.PostControlAndReadAnswerAsync(
+                _cloudApi!, source, ReadBudget, bridge, request, Delay, CancellationToken.None);
+            if (attempt.Failure is not null)
             {
-                Note($"Not sent: {failure}.");
+                Note($"Not sent: {attempt.Failure}.");
                 return ChatSendOutcome.Failed;
             }
 
-            Note($"Sent {(args.Length == 0 ? name : name + " " + args)} over Remote Control.");
+            // The CLI got it and said no. Its version comes off the registry
+            // row, read only now, so a command that ran costs no disk walk.
+            if (attempt.CliError is { } refused)
+            {
+                Note($"Not run: {CloudTurnSender.RejectionClause(refused, _findRegistry(SessionId)?.Version)}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            // "Done" only on the CLI's own "success"; silence is said as
+            // silence, never as plain "Sent", which reads as success.
+            Note(attempt.Confirmed ? DoneNote(name, args) : UnconfirmedNote(name, args));
             return ChatSendOutcome.Sent;
         }
 
-        internal const string CloudOffControlHint =
-            "slash commands reach this job over Remote Control, which needs \"Show cloud sessions\" turned on in "
-            + "Orbweaver's Settings — it uses the Claude Code login stored on this machine.";
+        internal static string DoneNote(string name, string args) =>
+            $"Done: {(args.Length == 0 ? name : name + " " + args)}.";
+
+        internal static string UnconfirmedNote(string name, string args) =>
+            $"Sent {(args.Length == 0 ? name : name + " " + args)} over Remote Control — no confirmation yet.";
+
+        // CB-306's product-readiness round: the control path has its own
+        // setting, on by default, instead of riding on "Show cloud sessions" —
+        // which a fresh install has off, so no background job or Desktop chat
+        // could run a command until somebody found it. The far side of the
+        // mirror refuses with this same sentence, so the toggle it names is the
+        // one on the machine that would have posted.
+        internal const string BridgeCommandsToggleLabel =
+            "Run slash commands in background jobs and Desktop sessions";
+
+        internal const string BridgeCommandsOffHint =
+            "slash commands reach this session over Remote Control, which is switched off — turn on \""
+            + BridgeCommandsToggleLabel + "\" in Orbweaver's Settings";
 
         // --- sending ---
 
@@ -755,7 +783,7 @@ namespace Orbweaver
             && TerminalFocuser.CanDeliver(_status, SessionId, _findRegistry);
 
         public string ComposerHint => _status.IsDesktopHosted
-            ? DesktopComposerHintFor(_status, _refusal, CloudOn, _format.ReplyEnabled(), IsBusy)!
+            ? DesktopComposerHintFor(_status, _refusal, CloudOn, _format.ReplyEnabled(), IsBusy, BridgeCommandsOn)!
             : ComposerHintFor(
                 TerminalFocuser.CanSendQuietly(_status), ChannelIsMessaging, _format.ReplyEnabled(),
                 _status.Shape, _status.Presence);
@@ -773,8 +801,10 @@ namespace Orbweaver
         // prompt — so the composer says so rather than pretending to be the
         // keyboard.
         //
-        // Gated on "Show cloud sessions", the setting that promises no credential
-        // read when off; no setting of its own.
+        // Messages are gated on "Show cloud sessions", the setting that promises
+        // no credential read when off. The five control commands have their
+        // own setting since CB-306's product-readiness round (on by default;
+        // see BridgeCommandsOffHint), so a fresh install can run them.
         internal const string DesktopNoBridgeHint =
             "Typing goes through Claude Desktop — click the orb to open it. To send from here, turn on "
             + "Remote Control for this chat: type /rc in its Code tab, or switch on Settings › Claude Code › "
@@ -783,6 +813,13 @@ namespace Orbweaver
         internal const string DesktopCloudOffHint =
             "This chat is on Remote Control. To send from here, turn on \"Show cloud sessions\" in "
             + "Orbweaver's Settings — sending uses the Claude Code login stored on this machine.";
+
+        // The box is up for commands while "Show cloud sessions" is off, so it
+        // says which ones and what turning that on would add. Short because it
+        // is a watermark: the longer first draft clipped its last line in the
+        // capture (chat-panel-desktop-commands-only.png).
+        internal const string DesktopCommandsOnlyHint =
+            "Slash commands work here. To send messages, turn on \"Show cloud sessions\" in Settings.";
 
         internal const string DesktopBridgedHint =
             "Message… (arrives as a teammate's request, via Remote Control)";
@@ -798,22 +835,30 @@ namespace Orbweaver
         private bool CloudOn =>
             _cloudApi is not null && _credentialsFor is not null && _cloudEnabled();
 
+        private bool BridgeCommandsOn =>
+            _cloudApi is not null && _credentialsFor is not null && _bridgeCommandsEnabled();
+
         private bool IsBusy => string.Equals(_status.State, "generating", StringComparison.OrdinalIgnoreCase);
 
         // Whether the composer is taken away. Pure, so each row of the table is a
-        // case: not bridged, cloud off, or a refusal the API has given.
-        internal static bool DesktopReadOnly(SessionStatus status, CloudSendability? refusal, bool cloudEnabled) =>
-            status.IsDesktopHosted && (!status.IsBridgedDesktop || !cloudEnabled || refusal is not null);
+        // case: not bridged, cloud off with commands off too, or a refusal the
+        // API has given. Cloud off with commands on keeps the box (CB-306):
+        // it takes the five control commands, and a plain message is refused
+        // with the cloud sentence when sent rather than the box disappearing.
+        internal static bool DesktopReadOnly(SessionStatus status, CloudSendability? refusal, bool cloudEnabled,
+                                             bool bridgeCommands = false) =>
+            status.IsDesktopHosted
+            && (!status.IsBridgedDesktop || (!cloudEnabled && !bridgeCommands) || refusal is not null);
 
         // What the composer says. Null for a session that is not Desktop-hosted,
         // so a caller cannot mistake "not my case" for an empty sentence.
         internal static string? DesktopComposerHintFor(
             SessionStatus status, CloudSendability? refusal, bool cloudEnabled, bool replyEnabled,
-            bool busy = false)
+            bool busy = false, bool bridgeCommands = false)
         {
             if (!status.IsDesktopHosted) return null;
             if (!status.IsBridgedDesktop) return DesktopNoBridgeHint;
-            if (!cloudEnabled) return DesktopCloudOffHint;
+            if (!cloudEnabled) return bridgeCommands ? DesktopCommandsOnlyHint : DesktopCloudOffHint;
 
             if (refusal is { } refused)
             {
@@ -824,7 +869,7 @@ namespace Orbweaver
             return busy ? CloudChatSendability.BusyHint : DesktopBridgedHint;
         }
 
-        public bool IsReadOnly => DesktopReadOnly(_status, _refusal, CloudOn);
+        public bool IsReadOnly => DesktopReadOnly(_status, _refusal, CloudOn, BridgeCommandsOn);
 
         // The chat in a browser, once there is a bridge to point at — shown beside
         // the note and above the composer. Null with no bridge: Desktop's own
@@ -1013,6 +1058,14 @@ namespace Orbweaver
             if (IsReadOnly)
             {
                 Note("Not sent: " + ComposerHint);
+                return ChatSendOutcome.Failed;
+            }
+
+            // The box can be up for commands alone (CB-306); a message still
+            // needs "Show cloud sessions".
+            if (!CloudOn)
+            {
+                Note("Not sent: " + DesktopCloudOffHint);
                 return ChatSendOutcome.Failed;
             }
 

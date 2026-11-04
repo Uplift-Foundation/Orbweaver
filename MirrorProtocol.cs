@@ -123,6 +123,16 @@ namespace Orbweaver
         public const string ViaControl = "control";
         public const string ViaRefused = "refused";
 
+        // CB-306's product-readiness round: on a `control` reply, what the far
+        // CLI said, in a `verdict` field. "done" only when it answered
+        // success; "unconfirmed" when nothing came back in time. An older far
+        // Buddy sends no verdict, and the near side reads that as unconfirmed
+        // — it never read the answer, so that is the true reading. An older
+        // near Buddy ignores the field and says what it always said.
+        public const string VerdictField = "verdict";
+        public const string VerdictDone = "done";
+        public const string VerdictUnconfirmed = "unconfirmed";
+
         // The INPUT field that marks the payload as a slash line to be
         // resolved on the far machine rather than text to be typed as-is. An
         // older far Buddy ignores unknown fields and types it, which is exactly

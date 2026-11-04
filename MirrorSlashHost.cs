@@ -24,9 +24,20 @@ namespace Orbweaver
             Func<SessionStatus, IReadOnlyList<SlashCommand>> TerminalCatalogue,
             Func<SessionStatus, string, Task<bool>> TypeInto,
 
-            // Posts one control request over the session's bridge. Null on
-            // success, otherwise the sentence saying why not.
-            Func<SessionStatus, string, JsonObject, Task<string?>> PostControl);
+            // Posts one control request over the session's bridge and says
+            // what came of it: refused (with the sentence), done, or delivered
+            // with no answer yet.
+            Func<SessionStatus, string, JsonObject, Task<ControlVerdict>> PostControl);
+
+        // CB-306's product-readiness round: the far side's answer to a control
+        // request, carried back over the link so the near panel says what the
+        // far CLI said rather than assuming success.
+        internal sealed record ControlVerdict(string? Refusal, bool Confirmed)
+        {
+            internal static readonly ControlVerdict Done = new(null, true);
+            internal static readonly ControlVerdict Unconfirmed = new(null, false);
+            internal static ControlVerdict Refused(string reason) => new(reason, false);
+        }
 
         private readonly Seams _seams;
 
@@ -56,7 +67,8 @@ namespace Orbweaver
             if (SlashRouting.Split(line) is not { } cmd)
                 return Refused("that is not a command");
 
-            var route = SlashRouting.Resolve(ChannelOf(status), cmd.Name, cmd.Args);
+            var channel = ChannelOf(status);
+            var route = SlashRouting.Resolve(channel, cmd.Name, cmd.Args);
 
             switch (route.Kind)
             {
@@ -69,17 +81,51 @@ namespace Orbweaver
                     var request = SlashRouting.ControlRequest(route.ControlSubtype!, cmd.Args, out var problem);
                     if (request is null) return Refused(problem!);
 
-                    var failure = await _seams.PostControl(status, route.ControlSubtype!, request).ConfigureAwait(false);
-                    return failure is null
-                        ? new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null)
-                        : Refused(failure);
+                    var verdict = await _seams.PostControl(status, route.ControlSubtype!, request).ConfigureAwait(false);
+                    return verdict.Refusal is { } refusal
+                        ? Refused(refusal)
+                        : new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null,
+                            verdict.Confirmed ? MirrorProtocol.VerdictDone : MirrorProtocol.VerdictUnconfirmed);
 
                 default:
                     // Unavailable, the only kind left for the channels this resolves, always
-                    // carries a reason; the server words a missing one itself.
-                    return Refused(route.Reason);
+                    // carries a reason; the server words a missing one itself. A
+                    // Desktop chat with no bridge lands on the peer-socket channel
+                    // too, and is told about itself rather than about a job.
+                    return Refused(status.IsDesktopHosted && channel == SlashChannel.PeerSocket
+                        ? SlashRouting.DesktopNoBridgeReason
+                        : route.Reason);
             }
         }
+
+        // The PostControl seam the live server wires, with its gates in front of
+        // the post: the bridge-commands setting on *this* machine (CB-306's
+        // product-readiness round — the far side posts with its own login, so
+        // its own toggle is the one that decides), then a bridge to post to.
+        // Lifted out of RemoteMirrorServer.LiveSeams so the round-trip harness
+        // drives the real gate with only the post itself faked.
+        //
+        // A rejection from the CLI itself comes back worded with the session's
+        // Claude Code version beside the one the requests were measured on;
+        // versionFor reads it off this machine's registry row.
+        internal static Func<SessionStatus, string, JsonObject, Task<ControlVerdict>> GatedPost(
+            Func<bool> commandsEnabled,
+            Func<SessionStatus, string?> bridgeIdFor,
+            Func<SessionStatus, string?> versionFor,
+            Func<SessionStatus, string, JsonObject, Task<CloudTurnSender.ControlAttempt>> post) =>
+            async (status, _, request) =>
+            {
+                if (!commandsEnabled()) return ControlVerdict.Refused(LocalCliChatSession.BridgeCommandsOffHint);
+                if (bridgeIdFor(status) is not { } id) return ControlVerdict.Refused(NoBridgeReason);
+
+                var attempt = await post(status, id, request).ConfigureAwait(false);
+                if (attempt.Failure is { } failure) return ControlVerdict.Refused(failure);
+                if (attempt.CliError is { } refused)
+                    return ControlVerdict.Refused(CloudTurnSender.RejectionClause(refused, versionFor(status)));
+                return attempt.Confirmed ? ControlVerdict.Done : ControlVerdict.Unconfirmed;
+            };
+
+        internal const string NoBridgeReason = "this session has no Remote Control bridge";
 
         private static RemoteMirrorServer.SlashOutcome Refused(string? reason) =>
             new(MirrorProtocol.ViaRefused, reason);

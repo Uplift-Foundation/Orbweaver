@@ -22,9 +22,19 @@ public class LocalCliSlashControlPayloadTests
     {
         internal int Status = 200;
         internal List<CloudRequestContext> Requests { get; } = new();
+        internal List<CloudRequestContext> Reads { get; } = new();
 
         public Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
         {
+            // CB-306's product-readiness round: a control request's answer is
+            // read back with a GET. Kept out of Requests, which means "what was
+            // posted"; this page holds no answer, so the command reads as sent.
+            if (context.Method is null)
+            {
+                Reads.Add(context);
+                return Task.FromResult(new CloudApiResult(new CloudOutcome(CloudOutcomeKind.Ok, 200), "{\"data\":[]}"));
+            }
+
             Requests.Add(context);
             using var request = CloudRequest.Build(context.AccessToken, context.Path, context.Method, context.Body);
             Assert.Equal(System.Net.Http.HttpMethod.Post, request.Method);

@@ -89,7 +89,7 @@ namespace Orbweaver
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
             "openclawReplyEnabled", "openclawApproveEnabled", "openclawActiveWithinMinutes",
-            "claudeCloudEnabled",
+            "claudeCloudEnabled", "bridgeCommandsEnabled",
             // Still written, though nothing reads it into the model any more —
             // see OpenClawHeartbeatMode. Listed here so it does not also
             // round-trip through _unknownKeys, which Save would reject as a
@@ -320,6 +320,16 @@ namespace Orbweaver
             // asks the OS for the Claude Code login, and nobody should meet a
             // Keychain prompt they did not ask for.
             public bool ClaudeCloudEnabled { get; set; }
+
+            // On by default (CB-306's product-readiness round): slash control
+            // commands — /color, /rename, /model, /permissions, /think — reach a
+            // background job or a Claude Desktop chat over its Remote Control
+            // bridge, which a fresh install could not do while they sat behind
+            // "Show cloud sessions". The one-time consent is the macOS Keychain
+            // prompt for the Claude Code login, the first time one is sent; with
+            // nothing typed, nothing is read. Cloud sessions themselves stay
+            // behind ClaudeCloudEnabled.
+            public bool BridgeCommandsEnabled { get; set; } = true;
 
             // Where the gateway lives. An address rather than a name on purpose:
             // the certificate it serves is self-signed with no subjectAltName,
@@ -1255,6 +1265,14 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.ClaudeCloudEnabled; }
             set { Load(); lock (Gate) _model.ClaudeCloudEnabled = value; Save(); }
+        }
+
+        // Read on every send rather than cached, so the toggle takes effect on
+        // the next command, locally and on the mirror's far side alike.
+        public static bool BridgeCommandsEnabled
+        {
+            get { Load(); lock (Gate) return _model.BridgeCommandsEnabled; }
+            set { Load(); lock (Gate) _model.BridgeCommandsEnabled = value; Save(); }
         }
 
         public static string OpenClawHost
@@ -2347,6 +2365,7 @@ namespace Orbweaver
                         VoiceInputEnabled = root["voiceInputEnabled"]?.GetValue<bool>() ?? false,
                         OpenClawEnabled = root["openclawEnabled"]?.GetValue<bool>() ?? false,
                         ClaudeCloudEnabled = root["claudeCloudEnabled"]?.GetValue<bool>() ?? false,
+                        BridgeCommandsEnabled = root["bridgeCommandsEnabled"]?.GetValue<bool>() ?? true,
                         OpenClawHost = Text(root["openclawHost"]),
                         OpenClawPort = root["openclawPort"]?.GetValue<int>() ?? DefaultOpenClawPort,
                         OpenClawFingerprint = Text(root["openclawFingerprint"]),
@@ -3012,6 +3031,7 @@ namespace Orbweaver
                         ["voiceInputEnabled"] = _model.VoiceInputEnabled,
                         ["openclawEnabled"] = _model.OpenClawEnabled,
                         ["claudeCloudEnabled"] = _model.ClaudeCloudEnabled,
+                        ["bridgeCommandsEnabled"] = _model.BridgeCommandsEnabled,
                         ["openclawHost"] = _model.OpenClawHost,
                         ["openclawPort"] = _model.OpenClawPort,
                         ["openclawFingerprint"] = _model.OpenClawFingerprint,
