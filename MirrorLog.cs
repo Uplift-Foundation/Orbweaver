@@ -56,6 +56,8 @@ namespace Orbweaver
 
         internal static void UseFile(string fileName) => _fileName = fileName;
 
+        internal static string CurrentFileName => _fileName;
+
         // Pure: where the log goes, or null when nobody asked for one.
         internal static string? PathFor(string? dir, bool asked, string fileName)
         {

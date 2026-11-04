@@ -79,7 +79,16 @@ public class PeerProbeGuardTests
     {
         // Only the name is switched; the resolved path is cached on first write,
         // which is why the probe calls this first thing in Main.
-        MirrorLog.UseFile(MirrorLog.ProbeFileName);
-        MirrorLog.UseFile(MirrorLog.DefaultFileName);
+        try
+        {
+            MirrorLog.UseFile(MirrorLog.ProbeFileName);
+            Assert.Equal(MirrorLog.ProbeFileName, MirrorLog.CurrentFileName);
+        }
+        finally
+        {
+            MirrorLog.UseFile(MirrorLog.DefaultFileName);
+        }
+
+        Assert.Equal(MirrorLog.DefaultFileName, MirrorLog.CurrentFileName);
     }
 }
