@@ -385,7 +385,11 @@ namespace Orbweaver
                 status => LocalSlashChannel.BridgeIdFor(
                     status.IsDesktopHosted ? status.BridgeSessionId : null,
                     status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
-                status => SlashCommandCatalog.For(status.Source, status.Cwd),
+                // Never the scan itself: this runs on the peer pump while a
+                // HELLO is answered, and one folder whose opendir never returns
+                // froze the whole link (CB-306's second reopen). The cache
+                // scans off-thread and answers with what it already has.
+                status => SlashCatalogueCache.Shared.Peek(status.Source, status.Cwd),
                 (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
                 async (status, subtype, request) =>
                 {
@@ -820,31 +824,17 @@ namespace Orbweaver
                     list.Select(c => MirrorProtocol.RouteWord(c.Route)).ToList());
         }
 
-        // Excluded from coverage: exists to be the try/catch. SlashCommandCatalog
-        // already swallows the IO it does — a directory that vanished mid-scan is
-        // its ordinary case rather than an exception — so nothing here has been
-        // observed to throw.
-        //
-        // Kept because this runs while answering another machine, on a background
-        // task, from a cwd belonging to a session this process does not own: an
-        // exception would take the roster answer down and leave the far panel
-        // with no live view and no explanation, which is a much worse outcome
-        // than a session offering no commands.
-        [ExcludeFromCodeCoverage]
-        private static IReadOnlyList<string> SafeCommandNames(SessionStatus status)
-        {
-            try
-            {
-                return SlashCommandCatalog.For(status.Source, status.Cwd)
-                    .Select(c => c.Name)
-                    .Take(MaxCatalogue)
-                    .ToList();
-            }
-            catch
-            {
-                return Array.Empty<string>();
-            }
-        }
+        // The CLI's built-ins and nothing read off disk. This arm serves only a
+        // server built without SlashCommandsFor — LiveSeams always wires it, so
+        // in the app that is tests and nothing else — and it runs on the peer
+        // pump while a HELLO is answered, where a scan of the session's cwd is
+        // exactly what froze the mini's link (CB-306's second reopen). It used
+        // to scan, behind a try/catch; a fixed list needs neither.
+        private static IReadOnlyList<string> SafeCommandNames(SessionStatus status) =>
+            SlashCommandCatalog.BuiltinsFor(status.Source)
+                .Select(c => c.Name)
+                .Take(MaxCatalogue)
+                .ToList();
 
         // How much of a transcript to read looking for the last turn.
         //

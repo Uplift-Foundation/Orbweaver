@@ -774,6 +774,61 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Empty(entry.CommandRoutes!);
     }
 
+    // CB-306's second reopen: on the mini a session whose cwd was under
+    // ~/Documents made the catalogue scan's opendir never return, on the pump
+    // thread, and no HELLO was answered again. Here the scan blocks for ever
+    // through the real SlashCatalogueCache and the real resolver, and the
+    // roster still arrives, carrying the built-ins in its place; once the scan
+    // lets go, the next ask carries what it read.
+    [Fact]
+    public async Task AFolderWhoseScanNeverReturnsStillLetsTheRosterArrive()
+    {
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var cache = new SlashCatalogueCache(new SlashCatalogueCache.Seams(
+            (_, _) =>
+            {
+                release.Wait();
+                return new[] { new SlashCommand("/compact", ""), new SlashCommand("/ship-it", "") };
+            },
+            SlashCommandCatalog.BuiltinsFor,
+            () => DateTime.UtcNow,
+            work => new System.Threading.Thread(() => work()) { IsBackground = true }.Start()));
+
+        var harness = new Harness(_dir, wireSlash: true);
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            status => cache.Peek(status.Source, status.Cwd),
+            (_, _) => Task.FromResult(true),
+            (_, _, _) => Task.FromResult<string?>(null)));
+        harness.AddSession("lawyer-search", WriteTranscript("hung.jsonl", Conversation(2)));
+
+        try
+        {
+            var hello = harness.HandshakeAsync("lawyer-search");
+            Assert.Same(hello, await Task.WhenAny(hello, Task.Delay(TimeSpan.FromSeconds(20))));
+            await hello;
+
+            var entry = harness.Client.StateFor("lawyer-search").Entry!;
+            Assert.True(entry.HasTranscript);
+            Assert.Contains("/color", entry.Commands!);
+            Assert.DoesNotContain("/ship-it", entry.Commands!);
+
+            // A second ask while the scan is still stuck neither waits nor
+            // starts another scan.
+            var again = harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Same(again, await Task.WhenAny(again, Task.Delay(TimeSpan.FromSeconds(20))));
+            Assert.Equal(1, cache.InFlight);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (cache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Contains("/ship-it", harness.Client.StateFor("lawyer-search").Entry!.Commands!);
+        }
+        finally { release.Set(); }
+    }
+
     [Fact]
     public async Task ARunnerThatThrowsIsAnsweredAsARefusalNotATornDownLink()
     {
