@@ -110,7 +110,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
     }
 
     private static LocalCliChatSession Desktop(Api api, Credentials credentials, string bridge, bool cloudOn = true,
-        string cwd = "", bool commandsOn = true) =>
+        string cwd = "", bool commandsOn = true, Func<string, SessionRegistry.Entry?>? findRegistry = null) =>
         new("s1", new SessionStatus
         {
             Source = SessionSource.ClaudeCode,
@@ -119,7 +119,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
             State = "idle",
             Title = "",
             Cwd = cwd,
-        }, cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn,
+        }, findRegistry: findRegistry, cloudApi: api, credentialsFor: _ => credentials, cloudEnabled: () => cloudOn,
         bridgeCommandsEnabled: () => commandsOn)
         {
             ReadBudget = TestBudgets.AlwaysAnswers,
@@ -370,6 +370,35 @@ public class LocalCliChatSessionSlashTests : IDisposable
         Assert.Contains(session.History, t => t.Text == "Sent /color pink over Remote Control — no confirmation yet.");
         Assert.DoesNotContain(session.History, t => t.Text.StartsWith("Done", StringComparison.Ordinal));
         Assert.Equal(CloudTurnSender.AnswerPolls, api.Reads.Count);
+    }
+
+    // A Desktop chat has its bridge on its own record and may have no
+    // registry row at all; a refusal then carries the CLI's sentence and no
+    // version sentence, rather than a guess.
+    [AvaloniaFact]
+    public async Task ARejectionWithNoRegistryRowLeavesTheVersionsOut()
+    {
+        var api = new Api { AnswerError = "Unknown color \"teal\"" };
+        var session = Desktop(api, new Credentials(), Bridge, findRegistry: _ => null);
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/color teal"));
+
+        Assert.Contains(session.History, t => t.Text == "Not run: Claude Code refused it: Unknown color \"teal\".");
+    }
+
+    // A command with no argument (/think resets the budget) is worded
+    // without a trailing space, confirmed or not.
+    [AvaloniaTheory]
+    [InlineData(true, "Done: /think.")]
+    [InlineData(false, "Sent /think over Remote Control — no confirmation yet.")]
+    public async Task ACommandWithNoArgumentIsWordedBare(bool confirmed, string expected)
+    {
+        var api = new Api { AnswerOk = confirmed };
+        var session = Headless(api, new Credentials(), Row(bridge: true));
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/think"));
+
+        Assert.Contains(session.History, t => t.Text == expected);
     }
 
     [AvaloniaFact]

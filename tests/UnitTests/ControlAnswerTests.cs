@@ -73,6 +73,8 @@ public class ControlAnswerTests
     [InlineData("[]")]
     [InlineData("{\"data\":{}}")]
     [InlineData("{\"data\":[null,1,{\"payload\":7},{\"payload\":{\"type\":\"control_response\",\"response\":\"x\"}}]}")]
+    // A request_id that is not a string (a number, an object) is not ours.
+    [InlineData("{\"data\":[{\"payload\":{\"type\":\"control_response\",\"response\":{\"request_id\":5,\"subtype\":\"success\"}}},{\"payload\":{\"type\":{},\"response\":{}}}]}")]
     public void AnythingThatIsNotAPageWithAnAnswerFindsNothing(string? body)
     {
         Assert.Null(CloudTurnSender.ControlAnswerIn(body, "r1"));

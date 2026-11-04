@@ -1952,17 +1952,11 @@ namespace Orbweaver
             if (outcome.Via == MirrorProtocol.ViaControl && outcome.Verdict is { } verdict)
                 fields[MirrorProtocol.VerdictField] = verdict;
 
-            try
-            {
-                await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields))
-                    .ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                // Detached from the frame loop, so nothing above would see
-                // this; the near side times out and says so.
-                MirrorLog.Say("slash-reply-failed", e.GetType().Name);
-            }
+            // Detached from the frame loop now, so a throw here would surface
+            // nowhere — but SendAsync already catches everything the transport
+            // throws and answers false, and the near side times out and says so.
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields))
+                .ConfigureAwait(false);
         }
 
         // The last detached slash run, so a test can wait on it instead of
