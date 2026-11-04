@@ -322,4 +322,22 @@ public class MirrorSlashHostTests
 
         Assert.Equal(expected, (await post(Status(), "set_color", new JsonObject())).Refusal);
     }
+
+    // CB-306's product-readiness round: seen from a linked machine, a session
+    // with no bridge is named by kind — a Desktop chat is told how to put
+    // itself on Remote Control, a background job keeps the job sentence.
+    [Fact]
+    public async Task ANoBridgeRefusalNamesTheKindOfSession()
+    {
+        var desktop = await new Edges().Host().RunAsync(Status(desktop: true), "/color pink");
+        var job = await new Edges { CanMessage = true }.Host().RunAsync(Status(), "/color pink");
+
+        Assert.Equal(MirrorProtocol.ViaRefused, desktop.Via);
+        Assert.Equal(SlashRouting.DesktopNoBridgeReason, desktop.Reason);
+        Assert.Contains("Desktop chat", desktop.Reason);
+        Assert.DoesNotContain("job", desktop.Reason);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, job.Via);
+        Assert.Equal(SlashRouting.PeerSocketReason, job.Reason);
+    }
 }

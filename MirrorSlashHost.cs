@@ -67,7 +67,8 @@ namespace Orbweaver
             if (SlashRouting.Split(line) is not { } cmd)
                 return Refused("that is not a command");
 
-            var route = SlashRouting.Resolve(ChannelOf(status), cmd.Name, cmd.Args);
+            var channel = ChannelOf(status);
+            var route = SlashRouting.Resolve(channel, cmd.Name, cmd.Args);
 
             switch (route.Kind)
             {
@@ -88,8 +89,12 @@ namespace Orbweaver
 
                 default:
                     // Unavailable, the only kind left for the channels this resolves, always
-                    // carries a reason; the server words a missing one itself.
-                    return Refused(route.Reason);
+                    // carries a reason; the server words a missing one itself. A
+                    // Desktop chat with no bridge lands on the peer-socket channel
+                    // too, and is told about itself rather than about a job.
+                    return Refused(status.IsDesktopHosted && channel == SlashChannel.PeerSocket
+                        ? SlashRouting.DesktopNoBridgeReason
+                        : route.Reason);
             }
         }
 

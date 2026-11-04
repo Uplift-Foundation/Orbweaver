@@ -95,6 +95,14 @@ namespace Orbweaver
         internal const string PeerMessageReason =
             "a message from here arrives in that session as a teammate's request, and Claude Code runs slash commands only from its own keyboard or claude.ai";
 
+        // The same refusal for a Claude Desktop chat, which is not a "job" and
+        // is put on Remote Control a different way (CB-306's product-readiness
+        // round). The local panel says this through DesktopNoBridgeHint; this
+        // is the clause a linked machine's panel gets.
+        internal const string DesktopNoBridgeReason =
+            "this Desktop chat has no Remote Control connection, so slash commands can't reach it. "
+            + "Turn Remote Control on for it: type /rc in its Code tab in Claude Desktop";
+
         internal const string CloudNoColorReason =
             "a cloud session has no prompt bar to colour";
 
