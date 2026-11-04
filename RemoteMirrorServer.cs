@@ -1811,7 +1811,7 @@ namespace Orbweaver
             // into somebody's terminal is the worst thing in this file.
             if (!frame.PayloadVerified || frame.Payload is null)
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrBadHash, "input failed its hash")
+                await InputErrAsync(fromPeer, frame, "?", MirrorProtocol.ErrBadHash, "input failed its hash")
                     .ConfigureAwait(false);
                 return;
             }
@@ -1824,14 +1824,14 @@ namespace Orbweaver
             var name = frame.Text("n");
             if (name is null)
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoSession, "no name").ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, "?", MirrorProtocol.ErrNoSession, "no name").ConfigureAwait(false);
                 return;
             }
 
             var resolved = Resolve(name, _seams.Agents(), _seams.LocalSessions());
             if (resolved is null)
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoSession, name).ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, name, MirrorProtocol.ErrNoSession, name).ConfigureAwait(false);
                 return;
             }
 
@@ -1840,7 +1840,7 @@ namespace Orbweaver
             // This machine's own setting, not the asker's. See the class note.
             if (!_seams.ReplyEnabled(status.Source))
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrReplyOff, name).ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, name, MirrorProtocol.ErrReplyOff, name).ConfigureAwait(false);
                 return;
             }
 
@@ -1893,6 +1893,8 @@ namespace Orbweaver
                         var okFields = new Dictionary<string, string> { ["via"] = MirrorProtocol.ViaMessage };
                         if (!string.IsNullOrEmpty(receipt.AgentStatus)) okFields["agent"] = receipt.AgentStatus;
 
+                        InputLog("input", $"n={name} -> ok via={MirrorProtocol.ViaMessage}");
+
                         await SendAsync(fromPeer, MirrorProtocol.BuildFrame(
                             MirrorProtocol.Ok, frame.Id, okFields)).ConfigureAwait(false);
                         return;
@@ -1902,17 +1904,21 @@ namespace Orbweaver
                         ? MirrorProtocol.ErrNotRegistered
                         : MirrorProtocol.ErrDeliverFailed;
 
-                    await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+                    await InputErrAsync(fromPeer, frame, name, code, name).ConfigureAwait(false);
                     return;
                 }
 
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoPane, name).ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, name, MirrorProtocol.ErrNoPane, name).ConfigureAwait(false);
                 return;
             }
 
             bool typed;
             try { typed = await _seams.TypeInto(status, text).ConfigureAwait(false); }
             catch { typed = false; }
+
+            InputLog("input", typed
+                ? $"n={name} -> ok via={MirrorProtocol.ViaTyped}"
+                : $"n={name} -> err code={MirrorProtocol.ErrTypeFailed}");
 
             await SendAsync(fromPeer, typed
                 ? MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id)
@@ -1926,6 +1932,20 @@ namespace Orbweaver
                     ["msg"] = MirrorProtocol.Encode("the terminal refused the text")
                 })).ConfigureAwait(false);
         }
+
+        // CB-306: what happened to a chat send, by session name and never by
+        // its text. The text is somebody's message; the outcome is the part a
+        // log can safely say, and it is what was missing when a send vanished.
+        private Task InputErrAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame, string name, string code, string detail)
+        {
+            InputLog("input", $"n={name} -> err code={code}");
+            return ErrAsync(fromPeer, frame.Id, code, detail);
+        }
+
+        // The sink for outcome lines; MirrorLog.Say in the app, a capture in a
+        // test. Same arrangement as GapLog above.
+        internal Action<string, string> InputLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
 
         // A slash INPUT. Answered with OK and a `via` saying how it ran, or
         // `refused` with a `why` — refusal is a normal answer to a slash line,
@@ -1945,6 +1965,8 @@ namespace Orbweaver
             {
                 outcome = new SlashOutcome(MirrorProtocol.ViaRefused, "that machine failed while running it");
             }
+
+            InputLog("input", $"n={frame.Text("n")} -> ok via={outcome.Via}");
 
             var fields = new Dictionary<string, string> { ["via"] = outcome.Via };
             if (outcome.Via == MirrorProtocol.ViaRefused)

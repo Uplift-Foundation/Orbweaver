@@ -35,6 +35,11 @@ namespace Orbweaver
 
         public string Account => _account;
 
+        // CB-306: the sink for outcome lines, by session name and never by
+        // message text. MirrorLog.Say in the app, a capture in a test; the
+        // same arrangement as RemoteMirrorServer.GapLog.
+        internal Action<string, string> Log { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
+
         // --- what the far side said it has -----------------------------------
 
         // A session's mirror status, from this side's point of view.
@@ -688,7 +693,9 @@ namespace Orbweaver
 
             if (!reply.Ok || reply.Payload is null)
             {
-                Failed?.Invoke(name, reply.Reason ?? "the other machine didn't answer");
+                var why = reply.Reason ?? "the other machine didn't answer";
+                Log("open", $"n={name} failed why={why}");
+                Failed?.Invoke(name, why);
                 return false;
             }
 
@@ -707,9 +714,14 @@ namespace Orbweaver
                 }
             }
 
-            Delivered?.Invoke(new MirrorRows(name, MirrorDelivery.Window, turns, cli, gen));
+            Deliver(new MirrorRows(name, MirrorDelivery.Window, turns, cli, gen));
 
             await RenewWatchAsync(name).ConfigureAwait(false);
+
+            // After the hand-over and the renewal rather than before: an "ok"
+            // that is written ahead of a Delivered handler which throws would
+            // read as success for exactly the failure this log exists to show.
+            Log("open", $"n={name} ok");
             return true;
         }
 
@@ -862,7 +874,10 @@ namespace Orbweaver
             {
                 var key = ExistingKey(name);
                 if (key is null || !_servedBy.TryGetValue(key, out var found))
+                {
+                    Log("input", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
                     return new InputOutcome(MirrorProtocol.ErrNoSession, null, null);
+                }
                 relay = found;
             }
 
@@ -873,7 +888,15 @@ namespace Orbweaver
                 TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds))
                 .ConfigureAwait(false);
 
-            if (!reply.Ok) return new InputOutcome(reply.ErrCode ?? MirrorProtocol.ErrUnsupported, null, null);
+            if (!reply.Ok)
+            {
+                var code = reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
+                Log("input", $"n={name} -> err code={code}");
+                return new InputOutcome(code, null, null);
+            }
+
+            Log("input", $"n={name} -> ok via="
+                + (reply.Fields is not null && reply.Fields.TryGetValue("via", out var sentVia) ? sentVia : "typed"));
 
             return new InputOutcome(
                 null,
@@ -911,6 +934,7 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         private bool SayItArrivedUnreadable(string name)
         {
+            Log("open", $"n={name} failed why=the transcript arrived unreadable");
             Failed?.Invoke(name, "the transcript arrived unreadable");
             return false;
         }
@@ -1272,7 +1296,14 @@ namespace Orbweaver
                 return;
             }
 
-            Delivered?.Invoke(new MirrorRows(name, MirrorDelivery.Delta, turns, cli, gen));
+            Deliver(new MirrorRows(name, MirrorDelivery.Delta, turns, cli, gen));
+        }
+
+        private void Deliver(MirrorRows rows)
+        {
+            Log("delivered",
+                $"n={rows.Name} mode={(rows.Mode == MirrorDelivery.Window ? "window" : "delta")} turns={rows.Turns.Count}");
+            Delivered?.Invoke(rows);
         }
 
         private void Settle(string id, Reply reply)

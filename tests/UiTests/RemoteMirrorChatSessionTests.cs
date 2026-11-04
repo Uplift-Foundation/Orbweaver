@@ -43,6 +43,18 @@ public class RemoteMirrorChatSessionTests : IDisposable
     // between "mirroring" and "painted" is real and was measured in minutes.
     private bool _stallFetch;
 
+    // CB-306: answer from a pool thread, as the real transport does. Every
+    // other test here answers inline on the UI thread, which is the one
+    // arrangement in which an off-thread UI touch cannot be seen.
+    private bool _relayOffThread;
+
+    // CB-306: an INPUT that is never answered, never reaches the relay, or a
+    // FETCH answered with a bare OK carrying no window.
+    private bool _stallInput;
+    private bool _unreachableInput;
+    private bool _bareOkForFetch;
+    private readonly List<string> _toServer = new();
+
     private RemoteMirrorServer _server = null!;
     private RemoteMirrorClient _client = null!;
     private readonly List<(string SessionId, SessionStatus Status)> _sessions = new();
@@ -50,6 +62,7 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
     private bool _replyEnabled = true;
     private bool _canType = true;
+    private bool _typeResult = true;
     private bool _mangle;
     private bool _mangleInput;
 
@@ -1197,6 +1210,415 @@ public class RemoteMirrorChatSessionTests : IDisposable
         "{\"type\":\"file-history-snapshot\",\"uuid\":\"h" + i + "\",\"blob\":\""
         + new string('x', 400) + "\"}";
 
+    // --- CB-306: the fetch wait must not touch the UI off its thread ------------------
+
+    private static async Task<bool> PumpUntilAsync(Func<bool> done)
+    {
+        for (var i = 0; i < 300 && !done(); i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
+
+        Dispatcher.UIThread.RunJobs();
+        return done();
+    }
+
+    private bool WatchSent()
+    {
+        lock (_toServer) return _toServer.Contains(MirrorProtocol.Watch);
+    }
+
+    // The crash.log 2026-11-02 stack: Delivered arrives on a pool thread, the
+    // session ended the wait inline, WaitChanged reached ChatPanel.HideWait and
+    // FetchWaitBox.IsVisible threw. The throw escaped OpenOnceAsync, so the
+    // window was never painted and the watch never renewed: "fetching" forever.
+    [AvaloniaFact]
+    public async Task ADeliveryFromAPoolThreadPaintsAndHidesTheWaitAndWatches()
+    {
+        _relayOffThread = true;
+        Wire("what did the build say?", "it passed");
+
+        var session = NewSession();
+        ChatPanel.OpenFor(new OrbWindow(Guid.NewGuid().ToString()), session);
+        var box = ChatPanelTestAccess.Instance!.FindControl<Border>("FetchWaitBox")!;
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        var painted = await PumpUntilAsync(() => session.History.Any(t => t.Text.Contains("Live view")));
+
+        Assert.True(painted, "the window should have been painted");
+        Assert.Contains(Turns(session), t => t.Text == "it passed");
+        Assert.False(box.IsVisible, "the fetching indicator should be gone");
+        Assert.Null(session.WaitingSince);
+        Assert.True(await PumpUntilAsync(WatchSent), "the watch should have been sent after the window");
+    }
+
+    // Same shape, ending the other way: a transfer that fails its integrity
+    // check, reported from a pool thread.
+    [AvaloniaFact]
+    public async Task AFailureFromAPoolThreadSaysSoAndHidesTheWait()
+    {
+        _relayOffThread = true;
+        _mangle = true;
+        Wire("a", "b");
+
+        var session = NewSession();
+        ChatPanel.OpenFor(new OrbWindow(Guid.NewGuid().ToString()), session);
+        var box = ChatPanelTestAccess.Instance!.FindControl<Border>("FetchWaitBox")!;
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        var said = await PumpUntilAsync(() => session.History.Any(t => t.Text.Contains("Couldn't verify")));
+
+        Assert.True(said, "the failure should have been put in the panel");
+        Assert.False(box.IsVisible);
+        Assert.Null(session.WaitingSince);
+    }
+
+    // An open that throws used to vanish: the task was dropped on the floor.
+    [AvaloniaFact]
+    public async Task AnOpenThatThrowsIsLogged()
+    {
+        Wire("a", "b");
+        _client.Delivered += _ => throw new InvalidOperationException("boom");
+
+        var logged = new List<(string What, string Detail)>();
+        var session = NewSession();
+        session.Log = (what, detail) => { lock (logged) logged.Add((what, detail)); };
+
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        Assert.True(await PumpUntilAsync(() => { lock (logged) return logged.Count > 0; }));
+
+        lock (logged)
+        {
+            var line = Assert.Single(logged);
+            Assert.Equal("open-threw", line.What);
+            Assert.Contains($"n={Name}", line.Detail);
+            Assert.Contains("InvalidOperationException", line.Detail);
+            Assert.Contains("boom", line.Detail);
+        }
+    }
+
+    // The send failures this logging exists for: no answer came back at all, so
+    // there is no error code from the far side, and the line says unsupported
+    // rather than nothing.
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ASendThatGetsNoAnswerIsLoggedWithAFallbackCode(bool stall)
+    {
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+        _stallInput = stall;
+        _unreachableInput = !stall;
+        _client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(50);
+
+        var outcome = await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Equal(MirrorProtocol.ErrUnsupported, outcome.Error);
+        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrUnsupported}", _clientLog);
+        AssertNoSecretLogged();
+    }
+
+    // An OK where a window should be: no payload and no reason either.
+    [AvaloniaFact]
+    public async Task AnOkWithNoWindowFailsTheOpenWithTheGenericReason()
+    {
+        _bareOkForFetch = true;
+        Wire("a", "b");
+        Capture();
+        var failures = new List<string>();
+        _client.Failed += (_, why) => failures.Add(why);
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.False(await _client.OpenAsync(Name));
+
+        Assert.Equal("the other machine didn't answer", Assert.Single(failures));
+        Assert.Contains($"open n={Name} failed why=the other machine didn't answer", _clientLog);
+    }
+
+    // Nobody listening is an ordinary state (a client outlives its panels), and
+    // must neither throw nor stop the line being written.
+    [AvaloniaFact]
+    public async Task AFailureWithNobodyListeningIsLoggedAndDoesNotThrow()
+    {
+        _bareOkForFetch = true;
+        Wire("a", "b");
+        Capture();
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.False(await _client.OpenAsync(Name));
+
+        Assert.Contains($"open n={Name} failed why=the other machine didn't answer", _clientLog);
+    }
+
+    [AvaloniaFact]
+    public async Task ADeliveryWithNobodyListeningIsLoggedAndDoesNotThrow()
+    {
+        Wire("a", "b");
+        Capture();
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.True(await _client.OpenAsync(Name));
+
+        Assert.Contains($"delivered n={Name} mode=window turns=2", _clientLog);
+        Assert.Contains($"open n={Name} ok", _clientLog);
+    }
+
+    // The reopen path is fire-and-forget too: a panel closed and shown again
+    // re-fetches, and a fault there used to vanish exactly as the first did.
+    [AvaloniaFact]
+    public async Task AReopenThatThrowsIsLoggedToo()
+    {
+        Wire("a", "b");
+        _client.Delivered += _ => throw new InvalidOperationException("boom again");
+
+        var logged = new List<string>();
+        var session = NewSession();
+        session.Log = (what, detail) => { lock (logged) logged.Add(what); };
+
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.True(await PumpUntilAsync(() => { lock (logged) return logged.Count == 1; }));
+
+        // Close, then show again: the feed is gone, so this is a fresh open.
+        session.PanelClosed();
+        await Task.Delay(50);
+        session.PanelOpened();
+
+        Assert.True(await PumpUntilAsync(() => { lock (logged) return logged.Count == 2; }));
+        lock (logged) Assert.All(logged, w => Assert.Equal("open-threw", w));
+    }
+
+    // The default sink is the real log, which is a no-op without a path.
+    [AvaloniaFact]
+    public void TheDefaultLogSinkIsCallable() => NewSession().Log("open-threw", "n=x");
+
+    // --- CB-306: chat outcomes are logged on both sides, by name and never by text ----
+
+    private const string Secret = "my password is hunter2";
+
+    private readonly List<string> _serverLog = new();
+    private readonly List<string> _clientLog = new();
+
+    private void Capture()
+    {
+        _server.InputLog = (what, detail) => { lock (_serverLog) _serverLog.Add($"{what} {detail}"); };
+        _client.Log = (what, detail) => { lock (_clientLog) _clientLog.Add($"{what} {detail}"); };
+    }
+
+    private void AssertNoSecretLogged()
+    {
+        lock (_serverLog) Assert.DoesNotContain(_serverLog, l => l.Contains("hunter2"));
+        lock (_clientLog) Assert.DoesNotContain(_clientLog, l => l.Contains("hunter2"));
+    }
+
+    [AvaloniaFact]
+    public async Task AnOpenAndATypedSendAreLoggedOnBothSides()
+    {
+        Wire("a", "b");
+        Capture();
+        var session = await OpenAsync();
+
+        Assert.Null((await _client.SendInputDetailedAsync(Name, Secret)).Error);
+
+        Assert.Contains($"open n={Name} ok", _clientLog);
+        Assert.Contains($"delivered n={Name} mode=window turns=2", _clientLog);
+        Assert.Contains($"input n={Name} -> ok via=typed", _clientLog);
+        Assert.Contains($"input n={Name} -> ok via=typed", _serverLog);
+        AssertNoSecretLogged();
+        Assert.NotNull(session);
+    }
+
+    [AvaloniaFact]
+    public async Task ADeltaIsLoggedWithItsMode()
+    {
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        Append(AssistantRow("a2", "and then"));
+        await _server.TickAsync();
+
+        Assert.Contains($"delivered n={Name} mode=delta turns=1", _clientLog);
+    }
+
+    [AvaloniaFact]
+    public async Task ARefusedTerminalIsLoggedAsATypeFailure()
+    {
+        _typeResult = false;
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        var outcome = await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed, outcome.Error);
+        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrTypeFailed}", _serverLog);
+        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrTypeFailed}", _clientLog);
+        AssertNoSecretLogged();
+    }
+
+    [AvaloniaTheory]
+    [InlineData("Accepted", false, "ok via=msg")]
+    [InlineData("NoRegistryEntry", false, "err code=not-registered")]
+    [InlineData("SocketRefused", false, "err code=deliver-failed")]
+    [InlineData("Accepted", true, "err code=deliver-failed")]
+    public async Task AMessagingDeliveryIsLoggedByHowItEnded(string result, bool throws, string expected)
+    {
+        _canType = false;
+        _canDeliver = true;
+        _deliverResult = Enum.Parse<DeliveryResult>(result);
+        _deliverThrows = throws;
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Contains($"input n={Name} -> {expected}", _serverLog);
+        Assert.Contains($"input n={Name} -> {expected}", _clientLog);
+        AssertNoSecretLogged();
+    }
+
+    [AvaloniaFact]
+    public async Task ASendWithNowhereToGoIsLoggedAsNoPane()
+    {
+        _canType = false;
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrNoPane}", _serverLog);
+    }
+
+    [AvaloniaFact]
+    public async Task ASendWithRepliesSwitchedOffIsLogged()
+    {
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+        _replyEnabled = false;
+
+        await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrReplyOff}", _serverLog);
+    }
+
+    [AvaloniaFact]
+    public async Task ASendForASessionTheFarSideNoLongerHasIsLogged()
+    {
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+        _sessions.Clear();
+        _agents.Clear();
+
+        await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrNoSession}", _serverLog);
+    }
+
+    [AvaloniaFact]
+    public async Task ASendTheNearSideCannotRouteIsLoggedThereOnly()
+    {
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        var outcome = await _client.SendInputDetailedAsync("nobody-home", Secret);
+
+        Assert.Equal(MirrorProtocol.ErrNoSession, outcome.Error);
+        Assert.Contains($"input n=nobody-home -> err code={MirrorProtocol.ErrNoSession}", _clientLog);
+        Assert.Empty(_serverLog);
+    }
+
+    [AvaloniaFact]
+    public async Task AnInputThatFailedItsHashIsLoggedWithoutAName()
+    {
+        _mangleInput = true;
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Contains($"input n=? -> err code={MirrorProtocol.ErrBadHash}", _serverLog);
+        AssertNoSecretLogged();
+    }
+
+    [AvaloniaFact]
+    public async Task AnInputWithNoNameIsLoggedWithoutOne()
+    {
+        Wire("a", "b");
+        Capture();
+
+        var frame = MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Input, "id1", new Dictionary<string, string>(), Encoding.UTF8.GetBytes(Secret)))!;
+        await _server.HandleAsync(NearRelay, frame);
+
+        Assert.Contains($"input n=? -> err code={MirrorProtocol.ErrNoSession}", _serverLog);
+        AssertNoSecretLogged();
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true, "ok via=typed")]
+    [InlineData(false, "ok via=refused")]
+    public async Task ASlashLineIsLoggedByHowItRan(bool canType, string expected)
+    {
+        _canType = canType;
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        await _client.SendInputDetailedAsync(Name, "/color " + Secret, slash: true);
+        await _server.SlashInFlight;
+
+        Assert.Contains($"input n={Name} -> {expected}", _serverLog);
+        Assert.Contains($"input n={Name} -> {expected}", _clientLog);
+        AssertNoSecretLogged();
+    }
+
+    [AvaloniaFact]
+    public async Task AControlSlashIsLoggedAsControl()
+    {
+        _wireSlash = true;
+        _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+
+        await _client.SendInputDetailedAsync(Name, "/color green", slash: true);
+        await _server.SlashInFlight;
+
+        Assert.Contains($"input n={Name} -> ok via={MirrorProtocol.ViaControl}", _serverLog);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnOpenThatFailsIsLoggedWithWhy(bool mangle)
+    {
+        _stallFetch = !mangle;
+        _mangle = mangle;
+        Wire("a", "b");
+        Capture();
+        _client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(50);
+
+        var session = NewSession();
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        Assert.True(await PumpUntilAsync(() => { lock (_clientLog) return _clientLog.Any(l => l.StartsWith($"open n={Name} failed why=")); }));
+        Assert.DoesNotContain(_clientLog, l => l == $"open n={Name} ok");
+    }
+
     // --- through the panel itself ----------------------------------------------------
 
     // The panel is a singleton that outlives every session it shows, so what it
@@ -1432,7 +1854,7 @@ public class RemoteMirrorChatSessionTests : IDisposable
             (status, text) =>
             {
                 _typed.Add((status.Title, text));
-                return Task.FromResult(true);
+                return Task.FromResult(_typeResult);
             },
             SlashCommandsFor: _wireSlash ? _ => _slashCatalogue : null,
             RunSlash: _wireSlash
@@ -1471,7 +1893,18 @@ public class RemoteMirrorChatSessionTests : IDisposable
         var frame = MirrorProtocol.TryParseFrame(line);
         if (frame is null) return false;
 
+        lock (_toServer) _toServer.Add(frame.Type);
+
         if (_stallFetch && frame.Type == MirrorProtocol.Fetch) return true;
+        if (_stallInput && frame.Type == MirrorProtocol.Input) return true;
+        if (_unreachableInput && frame.Type == MirrorProtocol.Input) return false;
+
+        if (_bareOkForFetch && frame.Type == MirrorProtocol.Fetch)
+        {
+            await _client.OnFrameAsync(FarRelay, MirrorProtocol.TryParseFrame(
+                MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id))!);
+            return true;
+        }
 
         // A courier that alters a message on its way to somebody's terminal.
         if (_mangleInput && frame.Type == MirrorProtocol.Input) frame = Mangle(line) ?? frame;
@@ -1505,7 +1938,9 @@ public class RemoteMirrorChatSessionTests : IDisposable
                 MirrorProtocol.BuildFrame(MirrorProtocol.Chunk, frame.Id, fields, payload))!;
         }
 
-        await _client.OnFrameAsync(FarRelay, frame);
+        if (_relayOffThread) await Task.Run(() => _client.OnFrameAsync(FarRelay, frame));
+        else await _client.OnFrameAsync(FarRelay, frame);
+
         return true;
     }
 

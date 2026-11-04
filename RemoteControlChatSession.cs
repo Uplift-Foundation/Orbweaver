@@ -265,8 +265,26 @@ namespace Orbweaver
             // that most needed explaining.
             BeginWait();
 
-            _ = client.OpenAsync(_remoteName);
+            // Observed rather than dropped: a fire-and-forget task that faults
+            // is invisible, and the panel would sit on "fetching" with nothing
+            // anywhere saying why (CB-306).
+            Observe(client.OpenAsync(_remoteName));
         }
+
+        // Every fire-and-forget call into the client goes through here, so a
+        // fault is logged under the same open-threw line wherever it came from
+        // (open, reopen or close).
+        private void Observe(Task task) => _ = task.ContinueWith(
+            t => Log("open-threw",
+                $"n={_remoteName} {t.Exception?.GetBaseException().GetType().Name}: "
+              + t.Exception?.GetBaseException().Message),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+
+        // The sink for this session's own log lines; MirrorLog.Say in the app,
+        // a capture in a test. Same shape as RemoteMirrorServer.GapLog.
+        internal Action<string, string> Log { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
 
         // --- where this conversation actually is ----------------------------
 
@@ -299,19 +317,27 @@ namespace Orbweaver
 
         public event Action? WaitChanged;
 
-        private void BeginWait()
+        // Both hop to the UI thread (CB-306). WaitChanged drives ChatPanel's
+        // FetchWaitBox, and OnDelivered / OnMirrorFailed arrive on a pool thread
+        // because RemoteMirrorClient awaits with ConfigureAwait(false). Ending
+        // the wait inline there threw InvalidOperationException out of the
+        // client's open, which skipped the window paint and the watch renewal
+        // and left the panel on "fetching" for good. Doing the hop here keeps
+        // _waitingSince confined to the UI thread and honours the
+        // IRemoteChatSession contract that events arrive there.
+        private void BeginWait() => OnUi(() =>
         {
             _waitingSince = DateTimeOffset.Now;
             WaitChanged?.Invoke();
-        }
+        });
 
-        private void EndWait()
+        private void EndWait() => OnUi(() =>
         {
             if (_waitingSince is null) return;
 
             _waitingSince = null;
             WaitChanged?.Invoke();
-        }
+        });
 
         // How long it has been, in words, for the indicator above the turns.
         //
@@ -981,7 +1007,7 @@ namespace Orbweaver
 
             // The handshake may have finished while nothing was open.
             if (!_mirroring) TryUpgrade();
-            else _ = RemoteControlSessions.MirrorClientFor(_account)?.ReopenAsync(_remoteName);
+            else if (RemoteControlSessions.MirrorClientFor(_account) is { } client) Observe(client.ReopenAsync(_remoteName));
         }
 
         public void PanelClosed()
@@ -999,7 +1025,7 @@ namespace Orbweaver
             // The history stays exactly as it is. Only the subscription goes:
             // reopening re-reads the tail, which is cheap and is also the right
             // thing, since the conversation will have moved on.
-            _ = RemoteControlSessions.MirrorClientFor(_account)?.CloseAsync(_remoteName);
+            if (RemoteControlSessions.MirrorClientFor(_account) is { } client) Observe(client.CloseAsync(_remoteName));
         }
 
         public void Dispose()
@@ -1015,7 +1041,7 @@ namespace Orbweaver
             client.Delivered -= OnDelivered;
             client.Failed -= OnMirrorFailed;
 
-            if (_mirroring) _ = client.CloseAsync(_remoteName);
+            if (_mirroring) Observe(client.CloseAsync(_remoteName));
         }
 
         // Everything that touches the history has to land on the UI thread,
