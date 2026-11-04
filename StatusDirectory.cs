@@ -72,16 +72,31 @@ namespace Orbweaver
         // assembly was ever loaded. CB-172 is what that cost. See the four
         // TestBootstrap.cs files for the failure it produced.
         //
-        // TMPDIR still wins over the platform, because that is the agreement
-        // with the hooks: they are shell and PowerShell, they write where
-        // TMPDIR says, and a second instance launched for a manual test gets
-        // its own sandbox by setting it. Only when there is none does the
-        // platform get asked, and only then does /tmp remain.
+        // The platform's per-user directory outranks TMPDIR, and that is the
+        // CB-306 correction to the agreement with the hooks. TMPDIR used to
+        // win "because that is where the hooks write", which held in a login
+        // shell and not under OpenClaw: its gateway runs with
+        // TMPDIR=~/.openclaw/tmp, every Claude Code session it spawns inherits
+        // that — as does a tmux server started from one, and every session in
+        // that tmux — so those hooks wrote to ~/.openclaw/tmp/orbweaver while
+        // this process, with the login TMPDIR, read /var/folders/.../T/. The
+        // mini served no sessions to any peer with five alive. The launchd
+        // story above, from the other side: an environment variable any
+        // parent can set is not a channel two processes with different
+        // parents can agree through. confstr reads no environment at all,
+        // which is what makes it one; the hook asks the same question through
+        // `getconf DARWIN_USER_TEMP_DIR`. TMPDIR remains for a platform that
+        // cannot answer, and the manual second-instance sandbox is
+        // ORBWEAVER_STATUS_ROOT, which both halves honour first.
+        //
+        // The P/Invoke now runs on every call rather than only when TMPDIR is
+        // unset. It is one confstr(3) into a caller-supplied buffer —
+        // microseconds — and skipping it is exactly the bug.
         internal static string Root(
             string? statusRoot, string? tmpdir, Func<string?> perUser, string fallback) =>
             !string.IsNullOrWhiteSpace(statusRoot) ? statusRoot!
-            : !string.IsNullOrWhiteSpace(tmpdir) ? tmpdir!
             : perUser() is { Length: > 0 } mine ? mine
+            : !string.IsNullOrWhiteSpace(tmpdir) ? tmpdir!
             : fallback;
 
         // Excluded from coverage: reads the process environment and calls libc.

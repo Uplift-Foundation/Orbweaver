@@ -160,11 +160,26 @@ namespace Orbweaver
 
                 _stopping ??= new CancellationTokenSource();
 
-                _socket = new UdpClient(AddressFamily.InterNetwork);
-                _socket.Client.SetSocketOption(
-                    SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                _socket.Client.Bind(new IPEndPoint(IPAddress.Any, GroupPort));
-                _socket.JoinMulticastGroup(Group);
+                // Published to the field only once fully set up. A throw from
+                // Bind or JoinMulticastGroup used to leave a half-made socket
+                // here, so a retry (CB-306) returned at the guard above and
+                // discovery never announced.
+                var socket = new UdpClient(AddressFamily.InterNetwork);
+
+                try
+                {
+                    socket.Client.SetSocketOption(
+                        SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                    socket.Client.Bind(new IPEndPoint(IPAddress.Any, GroupPort));
+                    socket.JoinMulticastGroup(Group);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+
+                _socket = socket;
             }
 
             _ = ListenAsync(_stopping!.Token);

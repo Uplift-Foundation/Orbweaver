@@ -260,9 +260,18 @@ namespace Orbweaver
                 // machine. On macOS this is the line that needs Local Network
                 // consent, and without it the failure arrives at the *client* as
                 // EHOSTUNREACH rather than here as anything at all.
-                _listener = new TcpListener(IPAddress.Any, port);
-                _listener.Start();
-                _boundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
+                //
+                // Assigned only once Start() has succeeded. It used to be
+                // assigned first, so a bind that threw left a dead listener in the
+                // field and every later Listen returned at the guard above —
+                // which made a retry a silent no-op (CB-306).
+                var listener = new TcpListener(IPAddress.Any, port);
+
+                try { listener.Start(); }
+                catch { listener.Stop(); throw; }
+
+                _listener = listener;
+                _boundPort = ((IPEndPoint)listener.LocalEndpoint).Port;
             }
 
             _ = AcceptLoopAsync(_stopping!.Token);

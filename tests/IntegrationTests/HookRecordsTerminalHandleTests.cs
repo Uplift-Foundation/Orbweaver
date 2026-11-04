@@ -64,6 +64,7 @@ public class HookRecordsTerminalHandleTests
         psi.ArgumentList.Add("claude");
         psi.ArgumentList.Add("idle");
         psi.Environment["TMPDIR"] = tmp.FullName;
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tmp.FullName;
 
         foreach (var name in TerminalVars) psi.Environment.Remove(name);
         psi.Environment.Remove("CLAUDE_CODE_ENTRYPOINT");

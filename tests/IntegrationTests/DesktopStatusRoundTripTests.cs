@@ -45,6 +45,7 @@ public class DesktopStatusRoundTripTests
         psi.ArgumentList.Add(agent);
         psi.ArgumentList.Add("idle");
         psi.Environment["TMPDIR"] = tmp.FullName;
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tmp.FullName;
         psi.Environment["CODEX_HOME"] = Path.Combine(tmp.FullName, "codex-home");
         psi.Environment["GROK_HOME"] = Path.Combine(tmp.FullName, "grok-home");
         foreach (var name in new[]
