@@ -107,7 +107,16 @@ namespace Orbweaver
             // refused on the same test. The seam is where the runner plugs in
             // without this file changing.
             Func<SessionStatus, IReadOnlyList<SlashCommand>>? SlashCommandsFor = null,
-            Func<SessionStatus, string, Task<SlashOutcome>>? RunSlash = null);
+            Func<SessionStatus, string, Task<SlashOutcome>>? RunSlash = null,
+
+            // CB-306's second reopen: the persona each entry carries, given the
+            // config dirs this roster resolves against and whether the asker
+            // fetches pictures by id. Null resolves on the calling thread, as
+            // every server built before this did; LiveSeams wires
+            // PeerPersonaCache.Shared, because the calling thread is the peer
+            // pump and the persona files live under the session's cwd and its
+            // parents — the same walk the slash catalogue froze the link on.
+            Func<SessionStatus, IReadOnlyList<string>, bool, MirrorProtocol.PeerPersona?>? PersonaFor = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -425,7 +434,8 @@ namespace Orbweaver
                         .ConfigureAwait(false);
                 },
                 SlashCommandsFor: slash.CommandsFor,
-                RunSlash: slash.RunAsync);
+                RunSlash: slash.RunAsync,
+                PersonaFor: PeerPersonaCache.Shared.Peek);
         }
 
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
@@ -640,7 +650,7 @@ namespace Orbweaver
                     status.State,
                     _seams.CanDeliver?.Invoke(status),
                     RouteFor(resolved.Value.SessionId),
-                    ResolvePeerPersona(status, userConfigDirs, picturesById),
+                    PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes));
             }
 
@@ -665,7 +675,7 @@ namespace Orbweaver
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById),
+                        PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes));
                 }
             }
@@ -694,7 +704,7 @@ namespace Orbweaver
                         HasTranscript(status), _seams.CanType(status),
                         string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById),
+                        PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes));
                 }
             }
@@ -746,20 +756,52 @@ namespace Orbweaver
         // CB-216: the picture comes from PeerAvatarStore, which reads it again
         // only when the file changes, and is sent as its id to an asker that can
         // fetch by id (picturesById) and as bytes to one that cannot.
-        internal static MirrorProtocol.PeerPersona? ResolvePeerPersona(
-            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById = false)
-        {
-            if (!status.IsLocalCli || string.IsNullOrWhiteSpace(status.Cwd)) return null;
+        // Through the seam when one is wired (LiveSeams wires PeerPersonaCache,
+        // so the pump never reads a persona file itself), and directly when not,
+        // which is what every server built before CB-306's second reopen did.
+        private MirrorProtocol.PeerPersona? PersonaFor(
+            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById) =>
+            _seams.PersonaFor is { } cached
+                ? cached(status, userConfigDirs, picturesById)
+                : ResolvePeerPersona(status, userConfigDirs, picturesById);
 
-            var candidates = LocalPersona.Candidates(
-                status.Cwd, userConfigDirs, status.Source, status.Agent);
-            var local = LocalPersona.ResolveFrom(candidates, status.Cwd);
+        internal static MirrorProtocol.PeerPersona? ResolvePeerPersona(
+            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById = false) =>
+            ToPeerPersona(ReadPeerPersona(status.Source, status.Cwd, status.Agent, userConfigDirs),
+                picturesById, PeerAvatarStore.Shared.ById);
+
+        // The half of resolving a persona that touches the disk: the persona
+        // files under the cwd and its parents, and the picture they name. Split
+        // from ToPeerPersona so PeerPersonaCache can run this on a worker and
+        // the pump only ever does the other half (CB-306's second reopen).
+        internal readonly record struct PersonaRead(
+            string? Name, string? Voice, double? Rate, PeerAvatarStore.Picture? Picture);
+
+        internal static PersonaRead? ReadPeerPersona(
+            SessionSource source, string? cwd, string agent, IReadOnlyList<string> userConfigDirs)
+        {
+            if (source is not (SessionSource.ClaudeCode or SessionSource.Codex or SessionSource.Grok)
+                || string.IsNullOrWhiteSpace(cwd)) return null;
+
+            var candidates = LocalPersona.Candidates(cwd, userConfigDirs, source, agent);
+            var local = LocalPersona.ResolveFrom(candidates, cwd);
             var picture = local.AvatarPath is null ? null : PeerAvatarStore.Shared.At(local.AvatarPath);
-            var peer = picture is not { } found
-                ? new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate)
-                : picturesById
-                    ? new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate, AvatarId: found.Id)
-                    : new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate, found.Bytes);
+            return new PersonaRead(local.Name, local.Voice, local.Rate, picture);
+        }
+
+        // The wire half, with no IO. An id is sent only while the store still
+        // answers for it: a cached read can outlive the picture's place in
+        // PeerAvatarStore's bounded memory, and an id the AVATAR request would
+        // refuse is worse than the bytes.
+        internal static MirrorProtocol.PeerPersona? ToPeerPersona(
+            PersonaRead? read, bool picturesById, Func<string, byte[]?> knownById)
+        {
+            if (read is not { } r) return null;
+            var peer = r.Picture is not { } found
+                ? new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate)
+                : picturesById && knownById(found.Id) is not null
+                    ? new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate, AvatarId: found.Id)
+                    : new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate, found.Bytes);
             return peer.IsEmpty ? null : peer;
         }
 

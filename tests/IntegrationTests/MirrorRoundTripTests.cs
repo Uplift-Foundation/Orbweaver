@@ -1129,6 +1129,56 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(1.2, persona.Rate);
     }
 
+    // CB-306's second reopen: the persona files live in the same folders the
+    // slash catalogue walk froze on, and were read on the pump right after it.
+    // Here the persona read blocks for ever through the real PeerPersonaCache;
+    // the roster still arrives, with no persona on the entry, and once the read
+    // lets go the next ask carries the persona from the real resolver.
+    [Fact]
+    public async Task APersonaFolderWhoseReadNeverReturnsStillLetsTheRosterArrive()
+    {
+        File.WriteAllText(Path.Combine(_dir, "CLAUDE.md"), """
+            ## Persona
+            **Name:** Faraday
+            - Voice: Samantha (Kokoro TTS, rate 1.2)
+            """);
+
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var harness = new Harness(_dir);
+        harness.PersonaCache = new PeerPersonaCache(
+            (source, cwd, agent, dirs) =>
+            {
+                release.Wait();
+                return RemoteMirrorServer.ReadPeerPersona(source, cwd, agent, dirs);
+            },
+            () => DateTime.UtcNow,
+            OffThread.OnOwnThread,
+            PeerAvatarStore.Shared.ById);
+        harness.AddSession("lawyer-search", WriteTranscript("hung-persona.jsonl", Conversation(2)));
+
+        try
+        {
+            var hello = harness.HandshakeAsync("lawyer-search");
+            Assert.Same(hello, await Task.WhenAny(hello, Task.Delay(TimeSpan.FromSeconds(20))));
+            await hello;
+
+            var entry = harness.Client.StateFor("lawyer-search").Entry!;
+            Assert.True(entry.HasTranscript);
+            Assert.Null(entry.Persona);
+            Assert.Equal(1, harness.PersonaCache.InFlight);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (harness.PersonaCache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            var persona = harness.Client.StateFor("lawyer-search").Entry!.Persona;
+            Assert.NotNull(persona);
+            Assert.Equal("Faraday", persona!.Name);
+        }
+        finally { release.Set(); }
+    }
+
     [Fact]
     public async Task TypingIntoASessionTheFarBuddyHasNeverHeardOfIsRefused()
     {
@@ -2502,6 +2552,11 @@ public class MirrorRoundTripTests : IDisposable
 
         // CB-306: the real far resolver, in place of the canned runner.
         public MirrorSlashHost? SlashHost { get; set; }
+
+        // CB-306's second reopen: the persona cache the server reads through,
+        // as LiveSeams wires PeerPersonaCache.Shared. Null resolves directly,
+        // which is what every test written before it expects.
+        public PeerPersonaCache? PersonaCache { get; set; }
         public List<string> SlashRan { get; } = new();
 
         // A far Buddy that predates the slash flag: it never sees `slash`, so
@@ -2604,6 +2659,9 @@ public class MirrorRoundTripTests : IDisposable
                 // somebody pinned by typing a code. A harness says yes explicitly.
                 PeerAllowed: _ => true,
                 UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs,
+                PersonaFor: (status, dirs, byId) => PersonaCache is { } personas
+                    ? personas.Peek(status, dirs, byId)
+                    : RemoteMirrorServer.ResolvePeerPersona(status, dirs, byId),
                 SlashCommandsFor: wireSlash
                     ? status => SlashCatalogueThrows
                         ? throw new InvalidOperationException("catalogue scan failed")
