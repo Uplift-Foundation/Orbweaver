@@ -47,6 +47,12 @@ public class RemoteMirrorChatSessionTests : IDisposable
     // other test here answers inline on the UI thread, which is the one
     // arrangement in which an off-thread UI touch cannot be seen.
     private bool _relayOffThread;
+
+    // CB-306: an INPUT that is never answered, never reaches the relay, or a
+    // FETCH answered with a bare OK carrying no window.
+    private bool _stallInput;
+    private bool _unreachableInput;
+    private bool _bareOkForFetch;
     private readonly List<string> _toServer = new();
 
     private RemoteMirrorServer _server = null!;
@@ -1296,6 +1302,73 @@ public class RemoteMirrorChatSessionTests : IDisposable
         }
     }
 
+    // The send failures this logging exists for: no answer came back at all, so
+    // there is no error code from the far side, and the line says unsupported
+    // rather than nothing.
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ASendThatGetsNoAnswerIsLoggedWithAFallbackCode(bool stall)
+    {
+        Wire("a", "b");
+        Capture();
+        await OpenAsync();
+        _stallInput = stall;
+        _unreachableInput = !stall;
+        _client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(50);
+
+        var outcome = await _client.SendInputDetailedAsync(Name, Secret);
+
+        Assert.Equal(MirrorProtocol.ErrUnsupported, outcome.Error);
+        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrUnsupported}", _clientLog);
+        AssertNoSecretLogged();
+    }
+
+    // An OK where a window should be: no payload and no reason either.
+    [AvaloniaFact]
+    public async Task AnOkWithNoWindowFailsTheOpenWithTheGenericReason()
+    {
+        _bareOkForFetch = true;
+        Wire("a", "b");
+        Capture();
+        var failures = new List<string>();
+        _client.Failed += (_, why) => failures.Add(why);
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.False(await _client.OpenAsync(Name));
+
+        Assert.Equal("the other machine didn't answer", Assert.Single(failures));
+        Assert.Contains($"open n={Name} failed why=the other machine didn't answer", _clientLog);
+    }
+
+    // Nobody listening is an ordinary state (a client outlives its panels), and
+    // must neither throw nor stop the line being written.
+    [AvaloniaFact]
+    public async Task AFailureWithNobodyListeningIsLoggedAndDoesNotThrow()
+    {
+        _bareOkForFetch = true;
+        Wire("a", "b");
+        Capture();
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.False(await _client.OpenAsync(Name));
+
+        Assert.Contains($"open n={Name} failed why=the other machine didn't answer", _clientLog);
+    }
+
+    [AvaloniaFact]
+    public async Task ADeliveryWithNobodyListeningIsLoggedAndDoesNotThrow()
+    {
+        Wire("a", "b");
+        Capture();
+
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.True(await _client.OpenAsync(Name));
+
+        Assert.Contains($"delivered n={Name} mode=window turns=2", _clientLog);
+        Assert.Contains($"open n={Name} ok", _clientLog);
+    }
+
     // The reopen path is fire-and-forget too: a panel closed and shown again
     // re-fetches, and a fault there used to vanish exactly as the first did.
     [AvaloniaFact]
@@ -1823,6 +1896,15 @@ public class RemoteMirrorChatSessionTests : IDisposable
         lock (_toServer) _toServer.Add(frame.Type);
 
         if (_stallFetch && frame.Type == MirrorProtocol.Fetch) return true;
+        if (_stallInput && frame.Type == MirrorProtocol.Input) return true;
+        if (_unreachableInput && frame.Type == MirrorProtocol.Input) return false;
+
+        if (_bareOkForFetch && frame.Type == MirrorProtocol.Fetch)
+        {
+            await _client.OnFrameAsync(FarRelay, MirrorProtocol.TryParseFrame(
+                MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id))!);
+            return true;
+        }
 
         // A courier that alters a message on its way to somebody's terminal.
         if (_mangleInput && frame.Type == MirrorProtocol.Input) frame = Mangle(line) ?? frame;
