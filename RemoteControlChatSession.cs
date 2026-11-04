@@ -265,8 +265,21 @@ namespace Orbweaver
             // that most needed explaining.
             BeginWait();
 
-            _ = client.OpenAsync(_remoteName);
+            // Observed rather than dropped: a fire-and-forget task that faults
+            // is invisible, and the panel would sit on "fetching" with nothing
+            // anywhere saying why (CB-306).
+            _ = client.OpenAsync(_remoteName).ContinueWith(
+                t => Log("open-threw",
+                    $"n={_remoteName} {t.Exception?.GetBaseException().GetType().Name}: "
+                  + t.Exception?.GetBaseException().Message),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
         }
+
+        // The sink for this session's own log lines; MirrorLog.Say in the app,
+        // a capture in a test. Same shape as RemoteMirrorServer.GapLog.
+        internal Action<string, string> Log { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
 
         // --- where this conversation actually is ----------------------------
 
@@ -299,19 +312,27 @@ namespace Orbweaver
 
         public event Action? WaitChanged;
 
-        private void BeginWait()
+        // Both hop to the UI thread (CB-306). WaitChanged drives ChatPanel's
+        // FetchWaitBox, and OnDelivered / OnMirrorFailed arrive on a pool thread
+        // because RemoteMirrorClient awaits with ConfigureAwait(false). Ending
+        // the wait inline there threw InvalidOperationException out of the
+        // client's open, which skipped the window paint and the watch renewal
+        // and left the panel on "fetching" for good. Doing the hop here keeps
+        // _waitingSince confined to the UI thread and honours the
+        // IRemoteChatSession contract that events arrive there.
+        private void BeginWait() => OnUi(() =>
         {
             _waitingSince = DateTimeOffset.Now;
             WaitChanged?.Invoke();
-        }
+        });
 
-        private void EndWait()
+        private void EndWait() => OnUi(() =>
         {
             if (_waitingSince is null) return;
 
             _waitingSince = null;
             WaitChanged?.Invoke();
-        }
+        });
 
         // How long it has been, in words, for the indicator above the turns.
         //
