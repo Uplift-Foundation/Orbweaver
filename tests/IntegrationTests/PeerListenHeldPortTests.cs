@@ -8,6 +8,17 @@ namespace Orbweaver.IntegrationTests;
 // peer port, the bind threw, and nothing ever tried again. This holds a real
 // port, fails a real PeerLink against it (the negative control), then releases
 // it and shows the retry loop binds the same port.
+//
+// **Runs alone, on purpose.** The test has to release the held port and then bind
+// that same number, and between the two there is a window in which any parallel
+// test that listens on port 0 can be handed it — one full IntegrationTests run in
+// three failed that way while the class passed alone. The OS gives no way to
+// swap ownership of a port atomically, so the fix is to leave nobody else
+// binding while it runs, not a sleep or a wider tolerance.
+[CollectionDefinition("PeerHeldPort", DisableParallelization = true)]
+public class PeerHeldPortCollection { }
+
+[Collection("PeerHeldPort")]
 public class PeerListenHeldPortTests
 {
     private static PeerLink Link() =>
