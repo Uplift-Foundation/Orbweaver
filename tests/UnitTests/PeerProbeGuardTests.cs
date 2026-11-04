@@ -60,9 +60,10 @@ public class PeerProbeGuardTests
     public void TheProbeLogsToItsOwnFileNotTheApps()
     {
         Assert.NotEqual(MirrorLog.DefaultFileName, MirrorLog.ProbeFileName);
-        Assert.Equal("/d/mirror-log-probe.txt".Replace('/', Path.DirectorySeparatorChar),
+        Assert.Equal(Path.Combine("/d", MirrorLog.ProbeFileName),
             MirrorLog.PathFor("/d", true, MirrorLog.ProbeFileName));
-        Assert.EndsWith("mirror-log.txt", MirrorLog.PathFor("/d", true, MirrorLog.DefaultFileName));
+        Assert.Equal(Path.Combine("/d", MirrorLog.DefaultFileName),
+            MirrorLog.PathFor("/d", true, MirrorLog.DefaultFileName));
     }
 
     [Theory]
