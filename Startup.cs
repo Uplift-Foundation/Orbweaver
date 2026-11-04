@@ -146,6 +146,24 @@ namespace Orbweaver
         // folder. Before `serveOnLaunch`, like the other retirement steps:
         // nothing it does needs the network or a screen.
         //
+        // `refreshHooks` (CB-306) is the installed-hook refresh CB-265 added,
+        // and it used to run from App.OnFrameworkInitializationCompleted —
+        // which is to say behind `waitForUnlock`. On the mini that wait never
+        // ends: the console session is locked (`CGSSessionScreenIsLocked
+        // true`, read off ioreg), the app parks before the UI and serves peers
+        // from `serveOnLaunch` for days, and a hook fix shipped in the bundle
+        // never reached ~/.claude/orbweaver — the installed copy stayed the
+        // one install-macos-hooks.sh wrote on 26 Oct while the bundle beside
+        // it carried the fix, with nothing in hook-installer.log to say so.
+        // That is the one machine the status-directory fix was for. The
+        // refresh is files only — read the bundled script, compare, overwrite
+        // on a pool thread — so it belongs with the other display-free steps,
+        // ahead of the wait. After `retireLegacy`, so it never refreshes a
+        // folder that step is about to retire; after the single-instance
+        // claim, so two instances never overwrite one script at once; before
+        // `serveOnLaunch`, so a session hooked from here on writes where the
+        // app reads as early as possible.
+        //
         // Passed as delegates rather than called directly because every one of
         // them is unrunnable in a test — a real relay, a real screen-lock query,
         // a real named mutex, and a lifetime that owns the process until it
@@ -158,6 +176,7 @@ namespace Orbweaver
             Action claimUiThread,
             Action retireLegacy,
             Action repairKeepAlive,
+            Action refreshHooks,
             Action serveOnLaunch,
             Action waitForUnlock,
             Action startUi)
@@ -175,6 +194,7 @@ namespace Orbweaver
             claimUiThread();
             retireLegacy();
             repairKeepAlive();
+            refreshHooks();
             serveOnLaunch();
             waitForUnlock();
             startUi();

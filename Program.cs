@@ -103,6 +103,15 @@ namespace Orbweaver
                 // a no-op whenever the plist's program exists.
                 repairKeepAlive: KeepAliveRepair.Run,
 
+                // Overwrite an installed hook script that differs from the
+                // bundled one (CB-265), here rather than from App because
+                // App is behind the screen-lock wait below and the mini's
+                // screen never unlocks — so the fix in 5343d162 sat in the
+                // bundle on that machine while every session kept running
+                // the 26 Oct script (CB-306). Files only, on a pool thread;
+                // never creates a copy, never touches settings.json.
+                refreshHooks: HookFreshness.StartInBackground,
+
                 // The serve path before the screen-lock wait below, because it
                 // needs nothing that wait exists to protect: a relay is tmux,
                 // files and subprocesses, with no display anywhere in it. A

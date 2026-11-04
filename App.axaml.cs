@@ -154,11 +154,11 @@ namespace Orbweaver
                 _ = NeuralSpeech.EnsureCurrentAsync()
                     .ContinueWith(_ => TextToSpeech.InvalidateVoiceCache(), TaskScheduler.Default);
 
-                // An upgrade does not refresh the installed hook script, so a
-                // hook change never reached anyone who had already wired it.
-                // Overwrites an installed copy that differs from the bundled
-                // one, on a pool thread; never creates one (CB-265).
-                HookFreshness.StartInBackground();
+                // The installed-hook refresh (CB-265) used to run here, and
+                // here is behind the screen-lock wait: on a Mac whose screen
+                // never unlocks the UI never starts and the hook was never
+                // refreshed (CB-306). It runs from Startup.Run's refreshHooks
+                // step now, before the wait, with the other display-free work.
 
                 // Development entry point: `Orbweaver --settings` opens the
                 // settings window at launch. It is otherwise only reachable by
