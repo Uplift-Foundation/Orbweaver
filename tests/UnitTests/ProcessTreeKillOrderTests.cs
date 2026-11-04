@@ -11,6 +11,8 @@ namespace Orbweaver.Tests;
 // it at all, which the live test in IntegrationTests is what shows.
 public class ProcessTreeKillOrderTests
 {
+    private static readonly Regex TreeKillCall = new(@"\.Kill\(\s*(entireProcessTree:\s*)?true\s*\)");
+
     private static Func<int, IReadOnlyList<int>> Tree(params (int Parent, int[] Kids)[] edges)
     {
         var map = edges.ToDictionary(e => e.Parent, e => (IReadOnlyList<int>)e.Kids);
@@ -100,7 +102,7 @@ public class ProcessTreeKillOrderTests
     public void NoProductionCodeCallsTheFrameworkTreeKillDirectly()
     {
         var root = FindRepoRoot();
-        var pattern = new Regex(@"\.Kill\(\s*(entireProcessTree:\s*)?true\s*\)");
+        var pattern = TreeKillCall;
         var offenders = new List<string>();
 
         foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
@@ -131,7 +133,7 @@ public class ProcessTreeKillOrderTests
     [InlineData("p.Kill( entireProcessTree:true )")]
     public void TheScanPatternMatchesTheShapesItIsMeantToRefuse(string line)
     {
-        Assert.Matches(@"\.Kill\(\s*(entireProcessTree:\s*)?true\s*\)", line);
+        Assert.Matches(TreeKillCall, line);
     }
 
     private static string FindRepoRoot()

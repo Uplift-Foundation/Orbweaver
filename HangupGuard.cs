@@ -37,7 +37,12 @@ namespace Orbweaver
         internal static void Handle(PosixSignalContext context)
         {
             context.Cancel = true;
-            CrashLog.Record("SIGHUP received and ignored (CB-306)", null);
+            // Not CrashLog.Record: with no exception it would print "(no
+            // exception object was provided)", which reads like a defect.
+            CrashLog.Append(
+                "=== " + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")
+                + "  SIGHUP received and ignored (CB-306)  pid " + Environment.ProcessId
+                + Environment.NewLine);
         }
     }
 }

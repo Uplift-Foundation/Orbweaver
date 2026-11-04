@@ -1317,8 +1317,8 @@ namespace Orbweaver
             });
         }
 
-        // Excluded from coverage: Process.Kill(entireProcessTree) against a pid
-        // this app does not own.
+        // Excluded from coverage: ProcessTreeKill.Kill against a pid this app
+        // does not own.
         [ExcludeFromCodeCoverage]
         private static bool ForceQuitWindows(int pid)
         {

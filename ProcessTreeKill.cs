@@ -11,12 +11,13 @@ namespace Orbweaver
     // children. On macOS that is fatal to *us*: Orbweaver runs in launchd's
     // session as the leader of its own process group, so the group is not
     // orphaned only because launchd (its parent) sits in another group of the
-    // same session. Kill a child's parent first and the grandchildren are
-    // reparented to launchd while still STOPPED mid-scan; when one of them
-    // exits XNU re-counts the group's orphan status, finds a stopped member and
-    // delivers SIGHUP+SIGCONT to the whole group, Orbweaver included. The
-    // default action for SIGHUP is to terminate. docs/sighup-findings.md has
-    // the trials and what is and is not confirmed.
+    // same session (the group's job-control count is 1). SIGKILL a parent and
+    // its children are reparented to launchd, not yet stopped; each of them is
+    // then SIGSTOPped for its own child scan. If an orphaned sibling exits in
+    // that window, the count drops from 1 to 0, XNU finds a stopped member of
+    // the now-orphaned group and delivers SIGHUP+SIGCONT to all of it,
+    // Orbweaver included. The default action for SIGHUP is to terminate.
+    // docs/sighup-findings.md has the trials and what is and is not confirmed.
     //
     // So on macOS this takes a snapshot of the descendants first (libproc),
     // SIGKILLs the root and then each descendant, and never sends SIGSTOP.
@@ -32,8 +33,8 @@ namespace Orbweaver
     {
         private const string LibSystem = "/usr/lib/libSystem.dylib";
         private const int SigKill = 9;
-        // pids per level, not for the tree: one parent with more children than
-        // this has the rest left to the next snapshot-less pass, i.e. leaked.
+        // pids per parent, not for the tree: a parent with more children than
+        // this has the overflow left out of the snapshot, which is to say leaked.
         private const int MaxChildrenPerParent = 4096;
 
         [DllImport(LibSystem)]
