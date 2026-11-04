@@ -748,9 +748,17 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            Note($"Sent {(args.Length == 0 ? name : name + " " + args)} over Remote Control.");
+            // "Done" only on the CLI's own "success"; silence is said as
+            // silence, never as plain "Sent", which reads as success.
+            Note(attempt.Confirmed ? DoneNote(name, args) : UnconfirmedNote(name, args));
             return ChatSendOutcome.Sent;
         }
+
+        internal static string DoneNote(string name, string args) =>
+            $"Done: {(args.Length == 0 ? name : name + " " + args)}.";
+
+        internal static string UnconfirmedNote(string name, string args) =>
+            $"Sent {(args.Length == 0 ? name : name + " " + args)} over Remote Control — no confirmation yet.";
 
         // CB-306's product-readiness round: the control path has its own
         // setting, on by default, instead of riding on "Show cloud sessions" —
@@ -811,8 +819,7 @@ namespace Orbweaver
         // is a watermark: the longer first draft clipped its last line in the
         // capture (chat-panel-desktop-commands-only.png).
         internal const string DesktopCommandsOnlyHint =
-            "Commands only: /color, /rename, /model, /permissions, /think. "
-            + "Messages need \"Show cloud sessions\" in Settings.";
+            "Slash commands work here. To send messages, turn on \"Show cloud sessions\" in Settings.";
 
         internal const string DesktopBridgedHint =
             "Message… (arrives as a teammate's request, via Remote Control)";

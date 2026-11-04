@@ -840,7 +840,8 @@ namespace Orbweaver
         // messaging socket also carries which channel was used and that
         // session's own agent status, which the composer hint and the
         // delivered-note both need to say something honest.
-        internal readonly record struct InputOutcome(string? Error, string? Via, string? AgentStatus, string? Why = null);
+        internal readonly record struct InputOutcome(string? Error, string? Via, string? AgentStatus, string? Why = null,
+            string? Verdict = null);
 
         // Types a line into the far session's own terminal, or — since
         // CB-105 — hands it to that session's own messaging socket when
@@ -879,7 +880,9 @@ namespace Orbweaver
                 reply.Fields is not null && reply.Fields.TryGetValue("via", out var via) ? via : null,
                 reply.Fields is not null && reply.Fields.TryGetValue("agent", out var agent) ? agent : null,
                 reply.Fields is not null && reply.Fields.TryGetValue("why", out var why)
-                    ? MirrorProtocol.Decode(why) : null);
+                    ? MirrorProtocol.Decode(why) : null,
+                reply.Fields is not null && reply.Fields.TryGetValue(MirrorProtocol.VerdictField, out var verdict)
+                    ? verdict : null);
         }
 
         // CB-306: the INPUT's fields, with the slash flag only when it is set,

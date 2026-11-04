@@ -664,7 +664,13 @@ namespace Orbweaver
                     return ChatSendOutcome.Failed;
 
                 case MirrorProtocol.ViaControl:
-                    Note(SlashRanNote(line, _remoteName));
+                    // The far CLI's verdict (CB-306's product-readiness
+                    // round). Only "done" is a success; anything else,
+                    // including no verdict from an older far Buddy, is
+                    // delivered without an answer and said as that.
+                    Note(outcome.Verdict == MirrorProtocol.VerdictDone
+                        ? SlashRanNote(line, _remoteName)
+                        : SlashUnconfirmedNote(line, _remoteName));
                     return ChatSendOutcome.Sent;
 
                 default:
@@ -678,7 +684,10 @@ namespace Orbweaver
         }
 
         internal static string SlashRanNote(string line, string remoteName) =>
-            $"Ran {line} on {remoteName}.";
+            $"Done: {line.Trim()} on {remoteName}.";
+
+        internal static string SlashUnconfirmedNote(string line, string remoteName) =>
+            $"Sent {line.Trim()} to {remoteName} over Remote Control — no confirmation yet.";
 
         internal static string OldFarBuddyNote(string remoteName) =>
             $"Not sent: {remoteName} is on a version of {Brand.DisplayName} that can't run slash commands "

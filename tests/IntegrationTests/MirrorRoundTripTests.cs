@@ -799,7 +799,7 @@ public class MirrorRoundTripTests : IDisposable
             _ => true, _ => false, _ => null,
             status => cache.Peek(status.Source, status.Cwd),
             (_, _) => Task.FromResult(true),
-            (_, _, _) => Task.FromResult<string?>(null)));
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done)));
         harness.AddSession("lawyer-search", WriteTranscript("hung.jsonl", Conversation(2)));
 
         try
@@ -919,7 +919,7 @@ public class MirrorRoundTripTests : IDisposable
             (_, subtype, request) =>
             {
                 posted.Add((subtype, (string?)request["color"] ?? ""));
-                return Task.FromResult<string?>(null);
+                return Task.FromResult(MirrorSlashHost.ControlVerdict.Done);
             }));
         harness.AddSession("job-hunter", WriteTranscript("real.jsonl", Conversation(2)));
         await harness.HandshakeAsync("job-hunter");
@@ -989,6 +989,84 @@ public class MirrorRoundTripTests : IDisposable
             Assert.Empty(posted);
         }
         Assert.Empty(harness.Typed);
+    }
+
+    // CB-306's product-readiness round: a control request now waits up to
+    // five seconds for the far CLI's answer, and the production pump
+    // (PeerMirrorHost) awaits HandleAsync one frame at a time, so a slash
+    // INPUT must not hold HandleAsync for that long. Driven the way the pump
+    // drives it: HandleAsync returns while the post is still waiting, and the
+    // OK reply with the verdict arrives once it is released. Negative control,
+    // run once while writing it: with the slash awaited inline, HandleAsync
+    // did not return within the window and this failed.
+    [Fact]
+    public async Task ASlashInputDoesNotHoldTheFrameLoopWhileItsAnswerIsAwaited()
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var release = new TaskCompletionSource<CloudTurnSender.ControlAttempt>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(() => true, _ => bridge, _ => null, (_, _, _) => release.Task)));
+        harness.AddSession("job-hunter", WriteTranscript("stall.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+        harness.ToClient.Clear();
+
+        var input = MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Input, "slash001",
+            new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode("job-hunter"),
+                [MirrorProtocol.SlashField] = "1",
+            },
+            System.Text.Encoding.UTF8.GetBytes("/color pink")))!;
+
+        try
+        {
+            var handled = harness.Server.HandleAsync(Harness.NearRelay, input);
+            Assert.Same(handled, await Task.WhenAny(handled, Task.Delay(TimeSpan.FromSeconds(5))));
+            await handled;
+            Assert.Empty(harness.ToClient);
+
+            release.SetResult(new CloudTurnSender.ControlAttempt(null, null, true));
+            await harness.Server.SlashInFlight;
+
+            var reply = MirrorProtocol.TryParseFrame(Assert.Single(harness.ToClient))!;
+            Assert.Equal(MirrorProtocol.Ok, reply.Type);
+            Assert.Equal("slash001", reply.Id);
+            Assert.Contains(";" + MirrorProtocol.VerdictField + "=" + MirrorProtocol.VerdictDone, Assert.Single(harness.ToClient));
+        }
+        finally
+        {
+            release.TrySetResult(new CloudTurnSender.ControlAttempt(null, null));
+        }
+    }
+
+    // CB-306's product-readiness round: the far side's verdict on a control
+    // request crosses the real link in the reply's `verdict` field, through
+    // the real GatedPost and resolver, with only the HTTP post faked.
+    [Theory]
+    [InlineData(true, MirrorProtocol.VerdictDone)]
+    [InlineData(false, MirrorProtocol.VerdictUnconfirmed)]
+    public async Task TheFarCliVerdictCrossesTheLink(bool confirmed, string expected)
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(() => true, _ => bridge, _ => "2.1.318",
+                (_, _, _) => Task.FromResult(new CloudTurnSender.ControlAttempt(null, null, confirmed)))));
+        harness.AddSession("job-hunter", WriteTranscript("verdict-" + confirmed + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaControl, outcome.Via);
+        Assert.Equal(expected, outcome.Verdict);
     }
 
     // CB-306's product-readiness round: the far CLI refusing a control

@@ -147,13 +147,16 @@ namespace Orbweaver
         // "not-a-colour". Available: …`; an unknown subtype answered `REPL
         // bridge does not handle control_request subtype: …`.
         //
-        // So the bridge path reads the answer back for a short while. No answer
-        // in that time is not a failure: the command was delivered, and the
-        // note stays the "Sent" it always was.
-        internal sealed record ControlAttempt(string? Failure, string? CliError);
+        // So the bridge path reads the answer back, asynchronously and for up
+        // to about five seconds — long enough for a session in the middle of a
+        // turn, by the lead's call; the measured idle answer took a fifth of a
+        // second. Confirmed is true only when the CLI answered "success". No
+        // answer in that time is not a failure (the command was delivered),
+        // but it is not a success either, and the caller says so.
+        internal sealed record ControlAttempt(string? Failure, string? CliError, bool Confirmed = false);
 
         internal static readonly TimeSpan AnswerPollInterval = TimeSpan.FromMilliseconds(500);
-        internal const int AnswerPolls = 4;
+        internal const int AnswerPolls = 10;
 
         // Newest first and twenty deep: the answer lands within a second of
         // the request, so it is near the top of a busy session too.
@@ -177,7 +180,7 @@ namespace Orbweaver
                 if (page.Outcome.Kind != CloudOutcomeKind.Ok) break;
 
                 if (ControlAnswerIn(page.Body, posted.RequestId) is { } answer)
-                    return new ControlAttempt(null, answer.Error);
+                    return new ControlAttempt(null, answer.Error, Confirmed: answer.Error is null);
             }
 
             return new ControlAttempt(null, null);

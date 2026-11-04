@@ -348,7 +348,8 @@ public class ChatPanelScreenshots : IDisposable
 
     // CB-306's product-readiness round: the same bridged chat on a fresh
     // install — "Show cloud sessions" off, slash commands on by default — keeps
-    // its composer, and the watermark says it takes the five commands only.
+    // its composer, and the watermark says up front that slash commands work
+    // and messages need "Show cloud sessions".
     [AvaloniaFact]
     public void ABridgedDesktopSessionWithCloudOffOffersCommandsOnly()
     {

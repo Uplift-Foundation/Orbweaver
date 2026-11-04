@@ -121,7 +121,7 @@ namespace Orbweaver
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
         // sentence that says why.
-        internal readonly record struct SlashOutcome(string Via, string? Reason);
+        internal readonly record struct SlashOutcome(string Via, string? Reason, string? Verdict = null);
 
         private readonly string _account;
         private readonly Seams _seams;
@@ -1846,9 +1846,15 @@ namespace Orbweaver
 
             // CB-306: a slash line is resolved HERE, on the machine that owns
             // the session, because only this machine knows its channel.
+            //
+            // Not awaited (CB-306's product-readiness round): a control request
+            // now waits up to five seconds for the far CLI's answer, and this
+            // runs on the frame loop, which must not stall a HELLO or a watch
+            // for that long. The reply carries the frame's id, so it can go
+            // whenever it is ready; SlashAsync catches its own failures.
             if (frame.Num(MirrorProtocol.SlashField) == 1)
             {
-                await SlashAsync(fromPeer, frame, status, text).ConfigureAwait(false);
+                SlashInFlight = Task.Run(() => SlashAsync(fromPeer, frame, status, text));
                 return;
             }
 
@@ -1943,10 +1949,25 @@ namespace Orbweaver
             var fields = new Dictionary<string, string> { ["via"] = outcome.Via };
             if (outcome.Via == MirrorProtocol.ViaRefused)
                 fields["why"] = MirrorProtocol.Encode(outcome.Reason ?? "it can't run there");
+            if (outcome.Via == MirrorProtocol.ViaControl && outcome.Verdict is { } verdict)
+                fields[MirrorProtocol.VerdictField] = verdict;
 
-            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields))
-                .ConfigureAwait(false);
+            try
+            {
+                await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                // Detached from the frame loop, so nothing above would see
+                // this; the near side times out and says so.
+                MirrorLog.Say("slash-reply-failed", e.GetType().Name);
+            }
         }
+
+        // The last detached slash run, so a test can wait on it instead of
+        // sleeping. Nothing in production reads it.
+        internal Task SlashInFlight { get; private set; } = Task.CompletedTask;
 
         // No runner wired: type it where there is a pane, refuse where there is
         // not. The same split Offered makes for the roster, so what was offered

@@ -185,7 +185,7 @@ public class ControlAnswerTests
 
         var (attempt, waits) = await Run(api);
 
-        Assert.Equal(new CloudTurnSender.ControlAttempt(null, null), attempt);
+        Assert.Equal(new CloudTurnSender.ControlAttempt(null, null, Confirmed: true), attempt);
         Assert.Equal(2, api.Requests.Count);
         var get = api.Requests[1];
         Assert.Null(get.Method);
@@ -206,11 +206,13 @@ public class ControlAnswerTests
 
         Assert.Null(attempt.Failure);
         Assert.Equal("Unknown color \"teal\". Available: red", attempt.CliError);
+        Assert.False(attempt.Confirmed);
         Assert.Equal(2, waits.Count);
     }
 
-    // No answer within the polls is not a failure: the command was
-    // delivered, and the caller says "Sent" as it always did.
+    // No answer within the polls is not a failure — the command was
+    // delivered — but it is not confirmed either. Ten reads, 500 ms apart:
+    // about five seconds, so a session mid-turn still gets to answer.
     [Fact]
     public async Task NoAnswerWithinThePollsIsDeliveredAndUnconfirmed()
     {
@@ -221,6 +223,8 @@ public class ControlAnswerTests
         Assert.Equal(new CloudTurnSender.ControlAttempt(null, null), attempt);
         Assert.Equal(1 + CloudTurnSender.AnswerPolls, api.Requests.Count);
         Assert.Equal(CloudTurnSender.AnswerPolls, waits.Count);
+        Assert.Equal(10, CloudTurnSender.AnswerPolls);
+        Assert.Equal(TimeSpan.FromSeconds(5), CloudTurnSender.AnswerPollInterval * CloudTurnSender.AnswerPolls);
     }
 
     [Fact]

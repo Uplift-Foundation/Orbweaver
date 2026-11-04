@@ -18,6 +18,7 @@ public class MirrorSlashHostTests
         public string? Bridge;
         public bool TypeOk = true;
         public string? PostFailure;
+        public bool Confirmed = true;
         public List<string> Typed { get; } = new();
         public List<(string Subtype, JsonObject Request)> Posted { get; } = new();
         public string[] Catalogue = { "/compact", "/color", "/review" };
@@ -26,7 +27,12 @@ public class MirrorSlashHostTests
             _ => CanType, _ => CanMessage, _ => Bridge,
             _ => Catalogue.Select(n => new SlashCommand(n, "")).ToList(),
             (_, text) => { Typed.Add(text); return Task.FromResult(TypeOk); },
-            (_, subtype, request) => { Posted.Add((subtype, request)); return Task.FromResult(PostFailure); }));
+            (_, subtype, request) =>
+            {
+                Posted.Add((subtype, request));
+                return Task.FromResult(PostFailure is { } f ? MirrorSlashHost.ControlVerdict.Refused(f)
+                    : Confirmed ? MirrorSlashHost.ControlVerdict.Done : MirrorSlashHost.ControlVerdict.Unconfirmed);
+            }));
     }
 
     private const string BridgeId = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
@@ -110,6 +116,20 @@ public class MirrorSlashHostTests
         Assert.Equal("set_color", subtype);
         Assert.Equal("pink", (string?)request["color"]);
         Assert.Empty(edges.Typed);
+    }
+
+    // CB-306's product-readiness round: the outcome carries the verdict the
+    // server puts on the wire — done when the CLI confirmed, unconfirmed when
+    // it did not answer in time.
+    [Theory]
+    [InlineData(true, MirrorProtocol.VerdictDone)]
+    [InlineData(false, MirrorProtocol.VerdictUnconfirmed)]
+    public async Task AControlCommandsOutcomeCarriesTheVerdict(bool confirmed, string expected)
+    {
+        var outcome = await new Edges { Bridge = BridgeId, Confirmed = confirmed }.Host().RunAsync(Status(), "/color pink");
+
+        Assert.Equal(MirrorProtocol.ViaControl, outcome.Via);
+        Assert.Equal(expected, outcome.Verdict);
     }
 
     [Fact]
@@ -250,7 +270,7 @@ public class MirrorSlashHostTests
             (_, _, _) => { calls++; return Answer(); });
 
         Assert.Equal(LocalCliChatSession.BridgeCommandsOffHint,
-            await post(Status(), "set_color", new JsonObject()));
+            (await post(Status(), "set_color", new JsonObject())).Refusal);
         Assert.Equal(0, calls);
     }
 
@@ -261,19 +281,22 @@ public class MirrorSlashHostTests
         var post = MirrorSlashHost.GatedPost(() => true, _ => null, _ => "2.1.318",
             (_, _, _) => { calls++; return Answer(); });
 
-        Assert.Equal(MirrorSlashHost.NoBridgeReason, await post(Status(), "set_color", new JsonObject()));
+        Assert.Equal(MirrorSlashHost.NoBridgeReason, (await post(Status(), "set_color", new JsonObject())).Refusal);
         Assert.Equal(0, calls);
     }
 
     [Fact]
-    public async Task GatedPostPostsToTheBridgeAndAnswersNullWhenItRan()
+    public async Task GatedPostPostsToTheBridgeAndSaysDoneOnlyWhenTheCliConfirmed()
     {
         string? sentTo = null;
-        var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => "2.1.318",
-            (_, id, _) => { sentTo = id; return Answer(); });
+        var confirmed = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => "2.1.318",
+            (_, id, _) => { sentTo = id; return Task.FromResult(new CloudTurnSender.ControlAttempt(null, null, true)); });
+        var silent = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => "2.1.318",
+            (_, _, _) => Answer());
 
-        Assert.Null(await post(Status(), "set_color", new JsonObject()));
+        Assert.Equal(MirrorSlashHost.ControlVerdict.Done, await confirmed(Status(), "set_color", new JsonObject()));
         Assert.Equal(BridgeId, sentTo);
+        Assert.Equal(MirrorSlashHost.ControlVerdict.Unconfirmed, await silent(Status(), "set_color", new JsonObject()));
     }
 
     // A transport or credential failure is passed back as it was, with no
@@ -284,7 +307,7 @@ public class MirrorSlashHostTests
         var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => "2.1.318",
             (_, _, _) => Answer(failure: "the service is unavailable"));
 
-        Assert.Equal("the service is unavailable", await post(Status(), "set_color", new JsonObject()));
+        Assert.Equal("the service is unavailable", (await post(Status(), "set_color", new JsonObject())).Refusal);
     }
 
     // The CLI's own refusal carries both versions when the registry row
@@ -297,6 +320,6 @@ public class MirrorSlashHostTests
         var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId, _ => version,
             (_, _, _) => Answer(cliError: "Unknown color \"x\"."));
 
-        Assert.Equal(expected, await post(Status(), "set_color", new JsonObject()));
+        Assert.Equal(expected, (await post(Status(), "set_color", new JsonObject())).Refusal);
     }
 }

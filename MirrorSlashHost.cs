@@ -24,9 +24,20 @@ namespace Orbweaver
             Func<SessionStatus, IReadOnlyList<SlashCommand>> TerminalCatalogue,
             Func<SessionStatus, string, Task<bool>> TypeInto,
 
-            // Posts one control request over the session's bridge. Null on
-            // success, otherwise the sentence saying why not.
-            Func<SessionStatus, string, JsonObject, Task<string?>> PostControl);
+            // Posts one control request over the session's bridge and says
+            // what came of it: refused (with the sentence), done, or delivered
+            // with no answer yet.
+            Func<SessionStatus, string, JsonObject, Task<ControlVerdict>> PostControl);
+
+        // CB-306's product-readiness round: the far side's answer to a control
+        // request, carried back over the link so the near panel says what the
+        // far CLI said rather than assuming success.
+        internal sealed record ControlVerdict(string? Refusal, bool Confirmed)
+        {
+            internal static readonly ControlVerdict Done = new(null, true);
+            internal static readonly ControlVerdict Unconfirmed = new(null, false);
+            internal static ControlVerdict Refused(string reason) => new(reason, false);
+        }
 
         private readonly Seams _seams;
 
@@ -69,10 +80,11 @@ namespace Orbweaver
                     var request = SlashRouting.ControlRequest(route.ControlSubtype!, cmd.Args, out var problem);
                     if (request is null) return Refused(problem!);
 
-                    var failure = await _seams.PostControl(status, route.ControlSubtype!, request).ConfigureAwait(false);
-                    return failure is null
-                        ? new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null)
-                        : Refused(failure);
+                    var verdict = await _seams.PostControl(status, route.ControlSubtype!, request).ConfigureAwait(false);
+                    return verdict.Refusal is { } refusal
+                        ? Refused(refusal)
+                        : new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null,
+                            verdict.Confirmed ? MirrorProtocol.VerdictDone : MirrorProtocol.VerdictUnconfirmed);
 
                 default:
                     // Unavailable, the only kind left for the channels this resolves, always
@@ -91,21 +103,21 @@ namespace Orbweaver
         // A rejection from the CLI itself comes back worded with the session's
         // Claude Code version beside the one the requests were measured on;
         // versionFor reads it off this machine's registry row.
-        internal static Func<SessionStatus, string, JsonObject, Task<string?>> GatedPost(
+        internal static Func<SessionStatus, string, JsonObject, Task<ControlVerdict>> GatedPost(
             Func<bool> commandsEnabled,
             Func<SessionStatus, string?> bridgeIdFor,
             Func<SessionStatus, string?> versionFor,
             Func<SessionStatus, string, JsonObject, Task<CloudTurnSender.ControlAttempt>> post) =>
             async (status, _, request) =>
             {
-                if (!commandsEnabled()) return LocalCliChatSession.BridgeCommandsOffHint;
-                if (bridgeIdFor(status) is not { } id) return NoBridgeReason;
+                if (!commandsEnabled()) return ControlVerdict.Refused(LocalCliChatSession.BridgeCommandsOffHint);
+                if (bridgeIdFor(status) is not { } id) return ControlVerdict.Refused(NoBridgeReason);
 
                 var attempt = await post(status, id, request).ConfigureAwait(false);
-                return attempt.Failure
-                    ?? (attempt.CliError is { } refused
-                        ? CloudTurnSender.RejectionClause(refused, versionFor(status))
-                        : null);
+                if (attempt.Failure is { } failure) return ControlVerdict.Refused(failure);
+                if (attempt.CliError is { } refused)
+                    return ControlVerdict.Refused(CloudTurnSender.RejectionClause(refused, versionFor(status)));
+                return attempt.Confirmed ? ControlVerdict.Done : ControlVerdict.Unconfirmed;
             };
 
         internal const string NoBridgeReason = "this session has no Remote Control bridge";

@@ -99,9 +99,10 @@ public class LocalCliChatSessionDesktopRulesTests
         var hint = LocalCliChatSession.DesktopComposerHintFor(
             Status(), null, cloudEnabled: false, replyEnabled: true, bridgeCommands: true);
 
+        // Said up front, so nobody types a message only to have it refused.
         Assert.Equal(LocalCliChatSession.DesktopCommandsOnlyHint, hint);
-        foreach (var name in new[] { "/color", "/rename", "/model", "/permissions", "/think", "Show cloud sessions" })
-            Assert.Contains(name, hint);
+        Assert.Equal(
+            "Slash commands work here. To send messages, turn on \"Show cloud sessions\" in Settings.", hint);
     }
 
     [Fact]

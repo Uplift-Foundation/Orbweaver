@@ -36,6 +36,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
         internal List<CloudRequestContext> Requests { get; } = new();
         internal List<CloudRequestContext> Reads { get; } = new();
         internal string? AnswerError { get; set; }
+        internal bool AnswerOk { get; set; }
 
         public Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
         {
@@ -47,18 +48,20 @@ public class LocalCliChatSessionSlashTests : IDisposable
             {
                 Reads.Add(context);
                 var body = "{\"data\":[]}";
-                if (AnswerError is { } error && Requests.Count > 0)
+                if ((AnswerError is not null || AnswerOk) && Requests.Count > 0)
                 {
                     using var posted = JsonDocument.Parse(Requests[^1].Body!);
                     var rid = posted.RootElement.GetProperty("events")[0].GetProperty("payload")
                         .GetProperty("request_id").GetString();
-                    body = JsonSerializer.Serialize(new
-                    {
-                        data = new[]
+                    body = AnswerOk
+                        ? JsonSerializer.Serialize(new
                         {
-                            new { payload = new { type = "control_response", response = new { subtype = "error", request_id = rid, error } } },
-                        },
-                    });
+                            data = new[] { new { payload = new { type = "control_response", response = new { subtype = "success", request_id = rid } } } },
+                        })
+                        : JsonSerializer.Serialize(new
+                        {
+                            data = new[] { new { payload = new { type = "control_response", response = new { subtype = "error", request_id = rid, error = AnswerError } } } },
+                        });
                 }
                 return Task.FromResult(new CloudApiResult(new CloudOutcome(CloudOutcomeKind.Ok, 200), body));
             }
@@ -211,7 +214,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
             var body = ControlRequestOf(request);
             Assert.Equal(subtype, body.GetProperty("subtype").GetString());
             Assert.Equal(value, body.GetProperty(field).GetString());
-            Assert.Contains(session.History, t => t.Text == $"Sent {line} over Remote Control.");
+            Assert.Contains(session.History, t => t.Text == $"Sent {line} over Remote Control — no confirmation yet.");
             Assert.DoesNotContain(Token, request.Body!, StringComparison.Ordinal);
         }
     }
@@ -225,7 +228,7 @@ public class LocalCliChatSessionSlashTests : IDisposable
         await session.RunSlashAsync("/think 8000");
 
         Assert.Equal(8000, ControlRequestOf(Assert.Single(api.Requests)).GetProperty("max_thinking_tokens").GetInt32());
-        Assert.Contains(session.History, t => t.Text == "Sent /think 8000 over Remote Control.");
+        Assert.Contains(session.History, t => t.Text == "Sent /think 8000 over Remote Control — no confirmation yet.");
     }
 
     // The negative control: /compact is not a control command, so it is refused
@@ -354,18 +357,31 @@ public class LocalCliChatSessionSlashTests : IDisposable
         Assert.Single(api.Reads);
     }
 
-    // No answer within the polls keeps today's "Sent" note: the command was
-    // delivered, and silence is not a refusal.
+    // No answer within the budget is said as exactly that — never a plain
+    // "Sent", which reads as success — and the CLI's "success" is "Done".
     [AvaloniaFact]
-    public async Task NoAnswerFromTheCliStillReadsAsSent()
+    public async Task NoAnswerFromTheCliSaysNoConfirmationYet()
     {
         var api = new Api();
         var session = Headless(api, new Credentials(), Row(bridge: true, version: "2.1.318"));
 
         Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/color pink"));
 
-        Assert.Contains(session.History, t => t.Text == "Sent /color pink over Remote Control.");
+        Assert.Contains(session.History, t => t.Text == "Sent /color pink over Remote Control — no confirmation yet.");
+        Assert.DoesNotContain(session.History, t => t.Text.StartsWith("Done", StringComparison.Ordinal));
         Assert.Equal(CloudTurnSender.AnswerPolls, api.Reads.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task ASuccessAnswerFromTheCliSaysDone()
+    {
+        var api = new Api { AnswerOk = true };
+        var session = Headless(api, new Credentials(), Row(bridge: true));
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/rename tidy"));
+
+        Assert.Contains(session.History, t => t.Text == "Done: /rename tidy.");
+        Assert.Single(api.Reads);
     }
 
     // ...and with cloud off but commands on — a fresh install — both post.

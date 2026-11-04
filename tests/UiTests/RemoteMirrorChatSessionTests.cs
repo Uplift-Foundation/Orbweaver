@@ -286,11 +286,19 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(1, Turns(session).Count(t => t.Text == "/color green"));
     }
 
-    [AvaloniaFact]
-    public async Task AControlCommandRunsOnTheFarSideAndIsReportedNotTyped()
+    // CB-306's product-readiness round: the far CLI's verdict crosses the
+    // real link and the near panel says what it said. "done" is Done; no
+    // answer in time, or no verdict at all (an older far Buddy), is
+    // "no confirmation yet" — never a plain success.
+    [AvaloniaTheory]
+    [InlineData(MirrorProtocol.VerdictDone, true)]
+    [InlineData(MirrorProtocol.VerdictUnconfirmed, false)]
+    [InlineData(null, false)]
+    public async Task AControlCommandRunsOnTheFarSideAndItsVerdictIsReported(string? verdict, bool done)
     {
         _wireSlash = true;
         _slashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) };
+        _slashOutcome = new(MirrorProtocol.ViaControl, null, verdict);
         Wire("a", "b");
         var session = await OpenAsync();
 
@@ -299,7 +307,12 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(ChatSendOutcome.Sent, outcome);
         Assert.Equal("/color green", Assert.Single(_slashRan));
         Assert.Empty(_typed);
-        Assert.Contains(RemoteControlChatSession.SlashRanNote("/color green", Name), NotesOf(session));
+        Assert.Contains(done
+            ? "Done: /color green on " + Name + "."
+            : "Sent /color green to " + Name + " over Remote Control — no confirmation yet.", NotesOf(session));
+        Assert.DoesNotContain(done
+            ? RemoteControlChatSession.SlashUnconfirmedNote("/color green", Name)
+            : RemoteControlChatSession.SlashRanNote("/color green", Name), NotesOf(session));
     }
 
     [AvaloniaFact]
