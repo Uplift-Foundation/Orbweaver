@@ -1296,6 +1296,31 @@ public class RemoteMirrorChatSessionTests : IDisposable
         }
     }
 
+    // The reopen path is fire-and-forget too: a panel closed and shown again
+    // re-fetches, and a fault there used to vanish exactly as the first did.
+    [AvaloniaFact]
+    public async Task AReopenThatThrowsIsLoggedToo()
+    {
+        Wire("a", "b");
+        _client.Delivered += _ => throw new InvalidOperationException("boom again");
+
+        var logged = new List<string>();
+        var session = NewSession();
+        session.Log = (what, detail) => { lock (logged) logged.Add(what); };
+
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        Assert.True(await PumpUntilAsync(() => { lock (logged) return logged.Count == 1; }));
+
+        // Close, then show again: the feed is gone, so this is a fresh open.
+        session.PanelClosed();
+        await Task.Delay(50);
+        session.PanelOpened();
+
+        Assert.True(await PumpUntilAsync(() => { lock (logged) return logged.Count == 2; }));
+        lock (logged) Assert.All(logged, w => Assert.Equal("open-threw", w));
+    }
+
     // The default sink is the real log, which is a no-op without a path.
     [AvaloniaFact]
     public void TheDefaultLogSinkIsCallable() => NewSession().Log("open-threw", "n=x");

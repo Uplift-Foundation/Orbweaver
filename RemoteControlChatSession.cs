@@ -268,14 +268,19 @@ namespace Orbweaver
             // Observed rather than dropped: a fire-and-forget task that faults
             // is invisible, and the panel would sit on "fetching" with nothing
             // anywhere saying why (CB-306).
-            _ = client.OpenAsync(_remoteName).ContinueWith(
-                t => Log("open-threw",
-                    $"n={_remoteName} {t.Exception?.GetBaseException().GetType().Name}: "
-                  + t.Exception?.GetBaseException().Message),
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted,
-                TaskScheduler.Default);
+            Observe(client.OpenAsync(_remoteName));
         }
+
+        // Every fire-and-forget call into the client goes through here, so a
+        // fault is logged under the same open-threw line wherever it came from
+        // (open, reopen or close).
+        private void Observe(Task task) => _ = task.ContinueWith(
+            t => Log("open-threw",
+                $"n={_remoteName} {t.Exception?.GetBaseException().GetType().Name}: "
+              + t.Exception?.GetBaseException().Message),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
 
         // The sink for this session's own log lines; MirrorLog.Say in the app,
         // a capture in a test. Same shape as RemoteMirrorServer.GapLog.
@@ -1002,7 +1007,7 @@ namespace Orbweaver
 
             // The handshake may have finished while nothing was open.
             if (!_mirroring) TryUpgrade();
-            else _ = RemoteControlSessions.MirrorClientFor(_account)?.ReopenAsync(_remoteName);
+            else if (RemoteControlSessions.MirrorClientFor(_account) is { } client) Observe(client.ReopenAsync(_remoteName));
         }
 
         public void PanelClosed()
@@ -1020,7 +1025,7 @@ namespace Orbweaver
             // The history stays exactly as it is. Only the subscription goes:
             // reopening re-reads the tail, which is cheap and is also the right
             // thing, since the conversation will have moved on.
-            _ = RemoteControlSessions.MirrorClientFor(_account)?.CloseAsync(_remoteName);
+            if (RemoteControlSessions.MirrorClientFor(_account) is { } client) Observe(client.CloseAsync(_remoteName));
         }
 
         public void Dispose()
@@ -1036,7 +1041,7 @@ namespace Orbweaver
             client.Delivered -= OnDelivered;
             client.Failed -= OnMirrorFailed;
 
-            if (_mirroring) _ = client.CloseAsync(_remoteName);
+            if (_mirroring) Observe(client.CloseAsync(_remoteName));
         }
 
         // Everything that touches the history has to land on the UI thread,
