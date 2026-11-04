@@ -38,7 +38,8 @@ public class HangupGuardTests
         HangupGuard.Install(macOS: true);
         Assert.True(HangupGuard.Installed);
 
-        HangupGuard.Install(macOS: true);
+        // The parameterless entry Program passes to Startup.Run.
+        HangupGuard.Install();
         Assert.True(HangupGuard.Installed);
     }
 }
