@@ -35,9 +35,12 @@ namespace Orbweaver
 
         private static readonly object Gate = new();
 
-        // A ceiling rather than rotation. This is a diagnostic that somebody
-        // turns on, looks at, and turns off; a megabyte is far more than that
-        // needs and rotation is machinery this does not earn.
+        // Rotated at this size: the full file becomes mirror-log.txt.1 (replacing
+        // any older one) and a fresh one starts. This used to be a ceiling that
+        // simply stopped writing, and it stopped on 2 Nov on both Macs — so the
+        // "peer-listen-failed" line of the CB-306 regression was never recorded
+        // and the fault looked like nothing at all. Dropping the oldest history
+        // is the right way for a diagnostic to be full; going deaf is not.
         private const long MaxBytes = 1024 * 1024;
 
         internal static bool On => Path.Value is not null;
@@ -131,6 +134,16 @@ namespace Orbweaver
             Say(what, since >= RepeatEvery ? $"{detail} (still, x{since})" : detail);
         }
 
+        // Keeps exactly one previous generation, so the disk cost is bounded at
+        // twice MaxBytes. Internal with the limit as an argument so a test can
+        // drive it without writing a megabyte.
+        internal static void RotateIfFull(string path, long maxBytes = MaxBytes)
+        {
+            if (new FileInfo(path) is not { Exists: true } info || info.Length <= maxBytes) return;
+
+            File.Move(path, path + ".1", overwrite: true);
+        }
+
         [ExcludeFromCodeCoverage]
         internal static void Say(string what, string detail = "")
         {
@@ -141,7 +154,7 @@ namespace Orbweaver
             {
                 lock (Gate)
                 {
-                    if (new FileInfo(path) is { Exists: true, Length: > MaxBytes }) return;
+                    RotateIfFull(path);
 
                     File.AppendAllText(
                         path, Line(DateTime.UtcNow, what, detail) + "\n", Encoding.UTF8);
