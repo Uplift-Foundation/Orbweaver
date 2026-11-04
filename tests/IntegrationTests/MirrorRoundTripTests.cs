@@ -2092,6 +2092,46 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(Face, Assert.Single(harness.Client.Known()).Entry.Persona!.Avatar);
     }
 
+    // CB-306 regression on 6e1c2183: the persona, picture included, must still
+    // reach the peer once a read that was pending at the first HELLO has
+    // answered, and its id must be one the AVATAR request answers.
+    [Fact]
+    public async Task APersonaReadThatFinishesAfterTheFirstHelloReachesThePeerWithAFetchablePicture()
+    {
+        WritePersona(Face);
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var harness = new Harness(_dir);
+        harness.PersonaCache = new PeerPersonaCache(
+            (source, cwd, agent, dirs) =>
+            {
+                release.Wait();
+                return RemoteMirrorServer.ReadPeerPersona(source, cwd, agent, dirs);
+            },
+            () => DateTime.UtcNow,
+            OffThread.OnOwnThread,
+            PeerAvatarStore.Shared.ById);
+        harness.AddSession("first", WriteTranscript("first.jsonl", Conversation(2)));
+
+        try
+        {
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Null(Assert.Single(harness.Client.Known()).Entry.Persona);
+            Assert.Equal(0, harness.PictureAsks);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (harness.PersonaCache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+            Assert.Equal(1, harness.PictureAsks);
+            var persona = Assert.Single(harness.Client.Known()).Entry.Persona!;
+            Assert.Equal(MirrorProtocol.AvatarIdOf(Face), persona.AvatarId);
+            Assert.Equal(Face, persona.Avatar);
+        }
+        finally { release.Set(); }
+    }
+
     // The case the ticket's decision named: a picture that changes on the
     // serving machine reaches the peer, by a new id, on the next poll.
     [Fact]
