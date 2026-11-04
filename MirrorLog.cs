@@ -45,6 +45,27 @@ namespace Orbweaver
 
         internal static bool On => Path.Value is not null;
 
+        // The file this process writes. The app keeps the default; peer-probe
+        // switches to its own before anything is logged, so a probe's failures
+        // (a terminal without Local Network consent, say) never read as the
+        // app's in the app's own log (CB-306). Must be set before the first
+        // line is written, because the path is resolved once.
+        internal const string DefaultFileName = "mirror-log.txt";
+        internal const string ProbeFileName = "mirror-log-probe.txt";
+        private static string _fileName = DefaultFileName;
+
+        internal static void UseFile(string fileName) => _fileName = fileName;
+
+        internal static string CurrentFileName => _fileName;
+
+        // Pure: where the log goes, or null when nobody asked for one.
+        internal static string? PathFor(string? dir, bool asked, string fileName)
+        {
+            if (string.IsNullOrEmpty(dir) || !asked) return null;
+
+            return System.IO.Path.Combine(dir, fileName);
+        }
+
         [ExcludeFromCodeCoverage]
         private static string? Resolve()
         {
@@ -56,9 +77,7 @@ namespace Orbweaver
                 var asked = !string.IsNullOrWhiteSpace(BrandEnv.Get(BrandEnv.MirrorLog))
                             || File.Exists(System.IO.Path.Combine(dir, "mirror-log"));
 
-                if (!asked) return null;
-
-                return System.IO.Path.Combine(dir, "mirror-log.txt");
+                return PathFor(dir, asked, _fileName);
             }
             catch
             {

@@ -588,4 +588,28 @@ public class SingleInstanceTests
             mutex.Dispose();
         }
     }
+
+    // --- CB-306: peer-probe asks whether the app holds the claim ----------
+
+    [Fact]
+    public void AppIsRunning_is_true_while_another_holder_has_the_claim()
+    {
+        var name = FreshName();
+
+        using (new Holder(name))
+        {
+            Assert.True(PeerProbeGuard.AppIsRunning([name]));
+        }
+    }
+
+    [Fact]
+    public void AppIsRunning_is_false_when_nobody_holds_it_and_the_probe_gives_it_straight_back()
+    {
+        // The negative control for the test above, and the half that matters
+        // for the app: a probe that kept the claim would stop Orbweaver starting.
+        var name = FreshName();
+
+        Assert.False(PeerProbeGuard.AppIsRunning([name]));
+        Assert.Equal(SingleInstanceClaim.Acquired, ClaimFromAnotherThread(name));
+    }
 }
