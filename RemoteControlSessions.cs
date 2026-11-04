@@ -443,6 +443,25 @@ namespace Orbweaver
                     string.IsNullOrWhiteSpace(k.Entry.AgentColor) ? null : k.Entry.AgentColor))
                 .ToList();
 
+        // CB-306: the roster entries this machine's own settings let through.
+        // An entry the far Buddy marked as a session OpenClaw spawned is judged
+        // by OpenClawCliSession.Show with the viewer's three cluster settings,
+        // and dropped when the viewer's gateway names its workspace, because
+        // the agent is already an orb here. An unmarked entry, which is every
+        // ordinary session and everything an older Buddy sends, always passes.
+        // Pure, so the rule is a test rather than a read of the live link.
+        internal static IReadOnlyList<(string Peer, MirrorProtocol.MirrorRosterEntry Entry)> ShownByOpenClawSettings(
+            IReadOnlyList<(string Peer, MirrorProtocol.MirrorRosterEntry Entry)> known,
+            bool openClawEnabled,
+            IReadOnlyCollection<string> gatewayWorkspaces,
+            ClusterMode heartbeats, ClusterMode crons, ClusterMode native) =>
+            known
+                .Where(k => OpenClawCliSession.Show(
+                    OpenClawCliSession.Parse(k.Entry.OpenClawCluster),
+                    OpenClawCliSession.RepresentedByGateway(k.Entry.OpenClawWorkspace, openClawEnabled, gatewayWorkspaces),
+                    heartbeats, crons, native))
+                .ToList();
+
         // Excluded from coverage: reads the live link. What it decides is
         // RemotesFromRoster, which is tested; this is the two lines that fetch
         // and store.
@@ -455,7 +474,12 @@ namespace Orbweaver
                 ? Array.Empty<Remote>()
                 : RemotesFromRoster(
                     OrbweaverSettings.DefaultRemoteControlProfileDir,
-                    client.Known(),
+                    ShownByOpenClawSettings(
+                        client.Known(),
+                        OrbweaverSettings.OpenClawEnabled,
+                        OpenClawSessions.OwnerIndexSnapshot().AgentWorkspaces.Values.ToList(),
+                        OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                        OrbweaverSettings.OpenClawNativeMode),
                     Now());
 
             lock (Gate) _peerRows = rows;

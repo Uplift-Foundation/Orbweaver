@@ -592,7 +592,21 @@ namespace Orbweaver
             // Buddy knows the far one understands the `slash` INPUT flag: an
             // older Buddy sends no routes, and its Commands then mean what they
             // always meant — keystrokes into a pane.
-            [property: JsonPropertyName("routes")] IReadOnlyList<string>? CommandRoutes = null);
+            [property: JsonPropertyName("routes")] IReadOnlyList<string>? CommandRoutes = null,
+
+            // CB-306: set only on a session OpenClaw spawned to run one of its
+            // agents (OpenClawCliSession): which of the gateway's clusters it
+            // belongs to, as OpenClawCliSession.Name words, and the agent
+            // workspace it runs in. The far machine is the only one that can
+            // read the transcript the cluster comes from; the near machine
+            // decides, with its own settings, whether to draw it, and hides it
+            // when its own gateway names that same workspace (the agent is
+            // already an orb there). Trailing and optional like every field
+            // since Status: an older Buddy neither sends nor reads them, and an
+            // ordinary session serialises exactly as before, so its CB-216
+            // roster hash is unchanged.
+            [property: JsonPropertyName("openclaw")] string? OpenClawCluster = null,
+            [property: JsonPropertyName("openclawWorkspace")] string? OpenClawWorkspace = null);
 
         // The portable part of LocalPersona.Persona. Avatar is the already
         // bounded image bytes, never AvatarPath: the latter has meaning only

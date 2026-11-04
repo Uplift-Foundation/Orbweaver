@@ -1309,6 +1309,50 @@ public class SessionScanTests
         Assert.Equal(becomesAnOrb, OrbIds(manager).Contains("blind"));
     }
 
+    // CB-306: a session OpenClaw spawned to run an agent's heartbeat follows
+    // the heartbeat setting, and is not drawn when the connected gateway
+    // already draws that agent. An ordinary session in a project folder, also
+    // started with -p, is the control and is drawn in every case.
+    [AvaloniaTheory]
+    [InlineData(ClusterMode.Hidden, false, false)]
+    [InlineData(ClusterMode.WithChats, false, true)]
+    [InlineData(ClusterMode.OwnShape, false, true)]
+    [InlineData(ClusterMode.WithChats, true, false)]
+    public void AnOpenClawHeartbeatSpawnFollowsTheHeartbeatSettingAndAnOrdinarySessionDoesNot(
+        ClusterMode heartbeats, bool gatewayDrawsIt, bool becomesAnOrb)
+    {
+        var before = (OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawEnabled);
+        using var scratch = new Scratch();
+        var workspace = Path.Combine(scratch.Dir, ".openclaw", "workspace-sample-zara");
+        try
+        {
+            OrbweaverSettings.OpenClawHeartbeatMode = heartbeats;
+            OrbweaverSettings.OpenClawEnabled = gatewayDrawsIt;
+            OpenClawSessions.SetAgentWorkspacesForTests(gatewayDrawsIt
+                ? new Dictionary<string, string> { ["main"] = workspace }
+                : new Dictionary<string, string>());
+
+            var heartbeat = Path.Combine(scratch.Dir, "spawn.jsonl");
+            File.WriteAllText(heartbeat,
+                "{\"type\":\"user\",\"message\":{\"content\":\"A scheduled reminder has been triggered. HEARTBEAT: run the routine.\"}}\n");
+            scratch.Write("spawn", entrypoint: "sdk-cli", cwd: workspace, transcriptPath: heartbeat);
+            scratch.Write("ordinary", cli: "codex", entrypoint: "sdk-cli", cwd: "/Users/user/Source/project",
+                transcriptPath: scratch.WriteTranscript("ordinary"));
+
+            var manager = Scan(scratch);
+
+            Assert.Equal(becomesAnOrb, OrbIds(manager).Contains("spawn"));
+            Assert.Contains("ordinary", OrbIds(manager));
+        }
+        finally
+        {
+            OrbweaverSettings.OpenClawHeartbeatMode = before.OpenClawHeartbeatMode;
+            OrbweaverSettings.OpenClawEnabled = before.OpenClawEnabled;
+            OpenClawSessions.SetAgentWorkspacesForTests(new Dictionary<string, string>());
+            OpenClawCliSession.ForgetForTests();
+        }
+    }
+
     // --- broadcasts that touch every orb ---
 
     [AvaloniaFact]
