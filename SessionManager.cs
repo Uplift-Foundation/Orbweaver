@@ -450,11 +450,12 @@ namespace Orbweaver
         // The status directory, said out loud.
         //
         // It has always come from the temp path, and CLAUDE.md documents
-        // TMPDIR=<dir> as the way to give a second instance its own fake
-        // sessions — which still works, because that is what Path.GetTempPath
-        // reads. This overload only makes the same seam nameable, so a test can
-        // hand over a scratch directory without reaching for an environment
-        // variable that the rest of the process is also reading.
+        // ORBWEAVER_STATUS_ROOT=<dir> as the way to give a second instance its
+        // own fake sessions (TMPDIR=<dir> until CB-306, when the per-user
+        // directory began outranking it — see StatusDirectory.Root). This
+        // overload only makes the same seam nameable, so a test can hand over
+        // a scratch directory without reaching for an environment variable
+        // that the rest of the process is also reading.
         // jobListing is the second seam, and the reason it is a constructor
         // parameter rather than a call is that the real one shells out to
         // `claude agents --json`. Every rule that consults it is already pure

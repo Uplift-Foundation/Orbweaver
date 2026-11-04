@@ -47,7 +47,8 @@ public class HookScriptPs1Tests
         string payloadJson,
         string tempDir,
         IDictionary<string, string>? extraEnv = null,
-        TimeSpan? deadline = null)
+        TimeSpan? deadline = null,
+        IEnumerable<string>? unsetEnv = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -84,10 +85,23 @@ public class HookScriptPs1Tests
         psi.Environment.Remove("CLAUDE_CODE_ENTRYPOINT");
         psi.Environment.Remove("CLAUDE_CODE_HOST_SESSION_ID");
 
+        // CB-306: the script honours ORBWEAVER_STATUS_ROOT ahead of -TempDir,
+        // the way the app's StatusDirectory.Root does, and TestBootstrap
+        // exports that variable for this whole process pointed at its own
+        // scratch root. Pinned to -TempDir here so each test's file lands
+        // where that test looks; the tests about the order itself override
+        // or unset it.
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tempDir;
+
         if (extraEnv is not null)
         {
             foreach (var (key, value) in extraEnv)
                 psi.Environment[key] = value;
+        }
+        if (unsetEnv is not null)
+        {
+            foreach (var name in unsetEnv)
+                psi.Environment.Remove(name);
         }
 
         using var process = Process.Start(psi)
@@ -212,6 +226,39 @@ public class HookScriptPs1Tests
 
             AssertSilentSuccess(result);
         }
+    }
+
+    // CB-306: ORBWEAVER_STATUS_ROOT outranks the baked -TempDir, in the same
+    // order the app's StatusDirectory.Root uses, so a sandboxed app and a
+    // sandboxed hook land in one place. The negative control is the shape
+    // every Windows install actually has: no variable, -TempDir baked by the
+    // installer, and the file where it always was. RunHook pins the variable
+    // for every other test, so that control is the one place the pin is
+    // removed and the baked argument is shown to still carry the file.
+    private static void StatusRootOutranksTheBakedTempDirCase(string exe)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("cb-hook-ps1-tempdir-").FullName;
+        var root = Directory.CreateTempSubdirectory("cb-hook-ps1-root-").FullName;
+        var payload = Payload(new { session_id = "root-wins", cwd = "C:\\proj", transcript_path = "" });
+
+        var result = RunHook(exe, "claude", "idle", payload, tempDir,
+            extraEnv: new Dictionary<string, string> { ["ORBWEAVER_STATUS_ROOT"] = root });
+
+        AssertSilentSuccess(result);
+        Assert.True(File.Exists(StatusFile(root, "root-wins")), "the file belongs under ORBWEAVER_STATUS_ROOT");
+        Assert.False(File.Exists(StatusFile(tempDir, "root-wins")), "and not under -TempDir");
+    }
+
+    private static void WithoutAStatusRootTheBakedTempDirIsUsedCase(string exe)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("cb-hook-ps1-tempdir-").FullName;
+        var payload = Payload(new { session_id = "tempdir-wins", cwd = "C:\\proj", transcript_path = "" });
+
+        var result = RunHook(exe, "claude", "idle", payload, tempDir,
+            unsetEnv: new[] { "ORBWEAVER_STATUS_ROOT" });
+
+        AssertSilentSuccess(result);
+        Assert.True(File.Exists(StatusFile(tempDir, "tempdir-wins")), "with no override the baked -TempDir carries the file");
     }
 
     private static void EndedStateDeletesTheStatusFileAndExitsSilentlyCase(string exe)
@@ -444,6 +491,18 @@ public class HookScriptPs1Tests
 
     [PwshFact]
     public void HookAlwaysExitsZeroWithNoOutput_ForEveryLiveStateAndAgent_Pwsh() => HookAlwaysExitsZeroWithNoOutput_ForEveryLiveStateAndAgentCase("pwsh");
+
+    [WindowsPowerShellFact]
+    public void StatusRootOutranksTheBakedTempDir_Powershell51() => StatusRootOutranksTheBakedTempDirCase("powershell");
+
+    [PwshFact]
+    public void StatusRootOutranksTheBakedTempDir_Pwsh() => StatusRootOutranksTheBakedTempDirCase("pwsh");
+
+    [WindowsPowerShellFact]
+    public void WithoutAStatusRootTheBakedTempDirIsUsed_Powershell51() => WithoutAStatusRootTheBakedTempDirIsUsedCase("powershell");
+
+    [PwshFact]
+    public void WithoutAStatusRootTheBakedTempDirIsUsed_Pwsh() => WithoutAStatusRootTheBakedTempDirIsUsedCase("pwsh");
 
     [WindowsPowerShellFact]
     public void EndedStateDeletesTheStatusFileAndExitsSilently_Powershell51() => EndedStateDeletesTheStatusFileAndExitsSilentlyCase("powershell");

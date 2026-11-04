@@ -73,9 +73,35 @@ TRANSCRIPT=$(field transcript_path)
 [ -n "$TRANSCRIPT" ] || TRANSCRIPT=$(field transcriptPath)
 [ -n "$SESSION_ID" ] || SESSION_ID="unknown"
 
-# ${TMPDIR} is what .NET's Path.GetTempPath() returns on macOS, so the app
-# and this script agree on the folder (both are per-user).
-DIR="${TMPDIR:-/tmp/}"
+# Where the status file goes. The app resolves the same way, in the same
+# order (StatusDirectory.Root), and the two have to keep agreeing:
+#
+#   1. ORBWEAVER_STATUS_ROOT — the test seam, and the only way to send one
+#      hook somewhere private without moving TMPDIR for everything else.
+#   2. The per-user temp directory macOS gives this user, asked of the C
+#      library: `getconf DARWIN_USER_TEMP_DIR` is confstr(3), the same call
+#      the app makes. It reads no environment variable, so a parent that
+#      pointed TMPDIR somewhere private cannot move it.
+#   3. TMPDIR, then /tmp — Linux, or a getconf that could not answer.
+#
+# TMPDIR came first until CB-306, "because that is what Path.GetTempPath()
+# returns" — true in a login shell, false under OpenClaw. Its gateway runs
+# with TMPDIR=~/.openclaw/tmp, and every Claude Code session it spawns
+# inherits it — as does a tmux server started from one, and every session
+# in that tmux. Those hooks wrote to ~/.openclaw/tmp/orbweaver while the app
+# read /var/folders/.../T/orbweaver, and the mini served no sessions to any
+# peer with five alive. Nothing failed; the two halves were looking in
+# different places, which is the launchd story in StatusDirectory.cs again
+# from the other side. The per-user directory carries a per-boot token, so
+# it is computed on every call rather than baked in by the installer the way
+# Windows bakes -TempDir. It must be an existing directory to count: a
+# getconf that answers with something else is treated as no answer.
+DIR="${ORBWEAVER_STATUS_ROOT:-}"
+if [ -z "$DIR" ]; then
+    DIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)
+    [ -n "$DIR" ] && [ -d "$DIR" ] || DIR=""
+fi
+[ -n "$DIR" ] || DIR="${TMPDIR:-/tmp/}"
 DIR="${DIR%/}/orbweaver"
 
 # Whether to give a session a colour when it has none.

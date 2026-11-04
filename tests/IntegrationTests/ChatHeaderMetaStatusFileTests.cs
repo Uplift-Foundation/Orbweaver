@@ -56,6 +56,7 @@ public class ChatHeaderMetaStatusFileTests
         psi.ArgumentList.Add("claude");
         psi.ArgumentList.Add(state);
         psi.Environment["TMPDIR"] = tmpDir;
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tmpDir;
         psi.Environment.Remove("GROK_SESSION_ID");
         psi.Environment.Remove("GROK_HOOK_EVENT");
         psi.Environment.Remove("GROK_WORKSPACE_ROOT");

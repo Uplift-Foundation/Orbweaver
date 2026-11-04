@@ -40,9 +40,17 @@ public class HookScriptShTests
     // Runs the real script as a subprocess. extraEnv is layered on top of a
     // full copy of this process's environment (ProcessStartInfo.Environment
     // starts pre-populated with it) so PATH, HOME etc. still resolve — only
-    // TMPDIR and whatever extraEnv names are overridden, exactly like a real
-    // hook invocation only ever has TMPDIR (and sometimes CODEX_HOME)
-    // pointed somewhere specific by its caller.
+    // TMPDIR, ORBWEAVER_STATUS_ROOT and whatever extraEnv names are
+    // overridden, and unsetEnv names removed last, for the tests about the
+    // resolution order itself.
+    //
+    // ORBWEAVER_STATUS_ROOT is set to the scratch directory, not merely
+    // TMPDIR, since CB-306: the hook asks the C library for the per-user temp
+    // directory ahead of TMPDIR, and that answer is the directory the
+    // developer's running Orbweaver is watching. TestBootstrap already exports
+    // the variable for this process, pointed at its own scratch root, and the
+    // hook would inherit that — pinning it here is what makes each test's
+    // file land where that test looks.
     //
     // Grok injects GROK_SESSION_ID / GROK_HOOK_EVENT into every child, and
     // the hook treats those as stronger than argv. A test run from inside a
@@ -54,7 +62,8 @@ public class HookScriptShTests
         string state,
         string payloadJson,
         string tmpDir,
-        IDictionary<string, string>? extraEnv = null)
+        IDictionary<string, string>? extraEnv = null,
+        IEnumerable<string>? unsetEnv = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -68,6 +77,7 @@ public class HookScriptShTests
         psi.ArgumentList.Add(agent);
         psi.ArgumentList.Add(state);
         psi.Environment["TMPDIR"] = tmpDir;
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tmpDir;
         psi.Environment.Remove("GROK_SESSION_ID");
         psi.Environment.Remove("GROK_HOOK_EVENT");
         psi.Environment.Remove("GROK_WORKSPACE_ROOT");
@@ -78,6 +88,11 @@ public class HookScriptShTests
         {
             foreach (var (key, value) in extraEnv)
                 psi.Environment[key] = value;
+        }
+        if (unsetEnv is not null)
+        {
+            foreach (var name in unsetEnv)
+                psi.Environment.Remove(name);
         }
 
         using var process = Process.Start(psi)
@@ -657,5 +672,112 @@ public class HookScriptShTests
 
         Assert.Contains("\"host_session_id\":\"local_abcde\"", status);
         Assert.Equal("local_abcde", JsonSerializer.Deserialize<SessionStatus>(status)!.HostSessionId);
+    }
+
+    // CB-306: where the hook writes, and why it is no longer TMPDIR.
+    //
+    // OpenClaw runs its gateway with TMPDIR=~/.openclaw/tmp and every Claude
+    // Code session it spawns inherits that — so did a tmux server started from
+    // one, and every session inside it. The hook followed TMPDIR; the app read
+    // the login session's /var/folders/.../T/; the mini served no sessions to
+    // any peer with five alive. The hook now asks the C library for the
+    // per-user directory the way the app does, ahead of TMPDIR, and
+    // ORBWEAVER_STATUS_ROOT outranks both — the seam RunHook sets for every
+    // other test here, and the reason none of them touches the real directory.
+    //
+    // The per-user arm is driven through a fake `getconf` placed ahead of the
+    // real one on PATH, because that is the only way to exercise it without
+    // writing into the developer's live status directory: a real getconf
+    // answers with the directory the running Orbweaver is watching, and a test
+    // that wrote there would draw an orb.
+
+    [UnixFact]
+    public void StatusRootOutranksTmpdir()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-tmpdir-");
+        var root = Directory.CreateTempSubdirectory("cb-hook-root-");
+        var payload = Payload(new { session_id = "root-wins", cwd = "/tmp/proj", transcript_path = "" });
+
+        var result = RunHook("claude", "idle", payload, tmp.FullName,
+            extraEnv: new Dictionary<string, string> { ["ORBWEAVER_STATUS_ROOT"] = root.FullName });
+
+        AssertSilentSuccess(result);
+        Assert.True(File.Exists(StatusFile(root.FullName, "root-wins")), "the file belongs under ORBWEAVER_STATUS_ROOT");
+        Assert.False(File.Exists(StatusFile(tmp.FullName, "root-wins")), "and not under TMPDIR");
+    }
+
+    [UnixFact]
+    public void ThePerUserTempDirectoryOutranksTmpdir_WhenNoStatusRootIsSet()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-tmpdir-");
+        var perUser = Directory.CreateTempSubdirectory("cb-hook-peruser-");
+        var payload = Payload(new { session_id = "per-user-wins", cwd = "/tmp/proj", transcript_path = "" });
+
+        // getconf prints the directory with a trailing slash, as the real one
+        // does; the hook is expected to cope with it.
+        var result = RunHook("claude", "idle", payload, tmp.FullName,
+            extraEnv: FakeGetconf(perUser.FullName + "/", exitCode: 0),
+            unsetEnv: new[] { "ORBWEAVER_STATUS_ROOT" });
+
+        AssertSilentSuccess(result);
+        Assert.True(File.Exists(StatusFile(perUser.FullName, "per-user-wins")), "the file belongs under the per-user temp directory");
+        Assert.False(File.Exists(StatusFile(tmp.FullName, "per-user-wins")), "and not under TMPDIR");
+    }
+
+    // Negative controls for the arm above, and the Linux shape: a getconf
+    // that cannot answer, or that names something that is not a directory,
+    // leaves TMPDIR in charge exactly as before CB-306 — and says nothing on
+    // stderr while doing it, which AssertSilentSuccess checks.
+    [UnixFact]
+    public void AGetconfWithNoAnswer_LeavesTmpdirInCharge()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-tmpdir-");
+        var payload = Payload(new { session_id = "no-answer", cwd = "/tmp/proj", transcript_path = "" });
+
+        var result = RunHook("claude", "idle", payload, tmp.FullName,
+            extraEnv: FakeGetconf("", exitCode: 1),
+            unsetEnv: new[] { "ORBWEAVER_STATUS_ROOT" });
+
+        AssertSilentSuccess(result);
+        Assert.True(File.Exists(StatusFile(tmp.FullName, "no-answer")), "with no per-user answer the file belongs under TMPDIR");
+    }
+
+    [UnixFact]
+    public void AGetconfNamingAMissingDirectory_LeavesTmpdirInCharge()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-tmpdir-");
+        var missing = Path.Combine(tmp.FullName, "never-created-" + Guid.NewGuid().ToString("N")) + "/";
+        var payload = Payload(new { session_id = "not-a-dir", cwd = "/tmp/proj", transcript_path = "" });
+
+        var result = RunHook("claude", "idle", payload, tmp.FullName,
+            extraEnv: FakeGetconf(missing, exitCode: 0),
+            unsetEnv: new[] { "ORBWEAVER_STATUS_ROOT" });
+
+        AssertSilentSuccess(result);
+        Assert.True(File.Exists(StatusFile(tmp.FullName, "not-a-dir")), "an answer that is not a directory counts as no answer");
+        Assert.False(Directory.Exists(missing), "and the hook must not have created it");
+    }
+
+    // A `getconf` ahead of the real one on PATH that answers
+    // DARWIN_USER_TEMP_DIR with `answer` and `exitCode`, and defers every
+    // other question to /usr/bin/getconf. Returns the PATH override to pass as
+    // extraEnv.
+    private static Dictionary<string, string> FakeGetconf(string answer, int exitCode)
+    {
+        var bin = Directory.CreateTempSubdirectory("cb-hook-fakebin-").FullName;
+        var script = Path.Combine(bin, "getconf");
+        File.WriteAllText(script,
+            "#!/bin/sh\n"
+            + "if [ \"$1\" = DARWIN_USER_TEMP_DIR ]; then printf '%s' '" + answer + "'; exit " + exitCode + "; fi\n"
+            + "exec /usr/bin/getconf \"$@\"\n");
+        File.SetUnixFileMode(script,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+
+        return new Dictionary<string, string>
+        {
+            ["PATH"] = bin + ":" + (Environment.GetEnvironmentVariable("PATH") ?? "/usr/bin:/bin"),
+        };
     }
 }

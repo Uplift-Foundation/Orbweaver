@@ -797,7 +797,7 @@ Details worth knowing:
   rebuilt on next launch.
 
 It works by watching a small folder in the OS temp directory
-(`%TEMP%\orbweaver\` on Windows, `$TMPDIR/orbweaver/` on macOS) that
+(`%TEMP%\orbweaver\` on Windows, `$(getconf DARWIN_USER_TEMP_DIR)/orbweaver/` on macOS) that
 fills up with one JSON status file per session — `<session_id>.txt`,
 containing `{"state": "...", "cwd": "...", "title": "...", "color": "...", ...}`
 — written by a tiny script that Claude Code hooks invoke:
@@ -2452,9 +2452,13 @@ To undo it by hand, delete the `"crossSessionInbound"` line from that `settings.
 ### Platform notes
 
 **macOS**: the hooks call `bash` with the script's absolute path — nothing
-else needed. The script writes to `$TMPDIR/orbweaver/`, which is the
-same per-user folder .NET's `Path.GetTempPath()` returns, so the app and
-hooks agree automatically. No `jq` dependency; the script extracts
+else needed. The script writes to `orbweaver/` under the per-user temp
+directory the C library reports (`getconf DARWIN_USER_TEMP_DIR`, the same
+`confstr` the app calls), so the app and hooks agree whatever `TMPDIR` the
+session was launched with — OpenClaw, for one, gives every session it spawns
+a private `TMPDIR`, and the hook used to follow it while the app did not.
+`ORBWEAVER_STATUS_ROOT` overrides both halves for a sandbox. No `jq`
+dependency; the script extracts
 `session_id`/`cwd`/`transcript_path` with `sed`, and the chat name and color
 with `grep`.
 
