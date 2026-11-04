@@ -236,4 +236,40 @@ public class MirrorSlashHostTests
         Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
         Assert.Empty(edges.Posted);
     }
+
+    // --- GatedPost (CB-306's product-readiness round) ----------------------
+
+    [Fact]
+    public async Task GatedPostRefusesWithTheToggleSentenceWhenCommandsAreOff()
+    {
+        var calls = 0;
+        var post = MirrorSlashHost.GatedPost(() => false, _ => BridgeId,
+            (_, _, _) => { calls++; return Task.FromResult<string?>(null); });
+
+        Assert.Equal(LocalCliChatSession.BridgeCommandsOffHint,
+            await post(Status(), "set_color", new JsonObject()));
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task GatedPostRefusesASessionWithNoBridge()
+    {
+        var calls = 0;
+        var post = MirrorSlashHost.GatedPost(() => true, _ => null,
+            (_, _, _) => { calls++; return Task.FromResult<string?>(null); });
+
+        Assert.Equal(MirrorSlashHost.NoBridgeReason, await post(Status(), "set_color", new JsonObject()));
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task GatedPostPostsToTheBridgeAndPassesTheAnswerBack()
+    {
+        string? sentTo = null;
+        var post = MirrorSlashHost.GatedPost(() => true, _ => BridgeId,
+            (_, id, _) => { sentTo = id; return Task.FromResult<string?>("the far side said no"); });
+
+        Assert.Equal("the far side said no", await post(Status(), "set_color", new JsonObject()));
+        Assert.Equal(BridgeId, sentTo);
+    }
 }

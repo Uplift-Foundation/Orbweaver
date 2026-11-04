@@ -400,22 +400,15 @@ namespace Orbweaver
                 // scans off-thread and answers with what it already has.
                 status => SlashCatalogueCache.Shared.Peek(status.Source, status.Cwd),
                 (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
-                async (status, subtype, request) =>
-                {
-                    if (!OrbweaverSettings.ClaudeCloudEnabled)
-                        return LocalCliChatSession.CloudOffControlHint;
-
-                    var bridgeId = LocalSlashChannel.BridgeIdFor(
+                MirrorSlashHost.GatedPost(
+                    () => OrbweaverSettings.BridgeCommandsEnabled,
+                    status => LocalSlashChannel.BridgeIdFor(
                         status.IsDesktopHosted ? status.BridgeSessionId : null,
-                        status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId);
-                    if (bridgeId is null) return "this session has no Remote Control bridge";
-
-                    return await CloudTurnSender.PostControlAsync(
+                        status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
+                    (status, bridgeId, request) => CloudTurnSender.PostControlAsync(
                         cloudApi,
                         CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
-                        CredentialBudget.Unmeasured, bridgeId, request, System.Threading.CancellationToken.None)
-                        .ConfigureAwait(false);
-                }));
+                        CredentialBudget.Unmeasured, bridgeId, request, System.Threading.CancellationToken.None))));
 
             return new(
                 sendFrame,

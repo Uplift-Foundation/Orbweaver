@@ -90,8 +90,13 @@ namespace Orbweaver
         internal const string CloudNoColorReason =
             "a cloud session has no prompt bar to colour";
 
+        // A job reached only over its peer socket is one whose registry row
+        // names no Remote Control bridge (CB-306's product-readiness round).
+        // Said as that, with the two ways out, rather than as a fact about
+        // sockets the person cannot act on.
         internal const string PeerSocketReason =
-            "this job is reached over its messaging socket, which carries messages only";
+            "this job has no Remote Control connection, so slash commands can't reach it. "
+            + "Start it with Remote Control on (claude --remote-control), or from a terminal pane, to run them";
 
         // Measured 2026-11-03: the command's control-request subtype, where one
         // exists. `/permissions` here means the mode form only.

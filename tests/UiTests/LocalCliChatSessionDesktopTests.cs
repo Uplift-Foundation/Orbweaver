@@ -116,6 +116,9 @@ public class LocalCliChatSessionDesktopTests : IDisposable
         internal FakeCredentials Credentials { get; init; } = null!;
         internal List<string?> RootsAsked { get; } = new();
         internal bool CloudOn = true;
+        // Off unless a case turns it on, so the cases above keep meaning
+        // "cloud off is everything off" (CB-306's product-readiness round).
+        internal bool CommandsOn;
         internal List<SessionStatus> DesktopFocused { get; } = new();
         internal List<(SessionStatus Status, string Id)> TerminalFocused { get; } = new();
         internal List<TimeSpan> Waits { get; } = new();
@@ -142,6 +145,7 @@ public class LocalCliChatSessionDesktopTests : IDisposable
                 }
                 : null,
             cloudEnabled: () => rig.CloudOn,
+            bridgeCommandsEnabled: () => rig.CommandsOn,
             focusDesktop: s =>
             {
                 rig.DesktopFocused.Add(s);
@@ -565,6 +569,28 @@ public class LocalCliChatSessionDesktopTests : IDisposable
         var outcome = await rig.Session.SendAsync("hello");
 
         Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Empty(rig.RootsAsked);
+        Assert.Contains(rig.Session.History, t => t.Text == "Not sent: " + LocalCliChatSession.DesktopCloudOffHint);
+    }
+
+    // Cloud off and commands on (the fresh-install default): the box is up
+    // for commands, says so, and a plain message is still refused with the
+    // cloud sentence before any credential is read.
+    [AvaloniaFact]
+    public async Task WithCloudOffAndCommandsOnTheBoxStaysUpButAMessageIsStillRefused()
+    {
+        var rig = Build(Status(""));
+        rig.CloudOn = false;
+        rig.CommandsOn = true;
+        rig.Session.UpdateStatus(Status(""));
+
+        Assert.False(rig.Session.IsReadOnly);
+        Assert.Equal(LocalCliChatSession.DesktopCommandsOnlyHint, rig.Session.ComposerHint);
+
+        var outcome = await rig.Session.SendAsync("hello");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Empty(rig.Api.Requests);
         Assert.Empty(rig.RootsAsked);
         Assert.Contains(rig.Session.History, t => t.Text == "Not sent: " + LocalCliChatSession.DesktopCloudOffHint);
     }

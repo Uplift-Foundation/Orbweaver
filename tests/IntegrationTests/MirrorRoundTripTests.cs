@@ -946,6 +946,50 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Empty(harness.Typed);
     }
 
+    // CB-306's product-readiness round: the far side's gate is its own
+    // bridge-commands setting, through the real GatedPost the live server
+    // wires. On, the command is posted to the job's bridge; off, it is refused
+    // across the link with the sentence naming the toggle, and nothing is
+    // posted. Only the post itself is a fake.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheFarSideGatesControlCommandsOnItsOwnBridgeCommandsSetting(bool enabled)
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var posted = new List<(string Bridge, string Subtype)>();
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(
+                () => enabled,
+                _ => bridge,
+                (_, id, request) =>
+                {
+                    posted.Add((id, (string?)request["subtype"] ?? ""));
+                    return Task.FromResult<string?>(null);
+                })));
+        harness.AddSession("job-hunter", WriteTranscript("gate-" + enabled + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        if (enabled)
+        {
+            Assert.Equal(MirrorProtocol.ViaControl, outcome.Via);
+            Assert.Equal((bridge, "set_color"), Assert.Single(posted));
+        }
+        else
+        {
+            Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+            Assert.Equal(LocalCliChatSession.BridgeCommandsOffHint, outcome.Why);
+            Assert.Empty(posted);
+        }
+        Assert.Empty(harness.Typed);
+    }
+
     // The roster carries the whole catalogue: a catalogue past the old 120-name
     // cut still lists its last name, so the near side knows it as a command.
     [Fact]

@@ -81,6 +81,25 @@ namespace Orbweaver
             }
         }
 
+        // The PostControl seam the live server wires, with its gates in front of
+        // the post: the bridge-commands setting on *this* machine (CB-306's
+        // product-readiness round — the far side posts with its own login, so
+        // its own toggle is the one that decides), then a bridge to post to.
+        // Lifted out of RemoteMirrorServer.LiveSeams so the round-trip harness
+        // drives the real gate with only the post itself faked.
+        internal static Func<SessionStatus, string, JsonObject, Task<string?>> GatedPost(
+            Func<bool> commandsEnabled,
+            Func<SessionStatus, string?> bridgeIdFor,
+            Func<SessionStatus, string, JsonObject, Task<string?>> post) =>
+            async (status, _, request) =>
+            {
+                if (!commandsEnabled()) return LocalCliChatSession.BridgeCommandsOffHint;
+                if (bridgeIdFor(status) is not { } id) return NoBridgeReason;
+                return await post(status, id, request).ConfigureAwait(false);
+            };
+
+        internal const string NoBridgeReason = "this session has no Remote Control bridge";
+
         private static RemoteMirrorServer.SlashOutcome Refused(string? reason) =>
             new(MirrorProtocol.ViaRefused, reason);
     }

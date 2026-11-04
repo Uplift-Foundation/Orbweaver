@@ -346,6 +346,15 @@ public class ChatPanelScreenshots : IDisposable
         WithDesktopSession(Bridge, new StubApi(200), cloudOn: true, "chat-panel-desktop-bridged.png", _ => { });
     }
 
+    // CB-306's product-readiness round: the same bridged chat on a fresh
+    // install — "Show cloud sessions" off, slash commands on by default — keeps
+    // its composer, and the watermark says it takes the five commands only.
+    [AvaloniaFact]
+    public void ABridgedDesktopSessionWithCloudOffOffersCommandsOnly()
+    {
+        WithDesktopSession(Bridge, new StubApi(200), cloudOn: false, "chat-panel-desktop-commands-only.png", _ => { });
+    }
+
     // CB-266: a send the API refused (409, the chat's bridge has ended). The
     // text stays unsent, no bubble is drawn, and the composer gives way to the
     // reason plus the link.

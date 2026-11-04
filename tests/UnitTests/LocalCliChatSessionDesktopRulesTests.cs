@@ -47,6 +47,14 @@ public class LocalCliChatSessionDesktopRulesTests
     public void ABridgedChatWithCloudOnAndNoRefusalIsSendable() =>
         Assert.False(LocalCliChatSession.DesktopReadOnly(Status(), null, cloudEnabled: true));
 
+    // CB-306: commands on keeps the box with cloud off; a refusal still wins.
+    [Fact]
+    public void ABridgedChatWithCloudOffButCommandsOnKeepsTheBoxUnlessRefused()
+    {
+        Assert.False(LocalCliChatSession.DesktopReadOnly(Status(), null, cloudEnabled: false, bridgeCommands: true));
+        Assert.True(LocalCliChatSession.DesktopReadOnly(Status(), CloudSendability.NotPermitted, cloudEnabled: false, bridgeCommands: true));
+    }
+
     [Theory]
     [InlineData("Ended")]
     [InlineData("Gone")]
@@ -81,6 +89,19 @@ public class LocalCliChatSessionDesktopRulesTests
         Assert.Equal(LocalCliChatSession.DesktopCloudOffHint, hint);
         Assert.Contains("Show cloud sessions", hint);
         Assert.Contains("login stored on this machine", hint);
+    }
+
+    // CB-306's product-readiness round: with commands on, cloud off says the
+    // box takes commands only and names what turning cloud on would add.
+    [Fact]
+    public void CloudOffWithCommandsOnSaysCommandsOnly()
+    {
+        var hint = LocalCliChatSession.DesktopComposerHintFor(
+            Status(), null, cloudEnabled: false, replyEnabled: true, bridgeCommands: true);
+
+        Assert.Equal(LocalCliChatSession.DesktopCommandsOnlyHint, hint);
+        foreach (var name in new[] { "/color", "/rename", "/model", "/permissions", "/think", "Show cloud sessions" })
+            Assert.Contains(name, hint);
     }
 
     [Fact]

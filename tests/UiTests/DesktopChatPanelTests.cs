@@ -192,14 +192,18 @@ public class DesktopChatPanelTests : IDisposable
         return status;
     }
 
-    private LocalCliChatSession OpenWith(SessionStatus status, ICloudApi? api, Func<bool> cloudOn)
+    // commandsOn defaults to off so the cases written before CB-306's
+    // product-readiness round keep meaning "everything off" when cloud is off.
+    private LocalCliChatSession OpenWith(SessionStatus status, ICloudApi? api, Func<bool> cloudOn,
+        Func<bool>? commandsOn = null)
     {
         var id = "desktop-" + Guid.NewGuid();
         _toClean.Add(id);
         var session = new LocalCliChatSession(id, status,
             cloudApi: api,
             credentialsFor: _ => new FakeCredentials(),
-            cloudEnabled: cloudOn)
+            cloudEnabled: cloudOn,
+            bridgeCommandsEnabled: commandsOn ?? (() => false))
         {
             ReadBudget = TestBudgets.AlwaysAnswers,
             Delay = (_, _) => Task.CompletedTask,
@@ -274,6 +278,19 @@ public class DesktopChatPanelTests : IDisposable
         Assert.Equal(LocalCliChatSession.DesktopCloudOffHint, Find<TextBlock>("ReadOnlyNote").Text);
         Assert.True(Find<TextBlock>("ReadOnlyLink").IsVisible);
         Assert.False(Find<TextBlock>("SessionLink").IsVisible);
+    }
+
+    // CB-306's product-readiness round: with the bridge-commands setting on
+    // (its default) and cloud off, the box stays up for the five commands and
+    // its watermark says so, rather than the panel going read-only.
+    [AvaloniaFact]
+    public void ABridgedChatWithCloudOffButCommandsOnKeepsTheBoxForCommands()
+    {
+        OpenWith(Bridged(Transcript()), Accepting(), () => false, () => true);
+
+        Assert.True(Find<Grid>("ComposerRow").IsVisible);
+        Assert.False(Find<Control>("ReadOnlyBox").IsVisible);
+        Assert.Equal(LocalCliChatSession.DesktopCommandsOnlyHint, Find<TextBox>("Input").Watermark);
     }
 
     // The flip in both directions, on the one bound panel: no rebinding, only
