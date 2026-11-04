@@ -152,7 +152,7 @@ namespace Orbweaver
 
                 try
                 {
-                    if (!_proc.HasExited) _proc.Kill(entireProcessTree: true);
+                    if (!_proc.HasExited) ProcessTreeKill.Kill(_proc);
                 }
                 catch { /* already gone, or the object is disposed — both fine here */ }
             }

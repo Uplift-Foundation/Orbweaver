@@ -629,7 +629,7 @@ namespace Orbweaver
 
                 if (!p.WaitForExit(5000))
                 {
-                    try { p.Kill(entireProcessTree: true); } catch { }
+                    try { ProcessTreeKill.Kill(p); } catch { }
                     return false;
                 }
 
@@ -1381,7 +1381,7 @@ namespace Orbweaver
                 // would otherwise hang this click forever.
                 if (!process.WaitForExit(timeoutMs))
                 {
-                    try { process.Kill(true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     return false;
                 }
 

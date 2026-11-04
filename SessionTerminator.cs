@@ -110,7 +110,7 @@ namespace Orbweaver
                     // line. Inferred from the code and a macOS process tree,
                     // **not reproduced on Windows**; see SessionDependents.
                     using var process = System.Diagnostics.Process.GetProcessById(pid);
-                    process.Kill(entireProcessTree: true);
+                    ProcessTreeKill.Kill(process);
                     return;
                 }
 

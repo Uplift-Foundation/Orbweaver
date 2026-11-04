@@ -196,7 +196,7 @@ namespace Orbweaver
             // and on Windows it catches the case where taskkill is unavailable.
             try
             {
-                if (!victim.HasExited) victim.Kill(entireProcessTree: true);
+                if (!victim.HasExited) ProcessTreeKill.Kill(victim);
             }
             catch { /* already gone, or the object is disposed — both fine here */ }
         }
@@ -430,7 +430,7 @@ namespace Orbweaver
                 // the UI with it.
                 if (!process.WaitForExit(10000))
                 {
-                    try { process.Kill(entireProcessTree: true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     Console.Error.WriteLine(
                         $"{Brand.DisplayName}: the speak voices command took too long and was stopped");
                     return found;

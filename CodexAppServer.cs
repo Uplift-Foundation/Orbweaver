@@ -304,7 +304,7 @@ namespace Orbweaver
             {
                 if (process is not null)
                 {
-                    try { process.Kill(entireProcessTree: true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     process.Dispose();
                 }
             }
