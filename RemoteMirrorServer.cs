@@ -712,6 +712,11 @@ namespace Orbweaver
             // Every entry, offered by either path, says whose team it is in.
             entries = WithTeamFields(entries, sessions);
 
+            // CB-306: and whether OpenClaw spawned it, for the near side's own
+            // cluster settings to judge.
+            entries = WithOpenClawFields(entries, sessions,
+                OpenClawSessions.OwnerIndexSnapshot().AgentWorkspaces.Values.ToList());
+
             // CB-300: a live session the roster never named leaves no trace in
             // the loops above — it is not in `wanted`, so it is never looked up,
             // never unresolved, never logged. Say so, on the complete roster
@@ -1138,6 +1143,32 @@ namespace Orbweaver
         // was not offered. An entry with no team, or whose lead is not here,
         // is returned unchanged, so a roster with no teams serialises (and
         // hashes) exactly as it did before.
+        // CB-306: stamps OpenClawCluster and OpenClawWorkspace on every entry
+        // whose session OpenClaw spawned, by route, as WithTeamFields stamps the
+        // team. knownWorkspaces is this machine's own gateway's agents.list, and
+        // cluster is the transcript read, a seam so a test needs no file.
+        internal static List<MirrorProtocol.MirrorRosterEntry> WithOpenClawFields(
+            List<MirrorProtocol.MirrorRosterEntry> entries,
+            IReadOnlyList<(string SessionId, SessionStatus Status)> sessions,
+            IReadOnlyCollection<string> knownWorkspaces,
+            Func<SessionStatus, IEnumerable<string>, OrbCluster?>? cluster = null)
+        {
+            var byRoute = new Dictionary<string, SessionStatus>(StringComparer.Ordinal);
+            foreach (var (sessionId, status) in sessions) byRoute[RouteFor(sessionId)] = status;
+
+            return entries.Select(entry =>
+            {
+                if (entry.Route is null || !byRoute.TryGetValue(entry.Route, out var status)) return entry;
+                if ((cluster ?? OpenClawCliSession.ClusterOf)(status, knownWorkspaces) is not { } c) return entry;
+
+                return entry with
+                {
+                    OpenClawCluster = OpenClawCliSession.Name(c),
+                    OpenClawWorkspace = status.Cwd.TrimEnd('/', '\\')
+                };
+            }).ToList();
+        }
+
         internal static List<MirrorProtocol.MirrorRosterEntry> WithTeamFields(
             List<MirrorProtocol.MirrorRosterEntry> entries,
             IReadOnlyList<(string SessionId, SessionStatus Status)> sessions)

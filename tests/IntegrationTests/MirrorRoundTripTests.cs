@@ -1823,6 +1823,61 @@ public class MirrorRoundTripTests : IDisposable
             harness.Client.StateFor("job-hunter").Availability);
     }
 
+    // CB-306: a Claude Code session OpenClaw spawned to run an agent's
+    // heartbeat crosses the link marked as one, and the near machine's own
+    // settings decide whether it is drawn. The ordinary session beside it is
+    // the negative control: it is unmarked and passes every setting.
+    [Fact]
+    public async Task AnOpenClawHeartbeatSpawnCrossesMarkedAndTheViewersSettingsDecide()
+    {
+        var harness = new Harness(_dir);
+        var workspace = Path.Combine(_dir, ".openclaw", "workspace-sample-zara");
+        harness.AddSession("sid:0000aaaa", WriteTranscript("heartbeat.jsonl", new[]
+        {
+            "{\"type\":\"queue-operation\",\"operation\":\"enqueue\"}",
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":"
+                + "\"A scheduled reminder has been triggered. The reminder content is:\\n\\nHEARTBEAT: run the routine.\"}}",
+            "{\"type\":\"assistant\",\"uuid\":\"a1\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"HEARTBEAT_OK\"}]}}"
+        }), s =>
+        {
+            s.Entrypoint = OpenClawCliSession.SdkEntrypoint;
+            s.Cwd = workspace;
+            s.TmuxPane = "";
+        });
+        harness.AddSession("job-hunter", WriteTranscript("ordinary.jsonl", Conversation(2)));
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        var known = harness.Client.Known();
+        var spawn = Assert.Single(known, k => k.Entry.Name == "sid:0000aaaa").Entry;
+        Assert.Equal("heartbeats", spawn.OpenClawCluster);
+        Assert.Equal(workspace, spawn.OpenClawWorkspace);
+        var ordinary = Assert.Single(known, k => k.Entry.Name == "job-hunter").Entry;
+        Assert.Null(ordinary.OpenClawCluster);
+        Assert.Null(ordinary.OpenClawWorkspace);
+
+        string[] Shown(bool enabled, string[] gateway, ClusterMode heartbeats) =>
+            RemoteControlSessions.ShownByOpenClawSettings(known, enabled, gateway,
+                    heartbeats, ClusterMode.Hidden, ClusterMode.WithChats)
+                .Select(k => k.Entry.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+
+        // Heartbeats hidden, as the reporting viewer had them: only the ordinary session.
+        Assert.Equal(new[] { "job-hunter" }, Shown(false, Array.Empty<string>(), ClusterMode.Hidden));
+
+        // Heartbeats shown with the chats: both.
+        Assert.Equal(new[] { "job-hunter", "sid:0000aaaa" },
+            Shown(false, Array.Empty<string>(), ClusterMode.WithChats));
+
+        // Shown, but this machine's gateway already draws that agent: the
+        // spawn is a duplicate and goes; the ordinary session stays.
+        Assert.Equal(new[] { "job-hunter" }, Shown(true, new[] { workspace }, ClusterMode.WithChats));
+
+        // The same gateway list with the integration switched off draws no
+        // gateway orb, so the spawn is not a duplicate.
+        Assert.Equal(new[] { "job-hunter", "sid:0000aaaa" },
+            Shown(false, new[] { workspace }, ClusterMode.WithChats));
+    }
+
     // An open-ended roster is a complete snapshot of one machine, not an
     // append-only notification. The second answer deliberately has no entries:
     // this is the unplugged Mini case that used to leave its last orb on screen
@@ -2808,7 +2863,11 @@ public class MirrorRoundTripTests : IDisposable
 
         public string SessionIdOf(string title) => _sessions.First(s => s.Status.Title == title).SessionId;
 
-        public void AddSession(string name, string transcriptPath)
+        public void AddSession(string name, string transcriptPath) => AddSession(name, transcriptPath, null);
+
+        // CB-306: the same, with the status shaped by the test (an OpenClaw
+        // spawn's entrypoint and workspace cwd).
+        public void AddSession(string name, string transcriptPath, Action<SessionStatus>? shape)
         {
             var sessionId = Guid.NewGuid().ToString();
 
@@ -2824,6 +2883,8 @@ public class MirrorRoundTripTests : IDisposable
                 SessionPid = 1000 + _sessions.Count,
                 Color = "green"
             }));
+
+            shape?.Invoke(_sessions[^1].Item2);
         }
 
         // Leaves the registry entry and takes the session away, which is what a

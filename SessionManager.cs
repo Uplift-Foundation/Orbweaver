@@ -2884,6 +2884,15 @@ namespace Orbweaver
                     continue;   // removed in the pass below
                 }
 
+                // CB-306: a session OpenClaw spawned to run one of its agents
+                // follows the OpenClaw cluster settings, and is not drawn at all
+                // when the connected gateway already draws it. See
+                // OpenClawCliSession.
+                if (!OpenClawCliSession.ShowHere(status))
+                {
+                    continue;   // removed in the pass below
+                }
+
                 seen.Add(sessionId);
 
                 // Whether this session is an agent-team member, and whose. Read
