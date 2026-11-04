@@ -774,6 +774,61 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Empty(entry.CommandRoutes!);
     }
 
+    // CB-306's second reopen: on the mini a session whose cwd was under
+    // ~/Documents made the catalogue scan's opendir never return, on the pump
+    // thread, and no HELLO was answered again. Here the scan blocks for ever
+    // through the real SlashCatalogueCache and the real resolver, and the
+    // roster still arrives, carrying the built-ins in its place; once the scan
+    // lets go, the next ask carries what it read.
+    [Fact]
+    public async Task AFolderWhoseScanNeverReturnsStillLetsTheRosterArrive()
+    {
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var cache = new SlashCatalogueCache(new SlashCatalogueCache.Seams(
+            (_, _) =>
+            {
+                release.Wait();
+                return new[] { new SlashCommand("/compact", ""), new SlashCommand("/ship-it", "") };
+            },
+            SlashCommandCatalog.BuiltinsFor,
+            () => DateTime.UtcNow,
+            work => new System.Threading.Thread(() => work()) { IsBackground = true }.Start()));
+
+        var harness = new Harness(_dir, wireSlash: true);
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            status => cache.Peek(status.Source, status.Cwd),
+            (_, _) => Task.FromResult(true),
+            (_, _, _) => Task.FromResult<string?>(null)));
+        harness.AddSession("lawyer-search", WriteTranscript("hung.jsonl", Conversation(2)));
+
+        try
+        {
+            var hello = harness.HandshakeAsync("lawyer-search");
+            Assert.Same(hello, await Task.WhenAny(hello, Task.Delay(TimeSpan.FromSeconds(20))));
+            await hello;
+
+            var entry = harness.Client.StateFor("lawyer-search").Entry!;
+            Assert.True(entry.HasTranscript);
+            Assert.Contains("/color", entry.Commands!);
+            Assert.DoesNotContain("/ship-it", entry.Commands!);
+
+            // A second ask while the scan is still stuck neither waits nor
+            // starts another scan.
+            var again = harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Same(again, await Task.WhenAny(again, Task.Delay(TimeSpan.FromSeconds(20))));
+            Assert.Equal(1, cache.InFlight);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (cache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Contains("/ship-it", harness.Client.StateFor("lawyer-search").Entry!.Commands!);
+        }
+        finally { release.Set(); }
+    }
+
     [Fact]
     public async Task ARunnerThatThrowsIsAnsweredAsARefusalNotATornDownLink()
     {
@@ -1072,6 +1127,56 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal("Faraday", persona!.Name);
         Assert.Equal("Samantha", persona.Voice);
         Assert.Equal(1.2, persona.Rate);
+    }
+
+    // CB-306's second reopen: the persona files live in the same folders the
+    // slash catalogue walk froze on, and were read on the pump right after it.
+    // Here the persona read blocks for ever through the real PeerPersonaCache;
+    // the roster still arrives, with no persona on the entry, and once the read
+    // lets go the next ask carries the persona from the real resolver.
+    [Fact]
+    public async Task APersonaFolderWhoseReadNeverReturnsStillLetsTheRosterArrive()
+    {
+        File.WriteAllText(Path.Combine(_dir, "CLAUDE.md"), """
+            ## Persona
+            **Name:** Faraday
+            - Voice: Samantha (Kokoro TTS, rate 1.2)
+            """);
+
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var harness = new Harness(_dir);
+        harness.PersonaCache = new PeerPersonaCache(
+            (source, cwd, agent, dirs) =>
+            {
+                release.Wait();
+                return RemoteMirrorServer.ReadPeerPersona(source, cwd, agent, dirs);
+            },
+            () => DateTime.UtcNow,
+            OffThread.OnOwnThread,
+            PeerAvatarStore.Shared.ById);
+        harness.AddSession("lawyer-search", WriteTranscript("hung-persona.jsonl", Conversation(2)));
+
+        try
+        {
+            var hello = harness.HandshakeAsync("lawyer-search");
+            Assert.Same(hello, await Task.WhenAny(hello, Task.Delay(TimeSpan.FromSeconds(20))));
+            await hello;
+
+            var entry = harness.Client.StateFor("lawyer-search").Entry!;
+            Assert.True(entry.HasTranscript);
+            Assert.Null(entry.Persona);
+            Assert.Equal(1, harness.PersonaCache.InFlight);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (harness.PersonaCache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            var persona = harness.Client.StateFor("lawyer-search").Entry!.Persona;
+            Assert.NotNull(persona);
+            Assert.Equal("Faraday", persona!.Name);
+        }
+        finally { release.Set(); }
     }
 
     [Fact]
@@ -1987,6 +2092,46 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(Face, Assert.Single(harness.Client.Known()).Entry.Persona!.Avatar);
     }
 
+    // CB-306 regression on 6e1c2183: the persona, picture included, must still
+    // reach the peer once a read that was pending at the first HELLO has
+    // answered, and its id must be one the AVATAR request answers.
+    [Fact]
+    public async Task APersonaReadThatFinishesAfterTheFirstHelloReachesThePeerWithAFetchablePicture()
+    {
+        WritePersona(Face);
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var harness = new Harness(_dir);
+        harness.PersonaCache = new PeerPersonaCache(
+            (source, cwd, agent, dirs) =>
+            {
+                release.Wait();
+                return RemoteMirrorServer.ReadPeerPersona(source, cwd, agent, dirs);
+            },
+            () => DateTime.UtcNow,
+            OffThread.OnOwnThread,
+            PeerAvatarStore.Shared.ById);
+        harness.AddSession("first", WriteTranscript("first.jsonl", Conversation(2)));
+
+        try
+        {
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Null(Assert.Single(harness.Client.Known()).Entry.Persona);
+            Assert.Equal(0, harness.PictureAsks);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (harness.PersonaCache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+            Assert.Equal(1, harness.PictureAsks);
+            var persona = Assert.Single(harness.Client.Known()).Entry.Persona!;
+            Assert.Equal(MirrorProtocol.AvatarIdOf(Face), persona.AvatarId);
+            Assert.Equal(Face, persona.Avatar);
+        }
+        finally { release.Set(); }
+    }
+
     // The case the ticket's decision named: a picture that changes on the
     // serving machine reaches the peer, by a new id, on the next poll.
     [Fact]
@@ -2447,6 +2592,11 @@ public class MirrorRoundTripTests : IDisposable
 
         // CB-306: the real far resolver, in place of the canned runner.
         public MirrorSlashHost? SlashHost { get; set; }
+
+        // CB-306's second reopen: the persona cache the server reads through,
+        // as LiveSeams wires PeerPersonaCache.Shared. Null resolves directly,
+        // which is what every test written before it expects.
+        public PeerPersonaCache? PersonaCache { get; set; }
         public List<string> SlashRan { get; } = new();
 
         // A far Buddy that predates the slash flag: it never sees `slash`, so
@@ -2549,6 +2699,9 @@ public class MirrorRoundTripTests : IDisposable
                 // somebody pinned by typing a code. A harness says yes explicitly.
                 PeerAllowed: _ => true,
                 UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs,
+                PersonaFor: (status, dirs, byId) => PersonaCache is { } personas
+                    ? personas.Peek(status, dirs, byId)
+                    : RemoteMirrorServer.ResolvePeerPersona(status, dirs, byId),
                 SlashCommandsFor: wireSlash
                     ? status => SlashCatalogueThrows
                         ? throw new InvalidOperationException("catalogue scan failed")

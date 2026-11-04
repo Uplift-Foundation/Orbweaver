@@ -27,6 +27,14 @@ namespace Orbweaver
             : source == SessionSource.Grok ? ForGrok()
             : ForClaudeCode(cwd);
 
+        // Each CLI's fixed list alone, with no disk read at all: what a caller
+        // that must never touch the filesystem offers until a scan has answered
+        // (SlashCatalogueCache, CB-306).
+        internal static IReadOnlyList<SlashCommand> BuiltinsFor(SessionSource source) =>
+            source == SessionSource.Codex ? CodexBuiltins
+            : source == SessionSource.Grok ? GrokBuiltins
+            : ClaudeCodeBuiltins;
+
 
         // --- Claude Code ---
 

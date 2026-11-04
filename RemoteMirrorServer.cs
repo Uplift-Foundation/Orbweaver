@@ -107,7 +107,16 @@ namespace Orbweaver
             // refused on the same test. The seam is where the runner plugs in
             // without this file changing.
             Func<SessionStatus, IReadOnlyList<SlashCommand>>? SlashCommandsFor = null,
-            Func<SessionStatus, string, Task<SlashOutcome>>? RunSlash = null);
+            Func<SessionStatus, string, Task<SlashOutcome>>? RunSlash = null,
+
+            // CB-306's second reopen: the persona each entry carries, given the
+            // config dirs this roster resolves against and whether the asker
+            // fetches pictures by id. Null resolves on the calling thread, as
+            // every server built before this did; LiveSeams wires
+            // PeerPersonaCache.Shared, because the calling thread is the peer
+            // pump and the persona files live under the session's cwd and its
+            // parents — the same walk the slash catalogue froze the link on.
+            Func<SessionStatus, IReadOnlyList<string>, bool, MirrorProtocol.PeerPersona?>? PersonaFor = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -385,7 +394,11 @@ namespace Orbweaver
                 status => LocalSlashChannel.BridgeIdFor(
                     status.IsDesktopHosted ? status.BridgeSessionId : null,
                     status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
-                status => SlashCommandCatalog.For(status.Source, status.Cwd),
+                // Never the scan itself: this runs on the peer pump while a
+                // HELLO is answered, and one folder whose opendir never returns
+                // froze the whole link (CB-306's second reopen). The cache
+                // scans off-thread and answers with what it already has.
+                status => SlashCatalogueCache.Shared.Peek(status.Source, status.Cwd),
                 (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
                 async (status, subtype, request) =>
                 {
@@ -421,7 +434,8 @@ namespace Orbweaver
                         .ConfigureAwait(false);
                 },
                 SlashCommandsFor: slash.CommandsFor,
-                RunSlash: slash.RunAsync);
+                RunSlash: slash.RunAsync,
+                PersonaFor: PeerPersonaCache.Shared.Peek);
         }
 
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
@@ -636,7 +650,7 @@ namespace Orbweaver
                     status.State,
                     _seams.CanDeliver?.Invoke(status),
                     RouteFor(resolved.Value.SessionId),
-                    ResolvePeerPersona(status, userConfigDirs, picturesById),
+                    PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes));
             }
 
@@ -661,7 +675,7 @@ namespace Orbweaver
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById),
+                        PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes));
                 }
             }
@@ -690,7 +704,7 @@ namespace Orbweaver
                         HasTranscript(status), _seams.CanType(status),
                         string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById),
+                        PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes));
                 }
             }
@@ -742,20 +756,52 @@ namespace Orbweaver
         // CB-216: the picture comes from PeerAvatarStore, which reads it again
         // only when the file changes, and is sent as its id to an asker that can
         // fetch by id (picturesById) and as bytes to one that cannot.
-        internal static MirrorProtocol.PeerPersona? ResolvePeerPersona(
-            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById = false)
-        {
-            if (!status.IsLocalCli || string.IsNullOrWhiteSpace(status.Cwd)) return null;
+        // Through the seam when one is wired (LiveSeams wires PeerPersonaCache,
+        // so the pump never reads a persona file itself), and directly when not,
+        // which is what every server built before CB-306's second reopen did.
+        private MirrorProtocol.PeerPersona? PersonaFor(
+            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById) =>
+            _seams.PersonaFor is { } cached
+                ? cached(status, userConfigDirs, picturesById)
+                : ResolvePeerPersona(status, userConfigDirs, picturesById);
 
-            var candidates = LocalPersona.Candidates(
-                status.Cwd, userConfigDirs, status.Source, status.Agent);
-            var local = LocalPersona.ResolveFrom(candidates, status.Cwd);
+        internal static MirrorProtocol.PeerPersona? ResolvePeerPersona(
+            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById = false) =>
+            ToPeerPersona(ReadPeerPersona(status.Source, status.Cwd, status.Agent, userConfigDirs),
+                picturesById, PeerAvatarStore.Shared.ById);
+
+        // The half of resolving a persona that touches the disk: the persona
+        // files under the cwd and its parents, and the picture they name. Split
+        // from ToPeerPersona so PeerPersonaCache can run this on a worker and
+        // the pump only ever does the other half (CB-306's second reopen).
+        internal readonly record struct PersonaRead(
+            string? Name, string? Voice, double? Rate, PeerAvatarStore.Picture? Picture);
+
+        internal static PersonaRead? ReadPeerPersona(
+            SessionSource source, string? cwd, string agent, IReadOnlyList<string> userConfigDirs)
+        {
+            if (source is not (SessionSource.ClaudeCode or SessionSource.Codex or SessionSource.Grok)
+                || string.IsNullOrWhiteSpace(cwd)) return null;
+
+            var candidates = LocalPersona.Candidates(cwd, userConfigDirs, source, agent);
+            var local = LocalPersona.ResolveFrom(candidates, cwd);
             var picture = local.AvatarPath is null ? null : PeerAvatarStore.Shared.At(local.AvatarPath);
-            var peer = picture is not { } found
-                ? new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate)
-                : picturesById
-                    ? new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate, AvatarId: found.Id)
-                    : new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate, found.Bytes);
+            return new PersonaRead(local.Name, local.Voice, local.Rate, picture);
+        }
+
+        // The wire half, with no IO. An id is sent only while the store still
+        // answers for it: a cached read can outlive the picture's place in
+        // PeerAvatarStore's bounded memory, and an id the AVATAR request would
+        // refuse is worse than the bytes.
+        internal static MirrorProtocol.PeerPersona? ToPeerPersona(
+            PersonaRead? read, bool picturesById, Func<string, byte[]?> knownById)
+        {
+            if (read is not { } r) return null;
+            var peer = r.Picture is not { } found
+                ? new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate)
+                : picturesById && knownById(found.Id) is not null
+                    ? new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate, AvatarId: found.Id)
+                    : new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate, found.Bytes);
             return peer.IsEmpty ? null : peer;
         }
 
@@ -820,31 +866,17 @@ namespace Orbweaver
                     list.Select(c => MirrorProtocol.RouteWord(c.Route)).ToList());
         }
 
-        // Excluded from coverage: exists to be the try/catch. SlashCommandCatalog
-        // already swallows the IO it does — a directory that vanished mid-scan is
-        // its ordinary case rather than an exception — so nothing here has been
-        // observed to throw.
-        //
-        // Kept because this runs while answering another machine, on a background
-        // task, from a cwd belonging to a session this process does not own: an
-        // exception would take the roster answer down and leave the far panel
-        // with no live view and no explanation, which is a much worse outcome
-        // than a session offering no commands.
-        [ExcludeFromCodeCoverage]
-        private static IReadOnlyList<string> SafeCommandNames(SessionStatus status)
-        {
-            try
-            {
-                return SlashCommandCatalog.For(status.Source, status.Cwd)
-                    .Select(c => c.Name)
-                    .Take(MaxCatalogue)
-                    .ToList();
-            }
-            catch
-            {
-                return Array.Empty<string>();
-            }
-        }
+        // The CLI's built-ins and nothing read off disk. This arm serves only a
+        // server built without SlashCommandsFor — LiveSeams always wires it, so
+        // in the app that is tests and nothing else — and it runs on the peer
+        // pump while a HELLO is answered, where a scan of the session's cwd is
+        // exactly what froze the mini's link (CB-306's second reopen). It used
+        // to scan, behind a try/catch; a fixed list needs neither.
+        private static IReadOnlyList<string> SafeCommandNames(SessionStatus status) =>
+            SlashCommandCatalog.BuiltinsFor(status.Source)
+                .Select(c => c.Name)
+                .Take(MaxCatalogue)
+                .ToList();
 
         // How much of a transcript to read looking for the last turn.
         //

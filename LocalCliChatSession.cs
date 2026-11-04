@@ -644,8 +644,18 @@ namespace Orbweaver
         public IReadOnlyList<SlashCommand> SlashCommands =>
             LocalSlashChannel.CommandsFor(SlashChannelNow, LocalCatalogue);
 
+        // Through the shared cache rather than the scan itself (CB-306's second
+        // reopen): this is read on the UI thread, which every orb shares, and
+        // the scan walks the cwd's parents up to `/` — so the folder that froze
+        // the mini's peer link would have frozen the whole app here the first
+        // time its panel offered "/". It waits for a first scan at most
+        // PanelCatalogueWait, once per folder, then offers the built-ins; only
+        // a real scan's answer is kept, so the next ask picks the scan up when
+        // it lands.
+        internal static readonly TimeSpan PanelCatalogueWait = TimeSpan.FromSeconds(1);
+
         private IReadOnlyList<SlashCommand> LocalCatalogue() =>
-            _slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd);
+            SlashCatalogueCache.Shared.Remembered(ref _slashCommands, _status.Source, _status.Cwd, PanelCatalogueWait);
 
         // The bridge id for this session: the Desktop record's, else the one a
         // headless job's registry row carries. Null when there is none.
