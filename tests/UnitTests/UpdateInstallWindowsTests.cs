@@ -306,4 +306,39 @@ public class UpdateInstallWindowsTests : IDisposable
             deleteDirectory: _ => throw (Exception)Activator.CreateInstance(ex, "locked")!));
         Assert.Contains(lines, l => l.Contains("completed"));
     }
+
+    [Fact]
+    public void Folder_inside_accepts_only_strict_descendants_of_the_root()
+    {
+        var sep = Path.DirectorySeparatorChar;
+        string P(params string[] parts) => Path.Combine([Path.GetTempPath(), .. parts]);
+        var root = P("upd");
+        Assert.Equal(P("upd", "1.2.0"), UpdateInstallWindows.FolderInside(root, P("upd", "1.2.0", "setup.log")));
+        Assert.Equal(P("upd", "1.2.0"), UpdateInstallWindows.FolderInside(root + sep, P("upd", "1.2.0", "setup.log")));
+        Assert.Null(UpdateInstallWindows.FolderInside(root, "setup.log"));          // relative
+        Assert.Null(UpdateInstallWindows.FolderInside(root, P("upd", "setup.log"))); // the root itself
+        Assert.Null(UpdateInstallWindows.FolderInside(root, P("other", "x.log")));   // outside
+        Assert.Null(UpdateInstallWindows.FolderInside(root, P("upd2", "x.log")));    // prefix sibling
+        Assert.Null(UpdateInstallWindows.FolderInside(root, P("upd", "..", "other", "x.log"))); // traversal
+        Assert.Null(UpdateInstallWindows.FolderInside(root, sep.ToString()));        // filesystem root
+    }
+
+    [Theory]
+    [InlineData("setup.log")]
+    [InlineData("OUTSIDE")]
+    public void A_marker_pointing_outside_the_updates_root_deletes_nothing(string logPath)
+    {
+        var outside = Path.Combine(Path.GetTempPath(), "orb-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        try
+        {
+            var lp = logPath == "OUTSIDE" ? Path.Combine(outside, "setup.log") : logPath;
+            File.WriteAllText(Marker(_root), UpdateInstallPlan.WinPendingJson(
+                new UpdateInstallPlan.WinPendingUpdate("1.1.0", "1.2.0", lp)));
+            Assert.Null(UpdateInstallWindows.ReconcileAtLaunch(_root, "1.2.0", _ => { }));
+            Assert.True(Directory.Exists(outside));
+            Assert.False(File.Exists(Marker(_root)));
+        }
+        finally { Directory.Delete(outside, true); }
+    }
 }

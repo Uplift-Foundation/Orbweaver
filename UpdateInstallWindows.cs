@@ -140,13 +140,32 @@ namespace Orbweaver
             if (aftermath.Kind == UpdateInstallPlan.WinAftermathKind.Completed)
             {
                 log($"update to {pending.To} completed (running {currentVersion})");
-                try { deleteDirectory(Path.GetDirectoryName(pending.LogPath)!); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                // The marker is a user-writable file, so its path is not trusted:
+                // only a folder strictly inside the updates root is ever removed.
+                var folder = FolderInside(updatesRoot, pending.LogPath);
+                if (folder is not null)
+                {
+                    try { deleteDirectory(folder); }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                }
                 return null;
             }
 
             log($"update to {pending.To} did not complete (still running {currentVersion}); setup log {pending.LogPath}");
             return pending;
+        }
+
+        // The directory holding `filePath`, when that directory is a strict
+        // descendant of `root` once both are made absolute; null otherwise (a
+        // relative path, the root itself, a sibling or anything outside it).
+        internal static string? FolderInside(string root, string filePath)
+        {
+            if (!Path.IsPathRooted(filePath)) return null;
+            var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
+            if (string.IsNullOrEmpty(dir)) return null;
+            var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+            var prefix = rootFull + Path.DirectorySeparatorChar;
+            return dir.StartsWith(prefix, StringComparison.Ordinal) ? dir : null;
         }
 
         private static void DeleteQuietly(string path, Action<string>? delete = null)
