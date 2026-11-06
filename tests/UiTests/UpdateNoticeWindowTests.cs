@@ -326,6 +326,24 @@ public class UpdateNoticeWindowTests : IDisposable
         Assert.Equal(new[] { "0.6.0" }, cleared);
     }
 
+    [AvaloniaFact]
+    public async Task WithNoInstallerTheOfferIsDownloadManuallyNotInstall()
+    {
+        var urls = new List<string>();
+        var w = new UpdateNoticeWindow(Release("0.6.0"), null, _ => { }, urls.Add);
+
+        Assert.False(w.InstallButton.IsVisible);
+        Assert.True(w.ManualButton.IsVisible);
+        Assert.True(w.SkipButton.IsVisible);
+        Assert.True(w.LaterButton.IsVisible);
+
+        await w.InstallAsync(); // a no-op, not a crash
+        Assert.Equal(UpdateNoticeWindow.Phase.Offer, w.State);
+
+        w.ManualButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Single(urls);
+    }
+
     // ---- the singleton -------------------------------------------------------
 
     [AvaloniaFact]

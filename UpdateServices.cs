@@ -125,20 +125,9 @@ namespace Orbweaver
         // one place the updater is wired to the real downloader, real processes and
         // the real filesystem, each of which is faked in the suites that cover the
         // installers themselves.
-        // The platform installer from its single factory. Null (a platform with no
-        // installer) becomes one that refuses and points at the release page, so
-        // the notice's failure state still has something true to say.
+        // The platform installer from its single factory; null means this install
+        // cannot update itself and the notice offers Download manually instead.
         [ExcludeFromCodeCoverage]
-        internal static IUpdateInstaller Installer() =>
-            UpdateInstallers.ForCurrentPlatform(Log) ?? new NoInstaller();
-
-        internal sealed class NoInstaller : IUpdateInstaller
-        {
-            public Task<InstallOutcome> InstallAsync(
-                UpdateRelease release, IProgress<UpdateProgress> progress, CancellationToken cancellationToken) =>
-                Task.FromResult(new InstallOutcome(
-                    InstallStatus.Refused,
-                    "This platform can't install updates itself. Use Download manually."));
-        }
+        internal static IUpdateInstaller? Installer() => UpdateInstallers.ForCurrentPlatform(Log);
     }
 }

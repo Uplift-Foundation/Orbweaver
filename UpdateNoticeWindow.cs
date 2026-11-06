@@ -38,7 +38,7 @@ namespace Orbweaver
 
         private static UpdateNoticeWindow? _open;
 
-        private readonly IUpdateInstaller _installer;
+        private readonly IUpdateInstaller? _installer;
         private readonly Action<UpdateRelease> _skip;
         private readonly Action<string> _openUrl;
         private CancellationTokenSource? _cts;
@@ -59,7 +59,7 @@ namespace Orbweaver
         // Opens the notice on a release, or brings the open one forward pointed at
         // that release. The skip and URL actions default to the real ones, which
         // the seam-built constructor lets a test replace.
-        public static void Toggle(UpdateRelease release, IUpdateInstaller installer)
+        public static void Toggle(UpdateRelease release, IUpdateInstaller? installer)
         {
             if (_open is not null)
             {
@@ -144,7 +144,7 @@ namespace Orbweaver
         }
 
         internal UpdateNoticeWindow(
-            UpdateRelease release, IUpdateInstaller installer, Action<UpdateRelease> skip, Action<string> openUrl)
+            UpdateRelease release, IUpdateInstaller? installer, Action<UpdateRelease> skip, Action<string> openUrl)
         {
             Release = release;
             _installer = installer;
@@ -218,10 +218,13 @@ namespace Orbweaver
             var working = State == Phase.Working;
             var failed = State == Phase.Failed;
 
-            InstallButton.IsVisible = State == Phase.Offer;
+            // No installer on this platform or install kind: Install is replaced by
+            // Download manually, which is the release page, so the offer is still
+            // actionable rather than a button that can only refuse.
+            InstallButton.IsVisible = State == Phase.Offer && _installer is not null;
             SkipButton.IsVisible = State == Phase.Offer;
             RetryButton.IsVisible = failed;
-            ManualButton.IsVisible = failed;
+            ManualButton.IsVisible = failed || (State == Phase.Offer && _installer is null);
             LaterButton.IsVisible = true;
             Bar.IsVisible = working;
             StatusText.IsVisible = working || failed;
@@ -274,7 +277,7 @@ namespace Orbweaver
 
         internal async Task InstallAsync()
         {
-            if (State == Phase.Working) return;
+            if (State == Phase.Working || _installer is null) return;
 
             State = Phase.Working;
             _cts = new CancellationTokenSource();

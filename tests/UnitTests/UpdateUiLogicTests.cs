@@ -394,13 +394,4 @@ public class UpdateUiLogicTests
         Assert.Null(shown[1].Log);
     }
 
-    [Fact]
-    public async System.Threading.Tasks.Task AnUnsupportedPlatformRefusesAndPointsAtTheManualDownload()
-    {
-        var outcome = await new UpdateServices.NoInstaller().InstallAsync(
-            Release(), new Progress<UpdateProgress>(), default);
-
-        Assert.Equal(InstallStatus.Refused, outcome.Status);
-        Assert.Contains("Download manually", outcome.Message);
-    }
 }
