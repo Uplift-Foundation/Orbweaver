@@ -472,6 +472,7 @@ namespace Orbweaver
             var block = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
             if (italic) block.FontStyle = FontStyle.Italic;
 
+            block.Inlines = new Avalonia.Controls.Documents.InlineCollection();
             foreach (var span in ChatMarkdown.Inline(text))
             {
                 var run = new Avalonia.Controls.Documents.Run(span.Text);
@@ -496,8 +497,7 @@ namespace Orbweaver
                         break;
                 }
 
-                block.Inlines ??= new Avalonia.Controls.Documents.InlineCollection();
-                block.Inlines.Add(run);
+                block.Inlines!.Add(run);
             }
 
             return block;
