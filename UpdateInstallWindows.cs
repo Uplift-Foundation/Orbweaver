@@ -112,11 +112,18 @@ namespace Orbweaver
         // the notice shows once, and removes the downloaded installer once it
         // has landed. A failed run keeps its folder, because the log is in it.
         internal static UpdateInstallPlan.WinPendingUpdate? ReconcileAtLaunch(
-            string updatesRoot, string currentVersion, Action<string> log)
+            string updatesRoot, string currentVersion, Action<string> log,
+            Func<string, string>? readFile = null, Action<string>? deleteFile = null, Action<string>? deleteDirectory = null)
         {
+            // The file operations are arguments so a test can make each one
+            // throw: a locked or read-only file is not something two operating
+            // systems can both be made to produce on demand.
+            readFile ??= File.ReadAllText;
+            deleteFile ??= File.Delete;
+            deleteDirectory ??= d => Directory.Delete(d, recursive: true);
             var markerPath = Path.Combine(updatesRoot, UpdateInstallPlan.WinPendingFile);
             string? json = null;
-            try { json = File.Exists(markerPath) ? File.ReadAllText(markerPath) : null; }
+            try { json = File.Exists(markerPath) ? readFile(markerPath) : null; }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
 
@@ -124,16 +131,16 @@ namespace Orbweaver
             if (aftermath.Kind == UpdateInstallPlan.WinAftermathKind.Nothing)
             {
                 // An unreadable or empty marker is debris, not a pending update.
-                if (json is not null) DeleteQuietly(markerPath);
+                if (json is not null) DeleteQuietly(markerPath, deleteFile);
                 return null;
             }
 
-            DeleteQuietly(markerPath);
+            DeleteQuietly(markerPath, deleteFile);
             var pending = aftermath.Pending!;
             if (aftermath.Kind == UpdateInstallPlan.WinAftermathKind.Completed)
             {
                 log($"update to {pending.To} completed (running {currentVersion})");
-                try { Directory.Delete(Path.GetDirectoryName(pending.LogPath)!, recursive: true); }
+                try { deleteDirectory(Path.GetDirectoryName(pending.LogPath)!); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
                 return null;
             }
@@ -142,9 +149,9 @@ namespace Orbweaver
             return pending;
         }
 
-        private static void DeleteQuietly(string path)
+        private static void DeleteQuietly(string path, Action<string>? delete = null)
         {
-            try { File.Delete(path); }
+            try { (delete ?? File.Delete)(path); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
 

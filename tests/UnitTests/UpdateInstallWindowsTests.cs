@@ -267,4 +267,43 @@ public class UpdateInstallWindowsTests : IDisposable
         Directory.CreateDirectory(Marker(_root));
         Assert.Null(UpdateInstallWindows.ReconcileAtLaunch(_root, "1.1.0", _ => { }));
     }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public void An_unreadable_marker_is_treated_as_nothing_pending(Type ex)
+    {
+        WritePending();
+        var r = UpdateInstallWindows.ReconcileAtLaunch(_root, "1.1.0", _ => { },
+            readFile: _ => throw (Exception)Activator.CreateInstance(ex, "locked")!);
+        Assert.Null(r);
+    }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public void A_marker_that_cannot_be_deleted_does_not_stop_the_verdict(Type ex)
+    {
+        WritePending();
+        var r = UpdateInstallWindows.ReconcileAtLaunch(_root, "1.1.0", _ => { },
+            deleteFile: _ => throw (Exception)Activator.CreateInstance(ex, "locked")!);
+        Assert.Equal("1.2.0", r!.To);
+
+        // An undeletable unreadable marker (the junk-marker path) is also survived.
+        File.WriteAllText(Marker(_root), "{garbage");
+        Assert.Null(UpdateInstallWindows.ReconcileAtLaunch(_root, "1.1.0", _ => { },
+            deleteFile: _ => throw (Exception)Activator.CreateInstance(ex, "locked")!));
+    }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public void A_download_folder_that_cannot_be_removed_after_success_is_tolerated(Type ex)
+    {
+        WritePending();
+        var lines = new List<string>();
+        Assert.Null(UpdateInstallWindows.ReconcileAtLaunch(_root, "1.2.0", lines.Add,
+            deleteDirectory: _ => throw (Exception)Activator.CreateInstance(ex, "locked")!));
+        Assert.Contains(lines, l => l.Contains("completed"));
+    }
 }
