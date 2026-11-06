@@ -236,8 +236,9 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden
 
 [Code]
 { CB-308: true only when setup was started with /RELAUNCH=1, which the in-app updater
-  passes. {param:RELAUNCH|0} reads the /RELAUNCH=<value> command-line switch and yields
-  the default 0 when it is absent. }
+  passes. The param constant below reads the /RELAUNCH=value command-line switch and
+  yields its default, 0, when the switch is absent. No brace pair in this comment:
+  comments do not nest, so it would end the comment early. }
 function RelaunchRequested(): Boolean;
 begin
   Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
