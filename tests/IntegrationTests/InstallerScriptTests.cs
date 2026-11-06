@@ -89,4 +89,46 @@ public class InstallerScriptTests
         Assert.Single(LinesMentioning(Offender, "IsAdminInstallMode"));
         Assert.Empty(LinesMentioning("; " + Offender, "IsAdminInstallMode"));
     }
+
+    // CB-308: a silent upgrade started by the in-app updater must relaunch the app,
+    // and a plain /VERYSILENT must not. The real behaviour is confirmed on the
+    // Windows box; this pins the script shape that produces it.
+    internal static IEnumerable<string> RunEntriesFor(string iss, string exe) =>
+        CodeLines(iss).Where(l => l.TrimStart().StartsWith("Filename:", StringComparison.OrdinalIgnoreCase)
+                                  && l.Contains(exe, StringComparison.Ordinal));
+
+    internal static bool IsGatedRelaunch(string line) =>
+        line.Contains("Check: RelaunchRequested", StringComparison.Ordinal)
+        && line.Contains("nowait", StringComparison.Ordinal)
+        && !line.Contains("postinstall", StringComparison.Ordinal);
+
+    [Fact]
+    public void Run_section_relaunches_the_app_only_when_RELAUNCH_is_requested()
+    {
+        var runs = RunEntriesFor(Iss, "{app}\\{#AppExe}").ToList();
+        // Two entries: the interactive "Start now" and the gated silent relaunch.
+        Assert.Equal(2, runs.Count);
+        Assert.Single(runs, IsGatedRelaunch);
+        // The interactive entry stays skipifsilent, so a plain /VERYSILENT starts nothing.
+        Assert.Single(runs, l => l.Contains("postinstall skipifsilent", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RelaunchRequested_reads_the_RELAUNCH_switch_and_defaults_to_off()
+    {
+        var body = string.Join("\n", CodeLines(Iss));
+        Assert.Contains("function RelaunchRequested(): Boolean;", body);
+        Assert.Contains("ExpandConstant('{param:RELAUNCH|0}') = '1'", body);
+    }
+
+    [Fact]
+    public void Control_an_ungated_or_postinstall_relaunch_is_not_accepted()
+    {
+        const string gated = "Filename: \"{app}\\Orbweaver.exe\"; Flags: nowait; Check: RelaunchRequested";
+        Assert.True(IsGatedRelaunch(gated));
+        Assert.False(IsGatedRelaunch("Filename: \"{app}\\Orbweaver.exe\"; Flags: nowait"));
+        Assert.False(IsGatedRelaunch("Filename: \"{app}\\Orbweaver.exe\"; Flags: nowait postinstall; Check: RelaunchRequested"));
+        Assert.False(IsGatedRelaunch("Filename: \"{app}\\Orbweaver.exe\"; Check: RelaunchRequested"));
+        Assert.Empty(RunEntriesFor("; Filename: \"{app}\\Orbweaver.exe\"; Flags: nowait", "Orbweaver.exe"));
+    }
 }
