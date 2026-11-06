@@ -12,13 +12,17 @@ namespace Orbweaver.IntegrationTests;
 // untimestamped bookkeeping rows, and if enough of them pile up after the
 // last turn, a window sized for rendering a conversation would push that turn
 // out of view. The rule would then be handed nothing, fail open, and the
-// abandoned orb would come back — with every test still green.
-public class AbandonedSessionsTests : IDisposable
+// quiet orb would be drawn bright — with every test still green.
+//
+// Since CB-307 the read goes through LastTurnCache, so these drive the cache's
+// real arms (FileInfo and the real tail read) rather than a tail read of their
+// own; the last test pins that it re-reads exactly when the file grows.
+public class ParkedSessionsTests : IDisposable
 {
     private readonly string _dir = Path.Combine(
-        Path.GetTempPath(), "cb-abandoned-" + Guid.NewGuid().ToString("N")[..8]);
+        Path.GetTempPath(), "cb-parked-" + Guid.NewGuid().ToString("N")[..8]);
 
-    public AbandonedSessionsTests() => Directory.CreateDirectory(_dir);
+    public ParkedSessionsTests() => Directory.CreateDirectory(_dir);
 
     public void Dispose()
     {
@@ -39,9 +43,7 @@ public class AbandonedSessionsTests : IDisposable
     private static string Bridge(int n) =>
         $$"""{"type":"bridge-session","sessionId":"dc6b769b","seq":{{n}}}""";
 
-    private static DateTime? LastTurnOf(string path) =>
-        SessionLiveness.LastTurnAt(
-            TranscriptReader.TailLines(path, LastTurnCache.TailBytes));
+    private static DateTime? LastTurnOf(string path) => new LastTurnCache().LastTurnFor(path);
 
     [Fact]
     public void TheLastTurnIsFoundUnderAPileOfBridgeHousekeeping()
@@ -63,14 +65,14 @@ public class AbandonedSessionsTests : IDisposable
     }
 
     [Fact]
-    public void AndTheAnswerIsThatItShouldNotBeShown()
+    public void AndTheAnswerIsThatItIsParked()
     {
         var lines = new List<string> { Turn("assistant", "2026-08-29T04:24:08.729Z") };
         for (var i = 0; i < 1000; i++) lines.Add(Bridge(i));
 
         var path = Write("parked-verdict.jsonl", lines);
 
-        Assert.False(!SessionLiveness.IsParked(
+        Assert.True(SessionLiveness.IsParked(
             "idle", LastTurnOf(path), new DateTime(2026, 8, 31, 3, 7, 0, DateTimeKind.Utc)));
     }
 
@@ -88,7 +90,7 @@ public class AbandonedSessionsTests : IDisposable
             Bridge(0),
         });
 
-        Assert.True(!SessionLiveness.IsParked("idle", LastTurnOf(path), now));
+        Assert.False(SessionLiveness.IsParked("idle", LastTurnOf(path), now));
     }
 
     [Fact]
@@ -113,24 +115,47 @@ public class AbandonedSessionsTests : IDisposable
     }
 
     [Fact]
-    public void AFileThatIsNotThereIsShownRatherThanHidden()
+    public void AFileThatIsNotThereIsNotParked()
     {
-        // TailLines swallows the IO and returns nothing, and nothing means
-        // "cannot tell" — which must not read as "abandoned".
+        // The cache's stat finds no file and answers nothing, and nothing
+        // means "cannot tell" — which must not read as "parked".
         var missing = Path.Combine(_dir, "no-such-file.jsonl");
 
         Assert.Null(LastTurnOf(missing));
-        Assert.True(!SessionLiveness.IsParked("idle", LastTurnOf(missing), DateTime.UtcNow));
+        Assert.False(SessionLiveness.IsParked("idle", LastTurnOf(missing), DateTime.UtcNow));
     }
 
     [Fact]
-    public void AnEmptyTranscriptIsShownRatherThanHidden()
+    public void AnEmptyTranscriptIsNotParked()
     {
         // A session that has just started has a file and no turns in it yet.
-        // Hiding it would mean an orb that appears only after the first reply.
+        // Parking it would mean an orb that brightens only after the first reply.
         var path = Write("empty.jsonl", Array.Empty<string>());
 
         Assert.Null(LastTurnOf(path));
-        Assert.True(!SessionLiveness.IsParked("idle", LastTurnOf(path), DateTime.UtcNow));
+        Assert.False(SessionLiveness.IsParked("idle", LastTurnOf(path), DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void TheCacheReadsARealFileAgainOnlyWhenItGrows()
+    {
+        // The real stat arm against a real file, with the read counted: the
+        // second ask is answered from the cache, and an appended turn — which
+        // always lengthens the file — is seen on the next ask.
+        var path = Write("growing.jsonl", new[] { Turn("user", "2026-11-05T23:32:39.000Z") });
+        var reads = 0;
+        var cache = new LastTurnCache(LastTurnCache.RealLengthOf, p =>
+        {
+            reads++;
+            return TranscriptReader.TailLines(p, LastTurnCache.TailBytes);
+        });
+
+        Assert.Equal(new DateTime(2026, 11, 5, 23, 32, 39, DateTimeKind.Utc), cache.LastTurnFor(path));
+        Assert.Equal(new DateTime(2026, 11, 5, 23, 32, 39, DateTimeKind.Utc), cache.LastTurnFor(path));
+
+        File.AppendAllLines(path, new[] { Turn("assistant", "2026-11-06T20:00:00.000Z") });
+
+        Assert.Equal(new DateTime(2026, 11, 6, 20, 0, 0, DateTimeKind.Utc), cache.LastTurnFor(path));
+        Assert.Equal(2, reads);
     }
 }

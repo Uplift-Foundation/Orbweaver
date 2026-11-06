@@ -116,7 +116,13 @@ namespace Orbweaver
             // PeerPersonaCache.Shared, because the calling thread is the peer
             // pump and the persona files live under the session's cwd and its
             // parents — the same walk the slash catalogue froze the link on.
-            Func<SessionStatus, IReadOnlyList<string>, bool, MirrorProtocol.PeerPersona?>? PersonaFor = null);
+            Func<SessionStatus, IReadOnlyList<string>, bool, MirrorProtocol.PeerPersona?>? PersonaFor = null,
+
+            // CB-307: where a session's last turn is read from, for the parked
+            // flag. Null means a cache of this server's own over the real
+            // disk, which is what the app uses; a test passes one with
+            // injected arms to count reads or to fail them.
+            LastTurnCache? LastTurns = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -617,22 +623,18 @@ namespace Orbweaver
                 var hasTranscript = !string.IsNullOrEmpty(status.TranscriptPath)
                                     && File.Exists(status.TranscriptPath);
 
-                // A conversation, not just a process.
-                //
-                // The registry lists every session whose window is still open,
-                // including ones abandoned at a prompt days ago — and drawing
-                // those puts an orb beside a live session with the same name
-                // and no way to tell them apart. SessionLiveness has the full
-                // account of why the obvious checks all say "alive" for a
-                // session nobody has spoken to since Saturday.
+                // CB-307: a session nobody has spoken to for a while is
+                // offered parked, not left out. It used to be left out, on the
+                // reasoning that a quiet session was an abandoned one; a quiet
+                // long-lived session is how these are ordinarily used, and the
+                // peer drew no orb for it at all. SessionLiveness has the full
+                // account, and WithoutQuietDuplicates below keeps the one case
+                // where leaving it out was right.
                 //
                 // Said once per name: a peer asks every ten seconds, and a
-                // session that has been abandoned stays abandoned.
-                if (hasTranscript && !LivelyEnough(status))
-                {
-                    MirrorLog.SayOnce($"hello-abandoned:{name}", $"name={name}");
-                    continue;
-                }
+                // parked session usually stays parked.
+                var parked = hasTranscript && ParkedNow(status);
+                if (parked) QuietLog($"hello-parked:{name}", $"name={name}");
 
                 var offered = Offered(status);
                 entries.Add(new MirrorProtocol.MirrorRosterEntry(
@@ -646,7 +648,8 @@ namespace Orbweaver
                     _seams.CanDeliver?.Invoke(status),
                     RouteFor(resolved.Value.SessionId),
                     PersonaFor(status, userConfigDirs, picturesById),
-                    CommandRoutes: offered.Routes));
+                    CommandRoutes: offered.Routes,
+                    Parked: parked ? true : null));
             }
 
             // AgentRoster is Claude Code's authority, not a universal session
@@ -665,15 +668,26 @@ namespace Orbweaver
                         ? (string.IsNullOrWhiteSpace(status.Cwd) ? MirrorProtocol.CliFor(status.Source) : Path.GetFileName(status.Cwd))
                         : status.Title;
                     var hasTranscript = !string.IsNullOrEmpty(status.TranscriptPath) && File.Exists(status.TranscriptPath);
-                    if (hasTranscript && !LivelyEnough(status)) continue;
+                    var parked = hasTranscript && ParkedNow(status);
                     var offered = Offered(status);
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
                         PersonaFor(status, userConfigDirs, picturesById),
-                    CommandRoutes: offered.Routes));
+                    CommandRoutes: offered.Routes,
+                    Parked: parked ? true : null));
                 }
             }
+
+            // CB-307: the one case where a quiet session is still left out — a
+            // parked copy beside a live copy of the same name, which is two
+            // identical labels with the dim one meaning nothing. Before the
+            // member block on purpose, so a suppressed lead cannot sponsor
+            // members (the same ordering the old abandoned rule had).
+            var (kept, suppressed) = WithoutQuietDuplicates(entries, sessions);
+            entries = kept;
+            foreach (var gone in suppressed)
+                QuietLog($"hello-duplicate:{gone.Name}", $"name={gone.Name}");
 
             // CB-223: agent-team members. Claude Code's agent registry does not
             // list a team's members — measured: fifteen live member processes,
@@ -688,8 +702,10 @@ namespace Orbweaver
             if (everything)
             {
                 var offeredRoutes = entries.Where(e => e.Route is not null).Select(e => e.Route!).ToList();
-                foreach (var (sessionId, status) in TeamMembersToOffer(offeredRoutes, sessions,
-                             s => !(HasTranscript(s) && !LivelyEnough(s))))
+                // CB-307: every member of an offered lead is offered; a quiet
+                // one is offered parked. The duplicate rule never reaches a
+                // member, because every member wears its lead's title.
+                foreach (var (sessionId, status) in TeamMembersToOffer(offeredRoutes, sessions, _ => true))
                 {
                     var name = string.IsNullOrWhiteSpace(status.Title)
                         ? (string.IsNullOrWhiteSpace(status.Cwd) ? MirrorProtocol.CliFor(status.Source) : Path.GetFileName(status.Cwd))
@@ -700,7 +716,8 @@ namespace Orbweaver
                         string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
                         PersonaFor(status, userConfigDirs, picturesById),
-                    CommandRoutes: offered.Routes));
+                    CommandRoutes: offered.Routes,
+                    Parked: HasTranscript(status) && ParkedNow(status) ? true : null));
                 }
             }
 
@@ -878,38 +895,23 @@ namespace Orbweaver
                 .Take(MaxCatalogue)
                 .ToList();
 
-        // Excluded from coverage: this is the disk. What it decides is
-        // SessionLiveness, which is pure and covered from both sides of the
-        // boundary; this reads a tail and asks.
+        // CB-307: whether this session is parked right now.
         //
         // Through `Now()` rather than `DateTime.UtcNow` for the reason that
         // property already exists: a rule about how long ago something happened
         // is untestable against a wall clock. It also keeps the fixtures
         // honest — MirrorRoundTripTests pins every row at a fixed instant
         // deliberately (its own comment says why), and a roster that read the
-        // real clock would quietly drop every one of those sessions and take
-        // the whole suite with it.
-        [ExcludeFromCodeCoverage]
-        private bool LivelyEnough(SessionStatus status)
-        {
-            try
-            {
-                var lines = TranscriptReader.TailLines(
-                    status.TranscriptPath!, LastTurnCache.TailBytes);
+        // real clock would quietly park every one of those sessions.
+        //
+        // No try/catch, unlike the read this replaced: LastTurnCache already
+        // turns a stat or read that throws into "no turn", which IsParked reads
+        // as not parked — the same fail-open, decided in one place.
+        private bool ParkedNow(SessionStatus status) =>
+            SessionLiveness.IsParked(status.State, LastTurns.LastTurnFor(status.TranscriptPath), Now());
 
-                return !SessionLiveness.IsParked(
-                    status.State,
-                    SessionLiveness.LastTurnAt(lines),
-                    Now());
-            }
-            catch
-            {
-                // A transcript that cannot be read is shown rather than
-                // hidden — see WorthShowing on why an unreadable file must not
-                // look like an abandoned session.
-                return true;
-            }
-        }
+        private LastTurnCache LastTurns => _seams.LastTurns ?? _ownLastTurns;
+        private readonly LastTurnCache _ownLastTurns = new();
 
         // A peer name, resolved to a session on this machine — or nothing.
         //
@@ -1094,13 +1096,24 @@ namespace Orbweaver
         // test, since the real log is opt-in and decided once per process.
         internal Action<string, string> GapLog { get; set; } = (what, detail) => MirrorLog.SayOnce(what, detail);
 
+        // CB-307: the sink for hello-parked and hello-duplicate, for the same
+        // reason GapLog is one — the real log is opt-in and decided once per
+        // process, so a test could not otherwise see what was said.
+        internal Action<string, string> QuietLog { get; set; } = (what, detail) => MirrorLog.SayOnce(what, detail);
+
         private void RecordRosterGaps(
             IReadOnlyList<AgentRoster.Entry> agents,
             IReadOnlyList<(string SessionId, SessionStatus Status)> sessions,
             IReadOnlyList<string> askedDirs)
         {
-            var gaps = RosterGaps(agents, sessions, askedDirs, Home,
-                s => !(HasTranscript(s) && !LivelyEnough(s)));
+            // CB-307: every session is eligible now. A parked session is offered,
+            // so it is a gap only if the registry missed it, like any other. A
+            // session the duplicate rule suppressed never needs excluding here:
+            // the rule only sees entries the registry loop offered, and such a
+            // session matches a registry row, which RosterGaps already skips.
+            // The plan's "not suppressed" predicate would therefore have been a
+            // second, unreachable spelling of that same skip.
+            var gaps = RosterGaps(agents, sessions, askedDirs, Home, _ => true);
 
             lock (_gate) _rosterGaps = gaps;
 
@@ -1119,6 +1132,48 @@ namespace Orbweaver
             root.StartsWith("~/", StringComparison.Ordinal) || root == NoTranscriptRoot
                 ? root
                 : "(outside home)";
+
+        // CB-307: the roster with every parked copy that a live copy of the
+        // same name makes redundant taken out, and what was taken out (for the
+        // log). Pure, like WithTeamFields: entries are matched to their
+        // sessions by route, and only a session SessionLiveness lets the
+        // duplicate rule see takes part — the host's scan uses the same
+        // predicate and the same rule, which is what makes host and peer
+        // agree. The name is the session's title, which is what the host
+        // labels its orb with, and the entry's name only when it has none.
+        // An entry with no route, or whose session is not in the list, is
+        // kept untouched.
+        internal static (List<MirrorProtocol.MirrorRosterEntry> Kept, List<(MirrorProtocol.MirrorRosterEntry Entry, string Name)> Suppressed)
+            WithoutQuietDuplicates(
+                List<MirrorProtocol.MirrorRosterEntry> entries,
+                IReadOnlyList<(string SessionId, SessionStatus Status)> sessions)
+        {
+            var byRoute = new Dictionary<string, SessionStatus>(StringComparer.Ordinal);
+            foreach (var (sessionId, status) in sessions) byRoute[RouteFor(sessionId)] = status;
+
+            var rows = new List<(string Key, string Name, bool Parked)>();
+            var nameOf = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+            {
+                if (entry.Route is null || !byRoute.TryGetValue(entry.Route, out var status)) continue;
+                if (!SessionLiveness.EligibleForDuplicateRule(status)) continue;
+
+                var name = string.IsNullOrWhiteSpace(status.Title) ? entry.Name : status.Title;
+                nameOf[entry.Route] = name;
+                rows.Add((entry.Route, name, entry.Parked == true));
+            }
+
+            var drop = SessionLiveness.SuppressedDuplicates(rows);
+            var kept = new List<MirrorProtocol.MirrorRosterEntry>();
+            var gone = new List<(MirrorProtocol.MirrorRosterEntry, string)>();
+            foreach (var entry in entries)
+            {
+                if (entry.Route is not null && drop.Contains(entry.Route)) gone.Add((entry, nameOf[entry.Route]));
+                else kept.Add(entry);
+            }
+
+            return (kept, gone);
+        }
 
         // CB-223: each entry with its team fields, from the session it was
         // built from. Lead is the lead's route, and only when that route is in
