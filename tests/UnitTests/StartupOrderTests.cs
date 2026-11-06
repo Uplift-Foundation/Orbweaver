@@ -420,4 +420,52 @@ public class StartupOrderTests
         MacOSLegacyBundle.Run();
         KeepAliveRepair.Run();
     }
+
+    [Fact]
+    public void A_handled_finish_update_stops_the_sequence_before_the_single_instance_claim()
+    {
+        // CB-308: the updater's finisher must run while the old Buddy still
+        // holds the claim, so it answers ahead of it and nothing after runs.
+        var order = new List<string>();
+
+        Startup.Run(
+            installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => order.Add("hup"),
+            claimSingleInstance: () => { order.Add("single"); return true; },
+            migrateUserData: () => order.Add("migrate"),
+            claimUiThread: () => order.Add("claim"),
+            retireLegacy: () => order.Add("retire"),
+            repairKeepAlive: () => order.Add("repair"),
+            refreshHooks: () => order.Add("refresh"),
+            serveOnLaunch: () => order.Add("serve"),
+            waitForUnlock: () => order.Add("wait"),
+            startUi: () => order.Add("ui"),
+            finishUpdate: () => { order.Add("finish"); return true; });
+
+        Assert.Equal(new[] { "log", "hup", "finish" }, order);
+    }
+
+    [Fact]
+    public void An_unhandled_finish_update_lets_startup_carry_on_as_normal()
+    {
+        // The negative control: the step that says "not mine" must not stop
+        // anything, or every ordinary launch would exit.
+        var order = new List<string>();
+
+        Startup.Run(
+            installCrashLog: () => { },
+            installHangupGuard: () => { },
+            claimSingleInstance: () => { order.Add("single"); return true; },
+            migrateUserData: () => { },
+            claimUiThread: () => { },
+            retireLegacy: () => { },
+            repairKeepAlive: () => { },
+            refreshHooks: () => { },
+            serveOnLaunch: () => { },
+            waitForUnlock: () => { },
+            startUi: () => order.Add("ui"),
+            finishUpdate: () => { order.Add("finish"); return false; });
+
+        Assert.Equal(new[] { "finish", "single", "ui" }, order);
+    }
 }

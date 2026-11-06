@@ -179,6 +179,11 @@ keepalive_plist_content() {
     <integer>$KEEPALIVE_THROTTLE_SECONDS</integer>
     <key>ProcessType</key>
     <string>Interactive</string>
+    <!-- CB-308: without this, launchd kills every process still in the app's
+         process group when the app exits, which would take the updater's
+         finisher down with the app it is replacing. -->
+    <key>AbandonProcessGroup</key>
+    <true/>
     <key>StandardOutPath</key>
     <string>$HOME/Library/Logs/Orbweaver/keepalive.log</string>
     <key>StandardErrorPath</key>

@@ -186,10 +186,19 @@ namespace Orbweaver
             Action refreshHooks,
             Action serveOnLaunch,
             Action waitForUnlock,
-            Action startUi)
+            Action startUi,
+            Func<bool>? finishUpdate = null)
         {
             installCrashLog();
             installHangupGuard();
+            // CB-308: the updater's finisher is the staged *new* bundle
+            // launched with --finish-update. It is deliberately not a Buddy:
+            // it must run while the old one is still alive and holding the
+            // single-instance claim, so it answers before that claim and
+            // Run returns once it has handled the launch. Optional and last
+            // so every existing caller keeps compiling; the order is what is
+            // pinned (StartupOrderTests).
+            if (finishUpdate is not null && finishUpdate()) return;
             if (!claimSingleInstance())
             {
                 // Another live Buddy holds the single-instance claim. Exit
