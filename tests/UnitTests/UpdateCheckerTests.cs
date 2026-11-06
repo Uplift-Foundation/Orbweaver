@@ -340,6 +340,53 @@ public class UpdateCheckerTests
     }
 
     [Fact]
+    public async Task AManualClickJoiningAnAutomaticCheckOfASkippedVersionIsOfferedItAnyway()
+    {
+        var r = new Rig();
+        r.S.SkippedVersion = "1.0.4";
+        r.F.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        r.F.Releases = [Rel("1.0.4")];
+
+        var auto = r.C.RunAutomaticAsync();       // holds the fetch open
+        var manual = r.C.CheckNowAsync();         // joins it
+        r.F.Gate.SetResult(true);
+        await auto;
+        var res = await manual;
+
+        Assert.Equal(1, r.F.Calls);               // re-decided from the same fetch: no second request
+        Assert.Equal(UpdateCheckOutcome.Available, res.Outcome);
+        Assert.Equal("v1.0.4", res.Release!.Tag);
+        Assert.True(res.Manual);
+        Assert.Equal("v1.0.4", r.C.Pending!.Tag);
+        // The automatic half stayed quiet (negative control): the only announcement
+        // is the manual one, and the skip setting itself was left alone.
+        var announced = Assert.Single(r.Results);
+        Assert.True(announced.Manual);
+        Assert.Equal(UpdateCheckOutcome.Available, announced.Outcome);
+        Assert.Equal("1.0.4", r.S.SkippedVersion);
+    }
+
+    [Fact]
+    public async Task AManualClickJoiningAnAutomaticFailureIsToldAboutTheFailure()
+    {
+        var r = new Rig();
+        r.F.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        r.F.Throw = new UpdateException(UpdateFailure.Network, "offline");
+
+        var auto = r.C.RunAutomaticAsync();
+        var manual = r.C.CheckNowAsync();
+        r.F.Gate.SetResult(true);
+        await auto;
+        var res = await manual;
+
+        Assert.Equal(UpdateCheckOutcome.Failed, res.Outcome);
+        Assert.Equal("offline", res.Error);
+        Assert.True(res.Manual);
+        Assert.Equal(1, r.F.Calls);
+        Assert.Single(r.Results);
+    }
+
+    [Fact]
     public async Task DisposeCancelsAnInFlightCheckAndStopsRescheduling()
     {
         var r = new Rig();

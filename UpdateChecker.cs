@@ -41,6 +41,12 @@ namespace Orbweaver
             new Timer(_ => action(), null, delay, Timeout.InfiniteTimeSpan);
     }
 
+    // What one check fetched, kept with its answer so a manual click that joins an
+    // automatic check in flight can re-decide from the same releases (skip ignored)
+    // instead of inheriting the automatic check's quieter answer. Releases is null
+    // when the fetch failed.
+    internal sealed record CheckSnapshot(IReadOnlyList<UpdateRelease>? Releases, bool IncludePrerelease, UpdateCheckResult Result);
+
     // Checks GitHub for a newer release, on a schedule and on demand (CB-308).
     //
     // Reporting rule (the PM's): a MANUAL check always answers — up to date,
@@ -65,7 +71,7 @@ namespace Orbweaver
         private readonly CancellationTokenSource _lifetime = new();
         private readonly object _gate = new();
         private IDisposable? _timer;
-        private Task<UpdateCheckResult>? _inFlight;
+        private Task<CheckSnapshot>? _inFlight;
         private UpdateRelease? _pending;
         private bool _disposed;
 
@@ -161,7 +167,7 @@ namespace Orbweaver
         {
             if (!_settings.AutoCheck) return;
 
-            var result = await CheckAsync(manual: false).ConfigureAwait(false);
+            var result = (await CheckAsync(manual: false).ConfigureAwait(false)).Result;
             lock (_gate)
             {
                 if (_disposed) return;
@@ -174,23 +180,35 @@ namespace Orbweaver
 
         /// <summary>"Check for updates…". Always reports; coalesces with a check already running.</summary>
         //
-        // If it joins an automatic check that was already running, that check's
-        // "up to date" or failure was not announced (automatic ones stay quiet), so
-        // it is announced here as the manual answer. (Known edge: an automatic
-        // check that stayed quiet because the user had skipped that version reads
-        // as "up to date" to a manual click that joined it; a manual check that
-        // starts fresh does offer the skipped version.)
+        // If it joins an automatic check already running, it does not inherit that
+        // check's answer: automatic checks honour the skip and stay quiet about up
+        // to date and failures, and a manual click must not be told "up to date"
+        // while a skipped release exists. It re-runs Pick on the releases that
+        // check already fetched, ignoring the skip. No second request.
         internal async Task<UpdateCheckResult> CheckNowAsync()
         {
-            var result = await CheckAsync(manual: true).ConfigureAwait(false);
-            if (result.Manual) return result;
+            var snap = await CheckAsync(manual: true).ConfigureAwait(false);
+            if (snap.Result.Manual) return snap.Result;
 
-            result = result with { Manual = true };
-            if (result.Outcome != UpdateCheckOutcome.Available) Completed?.Invoke(result);
+            UpdateCheckResult result;
+            if (snap.Releases is null)
+                result = snap.Result with { Manual = true };
+            else
+            {
+                var decision = UpdateFeed.Pick(snap.Releases, _currentVersion, snap.IncludePrerelease, null);
+                result = decision.Kind == UpdateDecisionKind.Available
+                    ? new UpdateCheckResult(UpdateCheckOutcome.Available, decision.Release, null, true)
+                    : new UpdateCheckResult(UpdateCheckOutcome.UpToDate, null, null, true);
+                SetPending(result.Release);
+            }
+
+            // The automatic check already announced an Available; don't repeat it.
+            if (!(snap.Result.Outcome == UpdateCheckOutcome.Available && result.Outcome == UpdateCheckOutcome.Available))
+                Completed?.Invoke(result);
             return result;
         }
 
-        private Task<UpdateCheckResult> CheckAsync(bool manual)
+        private Task<CheckSnapshot> CheckAsync(bool manual)
         {
             lock (_gate)
             {
@@ -201,13 +219,16 @@ namespace Orbweaver
             }
         }
 
-        private async Task<UpdateCheckResult> RunAsync(bool manual)
+        private async Task<CheckSnapshot> RunAsync(bool manual)
         {
             UpdateCheckResult result;
+            IReadOnlyList<UpdateRelease>? fetched = null;
+            var includePre = false;
             try
             {
-                var includePre = _settings.IncludePrerelease;
+                includePre = _settings.IncludePrerelease;
                 var releases = await _feed.FetchAsync(includePre, _lifetime.Token).ConfigureAwait(false);
+                fetched = releases;
                 var decision = UpdateFeed.Pick(releases, _currentVersion, includePre, _settings.SkippedVersion);
                 _settings.LastCheck = _now();
 
@@ -228,7 +249,7 @@ namespace Orbweaver
 
             SetPending(result.Outcome == UpdateCheckOutcome.Failed ? Pending : result.Release);
             if (manual || result.Outcome == UpdateCheckOutcome.Available) Completed?.Invoke(result);
-            return result;
+            return new CheckSnapshot(fetched, includePre, result);
         }
 
         private void SetPending(UpdateRelease? next)
