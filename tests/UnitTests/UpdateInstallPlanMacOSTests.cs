@@ -234,4 +234,13 @@ public class UpdateInstallPlanMacOSTests
     [InlineData("name", "name")]
     public void NamePosix_is_the_last_component(string path, string expected) =>
         Assert.Equal(expected, UpdateInstallPlan.NamePosix(path));
+
+    [Fact]
+    public void A_bundle_with_no_parent_folder_asks_about_the_root()
+    {
+        string? asked = null;
+        var (target, _) = UpdateInstallPlan.Preflight("Orbweaver.app/Contents/MacOS/Orbweaver", p => { asked = p; return true; });
+        Assert.Equal("Orbweaver.app", target);
+        Assert.Equal("/", asked);
+    }
 }

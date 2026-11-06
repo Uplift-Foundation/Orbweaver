@@ -12,15 +12,14 @@ namespace Orbweaver
         // Null means this platform has no installer, and the caller should
         // offer "Download manually" instead of an Install button.
         internal static IUpdateInstaller? ForCurrentPlatform(Action<string> log) =>
-            For(OperatingSystem.IsMacOS(), OperatingSystem.IsWindows(),
-                () => CreateMacOS(log),
-                () => CreateWindows(log));
+            For(OperatingSystem.IsMacOS(), OperatingSystem.IsWindows(), log, CreateMacOS, CreateWindows);
 
         // The choice, with the construction passed in, so each arm is a case
         // and neither real installer is built by a test.
         internal static IUpdateInstaller? For(
-            bool isMac, bool isWindows, Func<IUpdateInstaller> mac, Func<IUpdateInstaller?> windows) =>
-            isMac ? mac() : isWindows ? windows() : null;
+            bool isMac, bool isWindows, Action<string> log,
+            Func<Action<string>, IUpdateInstaller> mac, Func<Action<string>, IUpdateInstaller?> windows) =>
+            isMac ? mac(log) : isWindows ? windows(log) : null;
 
         // Excluded from coverage: composes the real downloader, the real
         // process runner and the real folders, none of which a suite may use.

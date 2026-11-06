@@ -754,6 +754,22 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Contains(_log, l => l.Contains("could not write the failed marker"));
     }
 
+    [Fact]
+    public async Task A_launcher_that_cannot_start_does_not_stop_the_failed_marker_being_written()
+    {
+        // Failure before any swap, with the relaunch of the old app throwing
+        // (RealExec throws when a program cannot be started at all).
+        var (h, mac, _, d, _) = Finish();
+        var baseHook = mac.Hook!;
+        mac.Hook = c => c.File == "/usr/bin/env" ? throw new System.ComponentModel.Win32Exception("no such file") : baseHook(c);
+        var d2 = d with { Move = (from, to) => throw new InvalidOperationException("cannot move aside") };
+
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d2));
+
+        Assert.True(File.Exists(Path.Combine(h.MarkerDir, "failed")));
+        Assert.Contains(_log, l => l.Contains("could not be run"));
+    }
+
     // ---- The installer, end to end --------------------------------------
 
     private MacUpdateInstaller Installer(FakeMac mac, MacUpdateInstaller.DownloadVerified? download = null,
