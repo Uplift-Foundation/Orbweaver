@@ -262,6 +262,16 @@ namespace Orbweaver
         [JsonPropertyName("transcript_path")]
         public string TranscriptPath { get; set; } = "";
 
+        // When the last real user or assistant turn in TranscriptPath happened
+        // (CB-307), read from the transcript and never from the file's mtime,
+        // which a bridge row or a hook write moves without anyone speaking.
+        // Filled in by ReadStatusFiles for an idle Claude Code session only —
+        // see WantsLastTurn — and null everywhere else, which SessionLiveness
+        // reads as "cannot tell, so not parked". In memory only, for the reason
+        // Source and Kind are: it is the scan's conclusion, not the hook's.
+        [JsonIgnore]
+        public DateTime? LastTurnUtc { get; set; }
+
         // Where this session lives when it does not live on this machine: a
         // https://claude.ai/code/session_… address for a cloud session, empty
         // for everything else. [JsonIgnore] for the reason Source and Kind are
@@ -973,6 +983,31 @@ namespace Orbweaver
 
         private readonly Dictionary<string, (long Length, TranscriptIdentity Identity)>
             _identityCache = new(StringComparer.Ordinal);
+
+        // The bounded last-turn read the mirror server also uses (CB-307), so
+        // host and peer decide "parked" from the same transcript the same way.
+        // One per manager, because what makes it cheap is its memo of each
+        // file's length. Replaceable so a scan test can count the reads.
+        internal LastTurnCache LastTurns { get; set; } = new();
+
+        // Which sessions get their transcript's last turn read: Claude Code,
+        // with a transcript to read, and not mid-turn. A generating or waiting
+        // session is never parked whatever its file says, so its transcript is
+        // never opened — which is what keeps this off the sessions that are
+        // writing continuously.
+        internal static bool WantsLastTurn(SessionStatus status) =>
+            status.Source == SessionSource.ClaudeCode
+            && !string.IsNullOrEmpty(status.TranscriptPath)
+            && status.State is not ("generating" or "waiting");
+
+        // The lead the duplicate rule sees for a session: the probe's team read,
+        // with a lead that is the session itself counting as none, the same
+        // reading the scan loop gives status.Lead.
+        private static string DuplicateRuleLead(ScanEntry entry, ScanProbes probes)
+        {
+            var membership = probes.TeamOf(entry.SessionId, entry.Status.SessionPid);
+            return membership.Lead == entry.SessionId ? "" : membership.Lead;
+        }
 
         internal static bool WantsIdentityFromTranscript(SessionStatus status) =>
             status.Source == SessionSource.ClaudeCode
@@ -2281,6 +2316,12 @@ namespace Orbweaver
                 if (WantsIdentityFromTranscript(status))
                     ApplyIdentity(status, IdentityFor(status.TranscriptPath!));
 
+                // CB-307: when anyone last spoke in it, for the parked rule. After
+                // the repair above, so it reads the path the rest of the scan
+                // believes.
+                if (WantsLastTurn(status))
+                    status.LastTurnUtc = LastTurns.LastTurnFor(status.TranscriptPath);
+
                 // A CLI switched off is ignored, not unwired. Its hooks keep
                 // writing status files — they are the user's own config, and a
                 // display switch that rewrote it would be a surprise, and for
@@ -2564,6 +2605,12 @@ namespace Orbweaver
                         AgentColor = remote.LeadKey is null ? "" : remote.AgentColor ?? "",
 
                         Kind = SessionKind.Remote,
+
+                        // CB-307: the host's own verdict that nobody has spoken
+                        // to this session for a while, carried on the roster.
+                        // Dimmed like a local quiet session, and cleared the
+                        // moment the next roster no longer says so.
+                        Presence = remote.Parked ? OrbPresence.Parked : OrbPresence.Present,
                     },
                     remote.Seen));
             }
@@ -2726,6 +2773,27 @@ namespace Orbweaver
 
             var superseded = Superseded(found, isLiveJob);
 
+            // CB-307: an exact-duplicate-name quiet copy beside a live copy of
+            // the same name is suppressed, and only that. Every other quiet
+            // session stays, dimmed — see SessionPresence.WithQuiet. Decided
+            // before the loop because the rule needs every session at once, the
+            // way Superseded does.
+            //
+            // Eligibility reads the team from the probes rather than
+            // status.Lead, which the loop below only assigns later: a member
+            // inherits its lead's title, and a quiet member beside a live one
+            // must not vanish. Background jobs sit out too, since their
+            // presence is the daemon's rather than a clock's.
+            var suppressed = SessionLiveness.SuppressedDuplicates(
+                found
+                    .Where(e => !superseded.Contains(e.SessionId)
+                        && e.Status.Source == SessionSource.ClaudeCode
+                        && string.IsNullOrEmpty(DuplicateRuleLead(e, probes))
+                        && (jobs is null
+                            || BackgroundJobs.Phase(jobs, e.SessionId) is JobPhase.NotAJob or JobPhase.Unknown))
+                    .Select(e => (e.SessionId, e.Status.Title, SessionLiveness.IsParked(
+                        e.Status.State, e.Status.LastTurnUtc, now))));
+
             // Sessions that live agents name as their lead. Used for two things
             // below, and for nothing else — in particular *not* to excuse a
             // lead from the lifetime timer, which is the user's setting to make.
@@ -2873,6 +2941,12 @@ namespace Orbweaver
                     continue;   // removed in the pass below
                 }
 
+                // CB-307: the quiet copy of a name a live session also wears.
+                if (suppressed.Contains(sessionId))
+                {
+                    continue;   // removed in the pass below
+                }
+
                 if (WantsAgentViewer(sessionId, status, leadsWithLiveAgents))
                 {
                     probes.AdoptViewer(status);
@@ -2934,6 +3008,11 @@ namespace Orbweaver
                         hasLead && presentIds.Contains(status.Lead),
                         hasLead && isLiveJob(status.Lead),
                         SessionPresence.HasAttachClient(attachClients, sessionId));
+
+                    // CB-307: a live session nobody has spoken to for a while is
+                    // parked — dimmed, still on the board — rather than gone.
+                    status.Presence = SessionPresence.WithQuiet(
+                        status.Presence, status.Shape, status.State, status.LastTurnUtc, now);
 
                     // The badge, which says what this session *is*. Assigned
                     // here rather than in OrbWindow because Kind is the one

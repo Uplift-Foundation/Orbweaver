@@ -48,9 +48,11 @@ namespace Orbweaver
         // sitting in it. Full brightness, ordinary motion.
         Present,
 
-        // Quiet, with nothing more to say about it. An orphaned team member is
-        // the only thing here: its lead has gone, and no daemon knows anything
-        // about it that would justify a mark. Dimmed.
+        // Quiet, with nothing more to say about it. Two things land here: an
+        // orphaned team member (its lead has gone, and no daemon knows anything
+        // about it that would justify a mark), and, since CB-307, a live
+        // session nobody has spoken to for longer than SessionLiveness.ParkedAfter
+        // (WithQuiet). Dimmed, and worded "parked" in the tooltip, with no badge.
         Parked,
 
         // A background job the daemon is holding for you. "Needs input" is the
@@ -221,6 +223,22 @@ namespace Orbweaver
             // turns is still a terminal session, sitting there waiting for you.
             _ => OrbPresence.Present
         };
+
+        // CB-307: a live session with no turn for longer than the quiet window is
+        // parked rather than hidden. Applied after PresenceOf so the orphan rule
+        // and the daemon's own presence keep their say: only a Present orb can
+        // become Parked, and a background job's presence is the daemon's, never
+        // a clock's. Terminal sessions and team members both park by quiet,
+        // because the mirror server parks members too and host and peer must
+        // agree; the duplicate rule, not this one, is what protects members.
+        internal static OrbPresence WithQuiet(
+            OrbPresence current, LocalSessionShape shape, string state,
+            DateTime? lastTurnUtc, DateTime nowUtc) =>
+            current == OrbPresence.Present
+            && shape != LocalSessionShape.Background
+            && SessionLiveness.IsParked(state, lastTurnUtc, nowUtc)
+                ? OrbPresence.Parked
+                : current;
 
         private static OrbPresence BackgroundPresence(string state, JobPhase phase, bool attached)
         {

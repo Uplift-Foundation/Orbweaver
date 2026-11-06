@@ -658,4 +658,43 @@ public class RemoteScanTests
         Assert.Equal("fallback-name", chat!.DisplayName);
     }
 
+    // --- CB-307: a parked remote orb is drawn dimmed, and clears -------------
+
+    // The host's roster said nobody has spoken to this session for a while, so
+    // the near side draws the orb dimmed rather than not at all — and the next
+    // roster without the flag brings it back to full brightness. Control: the
+    // very same row, unparked, is Present, so the dimming is the flag's doing.
+    [AvaloniaFact]
+    public void AParkedRemoteSessionIsDrawnDimmedAndClearsWhenTheNextRosterDropsTheFlag()
+    {
+        using var scratch = new Scratch();
+        try
+        {
+            OrbweaverSettings.ClaudeCodeEnabled = true;
+            Publish(new RemoteControlSessions.Remote("lawyer-search", "far-mac", "idle", DateTime.UtcNow,
+                ".claude", Route: "sid:quiet", Parked: true));
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+
+            const string key = "rc:.claude:sid:quiet";
+            Assert.Contains(key, Orbs(manager).Keys);
+            Assert.Equal(OrbPresence.Parked, StatusOf(manager, key).Presence);
+            Assert.Equal(OrbPresence.Parked, Orbs(manager)[key].Presence);
+            Assert.Equal("parked", Orbs(manager)[key].PresenceLabel);
+
+            Publish(new RemoteControlSessions.Remote("lawyer-search", "far-mac", "idle", DateTime.UtcNow,
+                ".claude", Route: "sid:quiet"));
+            manager.ScanAndUpdate();
+
+            Assert.Equal(OrbPresence.Present, StatusOf(manager, key).Presence);
+            Assert.Equal(OrbPresence.Present, Orbs(manager)[key].Presence);
+            Assert.Null(Orbs(manager)[key].PresenceLabel);
+        }
+        finally
+        {
+            PublishNothing();
+        }
+    }
+
 }
