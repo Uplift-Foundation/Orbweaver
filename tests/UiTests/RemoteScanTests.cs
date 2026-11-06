@@ -728,4 +728,54 @@ public class RemoteScanTests
             PublishNothing();
         }
     }
+
+    // --- CB-307 addendum: the local typing gate runs only where the pane lives ---
+
+    // Warren saw the local panel's refusal ("This terminal isn't at its prompt")
+    // while trying to type to a session on another machine. The gate reads a
+    // tmux pane on THIS machine, so it must be reachable only from the panel of
+    // a session whose pane is here. A peer's orb is answered by
+    // RemoteControlChatSession, which sends INPUT to the far server and lets
+    // the far side judge its own pane (the mirror's INPUT guard), and never by
+    // LocalCliChatSession, the one class that calls the local gate.
+    //
+    // Pinned by type for every state a remote row can be in, with a local
+    // session beside it as the control: that one IS a LocalCliChatSession, and
+    // its gate is covered in LocalCliChatSessionTests.
+    [AvaloniaTheory]
+    [InlineData("idle")]
+    [InlineData("waiting")]
+    [InlineData("running")]
+    public void APeersChatIsNeverALocalSessionSoTheLocalGateNeverRunsOnIt(string peerStatus)
+    {
+        using var scratch = new Scratch();
+        try
+        {
+            OrbweaverSettings.ClaudeCodeEnabled = true;
+            OrbweaverSettings.ClaudeCodeChatEnabled = true;
+            File.WriteAllText(Path.Combine(scratch.Dir, "local-1.txt"),
+                System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+                {
+                    State = "idle", Title = "here", Cwd = "/Users/user/project",
+                    SessionPid = Environment.ProcessId, TermProgram = "iTerm.app", Tty = "/dev/ttys004",
+                }));
+            Publish(new RemoteControlSessions.Remote("there", "far-mac", peerStatus, DateTime.UtcNow,
+                ".claude", Route: "sid:far"));
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+
+            var remote = manager.RemoteChatFor("rc:.claude:sid:far");
+            Assert.IsType<RemoteControlChatSession>(remote);
+            Assert.IsNotType<LocalCliChatSession>(remote);
+
+            // Control: a session whose pane is on this machine is the one that
+            // gets the local gate.
+            Assert.IsType<LocalCliChatSession>(manager.RemoteChatFor("local-1"));
+        }
+        finally
+        {
+            PublishNothing();
+        }
+    }
 }
