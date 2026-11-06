@@ -151,11 +151,16 @@ public class UpdateInstallPlanMacOSTests
     [Fact]
     public void Handoff_round_trips_and_rejects_junk()
     {
-        var h = new MacHandoff("/Applications/Orbweaver.app", "/s/Orbweaver.app", 42, "/p.plist", "1.2.3", "/m");
+        var h = new MacHandoff(UpdateInstallPlan.MacHandoffSchema, "/Applications/Orbweaver.app", "/s/Orbweaver.app", 42, "/p.plist", "1.2.3", "/m");
         Assert.Equal(h, UpdateInstallPlan.MacParseHandoff(UpdateInstallPlan.MacSerializeHandoff(h)));
         Assert.Null(UpdateInstallPlan.MacParseHandoff("not json"));
         Assert.Null(UpdateInstallPlan.MacParseHandoff("null"));
-        Assert.Null(UpdateInstallPlan.MacParseHandoff("""{"Installed":"","Staged":"s","MarkerDir":"m"}"""));
+        Assert.Null(UpdateInstallPlan.MacParseHandoff("""{"Schema":1,"Installed":"","Staged":"s","MarkerDir":"m"}"""));
+        // An unknown schema still parses, so the finisher can name it and use MarkerDir.
+        Assert.Equal(99, UpdateInstallPlan.MacParseHandoff("""{"Schema":99,"Installed":"i","Staged":"s","MarkerDir":"m","Future":true}""")!.Schema);
+        // No Schema at all reads as 0, which is not the current one.
+        Assert.Equal(0, UpdateInstallPlan.MacParseHandoff("""{"Installed":"i","Staged":"s","MarkerDir":"m"}""")!.Schema);
+        Assert.Equal(1, UpdateInstallPlan.MacHandoffSchema);
     }
 
     [Fact]
@@ -173,5 +178,26 @@ public class UpdateInstallPlanMacOSTests
         // compiles a second one in), so it uses these literals.
         Assert.Equal("io.github.wtvamp.claudebuddy", Brand.MacBundleId);
         Assert.Equal("Orbweaver", Brand.AssemblyName);
+    }
+
+    [Theory]
+    [InlineData("1.0.4")]
+    [InlineData("1.0.10")]
+    [InlineData("1.1.0")]
+    [InlineData("2.0.0")]
+    public void A_release_from_the_finisher_onward_is_installable(string version) =>
+        Assert.Null(UpdateInstallPlan.MacFinisherRefusal(version));
+
+    [Theory]
+    [InlineData("1.0.3")]
+    [InlineData("1.0.4-beta")]
+    [InlineData("0.5.11-beta")]
+    [InlineData("not a version")]
+    [InlineData("")]
+    public void A_release_that_predates_the_finisher_is_refused_and_says_where_to_go(string version)
+    {
+        var why = UpdateInstallPlan.MacFinisherRefusal(version);
+        Assert.NotNull(why);
+        Assert.Contains("releases page", why);
     }
 }

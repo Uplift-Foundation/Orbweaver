@@ -163,6 +163,12 @@ namespace Orbweaver
             var swapped = false;
             try
             {
+                // Before anything is stopped, unloaded or moved: a handoff from
+                // a version this build does not understand is refused with the
+                // old app still running and the installed bundle untouched.
+                if (h.Schema != UpdateInstallPlan.MacHandoffSchema)
+                    return Fail(h, d, $"The update was prepared by a version this one can't finish (handoff schema {h.Schema}, expected {UpdateInstallPlan.MacHandoffSchema}), so nothing was changed.");
+
                 d.Log($"finish: {h.Staged} -> {h.Installed} (old pid {h.Pid})");
 
                 // 1. This bundle must still verify, as itself.

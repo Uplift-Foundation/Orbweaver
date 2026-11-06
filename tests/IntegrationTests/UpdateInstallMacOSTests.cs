@@ -217,8 +217,8 @@ public sealed class UpdateInstallMacOSTests : IDisposable
 
     // ---- Launch ---------------------------------------------------------
 
-    private MacHandoff Handoff(string? plist = null) => new(
-        Path.Combine(_root, "Applications", "Orbweaver.app"), Path.Combine(Dir("staging"), "Orbweaver.app"), 4242, plist, "2.0.0", Dir("marker"));
+    private MacHandoff Handoff(string? plist = null, int schema = UpdateInstallPlan.MacHandoffSchema) => new(
+        schema, Path.Combine(_root, "Applications", "Orbweaver.app"), Path.Combine(Dir("staging"), "Orbweaver.app"), 4242, plist, "2.0.0", Dir("marker"));
 
     [Fact]
     public async Task Launch_writes_the_handoff_and_runs_open_n_on_the_staged_app()
@@ -320,6 +320,34 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Empty(Directory.GetFiles(h.MarkerDir, "*.dmg"));
         Assert.Equal([(4242, false)], w.Signals);
         Assert.Equal(h.Installed + "/Contents/Resources/install-hooks.sh", mac.Calls.Single(c => c.Args.Contains("--keepalive-only")).File);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task Finish_refuses_an_unknown_handoff_schema_and_touches_nothing(int schema)
+    {
+        var plist = Path.Combine(_root, "ka.plist"); File.WriteAllText(plist, "x");
+        var (h, mac, w, d, _) = Finish(plist: plist);
+        h = h with { Schema = schema };
+        var before = Hash(h.Installed);
+
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
+
+        Assert.Equal(before, Hash(h.Installed));
+        Assert.True(Directory.Exists(h.Staged));
+        Assert.Empty(w.Signals);
+        Assert.Empty(mac.Calls);
+        Assert.Contains($"schema {schema}", File.ReadAllText(Path.Combine(h.MarkerDir, "failed")));
+        Assert.False(File.Exists(Path.Combine(h.MarkerDir, "finished")));
+    }
+
+    [Fact]
+    public async Task The_current_schema_is_the_control_that_does_proceed()
+    {
+        var (h, _, _, d, _) = Finish();
+        Assert.Equal(UpdateInstallPlan.MacHandoffSchema, h.Schema);
+        Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
     }
 
     [Fact]
@@ -503,6 +531,19 @@ public sealed class UpdateInstallMacOSTests : IDisposable
             process, _ => writable, Path.Combine(_root, "updates"), null, mac.Run, poll ?? (() => Task.CompletedTask), _log.Add, 4242);
 
     private static readonly UpdateRelease Release = new("v2.0.0", "2.0.0", false, "", []);
+
+    [Fact]
+    public async Task Installer_refuses_a_release_that_predates_the_finisher_before_downloading()
+    {
+        var called = false;
+        var mac = new FakeMac();
+        var outcome = await Installer(mac, (r, d, p, c) => { called = true; return Task.FromResult(""); })
+            .InstallAsync(new UpdateRelease("v1.0.3", "1.0.3", false, "", []), new Sink(), default);
+        Assert.Equal(InstallStatus.Refused, outcome.Status);
+        Assert.Contains("releases page", outcome.Message);
+        Assert.False(called);
+        Assert.Empty(mac.Calls);
+    }
     private sealed class Sink : IProgress<UpdateProgress> { public List<UpdateStage> Stages = []; public void Report(UpdateProgress v) => Stages.Add(v.Stage); }
 
     [Fact]

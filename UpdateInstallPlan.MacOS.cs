@@ -10,7 +10,14 @@ namespace Orbweaver
 
     // The handoff the app writes and the finisher reads. Plain data in a file
     // rather than argv, so a path with spaces needs no quoting at all.
+    //
+    // **This file is a contract between two different versions**: version N
+    // writes it and version N+1's finisher reads it, so Schema says which
+    // shape it is. A finisher that does not recognise the number must refuse
+    // without touching anything (UpdateInstallMacOS.FinishAsync), and the
+    // number only ever changes together with a reader that handles both.
     internal sealed record MacHandoff(
+        int Schema,
         string Installed,
         string Staged,
         int Pid,
@@ -32,6 +39,28 @@ namespace Orbweaver
         internal const string MacTeamId = "5AQ4ULRG3Z";
 
         internal const string MacFinishFlag = "--finish-update";
+
+        // The only handoff shape this build writes and understands.
+        internal const int MacHandoffSchema = 1;
+
+        // The first release whose bundle answers --finish-update. Every earlier
+        // build ignores the flag, starts as a second instance, hits the
+        // single-instance mutex and exits, so staging one would only ever end
+        // in a 60 second wait and "did not start". The next release after
+        // 1.0.3 is the first with the finisher (patch bump). This also
+        // refuses a downgrade for free, which is out of scope.
+        internal const string MacFirstFinisherVersion = "1.0.4";
+
+        // Null when `releaseVersion` can finish its own update; otherwise why
+        // not, in words for the person reading it. Unparseable counts as no.
+        internal static string? MacFinisherRefusal(string releaseVersion)
+        {
+            if (UpdateVersion.TryParse(releaseVersion, out var v)
+                && UpdateVersion.TryParse(MacFirstFinisherVersion, out var first)
+                && UpdateVersion.Compare(v, first) >= 0)
+                return null;
+            return $"Version {releaseVersion} is older than the first release that can update itself ({MacFirstFinisherVersion}), so it can't be installed from here. Download it from the Orbweaver releases page instead.";
+        }
 
         // The two files the finisher leaves for the old app to read on its
         // next launch (or for the waiting app to poll for).
@@ -193,6 +222,9 @@ namespace Orbweaver
             try
             {
                 var h = JsonSerializer.Deserialize<MacHandoff>(json);
+                // Schema is deliberately not checked here: an unknown schema
+                // still has to yield its MarkerDir so the finisher can leave a
+                // `failed` marker the old app reads. It is the finisher's call.
                 return h is null || string.IsNullOrEmpty(h.Installed) || string.IsNullOrEmpty(h.Staged)
                     || string.IsNullOrEmpty(h.MarkerDir) ? null : h;
             }

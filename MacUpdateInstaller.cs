@@ -49,6 +49,15 @@ namespace Orbweaver
                 return new InstallOutcome(InstallStatus.Refused, refusal!);
             }
 
+            // Before a byte is downloaded: a release that predates the finisher
+            // would ignore --finish-update and exit on the mutex.
+            var tooOld = UpdateInstallPlan.MacFinisherRefusal(release.Version);
+            if (tooOld is not null)
+            {
+                _log($"refused: {tooOld}");
+                return new InstallOutcome(InstallStatus.Refused, tooOld);
+            }
+
             var directory = Path.Combine(_updatesRoot, release.Version);
             Directory.CreateDirectory(directory);
             string dmg;
@@ -72,7 +81,7 @@ namespace Orbweaver
             }
 
             progress.Report(new UpdateProgress(UpdateStage.Restarting, 0, 0));
-            var handoff = new MacHandoff(target, staged, _pid, _keepAlivePlist, release.Version, directory);
+            var handoff = new MacHandoff(UpdateInstallPlan.MacHandoffSchema, target, staged, _pid, _keepAlivePlist, release.Version, directory);
             return await UpdateInstallMacOS.LaunchAsync(handoff, _exec, _pollDelay, _log);
         }
     }

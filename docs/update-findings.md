@@ -6,6 +6,10 @@ This is the record behind the macOS half of the updater. Confirmed means observe
 
 The running app downloads and verifies the `.dmg`, mounts it read-only, checks the bundle inside (`codesign --verify --deep --strict`, Team ID `5AQ4ULRG3Z`, `spctl --assess --type execute`, bundle id, version), copies it to `~/Library/Application Support/Orbweaver/updates/<version>/`, writes a `handoff.json`, and starts the staged **new** bundle with `open -n <staged.app> --args --finish-update <handoff.json>`. That finisher stops the old app, swaps the bundle by rename, reconciles the keep-alive LaunchAgent from the new bundle's own script, makes sure the new app is running, and writes a `finished` or `failed` marker. It is the new bundle rather than a bash helper because launchd kills whatever is left in an app's process group when the app exits, so a detached helper child would die with the app it was replacing. The keep-alive plist also gains `AbandonProcessGroup=true` for the same reason.
 
+## Two cross-version rules
+
+`handoff.json` is written by version N and read by version N+1's finisher, so it carries a `Schema` integer (currently 1). A finisher that sees any other value, including a missing one, stops before it unloads, signals or moves anything and writes a `failed` marker the old app reads. The installer also refuses, before downloading, any release older than `MacFirstFinisherVersion` (1.0.4, the first release after 1.0.3 and so the first with a finisher), because earlier builds ignore `--finish-update`, start as a second instance and exit on the single-instance mutex. The 60 second "helper did not start, nothing was changed" path remains as the backstop. Both are covered by tests; the v1.0.3 refusal itself has not been run against a real v1.0.3 download.
+
 ## Confirmed on the Mac mini (macOS 27.0.1, 2026-11-06)
 
 The mini runs the real Orbweaver (pid 20079, `/Applications/Orbweaver.app`) as a LaunchServices job, with the console session locked (`CGSSessionScreenIsLocked true`, read with `ioreg`; nothing was locked or woken for this).
