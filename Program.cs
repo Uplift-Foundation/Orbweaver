@@ -192,7 +192,15 @@ namespace Orbweaver
                 waitForUnlock: () =>
                     MacOSScreenLock.WaitForUnlock(LockWait, LockPoll),
 
-                startUi: () => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args));
+                startUi: () => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args),
+
+                // The updater's finisher (CB-308): the staged new bundle,
+                // launched with --finish-update while the old Buddy is still
+                // alive. It answers ahead of the single-instance claim and
+                // swaps the bundle in; an ordinary launch falls straight
+                // through. macOS only — the Windows installer swaps the app
+                // itself.
+                finishUpdate: () => OperatingSystem.IsMacOS() && UpdateInstallMacOS.TryRunFinisher(args));
         }
 
         public static AppBuilder BuildAvaloniaApp() =>
