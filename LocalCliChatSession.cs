@@ -1412,32 +1412,78 @@ namespace Orbweaver
         internal async Task<ChatSendOutcome?> RefuseIfNotAtPromptAsync()
         {
             var verdict = await (Gate ?? RealGate)(_status);
+            var shadow = (ShadowOn ?? RealShadowOn)();
+
+            // Shadow mode (CB-307): compute the verdict and say what it was,
+            // along with what the gate saw, and then let the send go ahead.
+            // For reading the cause of a refusal that only happens in the
+            // running app without blocking anyone while it is read. Off unless
+            // the marker file or the env var asks for it.
+            if (shadow)
+            {
+                MirrorLog.Say(
+                    verdict.Allowed ? "local-typing-allowed" : "local-typing-refused",
+                    RefusalLogDetail(SessionId, verdict, _status, CanReadPane(_status), shadow: true));
+                return null;
+            }
+
             if (verdict.Allowed) return null;
 
             _pending = null;
             Note(NotAtPromptNote(verdict.Why));
-            MirrorLog.Say("local-typing-refused", RefusalLogDetail(SessionId, verdict));
+            MirrorLog.Say(
+                "local-typing-refused",
+                RefusalLogDetail(SessionId, verdict, _status, CanReadPane(_status), shadow: false));
             return ChatSendOutcome.Failed;
         }
 
-        // What the log says about a local refusal, so a refusal on a real
-        // machine can be told apart after the fact: the record said waiting, the
-        // screen was a dialog, or the screen could not be read (and then which
-        // check fired, or that the capture came back null or threw). Never any
-        // screen text: a dialog's title is reduced to the word "dialog", and the
-        // diagnostic is Celeste's own vocabulary of counts and check names.
-        internal static string RefusalLogDetail(string sessionId, TypingVerdict verdict)
+        // Whether the gate only logs. A seam so a test turns it on without a
+        // file or an environment variable; the default reads the marker file
+        // beside mirror-log, or the env var.
+        internal Func<bool>? ShadowOn { get; init; }
+
+        [ExcludeFromCodeCoverage]
+        private static bool RealShadowOn() =>
+            ShadowSwitch.IsOn(OrbweaverSettings.Directory, BrandEnv.Get(BrandEnv.LocalGateShadow), File.Exists);
+
+        [ExcludeFromCodeCoverage]
+        private static bool CanReadPane(SessionStatus status) => TerminalFocuser.CanReadPane(status);
+
+        // What the log says about a gate decision, so a refusal on a real
+        // machine can be told apart after the fact: the record said waiting,
+        // the screen was a dialog, or the screen could not be read (and then
+        // which check fired, or that the capture came back null or threw).
+        // Also which status fields the gate was handed, because the failure that
+        // prompted this is one that only the running app shows, where the
+        // panel's cached status can differ from the file. Never any screen text
+        // or any path: a dialog's title is reduced to the word "dialog", and
+        // the tmux fields are reported only as set or empty.
+        internal static string RefusalLogDetail(
+            string sessionId, TypingVerdict verdict, SessionStatus? status = null,
+            bool canReadPane = false, bool shadow = false)
         {
             var kind = verdict.Why switch
             {
+                null => "allowed",
                 TypingGate.WaitingWhy => "record-waiting",
                 TypingGate.UnreadableWhy => "unreadable",
                 { } why when why.StartsWith("it is showing a dialog", StringComparison.Ordinal) => "dialog",
                 _ => "other",
             };
 
-            return $"session={sessionId} kind={kind} diag={verdict.Diagnostic ?? "none"}";
+            var line = $"session={sessionId} kind={kind} diag={verdict.Diagnostic ?? "none"}";
+            if (shadow) line += " shadow=1";
+            if (status is not null)
+            {
+                line += $" state={status.State} source={status.Source} pid={(status.SessionPid > 0 ? "set" : "none")}"
+                    + $" tmux_socket={SetOrEmpty(status.TmuxSocket)} tmux_pane={SetOrEmpty(status.TmuxPane)}"
+                    + $" tmux_bin={SetOrEmpty(status.TmuxBin)} can_read_pane={canReadPane.ToString().ToLowerInvariant()}";
+            }
+
+            return line;
         }
+
+        private static string SetOrEmpty(string? value) => string.IsNullOrEmpty(value) ? "empty" : "set";
 
         internal static string NotAtPromptNote(string? why) =>
             "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)

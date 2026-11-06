@@ -39,6 +39,7 @@ namespace Orbweaver
         internal const string NoCredentialStore = "NO_CREDENTIAL_STORE";
         internal const string PersonaWalkCeiling = "PERSONA_WALK_CEILING";
         internal const string MirrorLog = "MIRROR_LOG";
+        internal const string LocalGateShadow = "LOCAL_GATE_SHADOW";
         internal const string LiveBridgeTests = "LIVE_BRIDGE_TESTS";
         internal const string LaunchTests = "LAUNCH_TESTS";
         internal const string LiveDaemonTests = "LIVE_DAEMON_TESTS";
@@ -72,7 +73,7 @@ namespace Orbweaver
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
-            NoCredentialStore, PersonaWalkCeiling, MirrorLog,
+            NoCredentialStore, PersonaWalkCeiling, MirrorLog, LocalGateShadow,
             LiveBridgeTests, LaunchTests, LiveDaemonTests,
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
