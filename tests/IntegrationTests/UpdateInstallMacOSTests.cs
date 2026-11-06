@@ -277,6 +277,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         public bool NewRunning;
         public List<(int Pid, bool Force)> Signals = [];
         public Func<string, string, bool>? FailMove;
+        public bool FailDelete;
     }
 
     private (MacHandoff H, FakeMac Mac, World W, UpdateInstallMacOS.FinishDeps D, string Exe) Finish(
@@ -303,6 +304,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
             (pid, force) => { w.Signals.Add((pid, force)); if (force || !w.IgnoresTerm) w.Alive.Remove(pid); },
             pid => w.Alive.Contains(pid), _ => Task.CompletedTask,
             (from, to) => { if (w.FailMove?.Invoke(from, to) == true) throw new IOException("simulated"); Directory.Move(from, to); },
+            path => { if (w.FailDelete) throw new IOException("cannot delete"); Directory.Delete(path, true); },
             Path.Combine(_root, "Trash"), 501, 9999);
         return (h, mac, w, d, exe);
     }
@@ -496,11 +498,75 @@ public sealed class UpdateInstallMacOSTests : IDisposable
     }
 
     [Fact]
-    public async Task Finish_survives_a_missing_marker_directory_and_no_dmg()
+    public async Task Finish_survives_no_dmg_to_clean_up()
     {
         var (h, _, _, d, _) = Finish();
         File.Delete(Path.Combine(h.MarkerDir, "u.dmg"));
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
+    }
+
+    [Fact]
+    public async Task A_failed_cleanup_is_logged_and_the_update_still_succeeds()
+    {
+        var (h, _, w, d, _) = Finish();
+        Directory.CreateDirectory(h.Staged); // still present: the cross-volume case
+        // Move works, so staged is consumed; recreate it afterwards via the move hook.
+        w.FailMove = null;
+        var d2 = d with { Move = (from, to) => { Directory.Move(from, to); if (to == h.Installed) Directory.CreateDirectory(h.Staged); } };
+        w.FailDelete = true;
+
+        Assert.True(await UpdateInstallMacOS.FinishAsync(h, d2));
+
+        Assert.Contains(_log, l => l.Contains("cleanup left files behind"));
+        Assert.True(File.Exists(Path.Combine(h.MarkerDir, "finished")));
+    }
+
+    [Fact]
+    public async Task A_failure_after_the_swap_restores_the_old_bundle_and_relaunches_it()
+    {
+        var (h, mac, w, d, _) = Finish();
+        var baseHook = mac.Hook!;
+        mac.Hook = c => c.Args.Count > 0 && c.Args[0] == "--keepalive-only" ? throw new InvalidOperationException("script vanished") : baseHook(c);
+
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
+
+        Assert.Equal("OLD", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
+        Assert.Contains("script vanished", File.ReadAllText(Path.Combine(h.MarkerDir, "failed")));
+        Assert.Contains(mac.Calls, c => c.File == "/usr/bin/env");
+        // The recovery's own reconcile throws too (same hook); that is logged, not thrown.
+        Assert.Contains(_log, l => l.Contains("could not be run"));
+    }
+
+    [Fact]
+    public async Task A_failed_restore_after_the_swap_is_logged_not_thrown()
+    {
+        var (h, mac, w, d, _) = Finish();
+        var baseHook = mac.Hook!;
+        mac.Hook = c => c.Args.Count > 0 && c.Args[0] == "--keepalive-only" ? throw new InvalidOperationException("boom") : baseHook(c);
+        w.FailMove = (from, to) => to == h.Installed && from.Contains(".old-");
+
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
+
+        Assert.Contains(_log, l => l.Contains("restore failed"));
+        Assert.True(File.Exists(Path.Combine(h.MarkerDir, "failed")));
+    }
+
+    [Fact]
+    public void Stage_refuses_when_the_plist_cannot_be_read()
+    {
+        var mac = new FakeMac { Hook = c => System.IO.Path.GetFileName(c.File) == "plutil" ? (1, "") : null };
+        var (app, error) = Stage(mac, out _);
+        Assert.Null(app);
+        Assert.Contains("bundle identifier", error);
+    }
+
+    [Fact]
+    public void Stage_refuses_when_the_version_cannot_be_read()
+    {
+        var mac = new FakeMac { Hook = c => System.IO.Path.GetFileName(c.File) == "plutil" && c.Args[1] == "CFBundleShortVersionString" ? (1, "") : null };
+        var (app, error) = Stage(mac, out _);
+        Assert.Null(app);
+        Assert.Contains("reports version", error);
     }
 
     [Fact]
@@ -522,6 +588,22 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         w.FailMove = (from, to) => from == h.Staged || to == h.Installed;
         Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.Contains(_log, l => l.Contains("restore failed"));
+    }
+
+    [Fact]
+    public async Task A_launcher_that_cannot_start_does_not_stop_the_failed_marker_being_written()
+    {
+        // Failure before any swap, with the relaunch of the old app throwing.
+        var (h, mac, _, d, _) = Finish();
+        mac.Verify = 0;
+        var baseHook = mac.Hook!;
+        mac.Hook = c => c.File == "/usr/bin/env" ? throw new System.ComponentModel.Win32Exception("no such file") : baseHook(c);
+        var d2 = d with { Move = (from, to) => throw new IOException("cannot move aside") };
+
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d2));
+
+        Assert.True(File.Exists(Path.Combine(h.MarkerDir, "failed")));
+        Assert.Contains(_log, l => l.Contains("could not be run"));
     }
 
     // ---- The installer, end to end --------------------------------------

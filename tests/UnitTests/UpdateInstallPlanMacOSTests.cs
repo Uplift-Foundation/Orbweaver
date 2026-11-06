@@ -17,6 +17,8 @@ public class UpdateInstallPlanMacOSTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("/usr/local/bin/dotnet")]
+    [InlineData("dotnet")]
+    [InlineData("relative/dir/dotnet")]
     public void A_loose_binary_has_no_bundle(string? processPath) =>
         Assert.Null(UpdateInstallPlan.MacAppBundleFor(processPath));
 

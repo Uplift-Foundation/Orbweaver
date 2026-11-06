@@ -150,6 +150,7 @@ namespace Orbweaver
             Func<int, bool> IsAlive,
             Func<TimeSpan, Task> Delay,
             Action<string, string> Move,   // Directory.Move, injected so EXDEV is testable
+            Action<string> DeleteTree,     // recursive delete, injected so its failure is testable
             string TrashDir,
             int Uid,
             int SelfPid);
@@ -219,12 +220,17 @@ namespace Orbweaver
 
                 // 7. Success: the old bundle to the Trash, the image out of the way.
                 TrashOld(oldPath, d);
-                // After a cross-volume copy the staged bundle is still there
-                // (a same-volume move consumes it); it is a second full copy of
-                // the app, so it goes.
-                try { if (Directory.Exists(h.Staged)) Directory.Delete(h.Staged, true); } catch { }
-                foreach (var dmg in Directory.Exists(h.MarkerDir) ? Directory.GetFiles(h.MarkerDir, "*.dmg") : [])
-                    try { File.Delete(dmg); } catch { }
+                // Best-effort housekeeping, never allowed to turn a finished
+                // update into a failed one. After a cross-volume copy the
+                // staged bundle is still there (a same-volume move consumes
+                // it), a second full copy of the app; the downloaded image goes
+                // too. GetFiles on a missing folder throws and is caught here.
+                try
+                {
+                    if (Directory.Exists(h.Staged)) d.DeleteTree(h.Staged);
+                    foreach (var dmg in Directory.GetFiles(h.MarkerDir, "*.dmg")) File.Delete(dmg);
+                }
+                catch (Exception cleanup) { d.Log($"finish: cleanup left files behind: {cleanup.Message}"); }
                 File.WriteAllText(Path.Combine(h.MarkerDir, UpdateInstallPlan.MacFinishedMarker), h.Version);
                 d.Log($"finish: updated to {h.Version}");
                 return true;
@@ -233,7 +239,7 @@ namespace Orbweaver
             {
                 d.Log($"finish: failed: {e.Message}");
                 if (swapped) RestoreAndRelaunch(h, oldPath, d);
-                else d.Exec(UpdateInstallPlan.MacOpenInstalled(h.Installed), ToolTimeout);
+                else TryExec(d, UpdateInstallPlan.MacOpenInstalled(h.Installed));
                 return Fail(h, d, $"The update did not complete ({e.Message}). The previous version was restored.");
             }
         }
@@ -286,8 +292,17 @@ namespace Orbweaver
         private static void RestoreAndRelaunch(MacHandoff h, string oldPath, FinishDeps d)
         {
             try { RestoreOld(h, oldPath, d); } catch (Exception e) { d.Log($"finish: restore failed: {e.Message}"); }
-            d.Exec(UpdateInstallPlan.MacKeepAliveRepair(h.Installed), ToolTimeout);
-            d.Exec(UpdateInstallPlan.MacOpenInstalled(h.Installed), ToolTimeout);
+            TryExec(d, UpdateInstallPlan.MacKeepAliveRepair(h.Installed));
+            TryExec(d, UpdateInstallPlan.MacOpenInstalled(h.Installed));
+        }
+
+        // The recovery path runs after something has already gone wrong, and
+        // RealExec throws when a program cannot be started at all. A throw here
+        // must not escape and skip the failed marker the old app is waiting for.
+        private static void TryExec(FinishDeps d, MacCommand command)
+        {
+            try { d.Exec(command, ToolTimeout); }
+            catch (Exception e) { d.Log($"finish: {command.File} could not be run: {e.Message}"); }
         }
 
         private static void TrashOld(string oldPath, FinishDeps d)
@@ -359,6 +374,7 @@ namespace Orbweaver
                 pid => { try { return !Process.GetProcessById(pid).HasExited; } catch { return false; } },
                 Task.Delay,
                 (from, to) => Directory.Move(from, to),
+                path => Directory.Delete(path, true),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".Trash"),
                 (int)geteuid(), Environment.ProcessId);
             FinishAsync(handoff, deps).GetAwaiter().GetResult();
