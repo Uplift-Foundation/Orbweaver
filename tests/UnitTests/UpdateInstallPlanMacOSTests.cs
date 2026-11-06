@@ -204,4 +204,34 @@ public class UpdateInstallPlanMacOSTests
         Assert.NotNull(why);
         Assert.Contains("releases page", why);
     }
+
+    [Theory]
+    [InlineData("/a", "b", "/a/b")]
+    [InlineData("/a/", "b", "/a/b")]
+    [InlineData("/a", "/b", "/a/b")]
+    [InlineData("a", "b", "a/b")]
+    public void JoinPosix_always_uses_a_forward_slash(string first, string next, string expected) =>
+        Assert.Equal(expected, UpdateInstallPlan.JoinPosix(first, next));
+
+    [Fact]
+    public void JoinPosix_joins_several_parts() =>
+        Assert.Equal("/A.app/Contents/MacOS/x", UpdateInstallPlan.JoinPosix("/A.app", "Contents", "MacOS", "x"));
+
+    [Theory]
+    [InlineData("/Applications/Orbweaver.app", "/Applications")]
+    [InlineData("/Applications/Orbweaver.app/", "/Applications")]
+    [InlineData("/Applications", "/")]
+    [InlineData("/", null)]
+    [InlineData("dotnet", null)]
+    [InlineData("a/b", "a")]
+    [InlineData("", null)]
+    public void ParentPosix_is_the_folder_part(string path, string? expected) =>
+        Assert.Equal(expected, UpdateInstallPlan.ParentPosix(path));
+
+    [Theory]
+    [InlineData("/Applications/Orbweaver.app", "Orbweaver.app")]
+    [InlineData("/x/y/", "y")]
+    [InlineData("name", "name")]
+    public void NamePosix_is_the_last_component(string path, string expected) =>
+        Assert.Equal(expected, UpdateInstallPlan.NamePosix(path));
 }

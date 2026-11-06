@@ -24,7 +24,7 @@ namespace Orbweaver
         internal static (string? StagedApp, string? Error) Stage(
             string dmg, string stagingDir, string expectedVersion, MacExec exec, Action<string> log)
         {
-            var mount = Path.Combine(stagingDir, "mnt");
+            var mount = UpdateInstallPlan.JoinPosix(stagingDir, "mnt");
             Directory.CreateDirectory(mount);
             var attach = exec(UpdateInstallPlan.MacHdiutilAttach(dmg, mount), ToolTimeout);
             if (attach.ExitCode != 0)
@@ -35,12 +35,12 @@ namespace Orbweaver
                     .Select(e => (e.Name, e is DirectoryInfo, e.LinkTarget is not null));
                 var (appName, findError) = UpdateInstallPlan.MacFindSingleApp(entries);
                 if (appName is null) return (null, findError);
-                var mounted = Path.Combine(mount, appName);
+                var mounted = UpdateInstallPlan.JoinPosix(mount, appName);
 
                 var gate = Verify(mounted, expectedVersion, exec, log);
                 if (gate is not null) return (null, gate);
 
-                var staged = Path.Combine(stagingDir, appName);
+                var staged = UpdateInstallPlan.JoinPosix(stagingDir, appName);
                 if (Directory.Exists(staged)) Directory.Delete(staged, true);
                 var copy = exec(UpdateInstallPlan.MacCopyBundle(mounted, staged), ToolTimeout);
                 if (copy.ExitCode != 0)
@@ -116,7 +116,7 @@ namespace Orbweaver
                 var path = Path.Combine(handoff.MarkerDir, stale);
                 if (File.Exists(path)) File.Delete(path);
             }
-            var handoffPath = Path.Combine(handoff.MarkerDir, "handoff.json");
+            var handoffPath = UpdateInstallPlan.JoinPosix(handoff.MarkerDir, "handoff.json");
             File.WriteAllText(handoffPath, UpdateInstallPlan.MacSerializeHandoff(handoff));
 
             var open = exec(UpdateInstallPlan.MacOpenFinisher(handoff.Staged, handoffPath), ToolTimeout);
@@ -197,7 +197,7 @@ namespace Orbweaver
                 }
 
                 // 3. Stop the old app, and anything else running the installed executable.
-                var exe = Path.Combine(h.Installed, "Contents", "MacOS", Brand.AssemblyName);
+                var exe = UpdateInstallPlan.JoinPosix(h.Installed, "Contents", "MacOS", Brand.AssemblyName);
                 var others = UpdateInstallPlan.MacParsePs(d.Exec(UpdateInstallPlan.MacPsList(), ToolTimeout).Output, exe, d.SelfPid, d.Uid);
                 var targets = others.Append(h.Pid).Where(p => p != d.SelfPid).Distinct().ToList();
                 await StopAsync(targets, d);
@@ -225,7 +225,7 @@ namespace Orbweaver
                 }
 
                 // 7. Success: the old bundle to the Trash, the image out of the way.
-                TrashOld(mode == SwapMode.Exchange ? newPath : oldPath, Path.GetFileName(oldPath), d);
+                TrashOld(mode == SwapMode.Exchange ? newPath : oldPath, UpdateInstallPlan.NamePosix(oldPath), d);
                 // Best-effort housekeeping, never allowed to turn a finished
                 // update into a failed one. After a cross-volume copy the
                 // staged bundle is still there (a same-volume move consumes

@@ -67,6 +67,36 @@ namespace Orbweaver
         internal const string MacFinishedMarker = "finished";
         internal const string MacFailedMarker = "failed";
 
+        // POSIX path arithmetic on '/', never System.IO.Path. Every path here
+        // is for a Mac (it ends up in an argv or in handoff.json), but this
+        // logic is pure and runs in both CI legs, and Path.Combine and
+        // GetDirectoryName use the HOST's separator, so on Windows they turn
+        // "/Applications/Orbweaver.app" into "\\Applications\\Orbweaver.app".
+        // Real filesystem calls stay on System.IO: they only run on a Mac.
+        internal static string JoinPosix(string first, params string[] rest)
+        {
+            var path = first;
+            foreach (var part in rest)
+                path = path.EndsWith('/') ? path + part.TrimStart('/') : path + "/" + part.TrimStart('/');
+            return path;
+        }
+
+        // The folder part, or null when there is none ("/" and a bare name).
+        internal static string? ParentPosix(string path)
+        {
+            var trimmed = path.Length > 1 ? path.TrimEnd('/') : path;
+            var at = trimmed.LastIndexOf('/');
+            if (at < 0 || trimmed == "/") return null;
+            return at == 0 ? "/" : trimmed[..at];
+        }
+
+        // The last component.
+        internal static string NamePosix(string path)
+        {
+            var trimmed = path.TrimEnd('/');
+            return trimmed[(trimmed.LastIndexOf('/') + 1)..];
+        }
+
         // The `.app` the running executable lives in, or null when it is not
         // inside one (`dotnet run`, a loose binary). The outermost-first walk
         // would be wrong for a bundle nested in another .app; the innermost
@@ -78,7 +108,7 @@ namespace Orbweaver
             while (!string.IsNullOrEmpty(path) && path != "/")
             {
                 if (path.EndsWith(".app", StringComparison.Ordinal)) return path;
-                path = Path.GetDirectoryName(path);
+                path = ParentPosix(path);
             }
             return null;
         }
@@ -94,7 +124,7 @@ namespace Orbweaver
                 return (null, "This copy of Orbweaver is not running from an app bundle (a loose binary or a developer build), so it can't replace itself. Install the release from the Orbweaver downloads page instead.");
             if (app.Contains("/AppTranslocation/", StringComparison.Ordinal))
                 return (null, "macOS is running Orbweaver from a temporary, read-only location. Drag Orbweaver.app into your Applications folder, open it from there, and check for updates again.");
-            var parent = Path.GetDirectoryName(app)!;
+            var parent = ParentPosix(app) ?? "/";
             if (!parentWritable(parent))
                 return (null, $"Your account can't write to {parent}, so Orbweaver can't replace itself there. Ask an administrator to update it, or move Orbweaver.app to a folder you own.");
             return (app, null);
@@ -119,7 +149,7 @@ namespace Orbweaver
             new("/usr/sbin/spctl", ["--assess", "--type", "execute", app]);
 
         internal static MacCommand MacPlistRead(string app, string key) =>
-            new("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", System.IO.Path.Combine(app, "Contents", "Info.plist")]);
+            new("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", JoinPosix(app, "Contents", "Info.plist")]);
 
         // ditto rather than cp -R: it carries the code signature's extended
         // attributes and resource forks, which is what keeps a copied bundle
@@ -152,7 +182,7 @@ namespace Orbweaver
             new("/usr/bin/env", ["-u", "CLAUDE_CONFIG_DIR", "/usr/bin/open", "-a", app]);
 
         internal static MacCommand MacKeepAliveRepair(string installedApp) =>
-            new(System.IO.Path.Combine(installedApp, "Contents", "Resources", "install-hooks.sh"), ["--keepalive-only"]);
+            new(JoinPosix(installedApp, "Contents", "Resources", "install-hooks.sh"), ["--keepalive-only"]);
 
         internal static MacCommand MacPsList() =>
             new("/bin/ps", ["-axo", "pid=,uid=,comm="]);

@@ -58,7 +58,7 @@ namespace Orbweaver
                 return new InstallOutcome(InstallStatus.Refused, tooOld);
             }
 
-            var directory = Path.Combine(_updatesRoot, release.Version);
+            var directory = UpdateInstallPlan.JoinPosix(_updatesRoot, release.Version);
             Directory.CreateDirectory(directory);
             string dmg;
             try
