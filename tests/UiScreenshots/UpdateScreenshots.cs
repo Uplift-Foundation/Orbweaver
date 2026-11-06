@@ -88,11 +88,25 @@ public class UpdateScreenshots : IDisposable
     [AvaloniaFact]
     public async Task NoticeFailure()
     {
+        // A platform-neutral failure whose text comes from the real source: the
+        // downloader's own exception for a server that cannot be reached (a
+        // loopback port nothing listens on), not a hand-typed sentence.
+        string message;
+        try
+        {
+            using var http = new HttpUpdateHttp();
+            await http.GetStringAsync("http://127.0.0.1:1/SHA256SUMS.txt", CancellationToken.None);
+            throw new InvalidOperationException("the unreachable server answered");
+        }
+        catch (UpdateException ex)
+        {
+            Assert.Equal(UpdateFailure.Network, ex.Kind);
+            message = ex.Message;
+        }
+
         var installer = new FakeInstaller
         {
-            Run = _ => Task.FromResult(new InstallOutcome(
-                InstallStatus.Refused,
-                "Orbweaver is running from a location this account cannot write to. Move it to Applications, open it from there, and check again."))
+            Run = _ => Task.FromResult(new InstallOutcome(InstallStatus.Failed, message))
         };
         var window = Notice(installer);
         window.Show();

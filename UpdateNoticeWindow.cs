@@ -47,7 +47,9 @@ namespace Orbweaver
         internal Phase State { get; private set; } = Phase.Offer;
 
         internal TextBlock HeadlineText { get; } = new();
-        internal StackPanel NotesPanel { get; } = new() { Spacing = 4 };
+        // Right margin reserves the scrollbar's width: a classic (Windows) scrollbar sits
+        // over the content's right edge, and without it the notes run under it.
+        internal StackPanel NotesPanel { get; } = new() { Spacing = 4, Margin = new Thickness(0, 0, 14, 0) };
         internal Button InstallButton { get; } = new() { Content = "Install & restart", IsDefault = true };
         internal Button LaterButton { get; } = new() { Content = "Later", IsCancel = true };
         internal Button SkipButton { get; } = new() { Content = "Skip this version" };
@@ -450,11 +452,16 @@ namespace Orbweaver
                         Margin = new Thickness(block.Depth * 10, 0, 0, 0)
                     };
 
+                    // Top-aligned: left to the default, a macOS bullet glyph is
+                    // centred against the whole wrapped paragraph instead of
+                    // sitting beside its first line.
                     var marker = Line(block.Marker);
+                    marker.VerticalAlignment = VerticalAlignment.Top;
                     marker.Margin = new Thickness(0, 0, 5, 0);
                     marker.Opacity = 0.7;
 
                     var text = Line(block.Text);
+                    text.VerticalAlignment = VerticalAlignment.Top;
                     Grid.SetColumn(text, 1);
 
                     row.Children.Add(marker);
