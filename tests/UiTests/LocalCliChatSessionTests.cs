@@ -1556,14 +1556,18 @@ public class LocalCliChatSessionTests : IDisposable
 
     // --- CB-307 addendum: never type into a dialog -------------------------------
 
-    private static LocalCliChatSession Gated(Func<SessionStatus, Task<TypingVerdict>> gate) =>
+    // ShadowOn is pinned off unless a test says otherwise, so these never depend
+    // on a marker file or variable left on the machine running them.
+    private static LocalCliChatSession Gated(
+        Func<SessionStatus, Task<TypingVerdict>> gate, bool shadow = false) =>
         new("s1", new SessionStatus
         {
             Source = SessionSource.ClaudeCode,
             State = "idle",
             Title = "",
+            TmuxPane = "%42",
         })
-        { Gate = gate };
+        { Gate = gate, ShadowOn = () => shadow };
 
     [AvaloniaFact]
     public async Task ASendIsRefusedWithTheReasonAndNothingIsTyped()
@@ -1627,7 +1631,7 @@ public class LocalCliChatSessionTests : IDisposable
     [InlineData(TypingGate.UnreadableWhy, "capture=threw", "session=s1 kind=unreadable diag=capture=threw")]
     [InlineData("it is showing a dialog: Permissions", null, "session=s1 kind=dialog diag=none")]
     [InlineData("something new", null, "session=s1 kind=other diag=none")]
-    [InlineData(null, null, "session=s1 kind=other diag=none")]
+    [InlineData(null, null, "session=s1 kind=allowed diag=none")]
     public void ARefusalIsLoggedWithItsCauseAndNeverTheScreen(string? why, string? diagnostic, string expected)
     {
         var verdict = new TypingVerdict(false, why) { Diagnostic = diagnostic };
@@ -1636,5 +1640,78 @@ public class LocalCliChatSessionTests : IDisposable
 
         Assert.Equal(expected, line);
         Assert.DoesNotContain("Permissions", line, StringComparison.Ordinal);
+    }
+
+    // --- shadow mode: work out the verdict, log it, type anyway ------------------
+
+    [AvaloniaFact]
+    public async Task InShadowModeARefusalIsLoggedButTheSendGoesAhead()
+    {
+        var calls = 0;
+        var session = Gated(_ =>
+        {
+            calls++;
+            return Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy) { Diagnostic = "capture=null" });
+        }, shadow: true);
+
+        // Null is "go ahead and type", and nothing is noted under the composer.
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Equal(1, calls);
+        Assert.Empty(session.History);
+    }
+
+    [AvaloniaFact]
+    public async Task InShadowModeAnAllowedSendIsAlsoLeftAlone()
+    {
+        var session = Gated(_ => Task.FromResult(TypingVerdict.Allow), shadow: true);
+
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Empty(session.History);
+    }
+
+    // Control: the same refusal with shadow off still refuses.
+    [AvaloniaFact]
+    public async Task WithShadowOffTheSameRefusalStillRefuses()
+    {
+        var session = Gated(
+            _ => Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy)), shadow: false);
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RefuseIfNotAtPromptAsync());
+        Assert.Single(session.History);
+    }
+
+    // What the gate saw, reported as presence only: the line carries no path, no
+    // pane id and no screen text.
+    [Fact]
+    public void TheLogSaysWhichStatusFieldsTheGateSawAndNoValues()
+    {
+        var status = new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", SessionPid = 4321,
+            TmuxSocket = "/private/tmp/tmux-501/default", TmuxPane = "%42", TmuxBin = "",
+        };
+
+        var line = LocalCliChatSession.RefusalLogDetail(
+            "s1", new TypingVerdict(false, TypingGate.UnreadableWhy) { Diagnostic = "capture=null" },
+            status, canReadPane: true, shadow: true);
+
+        Assert.Equal(
+            "session=s1 kind=unreadable diag=capture=null shadow=1 state=idle source=ClaudeCode pid=set "
+            + "tmux_socket=set tmux_pane=set tmux_bin=empty can_read_pane=true",
+            line);
+        Assert.DoesNotContain("/private", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("%42", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASessionWithNoPidOrTmuxFieldsSaysSoPlainly()
+    {
+        var line = LocalCliChatSession.RefusalLogDetail(
+            "s1", TypingVerdict.Allow, new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle" });
+
+        Assert.Equal(
+            "session=s1 kind=allowed diag=none state=idle source=ClaudeCode pid=none "
+            + "tmux_socket=empty tmux_pane=empty tmux_bin=empty can_read_pane=false",
+            line);
     }
 }
