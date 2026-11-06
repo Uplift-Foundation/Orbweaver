@@ -31,9 +31,9 @@ namespace Orbweaver.Tests
         // four of CB-291's, the OpenClaw probe's three (CB-270 Stage 6), and the
         // updater's two test levers (CB-308).
         [Fact]
-        public void TheListHoldsTwentyFourDistinctVariables()
+        public void TheListHoldsTwentyFiveDistinctVariables()
         {
-            Assert.Equal(24, BrandEnv.All.Count);
+            Assert.Equal(25, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

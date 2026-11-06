@@ -77,6 +77,10 @@ namespace Orbweaver
         internal const string UpdateFeedUrl = "UPDATE_FEED_URL";
         internal const string UpdateCurrentVersion = "UPDATE_CURRENT_VERSION";
 
+        // Opt-in gate on the one test that talks to the real api.github.com and
+        // downloads a real installer (UpdateRealNetworkTests). CI must never set it.
+        internal const string NetworkTests = "NETWORK_TESTS";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -85,7 +89,7 @@ namespace Orbweaver
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
-            UpdateFeedUrl, UpdateCurrentVersion,
+            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test
