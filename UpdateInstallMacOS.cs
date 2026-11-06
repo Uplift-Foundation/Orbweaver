@@ -219,6 +219,10 @@ namespace Orbweaver
 
                 // 7. Success: the old bundle to the Trash, the image out of the way.
                 TrashOld(oldPath, d);
+                // After a cross-volume copy the staged bundle is still there
+                // (a same-volume move consumes it); it is a second full copy of
+                // the app, so it goes.
+                try { if (Directory.Exists(h.Staged)) Directory.Delete(h.Staged, true); } catch { }
                 foreach (var dmg in Directory.Exists(h.MarkerDir) ? Directory.GetFiles(h.MarkerDir, "*.dmg") : [])
                     try { File.Delete(dmg); } catch { }
                 File.WriteAllText(Path.Combine(h.MarkerDir, UpdateInstallPlan.MacFinishedMarker), h.Version);

@@ -408,6 +408,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.Equal("NEW", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
         Assert.True(mac.Ran("ditto", h.Staged));
+        Assert.False(Directory.Exists(h.Staged), "the leftover staged copy is removed");
     }
 
     [Fact]

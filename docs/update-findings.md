@@ -29,11 +29,20 @@ So `open -n` honours the path it is given even when another process of the same 
 
 The probes were unregistered from LaunchServices afterwards (`lsregister -u`), the folder deleted, and the real app was still pid 20079 at the end.
 
+## Confirmed on the MacBook: a cross-volume swap (2026-11-06)
+
+Run by hand, not in a suite. A 40 MB APFS disk image was attached at a scratch mountpoint (device 16777239) and the staged bundle put on it; a scratch "installed" bundle sat on the boot data volume (device 16777234). The real `FinishAsync` ran with its real `Directory.Move` and a real `ditto`; only the process-table, codesign and launch calls were stubbed, and the logged exception was captured by wrapping the move.
+
+- **Directory.Move across volumes throws.** `IOException: Cross-device link` on staged -> installed. It does not silently copy.
+- **The fallback lands.** `ditto` to `Orbweaver.app.new` beside the target, then a same-volume rename: the installed executable read `NEW`, the old bundle went to the trash folder, the finished marker was written.
+- **A forced failure restores.** With `ditto` forced to exit 1 the finisher moved the old bundle back (`OLD` in place), wrote a `failed` marker reading "The update did not complete (copy into place failed (ditto exited 1)). The previous version was restored.", and left the staged copy untouched.
+
+The first run also found a gap, now fixed and covered: after the copy fallback the staged bundle was left behind, a second full copy of the app, so a successful finish now deletes it. The volume was detached and the scratch folder deleted. In normal use the updates folder and /Applications are usually on the same volume, so this path is the exception; it is now measured rather than assumed.
+
 ## Not confirmed
 
 - **The real signed finisher.** The probes were unsigned shell scripts. Whether LaunchServices treats a *signed, hardened-runtime* staged bundle the same, and whether the staged bundle's own start-up (it must reach `Startup.Run`'s `finishUpdate` step before any window or mutex) behaves under a locked console, is for QA's end-to-end run with a real build.
 - **Whether a plain `Process.Start` child survives the app's exit under launchd.** The plan wanted this measured once. It was not: the finisher's ppid=1 and own pgid already show it is not in the app's group, which is what the design relies on, and `AbandonProcessGroup` covers the keep-alive case. The question as literally put (a `Process.Start` child of Orbweaver itself) was not run.
-- **Directory.Move across volumes.** The code falls back to `ditto` then rename on an `IOException`, tested with an injected failure. That a real cross-volume move throws `IOException` rather than succeeding is assumed from .NET's behaviour, not observed.
 - **Moving the old bundle to `~/.Trash` from the finisher.** A failure is logged and the old bundle left beside the new one; success is assumed.
 - **TCC grants.** A replaced bundle gets a new CDHash, so Local Network, Automation, Accessibility and Microphone grants reset. That is the premise of the post-update notice and is known from the install notes in CLAUDE.md; this branch did not re-measure it.
 
