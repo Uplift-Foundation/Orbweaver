@@ -23,6 +23,8 @@
   <ItemGroup>
     <!-- CB-270: scrubbed real chat.history pages, read at test time. -->
     <Content Include="Fixtures\pages\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CB-308: the real GitHub releases API responses and SHA256SUMS.txt, captured 2026-11-06. -->
+    <Content Include="Fixtures\update\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

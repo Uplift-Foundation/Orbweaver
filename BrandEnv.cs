@@ -69,6 +69,14 @@ namespace Orbweaver
         internal const string ProbeCaps = "PROBE_CAPS";
         internal const string ProbeAllowResolve = "PROBE_ALLOW_RESOLVE";
 
+        // CB-308, the auto-updater's two test levers. FEED_URL replaces the GitHub
+        // API base the update check talks to (a fixture server in a test), and
+        // CURRENT_VERSION makes the running build claim to be an older one, so a
+        // real current release looks newer without building an old binary. Neither
+        // had an older spelling.
+        internal const string UpdateFeedUrl = "UPDATE_FEED_URL";
+        internal const string UpdateCurrentVersion = "UPDATE_CURRENT_VERSION";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -77,6 +85,7 @@ namespace Orbweaver
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
+            UpdateFeedUrl, UpdateCurrentVersion,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

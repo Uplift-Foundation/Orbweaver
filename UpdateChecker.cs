@@ -1,0 +1,266 @@
+using System.Reflection;
+
+namespace Orbweaver
+{
+    internal enum UpdateCheckOutcome { UpToDate, Available, Failed }
+
+    internal sealed record UpdateCheckResult(UpdateCheckOutcome Outcome, UpdateRelease? Release, string? Error, bool Manual);
+
+    // The slice of OrbweaverSettings the checker reads and writes, so a test needs
+    // no settings.json and every arm of the schedule is reachable.
+    internal interface IUpdateSettings
+    {
+        bool AutoCheck { get; }
+        bool IncludePrerelease { get; }
+        string? SkippedVersion { get; set; }
+        DateTimeOffset? LastCheck { get; set; }
+    }
+
+    internal sealed class OrbweaverUpdateSettings : IUpdateSettings
+    {
+        public bool AutoCheck => OrbweaverSettings.AutoCheckForUpdates;
+        public bool IncludePrerelease => OrbweaverSettings.IncludePrereleaseUpdates;
+        public string? SkippedVersion
+        {
+            get => OrbweaverSettings.SkippedUpdateVersion;
+            set => OrbweaverSettings.SkippedUpdateVersion = value;
+        }
+        public DateTimeOffset? LastCheck
+        {
+            get => OrbweaverSettings.LastUpdateCheckUtc;
+            set => OrbweaverSettings.LastUpdateCheckUtc = value;
+        }
+    }
+
+    // A one-shot timer behind a Func so tests can capture the delay and fire it by
+    // hand. System.Threading.Timer, not DispatcherTimer: the check must run (and
+    // keep its schedule) with no window and no dispatcher.
+    internal static class UpdateTimers
+    {
+        internal static IDisposable Threading(TimeSpan delay, Action action) =>
+            new Timer(_ => action(), null, delay, Timeout.InfiniteTimeSpan);
+    }
+
+    // Checks GitHub for a newer release, on a schedule and on demand (CB-308).
+    //
+    // Reporting rule (the PM's): a MANUAL check always answers — up to date,
+    // available, or the failure — because the user asked and silence reads as a
+    // dead menu item. An AUTOMATIC check says something only when there is an
+    // update, and otherwise only writes the log: a user on a plane should not get
+    // a dialog about GitHub being unreachable.
+    //
+    // Skip applies to automatic checks. A manual check offers the skipped version
+    // anyway, because a user who clicked "Check for updates" and was told "you're
+    // up to date" while one was waiting would be misled.
+    //
+    // Events fire on a pool thread; the UI marshals.
+    internal sealed class UpdateChecker : IDisposable
+    {
+        private readonly IReleaseFeed _feed;
+        private readonly IUpdateSettings _settings;
+        private readonly string _currentVersion;
+        private readonly Func<DateTimeOffset> _now;
+        private readonly Action<string> _log;
+        private readonly Func<TimeSpan, Action, IDisposable> _schedule;
+        private readonly CancellationTokenSource _lifetime = new();
+        private readonly object _gate = new();
+        private IDisposable? _timer;
+        private Task<UpdateCheckResult>? _inFlight;
+        private UpdateRelease? _pending;
+        private bool _disposed;
+
+        internal UpdateChecker(
+            IReleaseFeed feed,
+            IUpdateSettings settings,
+            string currentVersion,
+            Func<DateTimeOffset> now,
+            Action<string> log,
+            Func<TimeSpan, Action, IDisposable> schedule)
+        {
+            _feed = feed;
+            _settings = settings;
+            _currentVersion = currentVersion;
+            _now = now;
+            _log = log;
+            _schedule = schedule;
+        }
+
+        /// <summary>A newer release the user has not skipped, awaiting their decision.</summary>
+        internal UpdateRelease? Pending { get { lock (_gate) return _pending; } }
+
+        /// <summary>Raised when <see cref="Pending"/> changes (the tray item reads it).</summary>
+        internal event Action? PendingChanged;
+
+        /// <summary>Raised with every manual result and every automatic "available".</summary>
+        internal event Action<UpdateCheckResult>? Completed;
+
+        // The version this build says it is, with the test lever applied. The
+        // override is logged as a warning because a build that lies about its
+        // version is exactly the thing that must never go unnoticed in a log.
+        internal static string ResolveCurrentVersion(string? overrideValue, string? informational, out string? warning)
+        {
+            var real = NeuralSpeech.ResolveVersion(informational);
+            warning = null;
+            if (string.IsNullOrWhiteSpace(overrideValue)) return real;
+
+            var wanted = overrideValue.Trim();
+            if (!UpdateVersion.TryParse(wanted, out _))
+            {
+                warning = $"WARNING: {BrandEnv.Name(BrandEnv.UpdateCurrentVersion)}='{wanted}' is not a version; ignoring it and using {real}.";
+                return real;
+            }
+
+            warning = $"WARNING: {BrandEnv.Name(BrandEnv.UpdateCurrentVersion)} is set; this build is pretending to be {wanted} instead of its real {real}.";
+            return wanted;
+        }
+
+        // The real wiring: GitHub (or the fixture named by ORBWEAVER_UPDATE_FEED_URL),
+        // the real settings, the real clock and a real timer. Not started.
+        internal static UpdateChecker Create(Action<string> log, Func<string, string?>? env = null)
+        {
+            env ??= Environment.GetEnvironmentVariable;
+            var current = ResolveCurrentVersion(
+                BrandEnv.Get(BrandEnv.UpdateCurrentVersion, env),
+                typeof(UpdateChecker).Assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+                out var warning);
+            if (warning is not null) log(warning);
+
+            var feedUrl = BrandEnv.Get(BrandEnv.UpdateFeedUrl, env);
+            if (feedUrl is not null) log($"WARNING: {BrandEnv.Name(BrandEnv.UpdateFeedUrl)} is set; checking {feedUrl} instead of GitHub.");
+
+            return new UpdateChecker(
+                new GitHubReleaseFeed(new HttpUpdateHttp(), UpdateFeed.ResolveBaseUrl(feedUrl)),
+                new OrbweaverUpdateSettings(),
+                current,
+                () => DateTimeOffset.UtcNow,
+                log,
+                UpdateTimers.Threading);
+        }
+
+        internal string CurrentVersion => _currentVersion;
+
+        /// <summary>Begin the automatic schedule (a no-op while auto-check is off).</summary>
+        internal void Start() => Reschedule();
+
+        /// <summary>Re-read the auto-check setting; call when the Settings switch changes.</summary>
+        internal void Reschedule()
+        {
+            lock (_gate)
+            {
+                _timer?.Dispose();
+                _timer = null;
+                if (_disposed || !_settings.AutoCheck) return;
+                _timer = _schedule(UpdateSchedule.DelayUntilNextCheck(_settings.LastCheck, _now()), OnTimer);
+            }
+        }
+
+        private void OnTimer() => _ = RunAutomaticAsync();
+
+        internal async Task RunAutomaticAsync()
+        {
+            if (!_settings.AutoCheck) return;
+
+            var result = await CheckAsync(manual: false).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _timer?.Dispose();
+                _timer = _schedule(
+                    result.Outcome == UpdateCheckOutcome.Failed ? UpdateSchedule.FailureRetry : UpdateSchedule.Interval,
+                    OnTimer);
+            }
+        }
+
+        /// <summary>"Check for updates…". Always reports; coalesces with a check already running.</summary>
+        //
+        // If it joins an automatic check that was already running, that check's
+        // "up to date" or failure was not announced (automatic ones stay quiet), so
+        // it is announced here as the manual answer. (Known edge: an automatic
+        // check that stayed quiet because the user had skipped that version reads
+        // as "up to date" to a manual click that joined it; a manual check that
+        // starts fresh does offer the skipped version.)
+        internal async Task<UpdateCheckResult> CheckNowAsync()
+        {
+            var result = await CheckAsync(manual: true).ConfigureAwait(false);
+            if (result.Manual) return result;
+
+            result = result with { Manual = true };
+            if (result.Outcome != UpdateCheckOutcome.Available) Completed?.Invoke(result);
+            return result;
+        }
+
+        private Task<UpdateCheckResult> CheckAsync(bool manual)
+        {
+            lock (_gate)
+            {
+                // A second click (or the timer landing during a manual check)
+                // joins the running one rather than doubling the request.
+                if (_inFlight is { IsCompleted: false } running) return running;
+                return _inFlight = RunAsync(manual);
+            }
+        }
+
+        private async Task<UpdateCheckResult> RunAsync(bool manual)
+        {
+            UpdateCheckResult result;
+            try
+            {
+                var includePre = _settings.IncludePrerelease;
+                var releases = await _feed.FetchAsync(includePre, _lifetime.Token).ConfigureAwait(false);
+                var decision = UpdateFeed.Pick(releases, _currentVersion, includePre, _settings.SkippedVersion);
+                _settings.LastCheck = _now();
+
+                result = decision.Kind switch
+                {
+                    UpdateDecisionKind.Available => new UpdateCheckResult(UpdateCheckOutcome.Available, decision.Release, null, manual),
+                    UpdateDecisionKind.Skipped when manual => new UpdateCheckResult(UpdateCheckOutcome.Available, decision.Release, null, manual),
+                    _ => new UpdateCheckResult(UpdateCheckOutcome.UpToDate, null, null, manual),
+                };
+                if (decision.Kind == UpdateDecisionKind.Skipped && !manual)
+                    _log($"update check: {decision.Release!.Version} is available but skipped by the user; staying quiet.");
+            }
+            catch (Exception ex)
+            {
+                _log($"update check failed: {ex.Message}");
+                result = new UpdateCheckResult(UpdateCheckOutcome.Failed, null, ex.Message, manual);
+            }
+
+            SetPending(result.Outcome == UpdateCheckOutcome.Failed ? Pending : result.Release);
+            if (manual || result.Outcome == UpdateCheckOutcome.Available) Completed?.Invoke(result);
+            return result;
+        }
+
+        private void SetPending(UpdateRelease? next)
+        {
+            bool changed;
+            lock (_gate)
+            {
+                changed = _pending?.Tag != next?.Tag;
+                _pending = next;
+            }
+            if (changed) PendingChanged?.Invoke();
+        }
+
+        /// <summary>"Skip this version": quiet until a different release is published.</summary>
+        internal void Skip(UpdateRelease release)
+        {
+            _settings.SkippedVersion = release.Version;
+            if (Pending?.Tag == release.Tag) SetPending(null);
+        }
+
+        internal void ClearSkipped() => _settings.SkippedVersion = null;
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                _disposed = true;
+                _timer?.Dispose();
+                _timer = null;
+            }
+            _lifetime.Cancel();
+            _lifetime.Dispose();
+        }
+    }
+}
