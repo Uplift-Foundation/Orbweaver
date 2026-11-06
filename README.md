@@ -2061,18 +2061,19 @@ is needed; the .NET runtime is bundled.
 **Install Hooks.command** — that runs step 2 below for you. The
 builds are signed and notarized, so they open without a Gatekeeper override.
 
-**Windows**: run the setup. It installs per-user under
-`%LOCALAPPDATA%\Programs\ClaudeBuddy`, so there is no UAC prompt, and it
-offers to do step 2 and to start the app at sign-in. It is **not** code-signed
-yet, so SmartScreen shows a warning — choose *More info → Run anyway*.
-Uninstall through Apps & Features; that also removes the hook entries from
-`settings.json`.
+**Windows**: run the setup. It installs per-user under `%LOCALAPPDATA%\Programs\Orbweaver` on a fresh install, so there is no UAC prompt, and it offers to do step 2 and to start the app at sign-in. It is **not** code-signed yet, so SmartScreen shows a warning — choose *More info → Run anyway*. Uninstall through Apps & Features; that also removes the hook entries from `settings.json`.
 
-The install folder keeps the name `Programs\ClaudeBuddy` on purpose: setups
-from before the rename installed there, and an upgrade installs over the
-existing folder instead of leaving a second copy behind. The program inside it
-is `Orbweaver.exe`; the setup removes the old `ClaudeBuddy.exe` when it
-upgrades.
+An upgrade over a copy installed before the rename stays in `Programs\ClaudeBuddy` on purpose: the installer reuses the previous install folder, so the upgrade lands over the existing copy instead of leaving a second one behind. Either way the program inside is `Orbweaver.exe`; the setup removes the old `ClaudeBuddy.exe` when it upgrades.
+
+### Updating
+
+Orbweaver checks GitHub for a newer release about once a day, and **Check for updates…** in the menu-bar/tray menu checks on demand. When one is found the menu item becomes **Update to <version> available…** and a small notice shows the release notes with **Install & restart**, **Later** and **Skip this version**. Nothing is downloaded until you choose Install. Settings → **Updates** turns the daily check off (no network call is made at all while it is off), opts in to prerelease versions, and shows the version you skipped with a way to forget it.
+
+What Install does: it downloads the installer for your platform, checks it against the release's `SHA256SUMS.txt`, and refuses on any mismatch. On macOS it also requires the downloaded app to pass `codesign --verify --deep --strict`, to be signed by Uplift Foundation's Team ID, and to pass Gatekeeper's `spctl --assess`, then swaps it into `/Applications` and relaunches it. On Windows it runs the setup silently and the setup relaunches the app. The Windows installer is not code-signed, so the checksum is the only check and it comes from the same GitHub release as the installer — that is the same level of assurance as downloading it by hand, not more.
+
+The updater will not try to escalate privileges. If the app is not in a folder you can write to, was launched from a downloaded disk image (macOS App Translocation), or is a loose `dotnet run` binary, it says so and points you at the release page instead. If an install fails, the notice shows why and offers **Retry** and **Download manually**; the failure is also written to `update.log` (`~/Library/Logs/Orbweaver/` on macOS).
+
+**macOS asks for permissions again after an update.** Replacing the app gives it a new code identity, and macOS does not carry privacy grants across that. The first launch after an update tells you once, and lists what may need re-allowing in System Settings → Privacy & Security: Local Network (OpenClaw and other machines), Automation (click-to-focus), Accessibility and Microphone. If you use OpenClaw or other machines, the notice has a button that opens the Local Network pane.
 
 **Crash keep-alive.** If **Serve on launch** (Settings → Remote Control) is
 turned on, both installers also register a way for the OS to bring

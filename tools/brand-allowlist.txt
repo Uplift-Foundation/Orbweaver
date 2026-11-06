@@ -34,7 +34,7 @@ OrbWindow.axaml.cs	1	sample data: a repository path or session name; the GitHub 
 OrbweaverHook.ps1	1	fixture: a real transcript line quoted verbatim, whose customTitle was the repo's old name
 OrbweaverHook.sh	1	fixture: a real transcript line quoted verbatim, whose customTitle was the repo's old name
 Program.cs	2	legacy arm: names the pre-rename thing a phase 2 migration recognises (the legacy bundle and executable startup steps)
-README.md	9	'Formerly Claude Buddy', the Programs\ClaudeBuddy upgrade folder, the old exe name, the old env spelling note, and a sample repo path
+README.md	7	'Formerly Claude Buddy', the Programs\ClaudeBuddy upgrade folder, the old exe name, the old env spelling note, and a sample repo path
 RemoteControlSessions.cs	1	comment records what happened under the old name; rewriting it would falsify the record (the 'two Claude Buddys' complaint)
 SessionDependents.cs	1	comment records what happened under the old name; rewriting it would falsify the record (a measurement taken on a 0.4.2-beta build)
 Startup.cs	1	legacy arm: names the pre-rename thing a phase 2 migration recognises (the step ordering comment about the legacy bundle)

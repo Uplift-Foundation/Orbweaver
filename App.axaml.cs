@@ -109,6 +109,14 @@ namespace Orbweaver
 
                 new SessionManager().Start();
 
+                // The updater (CB-308). After SessionManager so the tray exists for
+                // PendingChanged to refresh. The post-update notice records this
+                // run's version before it decides to show anything, and the
+                // failure notice reads what a finisher left behind.
+                UpdateServices.Start();
+                UpdatePostInstallNotice.Run();
+                UpdateFailureNotice.Run();
+
                 // Hide/show orbs (and room for more — see HotkeyRegistry) from
                 // a system-wide key combo, so the toggle already on the tray
                 // menu doesn't require finding the menu bar icon first. Started
