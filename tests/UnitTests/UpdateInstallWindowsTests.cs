@@ -385,4 +385,13 @@ public class UpdateInstallWindowsTests : IDisposable
         }
         finally { Directory.Delete(outside, true); }
     }
+
+    [Fact]
+    public void Start_info_working_directory_is_the_setups_folder_or_empty_for_a_root_path()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "orb-wd");
+        Assert.Equal(dir, UpdateInstallPlan.WinSetupStartInfo(Path.Combine(dir, "setup.exe"), "l.log").WorkingDirectory);
+        // GetDirectoryName is null for a filesystem root; the arm falls back to "".
+        Assert.Equal("", UpdateInstallPlan.WinSetupStartInfo(Path.GetPathRoot(dir)!, "l.log").WorkingDirectory);
+    }
 }
