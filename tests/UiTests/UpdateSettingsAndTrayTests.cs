@@ -119,6 +119,28 @@ public class UpdateSettingsAndTrayTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void CheckNowWithNoSeamAndNoCheckerReportsFailureWithoutTouchingTheNetwork()
+    {
+        var window = NewWindow();
+        // The real (unseamed) path: with no checker there is no network to reach,
+        // so it answers Failed at once.
+        var button = ButtonNamed(window.UpdateRows(), "Check now");
+        UpdateServices.Checker = null;
+        window.OnCheckNowAsync(button).GetAwaiter().GetResult();
+
+        Assert.Contains("Could not check", window.UpdateStatusText);
+    }
+
+    [AvaloniaFact]
+    public void ClickingCheckForUpdatesWithNoSeamsAsksTheServiceAndReachesNothing()
+    {
+        UpdateServices.Checker = null;
+        UpdateMenu.PendingForTests = () => null;
+
+        UpdateMenu.Activate();
+    }
+
+    [AvaloniaFact]
     public void ThePrereleaseSwitchWritesTheSettingBothWays()
     {
         var window = NewWindow();

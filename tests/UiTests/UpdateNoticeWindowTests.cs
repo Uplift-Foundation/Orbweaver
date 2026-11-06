@@ -313,6 +313,20 @@ public class UpdateNoticeWindowTests : IDisposable
         Assert.Empty(skipped);
     }
 
+    // The unseamed Clear: the updates root is under the scratch settings dir, so
+    // nothing real is touched and a missing marker is a no-op.
+    [AvaloniaFact]
+    public async Task AFailureWithNoMarkerSeamClearsHarmlessly()
+    {
+        var installer = new FakeInstaller { Run = (_, _) => Task.FromResult(new InstallOutcome(InstallStatus.Failed, "x")) };
+        UpdateNoticeWindow.ClearFailureMarkerForTests = null;
+        var w = new UpdateNoticeWindow(Release("0.6.0"), installer, _ => { }, _ => { });
+
+        await w.InstallAsync();
+
+        Assert.Equal(UpdateNoticeWindow.Phase.Failed, w.State);
+    }
+
     [AvaloniaFact]
     public async Task TheFailureMarkerIsClearedWhenTheFailureIsShownInline()
     {

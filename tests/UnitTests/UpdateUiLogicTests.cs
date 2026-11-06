@@ -180,6 +180,7 @@ public class UpdateUiLogicTests
         Assert.Contains("0.6.0", UpdateSettingsText.Result(Result(UpdateCheckOutcome.Available, true, Release())));
         Assert.Contains("offline", UpdateSettingsText.Result(Result(UpdateCheckOutcome.Failed, true, error: "offline")));
         Assert.Contains("up to date", UpdateSettingsText.Result(Result(UpdateCheckOutcome.UpToDate, true)));
+        Assert.Contains("is available", UpdateSettingsText.Result(Result(UpdateCheckOutcome.Available, true)));
     }
 
     // ---- UpdateFailureNotice ------------------------------------------------
