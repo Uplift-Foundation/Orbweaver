@@ -352,4 +352,55 @@ public class UpdateUiLogicTests
         UpdateServices.ClearSkipped();
         Assert.Null(OrbweaverSettings.SkippedUpdateVersion);
     }
+
+    // ---- Windows "did not complete" -----------------------------------------
+
+    [Fact]
+    public void OpenLogIsOfferedOnlyForAnExistingAbsoluteDotLogFile()
+    {
+        var dir = Scratch();
+        var log = Path.Combine(dir, "setup.log");
+        File.WriteAllText(log, "x");
+        var notLog = Path.Combine(dir, "setup.exe");
+        File.WriteAllText(notLog, "x");
+
+        Assert.Equal(log, UpdateFailureNotice.TrustedLog(log));
+        Assert.Null(UpdateFailureNotice.TrustedLog(notLog));                         // not a .log
+        Assert.Null(UpdateFailureNotice.TrustedLog(Path.Combine(dir, "gone.log")));  // does not exist
+        Assert.Null(UpdateFailureNotice.TrustedLog("setup.log"));                    // relative
+        Assert.Null(UpdateFailureNotice.TrustedLog(""));                             // untrusted marker
+        Assert.Null(UpdateFailureNotice.TrustedLog(null));
+    }
+
+    [Fact]
+    public void ANotCompletedWindowsUpdateShowsTheNoticeAndANullOneShowsNothing()
+    {
+        var dir = Scratch();
+        var log = Path.Combine(dir, "setup.log");
+        File.WriteAllText(log, "x");
+        var shown = new List<(string Title, string Message, string? Log)>();
+
+        Assert.False(UpdateFailureNotice.RunWindows(null, (t, m, l) => shown.Add((t, m, l))));
+        Assert.Empty(shown);
+
+        Assert.True(UpdateFailureNotice.RunWindows(
+            new UpdateInstallPlan.WinPendingUpdate("1.0.3", "1.0.4", log), (t, m, l) => shown.Add((t, m, l))));
+        Assert.Contains("1.0.4", shown[0].Message);
+        Assert.Contains("1.0.3", shown[0].Message);
+        Assert.Equal(log, shown[0].Log);
+
+        UpdateFailureNotice.RunWindows(
+            new UpdateInstallPlan.WinPendingUpdate("1.0.3", "1.0.4", "../../evil.log"), (t, m, l) => shown.Add((t, m, l)));
+        Assert.Null(shown[1].Log);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task AnUnsupportedPlatformRefusesAndPointsAtTheManualDownload()
+    {
+        var outcome = await new UpdateServices.NoInstaller().InstallAsync(
+            Release(), new Progress<UpdateProgress>(), default);
+
+        Assert.Equal(InstallStatus.Refused, outcome.Status);
+        Assert.Contains("Download manually", outcome.Message);
+    }
 }

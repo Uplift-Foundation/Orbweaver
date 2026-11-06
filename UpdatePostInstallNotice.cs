@@ -92,18 +92,22 @@ namespace Orbweaver
 
         internal TextBlock Message { get; } = new();
         internal Button OpenButton { get; } = new() { Content = "Open Local Network settings" };
+        internal Button LogButton { get; } = new() { Content = "Open log" };
+        private string? _logPath;
+        private readonly Action<string> _openFile;
+
         internal Button OkButton { get; } = new() { Content = "OK", IsDefault = true, IsCancel = true };
 
-        public static void Toggle(string title, string message, bool offerLocalNetwork)
+        public static void Toggle(string title, string message, bool offerLocalNetwork, string? logPath = null)
         {
             if (_open is not null)
             {
-                _open.Retarget(title, message, offerLocalNetwork);
+                _open.Retarget(title, message, offerLocalNetwork, logPath);
                 (BringForwardForTests ?? Activate)(_open);
                 return;
             }
 
-            _open = new UpdateMessageWindow(title, message, offerLocalNetwork, OpenLocalNetworkPane);
+            _open = new UpdateMessageWindow(title, message, offerLocalNetwork, OpenLocalNetworkPane, logPath, OpenFile);
             _open.Closed += OnClosed;
             (PresentForTests ?? Present)(_open);
         }
@@ -136,6 +140,35 @@ namespace Orbweaver
             }
         }
 
+        // The platform's default viewer for a file, never the file run as a program:
+        // `open <file>` hands a .log to whatever app is associated with it, and
+        // ShellExecute does the same on Windows. A path that is not a plain .log
+        // never reaches here (UpdateFailureNotice.TrustedLog).
+        [ExcludeFromCodeCoverage]
+        private static void OpenFile(string path)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo();
+                if (OperatingSystem.IsMacOS())
+                {
+                    psi.FileName = "open";
+                    psi.ArgumentList.Add(path);
+                    psi.UseShellExecute = false;
+                }
+                else
+                {
+                    psi.FileName = path;
+                    psi.UseShellExecute = true;
+                }
+
+                System.Diagnostics.Process.Start(psi)?.Dispose();
+            }
+            catch
+            {
+            }
+        }
+
         [ExcludeFromCodeCoverage]
         private static void Present(UpdateMessageWindow window)
         {
@@ -160,16 +193,24 @@ namespace Orbweaver
 
         internal TextBlock Heading { get; } = new() { FontWeight = FontWeight.SemiBold, FontSize = 15 };
 
-        private void Retarget(string title, string message, bool offerLocalNetwork)
+        private void Retarget(string title, string message, bool offerLocalNetwork, string? logPath)
         {
+            _logPath = logPath;
+            LogButton.IsVisible = logPath is not null;
             Title = title;
             Heading.Text = title;
             Message.Text = message;
             OpenButton.IsVisible = offerLocalNetwork;
         }
 
-        internal UpdateMessageWindow(string title, string message, bool offerLocalNetwork, Action openLocalNetwork)
+        internal UpdateMessageWindow(
+            string title, string message, bool offerLocalNetwork, Action openLocalNetwork,
+            string? logPath = null, Action<string>? openFile = null)
         {
+            _logPath = logPath;
+            _openFile = openFile ?? (_ => { });
+            LogButton.IsVisible = logPath is not null;
+            LogButton.Click += (_, _) => { if (_logPath is not null) _openFile(_logPath); };
             _openLocalNetwork = openLocalNetwork;
 
             Title = title;
@@ -200,7 +241,7 @@ namespace Orbweaver
                         Orientation = Orientation.Horizontal,
                         HorizontalAlignment = HorizontalAlignment.Right,
                         Spacing = 8,
-                        Children = { OpenButton, OkButton }
+                        Children = { LogButton, OpenButton, OkButton }
                     }
                 }
             };

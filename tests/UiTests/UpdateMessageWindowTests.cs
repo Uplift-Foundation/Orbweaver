@@ -95,4 +95,33 @@ public class UpdateMessageWindowTests : IDisposable
         Assert.True(presented[0].OpenButton.IsVisible);
         Assert.Equal("Two", presented[0].Title);
     }
+
+    [AvaloniaFact]
+    public void TheOpenLogButtonIsThereOnlyWithAPathAndOpensThatPath()
+    {
+        var opened = new List<string>();
+        var without = new UpdateMessageWindow("t", "m", false, () => { });
+        var with = new UpdateMessageWindow("t", "m", false, () => { }, "/tmp/setup.log", opened.Add);
+
+        Assert.False(without.LogButton.IsVisible);
+        Assert.True(with.LogButton.IsVisible);
+
+        with.LogButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        without.LogButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+
+        Assert.Equal(new[] { "/tmp/setup.log" }, opened);
+    }
+
+    [AvaloniaFact]
+    public void RetargetingCarriesTheLogPathAcross()
+    {
+        UpdateMessageWindow.PresentForTests = _ => { };
+        UpdateMessageWindow.BringForwardForTests = _ => { };
+
+        UpdateMessageWindow.Toggle("One", "a", false);
+        Assert.False(UpdateMessageWindow.OpenForTests!.LogButton.IsVisible);
+
+        UpdateMessageWindow.Toggle("Two", "b", false, "/tmp/setup.log");
+        Assert.True(UpdateMessageWindow.OpenForTests!.LogButton.IsVisible);
+    }
 }

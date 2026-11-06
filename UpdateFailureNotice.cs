@@ -67,6 +67,40 @@ namespace Orbweaver
             return failures.Count;
         }
 
+        // Windows: tamsin's ReconcileAtLaunch says whether the silent setup landed.
+        // Its LogPath comes out of a marker the user's account can write, so it is
+        // only offered as an "Open log" action when it is an absolute path to an
+        // existing .log file; anything else shows the notice without the button.
+        internal static string? TrustedLog(string? logPath) =>
+            !string.IsNullOrEmpty(logPath)
+            && Path.IsPathRooted(logPath)
+            && logPath.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
+            && File.Exists(logPath)
+                ? logPath
+                : null;
+
+        internal static string WindowsMessage(UpdateInstallPlan.WinPendingUpdate pending) =>
+            $"The update to {pending.To} did not complete, so {Brand.DisplayName} is still on {pending.From}. "
+            + "Nothing was lost; you can try again from the tray menu or download the installer yourself.";
+
+        // Returns whether a notice was shown. `show` gets the message and the
+        // vetted log path (null = no button).
+        internal static bool RunWindows(
+            UpdateInstallPlan.WinPendingUpdate? pending, Action<string, string, string?> show)
+        {
+            if (pending is null) return false;
+            show("Update did not complete", WindowsMessage(pending), TrustedLog(pending.LogPath));
+            return true;
+        }
+
+        [ExcludeFromCodeCoverage]
+        internal static void RunWindowsAtLaunch(string currentVersion)
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            var pending = UpdateInstallWindows.ReconcileAtLaunch(UpdatesRoot(), currentVersion, UpdateServices.Log);
+            RunWindows(pending, (t, m, log) => UpdateMessageWindow.Toggle(t, m, false, log));
+        }
+
         [ExcludeFromCodeCoverage]
         internal static void Run() =>
             Run(UpdatesRoot(), (title, message) => UpdateMessageWindow.Toggle(title, message, offerLocalNetwork: false));

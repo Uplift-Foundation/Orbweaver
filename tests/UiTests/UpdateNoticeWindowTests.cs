@@ -410,6 +410,33 @@ public class UpdateNoticeWindowTests : IDisposable
         }
     }
 
+    // The real v1.0.3 body. Without the strip, its downloads table renders as a
+    // block of raw pipes under a "Which file do I want" heading.
+    [AvaloniaFact]
+    public void TheRealReleaseBodyShowsNoTableAndNoDownloadsSection()
+    {
+        var text = string.Join("\n", Flatten(UpdateNotesView.Build(UpdateReleaseNotesFixture.V103)));
+
+        Assert.DoesNotContain("|", text);
+        Assert.DoesNotContain("Which file do I want", text);
+        Assert.DoesNotContain("OrbweaverSpeech", text);
+        Assert.DoesNotContain("**", text);
+        Assert.DoesNotContain("##", text);
+
+        // The control: the notes themselves survived.
+        Assert.Contains("A dragged orb now stays where you drop it.", text);
+        Assert.Contains("Known limitations", text);
+        Assert.Contains("Upgrading", text);
+    }
+
+    [AvaloniaFact]
+    public void StripTablesLeavesATableFreeBodyAloneAndKeepsPreHeadingText()
+    {
+        Assert.Equal("## A\n\ntext", UpdateNotesView.StripTables("## A\n\ntext\n"));
+        Assert.Equal("intro\n\n## B\nbody", UpdateNotesView.StripTables("intro\n| x | y |\n\n## B\nbody"));
+        Assert.Equal("## A\nfine", UpdateNotesView.StripTables("## A\nfine\n## T\n| a | b |\nprose\n"));
+    }
+
     private static IEnumerable<string> Flatten(IEnumerable<Control> controls)
     {
         foreach (var control in controls)

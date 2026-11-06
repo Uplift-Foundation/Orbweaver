@@ -38,19 +38,11 @@ public class UpdateScreenshots : IDisposable
         UpdateMenu.PendingForTests = null;
     }
 
-    // A real GitHub release body's shape: headings, bold, bullets, a fenced block.
-    private const string Notes =
-        "## What's new\n\n"
-        + "- **Orbs remember their place** across restarts, including after an update\n"
-        + "- The chat panel now keeps its scroll position while a reply streams\n"
-        + "- Fixed a crash when a session's folder was deleted while its orb was open\n\n"
-        + "## Fixed\n\n"
-        + "1. Click-to-focus on a Windows Terminal tab\n"
-        + "2. Usage orbs showing `0%` for a freshly signed-in account\n\n"
-        + "> Installers are unchanged: the .dmg is signed and notarized.\n";
+    // The real v1.0.3 release body, the same text UpdateNoticeWindowTests pins.
+    private const string Notes = UpdateReleaseNotesFixture.V103;
 
     private static UpdateRelease Release() =>
-        new("v0.6.0", "0.6.0", false, Notes, Array.Empty<UpdateAsset>());
+        new("v1.0.3", "1.0.3", false, Notes, Array.Empty<UpdateAsset>());
 
     private sealed class FakeInstaller : IUpdateInstaller
     {

@@ -365,13 +365,41 @@ namespace Orbweaver
         {
             var controls = new List<Control>();
 
-            foreach (var block in ChatMarkdown.Parse(body ?? ""))
+            foreach (var block in ChatMarkdown.Parse(StripTables(body ?? "")))
                 controls.Add(Block(block));
 
             if (controls.Count == 0)
                 controls.Add(Line("No release notes were published for this version.", italic: true));
 
             return controls;
+        }
+
+        // Every release body carries a "Which file do I want" section: a downloads
+        // table plus a sentence about the optional speech engine. ChatMarkdown
+        // (rightly, for chat) turns a table into a monospace block of raw pipes,
+        // and in an updater none of it means anything — the updater has already
+        // chosen the file. So a section that contains a table is dropped whole,
+        // heading and prose with it; a table before any heading just loses its
+        // table lines.
+        internal static string StripTables(string body)
+        {
+            var sections = new List<List<string>> { new() };
+            foreach (var line in body.Replace("\r", "").Split('\n'))
+            {
+                if (line.TrimStart().StartsWith('#')) sections.Add(new List<string>());
+                sections[^1].Add(line);
+            }
+
+            var kept = new List<string>();
+            for (var i = 0; i < sections.Count; i++)
+            {
+                var section = sections[i];
+                var hasTable = section.Any(l => l.TrimStart().StartsWith('|'));
+                if (hasTable && i > 0) continue;
+                kept.AddRange(hasTable ? section.Where(l => !l.TrimStart().StartsWith('|')) : section);
+            }
+
+            return string.Join("\n", kept).TrimEnd();
         }
 
         private static Control Block(ChatMarkdown.MdBlock block)

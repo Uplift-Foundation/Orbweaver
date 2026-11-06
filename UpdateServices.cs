@@ -125,52 +125,20 @@ namespace Orbweaver
         // one place the updater is wired to the real downloader, real processes and
         // the real filesystem, each of which is faked in the suites that cover the
         // installers themselves.
+        // The platform installer from its single factory. Null (a platform with no
+        // installer) becomes one that refuses and points at the release page, so
+        // the notice's failure state still has something true to say.
         [ExcludeFromCodeCoverage]
-        internal static IUpdateInstaller Installer()
+        internal static IUpdateInstaller Installer() =>
+            UpdateInstallers.ForCurrentPlatform(Log) ?? new NoInstaller();
+
+        internal sealed class NoInstaller : IUpdateInstaller
         {
-            if (OperatingSystem.IsMacOS()) return MacInstaller();
-            return WindowsInstaller();
-        }
-
-        [ExcludeFromCodeCoverage]
-        private static IUpdateInstaller MacInstaller()
-        {
-            var plist = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Library", "LaunchAgents", Brand.MacBundleId + ".plist");
-
-            return new MacUpdateInstaller(
-                (release, directory, progress, ct) => UpdateDownloader.DownloadVerifiedAsync(
-                    release, UpdateAssets.CurrentRid(), directory, new HttpUpdateHttp(), progress, ct),
-                Environment.ProcessPath,
-                ParentWritable,
-                Path.Combine(OrbweaverSettings.Directory, "updates"),
-                File.Exists(plist) ? plist : null,
-                UpdateInstallMacOS.RealExec,
-                () => Task.Delay(500),
-                Log,
-                Environment.ProcessId);
-        }
-
-        // The Windows installer is composed by its own file (CB-308, Windows half).
-        [ExcludeFromCodeCoverage]
-        private static IUpdateInstaller WindowsInstaller() =>
-            throw new PlatformNotSupportedException("The Windows installer is not wired yet.");
-
-        [ExcludeFromCodeCoverage]
-        private static bool ParentWritable(string directory)
-        {
-            try
-            {
-                var probe = Path.Combine(directory, $".orbweaver-write-test-{Guid.NewGuid():N}");
-                File.WriteAllBytes(probe, []);
-                File.Delete(probe);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
+            public Task<InstallOutcome> InstallAsync(
+                UpdateRelease release, IProgress<UpdateProgress> progress, CancellationToken cancellationToken) =>
+                Task.FromResult(new InstallOutcome(
+                    InstallStatus.Refused,
+                    "This platform can't install updates itself. Use Download manually."));
         }
     }
 }

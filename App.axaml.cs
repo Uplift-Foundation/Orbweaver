@@ -114,6 +114,7 @@ namespace Orbweaver
                 // run's version before it decides to show anything, and the
                 // failure notice reads what a finisher left behind.
                 UpdateServices.Start();
+                UpdateFailureNotice.RunWindowsAtLaunch(UpdateServices.Checker?.CurrentVersion ?? "");
                 UpdatePostInstallNotice.Run();
                 UpdateFailureNotice.Run();
 
