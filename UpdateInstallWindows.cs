@@ -152,15 +152,11 @@ namespace Orbweaver
         // Every test drives the constructor with a fake start function.
         [ExcludeFromCodeCoverage]
         internal static UpdateInstallWindows CreateReal(
-            DownloadVerified download, string currentVersion, Action shutdown)
-        {
-            var logDir = CrashLog.Directory;
-            return new UpdateInstallWindows(
-                download, Environment.ProcessPath,
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Brand.ShortName, "updates"),
+            DownloadVerified download, string currentVersion, Action<string> log, Action shutdown) =>
+            new(download, Environment.ProcessPath,
+                Path.Combine(OrbweaverSettings.Directory, "updates"),
                 currentVersion, OrbweaverSettings.FlushPendingSave,
                 info => Process.Start(info)?.Id ?? throw new InvalidOperationException("Process.Start returned no process"),
-                shutdown, line => DataDirMigration.AppendLog(logDir, "update.log", line));
-        }
+                shutdown, log);
     }
 }

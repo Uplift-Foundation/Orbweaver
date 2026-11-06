@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 
 namespace Orbweaver
 {
@@ -13,9 +14,7 @@ namespace Orbweaver
         internal static IUpdateInstaller? ForCurrentPlatform(Action<string> log) =>
             For(OperatingSystem.IsMacOS(), OperatingSystem.IsWindows(),
                 () => CreateMacOS(log),
-                // Windows arm: UpdateInstallWindows, owned by the Windows
-                // engineer. Until it exists this answers "no installer".
-                () => null);
+                () => CreateWindows(log));
 
         // The choice, with the construction passed in, so each arm is a case
         // and neither real installer is built by a test.
@@ -44,6 +43,27 @@ namespace Orbweaver
                 () => Task.Delay(TimeSpan.FromMilliseconds(500)),
                 log,
                 Environment.ProcessId);
+        }
+
+        // Excluded from coverage: the real downloader, the real settings folder
+        // and the real desktop lifetime. The shutdown is posted to the UI thread
+        // because the installer calls it from the notice's async continuation.
+        [ExcludeFromCodeCoverage]
+        private static IUpdateInstaller CreateWindows(Action<string> log)
+        {
+            var http = new HttpUpdateHttp();
+            var current = UpdateChecker.ResolveCurrentVersion(
+                BrandEnv.Get(BrandEnv.UpdateCurrentVersion, Environment.GetEnvironmentVariable),
+                typeof(UpdateChecker).Assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+                out _);
+            return UpdateInstallWindows.CreateReal(
+                (release, directory, progress, ct) =>
+                    UpdateDownloader.DownloadVerifiedAsync(release, UpdateAssets.CurrentRid(), directory, http, progress, ct),
+                current, log,
+                () => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    (Avalonia.Application.Current?.ApplicationLifetime
+                        as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.Shutdown()));
         }
 
         // A permission bit lies about ACLs and read-only volumes; creating a
