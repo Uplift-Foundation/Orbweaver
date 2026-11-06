@@ -2411,8 +2411,10 @@ namespace Orbweaver
         // skipped version with a way to take the skip back. Nothing here checks
         // by itself: the daily check belongs to UpdateChecker, and turning it off
         // here is what makes that check make no network call at all.
-        private TextBlock? _updateStatus;
-        internal string? UpdateStatusText => _updateStatus?.Text;
+        // Never null: UpdateRows replaces it on every build, and the initial one only
+        // exists so nothing has to null-check a field the constructor always fills.
+        private TextBlock _updateStatus = new();
+        internal string? UpdateStatusText => _updateStatus.Text;
 
         internal Control[] UpdateRows()
         {
@@ -2457,7 +2459,7 @@ namespace Orbweaver
         internal async Task OnCheckNowAsync(Button button)
         {
             button.IsEnabled = false;
-            if (_updateStatus is not null) _updateStatus.Text = "Checking…";
+            _updateStatus.Text = "Checking…";
 
             UpdateCheckResult result;
             try
@@ -2469,7 +2471,7 @@ namespace Orbweaver
                 result = new UpdateCheckResult(UpdateCheckOutcome.Failed, null, ex.Message, true);
             }
 
-            if (_updateStatus is not null) _updateStatus.Text = UpdateSettingsText.Result(result);
+            _updateStatus.Text = UpdateSettingsText.Result(result);
             button.IsEnabled = true;
         }
 
