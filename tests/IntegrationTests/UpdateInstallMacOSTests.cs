@@ -278,6 +278,8 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         public List<(int Pid, bool Force)> Signals = [];
         public Func<string, string, bool>? FailMove;
         public bool FailDelete;
+        public List<(string A, string B)> Swaps = [];
+        public Func<int, int>? SwapRc;   // call index -> errno (0 = really exchange)
     }
 
     private (MacHandoff H, FakeMac Mac, World W, UpdateInstallMacOS.FinishDeps D, string Exe) Finish(
@@ -305,6 +307,14 @@ public sealed class UpdateInstallMacOSTests : IDisposable
             pid => w.Alive.Contains(pid), _ => Task.CompletedTask,
             (from, to) => { if (w.FailMove?.Invoke(from, to) == true) throw new IOException("simulated"); Directory.Move(from, to); },
             path => { if (w.FailDelete) throw new IOException("cannot delete"); Directory.Delete(path, true); },
+            (a, b) =>
+            {
+                w.Swaps.Add((a, b));
+                var rc = w.SwapRc?.Invoke(w.Swaps.Count - 1) ?? 0;
+                if (rc != 0) return rc;
+                var tmp = a + ".swaptmp"; Directory.Move(a, tmp); Directory.Move(b, a); Directory.Move(tmp, b);
+                return 0;
+            },
             Path.Combine(_root, "Trash"), 501, 9999);
         return (h, mac, w, d, exe);
     }
@@ -406,7 +416,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
     public async Task Finish_falls_back_to_copy_and_rename_on_a_cross_volume_move()
     {
         var (h, mac, w, d, _) = Finish();
-        w.FailMove = (from, to) => from == h.Staged && to == h.Installed;
+        w.FailMove = (from, to) => from == h.Staged && to == UpdateInstallPlan.MacNewPath(h.Installed);
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.Equal("NEW", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
         Assert.True(mac.Ran("ditto", h.Staged));
@@ -418,7 +428,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
     {
         var (h, _, w, d, _) = Finish();
         Directory.CreateDirectory(UpdateInstallPlan.MacNewPath(h.Installed) + "/junk");
-        w.FailMove = (from, to) => from == h.Staged && to == h.Installed;
+        w.FailMove = (from, to) => from == h.Staged && to == UpdateInstallPlan.MacNewPath(h.Installed);
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.False(Directory.Exists(UpdateInstallPlan.MacNewPath(h.Installed)));
     }
@@ -427,7 +437,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
     public async Task Finish_restores_the_old_bundle_when_even_the_fallback_copy_fails()
     {
         var (h, mac, w, d, _) = Finish();
-        w.FailMove = (from, to) => from == h.Staged && to == h.Installed;
+        w.FailMove = (from, to) => from == h.Staged && to == UpdateInstallPlan.MacNewPath(h.Installed);
         mac.Ditto = 1;
         Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.Equal("OLD", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
@@ -435,20 +445,184 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.True(mac.Calls.Any(c => c.File == "/usr/bin/env"), "the old app is relaunched");
     }
 
+    private const int ENotSup = 45;
+
     [Fact]
-    public async Task Finish_removes_a_half_moved_install_before_restoring()
+    public async Task Finish_removes_a_half_moved_install_before_restoring_on_the_two_rename_fallback()
     {
         var (h, _, w, d, _) = Finish();
-        // The swap "succeeds" far enough to leave a directory at the target, then throws.
+        w.SwapRc = _ => ENotSup;
+        var newPath = UpdateInstallPlan.MacNewPath(h.Installed);
+        // The second rename "succeeds" far enough to leave a directory at the target, then throws.
         w.FailMove = (from, to) =>
         {
-            if (from == h.Staged) { Directory.CreateDirectory(h.Installed); File.WriteAllText(Path.Combine(h.Installed, "half"), "x"); throw new IOException("boom"); }
+            if (from == newPath && to == h.Installed) { Directory.CreateDirectory(h.Installed); File.WriteAllText(Path.Combine(h.Installed, "half"), "x"); return true; }
             return false;
         };
-        var viaFallback = w.FailMove;
         Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.False(File.Exists(Path.Combine(h.Installed, "half")));
         Assert.Equal("OLD", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
+    }
+
+    [Fact]
+    public async Task Finish_restores_and_reports_when_the_fallback_swap_and_its_restore_both_fail()
+    {
+        var (h, _, w, d, _) = Finish();
+        w.SwapRc = _ => ENotSup;
+        w.FailMove = (from, to) => to == h.Installed;
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
+        Assert.Contains(_log, l => l.Contains("restore failed"));
+    }
+
+    // ---- The atomic swap ---------------------------------------------------
+
+    [Fact]
+    public async Task Finish_exchanges_the_two_paths_once_so_the_installed_path_is_never_empty()
+    {
+        var (h, _, w, d, _) = Finish();
+        var newPath = UpdateInstallPlan.MacNewPath(h.Installed);
+        var emptyEver = false;
+        var inner = d.Swap;
+        d = d with { Swap = (a, b) => { emptyEver |= !Directory.Exists(b); var rc = inner(a, b); emptyEver |= !Directory.Exists(b); return rc; } };
+
+        Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
+
+        Assert.Equal([(newPath, h.Installed)], w.Swaps);
+        Assert.False(emptyEver);
+        Assert.Equal("NEW", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
+        // The old bundle, which the exchange left at .new, went to the Trash.
+        Assert.Equal("OLD", File.ReadAllText(Directory.GetDirectories(Path.Combine(_root, "Trash")).Single() + "/Contents/MacOS/" + ExeName));
+        Assert.False(Directory.Exists(newPath));
+    }
+
+    [Fact]
+    public async Task Finish_falls_back_to_two_renames_only_on_enotsup_and_says_so()
+    {
+        var (h, _, w, d, _) = Finish();
+        w.SwapRc = _ => ENotSup;
+        Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
+        Assert.Single(w.Swaps);
+        Assert.Contains(_log, l => l.Contains("renamex_np unsupported"));
+        Assert.Equal("NEW", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
+        Assert.Single(Directory.GetDirectories(Path.Combine(_root, "Trash")));
+    }
+
+    [Fact]
+    public async Task Finish_also_falls_back_on_eopnotsupp()
+    {
+        var (h, _, w, d, _) = Finish();
+        w.SwapRc = _ => 102;
+        Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
+        Assert.Contains(_log, l => l.Contains("errno 102"));
+    }
+
+    [Fact]
+    public async Task Finish_does_not_fall_back_on_any_other_swap_error_and_leaves_the_install_alone()
+    {
+        var (h, mac, w, d, _) = Finish();
+        w.SwapRc = _ => 13; // EACCES
+        var before = Hash(h.Installed);
+
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
+
+        Assert.Equal(before, Hash(h.Installed));
+        Assert.Contains("errno 13", File.ReadAllText(Path.Combine(h.MarkerDir, "failed")));
+        Assert.DoesNotContain(_log, l => l.Contains("falling back"));
+        Assert.False(Directory.Exists(UpdateInstallPlan.MacNewPath(h.Installed)), "the placed copy is cleaned up");
+        Assert.Contains(mac.Calls, c => c.File == "/usr/bin/env"); // old app relaunched
+    }
+
+    [Fact]
+    public async Task A_new_app_that_will_not_start_is_swapped_back_atomically()
+    {
+        var (h, _, w, d, _) = Finish(newStartsOnItsOwn: false, openStartsIt: false);
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
+        var newPath = UpdateInstallPlan.MacNewPath(h.Installed);
+        Assert.Equal([(newPath, h.Installed), (newPath, h.Installed)], w.Swaps);
+        Assert.Equal("OLD", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
+        Assert.False(Directory.Exists(newPath), "no second app is left beside the install");
+    }
+
+    [Fact]
+    public async Task A_failed_swap_back_is_logged_and_the_old_app_is_still_relaunched()
+    {
+        var (h, mac, w, d, _) = Finish(newStartsOnItsOwn: false, openStartsIt: false);
+        w.SwapRc = i => i == 1 ? 5 : 0;
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
+        Assert.Contains(_log, l => l.Contains("swap back failed (errno 5)"));
+        // The swap back failed, so `.new` still holds the OLD bundle: it must not be deleted.
+        Assert.Equal("OLD", File.ReadAllText(Path.Combine(UpdateInstallPlan.MacNewPath(h.Installed), "Contents", "MacOS", ExeName)));
+        Assert.True(mac.Calls.Count(c => c.File == "/usr/bin/env") >= 1);
+        Assert.True(File.Exists(Path.Combine(h.MarkerDir, "failed")));
+    }
+
+    // ---- Keep-alive is reloaded on every failure after the unload ---------
+
+    private async Task<(FakeMac Mac, MacHandoff H)> FailAfterUnload(Action<FakeMac, World, MacHandoff, UpdateInstallMacOS.FinishDeps, Action<UpdateInstallMacOS.FinishDeps>> arrange, bool withPlist = true)
+    {
+        var plist = Path.Combine(_root, "ka.plist"); if (withPlist) File.WriteAllText(plist, "x");
+        var (h, mac, w, d, _) = Finish(newStartsOnItsOwn: false, openStartsIt: false, plist: plist);
+        UpdateInstallMacOS.FinishDeps used = d;
+        arrange(mac, w, h, d, nd => used = nd);
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, used));
+        return (mac, h);
+    }
+
+    private static void AssertLoadedBetweenUnloadAndRelaunch(FakeMac mac, string plist)
+    {
+        var unload = mac.Calls.FindIndex(c => c.Args.Count > 0 && c.Args[0] == "unload");
+        var load = mac.Calls.FindIndex(c => c.Args.Count == 2 && c.Args[0] == "load" && c.Args[1] == plist);
+        var relaunch = mac.Calls.FindLastIndex(c => c.File == "/usr/bin/env");
+        Assert.True(unload >= 0 && load > unload && relaunch > load, "unload, then load, then relaunch");
+    }
+
+    [Fact]
+    public async Task Keepalive_is_loaded_again_when_the_move_into_place_fails()
+    {
+        var (mac, _) = await FailAfterUnload((m, w, h, d, set) => set(d with { Move = (f, t) => throw new InvalidOperationException("move") }));
+        AssertLoadedBetweenUnloadAndRelaunch(mac, Path.Combine(_root, "ka.plist"));
+    }
+
+    [Fact]
+    public async Task Keepalive_is_loaded_again_when_the_atomic_swap_errors()
+    {
+        var (mac, _) = await FailAfterUnload((m, w, h, d, set) => w.SwapRc = _ => 13);
+        AssertLoadedBetweenUnloadAndRelaunch(mac, Path.Combine(_root, "ka.plist"));
+    }
+
+    [Fact]
+    public async Task Keepalive_is_loaded_again_when_the_new_app_will_not_start()
+    {
+        var (mac, _) = await FailAfterUnload((m, w, h, d, set) => { });
+        AssertLoadedBetweenUnloadAndRelaunch(mac, Path.Combine(_root, "ka.plist"));
+    }
+
+    [Fact]
+    public async Task Keepalive_is_loaded_again_when_the_post_swap_step_throws()
+    {
+        var (mac, _) = await FailAfterUnload((m, w, h, d, set) =>
+        {
+            var baseHook = m.Hook!;
+            m.Hook = c => c.Args.Count > 0 && c.Args[0] == "--keepalive-only" ? throw new InvalidOperationException("script vanished") : baseHook(c);
+        });
+        AssertLoadedBetweenUnloadAndRelaunch(mac, Path.Combine(_root, "ka.plist"));
+    }
+
+    [Fact]
+    public async Task Keepalive_is_loaded_again_when_stopping_the_old_app_throws()
+    {
+        var (mac, _) = await FailAfterUnload((m, w, h, d, set) => set(d with { Signal = (p, f) => throw new InvalidOperationException("kill") }));
+        AssertLoadedBetweenUnloadAndRelaunch(mac, Path.Combine(_root, "ka.plist"));
+    }
+
+    [Fact]
+    public async Task Keepalive_is_not_loaded_when_it_was_never_unloaded()
+    {
+        // The control: no plist on this machine, so nothing was unloaded and nothing may be loaded.
+        var (mac, _) = await FailAfterUnload((m, w, h, d, set) => { }, withPlist: false);
+        Assert.False(mac.Ran("launchctl", "unload"));
+        Assert.False(mac.Ran("launchctl", "load"));
+        Assert.Contains(mac.Calls, c => c.File == "/usr/bin/env");
     }
 
     [Fact]
@@ -485,7 +659,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         w.FailMove = (_, to) => to.StartsWith(Path.Combine(_root, "Trash"));
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.Contains(_log, l => l.Contains("could not trash it"));
-        Assert.Single(Directory.GetDirectories(Path.Combine(_root, "Applications"), "Orbweaver.app.old-*"));
+        Assert.True(Directory.Exists(UpdateInstallPlan.MacNewPath(h.Installed)), "the old bundle stays where the exchange left it");
     }
 
     [Fact]
@@ -512,7 +686,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Directory.CreateDirectory(h.Staged); // still present: the cross-volume case
         // Move works, so staged is consumed; recreate it afterwards via the move hook.
         w.FailMove = null;
-        var d2 = d with { Move = (from, to) => { Directory.Move(from, to); if (to == h.Installed) Directory.CreateDirectory(h.Staged); } };
+        var d2 = d with { Move = (from, to) => { Directory.Move(from, to); if (to == UpdateInstallPlan.MacNewPath(h.Installed)) Directory.CreateDirectory(h.Staged); } };
         w.FailDelete = true;
 
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d2));
@@ -533,14 +707,14 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Equal("OLD", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
         Assert.Contains("script vanished", File.ReadAllText(Path.Combine(h.MarkerDir, "failed")));
         Assert.Contains(mac.Calls, c => c.File == "/usr/bin/env");
-        // The recovery's own reconcile throws too (same hook); that is logged, not thrown.
-        Assert.Contains(_log, l => l.Contains("could not be run"));
+        Assert.Equal(2, w.Swaps.Count);
     }
 
     [Fact]
-    public async Task A_failed_restore_after_the_swap_is_logged_not_thrown()
+    public async Task A_failed_restore_after_a_two_rename_swap_is_logged_not_thrown()
     {
         var (h, mac, w, d, _) = Finish();
+        w.SwapRc = _ => ENotSup;
         var baseHook = mac.Hook!;
         mac.Hook = c => c.Args.Count > 0 && c.Args[0] == "--keepalive-only" ? throw new InvalidOperationException("boom") : baseHook(c);
         w.FailMove = (from, to) => to == h.Installed && from.Contains(".old-");
@@ -578,49 +752,6 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         File.WriteAllText(h.MarkerDir, "a file where the folder should be");
         Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
         Assert.Contains(_log, l => l.Contains("could not write the failed marker"));
-    }
-
-    [Fact]
-    public async Task Finish_restores_and_reports_when_the_old_bundle_cannot_even_be_moved_aside_and_restore_fails_too()
-    {
-        var (h, _, w, d, _) = Finish();
-        // Move aside works; the swap fails; restoring the old one also fails.
-        w.FailMove = (from, to) => from == h.Staged || to == h.Installed;
-        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d));
-        Assert.Contains(_log, l => l.Contains("restore failed"));
-    }
-
-    [Fact]
-    public async Task A_launcher_that_cannot_start_does_not_stop_the_failed_marker_being_written()
-    {
-        // Failure before any swap, with the relaunch of the old app throwing.
-        var (h, mac, _, d, _) = Finish();
-        mac.Verify = 0;
-        var baseHook = mac.Hook!;
-        mac.Hook = c => c.File == "/usr/bin/env" ? throw new System.ComponentModel.Win32Exception("no such file") : baseHook(c);
-        var d2 = d with { Move = (from, to) => throw new IOException("cannot move aside") };
-
-        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d2));
-
-        Assert.True(File.Exists(Path.Combine(h.MarkerDir, "failed")));
-        Assert.Contains(_log, l => l.Contains("could not be run"));
-    }
-
-    [Fact]
-    public async Task A_failure_before_the_swap_puts_the_keepalive_agent_back()
-    {
-        // QA round 1: step 2 unloads the agent; a throw before the swap used to
-        // relaunch the old app but leave the agent unloaded.
-        var plist = Path.Combine(_root, "ka.plist"); File.WriteAllText(plist, "x");
-        var (h, mac, _, d, _) = Finish(plist: plist);
-        var d2 = d with { Move = (from, to) => throw new IOException("cannot move aside") };
-
-        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d2));
-
-        var unload = mac.Calls.FindIndex(c => c.Args.Count > 0 && c.Args[0] == "unload");
-        var repair = mac.Calls.FindIndex(c => c.Args.Count > 0 && c.Args[0] == "--keepalive-only");
-        var relaunch = mac.Calls.FindIndex(c => c.File == "/usr/bin/env");
-        Assert.True(unload >= 0 && repair > unload && relaunch > repair, "unload, then reconcile, then relaunch");
     }
 
     // ---- The installer, end to end --------------------------------------

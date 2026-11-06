@@ -151,9 +151,18 @@ namespace Orbweaver
             Func<TimeSpan, Task> Delay,
             Action<string, string> Move,   // Directory.Move, injected so EXDEV is testable
             Action<string> DeleteTree,     // recursive delete, injected so its failure is testable
+            Func<string, string, int> Swap, // renamex_np(RENAME_SWAP): 0 or an errno
             string TrashDir,
             int Uid,
             int SelfPid);
+
+        // errno values renamex_np answers with when the filesystem cannot
+        // exchange two paths (ENOTSUP, EOPNOTSUPP on macOS).
+        private const int ENotSup = 45;
+        private const int EOpNotSupp = 102;
+
+        // How the new bundle got into place, which decides how to undo it.
+        private enum SwapMode { None, Exchange, TwoRename }
 
         // Never throws: any exception becomes a `failed` marker, because the
         // old app reads the marker and a finisher that died silently would
@@ -161,7 +170,9 @@ namespace Orbweaver
         internal static async Task<bool> FinishAsync(MacHandoff h, FinishDeps d)
         {
             var oldPath = UpdateInstallPlan.MacOldPath(h.Installed, d.Now());
-            var swapped = false;
+            var newPath = UpdateInstallPlan.MacNewPath(h.Installed);
+            var mode = SwapMode.None;
+            var unloaded = false;
             try
             {
                 // Before anything is stopped, unloaded or moved: a handoff from
@@ -176,9 +187,14 @@ namespace Orbweaver
                 if (d.Exec(UpdateInstallPlan.MacCodesignVerify(h.Staged), ToolTimeout).ExitCode != 0)
                     return Fail(h, d, "The staged update failed its signature check, so nothing was changed.");
 
-                // 2. launchd would otherwise restart the old app the moment we stop it.
+                // 2. launchd would otherwise restart the old app the moment we
+                // stop it. Remember that we unloaded it: every failure from
+                // here on must load it again before relaunching the old app.
                 if (h.KeepAlivePlist is not null && File.Exists(h.KeepAlivePlist))
+                {
                     d.Exec(UpdateInstallPlan.MacLaunchctlUnload(h.KeepAlivePlist), ToolTimeout);
+                    unloaded = true;
+                }
 
                 // 3. Stop the old app, and anything else running the installed executable.
                 var exe = Path.Combine(h.Installed, "Contents", "MacOS", Brand.AssemblyName);
@@ -186,21 +202,11 @@ namespace Orbweaver
                 var targets = others.Append(h.Pid).Where(p => p != d.SelfPid).Distinct().ToList();
                 await StopAsync(targets, d);
 
-                // 4. Swap.
-                if (Directory.Exists(h.Installed)) d.Move(h.Installed, oldPath);
-                try
-                {
-                    MoveBundle(h, d);
-                    swapped = true;
-                }
-                catch
-                {
-                    // A restore that fails must not replace the swap's own
-                    // error as the one that is reported.
-                    try { RestoreOld(h, oldPath, d); }
-                    catch (Exception restore) { d.Log($"finish: restore failed: {restore.Message}"); }
-                    throw;
-                }
+                // 4. Swap: the new bundle onto the installed one's own volume
+                // first, then one atomic exchange, so at no instant is the
+                // installed path empty. The old bundle ends up at `.new`.
+                PlaceNew(h, newPath, d);
+                mode = SwapIn(h, oldPath, newPath, d);
 
                 // 5. The keep-alive plist names the executable, so reconcile it
                 // from the NEW bundle's own script.
@@ -213,13 +219,13 @@ namespace Orbweaver
                     d.Exec(UpdateInstallPlan.MacOpenInstalled(h.Installed), ToolTimeout);
                     if (!await RunningAsync(exe, d, 20))
                     {
-                        RestoreAndRelaunch(h, oldPath, d);
+                        RestoreAndRelaunch(h, mode, oldPath, newPath, unloaded, d);
                         return Fail(h, d, "The new version was installed but did not start, so the previous version was put back.");
                     }
                 }
 
                 // 7. Success: the old bundle to the Trash, the image out of the way.
-                TrashOld(oldPath, d);
+                TrashOld(mode == SwapMode.Exchange ? newPath : oldPath, Path.GetFileName(oldPath), d);
                 // Best-effort housekeeping, never allowed to turn a finished
                 // update into a failed one. After a cross-volume copy the
                 // staged bundle is still there (a same-volume move consumes
@@ -238,33 +244,53 @@ namespace Orbweaver
             catch (Exception e)
             {
                 d.Log($"finish: failed: {e.Message}");
-                if (swapped) RestoreAndRelaunch(h, oldPath, d);
-                else
-                {
-                    // Nothing was swapped, but step 2 may already have unloaded
-                    // the keep-alive agent: put it back, from the still-installed
-                    // old bundle's own script, before relaunching that bundle.
-                    TryExec(d, UpdateInstallPlan.MacKeepAliveRepair(h.Installed));
-                    TryExec(d, UpdateInstallPlan.MacOpenInstalled(h.Installed));
-                }
+                RestoreAndRelaunch(h, mode, oldPath, newPath, unloaded, d);
                 return Fail(h, d, $"The update did not complete ({e.Message}). The previous version was restored.");
             }
         }
 
-        // staged -> installed. A cross-volume rename throws IOException, so it
-        // falls back to copying beside the target and renaming that, which
-        // keeps the final step an atomic rename on the target's own volume.
-        private static void MoveBundle(MacHandoff h, FinishDeps d)
+        // The new bundle beside the installed one, on the installed one's own
+        // volume. A same-volume rename consumes the staged copy; a cross-volume
+        // one throws IOException and falls back to copying (measured: see
+        // docs/update-findings.md), which leaves the staged copy for cleanup.
+        private static void PlaceNew(MacHandoff h, string newPath, FinishDeps d)
         {
-            try { d.Move(h.Staged, h.Installed); }
+            if (Directory.Exists(newPath)) d.DeleteTree(newPath);
+            try { d.Move(h.Staged, newPath); }
             catch (IOException)
             {
-                var staging = UpdateInstallPlan.MacNewPath(h.Installed);
-                if (Directory.Exists(staging)) Directory.Delete(staging, true);
-                var copy = d.Exec(UpdateInstallPlan.MacCopyBundle(h.Staged, staging), ToolTimeout);
+                var copy = d.Exec(UpdateInstallPlan.MacCopyBundle(h.Staged, newPath), ToolTimeout);
                 if (copy.ExitCode != 0) throw new IOException($"copy into place failed (ditto exited {copy.ExitCode})");
-                d.Move(staging, h.Installed);
             }
+        }
+
+        // Exchange `.new` with the installed path in one step. Only when the
+        // filesystem cannot exchange (ENOTSUP) does it fall back to the two
+        // renames, which leave a moment with nothing installed, and says so.
+        private static SwapMode SwapIn(MacHandoff h, string oldPath, string newPath, FinishDeps d)
+        {
+            if (!Directory.Exists(h.Installed))
+            {
+                d.Move(newPath, h.Installed);
+                return SwapMode.TwoRename;
+            }
+            var rc = d.Swap(newPath, h.Installed);
+            if (rc == 0) return SwapMode.Exchange;
+            if (rc != ENotSup && rc != EOpNotSupp)
+                throw new IOException($"atomic swap failed (errno {rc})");
+
+            d.Log($"finish: renamex_np unsupported here (errno {rc}); falling back to two renames");
+            d.Move(h.Installed, oldPath);
+            try { d.Move(newPath, h.Installed); }
+            catch
+            {
+                // A restore that fails must not replace the swap's own error
+                // as the one that is reported.
+                try { RestoreOld(h, oldPath, d); }
+                catch (Exception restore) { d.Log($"finish: restore failed: {restore.Message}"); }
+                throw;
+            }
+            return SwapMode.TwoRename;
         }
 
         private static async Task StopAsync(IReadOnlyList<int> pids, FinishDeps d)
@@ -292,14 +318,34 @@ namespace Orbweaver
         private static void RestoreOld(MacHandoff h, string oldPath, FinishDeps d)
         {
             if (!Directory.Exists(oldPath)) return;
-            if (Directory.Exists(h.Installed)) Directory.Delete(h.Installed, true);
+            if (Directory.Exists(h.Installed)) d.DeleteTree(h.Installed);
             d.Move(oldPath, h.Installed);
         }
 
-        private static void RestoreAndRelaunch(MacHandoff h, string oldPath, FinishDeps d)
+        // Undo whatever was done, load the keep-alive agent again if it was
+        // unloaded, and bring the old app back. Each step is independent: a
+        // failed restore is logged and the relaunch still happens.
+        private static void RestoreAndRelaunch(
+            MacHandoff h, SwapMode mode, string oldPath, string newPath, bool unloaded, FinishDeps d)
         {
-            try { RestoreOld(h, oldPath, d); } catch (Exception e) { d.Log($"finish: restore failed: {e.Message}"); }
-            TryExec(d, UpdateInstallPlan.MacKeepAliveRepair(h.Installed));
+            try
+            {
+                if (mode == SwapMode.Exchange)
+                {
+                    // The same exchange again puts the old bundle back at the
+                    // installed path, atomically.
+                    var rc = d.Swap(newPath, h.Installed);
+                    if (rc != 0) throw new IOException($"swap back failed (errno {rc})");
+                }
+                else if (mode == SwapMode.TwoRename) RestoreOld(h, oldPath, d);
+                // Only once the old bundle is back: a leftover `.new` beside
+                // the install is a second app with the same bundle id. If the
+                // swap back failed, `.new` may BE the old bundle, so this line
+                // is never reached then.
+                if (Directory.Exists(newPath)) d.DeleteTree(newPath);
+            }
+            catch (Exception e) { d.Log($"finish: restore failed: {e.Message}"); }
+            if (unloaded && h.KeepAlivePlist is not null) TryExec(d, UpdateInstallPlan.MacLaunchctlLoad(h.KeepAlivePlist));
             TryExec(d, UpdateInstallPlan.MacOpenInstalled(h.Installed));
         }
 
@@ -312,15 +358,15 @@ namespace Orbweaver
             catch (Exception e) { d.Log($"finish: {command.File} could not be run: {e.Message}"); }
         }
 
-        private static void TrashOld(string oldPath, FinishDeps d)
+        private static void TrashOld(string source, string name, FinishDeps d)
         {
-            if (!Directory.Exists(oldPath)) return;
+            if (!Directory.Exists(source)) return;
             try
             {
                 Directory.CreateDirectory(d.TrashDir);
-                d.Move(oldPath, Path.Combine(d.TrashDir, Path.GetFileName(oldPath)));
+                d.Move(source, Path.Combine(d.TrashDir, name));
             }
-            catch (Exception e) { d.Log($"finish: left {oldPath} in place, could not trash it: {e.Message}"); }
+            catch (Exception e) { d.Log($"finish: left {source} in place, could not trash it: {e.Message}"); }
         }
 
         private static bool Fail(MacHandoff h, FinishDeps d, string reason)
@@ -382,6 +428,7 @@ namespace Orbweaver
                 Task.Delay,
                 (from, to) => Directory.Move(from, to),
                 path => Directory.Delete(path, true),
+                RealSwap,
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".Trash"),
                 (int)geteuid(), Environment.ProcessId);
             FinishAsync(handoff, deps).GetAwaiter().GetResult();
@@ -390,6 +437,14 @@ namespace Orbweaver
 
         [System.Runtime.InteropServices.DllImport("libc")]
         private static extern uint geteuid();
+
+        // RENAME_SWAP = 0x2: atomically exchange two paths on the same volume.
+        [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
+        private static extern int renamex_np(string from, string to, uint flags);
+
+        [ExcludeFromCodeCoverage]
+        internal static int RealSwap(string a, string b) =>
+            renamex_np(a, b, 0x2) == 0 ? 0 : System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
 
         // SIGTERM (15) then SIGKILL (9): Process.Kill is always SIGKILL, and
         // the old app should get the chance to flush its settings first.

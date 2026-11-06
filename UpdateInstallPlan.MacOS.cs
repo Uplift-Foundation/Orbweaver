@@ -142,6 +142,9 @@ namespace Orbweaver
         internal static MacCommand MacLaunchctlUnload(string plist) =>
             new("/bin/launchctl", ["unload", plist]);
 
+        internal static MacCommand MacLaunchctlLoad(string plist) =>
+            new("/bin/launchctl", ["load", plist]);
+
         // CLAUDE_CONFIG_DIR is stripped for the relaunch for the same reason
         // the install script strips it: a launch from a shell inside a Claude
         // session must not hand the new Buddy that session's config root.

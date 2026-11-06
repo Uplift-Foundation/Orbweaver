@@ -39,9 +39,24 @@ Run by hand, not in a suite. A 40 MB APFS disk image was attached at a scratch m
 
 The first run also found a gap, now fixed and covered: after the copy fallback the staged bundle was left behind, a second full copy of the app, so a successful finish now deletes it. The volume was detached and the scratch folder deleted. In normal use the updates folder and /Applications are usually on the same volume, so this path is the exception; it is now measured rather than assumed.
 
-## Known, accepted window: the finisher killed mid-swap
+## The swap is atomic: renamex_np(RENAME_SWAP), measured (2026-11-06)
 
-Between `Move(installed -> .old-<ts>)` and `Move(staged -> installed)` there is nothing at the installed path. If the finisher is SIGKILLed or the machine loses power in those two renames, the old bundle is left beside the install location as `Orbweaver.app.old-<timestamp>`, the old app is already stopped and the keep-alive agent is unloaded. Nothing can recover it automatically: with no bundle at the path there is no app to start a recovery step from. The remedy is manual (rename the `.old-` folder back; update.log records both moves). This was found by reading the code (QA round 1), not by killing a finisher, and it was judged a window of two renames. A rename-swap primitive (`renamex_np` with `RENAME_SWAP`) would close it and was not adopted.
+QA's round 1 pointed out that two renames (installed -> `.old-<ts>`, then staged -> installed) leave an instant with nothing installed, and a finisher killed in it cannot be recovered because no app exists to run a recovery from. The window is closed structurally rather than with recovery logic: the new bundle is put beside the installed one on the same volume as `Orbweaver.app.new` (renamed from staging, or copied with `ditto` when staging is on another volume), then one `renamex_np(new, installed, RENAME_SWAP)` exchanges the two paths. The old bundle ends up at `.new` and is trashed on success; on failure the same exchange is run again. Only `ENOTSUP`/`EOPNOTSUPP` falls back to the two-rename path, and the fallback is logged. The swap is an injected function, so the swap/swap-back logic is tested with fakes.
+
+One-off measurement, by hand, real `renamex_np` through the real `FinishAsync` (only ps, codesign and launch calls stubbed), on scratch directories:
+
+| volume | plain swap of two bundles | swap with a missing path (the failure) |
+| --- | --- | --- |
+| APFS (boot data volume) | rc 0, contents exchanged | rc 2 (ENOENT), **both intact** |
+| APFS disk image | rc 0, contents exchanged | rc 2, both intact |
+| HFS+ disk image | **rc 45 (ENOTSUP)**, nothing changed | rc 2, both intact |
+| across two volumes | rc 18 (EXDEV) | |
+
+The HFS+ row is what makes the fallback trigger a measurement rather than a guess. EXDEV is not a fallback case on purpose: placing `.new` on the installed volume first means a cross-volume swap is never attempted.
+
+Through `FinishAsync`: on APFS a successful finish exchanged once (`SWAP(Orbweaver.app.new, Orbweaver.app) rc=0`), left `NEW` installed and trashed the old bundle; with the new app forced not to start it exchanged back (second swap rc=0), left `OLD` installed and wrote a `failed` marker. On HFS+ the same two runs logged `renamex_np unsupported here (errno 45); falling back to two renames` and ended the same way (NEW installed and OLD trashed; OLD installed and `failed`). The APFS failure run also showed `Orbweaver.app.new` left beside the install, a second bundle with the same id, so a successful restore now deletes it; it is deliberately not deleted when the swap back itself fails, because `.new` is then the old bundle.
+
+What this does not show: a finisher actually killed mid-swap (the point of the change is that there is no longer a mid), and a power loss. The fallback path on HFS+ keeps the old two-rename window; on such volumes it is as before, with the old bundle left as `Orbweaver.app.old-<ts>`.
 
 ## Not confirmed
 
