@@ -1618,4 +1618,23 @@ public class LocalCliChatSessionTests : IDisposable
             "This terminal isn't at its prompt — Claude Code reports it is waiting on a dialog. "
             + "Nothing was typed; answer that screen in the terminal and send again.",
             LocalCliChatSession.NotAtPromptNote(TypingGate.WaitingWhy));
+
+    // The log line that tells a real refusal's cause apart afterwards. Never any
+    // screen text: a dialog's title is reduced to the word "dialog".
+    [Theory]
+    [InlineData(TypingGate.WaitingWhy, null, "session=s1 kind=record-waiting diag=none")]
+    [InlineData(TypingGate.UnreadableWhy, "capture=null", "session=s1 kind=unreadable diag=capture=null")]
+    [InlineData(TypingGate.UnreadableWhy, "capture=threw", "session=s1 kind=unreadable diag=capture=threw")]
+    [InlineData("it is showing a dialog: Permissions", null, "session=s1 kind=dialog diag=none")]
+    [InlineData("something new", null, "session=s1 kind=other diag=none")]
+    [InlineData(null, null, "session=s1 kind=other diag=none")]
+    public void ARefusalIsLoggedWithItsCauseAndNeverTheScreen(string? why, string? diagnostic, string expected)
+    {
+        var verdict = new TypingVerdict(false, why) { Diagnostic = diagnostic };
+
+        var line = LocalCliChatSession.RefusalLogDetail("s1", verdict);
+
+        Assert.Equal(expected, line);
+        Assert.DoesNotContain("Permissions", line, StringComparison.Ordinal);
+    }
 }
