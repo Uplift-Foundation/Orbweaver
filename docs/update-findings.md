@@ -39,6 +39,10 @@ Run by hand, not in a suite. A 40 MB APFS disk image was attached at a scratch m
 
 The first run also found a gap, now fixed and covered: after the copy fallback the staged bundle was left behind, a second full copy of the app, so a successful finish now deletes it. The volume was detached and the scratch folder deleted. In normal use the updates folder and /Applications are usually on the same volume, so this path is the exception; it is now measured rather than assumed.
 
+## Known, accepted window: the finisher killed mid-swap
+
+Between `Move(installed -> .old-<ts>)` and `Move(staged -> installed)` there is nothing at the installed path. If the finisher is SIGKILLed or the machine loses power in those two renames, the old bundle is left beside the install location as `Orbweaver.app.old-<timestamp>`, the old app is already stopped and the keep-alive agent is unloaded. Nothing can recover it automatically: with no bundle at the path there is no app to start a recovery step from. The remedy is manual (rename the `.old-` folder back; update.log records both moves). This was found by reading the code (QA round 1), not by killing a finisher, and it was judged a window of two renames. A rename-swap primitive (`renamex_np` with `RENAME_SWAP`) would close it and was not adopted.
+
 ## Not confirmed
 
 - **The real signed finisher.** The probes were unsigned shell scripts. Whether LaunchServices treats a *signed, hardened-runtime* staged bundle the same, and whether the staged bundle's own start-up (it must reach `Startup.Run`'s `finishUpdate` step before any window or mutex) behaves under a locked console, is for QA's end-to-end run with a real build.

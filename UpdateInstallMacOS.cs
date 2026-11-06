@@ -239,7 +239,14 @@ namespace Orbweaver
             {
                 d.Log($"finish: failed: {e.Message}");
                 if (swapped) RestoreAndRelaunch(h, oldPath, d);
-                else TryExec(d, UpdateInstallPlan.MacOpenInstalled(h.Installed));
+                else
+                {
+                    // Nothing was swapped, but step 2 may already have unloaded
+                    // the keep-alive agent: put it back, from the still-installed
+                    // old bundle's own script, before relaunching that bundle.
+                    TryExec(d, UpdateInstallPlan.MacKeepAliveRepair(h.Installed));
+                    TryExec(d, UpdateInstallPlan.MacOpenInstalled(h.Installed));
+                }
                 return Fail(h, d, $"The update did not complete ({e.Message}). The previous version was restored.");
             }
         }

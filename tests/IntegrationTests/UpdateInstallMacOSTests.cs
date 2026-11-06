@@ -606,6 +606,23 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Contains(_log, l => l.Contains("could not be run"));
     }
 
+    [Fact]
+    public async Task A_failure_before_the_swap_puts_the_keepalive_agent_back()
+    {
+        // QA round 1: step 2 unloads the agent; a throw before the swap used to
+        // relaunch the old app but leave the agent unloaded.
+        var plist = Path.Combine(_root, "ka.plist"); File.WriteAllText(plist, "x");
+        var (h, mac, _, d, _) = Finish(plist: plist);
+        var d2 = d with { Move = (from, to) => throw new IOException("cannot move aside") };
+
+        Assert.False(await UpdateInstallMacOS.FinishAsync(h, d2));
+
+        var unload = mac.Calls.FindIndex(c => c.Args.Count > 0 && c.Args[0] == "unload");
+        var repair = mac.Calls.FindIndex(c => c.Args.Count > 0 && c.Args[0] == "--keepalive-only");
+        var relaunch = mac.Calls.FindIndex(c => c.File == "/usr/bin/env");
+        Assert.True(unload >= 0 && repair > unload && relaunch > repair, "unload, then reconcile, then relaunch");
+    }
+
     // ---- The installer, end to end --------------------------------------
 
     private MacUpdateInstaller Installer(FakeMac mac, MacUpdateInstaller.DownloadVerified? download = null,
