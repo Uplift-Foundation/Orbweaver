@@ -172,7 +172,7 @@ namespace Orbweaver
             var oldPath = UpdateInstallPlan.MacOldPath(h.Installed, d.Now());
             var newPath = UpdateInstallPlan.MacNewPath(h.Installed);
             var mode = SwapMode.None;
-            var unloaded = false;
+            string? unloadedPlist = null;
             try
             {
                 // Before anything is stopped, unloaded or moved: a handoff from
@@ -193,7 +193,7 @@ namespace Orbweaver
                 if (h.KeepAlivePlist is not null && File.Exists(h.KeepAlivePlist))
                 {
                     d.Exec(UpdateInstallPlan.MacLaunchctlUnload(h.KeepAlivePlist), ToolTimeout);
-                    unloaded = true;
+                    unloadedPlist = h.KeepAlivePlist;
                 }
 
                 // 3. Stop the old app, and anything else running the installed executable.
@@ -219,7 +219,7 @@ namespace Orbweaver
                     d.Exec(UpdateInstallPlan.MacOpenInstalled(h.Installed), ToolTimeout);
                     if (!await RunningAsync(exe, d, 20))
                     {
-                        RestoreAndRelaunch(h, mode, oldPath, newPath, unloaded, d);
+                        RestoreAndRelaunch(h, mode, oldPath, newPath, unloadedPlist, d);
                         return Fail(h, d, "The new version was installed but did not start, so the previous version was put back.");
                     }
                 }
@@ -244,7 +244,7 @@ namespace Orbweaver
             catch (Exception e)
             {
                 d.Log($"finish: failed: {e.Message}");
-                RestoreAndRelaunch(h, mode, oldPath, newPath, unloaded, d);
+                RestoreAndRelaunch(h, mode, oldPath, newPath, unloadedPlist, d);
                 return Fail(h, d, $"The update did not complete ({e.Message}). The previous version was restored.");
             }
         }
@@ -326,7 +326,7 @@ namespace Orbweaver
         // unloaded, and bring the old app back. Each step is independent: a
         // failed restore is logged and the relaunch still happens.
         private static void RestoreAndRelaunch(
-            MacHandoff h, SwapMode mode, string oldPath, string newPath, bool unloaded, FinishDeps d)
+            MacHandoff h, SwapMode mode, string oldPath, string newPath, string? unloadedPlist, FinishDeps d)
         {
             try
             {
@@ -345,7 +345,7 @@ namespace Orbweaver
                 if (Directory.Exists(newPath)) d.DeleteTree(newPath);
             }
             catch (Exception e) { d.Log($"finish: restore failed: {e.Message}"); }
-            if (unloaded && h.KeepAlivePlist is not null) TryExec(d, UpdateInstallPlan.MacLaunchctlLoad(h.KeepAlivePlist));
+            if (unloadedPlist is not null) TryExec(d, UpdateInstallPlan.MacLaunchctlLoad(unloadedPlist));
             TryExec(d, UpdateInstallPlan.MacOpenInstalled(h.Installed));
         }
 
