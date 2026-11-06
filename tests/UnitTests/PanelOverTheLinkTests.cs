@@ -264,6 +264,20 @@ public class PanelOverTheLinkTests
     }
 
     [Fact]
+    public void AnExplicitFalseIsNotParked()
+    {
+        // No Buddy writes it, but the decoder accepts it, and false must not be
+        // read as "the field is present, so parked".
+        var json = "[{\"name\":\"jh\",\"cli\":\"claude\",\"transcript\":true,\"pane\":true,\"parked\":false}]";
+        var entry = Assert.Single(MirrorProtocol.DecodeRoster(
+            MirrorProtocol.Gzip(System.Text.Encoding.UTF8.GetBytes(json)))!);
+
+        Assert.False(entry.Parked);
+        Assert.False(Assert.Single(RemoteControlSessions.RemotesFromRoster(
+            "acct", new[] { ("mini", entry) }, DateTime.UnixEpoch)).Parked);
+    }
+
+    [Fact]
     public void AWorkingSessionDrawsAsWorking()
     {
         var rows = RemoteControlSessions.RemotesFromRoster(

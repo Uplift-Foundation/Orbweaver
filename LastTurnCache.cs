@@ -20,6 +20,12 @@ namespace Orbweaver
     // every few minutes per attached session and is the price of not having to
     // trust mtime (SessionLiveness's header has why mtime is a liar here).
     //
+    // Never pruned, deliberately: an entry is a path and two small values,
+    // and the number of distinct transcripts one process ever sees is the
+    // number of sessions started while it ran — hundreds over weeks, a few
+    // tens of kilobytes. Pruning would need to know which sessions are gone,
+    // which is the scan's knowledge, not this class's.
+    //
     // Both arms are injected so the caching rule is testable without a disk;
     // the parameterless constructor wires them to the real file system.
     // Thread-safe, because the server answers HELLOs concurrently and the scan

@@ -127,14 +127,14 @@ namespace Orbweaver
         // both stay, dimmed.
         //
         // Names compare case-insensitively, as the peer list resolves them; a
-        // row with no name is never a duplicate of anything.
+        // row with no name (or only whitespace) is never a duplicate of anything.
         internal static HashSet<string> SuppressedDuplicates(
             IEnumerable<(string Key, string Name, bool Parked)> rows)
         {
             var suppressed = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (var group in rows
-                         .Where(r => !string.IsNullOrEmpty(r.Name))
+                         .Where(r => !string.IsNullOrWhiteSpace(r.Name))
                          .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase))
             {
                 if (!group.Any(r => !r.Parked)) continue;

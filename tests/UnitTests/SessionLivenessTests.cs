@@ -292,6 +292,7 @@ public class SessionLivenessTests
     {
         Assert.Empty(Suppressed(("live", "", false), ("old", "", true)));
         Assert.Empty(Suppressed(("live", null!, false), ("old", null!, true)));
+        Assert.Empty(Suppressed(("live", "  ", false), ("old", "  ", true)));
     }
 
     [Fact]
