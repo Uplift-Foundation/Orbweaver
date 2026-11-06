@@ -6,6 +6,20 @@ namespace Orbweaver.Tests;
 // CB-308: the macOS updater's stage / launch / finish sequence, run against
 // real scratch folders with every OS tool replaced by FakeMac. Nothing here
 // runs hdiutil, codesign, spctl, open or launchctl.
+// These cases drive the Mac finisher against a real filesystem layout
+// (renames, the exchange, the Trash, mounts) with POSIX paths in the
+// expectations; that behaviour only ever runs on macOS. The pure logic they
+// share is cross-platform in tests/UnitTests, which is where the rule that
+// both rids give one answer is held.
+public sealed class MacFinisherFactAttribute : FactAttribute
+{
+    public MacFinisherFactAttribute()
+    {
+        if (!OperatingSystem.IsMacOS())
+            Skip = "drives the macOS finisher against a real macOS filesystem layout";
+    }
+}
+
 public sealed class UpdateInstallMacOSTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "orb-upd-" + Guid.NewGuid().ToString("N"));
@@ -93,7 +107,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
 
     // ---- Stage ----------------------------------------------------------
 
-    [Fact]
+    [MacFinisherFact]
     public void Stage_copies_a_verified_bundle_and_detaches_the_image()
     {
         var mac = new FakeMac { MountSymlink = true };
@@ -220,7 +234,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
     private MacHandoff Handoff(string? plist = null, int schema = UpdateInstallPlan.MacHandoffSchema) => new(
         schema, Path.Combine(_root, "Applications", "Orbweaver.app"), Path.Combine(Dir("staging"), "Orbweaver.app"), 4242, plist, "2.0.0", Dir("marker"));
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Launch_writes_the_handoff_and_runs_open_n_on_the_staged_app()
     {
         var mac = new FakeMac();
@@ -319,7 +333,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         return (h, mac, w, d, exe);
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_swaps_the_bundle_trashes_the_old_one_and_writes_the_finished_marker()
     {
         var (h, mac, w, d, _) = Finish();
@@ -354,7 +368,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.False(File.Exists(Path.Combine(h.MarkerDir, "finished")));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task The_current_schema_is_the_control_that_does_proceed()
     {
         var (h, _, _, d, _) = Finish();
@@ -381,7 +395,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.False(mac.Ran("launchctl", "unload"));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_sends_sigkill_to_a_process_that_ignores_sigterm()
     {
         var (h, _, w, d, _) = Finish();
@@ -390,7 +404,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Equal([(4242, false), (4242, true)], w.Signals);
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_also_stops_another_process_running_the_installed_executable()
     {
         var (h, mac, w, d, exe) = Finish();
@@ -412,7 +426,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Contains("signature", File.ReadAllText(Path.Combine(h.MarkerDir, "failed")));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_falls_back_to_copy_and_rename_on_a_cross_volume_move()
     {
         var (h, mac, w, d, _) = Finish();
@@ -423,7 +437,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.False(Directory.Exists(h.Staged), "the leftover staged copy is removed");
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_replaces_a_leftover_dot_new_when_it_falls_back()
     {
         var (h, _, w, d, _) = Finish();
@@ -476,7 +490,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
 
     // ---- The atomic swap ---------------------------------------------------
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_exchanges_the_two_paths_once_so_the_installed_path_is_never_empty()
     {
         var (h, _, w, d, _) = Finish();
@@ -495,7 +509,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.False(Directory.Exists(newPath));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_falls_back_to_two_renames_only_on_enotsup_and_says_so()
     {
         var (h, _, w, d, _) = Finish();
@@ -507,7 +521,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Single(Directory.GetDirectories(Path.Combine(_root, "Trash")));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_also_falls_back_on_eopnotsupp()
     {
         var (h, _, w, d, _) = Finish();
@@ -625,7 +639,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Contains(mac.Calls, c => c.File == "/usr/bin/env");
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_launches_the_installed_app_itself_when_launchd_did_not()
     {
         var (h, mac, _, d, _) = Finish(newStartsOnItsOwn: false, openStartsIt: true);
@@ -643,7 +657,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.False(File.Exists(Path.Combine(h.MarkerDir, "finished")));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_logs_a_failed_keepalive_reconcile_and_carries_on()
     {
         var (h, mac, _, d, _) = Finish();
@@ -652,7 +666,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Contains(_log, l => l.Contains("keep-alive reconcile exited 2"));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_leaves_the_old_bundle_in_place_when_the_trash_refuses_it()
     {
         var (h, _, w, d, _) = Finish();
@@ -662,7 +676,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.True(Directory.Exists(UpdateInstallPlan.MacNewPath(h.Installed)), "the old bundle stays where the exchange left it");
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_with_nothing_installed_yet_just_moves_the_new_bundle_in()
     {
         var (h, _, _, d, _) = Finish();
@@ -671,7 +685,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.Equal("NEW", File.ReadAllText(Path.Combine(h.Installed, "Contents", "MacOS", ExeName)));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task Finish_survives_no_dmg_to_clean_up()
     {
         var (h, _, _, d, _) = Finish();
@@ -679,7 +693,7 @@ public sealed class UpdateInstallMacOSTests : IDisposable
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
     }
 
-    [Fact]
+    [MacFinisherFact]
     public async Task A_failed_cleanup_is_logged_and_the_update_still_succeeds()
     {
         var (h, _, w, d, _) = Finish();
