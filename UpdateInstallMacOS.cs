@@ -402,7 +402,7 @@ namespace Orbweaver
             var stderr = process.StandardError.ReadToEndAsync();
             if (!process.WaitForExit(timeout))
             {
-                try { process.Kill(true); } catch { }
+                try { ProcessTreeKill.Kill(process); } catch { }
                 return (-1, "timed out");
             }
             return (process.ExitCode, stdout.Result + stderr.Result);
