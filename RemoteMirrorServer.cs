@@ -668,14 +668,21 @@ namespace Orbweaver
                         ? (string.IsNullOrWhiteSpace(status.Cwd) ? MirrorProtocol.CliFor(status.Source) : Path.GetFileName(status.Cwd))
                         : status.Title;
                     var hasTranscript = !string.IsNullOrEmpty(status.TranscriptPath) && File.Exists(status.TranscriptPath);
-                    var parked = hasTranscript && ParkedNow(status);
+                    // CB-307: never parked. SessionLiveness reads Claude Code's
+                    // turn rows (`user`/`assistant`), and neither a Codex rollout
+                    // (response_item, event_msg, ...) nor Grok's updates.jsonl
+                    // (untyped rows) has one — measured on real files on this
+                    // machine — so their last turn is always "unknown", which
+                    // is not parked. The host's scan reads last turns for Claude
+                    // Code only, for the same reason, so saying so here rather
+                    // than computing an answer that is always no keeps the two
+                    // sides agreeing by construction, not by coincidence.
                     var offered = Offered(status);
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
                         PersonaFor(status, userConfigDirs, picturesById),
-                    CommandRoutes: offered.Routes,
-                    Parked: parked ? true : null));
+                    CommandRoutes: offered.Routes));
                 }
             }
 

@@ -1615,6 +1615,38 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(2, reads);
     }
 
+    // CB-307: Codex and Grok sessions are never offered parked. Their real
+    // transcripts hold no Claude-shaped turn rows (the first rows below are
+    // the shapes measured on real files), and the host's scan only reads
+    // last turns for Claude Code — so the server says "not parked" outright.
+    // The Claude-shaped day-old row is there to make that a decision rather
+    // than an accident of the fixture: it would park a Claude Code session,
+    // and the Claude Code control beside them, on the same clock with the
+    // same row, is parked.
+    [Fact]
+    public async Task CodexAndGrokSessionsAreNeverOfferedParked()
+    {
+        var dayOld = new[]
+        {
+            "{\"timestamp\":\"2026-08-15T10:00:00Z\",\"type\":\"response_item\",\"payload\":{}}",
+            "{\"timestamp\":\"2026-08-15T10:00:01Z\",\"update\":{}}",
+            DayOldTurn,
+        };
+
+        var harness = new Harness(_dir);
+        harness.AddCodexSession("codex quiet", WriteTranscript("codex-quiet.jsonl", dayOld));
+        harness.AddCodexSession("grok quiet", WriteTranscript("grok-quiet.jsonl", dayOld), SessionSource.Grok);
+        harness.AddSession("claude quiet", WriteTranscript("claude-quiet.jsonl", dayOld));
+
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("cg1"));
+        var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "cg1"))!.ToList();
+
+        Assert.Equal(3, known.Count);
+        Assert.Null(known.Single(e => e.Name == "codex quiet").Parked);
+        Assert.Null(known.Single(e => e.Name == "grok quiet").Parked);
+        Assert.True(known.Single(e => e.Name == "claude quiet").Parked);
+    }
+
     // A single turn a day before the fixture's own rows: the shape of a quiet
     // session at the fixture's clock, written by hand because Conversation
     // stamps every row at RowAt.
@@ -3078,12 +3110,13 @@ public class MirrorRoundTripTests : IDisposable
 
         // A Codex session: a status file with no agent-registry row, which the
         // full roster offers from the status files directly.
-        public void AddCodexSession(string title, string transcriptPath) =>
+        public void AddCodexSession(string title, string transcriptPath,
+            SessionSource source = SessionSource.Codex) =>
             _sessions.Add((Guid.NewGuid().ToString(), new SessionStatus
             {
                 Title = title,
                 Cwd = _dir,
-                Source = SessionSource.Codex,
+                Source = source,
                 TranscriptPath = transcriptPath,
                 TmuxPane = "%2",
                 SessionPid = 2000 + _sessions.Count,
