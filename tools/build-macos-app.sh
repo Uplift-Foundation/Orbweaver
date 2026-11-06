@@ -120,6 +120,11 @@ chmod +x "$CONTENTS/MacOS/$EXECUTABLE"
 # what it calls. Nobody should have to know which of two scripts their machine
 # needs; that knowledge belongs in a script, not in a README step someone reads
 # once.
+#
+# The auto-updater depends on this copy too (CB-308): after swapping the bundle
+# in, its finisher runs "$installed/Contents/Resources/install-hooks.sh
+# --keepalive-only" so the keep-alive plist names the NEW executable. Keep
+# install-hooks.sh in Resources, and keep that flag working.
 cp OrbweaverHook.sh \
    tools/install-hooks.sh \
    tools/install-macos-hooks.sh \
