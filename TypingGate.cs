@@ -38,7 +38,7 @@ namespace Orbweaver
         internal static readonly TypingVerdict Allow = new(true, null);
 
         // How the screen read, for a log line and nothing else: "capture=null",
-        // "capture=threw", or "lines=<n> check=<PaneScreen.Read's word>". Never
+        // "capture=threw:<exception type>", or "lines=<n> check=<PaneScreen.Read's word>". Never
         // any of the screen's text. Null when the screen was not read.
         internal string? Diagnostic { get; init; }
     }
@@ -99,7 +99,11 @@ namespace Orbweaver
 
             string? screen;
             try { screen = await capturePane(status).ConfigureAwait(false); }
-            catch { return new TypingVerdict(false, UnreadableWhy) { Diagnostic = "capture=threw" }; }
+            catch (Exception e)
+            {
+                // The type only: a message can carry a path or a pane's text.
+                return new TypingVerdict(false, UnreadableWhy) { Diagnostic = "capture=threw:" + e.GetType().Name };
+            }
 
             if (screen is null) return new TypingVerdict(false, UnreadableWhy) { Diagnostic = "capture=null" };
 

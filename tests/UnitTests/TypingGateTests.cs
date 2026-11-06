@@ -122,7 +122,8 @@ public class TypingGateTests
         var verdict = await new Reads { Throw = true }.Judge(readable: true);
 
         Assert.Equal((false, TypingGate.UnreadableWhy), (verdict.Allowed, verdict.Why));
-        Assert.Equal("capture=threw", verdict.Diagnostic);
+        // The exception's type and never its message, which can carry a path.
+        Assert.Equal("capture=threw:InvalidOperationException", verdict.Diagnostic);
     }
 
     [Fact]
