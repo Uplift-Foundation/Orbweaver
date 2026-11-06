@@ -272,6 +272,16 @@ namespace Orbweaver
         [JsonIgnore]
         public DateTime? LastTurnUtc { get; set; }
 
+        // Claude Code's own session record says its TUI is waiting on a dialog
+        // (CB-307 addendum): a permission prompt, /permissions, the exit
+        // dialog. Read from the record, not the status file, whose hook never
+        // fires for a modal screen, so the file keeps saying `idle` while the
+        // pane is blocked. ReadStatusFiles promotes the state to `waiting` on
+        // it (SessionPresence.EffectiveState), which is what keeps such a
+        // session from being parked or expired. In memory only.
+        [JsonIgnore]
+        public bool RecordWaiting { get; set; }
+
         // Where this session lives when it does not live on this machine: a
         // https://claude.ai/code/session_… address for a cloud session, empty
         // for everything else. [JsonIgnore] for the reason Source and Kind are
@@ -990,6 +1000,25 @@ namespace Orbweaver
         // file's length. Replaceable so a scan test can count the reads.
         internal LastTurnCache LastTurns { get; set; } = new();
 
+        // Claude Code's record status for a pid and session, behind a seam so a
+        // scan test can hand over a record instead of reading this machine's
+        // real ones. The default is the cached SessionPark read.
+        internal Func<int, string, string?> RecordStatusOf { get; init; } = (pid, id) => SessionPark.RecordStatus(pid, id);
+
+        // Reads the record and promotes the state, for a Claude Code session
+        // with a pid. Only `waiting` counts — see SessionPark.RecordStatus.
+        // Shared by the live scan and HeadlessSnapshot so the screen and the
+        // roster a peer is served cannot disagree about it.
+        internal static void ApplyRecordWaiting(
+            SessionStatus status, string sessionId, Func<int, string, string?> recordStatus)
+        {
+            if (status.Source != SessionSource.ClaudeCode || status.SessionPid <= 0) return;
+
+            status.RecordWaiting = string.Equals(
+                recordStatus(status.SessionPid, sessionId), "waiting", StringComparison.Ordinal);
+            status.State = SessionPresence.EffectiveState(status.State, status.RecordWaiting);
+        }
+
         // Which sessions get their transcript's last turn read: Claude Code,
         // with a transcript to read, and not mid-turn. A generating or waiting
         // session is never parked whatever its file says, so its transcript is
@@ -1566,7 +1595,8 @@ namespace Orbweaver
             bool honourOrbLifetime = true,
             bool? onWindows = null,
             Func<IReadOnlyList<int>, IReadOnlyDictionary<int, AgentTeam.Membership>>? teams = null,
-            string? legacyStatusDir = null)
+            string? legacyStatusDir = null,
+            Func<int, string, string?>? recordStatus = null)
         {
             if (statusDir is null)
             {
@@ -1603,6 +1633,13 @@ namespace Orbweaver
                 status.Source = SourceOf(status);
                 if (!EnabledFor(status.Source)) continue;
                 if (MachineNames.LooksLikeALeftoverRelay(status.Cwd)) continue;
+
+                // CB-307 addendum: the same promotion the live scan applies, so
+                // the roster served to a peer says `waiting` for a session on a
+                // dialog and the host's parked rule leaves it alone.
+                ApplyRecordWaiting(
+                    status, read.SessionId,
+                    recordStatus ?? ((pid, id) => SessionPark.RecordStatus(pid, id)));
 
                 // And here too, so a peer asking this machine what it is running
                 // is told the same thing the screen shows. A summariser
@@ -2316,6 +2353,12 @@ namespace Orbweaver
                 if (WantsIdentityFromTranscript(status))
                     ApplyIdentity(status, IdentityFor(status.TranscriptPath!));
 
+                // CB-307 addendum: a session whose Claude Code record says it is
+                // on a dialog is `waiting` whatever its status file says. Before
+                // the last-turn read, so a waiting session never has its
+                // transcript opened, and before anything judges liveness.
+                ApplyRecordWaiting(status, sessionId, RecordStatusOf);
+
                 // CB-307: when anyone last spoke in it, for the parked rule. After
                 // the repair above, so it reads the path the rest of the scan
                 // believes.
@@ -2571,7 +2614,7 @@ namespace Orbweaver
                         // work counts as idle: an orb that spins forever because
                         // a label changed upstream is worse than one that never
                         // spins.
-                        State = remote.Working ? "generating" : "idle",
+                        State = remote.Waiting ? "waiting" : remote.Working ? "generating" : "idle",
 
                         // Its name on the other machine, which is all the peer
                         // list gives us — no hostname, no path. That is thin for

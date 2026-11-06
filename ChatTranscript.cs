@@ -398,12 +398,16 @@ namespace Orbweaver
 
         // --- the screen ---
 
-        private static readonly Regex OptionLine =
+        internal static readonly Regex OptionLine =
             new(@"^(?:[❯>›»→]\s*)?(\d{1,2})[.)]\s+(\S.*)$", RegexOptions.Compiled);
 
         // How far up the pane to look. The dialog is always at the bottom; this
         // is only enough room for the longest option list plus its trailer.
-        private const int DialogWindow = 30;
+        internal const int DialogWindow = 30;
+
+        // The most non-option lines crossed between two options: a three-line
+        // description, or one separating rule, in the real captures.
+        private const int MaxOptionGap = 3;
 
         // The numbered dialog at the bottom of the pane, or null.
         //
@@ -428,6 +432,22 @@ namespace Orbweaver
         //     but a hint. That is what the rule check at the end is for, and it
         //     is the whole defence against pressing a key to answer a question
         //     nobody asked.
+        //  4. **A list that is navigated is not a dialog that is answered**
+        //     (CB-307's addendum). `/permissions` draws numbered rules with no
+        //     input box below them, which is exactly shape (3), so its Allow
+        //     tab read as a nine-option dialog whose buttons would press keys
+        //     meaning nothing their labels say. The key is the screen's tab
+        //     bar, `Permissions  Recently blocked …`, the one line every tab
+        //     draws, populated or empty — measured on all eight captures. It
+        //     is matched as a prefix because the bar wraps on a narrow pane.
+        //     The footer `←/→ to switch` and the `⌕` search box are second
+        //     signals only: the populated Recently-blocked tab has neither (its
+        //     footer is "Enter to approve · r to retry · Esc to approve 1
+        //     blocked"), and it is the case that matters, since with two
+        //     blocked items it would have parsed as a dialog whose keys toggle
+        //     approvals. Searched over the whole screen, not the dialog window:
+        //     a tall pane puts the bar more than thirty lines up, and a false
+        //     match here only ever sends someone to the terminal.
         //
         // Null on anything unexpected, and every caller treats null as "send the
         // person to the terminal".
@@ -440,28 +460,53 @@ namespace Orbweaver
             // prompt isn't.
             var cleaned = lines.Select(l => l.Trim().Trim('│', '┃', '|', '║').Trim()).ToArray();
 
+            if (IsNavigatedList(cleaned)) return null;
+
             var from = Math.Max(0, cleaned.Length - DialogWindow);
 
-            // The *last* contiguous run of numbered lines in the window. Last,
-            // because anything the assistant wrote earlier in the conversation
-            // is above whatever it is now blocked on.
+            // The *last* run of numbered lines in the window. Last, because
+            // anything the assistant wrote earlier in the conversation is above
+            // whatever it is now blocked on.
+            //
+            // A run may have short gaps (CB-307's addendum, from a real
+            // AskUserQuestion dialog on the mini): each option there carries
+            // an indented description of up to three lines, and a rule
+            // separates "Type something." from "Chat about this". Walking up,
+            // a gap of at most MaxOptionGap non-option lines is crossed only
+            // when the option above it is numbered exactly one less, so a list
+            // that skips a number still stops where it did. Gaps never weaken
+            // (3): the input-box check below still runs after the last option.
             var runEnd = -1;
-            var runStart = -1;
+            for (var i = cleaned.Length - 1; i >= from && runEnd < 0; i--)
+                if (OptionLine.IsMatch(cleaned[i])) runEnd = i;
 
-            for (var i = cleaned.Length - 1; i >= from; i--)
+            if (runEnd < 0) return null;
+
+            var picked = new List<int> { runEnd };
+            var at = runEnd;
+            while (true)
             {
-                if (!OptionLine.IsMatch(cleaned[i])) continue;
+                var want = int.Parse(OptionLine.Match(cleaned[at]).Groups[1].Value) - 1;
+                if (want < 1) break;
 
-                runEnd = i;
-                runStart = i;
-                while (runStart - 1 >= from && OptionLine.IsMatch(cleaned[runStart - 1])) runStart--;
-                break;
+                var above = -1;
+                for (var j = at - 1; j >= Math.Max(from, at - 1 - MaxOptionGap); j--)
+                {
+                    if (!OptionLine.IsMatch(cleaned[j])) continue;
+                    if (OptionLine.Match(cleaned[j]).Groups[1].Value == want.ToString()) above = j;
+                    break;
+                }
+
+                if (above < 0) break;
+                picked.Add(above);
+                at = above;
             }
 
-            if (runStart < 0) return null;
+            picked.Reverse();
+            var runStart = picked[0];
 
             var options = new List<ChatPromptOption>();
-            for (var i = runStart; i <= runEnd; i++)
+            foreach (var i in picked)
             {
                 var match = OptionLine.Match(cleaned[i]);
                 options.Add(new ChatPromptOption(match.Groups[1].Value, match.Groups[2].Value.Trim()));
@@ -491,6 +536,16 @@ namespace Orbweaver
             return new ChatPrompt(title, options);
         }
 
+        // (4) above: whether these trimmed, frame-stripped lines are a
+        // navigated list such as `/permissions` rather than a question.
+        internal const string PermissionsTabBar = "Permissions  Recently blocked";
+
+        internal static bool IsNavigatedList(IEnumerable<string> cleanedLines) =>
+            cleanedLines.Any(l =>
+                l.StartsWith(PermissionsTabBar, StringComparison.Ordinal)
+                || l.Contains("←/→ to switch", StringComparison.Ordinal)
+                || l.StartsWith('⌕'));
+
         private const string BoxDrawing = "─━═│┃║╭╮╰╯┌┐└┘├┤┬┴┼╔╗╚╝▐▌╌╍┄┅";
 
         private static bool IsBlankOrFrame(string line) =>
@@ -498,7 +553,7 @@ namespace Orbweaver
 
         // The full-width line the TUI draws above and below its input box.
         // Length matters: a short run of dashes is punctuation in a sentence.
-        private static bool IsHorizontalRule(string line) =>
+        internal static bool IsHorizontalRule(string line) =>
             line.Length >= 10 && line.All(c => c is '─' or '━' or '═' || char.IsWhiteSpace(c));
 
         // --- json helpers ---

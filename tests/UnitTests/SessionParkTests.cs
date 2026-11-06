@@ -132,4 +132,84 @@ public class SessionParkTests
     {
         Assert.False(SessionPark.IsParked(70580, ""));
     }
+
+    // --- SaysStatus (CB-307 addendum) -----------------------------------------
+
+    // The record Claude Code writes while its TUI sits on a modal dialog: the
+    // shape read off a real session on 2026-11-06, trimmed to the fields that
+    // matter. `status` is the only word acted on, and only when it is `waiting`.
+    private static string WithStatus(string sessionId, string status) =>
+        "{\"pid\":32273,\"sessionId\":\"" + sessionId + "\",\"kind\":\"interactive\",\"status\":\"" + status + "\"}";
+
+    [Theory]
+    [InlineData("waiting")]
+    [InlineData("busy")]
+    [InlineData("idle")]
+    public void TheRecordsStatusIsReadBackWhenTheRecordIsThisSessions(string status)
+    {
+        Assert.Equal(status, SessionPark.SaysStatus(WithStatus(Owner, status), Owner));
+    }
+
+    // Pids are reused. A recycled record must be able to fail to assert, never
+    // to assert about the wrong session — the same guard SaysParked has.
+    [Fact]
+    public void ARecordBelongingToAnotherSessionSaysNothing()
+    {
+        Assert.Null(SessionPark.SaysStatus(WithStatus("someone-else", "waiting"), Owner));
+    }
+
+    [Fact]
+    public void ARecordWithNoSessionIdSaysNothing()
+    {
+        Assert.Null(SessionPark.SaysStatus(@"{""status"":""waiting""}", Owner));
+        Assert.Null(SessionPark.SaysStatus(@"{""sessionId"":7,""status"":""waiting""}", Owner));
+    }
+
+    [Fact]
+    public void ARecordWithNoStatusOrANonStringOneSaysNothing()
+    {
+        Assert.Null(SessionPark.SaysStatus($@"{{""sessionId"":""{Owner}""}}", Owner));
+        Assert.Null(SessionPark.SaysStatus($@"{{""sessionId"":""{Owner}"",""status"":3}}", Owner));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(@"{""sessionId"":""746")]
+    [InlineData("[1,2]")]
+    public void NothingReadableSaysNothing(string? json)
+    {
+        Assert.Null(SessionPark.SaysStatus(json, Owner));
+    }
+
+    [Fact]
+    public void AnUnnamedAskerHearsNothing()
+    {
+        Assert.Null(SessionPark.SaysStatus(WithStatus(Owner, "waiting"), ""));
+    }
+
+    // SaysParked and SaysStatus read the same record independently: a parked
+    // record's status is still reported, and a waiting one is not parked.
+    [Fact]
+    public void ParkedAndStatusAreIndependentQuestionsOfOneRecord()
+    {
+        Assert.True(SessionPark.SaysParked(Parked, Owner));
+        Assert.Equal("idle", SessionPark.SaysStatus(Parked, Owner));
+        Assert.False(SessionPark.SaysParked(WithStatus(Owner, "waiting"), Owner));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void RecordStatusOfANonProcessIsNull(int pid)
+    {
+        Assert.Null(SessionPark.RecordStatus(pid, Owner));
+    }
+
+    [Fact]
+    public void RecordStatusOfAnUnnamedSessionIsNull()
+    {
+        Assert.Null(SessionPark.RecordStatus(70580, ""));
+    }
 }

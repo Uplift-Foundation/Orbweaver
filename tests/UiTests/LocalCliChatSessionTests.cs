@@ -1553,4 +1553,69 @@ public class LocalCliChatSessionTests : IDisposable
             OrbweaverSettings.ClaudeCodeReplyEnabled = before;
         }
     }
+
+    // --- CB-307 addendum: never type into a dialog -------------------------------
+
+    private static LocalCliChatSession Gated(Func<SessionStatus, Task<TypingVerdict>> gate) =>
+        new("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode,
+            State = "idle",
+            Title = "",
+        })
+        { Gate = gate };
+
+    [AvaloniaFact]
+    public async Task ASendIsRefusedWithTheReasonAndNothingIsTyped()
+    {
+        SessionStatus? asked = null;
+        var session = Gated(status =>
+        {
+            asked = status;
+            return Task.FromResult(new TypingVerdict(false, TypingGate.DialogWhy("Permissions")));
+        });
+
+        var outcome = await session.RefuseIfNotAtPromptAsync();
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.NotNull(asked);
+
+        // The note names the dialog and says nothing was typed, under the
+        // composer, where the user's own text is still sitting.
+        var note = Assert.Single(session.History).Text;
+        Assert.Contains("isn't at its prompt", note, StringComparison.Ordinal);
+        Assert.Contains("it is showing a dialog: Permissions", note, StringComparison.Ordinal);
+        Assert.Contains("Nothing was typed", note, StringComparison.Ordinal);
+    }
+
+    // The control: at a prompt the gate says yes, nothing is noted, and the
+    // caller goes on to type.
+    [AvaloniaFact]
+    public async Task ASendAtAPromptIsNotRefusedAndLeavesNoNote()
+    {
+        var calls = 0;
+        var session = Gated(_ => { calls++; return Task.FromResult(TypingVerdict.Allow); });
+
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Equal(1, calls);
+        Assert.Empty(session.History);
+    }
+
+    [AvaloniaFact]
+    public async Task ARefusalWithNoReasonStillExplainsItself()
+    {
+        var session = Gated(_ => Task.FromResult(new TypingVerdict(false, null)));
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RefuseIfNotAtPromptAsync());
+        Assert.Equal(
+            "This terminal isn't at its prompt. Nothing was typed; answer that screen in the terminal and send again.",
+            Assert.Single(session.History).Text);
+    }
+
+    [Fact]
+    public void TheRefusalNoteJoinsTheReasonWithADash() =>
+        Assert.Equal(
+            "This terminal isn't at its prompt — Claude Code reports it is waiting on a dialog. "
+            + "Nothing was typed; answer that screen in the terminal and send again.",
+            LocalCliChatSession.NotAtPromptNote(TypingGate.WaitingWhy));
 }

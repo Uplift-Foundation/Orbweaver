@@ -60,7 +60,11 @@ namespace Orbweaver
         // strikes, and it matters more here: this is asked once per scan for
         // every Claude Code session on screen, and the scan runs every two
         // seconds.
-        private static readonly Dictionary<string, (long Length, DateTime Written, bool Answer)>
+        //
+        // One read serves two questions (CB-307 addendum): whether the record
+        // says parked, and what its `status` says. A record is parsed once per
+        // change, not once per question.
+        private static readonly Dictionary<string, (long Length, DateTime Written, bool Parked, string? Status)>
             _answers = new(StringComparer.Ordinal);
 
         // The I/O half: find the record, consult the cache, read only what has
@@ -76,15 +80,33 @@ namespace Orbweaver
         // home is a parameter for the reason TranscriptReader's is: so the walk
         // can be pointed at a temp directory in a test instead of at the
         // machine's own accounts.
-        internal static bool IsParked(int pid, string sessionId, string? home = null)
+        internal static bool IsParked(int pid, string sessionId, string? home = null) =>
+            Lookup(pid, sessionId, home)?.Parked ?? false;
+
+        // What Claude Code's own record says its TUI is doing, or null when
+        // there is no record, it is not this session's, or it names no status.
+        //
+        // **Only `waiting` is ever acted on, in either direction; `busy` and
+        // `idle` are never trusted for anything.** Measured off a real machine
+        // on 2026-11-06: the record's status is written when the TUI's modal
+        // state changes and otherwise left alone, so `waiting` was right on both
+        // occasions it was seen (a /permissions screen, and the exit dialog of a
+        // session whose record had said so for four days) and cleared within
+        // seconds of the dialog closing, while `busy` was wrong by two days on
+        // a session sitting idle at its prompt. A positive `waiting` is
+        // evidence; its absence, and every other word, is not.
+        internal static string? RecordStatus(int pid, string sessionId, string? home = null) =>
+            Lookup(pid, sessionId, home)?.Status;
+
+        private static (bool Parked, string? Status)? Lookup(int pid, string sessionId, string? home)
         {
-            if (pid <= 0 || string.IsNullOrEmpty(sessionId)) return false;
+            if (pid <= 0 || string.IsNullOrEmpty(sessionId)) return null;
 
             var path = RecordPath(pid, home);
-            if (path is null) return false;
+            if (path is null) return null;
 
             var stat = Stat(path);
-            if (stat is null) return false;
+            if (stat is null) return null;
 
             lock (Cache.Gate)
             {
@@ -92,11 +114,13 @@ namespace Orbweaver
                     && seen.Length == stat.Value.Length
                     && seen.Written == stat.Value.Written)
                 {
-                    return seen.Answer;
+                    return (seen.Parked, seen.Status);
                 }
             }
 
-            var answer = SaysParked(ReadAll(path), sessionId);
+            var text = ReadAll(path);
+            var parked = SaysParked(text, sessionId);
+            var status = SaysStatus(text, sessionId);
 
             lock (Cache.Gate)
             {
@@ -105,10 +129,42 @@ namespace Orbweaver
                 // one extra read per surviving entry.
                 if (_answers.Count >= 512) _answers.Clear();
 
-                _answers[path] = (stat.Value.Length, stat.Value.Written, answer);
+                _answers[path] = (stat.Value.Length, stat.Value.Written, parked, status);
             }
 
-            return answer;
+            return (parked, status);
+        }
+
+        // The record's `status` string, only when the record is this session's.
+        // The same pid-reuse guard SaysParked applies, for the same reason: a
+        // recycled record must be able to fail to assert, never to assert about
+        // the wrong session. Malformed JSON, a missing or non-string status all
+        // answer null.
+        internal static string? SaysStatus(string? json, string sessionId)
+        {
+            if (string.IsNullOrWhiteSpace(json) || string.IsNullOrEmpty(sessionId)) return null;
+
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+
+                if (!document.RootElement.TryGetProperty("sessionId", out var owner)
+                    || owner.ValueKind != JsonValueKind.String
+                    || !string.Equals(owner.GetString(), sessionId, StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                return document.RootElement.TryGetProperty("status", out var status)
+                    && status.ValueKind == JsonValueKind.String
+                    ? status.GetString()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
 
         // The decision, over the record's text.

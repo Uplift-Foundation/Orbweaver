@@ -62,6 +62,10 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
     private bool _replyEnabled = true;
     private bool _canType = true;
+
+    // CB-307 addendum: the far pane's screen for the typing gate. Null leaves
+    // the gate unwired, which is every test written before it.
+    private string? _farScreen;
     private bool _typeResult = true;
     private bool _mangle;
     private bool _mangleInput;
@@ -649,6 +653,40 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Contains("over there", last.Text);
 
         Assert.Equal(ChatSendOutcome.Failed, outcome);
+    }
+
+    // CB-307 addendum: the far pane is on /permissions. Nothing is typed, the
+    // send fails, and the note under it names the far screen and says what to
+    // do — the sentence a person actually reads.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneOnADialogIsRefusedWithANoteThatSaysWhy()
+    {
+        _farScreen = PaneFixtures.PermissionsAllow;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var outcome = await session.SendAsync("please carry on");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Empty(_typed);
+
+        var last = session.History[^1];
+        Assert.Equal(ChatRole.System, last.Role);
+        Assert.StartsWith($"{Name}'s terminal isn't at its prompt — ", last.Text);
+        Assert.EndsWith("answer that screen in the terminal and send again.", last.Text);
+    }
+
+    // ...and the control: the same wiring on a real prompt types.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneAtItsPromptIsTyped()
+    {
+        _farScreen = PaneFixtures.MacPromptAfterEsc;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.SendAsync("please carry on"));
+        Assert.Single(_typed);
     }
 
     // --- CB-52: the integrity wording ------------------------------------------
@@ -1880,7 +1918,9 @@ public class RemoteMirrorChatSessionTests : IDisposable
             // somebody pinned by typing a code. A harness says yes explicitly.
             PeerAllowed: _ => true,
             // CB-252: never the developer's real persona files.
-            UserConfigDirs: () => Array.Empty<string>()));
+            UserConfigDirs: () => Array.Empty<string>(),
+            CapturePane: _farScreen is null ? null : _ => Task.FromResult<string?>(_farScreen),
+            CanReadPane: _farScreen is null ? null : _ => true));
 
     private void BuildClient()
     {

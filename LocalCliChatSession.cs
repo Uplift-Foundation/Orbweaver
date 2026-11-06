@@ -1362,6 +1362,12 @@ namespace Orbweaver
         private async Task<ChatSendOutcome> TypeIntoTerminalAsync(
             string typedText, string displayText, byte[]? imageBytes)
         {
+            // CB-307: keystrokes mean whatever the pane is showing, so ask first.
+            // Before Add(mine), so a refused line never appears as a sent
+            // bubble. The decision and the note are RefuseIfNotAtPromptAsync's,
+            // which is covered; only this one call line is not.
+            if (await RefuseIfNotAtPromptAsync() is { } refused) return refused;
+
             var mine = new ChatTurn
             {
                 Role = ChatRole.User,
@@ -1384,6 +1390,38 @@ namespace Orbweaver
             Note("Couldn't send that to the terminal.");
             return ChatSendOutcome.Failed;
         }
+
+        // CB-307: the typing gate, asked once per send and never per frame.
+        // Injectable so a test hands over a verdict instead of a real tmux pane;
+        // the default reads Claude Code's own session record and, where it can
+        // (tmux), the pane itself.
+        internal Func<SessionStatus, Task<TypingVerdict>>? Gate { get; init; }
+
+        [ExcludeFromCodeCoverage]
+        private Task<TypingVerdict> RealGate(SessionStatus status) =>
+            TypingGate.JudgeAsync(
+                status,
+                s => SessionPark.RecordStatus(s.SessionPid, SessionId),
+                TerminalFocuser.CapturePane,
+                TerminalFocuser.CanReadPane(status));
+
+        // Null when typing may go ahead. Otherwise the note has been written
+        // under the composer, nothing is pending, and the send has Failed — so
+        // the composer keeps the user's text, which is the right thing to do
+        // with words that never reached anything.
+        internal async Task<ChatSendOutcome?> RefuseIfNotAtPromptAsync()
+        {
+            var verdict = await (Gate ?? RealGate)(_status);
+            if (verdict.Allowed) return null;
+
+            _pending = null;
+            Note(NotAtPromptNote(verdict.Why));
+            return ChatSendOutcome.Failed;
+        }
+
+        internal static string NotAtPromptNote(string? why) =>
+            "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)
+            + ". Nothing was typed; answer that screen in the terminal and send again.";
 
         // The body of a delivered message, unwrapped from the tag Claude Code's
         // own transcript holds it in.

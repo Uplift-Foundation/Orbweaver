@@ -1146,6 +1146,222 @@ namespace Orbweaver.Tests
                 Check("the tool_result body is in no produced string", !line.Contains("18"));
             }
 
+            // --- the screen, for the typing gate (CB-307 addendum) ---
+            //
+            // PaneScreen.Classify says whether a pane is at its prompt, where a
+            // typed line becomes a message. Every fixture is a real capture
+            // (PaneFixtures says which), and a wrong "Prompt" here types into a
+            // dialog, so most of these are things that must not read as one.
+
+            Check("the MacBook's fresh prompt, placeholder and all, is a prompt",
+                PaneScreen.Classify(PaneFixtures.MacPromptStartup) == PaneReading.Prompt,
+                PaneScreen.Classify(PaneFixtures.MacPromptStartup).ToString());
+            Check("the prompt right after Esc closed /permissions is a prompt",
+                PaneScreen.Classify(PaneFixtures.MacPromptAfterEsc) == PaneReading.Prompt,
+                PaneScreen.Classify(PaneFixtures.MacPromptAfterEsc).ToString());
+            Check("a prompt under a titled upper rule is a prompt (nothing is required above the box)",
+                PaneScreen.Classify(PaneFixtures.MiniTitledPromptReconstructed) == PaneReading.Prompt,
+                PaneScreen.Classify(PaneFixtures.MiniTitledPromptReconstructed).ToString());
+            // The real prompt line is `❯` and a no-break space; a draft replaces
+            // what follows it. The first check proves the replacement happened.
+            var withDraft = PaneFixtures.MacPromptAfterEsc.Replace("❯\u00a0\n", "❯\u00a0half a thought the user left\n");
+            Check("the draft fixture really carries the draft", withDraft.Contains("half a thought"));
+            Check("a draft left in the box is still a prompt", PaneScreen.Classify(withDraft) == PaneReading.Prompt);
+
+            var exit = ChatTranscript.ParseDialog(PaneFixtures.MiniExitDialog);
+            Check("the real exit dialog parses as a dialog", exit is not null);
+            Check("with keys 1 to 3",
+                exit is not null && exit.Options.Select(o => o.Key).SequenceEqual(new[] { "1", "2", "3" }),
+                string.Join(",", exit?.Options.Select(o => o.Key) ?? Array.Empty<string>()));
+            Check("and the screen reads as a dialog",
+                PaneScreen.Classify(PaneFixtures.MiniExitDialog) == PaneReading.Dialog);
+            Check("a Bash approval reads as a dialog", PaneScreen.Classify(BashApproval) == PaneReading.Dialog);
+
+            // A navigated list is not a dialog (ChatTranscript (4)): every
+            // /permissions capture parses to nothing, populated tab included.
+            foreach (var (name, screen) in new[]
+                     {
+                         ("Allow", PaneFixtures.PermissionsAllow), ("Ask", PaneFixtures.PermissionsAsk),
+                         ("Deny", PaneFixtures.PermissionsDeny), ("Auto mode", PaneFixtures.PermissionsAutoMode),
+                         ("Workspace", PaneFixtures.PermissionsWorkspace),
+                         ("Recently blocked (empty)", PaneFixtures.PermissionsRecentlyBlockedEmpty),
+                         ("Permissions", PaneFixtures.PermissionsPermissionsTab),
+                         ("Recently blocked (populated, stripped)", PaneFixtures.MiniRecentlyBlockedPopulatedStripped),
+                     })
+            {
+                Check($"/permissions {name} is not a dialog", ChatTranscript.ParseDialog(screen) is null,
+                    $"{ChatTranscript.ParseDialog(screen)?.Options.Count} options");
+                Check($"/permissions {name} reads as unknown, not a prompt",
+                    PaneScreen.Classify(screen) == PaneReading.Unknown, PaneScreen.Classify(screen).ToString());
+            }
+
+            // The populated tab is the case that matters, and the tab bar is
+            // what catches it. Its footer and its lack of a search box mean the
+            // second signals alone do not — pinned so the key is never
+            // "simplified" back to the footer.
+            var blockedLines = PaneFixtures.MiniRecentlyBlockedPopulatedStripped.Split('\n');
+            var withoutBar = blockedLines
+                .Where(l => !l.TrimStart().StartsWith("Permissions  Recently blocked", StringComparison.Ordinal))
+                .ToArray();
+            Check("the populated tab really has its bar removed", withoutBar.Length == blockedLines.Length - 1);
+            Check("without its tab bar, the populated tab trips no other signal",
+                !ChatTranscript.IsNavigatedList(withoutBar.Select(l => l.Trim().Trim('│').Trim())));
+
+            // With one blocked item it was already null by the single-option
+            // rule; with two it was a dialog whose keys toggle approvals.
+            // Derived from the real capture by repeating its item as item 2.
+            var twoBlocked = PaneFixtures.MiniRecentlyBlockedPopulatedStripped.Replace(
+                "   ❯ 1. ✔ Test-run Memory Dreaming autom…  Auto mode: [Real-World\n",
+                "   ❯ 1. ✔ Test-run Memory Dreaming autom…  Auto mode: [Real-World\n"
+                + "     2. ✔ Test-run Memory Dreaming autom…  Auto mode: [Real-World\n");
+            Check("the two-item variant really has two items", twoBlocked.Contains("2. ✔"));
+            Check("two blocked items are not a dialog", ChatTranscript.ParseDialog(twoBlocked) is null);
+            Check("…and the tab bar is what stops them",
+                ChatTranscript.ParseDialog(string.Join("\n", twoBlocked.Split('\n')
+                    .Where(l => !l.TrimStart().StartsWith("Permissions  Recently blocked", StringComparison.Ordinal))))
+                    ?.Options.Count == 2);
+
+            // The other two signals, each alone.
+            Check("a ←/→ footer alone marks a navigated list",
+                ChatTranscript.IsNavigatedList(new[] { "1. a", "2. b", "←/→ to switch · Esc to cancel" }));
+            Check("a search box alone marks a navigated list",
+                ChatTranscript.IsNavigatedList(new[] { "⌕ Search…", "1. a", "2. b" }));
+            Check("an ordinary dialog trips none of them",
+                !ChatTranscript.IsNavigatedList(BashApproval.Split('\n').Select(l => l.Trim())));
+
+            // QA's finding: a dialog the parser does not know, with the user's
+            // echoed `❯ hi` a few lines above its top border. Never a prompt.
+            Check("a real Model switch dialog is not a prompt",
+                PaneScreen.Classify(PaneFixtures.MacModelSwitchDialog) != PaneReading.Prompt,
+                PaneScreen.Classify(PaneFixtures.MacModelSwitchDialog).ToString());
+            Check("…nor with a short echo that puts its border near a ❯",
+                PaneScreen.Classify(PaneFixtures.MacModelSwitchDialogShortEcho) != PaneReading.Prompt,
+                PaneScreen.Classify(PaneFixtures.MacModelSwitchDialogShortEcho).ToString());
+            Check("a ❯ and a rule above a /permissions screen are not a prompt",
+                PaneScreen.Classify("❯ x\n\n\n────────────────────────────────────────\n"
+                                    + PaneFixtures.MiniRecentlyBlockedPopulatedStripped) != PaneReading.Prompt);
+            Check("a prompt box with a dialog's options under it is not a prompt",
+                PaneScreen.Classify("""
+                    ────────────────────────────────────────
+                    ❯ 
+                    ────────────────────────────────────────
+                      1. Yes
+                    """) == PaneReading.Unknown);
+            Check("a prompt box with a dialog hint under it is not a prompt",
+                PaneScreen.Classify("""
+                    ────────────────────────────────────────
+                    ❯ 
+                    ────────────────────────────────────────
+                    Enter to select · Esc to cancel
+                    """) == PaneReading.Unknown);
+            Check("a prompt whose box top is a blank's width above it still counts",
+                PaneScreen.Classify("""
+                    ────────────────────────────────────────
+
+                    ❯ 
+                    ────────────────────────────────────────
+                    """) == PaneReading.Prompt);
+            // Only the box-top rule decides this one: a scrollback echo with a
+            // rule below it and nothing option-like after — the shape of an
+            // echo above a panel the parser has never seen.
+            Check("an echoed message above a rule is not a prompt without a box top",
+                PaneScreen.Classify("""
+                    ✻ Brewed for 10s · done 1:59 PM
+
+                    ❯ hi
+
+                    ────────────────────────────────────────
+                      Some panel this build has never seen
+                    """) == PaneReading.Unknown);
+            Check("a ❯ at the very top of the screen has no box top",
+                PaneScreen.Classify("""
+                    ❯ 
+                    ────────────────────────────────────────
+                    """) == PaneReading.Unknown);
+
+            // A real AskUserQuestion dialog on the mini: descriptions under each
+            // option, a rule between 4 and 5, and the session's titled rule as
+            // the last line. The panel offers its five buttons; the screen is a
+            // dialog, never a prompt — the titled rule below it is not a box.
+            var question = ChatTranscript.ParseDialog(PaneFixtures.MiniOpenclawQuestionDialog);
+            Check("a question dialog with descriptions under its options parses", question is not null);
+            Check("with all five options, keys 1 to 5",
+                question is not null && question.Options.Select(o => o.Key).SequenceEqual(new[] { "1", "2", "3", "4", "5" }),
+                string.Join(",", question?.Options.Select(o => o.Key) ?? Array.Empty<string>()));
+            Check("labels are the option lines, not their descriptions",
+                question?.Options[0].Label == "Use claude-cli login (Recommended)"
+                && question.Options[4].Label == "Chat about this",
+                string.Join(" | ", question?.Options.Select(o => o.Label) ?? Array.Empty<string>()));
+            Check("the title is the question above the options",
+                question?.Title.EndsWith("21 automations?") == true, question?.Title ?? "null");
+            Check("and the screen is a dialog",
+                PaneScreen.Classify(PaneFixtures.MiniOpenclawQuestionDialog) == PaneReading.Dialog);
+
+            // Gaps are crossed only toward the right number, and only short ones.
+            Check("a gap is not crossed to an option with the wrong number",
+                ChatTranscript.ParseDialog("""
+                     Pick one
+                     ❯ 1. Yes
+                       2. Maybe
+                          a description
+                       4. No
+                    """) is null);
+            Check("a gap longer than a description is not crossed",
+                ChatTranscript.ParseDialog("""
+                     Pick one
+                     ❯ 1. Yes
+                          one
+                          two
+                          three
+                          four
+                       2. No
+                    """) is null);
+            Check("a numbered list with descriptions above the input box is still prose",
+                ChatTranscript.ParseDialog("""
+                    ⏺ Two options:
+                      1. Extract the geometry
+                         keeps the arrangement pure
+                      2. Add the test
+                    ────────────────────────────────────────────────────────────────────
+                    ❯ 
+                    ────────────────────────────────────────────────────────────────────
+                    """) is null);
+
+            // Whatever the parser makes of /permissions, none of it is a prompt.
+            foreach (var (name, screen) in new[]
+                     {
+                         ("Allow", PaneFixtures.PermissionsAllow), ("Ask", PaneFixtures.PermissionsAsk),
+                         ("Deny", PaneFixtures.PermissionsDeny), ("Auto mode", PaneFixtures.PermissionsAutoMode),
+                         ("Workspace", PaneFixtures.PermissionsWorkspace),
+                         ("Recently blocked (empty)", PaneFixtures.PermissionsRecentlyBlockedEmpty),
+                         ("Permissions", PaneFixtures.PermissionsPermissionsTab),
+                         ("Recently blocked (populated, stripped)", PaneFixtures.MiniRecentlyBlockedPopulatedStripped),
+                     })
+                Check($"/permissions {name} is not a prompt", PaneScreen.Classify(screen) != PaneReading.Prompt,
+                    PaneScreen.Classify(screen).ToString());
+
+            Check("a selected option is not a prompt, even with a rule under it",
+                PaneScreen.Classify("""
+                    ❯ 1. Yes
+                    ────────────────────────────────────────────────────────────────────
+                    """) == PaneReading.Unknown);
+            Check("a prompt mark with no box edge below it is unknown",
+                PaneScreen.Classify("""
+                    ❯ 
+
+                    nothing here
+
+
+
+                    ────────────────────────────────────────────────────────────────────
+                    """) == PaneReading.Unknown);
+            Check("a prompt that scrolled out of the window is unknown",
+                PaneScreen.Classify("❯ \n" + "────────────────────────────────────────\n"
+                                    + string.Concat(Enumerable.Repeat("output\n", 40))) == PaneReading.Unknown);
+            Check("no screen is unknown", PaneScreen.Classify(null) == PaneReading.Unknown);
+            Check("an empty screen is unknown", PaneScreen.Classify("") == PaneReading.Unknown);
+            Check("whitespace is unknown", PaneScreen.Classify(" \n \n") == PaneReading.Unknown);
+
             return failures;
 
             static string Head(string s)
