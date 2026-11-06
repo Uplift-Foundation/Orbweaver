@@ -60,6 +60,42 @@ public class UpdateFeedTests
         Assert.Empty(list[1].Assets);
     }
 
+    [Fact]
+    public void WrongTypedAndBlankFieldsReadAsAbsent()
+    {
+        var json = """
+        [ {"tag_name":"v1.0.0","body":5,"assets":[
+              {"name":"nosize.dmg","browser_download_url":"http://x/a"},
+              {"name":"objsize.dmg","browser_download_url":"http://x/b","size":{"n":1}},
+              {"name":"   ","browser_download_url":"http://x/c"} ]},
+          {"tag_name":"   "} ]
+        """;
+        var list = UpdateFeed.ParseList(json);
+        var r = Assert.Single(list);
+        Assert.Equal("", r.Body);
+        Assert.Equal(new[] { ("nosize.dmg", 0L), ("objsize.dmg", 0L) }, r.Assets.Select(a => (a.Name, a.Size)));
+    }
+
+    [Fact]
+    public void BuildMetadataNeverReachesTheVersionThatNamesTheInstallerFile()
+    {
+        // "v1.0.4+x/../../evil" parses as a version; its build metadata must not
+        // survive into release.Version, which UpdateAssets turns into a file name.
+        var r = UpdateFeed.ParseLatest("""{"tag_name":"v1.0.4+x/../../evil"}""")!;
+        Assert.Equal("1.0.4", r.Version);
+        Assert.DoesNotContain('/', UpdateAssets.ExpectedAssetName(r.Version, "osx-arm64"));
+        Assert.Equal("1.0.4-rc.1", UpdateFeed.ParseLatest("""{"tag_name":"V1.0.4-rc.1+meta"}""")!.Version);
+    }
+
+    [Fact]
+    public void ATagWithPrereleaseIdentifiersIsAPrereleaseEvenIfGitHubDidNotFlagIt()
+    {
+        var mislabelled = UpdateFeed.ParseLatest("""{"tag_name":"v2.0.0-beta","prerelease":false}""")!;
+        Assert.True(mislabelled.Prerelease);
+        Assert.Equal(UpdateDecisionKind.UpToDate, UpdateFeed.Pick([mislabelled], "1.0.3", false, null).Kind);
+        Assert.False(UpdateFeed.ParseLatest("""{"tag_name":"v2.0.0","prerelease":false}""")!.Prerelease);
+    }
+
     [Theory]
     [InlineData("not json")]
     [InlineData("[1,2")]

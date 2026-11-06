@@ -269,6 +269,16 @@ public class UpdateCheckerTests
         Assert.Null(r.S.SkippedVersion);
     }
 
+    [Fact]
+    public void SkippingWithNothingPendingJustRecordsTheSkip()
+    {
+        var r = new Rig();
+        r.C.Skip(Rel("1.0.4"));
+        Assert.Equal("1.0.4", r.S.SkippedVersion);
+        Assert.Null(r.C.Pending);
+        Assert.Equal(0, r.PendingChanges);
+    }
+
     // ---- prerelease and the feed argument -------------------------------------
 
     [Fact]
@@ -387,6 +397,45 @@ public class UpdateCheckerTests
     }
 
     [Fact]
+    public async Task AThrowingCompletedSubscriberDoesNotEndTheAutomaticSchedule()
+    {
+        var r = new Rig();
+        r.F.Releases = [Rel("1.0.4")];
+        r.C.Completed += _ => throw new InvalidOperationException("ui blew up");
+
+        await r.C.RunAutomaticAsync();             // must not throw
+
+        Assert.Equal(UpdateSchedule.Interval, r.LastDelay);   // and the next check is armed
+        Assert.Equal("v1.0.4", r.C.Pending!.Tag);
+        Assert.Contains(r.Log, l => l.Contains("Completed subscriber threw") && l.Contains("ui blew up"));
+    }
+
+    [Fact]
+    public async Task AThrowingPendingChangedSubscriberDoesNotEndTheScheduleOrBreakManualChecks()
+    {
+        var r = new Rig();
+        r.F.Releases = [Rel("1.0.4")];
+        r.C.PendingChanged += () => throw new InvalidOperationException("tray blew up");
+
+        await r.C.RunAutomaticAsync();
+        Assert.Equal(UpdateSchedule.Interval, r.LastDelay);
+
+        r.F.Releases = [Rel("1.0.3")];             // pending clears -> PendingChanged fires (and throws) again
+        var res = await r.C.CheckNowAsync();       // the manual caller still gets its answer
+        Assert.Equal(UpdateCheckOutcome.UpToDate, res.Outcome);
+        Assert.Equal(2, r.Log.Count(l => l.Contains("PendingChanged subscriber threw")));
+    }
+
+    [Fact]
+    public async Task AThrowingCompletedSubscriberDoesNotBreakAManualCheck()
+    {
+        var r = new Rig();
+        r.F.Releases = [Rel("1.0.3")];
+        r.C.Completed += _ => throw new InvalidOperationException("boom");
+        Assert.Equal(UpdateCheckOutcome.UpToDate, (await r.C.CheckNowAsync()).Outcome);
+    }
+
+    [Fact]
     public async Task DisposeCancelsAnInFlightCheckAndStopsRescheduling()
     {
         var r = new Rig();
@@ -473,6 +522,35 @@ public class UpdateCheckerTests
     [Collection("Settings")]
     public class RealSettings
     {
+        [Fact]
+        public async Task TheRealClockIsTheOneCreateWiresIn()
+        {
+            // Create's checker reads the system clock when it records a check; drive one
+            // against a loopback feed so that path (not a fake) is what runs.
+            using var listener = new System.Net.HttpListener();
+            var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            probe.Start(); var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port; probe.Stop();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Start();
+            _ = Task.Run(async () =>
+            {
+                var ctx = await listener.GetContextAsync();
+                var body = System.Text.Encoding.UTF8.GetBytes("""{"tag_name":"v0.0.1"}""");
+                await ctx.Response.OutputStream.WriteAsync(body);
+                ctx.Response.Close();
+            });
+            var env = new Dictionary<string, string> { ["ORBWEAVER_UPDATE_FEED_URL"] = $"http://127.0.0.1:{port}" };
+            using var c = UpdateChecker.Create(_ => { }, k => env.GetValueOrDefault(k));
+
+            var before = DateTimeOffset.UtcNow;
+            var res = await c.CheckNowAsync();
+
+            Assert.Equal(UpdateCheckOutcome.UpToDate, res.Outcome);
+            // (Settings are the real static ones; the clock value is asserted through them.)
+            Assert.True(OrbweaverSettings.LastUpdateCheckUtc >= before.AddSeconds(-1));
+            OrbweaverSettings.LastUpdateCheckUtc = null;
+        }
+
         [Fact]
         public void TheAdapterForwardsToOrbweaverSettings()
         {

@@ -40,7 +40,9 @@ namespace Orbweaver
                 || !long.TryParse(parts[0], out var major) || major < 0
                 || !long.TryParse(parts[1], out var minor) || minor < 0
                 || !long.TryParse(parts[2], out var patch) || patch < 0
-                || parts.Any(p => p.Length == 0 || !p.All(char.IsAsciiDigit)))
+                // long.TryParse above already rejects an empty part; this catches the signs
+                // and spaces it accepts ("+5", " 5").
+                || parts.Any(p => !p.All(char.IsAsciiDigit)))
                 return false;
 
             var ids = Array.Empty<string>();
@@ -54,6 +56,14 @@ namespace Orbweaver
             version = new UpdateVersion(major, minor, patch, ids);
             return true;
         }
+
+        // major.minor.patch[-prerelease] with the leading "v" and build metadata
+        // dropped. This is what release.Version carries, so nothing from the
+        // network beyond digits, letters, dots and dashes can reach a file name:
+        // build metadata after "+" is otherwise unconstrained ("1.0.4+x/../y"
+        // parses).
+        internal string Normalized() =>
+            $"{Major}.{Minor}.{Patch}" + (Prerelease.Count == 0 ? "" : "-" + string.Join('.', Prerelease));
 
         // Negative when a is older than b. Total order, so Math.Sign-safe.
         internal static int Compare(UpdateVersion a, UpdateVersion b)

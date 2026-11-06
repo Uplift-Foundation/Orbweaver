@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace Orbweaver
 {
     internal enum UpdateCheckOutcome { UpToDate, Available, Failed }
@@ -125,11 +123,10 @@ namespace Orbweaver
         internal static UpdateChecker Create(Action<string> log, Func<string, string?>? env = null)
         {
             env ??= Environment.GetEnvironmentVariable;
+            // EngineVersion is the build's informational version already cut at "+",
+            // read once from the assembly for the speech-engine URL; one source.
             var current = ResolveCurrentVersion(
-                BrandEnv.Get(BrandEnv.UpdateCurrentVersion, env),
-                typeof(UpdateChecker).Assembly
-                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
-                out var warning);
+                BrandEnv.Get(BrandEnv.UpdateCurrentVersion, env), NeuralSpeech.EngineVersion, out var warning);
             if (warning is not null) log(warning);
 
             var feedUrl = BrandEnv.Get(BrandEnv.UpdateFeedUrl, env);
@@ -139,7 +136,7 @@ namespace Orbweaver
                 new GitHubReleaseFeed(new HttpUpdateHttp(), UpdateFeed.ResolveBaseUrl(feedUrl)),
                 new OrbweaverUpdateSettings(),
                 current,
-                () => DateTimeOffset.UtcNow,
+                TimeProvider.System.GetUtcNow,
                 log,
                 UpdateTimers.Threading);
         }
@@ -204,7 +201,7 @@ namespace Orbweaver
 
             // The automatic check already announced an Available; don't repeat it.
             if (!(snap.Result.Outcome == UpdateCheckOutcome.Available && result.Outcome == UpdateCheckOutcome.Available))
-                Completed?.Invoke(result);
+                RaiseCompleted(result);
             return result;
         }
 
@@ -248,8 +245,21 @@ namespace Orbweaver
             }
 
             SetPending(result.Outcome == UpdateCheckOutcome.Failed ? Pending : result.Release);
-            if (manual || result.Outcome == UpdateCheckOutcome.Available) Completed?.Invoke(result);
+            if (manual || result.Outcome == UpdateCheckOutcome.Available) RaiseCompleted(result);
             return new CheckSnapshot(fetched, includePre, result);
+        }
+
+        private void RaiseCompleted(UpdateCheckResult result) =>
+            Guard("Completed", () => Completed?.Invoke(result));
+
+        // Subscribers are UI code on someone else's schedule. One that throws must
+        // not unwind into RunAutomaticAsync, which would skip its reschedule and
+        // end the automatic checks silently until restart (the fire-and-forget
+        // caller swallows the exception), nor surface in a manual caller's await.
+        private void Guard(string what, Action raise)
+        {
+            try { raise(); }
+            catch (Exception ex) { _log($"update {what} subscriber threw: {ex.Message}"); }
         }
 
         private void SetPending(UpdateRelease? next)
@@ -260,7 +270,7 @@ namespace Orbweaver
                 changed = _pending?.Tag != next?.Tag;
                 _pending = next;
             }
-            if (changed) PendingChanged?.Invoke();
+            if (changed) Guard("PendingChanged", () => PendingChanged?.Invoke());
         }
 
         /// <summary>"Skip this version": quiet until a different release is published.</summary>

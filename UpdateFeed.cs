@@ -71,7 +71,7 @@ namespace Orbweaver
             if (Bool(obj["draft"])) return null;
 
             var tag = Str(obj["tag_name"]);
-            if (tag is null || !UpdateVersion.TryParse(tag, out _)) return null;
+            if (tag is null || !UpdateVersion.TryParse(tag, out var parsed)) return null;
 
             var assets = new List<UpdateAsset>();
             if (obj["assets"] is JsonArray arr)
@@ -86,8 +86,10 @@ namespace Orbweaver
 
             return new UpdateRelease(
                 tag,
-                tag.TrimStart('v', 'V'),
-                Bool(obj["prerelease"]),
+                parsed.Normalized(),
+                // GitHub's flag, or prerelease identifiers in the tag: a "2.0.0-beta"
+                // someone forgot to flag must not be offered to a stable-only user.
+                Bool(obj["prerelease"]) || parsed.Prerelease.Count > 0,
                 Str(obj["body"]) ?? "",
                 assets);
         }
