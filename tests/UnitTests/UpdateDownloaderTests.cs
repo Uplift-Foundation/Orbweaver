@@ -135,6 +135,20 @@ public class UpdateDownloaderTests : IDisposable
     }
 
     [Fact]
+    public async Task AnIoFailureFromTheDownloadStepIsStorageAndLeavesNoPartialFile()
+    {
+        var http = Good();
+        http.WriteThenFail = true;
+        http.FailDownloadWith = new IOException("disk full");
+
+        var ex = await Assert.ThrowsAsync<UpdateException>(
+            () => UpdateDownloader.DownloadVerifiedAsync(Release(), Rid, _dir, http, null, default));
+
+        Assert.Equal(UpdateFailure.Storage, ex.Kind);
+        Assert.Empty(Directory.GetFiles(_dir));
+    }
+
+    [Fact]
     public async Task CancellationLeavesNoPartialFileAndStaysACancellation()
     {
         var http = Good();

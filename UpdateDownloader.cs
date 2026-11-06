@@ -62,9 +62,28 @@ namespace Orbweaver
                 await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
                 var buffer = new byte[81920];
                 long total = 0;
-                int read;
-                while ((read = await body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+                while (true)
                 {
+                    // The read side and the write side are caught separately, and
+                    // classified by which side failed, never by exception type. A body
+                    // cut off mid-stream surfaces as HttpIOException on macOS but as a
+                    // plain IOException wrapping SocketException(ConnectionReset) on
+                    // Windows (captured on a real Windows box, 10.0.26200, CB-308), and guessing
+                    // by type is exactly what reported a dropped connection as a disk
+                    // fault there. Anything the response stream throws is the network;
+                    // anything the destination throws is left alone for the caller to
+                    // call Storage.
+                    int read;
+                    try
+                    {
+                        read = await body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
+                    {
+                        throw new UpdateException(UpdateFailure.Network, "The connection to the update server was lost mid-download.", ex);
+                    }
+
+                    if (read == 0) break;
                     await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                     total += read;
                     bytesWritten?.Report(total);
@@ -87,12 +106,11 @@ namespace Orbweaver
                 : new UpdateException(UpdateFailure.Network, $"The update server answered HTTP {status} for {url}.");
         }
 
-        // A transport failure, or our own metadata timeout, is Network. Caller
-        // cancellation and our own UpdateExceptions are not, and pass through.
-        // HttpIOException is a body cut off mid-stream; it is an IOException, so
-        // without naming it here it would be mistaken for the local disk failing.
+        // Failures before the body starts: a transport error, or our own metadata
+        // timeout, is Network. Caller cancellation and our own UpdateExceptions pass
+        // through. (A body that dies mid-stream is classified at the read, above.)
         private static bool IsTransportFailure(Exception ex, CancellationToken caller) =>
-            ex is HttpRequestException or HttpIOException
+            ex is HttpRequestException
             || (ex is OperationCanceledException && !caller.IsCancellationRequested);
 
         public void Dispose() => _http.Dispose();
