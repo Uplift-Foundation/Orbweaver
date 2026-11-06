@@ -1448,27 +1448,31 @@ public class MirrorRoundTripTests : IDisposable
 
     // --- a conversation, not just a process ---------------------------------------
 
-    // A session nobody has spoken to since yesterday does not get an orb.
+    // A session nobody has spoken to since yesterday is offered parked.
     //
     // **Measured on real machines and not reproducible any other way.** The Mac
     // mini had two sessions both called `job-hunter-mac-mini`, both with a live
     // process, both listed by `claude agents` — and one of them had last been
-    // spoken to 23 hours earlier. Drawn side by side they were
-    // indistinguishable, so the live one read as missing and both read as fake.
+    // spoken to 23 hours earlier. The trap this pins is the one that makes it
+    // hard to see: the quiet session's transcript had been *written six
+    // minutes earlier*. Remote Control's bridge keeps poking the file of a
+    // session it is attached to, with rows carrying no timestamp at all — so
+    // file mtime, process liveness and registry presence all agreed it was in
+    // use. Only the newest turn did not. The fixture below is that exact shape.
     //
-    // The trap this pins is the one that makes it hard to see: the abandoned
-    // session's transcript had been *written six minutes earlier*. Remote
-    // Control's bridge keeps poking the file of a session it is attached to,
-    // with rows carrying no timestamp at all — so file mtime, process liveness
-    // and registry presence all agreed it was alive. Only the newest turn did
-    // not. The fixture below is that exact shape.
+    // CB-307: such a session used to be left out of the roster entirely, which
+    // gave a long-lived quiet session no orb at all on a peer. It is now
+    // offered, and flagged parked so the near side draws it dimmed; the server
+    // logs it under hello-parked, and the hello-abandoned key is gone.
     [Fact]
-    public async Task ASessionNobodyHasSpokenToSinceYesterdayIsNotOffered()
+    public async Task ASessionNobodyHasSpokenToSinceYesterdayIsOfferedParked()
     {
         var stale = WriteTranscript("abandoned.jsonl",
             Conversation(2).Concat(Enumerable.Range(0, 40).Select(BridgeRow)));
 
         var harness = new Harness(_dir);
+        var said = new List<string>();
+        harness.Server.QuietLog = (what, _) => said.Add(what);
         harness.AddSession("job-hunter", stale);
 
         // A day after the rows, rather than a minute. Nothing else changes.
@@ -1476,18 +1480,20 @@ public class MirrorRoundTripTests : IDisposable
 
         await harness.Client.DiscoverAsync(new[] { Harness.FarRelay }, new[] { "job-hunter" });
 
-        Assert.Equal(
-            RemoteMirrorClient.MirrorAvailability.Unavailable,
-            harness.Client.StateFor("job-hunter").Availability);
+        var state = harness.Client.StateFor("job-hunter");
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Available, state.Availability);
+        Assert.True(state.Entry!.Parked);
+        Assert.Contains("hello-parked:job-hunter", said);
+        Assert.DoesNotContain(said, w => w.StartsWith("hello-abandoned", StringComparison.Ordinal));
     }
 
-    // ...and the same session, an hour later rather than a day, still does.
+    // ...and the same session, an hour later rather than a day, is not parked.
     //
     // The other half of the boundary, and the mistake this must not repeat:
     // CB-74 removed a filter that keyed off the status file's heartbeat, which
     // stops for a session that is merely idle — so it hid sessions that were
-    // alive and waiting. Walking away for an hour is not abandoning a
-    // conversation.
+    // alive and waiting. Walking away for an hour is not leaving a
+    // conversation, and the field is absent rather than false.
     [Fact]
     public async Task ASessionSpokenToWithinTheHourStillIs()
     {
@@ -1495,16 +1501,157 @@ public class MirrorRoundTripTests : IDisposable
             Conversation(2).Concat(Enumerable.Range(0, 40).Select(BridgeRow)));
 
         var harness = new Harness(_dir);
+        var said = new List<string>();
+        harness.Server.QuietLog = (what, _) => said.Add(what);
         harness.AddSession("job-hunter", recent);
 
         harness.Server.Now = () => LiveAt.AddHours(1);
 
         await harness.Client.DiscoverAsync(new[] { Harness.FarRelay }, new[] { "job-hunter" });
 
-        Assert.Equal(
-            RemoteMirrorClient.MirrorAvailability.Available,
-            harness.Client.StateFor("job-hunter").Availability);
+        var state = harness.Client.StateFor("job-hunter");
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Available, state.Availability);
+        Assert.Null(state.Entry!.Parked);
+        Assert.Empty(said);
     }
+
+    // CB-307's one remaining hide: a quiet copy beside a live copy of the same
+    // name. Two registry rows answer to `job-hunter` (Offer qualifies their
+    // names); the live one is offered and the quiet one is not, and the server
+    // says so once under hello-duplicate.
+    [Fact]
+    public async Task AQuietCopyBesideALiveCopyOfTheSameNameIsSuppressed()
+    {
+        var harness = new Harness(_dir);
+        var said = new List<string>();
+        harness.Server.QuietLog = (what, _) => said.Add(what);
+        harness.AddSession("job-hunter", WriteTranscript("dup-live.jsonl", Conversation(2)));
+        var live = harness.SessionIdOf("job-hunter");
+        harness.AddSession("job-hunter", WriteTranscript("dup-quiet.jsonl", new[] { DayOldTurn }));
+        var quiet = harness.SessionIdsOf("job-hunter").Single(id => id != live);
+
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("dup1"));
+        var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "dup1"))!.ToList();
+
+        var entry = Assert.Single(known);
+        Assert.Equal(RemoteMirrorServer.RouteFor(live), entry.Route);
+        Assert.Null(entry.Parked);
+        Assert.DoesNotContain(known, e => e.Route == RemoteMirrorServer.RouteFor(quiet));
+        Assert.Contains("hello-duplicate:job-hunter", said);
+        Assert.DoesNotContain(said, w => w.StartsWith("hello-abandoned", StringComparison.Ordinal));
+    }
+
+    // ...and two quiet copies are both offered, both parked: there is nothing
+    // to prefer one over the other.
+    [Fact]
+    public async Task TwoQuietCopiesAreBothOfferedParked()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("dup-quiet-a.jsonl", new[] { DayOldTurn }));
+        harness.AddSession("job-hunter", WriteTranscript("dup-quiet-b.jsonl", new[] { DayOldTurn }));
+
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("dup2"));
+        var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "dup2"))!.ToList();
+
+        Assert.Equal(2, known.Count);
+        Assert.All(known, e => Assert.True(e.Parked));
+    }
+
+    // The wire, both directions, on bytes the server really served. Stripping
+    // the one field from a parked roster gives back exactly the bytes of the
+    // same roster unparked — which is both what an older Buddy reads (it
+    // ignores the member, and decodes the same entries) and why the hash moves
+    // when, and only when, a session flips: that is how a peer learns a parked
+    // session has cleared.
+    [Fact]
+    public async Task ParkedIsOneOptionalFieldOnTheWireAndMovesTheHash()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("wire.jsonl", Conversation(2)));
+
+        harness.Server.Now = () => LiveAt.AddHours(23);
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("wire1"));
+        var parkedRaw = MirrorProtocol.Gunzip(ReassembledPayload(harness.ToClient, "wire1"));
+
+        harness.Server.Now = () => LiveAt;
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("wire2"));
+        var liveRaw = MirrorProtocol.Gunzip(ReassembledPayload(harness.ToClient, "wire2"));
+
+        var parkedText = Encoding.UTF8.GetString(parkedRaw);
+        Assert.Contains(",\"parked\":true", parkedText);
+        Assert.DoesNotContain("parked", Encoding.UTF8.GetString(liveRaw));
+        Assert.Equal(Encoding.UTF8.GetString(liveRaw), parkedText.Replace(",\"parked\":true", ""));
+
+        Assert.NotEqual(MirrorProtocol.Hash(parkedRaw), MirrorProtocol.Hash(liveRaw));
+
+        // And an older roster (no field) read by this Buddy is not parked.
+        var older = MirrorProtocol.DecodeRoster(MirrorProtocol.Gzip(liveRaw))!;
+        Assert.Null(Assert.Single(older).Parked);
+    }
+
+    // The cost claim behind LastTurnCache: a peer asks every ten seconds, and
+    // an unchanged transcript is read once, not once per ask. The cache is
+    // the server's seam, with the real disk arms and the read counted.
+    [Fact]
+    public async Task RepeatedHellosReadAnUnchangedTranscriptOnce()
+    {
+        var reads = 0;
+        var cache = new LastTurnCache(LastTurnCache.RealLengthOf, path =>
+        {
+            reads++;
+            return TranscriptReader.TailLines(path, LastTurnCache.TailBytes);
+        });
+
+        var harness = new Harness(_dir, lastTurns: cache);
+        var path = WriteTranscript("read-once.jsonl", Conversation(2));
+        harness.AddSession("job-hunter", path);
+
+        for (var i = 0; i < 3; i++)
+            await harness.Server.HandleAsync(Harness.NearRelay, OldHello("once" + i));
+        Assert.Equal(1, reads);
+
+        File.AppendAllText(path, Row("user", "u9", "back again") + "\n");
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("once9"));
+        Assert.Equal(2, reads);
+    }
+
+    // CB-307: Codex and Grok sessions are never offered parked. Their real
+    // transcripts hold no Claude-shaped turn rows (the first rows below are
+    // the shapes measured on real files), and the host's scan only reads
+    // last turns for Claude Code — so the server says "not parked" outright.
+    // The Claude-shaped day-old row is there to make that a decision rather
+    // than an accident of the fixture: it would park a Claude Code session,
+    // and the Claude Code control beside them, on the same clock with the
+    // same row, is parked.
+    [Fact]
+    public async Task CodexAndGrokSessionsAreNeverOfferedParked()
+    {
+        var dayOld = new[]
+        {
+            "{\"timestamp\":\"2026-08-15T10:00:00Z\",\"type\":\"response_item\",\"payload\":{}}",
+            "{\"timestamp\":\"2026-08-15T10:00:01Z\",\"update\":{}}",
+            DayOldTurn,
+        };
+
+        var harness = new Harness(_dir);
+        harness.AddCodexSession("codex quiet", WriteTranscript("codex-quiet.jsonl", dayOld));
+        harness.AddCodexSession("grok quiet", WriteTranscript("grok-quiet.jsonl", dayOld), SessionSource.Grok);
+        harness.AddSession("claude quiet", WriteTranscript("claude-quiet.jsonl", dayOld));
+
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("cg1"));
+        var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "cg1"))!.ToList();
+
+        Assert.Equal(3, known.Count);
+        Assert.Null(known.Single(e => e.Name == "codex quiet").Parked);
+        Assert.Null(known.Single(e => e.Name == "grok quiet").Parked);
+        Assert.True(known.Single(e => e.Name == "claude quiet").Parked);
+    }
+
+    // A single turn a day before the fixture's own rows: the shape of a quiet
+    // session at the fixture's clock, written by hand because Conversation
+    // stamps every row at RowAt.
+    private const string DayOldTurn =
+        "{\"type\":\"user\",\"uuid\":\"old\",\"timestamp\":\"2026-08-15T10:00:00Z\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}";
 
     // What the bridge appends to a session it is attached to: no timestamp, and
     // enough of them to bury the last real turn under bookkeeping.
@@ -1687,7 +1834,7 @@ public class MirrorRoundTripTests : IDisposable
     private const string RowAt = "2026-08-16T10:00:00Z";
 
     // A minute after the rows above, which is what the far side's clock is set
-    // to. Far enough inside SessionLiveness.StaysInterestingFor that a change
+    // to. Far enough inside SessionLiveness.ParkedAfter that a change
     // to that window does not silently empty every roster in this file.
     internal static readonly DateTime LiveAt =
         new(2026, 8, 16, 10, 1, 0, DateTimeKind.Utc);
@@ -2630,14 +2777,15 @@ public class MirrorRoundTripTests : IDisposable
     }
 
     // The real liveness rule on members, not an injected one: a member nobody
-    // has spoken to since yesterday is not offered, exactly as a registered
-    // session in that state is not. Its lead's transcript path names no file,
+    // has spoken to since yesterday is offered parked (CB-307), exactly as a
+    // registered session in that state is — and it is not taken for a
+    // duplicate of its lead, whose title every member inherits. Its lead's transcript path names no file,
     // which is what keeps the lead itself out of the liveness question, and
     // the members that do get offered cover the other two transcript shapes —
     // a path to nothing, and no path at all — both offered without a
     // transcript to show.
     [Fact]
-    public async Task AMemberNobodyHasSpokenToSinceYesterdayIsNotOffered()
+    public async Task AMemberNobodyHasSpokenToSinceYesterdayIsOfferedParked()
     {
         var harness = new Harness(_dir);
         harness.AddSession("backlog status check", Path.Combine(_dir, "no-such-lead.jsonl"));
@@ -2655,7 +2803,9 @@ public class MirrorRoundTripTests : IDisposable
         // deliberately have none.
         await harness.Server.HandleAsync(Harness.NearRelay, OldHello("stale1"));
         var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "stale1"))!.ToList();
-        Assert.DoesNotContain(known, e => e.Route == RemoteMirrorServer.RouteFor(stale));
+        var staleEntry = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(stale));
+        Assert.True(staleEntry.Parked);
+        Assert.Equal(RemoteMirrorServer.RouteFor(lead), staleEntry.Lead);
 
         var ghost = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(pathToNothing));
         Assert.False(ghost.HasTranscript);
@@ -2663,7 +2813,9 @@ public class MirrorRoundTripTests : IDisposable
 
         var fresh = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(noPath));
         Assert.False(fresh.HasTranscript);
-        Assert.Equal(3, known.Count);
+        Assert.Null(fresh.Parked);
+        Assert.Null(ghost.Parked);
+        Assert.Equal(4, known.Count);
     }
 
     // A member's display name when it has no title: its folder, and with no
@@ -2865,7 +3017,8 @@ public class MirrorRoundTripTests : IDisposable
         // Harness never reads the developer's real persona (CB-252).
         public IReadOnlyList<string> UserConfigDirs { get; set; } = Array.Empty<string>();
 
-        public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false)
+        public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
+            LastTurnCache? lastTurns = null)
         {
             _dir = dir;
 
@@ -2918,7 +3071,8 @@ public class MirrorRoundTripTests : IDisposable
                         SlashRan.Add(line);
                         return Task.FromResult(SlashRunner!(status, line));
                     }
-                    : null));
+                    : null,
+                LastTurns: lastTurns));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -2956,12 +3110,13 @@ public class MirrorRoundTripTests : IDisposable
 
         // A Codex session: a status file with no agent-registry row, which the
         // full roster offers from the status files directly.
-        public void AddCodexSession(string title, string transcriptPath) =>
+        public void AddCodexSession(string title, string transcriptPath,
+            SessionSource source = SessionSource.Codex) =>
             _sessions.Add((Guid.NewGuid().ToString(), new SessionStatus
             {
                 Title = title,
                 Cwd = _dir,
-                Source = SessionSource.Codex,
+                Source = source,
                 TranscriptPath = transcriptPath,
                 TmuxPane = "%2",
                 SessionPid = 2000 + _sessions.Count,
@@ -3010,6 +3165,9 @@ public class MirrorRoundTripTests : IDisposable
         }
 
         public string SessionIdOf(string title) => _sessions.First(s => s.Status.Title == title).SessionId;
+
+        public IEnumerable<string> SessionIdsOf(string title) =>
+            _sessions.Where(s => s.Status.Title == title).Select(s => s.SessionId);
 
         public void AddSession(string name, string transcriptPath) => AddSession(name, transcriptPath, null);
 

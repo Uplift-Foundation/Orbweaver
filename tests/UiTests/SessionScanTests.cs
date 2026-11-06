@@ -3613,4 +3613,251 @@ public class SessionScanTests
         Assert.True(File.Exists(Path.Combine(current.Dir, "unseen.txt")));
         Assert.False(File.Exists(Path.Combine(legacy.Dir, "unseen.txt")));
     }
+
+    // --- CB-307: quiet sessions are parked, not hidden ---
+
+    // A transcript whose real turns carry the given times, written the way the
+    // CLI writes them (ISO-8601 with a trailing Z). Not Scratch.WriteTranscript,
+    // whose rows are deliberately timestamp-less: that is the "cannot tell"
+    // shape, and every scan test written before this rule leans on it staying so.
+    private static string TurnTranscript(Scratch scratch, string sessionId, params DateTime[] turns)
+    {
+        var path = Path.Combine(scratch.Dir, sessionId + ".jsonl");
+        File.WriteAllText(path, string.Join("\n", turns.Select((at, i) =>
+            "{\"type\":\"" + (i % 2 == 0 ? "user" : "assistant") + "\",\"timestamp\":\""
+            + at.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+            + "\",\"message\":{\"content\":\"x\"}}")) + "\n");
+        return path;
+    }
+
+    private static readonly TimeSpan Quiet = TimeSpan.FromHours(23);
+
+    // A scan that asks the daemon, the panes and the process table nothing real,
+    // for the tests below that need a second live pid and a team: the same seams
+    // RemoteScanTests uses, for the same reason.
+    private static SessionManager Seamed(
+        Scratch scratch, Func<int, AgentTeam.Membership>? membership = null)
+    {
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        OrbweaverSettings.CodexEnabled = true;
+        return new SessionManager(
+            scratch.Dir,
+            () => new Dictionary<string, string>(StringComparer.Ordinal),
+            () => new HashSet<string>(StringComparer.Ordinal),
+            dependents: _ => SessionDependents.Nothing,
+            paneOwners: claims => claims.ToDictionary(TmuxPaneKey.Of, _ => (string?)null),
+            agentViewer: _ => null,
+            teams: pids => pids.ToDictionary(
+                p => p, p => membership?.Invoke(p) ?? AgentTeam.None));
+    }
+
+    private static System.Diagnostics.Process SpawnSecondLivePid() =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = OperatingSystem.IsWindows() ? "ping" : "sleep",
+            Arguments = OperatingSystem.IsWindows() ? "-n 120 127.0.0.1" : "120",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+        })!;
+
+    [AvaloniaFact]
+    public void AnIdleSessionNobodyHasSpokenToForADayIsStillDrawnButParked()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "quiet", DateTime.UtcNow - Quiet);
+        scratch.Write("quiet", title: "lawyer-search", transcriptPath: transcript);
+
+        var manager = Scan(scratch);
+
+        Assert.Contains("quiet", OrbIds(manager));
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("quiet")!.Presence);
+    }
+
+    [AvaloniaFact]
+    public void ASessionSpokenToRecentlyIsNotParked()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "lively", DateTime.UtcNow - TimeSpan.FromMinutes(5));
+        scratch.Write("lively", title: "lawyer-search", transcriptPath: transcript);
+
+        var manager = Scan(scratch);
+
+        Assert.Equal(OrbPresence.Present, manager.StatusFor("lively")!.Presence);
+    }
+
+    // A transcript with no timestamped turn is "cannot tell", and cannot tell
+    // fails open: an orb that lingers brightly is the cheaper mistake.
+    [AvaloniaFact]
+    public void ASessionWhoseTranscriptHasNoTimedTurnIsNotParked()
+    {
+        using var scratch = new Scratch();
+        var transcript = scratch.WriteTranscript("untimed");
+        scratch.Write("untimed", transcriptPath: transcript);
+
+        var manager = Scan(scratch);
+
+        Assert.Equal(OrbPresence.Present, manager.StatusFor("untimed")!.Presence);
+        Assert.Null(manager.StatusFor("untimed")!.LastTurnUtc);
+    }
+
+    // generating and waiting are in use now whatever the file says, and their
+    // transcripts are never opened — which is the whole cost argument for
+    // WantsLastTurn. Counted through the cache's own seams rather than assumed.
+    [AvaloniaFact]
+    public void AGeneratingSessionIsNeverParkedAndItsTranscriptIsNeverRead()
+    {
+        using var scratch = new Scratch();
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        OrbweaverSettings.CodexEnabled = true;
+        var transcript = TurnTranscript(scratch, "busy", DateTime.UtcNow - Quiet);
+        using var child = SpawnSecondLivePid();
+        scratch.Write("busy", state: "generating", transcriptPath: transcript);
+        scratch.Write("blocked", state: "waiting", transcriptPath: transcript, pid: child.Id);
+
+        var reads = 0;
+        var manager = new SessionManager(scratch.Dir)
+        {
+            LastTurns = new LastTurnCache(
+                path => new FileInfo(path).Length,
+                path => { reads++; return File.ReadLines(path); }),
+        };
+        manager.ScanAndUpdate();
+
+        Assert.Equal(0, reads);
+        Assert.Equal(OrbPresence.Present, manager.StatusFor("busy")!.Presence);
+        Assert.Equal(OrbPresence.Present, manager.StatusFor("blocked")!.Presence);
+        Assert.Null(manager.StatusFor("busy")!.LastTurnUtc);
+    }
+
+    // The clearing half: parked on one scan, and the next turn un-parks it on
+    // the next, with the transcript read again only because its length moved.
+    [AvaloniaFact]
+    public void ANewTurnClearsParkedOnTheNextScan()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "wakes", DateTime.UtcNow - Quiet);
+        scratch.Write("wakes", title: "lawyer-search", transcriptPath: transcript);
+
+        var manager = Scan(scratch);
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("wakes")!.Presence);
+
+        // Mid-turn: the hook writes generating, and the next scan lets go of it
+        // without the transcript having changed.
+        scratch.Write("wakes", state: "generating", title: "lawyer-search", transcriptPath: transcript);
+        manager.ScanAndUpdate();
+        Assert.Equal(OrbPresence.Present, manager.StatusFor("wakes")!.Presence);
+
+        // After the turn: idle again, with a fresh turn on the end of the file.
+        TurnTranscript(scratch, "wakes", DateTime.UtcNow - Quiet, DateTime.UtcNow);
+        scratch.Write("wakes", state: "idle", title: "lawyer-search", transcriptPath: transcript);
+        manager.ScanAndUpdate();
+        Assert.Equal(OrbPresence.Present, manager.StatusFor("wakes")!.Presence);
+    }
+
+    // A background job's presence is the daemon's, never a clock's: the scan
+    // must not park it however old its transcript is.
+    [AvaloniaFact]
+    public void ABackgroundJobIsNotParkedByTheClock()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "job", DateTime.UtcNow - Quiet);
+        File.WriteAllText(Path.Combine(scratch.Dir, "job.txt"),
+            System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+            {
+                State = "idle",
+                SessionPid = LivePid,
+                TranscriptPath = transcript,
+            }));
+
+        var manager = Manager(scratch, () => Listing(("job", "blocked")));
+        manager.ScanAndUpdate();
+
+        var status = manager.StatusFor("job");
+        Assert.NotNull(status);
+        Assert.Equal(LocalSessionShape.Background, status!.Shape);
+
+        // The daemon's word, not the clock's: the transcript is a day old and
+        // this is still NeedsInput rather than Parked.
+        Assert.Equal(OrbPresence.NeedsInput, status.Presence);
+    }
+
+    // The one thing that is hidden: an exact-duplicate-name quiet copy beside a
+    // live copy of the same name. Both start live so both have an orb, and the
+    // removal is the ordinary removal pass rather than a never-drawn.
+    [AvaloniaFact]
+    public void AQuietCopyBesideALiveCopyOfTheSameNameIsRemoved()
+    {
+        using var scratch = new Scratch();
+        using var child = SpawnSecondLivePid();
+        scratch.Write("original", state: "generating", title: "lawyer-search");
+        scratch.Write("fresh", state: "generating", title: "Lawyer-Search", pid: child.Id);
+
+        var manager = Seamed(scratch);
+        manager.ScanAndUpdate();
+        Assert.Equal(2, OrbIds(manager).Count);
+
+        var transcript = TurnTranscript(scratch, "original", DateTime.UtcNow - Quiet);
+        scratch.Write("original", state: "idle", title: "lawyer-search", transcriptPath: transcript);
+        manager.ScanAndUpdate();
+
+        Assert.Equal(new[] { "fresh" }, OrbIds(manager));
+        Assert.Null(manager.StatusFor("original"));
+    }
+
+    [AvaloniaFact]
+    public void TwoQuietCopiesOfTheSameNameAreBothDrawnParked()
+    {
+        using var scratch = new Scratch();
+        using var child = SpawnSecondLivePid();
+        scratch.Write("a", title: "lawyer-search",
+            transcriptPath: TurnTranscript(scratch, "a", DateTime.UtcNow - Quiet));
+        scratch.Write("b", title: "lawyer-search", pid: child.Id,
+            transcriptPath: TurnTranscript(scratch, "b", DateTime.UtcNow - Quiet));
+
+        var manager = Seamed(scratch);
+        manager.ScanAndUpdate();
+
+        Assert.Equal(2, OrbIds(manager).Count);
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("a")!.Presence);
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("b")!.Presence);
+    }
+
+    [AvaloniaFact]
+    public void ADifferentlyNamedQuietSessionIsNeverSuppressed()
+    {
+        using var scratch = new Scratch();
+        using var child = SpawnSecondLivePid();
+        scratch.Write("quiet", title: "lawyer-search",
+            transcriptPath: TurnTranscript(scratch, "quiet", DateTime.UtcNow - Quiet));
+        scratch.Write("live", state: "generating", title: "job-hunter", pid: child.Id);
+
+        var manager = Seamed(scratch);
+        manager.ScanAndUpdate();
+
+        Assert.Equal(2, OrbIds(manager).Count);
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("quiet")!.Presence);
+    }
+
+    // CB-223: every team member inherits its lead's title, so a quiet member
+    // beside a live lead is the same name by construction and must stay —
+    // parked, not removed. The control is the test above's shape with no team.
+    [AvaloniaFact]
+    public void AQuietTeamMemberBesideItsLiveLeadIsParkedNotSuppressed()
+    {
+        using var scratch = new Scratch();
+        using var child = SpawnSecondLivePid();
+        scratch.Write("lead-id", state: "generating", title: "backlog status check");
+        scratch.Write("member", title: "backlog status check", pid: child.Id,
+            transcriptPath: TurnTranscript(scratch, "member", DateTime.UtcNow - Quiet));
+
+        var manager = Seamed(scratch, pid => pid == child.Id
+            ? new AgentTeam.Membership("lead-id", "blue", "wren-asare")
+            : AgentTeam.None);
+        manager.ScanAndUpdate();
+
+        Assert.Equal(2, OrbIds(manager).Count);
+        Assert.Equal("lead-id", manager.StatusFor("member")!.Lead);
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("member")!.Presence);
+    }
 }

@@ -190,4 +190,30 @@ public class RosterHashTests
 
         Assert.All(answers, answer => Assert.Equal(raw, MirrorProtocol.Gunzip(answer)));
     }
+
+    // CB-307: the parked flag is how a peer learns a session has gone quiet or
+    // come back, and it rides on the hash: unchanged when nothing is parked,
+    // changed the moment something flips.
+    [Fact]
+    public void ARosterWithNothingParkedHashesAsItDidBeforeTheFieldExisted()
+    {
+        var before = "[{\"name\":\"far-session\",\"cli\":\"claude\",\"transcript\":true,\"pane\":true}]";
+        var now = new MirrorProtocol.MirrorRosterEntry("far-session", MirrorProtocol.CliClaudeCode, true, true);
+
+        Assert.Equal(before, Encoding.UTF8.GetString(MirrorProtocol.RosterBytes(new[] { now })));
+        Assert.Equal(
+            MirrorProtocol.Hash(Encoding.UTF8.GetBytes(before)),
+            MirrorProtocol.Hash(MirrorProtocol.RosterBytes(new[] { now })));
+    }
+
+    [Fact]
+    public void ASessionGoingQuietChangesTheHash()
+    {
+        var live = new MirrorProtocol.MirrorRosterEntry("far-session", MirrorProtocol.CliClaudeCode, true, true);
+        var parked = live with { Parked = true };
+
+        Assert.NotEqual(
+            MirrorProtocol.Hash(MirrorProtocol.RosterBytes(new[] { live })),
+            MirrorProtocol.Hash(MirrorProtocol.RosterBytes(new[] { parked })));
+    }
 }

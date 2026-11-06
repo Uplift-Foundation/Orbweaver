@@ -168,6 +168,35 @@ public class PeerRosterProfilesTests : IDisposable
         Assert.Empty(wire.Server.LastRosterGaps);
     }
 
+    // CB-307: a quiet copy suppressed beside a live copy of the same title is
+    // not reported as a gap. The gap analysis counts every session (the server
+    // passes RosterGaps an always-true eligibility) because a suppressed copy
+    // is always a registry-matched row, which RosterGaps skips anyway — this
+    // pins that, through the real wiring. TheOldListGivesAnEmptyRosterAndAGap
+    // ThatSaysWhy below is the control that the same fixture does produce gaps
+    // when the registry misses the sessions.
+    [Fact]
+    public async Task ASuppressedQuietDuplicateIsNotAGap()
+    {
+        WriteSettings(MiniSettings);
+        var sessions = LoginidSessions(2);
+        foreach (var (_, status) in sessions) status.Title = "job-hunter";
+        File.WriteAllText(sessions[1].Item2.TranscriptPath!,
+            "{\"type\":\"user\",\"uuid\":\"q\",\"timestamp\":\"2026-10-29T08:00:00Z\","
+            + "\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n");
+
+        var wire = new Wire(Home, () => PeerRosterDirs.Configured(Home), sessions);
+        var gapsSaid = new List<string>();
+        var quietSaid = new List<string>();
+        wire.Server.GapLog = (what, _) => gapsSaid.Add(what);
+        wire.Server.QuietLog = (what, _) => quietSaid.Add(what);
+
+        Assert.Equal(1, await wire.AskAsync());
+        Assert.Contains("hello-duplicate:job-hunter", quietSaid);
+        Assert.Empty(wire.Server.LastRosterGaps);
+        Assert.Empty(gapsSaid);
+    }
+
     // The reproduction as a test: the same fixture with the old RC-only list.
     [Fact]
     public async Task TheOldListGivesAnEmptyRosterAndAGapThatSaysWhy()

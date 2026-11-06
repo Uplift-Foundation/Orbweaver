@@ -106,7 +106,10 @@ namespace Orbweaver
         internal sealed record Remote(
             string Name, string Ref, string Status, DateTime Seen, string Account, string? Color = null,
             string? Cli = null, string? Route = null, MirrorProtocol.PeerPersona? Persona = null,
-            string? LeadRoute = null, string? Agent = null, string? AgentColor = null)
+            string? LeadRoute = null, string? Agent = null, string? AgentColor = null,
+            // CB-307: the far machine says nobody has spoken to this session
+            // for a while. Drawn dimmed, never dropped.
+            bool Parked = false)
         {
             // CB-223: the key of this session's lead's own orb, when the far
             // machine said it is a team member and offered the lead too. Built
@@ -440,7 +443,8 @@ namespace Orbweaver
                     k.Entry.Cli, k.Entry.Route, k.Entry.Persona,
                     string.IsNullOrWhiteSpace(k.Entry.Lead) ? null : k.Entry.Lead,
                     string.IsNullOrWhiteSpace(k.Entry.Agent) ? null : k.Entry.Agent,
-                    string.IsNullOrWhiteSpace(k.Entry.AgentColor) ? null : k.Entry.AgentColor))
+                    string.IsNullOrWhiteSpace(k.Entry.AgentColor) ? null : k.Entry.AgentColor,
+                    k.Entry.Parked == true))
                 .ToList();
 
         // CB-306: the roster entries this machine's own settings let through.
