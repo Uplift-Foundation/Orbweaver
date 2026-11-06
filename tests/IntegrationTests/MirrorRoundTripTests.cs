@@ -1687,7 +1687,7 @@ public class MirrorRoundTripTests : IDisposable
     private const string RowAt = "2026-08-16T10:00:00Z";
 
     // A minute after the rows above, which is what the far side's clock is set
-    // to. Far enough inside SessionLiveness.StaysInterestingFor that a change
+    // to. Far enough inside SessionLiveness.ParkedAfter that a change
     // to that window does not silently empty every roster in this file.
     internal static readonly DateTime LiveAt =
         new(2026, 8, 16, 10, 1, 0, DateTimeKind.Utc);

@@ -565,6 +565,51 @@ public class MirrorProtocolTests
         Assert.Equal("job-hunter", Assert.Single(back!).Name);
     }
 
+    // --- CB-307: parked ---------------------------------------------------------
+
+    [Fact]
+    public void ARosterFromAnOlderHostReadsAsNotParked()
+    {
+        var json = "[{\"name\":\"lawyer-search\",\"cli\":\"claude\",\"transcript\":true,\"pane\":true}]";
+
+        var back = MirrorProtocol.DecodeRoster(MirrorProtocol.Gzip(Encoding.UTF8.GetBytes(json)));
+
+        Assert.Null(Assert.Single(back!).Parked);
+    }
+
+    [Fact]
+    public void AParkedEntryReadsAsParked()
+    {
+        var json = "[{\"name\":\"lawyer-search\",\"cli\":\"claude\",\"transcript\":true,\"pane\":true,\"parked\":true}]";
+
+        var back = MirrorProtocol.DecodeRoster(MirrorProtocol.Gzip(Encoding.UTF8.GetBytes(json)));
+
+        Assert.True(Assert.Single(back!).Parked);
+    }
+
+    [Fact]
+    public void AnUnparkedEntryNeverMentionsTheField()
+    {
+        // Null is omitted, so a roster with nothing parked is the bytes it was
+        // before the field existed — which is what keeps its CB-216 hash.
+        var text = Encoding.UTF8.GetString(MirrorProtocol.RosterBytes(new[]
+        {
+            new MirrorProtocol.MirrorRosterEntry("lawyer-search", MirrorProtocol.CliClaudeCode, true, true),
+        }));
+
+        Assert.DoesNotContain("parked", text);
+    }
+
+    [Fact]
+    public void AParkedEntryRoundTrips()
+    {
+        var entry = new MirrorProtocol.MirrorRosterEntry(
+            "lawyer-search", MirrorProtocol.CliClaudeCode, true, true, Parked: true);
+
+        Assert.Contains("\"parked\":true", Encoding.UTF8.GetString(MirrorProtocol.RosterBytes(new[] { entry })));
+        Assert.True(Assert.Single(MirrorProtocol.DecodeRoster(MirrorProtocol.EncodeRoster(new[] { entry }))!).Parked);
+    }
+
     [Fact]
     public void ARosterEntryWithNoNameIsDropped()
     {

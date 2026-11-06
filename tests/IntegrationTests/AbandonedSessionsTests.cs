@@ -41,7 +41,7 @@ public class AbandonedSessionsTests : IDisposable
 
     private static DateTime? LastTurnOf(string path) =>
         SessionLiveness.LastTurnAt(
-            TranscriptReader.TailLines(path, RemoteMirrorServer.LivelinessTailBytes));
+            TranscriptReader.TailLines(path, LastTurnCache.TailBytes));
 
     [Fact]
     public void TheLastTurnIsFoundUnderAPileOfBridgeHousekeeping()
@@ -70,7 +70,7 @@ public class AbandonedSessionsTests : IDisposable
 
         var path = Write("parked-verdict.jsonl", lines);
 
-        Assert.False(SessionLiveness.WorthShowing(
+        Assert.False(!SessionLiveness.IsParked(
             "idle", LastTurnOf(path), new DateTime(2026, 8, 31, 3, 7, 0, DateTimeKind.Utc)));
     }
 
@@ -88,7 +88,7 @@ public class AbandonedSessionsTests : IDisposable
             Bridge(0),
         });
 
-        Assert.True(SessionLiveness.WorthShowing("idle", LastTurnOf(path), now));
+        Assert.True(!SessionLiveness.IsParked("idle", LastTurnOf(path), now));
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public class AbandonedSessionsTests : IDisposable
 
         var path = Write("big.jsonl", lines);
 
-        Assert.True(new FileInfo(path).Length > RemoteMirrorServer.LivelinessTailBytes);
+        Assert.True(new FileInfo(path).Length > LastTurnCache.TailBytes);
         Assert.Equal(
             new DateTime(2026, 8, 31, 3, 7, 7, 499, DateTimeKind.Utc),
             LastTurnOf(path));
@@ -120,7 +120,7 @@ public class AbandonedSessionsTests : IDisposable
         var missing = Path.Combine(_dir, "no-such-file.jsonl");
 
         Assert.Null(LastTurnOf(missing));
-        Assert.True(SessionLiveness.WorthShowing("idle", LastTurnOf(missing), DateTime.UtcNow));
+        Assert.True(!SessionLiveness.IsParked("idle", LastTurnOf(missing), DateTime.UtcNow));
     }
 
     [Fact]
@@ -131,6 +131,6 @@ public class AbandonedSessionsTests : IDisposable
         var path = Write("empty.jsonl", Array.Empty<string>());
 
         Assert.Null(LastTurnOf(path));
-        Assert.True(SessionLiveness.WorthShowing("idle", LastTurnOf(path), DateTime.UtcNow));
+        Assert.True(!SessionLiveness.IsParked("idle", LastTurnOf(path), DateTime.UtcNow));
     }
 }

@@ -616,7 +616,21 @@ namespace Orbweaver
             // ordinary session serialises exactly as before, so its CB-216
             // roster hash is unchanged.
             [property: JsonPropertyName("openclaw")] string? OpenClawCluster = null,
-            [property: JsonPropertyName("openclawWorkspace")] string? OpenClawWorkspace = null);
+            [property: JsonPropertyName("openclawWorkspace")] string? OpenClawWorkspace = null,
+
+            // CB-307: set, and only ever to true, on a session that is alive
+            // but nobody has spoken to for SessionLiveness.ParkedAfter. The
+            // near Buddy draws it dimmed rather than not at all, which is what
+            // the far Buddy used to do by leaving it out of the roster.
+            //
+            // Never written as false: null is omitted (RosterJson is
+            // WhenWritingNull), so a roster with nothing parked in it is the
+            // same bytes as before this field existed and keeps its CB-216
+            // hash, while a session flipping parked <-> live changes the bytes,
+            // which is the whole of how a peer learns it has cleared. An older
+            // Buddy reading this ignores the member and draws the orb at full
+            // brightness, which still beats the no-orb it got before.
+            [property: JsonPropertyName("parked")] bool? Parked = null);
 
         // The portable part of LocalPersona.Persona. Avatar is the already
         // bounded image bytes, never AvatarPath: the latter has meaning only

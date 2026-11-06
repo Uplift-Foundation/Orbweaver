@@ -878,18 +878,6 @@ namespace Orbweaver
                 .Take(MaxCatalogue)
                 .ToList();
 
-        // How much of a transcript to read looking for the last turn.
-        //
-        // Larger than the window used to *render* a conversation, because this
-        // is asking a different question: a session that has been sitting at a
-        // prompt accumulates bookkeeping rows — `bridge-session`,
-        // `queue-operation`, `mode` — after its final turn, and the answer is
-        // wrong if the last turn has been pushed out of the window by them.
-        // A megabyte reaches past several hundred such rows, and the cost is a
-        // bounded read on a path that already scans a commands directory per
-        // entry.
-        internal const int LivelinessTailBytes = 1024 * 1024;
-
         // Excluded from coverage: this is the disk. What it decides is
         // SessionLiveness, which is pure and covered from both sides of the
         // boundary; this reads a tail and asks.
@@ -907,9 +895,9 @@ namespace Orbweaver
             try
             {
                 var lines = TranscriptReader.TailLines(
-                    status.TranscriptPath!, LivelinessTailBytes);
+                    status.TranscriptPath!, LastTurnCache.TailBytes);
 
-                return SessionLiveness.WorthShowing(
+                return !SessionLiveness.IsParked(
                     status.State,
                     SessionLiveness.LastTurnAt(lines),
                     Now());
