@@ -118,6 +118,18 @@ public class UpdateSettingsAndTrayTests : IDisposable
         Assert.True(OrbweaverSettings.AutoCheckForUpdates);
     }
 
+    [AvaloniaFact]
+    public void ThePrereleaseSwitchWritesTheSettingBothWays()
+    {
+        var window = NewWindow();
+
+        window.OnPrereleaseToggled(true);
+        Assert.True(OrbweaverSettings.IncludePrereleaseUpdates);
+
+        window.OnPrereleaseToggled(false);
+        Assert.False(OrbweaverSettings.IncludePrereleaseUpdates);
+    }
+
     [AvaloniaTheory]
     [InlineData((int)UpdateCheckOutcome.UpToDate, "up to date")]
     [InlineData((int)UpdateCheckOutcome.Failed, "Could not check: offline")]

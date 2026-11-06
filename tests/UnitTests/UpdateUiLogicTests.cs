@@ -394,4 +394,19 @@ public class UpdateUiLogicTests
         Assert.Null(shown[1].Log);
     }
 
+
+    [Fact]
+    public void AMarkerThatCannotBeReadOrDeletedIsSkippedNotFatal()
+    {
+        var root = Scratch();
+        Directory.CreateDirectory(Path.Combine(root, "0.6.0"));
+        var marker = Path.Combine(root, "0.6.0", "failed");
+        File.WriteAllText(marker, "x");
+
+        Assert.Empty(UpdateFailureNotice.Find(root, _ => throw new IOException("locked")));
+
+        UpdateFailureNotice.Clear(root, "0.6.0", _ => throw new IOException("locked"));
+        UpdateFailureNotice.Clear(root, "0.6.0", _ => throw new UnauthorizedAccessException());
+        Assert.True(File.Exists(marker));
+    }
 }

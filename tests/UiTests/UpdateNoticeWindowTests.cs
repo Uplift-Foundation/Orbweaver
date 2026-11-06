@@ -418,6 +418,51 @@ public class UpdateNoticeWindowTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void EveryInlineStyleBecomesARun()
+    {
+        var controls = UpdateNotesView.Build("***both*** and *it* and **bold** and `code` and [a link](https://example.com)");
+
+        var runs = Descendants(controls).OfType<Avalonia.Controls.Documents.Run>().ToList();
+        Assert.Contains(runs, r => r.FontWeight == Avalonia.Media.FontWeight.SemiBold && r.FontStyle == Avalonia.Media.FontStyle.Italic);
+        Assert.Contains(runs, r => r.FontStyle == Avalonia.Media.FontStyle.Italic && r.FontWeight != Avalonia.Media.FontWeight.SemiBold);
+        Assert.Contains(runs, r => r.FontWeight == Avalonia.Media.FontWeight.SemiBold && r.FontStyle != Avalonia.Media.FontStyle.Italic);
+        Assert.Contains(runs, r => r.TextDecorations is { Count: > 0 });
+        Assert.Contains(runs, r => r.Text == "code" && r.FontFamily.Name.Contains("Menlo"));
+    }
+
+    private static IEnumerable<Avalonia.Controls.Documents.Inline> Descendants(IEnumerable<Control> controls)
+    {
+        foreach (var c in controls)
+        {
+            if (c is TextBlock t && t.Inlines is not null) foreach (var i in t.Inlines) yield return i;
+            if (c is Panel p) foreach (var i in Descendants(p.Children.OfType<Control>())) yield return i;
+            if (c is Border b && b.Child is Control child) foreach (var i in Descendants(new[] { child })) yield return i;
+        }
+    }
+
+    // Progress reported from a pool thread (the real downloader's) is posted to
+    // the UI thread rather than touching controls from the wrong one.
+    [AvaloniaFact]
+    public async Task ProgressFromAnotherThreadIsPostedToTheUiThread()
+    {
+        var (w, installer, _, _) = Build();
+        var gate = new TaskCompletionSource<InstallOutcome>();
+        installer.Run = async (progress, _) =>
+        {
+            await Task.Run(() => progress.Report(new UpdateProgress(UpdateStage.Installing, 0, 0)));
+            return await gate.Task;
+        };
+
+        var install = w.InstallAsync();
+        await Task.Delay(100);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Installing…", w.StatusText.Text);
+        gate.SetResult(new InstallOutcome(InstallStatus.HandedOff, "ok"));
+        await install;
+    }
+
+    [AvaloniaFact]
     public void AnEmptyBodySaysSoInsteadOfShowingNothing()
     {
         foreach (var body in new string?[] { null, "", "   \n " })

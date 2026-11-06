@@ -20,8 +20,9 @@ namespace Orbweaver
         internal static string UpdatesRoot() => Path.Combine(OrbweaverSettings.Directory, "updates");
 
         // Pure over the filesystem it is handed: every <root>/<version>/failed.
-        internal static IReadOnlyList<Failure> Find(string updatesRoot)
+        internal static IReadOnlyList<Failure> Find(string updatesRoot, Func<string, string>? read = null)
         {
+            read ??= File.ReadAllText;
             var found = new List<Failure>();
             if (!Directory.Exists(updatesRoot)) return found;
 
@@ -31,7 +32,7 @@ namespace Orbweaver
                 if (!File.Exists(marker)) continue;
 
                 string reason;
-                try { reason = File.ReadAllText(marker).Trim(); }
+                try { reason = read(marker).Trim(); }
                 catch (IOException) { continue; }
 
                 if (reason.Length == 0) reason = "The installer did not say why.";
@@ -45,10 +46,11 @@ namespace Orbweaver
             $"The update to {failure.Version} did not complete, so {Brand.DisplayName} is still on the version you had. "
             + failure.Reason;
 
-        internal static void Clear(string updatesRoot, string version)
+        internal static void Clear(string updatesRoot, string version, Action<string>? delete = null)
         {
             var marker = Path.Combine(updatesRoot, version, UpdateInstallPlan.MacFailedMarker);
-            try { if (File.Exists(marker)) File.Delete(marker); }
+            delete ??= File.Delete;
+            try { if (File.Exists(marker)) delete(marker); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }

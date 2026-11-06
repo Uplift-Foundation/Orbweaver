@@ -312,7 +312,7 @@ namespace Orbweaver
             StatusText.Text = outcome.Message;
 
             // Shown here, so the next launch must not announce it again.
-            (ClearFailureMarkerForTests ?? UpdateFailureNotice.Clear)(UpdateFailureNotice.UpdatesRoot(), Release.Version);
+            (ClearFailureMarkerForTests ?? ((r, v) => UpdateFailureNotice.Clear(r, v)))(UpdateFailureNotice.UpdatesRoot(), Release.Version);
         }
 
         internal void Later()

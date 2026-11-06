@@ -2434,7 +2434,7 @@ namespace Orbweaver
                     $"Looks for a newer {Brand.DisplayName} on GitHub about once a day. Nothing is "
                     + "downloaded until you choose Install, and with this off nothing is contacted at all."),
                 Row("Include prerelease versions",
-                    Switch(OrbweaverSettings.IncludePrereleaseUpdates, v => OrbweaverSettings.IncludePrereleaseUpdates = v),
+                    Switch(OrbweaverSettings.IncludePrereleaseUpdates, OnPrereleaseToggled),
                     "Offers beta builds as well as full releases."),
                 Row("Check now", checkNow),
                 NoteRow(_updateStatus)
@@ -2482,6 +2482,8 @@ namespace Orbweaver
             OrbweaverSettings.AutoCheckForUpdates = on;
             UpdateServices.Reschedule();
         }
+
+        internal void OnPrereleaseToggled(bool on) => OrbweaverSettings.IncludePrereleaseUpdates = on;
 
         internal void OnForgetSkippedUpdate()
         {
