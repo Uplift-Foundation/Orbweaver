@@ -675,6 +675,8 @@ public class MirrorRoundTripTests : IDisposable
         // Logged with the reason and never the text.
         var line = Assert.Single(log, l => l.Contains(MirrorProtocol.ErrNotAtPrompt));
         Assert.Contains("why=" + outcome.Why, line);
+        Assert.Contains(" lines=", line);
+        Assert.EndsWith(" check=no-prompt-mark", line);
         Assert.DoesNotContain("please carry on", string.Join("\n", log));
 
         // And the near panel's sentence quotes it.

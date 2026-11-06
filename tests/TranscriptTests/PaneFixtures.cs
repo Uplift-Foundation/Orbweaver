@@ -657,5 +657,96 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 ───────────────────────────────────────────────────────────────────── openclaw ─
 """"";
 
+        // Mac mini, a real idle prompt: titled upper rule, `❯`+NBSP, the "✔ Update installed" line just above the box. Read-only capture (CB-307 addendum, the screen
+        // the installed build was reported refusing), **redacted**: every ASCII
+        // letter is replaced by `x`, so the conversation, the session and agent
+        // names and the paths are gone while every digit, space, punctuation
+        // mark and box-drawing character — the whole shape a screen parser
+        // reads — is exactly as captured.
+        internal const string MiniUpdateLinePrompt = """""
+
+✻ xxxxxx xxx 1x 22x · xxxx 8:08 xx
+
+❯ xx xxxx xxxxxxx xxxx?
+
+⏺ xxx, x'x xxxx xxx xxx xxxxxxx xx xxxxxxx.
+
+  xx xxx xxxx xxxxxxx xxx xxx xxxxx xx xxxx xxxxxxx xxxxxx: xxx xxxxx
+  /xxxxxx-xxxxxxx xxxxxx xxxxxxx xxx xxxxx'x xxxxxx xx. xxx xxx /xxxxx xxx xxxx
+  /xxxxxx-xxxxxxx xxxxx, xxx xxxx xxxxxx xxx xxxx xx xxxxx, xx xx xxxx xxxxxx
+  xxxxxxxxx. x xxx'x xxxxx xxxx xxxxxxxxxx xxxx xxxxxx xxx xxxxxxx, xxxxxx. xxx
+  xxxxxx xxxx xx xx xxxx xxxxxx.xx/xxxx xx xxxx xxxxx xx xxxxxxx xxx xxx xxxxxxx
+  "xxx-xxxxxx" xxxxx xx. xx xx xxxxx'x, xxx /xxxxxx-xxxxxxx xxxxx.
+
+  xxxx, x xxxxxx xx xxxx xxxx xxxxxx xxxxx x xxxxxxx xx xxxxx xxxxxx. x xxx
+  xxxxx xxxx xxxxx xx xxx xx xx'x xxxxxxx xxxx.
+
+✻ xxxxéxx xxx 4x · xxxx 1:43 xx
+                                        ✔ xxxxxx xxxxxxxxx · xxxxxxx xx xxxxxx
+─────────────────────────────────────────────────────────────────── xxx-xxxxxx ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  xxxx 5.5 | ~/xxx-xxxxxx | 17% (7x:12%) | [.xxxxxx]
+  ⏵⏵ xxxxxx xxxxxxxxxxx xx (xxxxx+xxx xx xxxxx)
+""""";
+
+        // Mac mini, a real idle prompt with an agent-team list (`⏺ main`, `◯ …`) drawn UNDER the box. Read-only capture (CB-307 addendum, the screen
+        // the installed build was reported refusing), **redacted**: every ASCII
+        // letter is replaced by `x`, so the conversation, the session and agent
+        // names and the paths are gone while every digit, space, punctuation
+        // mark and box-drawing character — the whole shape a screen parser
+        // reads — is exactly as captured.
+        internal const string MiniTeamListPrompt = """""
+  - 10 xxxxx xxxxxxx xx xxxxxx, xxxx xxx xxxxxxx
+  - 11 xxxxxxxxx, xx xxxxxxxxxx xxx xxx xxxx xxxxxxxx xx
+    xxxxxx
+  - 2 xx xxx xxxxxxxx xxxx
+
+  xxxxx xxxxxx xxxxx xx xxx 23 xx xxxx xxxx. xxxx xx xxx 25
+  xxx xxx xxxx xxxxx xxxxxx'x xxxxxxxx xxxxxx. xxx xxxx
+  (xxxxxx xxxxx) xxxxxx xxxxx xxxx xxxxxx, xx xxxxxx xxxxx
+  xxxx xxx xxxxx xxxxxxx xxxx xxxx xxxxxx xxxxxxx.
+
+  xxxxx xxxx xxxxxxxxx xxxxxx x xxxxx xxxx, xxxx 5.170,
+  xxxxx xxx xxxx xxxx x xxxxxx xxxxxx xxx x xxxxxx xxxxxxx.
+  xxxx xxxxx xxxxxx xxxxxxxx'x xxxxxxxxx. x xxxxx'x
+  xxxxxxx xxx xxxx xxxxxx, xxxxxx, xxx x xxxxx xxxxxxxx xx
+  xx xxxxx xx xxxxxxx xxxxx xxxx xx. x'x xxxxx xx xxx.
+
+  xxx xxxx xxxx xxxxxxx xxxx xx xx 506 xxxxxxx xx "11/6
+  xxxxxxx xxxxx" xxxx xxxxxxx xxx xxx x xxxx. xxxxxxx
+  xxxxxxx xxx xx xxxxxxxx xxxxxxx xxx. xxx xxxx xxx, xx xxx
+  xxxxxx xxxxxxx xxxxxxx-xxxxxx xxxxxxx?
+
+  xxxxxx x xxxx xxx 25?
+
+
+⏺ xxxxxxxx @xxxxx-4 xxxxxxxx
+  xxxxx 6 xx xxxxx xxx xxxxxx'x xxxxxxxx: 25 xxxxx, xxxx
+  xxxx. xxxx'xx xx xxx xxxxxxxxxx xxxx xxxxx "xxxxx 6", xxx
+  x'xx xxxx xxx xxx xxxxx xxx xxx xxx xxx.…
+
+⏺ xxxxx'x xxxxxx xxxxxxx xxxxxxx xxxx x xxxxxxx xxxx xxx.
+  xxxxx 6 xxx 25 xxxxxxx xxxxx, xxx xxxxxxx xxx xxxx xxxx.
+
+  xxx xxxxxx xxxx xxxx xxxxxx:
+  1. xxxxx 6: xxxxxx x xxxx xxx 25?
+  2. xxx "11/6 xxxxxxx" xxxxx (xxxxxxx xxxx 482–494):
+     xxxxxxx xxxxx xxx x xxxx xx. xxx xxx, xx xxx xxx xxxxx
+     xxxxxxx-xxxxxx xxxxxxx xxxx'x xxxxxxx xxxxxxxx?
+                   ✔ xxxxxx xxxxxxxxx · xxxxxxx xx xxxxxx
+─────────────────────────────────────────── xxxxxx-xxxxxx ─
+❯ 
+───────────────────────────────────────────────────────────
+  xxxx 5.5 | ~/xxxxxxxx | 10% (7x:8%) | [.xxxxxx-xxxxx]
+  ⏵⏵ xxxx xxxx xx (xxxxx+xxx xx xxxxx)
+
+  ⏺ xxxx
+  ◯ xxxxx    xxxxx: xxxxxxxx xxxxxxx xxxxxx    1x 21x 19x
+  ◯ xxxxx-2  xxxxx: xxxxxxxx xxxxxxx xxxxxx    1x 21x 12x
+  ◯ xxxxx-3  xxxxx: xxxxxxxx xxxxxxx xxxxxx     1x 21x 3x
+  ◯ xxxxx-4  xxxxx: xxxxxxxx xxxxxxx xxxxxx     1x 21x 1x
+""""";
+
     }
 }

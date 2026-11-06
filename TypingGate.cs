@@ -36,6 +36,11 @@ namespace Orbweaver
     internal readonly record struct TypingVerdict(bool Allowed, string? Why)
     {
         internal static readonly TypingVerdict Allow = new(true, null);
+
+        // How the screen read, for a log line and nothing else: "capture=null",
+        // "capture=threw", or "lines=<n> check=<PaneScreen.Read's word>". Never
+        // any of the screen's text. Null when the screen was not read.
+        internal string? Diagnostic { get; init; }
     }
 
     internal static class TypingGate
@@ -59,7 +64,7 @@ namespace Orbweaver
         // (canReadPane null means "yes, if there is a capture" — a test seam
         // that supplies a screen means it). Refusal returns the gate's reason
         // and types nothing.
-        internal static async Task<(bool Typed, string? Refusal)> GuardedTypeAsync(
+        internal static async Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
             SessionStatus status,
             string text,
             Func<SessionStatus, string, Task<bool>> typeInto,
@@ -75,10 +80,10 @@ namespace Orbweaver
                     capturePane ?? (_ => Task.FromResult<string?>(null)),
                     capturePane is not null && (canReadPane?.Invoke(status) ?? true)).ConfigureAwait(false);
 
-                if (!verdict.Allowed) return (false, verdict.Why);
+                if (!verdict.Allowed) return (false, verdict.Why, verdict.Diagnostic);
             }
 
-            return (await typeInto(status, text).ConfigureAwait(false), null);
+            return (await typeInto(status, text).ConfigureAwait(false), null, null);
         }
 
         internal static async Task<TypingVerdict> JudgeAsync(
@@ -94,13 +99,19 @@ namespace Orbweaver
 
             string? screen;
             try { screen = await capturePane(status).ConfigureAwait(false); }
-            catch { screen = null; }
+            catch { return new TypingVerdict(false, UnreadableWhy) { Diagnostic = "capture=threw" }; }
 
-            return PaneScreen.Classify(screen) switch
+            if (screen is null) return new TypingVerdict(false, UnreadableWhy) { Diagnostic = "capture=null" };
+
+            var (reading, check) = PaneScreen.Read(screen);
+            var diagnostic = $"lines={screen.Replace("\r", "").Split('\n').Length} check={check}";
+
+            return reading switch
             {
-                PaneReading.Prompt => TypingVerdict.Allow,
-                PaneReading.Dialog => new TypingVerdict(false, DialogWhy(ChatTranscript.ParseDialog(screen!)!.Title)),
-                _ => new TypingVerdict(false, UnreadableWhy),
+                PaneReading.Prompt => TypingVerdict.Allow with { Diagnostic = diagnostic },
+                PaneReading.Dialog => new TypingVerdict(false, DialogWhy(ChatTranscript.ParseDialog(screen)!.Title))
+                    { Diagnostic = diagnostic },
+                _ => new TypingVerdict(false, UnreadableWhy) { Diagnostic = diagnostic },
             };
         }
     }

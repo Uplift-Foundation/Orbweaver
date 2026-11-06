@@ -1327,6 +1327,31 @@ namespace Orbweaver.Tests
                     ────────────────────────────────────────────────────────────────────
                     """) is null);
 
+            // The mini's real idle prompts (redacted): a titled top under the
+            // "✔ Update installed" line, `❯`+NBSP, and an agent-team list drawn
+            // under the box. Reported refused by an installed build; they read
+            // as prompts here, and are pinned so they always do.
+            Check("the mini's prompt under an update line is a prompt",
+                PaneScreen.Read(PaneFixtures.MiniUpdateLinePrompt) == (PaneReading.Prompt, "prompt"),
+                PaneScreen.Read(PaneFixtures.MiniUpdateLinePrompt).ToString());
+            Check("a prompt with an agent-team list under its box is a prompt",
+                PaneScreen.Read(PaneFixtures.MiniTeamListPrompt) == (PaneReading.Prompt, "prompt"),
+                PaneScreen.Read(PaneFixtures.MiniTeamListPrompt).ToString());
+            Check("the prompt's mark really is ❯ and a no-break space",
+                PaneFixtures.MiniUpdateLinePrompt.Contains("❯\u00a0\n") && PaneFixtures.MiniTeamListPrompt.Contains("❯\u00a0\n"));
+
+            // Read names the check that decided, one word per arm.
+            Check("Read: empty", PaneScreen.Read("") == (PaneReading.Unknown, "empty"));
+            Check("Read: dialog", PaneScreen.Read(PaneFixtures.MiniExitDialog).Check == "dialog");
+            Check("Read: no prompt mark", PaneScreen.Read("⏺ working").Check == "no-prompt-mark");
+            Check("Read: no box top", PaneScreen.Read("❯ \n────────────────────────────────────────").Check == "no-box-top");
+            Check("Read: no box bottom",
+                PaneScreen.Read("────────────────────────────────────────\n❯ \n\n\n\n────────────────────────────────────────").Check
+                    == "no-box-bottom");
+            Check("Read: options under the box",
+                PaneScreen.Read("────────────────────────────────────────\n❯ \n────────────────────────────────────────\n1. Yes").Check
+                    == "options-under-box");
+
             // Whatever the parser makes of /permissions, none of it is a prompt.
             foreach (var (name, screen) in new[]
                      {

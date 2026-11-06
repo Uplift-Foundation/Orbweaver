@@ -49,11 +49,18 @@ namespace Orbweaver
         // How far above it the box's top edge may be, skipping blanks.
         private const int TopWithin = 2;
 
-        internal static PaneReading Classify(string? screen)
-        {
-            if (string.IsNullOrWhiteSpace(screen)) return PaneReading.Unknown;
+        internal static PaneReading Classify(string? screen) => Read(screen).Reading;
 
-            if (ChatTranscript.ParseDialog(screen) is not null) return PaneReading.Dialog;
+        // The reading and which check decided it, as a short fixed word — never
+        // any of the screen's own text. The word is for a log line: a refusal
+        // reported from a machine nobody here can look at has to say which
+        // check fired, or the next report is another guess (CB-307 addendum:
+        // the first such report could not be reproduced from the captures).
+        internal static (PaneReading Reading, string Check) Read(string? screen)
+        {
+            if (string.IsNullOrWhiteSpace(screen)) return (PaneReading.Unknown, "empty");
+
+            if (ChatTranscript.ParseDialog(screen) is not null) return (PaneReading.Dialog, "dialog");
 
             var lines = screen.Replace("\r", "").Split('\n').Select(l => l.Trim()).ToArray();
             var from = Math.Max(0, lines.Length - ChatTranscript.DialogWindow);
@@ -62,25 +69,26 @@ namespace Orbweaver
             for (var i = lines.Length - 1; i >= from && mark < 0; i--)
                 if (lines[i].StartsWith('❯') && !ChatTranscript.OptionLine.IsMatch(lines[i])) mark = i;
 
-            if (mark < 0) return PaneReading.Unknown;
+            if (mark < 0) return (PaneReading.Unknown, "no-prompt-mark");
 
             var above = mark - 1;
             while (above >= Math.Max(0, mark - TopWithin) && lines[above].Length == 0) above--;
-            if (above < Math.Max(0, mark - TopWithin) || !IsBoxTop(lines[above])) return PaneReading.Unknown;
+            if (above < Math.Max(0, mark - TopWithin) || !IsBoxTop(lines[above]))
+                return (PaneReading.Unknown, "no-box-top");
 
             var bottom = -1;
             for (var j = mark + 1; j <= mark + RuleWithin && j < lines.Length && bottom < 0; j++)
                 if (ChatTranscript.IsHorizontalRule(lines[j])) bottom = j;
 
-            if (bottom < 0) return PaneReading.Unknown;
+            if (bottom < 0) return (PaneReading.Unknown, "no-box-bottom");
 
             for (var k = bottom + 1; k < lines.Length; k++)
                 if (ChatTranscript.OptionLine.IsMatch(lines[k])
                     || lines[k].Contains("Enter to ", StringComparison.Ordinal)
                     || lines[k].Contains("Esc to ", StringComparison.Ordinal))
-                    return PaneReading.Unknown;
+                    return (PaneReading.Unknown, "options-under-box");
 
-            return PaneReading.Prompt;
+            return (PaneReading.Prompt, "prompt");
         }
 
         // A box's top edge: a long run of rule characters at its start, with

@@ -2001,13 +2001,14 @@ namespace Orbweaver
             // CB-307 addendum: past the gate, or not at all. A refusal is its
             // own code with the reason as msg, logged with the reason and
             // never the text.
-            (bool Typed, string? Refusal) attempt;
+            (bool Typed, string? Refusal, string? Diagnostic) attempt;
             try { attempt = await GuardedTypeAsync(status, text).ConfigureAwait(false); }
-            catch { attempt = (false, null); }
+            catch { attempt = (false, null, null); }
 
             if (attempt.Refusal is { } why)
             {
-                InputLog("input", $"n={name} -> err code={MirrorProtocol.ErrNotAtPrompt} why={why}");
+                InputLog("input", $"n={name} -> err code={MirrorProtocol.ErrNotAtPrompt} why={why}"
+                    + (attempt.Diagnostic is { } diag ? " " + diag : ""));
                 await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNotAtPrompt, why).ConfigureAwait(false);
                 return;
             }
@@ -2091,7 +2092,7 @@ namespace Orbweaver
             if (!_seams.CanType(status))
                 return new SlashOutcome(MirrorProtocol.ViaRefused, SlashRouting.PeerSocketReason);
 
-            var (typed, refusal) = await GuardedTypeAsync(status, line).ConfigureAwait(false);
+            var (typed, refusal, _) = await GuardedTypeAsync(status, line).ConfigureAwait(false);
             if (refusal is not null)
                 return new SlashOutcome(MirrorProtocol.ViaRefused, TypingGate.NotAtPromptReason(refusal));
 
@@ -2102,7 +2103,7 @@ namespace Orbweaver
 
         // The only way this server types: TypingGate first, with this
         // server's seams as its reads.
-        private Task<(bool Typed, string? Refusal)> GuardedTypeAsync(SessionStatus status, string text) =>
+        private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(SessionStatus status, string text) =>
             TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
                 _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane);
 
