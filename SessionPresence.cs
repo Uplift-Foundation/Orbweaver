@@ -231,6 +231,15 @@ namespace Orbweaver
         // a clock's. Terminal sessions and team members both park by quiet,
         // because the mirror server parks members too and host and peer must
         // agree; the duplicate rule, not this one, is what protects members.
+        // CB-307 addendum: Claude Code's own record says the TUI is waiting on a
+        // dialog while the hook's status file still says `idle`, because no hook
+        // fires for a modal screen. Promote `idle` to `waiting` on that evidence
+        // and nothing else: `generating` and `waiting` already say more, and a
+        // record that does not say `waiting` decides nothing (its `busy` was
+        // measured two days stale on a session at its prompt).
+        internal static string EffectiveState(string fileState, bool recordWaiting) =>
+            recordWaiting && fileState == "idle" ? "waiting" : fileState;
+
         internal static OrbPresence WithQuiet(
             OrbPresence current, LocalSessionShape shape, string state,
             DateTime? lastTurnUtc, DateTime nowUtc) =>

@@ -85,6 +85,15 @@ namespace Orbweaver
         // or the window having been closed since the status file was written.
         public const string ErrTypeFailed = "type-failed";
 
+        // CB-307 addendum: the session's terminal is there and typeable, but it
+        // is not at its prompt — a dialog, a navigated list like /permissions,
+        // or a screen that could not be read as a prompt — so typing would be
+        // keystrokes on that screen rather than a message. Refused before
+        // anything is typed. The ERR's msg carries TypingGate's reason, which
+        // the near panel quotes; an older near Buddy that does not know the
+        // code shows its generic "couldn't type that" instead.
+        public const string ErrNotAtPrompt = "not-at-prompt";
+
         public const string ErrReplyOff = "reply-off";
         public const string ErrBadHash = "bad-hash";
         public const string ErrUnsupported = "unsupported";

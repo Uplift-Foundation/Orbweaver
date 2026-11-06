@@ -50,5 +50,6 @@
          and the transcript parsers read formats nobody here controls. -->
     <Compile Include="..\GlyphTests\GlyphSuite.cs" />
     <Compile Include="..\TranscriptTests\TranscriptSuite.cs" />
+    <Compile Include="..\TranscriptTests\PaneFixtures.cs" />
   </ItemGroup>
 </Project>

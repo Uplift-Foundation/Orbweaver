@@ -116,6 +116,81 @@ public class SessionParkRecordTests
         Assert.False(SessionPark.IsParked(70580, Owner, home));
     }
 
+    // --- RecordStatus (CB-307 addendum) ---------------------------------------
+
+    private static string StatusRecord(string status) =>
+        $$"""{"pid":32273,"sessionId":"{{Owner}}","kind":"interactive","status":"{{status}}"}""";
+
+    [Fact]
+    public void AWaitingRecordIsReadBackFromDisk()
+    {
+        var home = NewHome();
+        WriteRecord(home, ".claude", 32273, StatusRecord("waiting"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+    }
+
+    // Negative control from the measurement that justifies the rule: a record
+    // that is wrong but is not `waiting` (the real `busy`, two days stale, on a
+    // pane sitting at its prompt) reads back as exactly what it says, and the
+    // callers act on nothing but `waiting`.
+    [Fact]
+    public void ABusyRecordIsReadBackAsBusyAndNotAsWaiting()
+    {
+        var home = NewHome();
+        WriteRecord(home, ".claude", 81151, StatusRecord("busy"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Equal("busy", SessionPark.RecordStatus(81151, Owner, home));
+        Assert.NotEqual("waiting", SessionPark.RecordStatus(81151, Owner, home));
+    }
+
+    // Cached on (length, mtime), proved by making the file lie: same length,
+    // same mtime, different text. A re-read would see `waiting`; the cache
+    // still says `idle`. Then a real rewrite is noticed.
+    [Fact]
+    public void ARecordIsReadOnceAndReReadWhenItChanges()
+    {
+        var home = NewHome();
+        var path = WriteRecord(home, ".claude", 32273, StatusRecord("idle"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Equal("idle", SessionPark.RecordStatus(32273, Owner, home));
+
+        var written = File.GetLastWriteTimeUtc(path);
+        File.WriteAllText(path, StatusRecord("idle").Replace("idle", "busy"));
+        File.SetLastWriteTimeUtc(path, written);
+        Assert.Equal("idle", SessionPark.RecordStatus(32273, Owner, home));
+
+        File.WriteAllText(path, StatusRecord("waiting"));
+        Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+
+        File.WriteAllText(path, StatusRecord("idle"));
+        Assert.Equal("idle", SessionPark.RecordStatus(32273, Owner, home));
+    }
+
+    [Fact]
+    public void NoRecordMeansNoStatus()
+    {
+        var home = NewHome();
+        Directory.CreateDirectory(Path.Combine(home, ".claude", "sessions"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Null(SessionPark.RecordStatus(32273, Owner, home));
+    }
+
+    [Fact]
+    public void ARecycledPidsRecordSaysNothingAboutTheAsker()
+    {
+        var home = NewHome();
+        WriteRecord(home, ".claude", 32273,
+            StatusRecord("waiting").Replace(Owner, "some-other-session"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Null(SessionPark.RecordStatus(32273, Owner, home));
+    }
+
     private static string NewHome()
     {
         var home = Path.Combine(Path.GetTempPath(), "cb-park-" + Path.GetRandomFileName());

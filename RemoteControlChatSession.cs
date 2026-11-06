@@ -678,7 +678,7 @@ namespace Orbweaver
         {
             if (outcome.Error is not null)
             {
-                Note(TypingRefusal(outcome.Error, _remoteName));
+                Note(TypingRefusal(outcome.Error, _remoteName, outcome.Why));
                 return ChatSendOutcome.Failed;
             }
 
@@ -800,7 +800,7 @@ namespace Orbweaver
             // request arriving over a wire does not change it.
             _pending = null;
 
-            Note(TypingRefusal(outcome.Error, _remoteName));
+            Note(TypingRefusal(outcome.Error, _remoteName, outcome.Why));
             return ChatSendOutcome.Failed;
         }
 
@@ -829,9 +829,18 @@ namespace Orbweaver
         // runs when the far machine is newer than this one. A blank or a code
         // number on screen would be the worst outcome of the four, and it is the
         // only arm nothing else can produce.
-        internal static string TypingRefusal(string? errCode, string remoteName) =>
+        internal static string TypingRefusal(string? errCode, string remoteName, string? detail = null) =>
             errCode switch
             {
+                // CB-307 addendum: the far terminal is on a dialog or some
+                // other screen, so typing would have pressed keys on it. Says
+                // what the far side saw, and what to do, which is the one thing
+                // only the person at that terminal can.
+                MirrorProtocol.ErrNotAtPrompt =>
+                    $"{remoteName}'s terminal isn't at its prompt"
+                    + (string.IsNullOrWhiteSpace(detail) ? "" : $" — {detail}")
+                    + ". Nothing was typed; answer that screen in the terminal and send again.",
+
                 MirrorProtocol.ErrReplyOff =>
                     $"{remoteName}'s machine has replying to sessions switched off, so nothing was typed. "
                     + "That is its own setting, and it has to be turned on over there.",

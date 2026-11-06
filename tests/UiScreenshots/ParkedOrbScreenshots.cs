@@ -75,6 +75,26 @@ public class ParkedOrbScreenshots
             "parked-vs-live-orbs.png");
     }
 
+    // CB-307 addendum: a remote session that is on a dialog. A remote orb has
+    // never drawn `waiting` before — the roster word arrived as idle — so this
+    // is a new state on a surface that shows it. Beside an idle remote orb, so
+    // the amber pulse and the full brightness read against the ordinary one.
+    [AvaloniaFact]
+    public void ARemoteOrbOnADialogBesideAnIdleOne()
+    {
+        Draw("rc:.claude:sid:idle", Remote(OrbPresence.Present, "idle"), "orb-remote-idle.png");
+        Draw("rc:.claude:sid:waiting", Remote(OrbPresence.Present, "waiting"), "orb-remote-waiting.png");
+
+        // Waiting is drawn at full brightness, not dimmed like a parked orb,
+        // and not the same picture as idle.
+        Assert.True(
+            Alpha("orb-remote-waiting.png") >= Alpha("orb-remote-idle.png") * 0.95,
+            "a waiting remote orb should not be dimmed");
+        Assert.NotEqual(Alpha("orb-remote-idle.png"), Alpha("orb-remote-waiting.png"));
+
+        Stitch(new[] { "orb-remote-idle.png", "orb-remote-waiting.png" }, "remote-idle-vs-waiting-orbs.png");
+    }
+
     // Total opacity of a capture: the sum of its alpha channel, which is what a
     // dimmed orb loses and a live one keeps.
     private static long Alpha(string file)

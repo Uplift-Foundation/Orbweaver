@@ -1231,4 +1231,39 @@ public class SessionPresenceTests
     [InlineData(SessionSource.Grok)]
     public void OnlyClaudeCodeSessionsAreAskedForALastTurn(SessionSource source) =>
         Assert.False(SessionManager.WantsLastTurn(ForLastTurn(source: source)));
+
+    // --- EffectiveState (CB-307 addendum) --------------------------------------
+
+    // Claude Code's record says the TUI is on a dialog while the hook's file
+    // still says idle, because no hook fires for a modal screen.
+    [Fact]
+    public void AnIdleFileWithAWaitingRecordIsWaiting() =>
+        Assert.Equal("waiting", SessionPresence.EffectiveState("idle", recordWaiting: true));
+
+    [Theory]
+    [InlineData("idle")]
+    [InlineData("generating")]
+    [InlineData("waiting")]
+    public void WithoutAWaitingRecordTheFilesStateStands(string state) =>
+        Assert.Equal(state, SessionPresence.EffectiveState(state, recordWaiting: false));
+
+    // A working session stays working however the record reads: only idle is
+    // ever promoted, because the file already says more than the record would.
+    [Theory]
+    [InlineData("generating")]
+    [InlineData("waiting")]
+    public void AWaitingRecordDoesNotOverrideAStateThatSaysMore(string state) =>
+        Assert.Equal(state, SessionPresence.EffectiveState(state, recordWaiting: true));
+
+    // The point of the whole promotion: a session on a dialog is waiting, and a
+    // waiting session is never parked, however old its last turn is.
+    [Fact]
+    public void AWaitingSessionIsNeverParkedEvenAfterADayOfSilence()
+    {
+        var state = SessionPresence.EffectiveState("idle", recordWaiting: true);
+
+        Assert.Equal(
+            OrbPresence.Present,
+            SessionPresence.WithQuiet(OrbPresence.Present, LocalSessionShape.Terminal, state, Yesterday, Now));
+    }
 }

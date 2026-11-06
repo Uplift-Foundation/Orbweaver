@@ -651,6 +651,190 @@ public class MirrorRoundTripTests : IDisposable
     }
 
 
+    // --- CB-307 addendum: never type into a screen that isn't the prompt --------
+
+    // The bug, end to end: the far pane is on /permissions (the real Allow tab
+    // capture). The line is refused before anything is typed, with its own
+    // code, and the reason reaches the near side.
+    [Fact]
+    public async Task TypingIsRefusedWhenThePaneIsNotAtItsPrompt()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.PermissionsAllow };
+        var log = new List<string>();
+        harness.Server.InputLog = (_, detail) => log.Add(detail);
+        harness.AddSession("openclaw", WriteTranscript("perm.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "please carry on");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.False(string.IsNullOrEmpty(outcome.Why));
+        Assert.Empty(harness.Typed);
+        Assert.Equal(1, harness.Captures);
+
+        // Logged with the reason and never the text.
+        var line = Assert.Single(log, l => l.Contains(MirrorProtocol.ErrNotAtPrompt));
+        Assert.Contains("why=" + outcome.Why, line);
+        Assert.DoesNotContain("please carry on", string.Join("\n", log));
+
+        // And the near panel's sentence quotes it.
+        Assert.Contains(outcome.Why!, RemoteControlChatSession.TypingRefusal(outcome.Error, "openclaw", outcome.Why));
+    }
+
+    // A real dialog is named in the reason.
+    [Fact]
+    public async Task ADialogIsNamedInTheRefusal()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("exit-sess01", WriteTranscript("exit.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("exit-sess01");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("exit-sess01", "hello");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Equal(TypingGate.DialogWhy(ChatTranscript.ParseDialog(PaneFixtures.MiniExitDialog)!.Title), outcome.Why);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The record says waiting: refused without reading the screen at all,
+    // even though the screen (the harness default) is a perfectly good prompt.
+    [Fact]
+    public async Task TypingIsRefusedWhenTheRecordSaysWaiting()
+    {
+        var harness = new Harness(_dir) { Record = "waiting" };
+        harness.AddSession("openclaw", WriteTranscript("rec.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Equal(TypingGate.WaitingWhy, outcome.Why);
+        Assert.Equal(0, harness.Captures);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The control for both: a normal prompt, an idle record, and the line is
+    // typed, having been through both reads.
+    [Fact]
+    public async Task TypingProceedsAtANormalPrompt()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("openclaw", WriteTranscript("ok.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(new[] { ("openclaw", "hello") }, harness.Typed);
+        Assert.Equal(1, harness.RecordReads);
+        Assert.Equal(1, harness.Captures);
+    }
+
+    // The back-compat contract: neither read wired, and a screen that would
+    // refuse if anyone looked at it — the line is typed exactly as before.
+    [Fact]
+    public async Task AnUngatedHarnessStillTypes()
+    {
+        var harness = new Harness(_dir, ungated: true) { Screen = PaneFixtures.PermissionsAllow, Record = "waiting" };
+        harness.AddSession("openclaw", WriteTranscript("ungated.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Null(await harness.Client.SendInputAsync("openclaw", "hello"));
+        Assert.Single(harness.Typed);
+        Assert.Equal(0, harness.Captures);
+        Assert.Equal(0, harness.RecordReads);
+    }
+
+    // An ERR's msg rides along as Why, and an ERR with no msg gives no reason
+    // rather than echoing its code back as one — which would read as
+    // "isn't at its prompt — not-at-prompt".
+    [Fact]
+    public async Task AnErrsMessageRidesAlongAndACodeAloneIsNoReason()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("openclaw", WriteTranscript("nomsg.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        harness.CodeOnlyInputRefusal = MirrorProtocol.ErrNotAtPrompt;
+        var bare = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, bare.Error);
+        Assert.Null(bare.Why);
+
+        harness.CodeOnlyInputRefusal = null;
+        harness.ForgetSessionKeepingAgent("openclaw");
+        var named = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+        Assert.Equal(MirrorProtocol.ErrNoSession, named.Error);
+        Assert.Equal("openclaw", named.Why);
+    }
+
+    // Both slash paths: the server's own default runner and the real slash
+    // host's Typed arm. A slash line is still keystrokes when it is typed.
+    [Fact]
+    public async Task ASlashLineIsRefusedOnADialogWithAReasonByTheDefaultRunner()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("exit-sess01", WriteTranscript("slash-default.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("exit-sess01");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("exit-sess01", "/color green", slash: true);
+        await harness.Server.SlashInFlight;
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(TypingGate.NotAtPromptReason(
+            TypingGate.DialogWhy(ChatTranscript.ParseDialog(PaneFixtures.MiniExitDialog)!.Title)), outcome.Why);
+        Assert.Empty(harness.Typed);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsTypedAtAPromptByTheDefaultRunner()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("openclaw", WriteTranscript("slash-default-ok.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "/color green", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaTyped, outcome.Via);
+        Assert.Single(harness.Typed);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheSlashHostsTypedArmGoesThroughTheGate(bool atPrompt)
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            Screen = atPrompt ? PaneFixtures.MacPromptAfterEsc : PaneFixtures.PermissionsAllow
+        };
+        var typed = new List<string>();
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            _ => new[] { new SlashCommand("/ship-it", "") },
+            (_, line) => { typed.Add(line); return Task.FromResult(true); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            RecordStatus: harness.ReadRecord,
+            CapturePane: harness.CaptureScreen,
+            CanReadPane: _ => true));
+        harness.AddSession("openclaw", WriteTranscript("slash-host-" + atPrompt + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "/ship-it", slash: true);
+
+        if (atPrompt)
+        {
+            Assert.Equal(MirrorProtocol.ViaTyped, outcome.Via);
+            Assert.Equal(new[] { "/ship-it" }, typed);
+        }
+        else
+        {
+            Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+            Assert.StartsWith("the terminal there isn't at its prompt (", outcome.Why);
+            Assert.Empty(typed);
+        }
+    }
+
     // --- CB-306: slash lines over the link ---------------------------------------
 
     [Fact]
@@ -2934,6 +3118,9 @@ public class MirrorRoundTripTests : IDisposable
         // roster and the fetch looks like.
         public bool RefusePictures { get; set; }
 
+        // A far side that refuses every INPUT with this code and no msg.
+        public string? CodeOnlyInputRefusal { get; set; }
+
         // How many pictures the client has asked for.
         public int PictureAsks => ToServer.Count(line => line.Contains(";t=" + MirrorProtocol.Avatar + ";"));
 
@@ -2964,6 +3151,16 @@ public class MirrorRoundTripTests : IDisposable
         // *window* should not have to subtract it.
         public void ForgetFramesSoFar() => ChunkFrames = 0;
         public int Resends { get; private set; }
+
+        // CB-307 addendum: the far pane's screen and Claude Code's own record,
+        // as the typing gate reads them. Gated by default, on the real
+        // MacBook prompt capture, so every typed test in this file goes
+        // through the gate and still types; Ungated nulls both reads, which is
+        // what a harness built before the gate looked like.
+        public string? Screen { get; set; } = PaneFixtures.MacPromptAfterEsc;
+        public string? Record { get; set; } = "idle";
+        public int Captures { get; private set; }
+        public int RecordReads { get; private set; }
 
         public bool ReplyEnabled { get; init; } = true;
         public bool CanType { get; init; } = true;
@@ -3018,7 +3215,7 @@ public class MirrorRoundTripTests : IDisposable
         public IReadOnlyList<string> UserConfigDirs { get; set; } = Array.Empty<string>();
 
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
-            LastTurnCache? lastTurns = null)
+            LastTurnCache? lastTurns = null, bool ungated = false)
         {
             _dir = dir;
 
@@ -3072,7 +3269,10 @@ public class MirrorRoundTripTests : IDisposable
                         return Task.FromResult(SlashRunner!(status, line));
                     }
                     : null,
-                LastTurns: lastTurns));
+                LastTurns: lastTurns,
+                RecordStatus: ungated ? null : ReadRecord,
+                CapturePane: ungated ? null : CaptureScreen,
+                CanReadPane: ungated ? null : _ => true));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -3097,6 +3297,19 @@ public class MirrorRoundTripTests : IDisposable
             };
 
             Client.Failed += (name, why) => Failures.Add((name, why));
+        }
+
+        // The gate's two reads, counted.
+        public string? ReadRecord(SessionStatus _)
+        {
+            RecordReads++;
+            return Record;
+        }
+
+        public Task<string?> CaptureScreen(SessionStatus _)
+        {
+            Captures++;
+            return Task.FromResult(Screen);
         }
 
         // The machines to ask, by name. A direct link knows the machines it is
@@ -3248,6 +3461,13 @@ public class MirrorRoundTripTests : IDisposable
                         .Where(field => field.Key != MirrorProtocol.SlashField)
                         .ToDictionary(field => field.Key, field => field.Value, StringComparer.Ordinal)
                 };
+            }
+
+            if (CodeOnlyInputRefusal is { } code && frame.Type == MirrorProtocol.Input)
+            {
+                await Client.OnFrameAsync(FarRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+                    MirrorProtocol.Err, frame.Id, new Dictionary<string, string> { ["code"] = code }))!);
+                return true;
             }
 
             if (RefusePictures && frame.Type == MirrorProtocol.Avatar)

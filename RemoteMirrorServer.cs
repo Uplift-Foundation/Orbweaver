@@ -122,7 +122,17 @@ namespace Orbweaver
             // flag. Null means a cache of this server's own over the real
             // disk, which is what the app uses; a test passes one with
             // injected arms to count reads or to fail them.
-            LastTurnCache? LastTurns = null);
+            LastTurnCache? LastTurns = null,
+
+            // CB-307 addendum: what TypingGate reads before anything is typed —
+            // Claude Code's own session record, the pane's screen, and whether
+            // that screen can be read at all on this session's route. Null on
+            // both reads means ungated (TypingGate.GuardedTypeAsync), so every
+            // harness built before this types exactly as it did; LiveSeams
+            // wires all three.
+            Func<SessionStatus, string?>? RecordStatus = null,
+            Func<SessionStatus, Task<string?>>? CapturePane = null,
+            Func<SessionStatus, bool>? CanReadPane = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -416,7 +426,10 @@ namespace Orbweaver
                         cloudApi,
                         CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
                         CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
-                        System.Threading.CancellationToken.None))));
+                        System.Threading.CancellationToken.None)),
+                RecordStatus: status => RecordStatusFor(status, localSessions),
+                CapturePane: TerminalFocuser.CapturePane,
+                CanReadPane: TerminalFocuser.CanReadPane));
 
             return new(
                 sendFrame,
@@ -436,7 +449,30 @@ namespace Orbweaver
                 },
                 SlashCommandsFor: slash.CommandsFor,
                 RunSlash: slash.RunAsync,
-                PersonaFor: PeerPersonaCache.Shared.Peek);
+                PersonaFor: PeerPersonaCache.Shared.Peek,
+                RecordStatus: status => RecordStatusFor(status, localSessions),
+                CapturePane: TerminalFocuser.CapturePane,
+                CanReadPane: TerminalFocuser.CanReadPane);
+        }
+
+        // CB-307 addendum: Claude Code's own record status for a session, for
+        // the typing gate. SessionStatus carries the pid but not the session
+        // id SessionPark needs to refuse a reused pid's record, so the id is
+        // looked up in this server's own session list by reference — the same
+        // list the status came out of. Excluded with the rest of LiveSeams:
+        // it reads real files under the real config roots.
+        [ExcludeFromCodeCoverage]
+        private static string? RecordStatusFor(
+            SessionStatus status,
+            Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> localSessions)
+        {
+            if (status.SessionPid <= 0) return null;
+
+            foreach (var (sessionId, candidate) in localSessions())
+                if (ReferenceEquals(candidate, status))
+                    return SessionPark.RecordStatus(status.SessionPid, sessionId);
+
+            return null;
         }
 
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
@@ -1962,9 +1998,21 @@ namespace Orbweaver
                 return;
             }
 
-            bool typed;
-            try { typed = await _seams.TypeInto(status, text).ConfigureAwait(false); }
-            catch { typed = false; }
+            // CB-307 addendum: past the gate, or not at all. A refusal is its
+            // own code with the reason as msg, logged with the reason and
+            // never the text.
+            (bool Typed, string? Refusal) attempt;
+            try { attempt = await GuardedTypeAsync(status, text).ConfigureAwait(false); }
+            catch { attempt = (false, null); }
+
+            if (attempt.Refusal is { } why)
+            {
+                InputLog("input", $"n={name} -> err code={MirrorProtocol.ErrNotAtPrompt} why={why}");
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNotAtPrompt, why).ConfigureAwait(false);
+                return;
+            }
+
+            var typed = attempt.Typed;
 
             InputLog("input", typed
                 ? $"n={name} -> ok via={MirrorProtocol.ViaTyped}"
@@ -2043,10 +2091,20 @@ namespace Orbweaver
             if (!_seams.CanType(status))
                 return new SlashOutcome(MirrorProtocol.ViaRefused, SlashRouting.PeerSocketReason);
 
-            return await _seams.TypeInto(status, line).ConfigureAwait(false)
+            var (typed, refusal) = await GuardedTypeAsync(status, line).ConfigureAwait(false);
+            if (refusal is not null)
+                return new SlashOutcome(MirrorProtocol.ViaRefused, TypingGate.NotAtPromptReason(refusal));
+
+            return typed
                 ? new SlashOutcome(MirrorProtocol.ViaTyped, null)
                 : new SlashOutcome(MirrorProtocol.ViaRefused, "the terminal refused the text");
         }
+
+        // The only way this server types: TypingGate first, with this
+        // server's seams as its reads.
+        private Task<(bool Typed, string? Refusal)> GuardedTypeAsync(SessionStatus status, string text) =>
+            TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
+                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane);
 
         // --- sending ------------------------------------------------------------
 

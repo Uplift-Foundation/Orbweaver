@@ -27,7 +27,14 @@ namespace Orbweaver
             // Posts one control request over the session's bridge and says
             // what came of it: refused (with the sentence), done, or delivered
             // with no answer yet.
-            Func<SessionStatus, string, JsonObject, Task<ControlVerdict>> PostControl);
+            Func<SessionStatus, string, JsonObject, Task<ControlVerdict>> PostControl,
+
+            // CB-307 addendum: the typing gate's reads, as on the server's own
+            // seams. Null on both means ungated, which every harness built
+            // before this relies on.
+            Func<SessionStatus, string?>? RecordStatus = null,
+            Func<SessionStatus, Task<string?>>? CapturePane = null,
+            Func<SessionStatus, bool>? CanReadPane = null);
 
         // CB-306's product-readiness round: the far side's answer to a control
         // request, carried back over the link so the near panel says what the
@@ -73,7 +80,11 @@ namespace Orbweaver
             switch (route.Kind)
             {
                 case SlashRouteKind.Typed:
-                    return await _seams.TypeInto(status, line).ConfigureAwait(false)
+                    var (typed, notAtPrompt) = await TypingGate.GuardedTypeAsync(status, line, _seams.TypeInto,
+                        _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane).ConfigureAwait(false);
+                    if (notAtPrompt is not null) return Refused(TypingGate.NotAtPromptReason(notAtPrompt));
+
+                    return typed
                         ? new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaTyped, null)
                         : Refused("the terminal refused the text");
 

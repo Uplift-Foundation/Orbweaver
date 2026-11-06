@@ -345,4 +345,28 @@ public class PanelOverTheLinkTests
             Array.Empty<(string, MirrorProtocol.MirrorRosterEntry)>(),
             DateTime.UnixEpoch));
     }
+
+    // CB-307 addendum: the far machine's session is on a dialog and says so on
+    // the roster. Working never knew the word, so it arrived as idle.
+    [Fact]
+    public void AWaitingSessionIsWaitingAndNotWorking()
+    {
+        var row = Assert.Single(RemoteControlSessions.RemotesFromRoster(
+            "acct", new[] { ("mini", Entry("jh", status: "waiting")) }, DateTime.UnixEpoch));
+
+        Assert.True(row.Waiting);
+        Assert.False(row.Working);
+    }
+
+    [Theory]
+    [InlineData("idle")]
+    [InlineData("busy")]
+    [InlineData("running")]
+    public void OnlyTheWordWaitingIsWaiting(string status)
+    {
+        var row = Assert.Single(RemoteControlSessions.RemotesFromRoster(
+            "acct", new[] { ("mini", Entry("jh", status: status)) }, DateTime.UnixEpoch));
+
+        Assert.False(row.Waiting);
+    }
 }

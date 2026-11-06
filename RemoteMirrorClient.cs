@@ -892,7 +892,13 @@ namespace Orbweaver
             {
                 var code = reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
                 Log("input", $"n={name} -> err code={code}");
-                return new InputOutcome(code, null, null);
+
+                // CB-307 addendum: the far side's reason rides along as Why,
+                // so a refusal that names a dialog reaches the panel. The
+                // reason is msg, or the code itself when the far side sent
+                // none, so it is never the meaningful part only by accident.
+                return new InputOutcome(code, null, null,
+                    reply.Reason is { } reason && reason != code ? reason : null);
             }
 
             Log("input", $"n={name} -> ok via="

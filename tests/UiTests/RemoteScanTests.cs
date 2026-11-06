@@ -697,4 +697,35 @@ public class RemoteScanTests
         }
     }
 
+    // --- CB-307 addendum: a remote session on a dialog draws as waiting --------
+
+    // The roster's status word has always carried `waiting`; Working only knew
+    // three other words, so it arrived as idle and a remote orb never drew the
+    // state. Control: the same row saying idle is idle.
+    [AvaloniaFact]
+    public void ARemoteSessionOnADialogDrawsAsWaitingAndIsNeverDimmed()
+    {
+        using var scratch = new Scratch();
+        try
+        {
+            OrbweaverSettings.ClaudeCodeEnabled = true;
+            Publish(
+                new RemoteControlSessions.Remote("openclaw", "far-mac", "waiting", DateTime.UtcNow,
+                    ".claude", Route: "sid:dialog"),
+                new RemoteControlSessions.Remote("job-hunter", "far-mac", "idle", DateTime.UtcNow,
+                    ".claude", Route: "sid:calm"));
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+
+            var waiting = StatusOf(manager, "rc:.claude:sid:dialog");
+            Assert.Equal("waiting", waiting.State);
+            Assert.Equal(OrbPresence.Present, waiting.Presence);
+            Assert.Equal("idle", StatusOf(manager, "rc:.claude:sid:calm").State);
+        }
+        finally
+        {
+            PublishNothing();
+        }
+    }
 }

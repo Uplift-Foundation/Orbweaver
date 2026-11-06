@@ -430,6 +430,13 @@ namespace Orbweaver
         public static bool CanSendQuietly(SessionStatus? status) =>
             RouteFor(status) != TerminalTyping.Route.None;
 
+        // CB-307 addendum: whether CapturePane can read this session's screen,
+        // which only tmux can. The typing gate asks it to decide whether the
+        // screen is evidence at all; on the other routes only Claude Code's
+        // own session record guards a typed line (TypingGate says why).
+        internal static bool CanReadPane(SessionStatus? status) =>
+            RouteFor(status) == TerminalTyping.Route.Tmux;
+
         // The sibling question for a session CanSendQuietly has already said no
         // to: is there still somewhere a message can reach it, over its own
         // registry socket rather than a pane. sessionId is separate from
