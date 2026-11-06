@@ -341,4 +341,48 @@ public class UpdateInstallWindowsTests : IDisposable
         }
         finally { Directory.Delete(outside, true); }
     }
+
+    [Fact]
+    public void An_invalid_path_is_refused_not_thrown()
+    {
+        Assert.Null(UpdateInstallWindows.FolderInside(_root, Path.Combine(_root, "1.2.0", "bad\0name", "setup.log")));
+    }
+
+    [Fact]
+    public void A_sibling_prefix_marker_is_refused_and_its_folder_survives()
+    {
+        var evil = _root + "-evil";
+        Directory.CreateDirectory(Path.Combine(evil, "1.2.0"));
+        try
+        {
+            File.WriteAllText(Marker(_root), UpdateInstallPlan.WinPendingJson(
+                new UpdateInstallPlan.WinPendingUpdate("1.1.0", "1.2.0", Path.Combine(evil, "1.2.0", "setup.log"))));
+            Assert.Null(UpdateInstallWindows.ReconcileAtLaunch(_root, "1.2.0", _ => { }));
+            Assert.True(Directory.Exists(Path.Combine(evil, "1.2.0")));
+        }
+        finally { Directory.Delete(evil, true); }
+    }
+
+    [Theory]
+    [InlineData("setup.log")]
+    [InlineData("OUTSIDE")]
+    public void A_failed_update_with_an_untrusted_log_path_shows_the_notice_without_a_log(string logPath)
+    {
+        var outside = Path.Combine(Path.GetTempPath(), "orb-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        try
+        {
+            var lp = logPath == "OUTSIDE" ? Path.Combine(outside, "setup.log") : logPath;
+            File.WriteAllText(Marker(_root), UpdateInstallPlan.WinPendingJson(
+                new UpdateInstallPlan.WinPendingUpdate("1.1.0", "1.2.0", lp)));
+            var lines = new List<string>();
+            var r = UpdateInstallWindows.ReconcileAtLaunch(_root, "1.1.0", lines.Add);
+            Assert.Equal("1.2.0", r!.To);
+            Assert.Equal("", r.LogPath);
+            Assert.True(Directory.Exists(outside));
+            Assert.False(File.Exists(Marker(_root)));
+            Assert.Contains(lines, l => l.Contains("ignoring the log path"));
+        }
+        finally { Directory.Delete(outside, true); }
+    }
 }

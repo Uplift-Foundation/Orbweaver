@@ -137,12 +137,20 @@ namespace Orbweaver
 
             DeleteQuietly(markerPath, deleteFile);
             var pending = aftermath.Pending!;
+            // The marker is a user-writable file, so its log path is not trusted:
+            // it is only ever used, deleted or offered to the UI when it lies
+            // strictly inside the updates root. Anything else is dropped and the
+            // notice shows without an Open log action.
+            var folder = FolderInside(updatesRoot, pending.LogPath);
+            if (folder is null)
+            {
+                log($"ignoring the log path in {UpdateInstallPlan.WinPendingFile}: it is not inside {updatesRoot}");
+                pending = pending with { LogPath = "" };
+            }
+
             if (aftermath.Kind == UpdateInstallPlan.WinAftermathKind.Completed)
             {
                 log($"update to {pending.To} completed (running {currentVersion})");
-                // The marker is a user-writable file, so its path is not trusted:
-                // only a folder strictly inside the updates root is ever removed.
-                var folder = FolderInside(updatesRoot, pending.LogPath);
                 if (folder is not null)
                 {
                     try { deleteDirectory(folder); }
@@ -151,7 +159,7 @@ namespace Orbweaver
                 return null;
             }
 
-            log($"update to {pending.To} did not complete (still running {currentVersion}); setup log {pending.LogPath}");
+            log($"update to {pending.To} did not complete (still running {currentVersion}); setup log {(pending.LogPath.Length > 0 ? pending.LogPath : "unavailable")}");
             return pending;
         }
 
@@ -161,11 +169,18 @@ namespace Orbweaver
         internal static string? FolderInside(string root, string filePath)
         {
             if (!Path.IsPathRooted(filePath)) return null;
-            var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
-            if (string.IsNullOrEmpty(dir)) return null;
-            var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-            var prefix = rootFull + Path.DirectorySeparatorChar;
-            return dir.StartsWith(prefix, StringComparison.Ordinal) ? dir : null;
+            try
+            {
+                var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
+                if (string.IsNullOrEmpty(dir)) return null;
+                var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+                var prefix = rootFull + Path.DirectorySeparatorChar;
+                return dir.StartsWith(prefix, StringComparison.Ordinal) ? dir : null;
+            }
+            catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                return null;
+            }
         }
 
         private static void DeleteQuietly(string path, Action<string>? delete = null)
