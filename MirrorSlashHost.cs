@@ -80,7 +80,7 @@ namespace Orbweaver
             switch (route.Kind)
             {
                 case SlashRouteKind.Typed:
-                    var (typed, notAtPrompt) = await TypingGate.GuardedTypeAsync(status, line, _seams.TypeInto,
+                    var (typed, notAtPrompt, _) = await TypingGate.GuardedTypeAsync(status, line, _seams.TypeInto,
                         _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane).ConfigureAwait(false);
                     if (notAtPrompt is not null) return Refused(TypingGate.NotAtPromptReason(notAtPrompt));
 

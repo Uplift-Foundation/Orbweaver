@@ -47,7 +47,7 @@ public class TypingGateTests
     {
         var reads = new Reads();
 
-        Assert.Equal(TypingVerdict.Allow, await reads.Judge(readable: true));
+        Assert.True((await reads.Judge(readable: true)).Allowed);
         Assert.Equal(1, reads.Captures);
     }
 
@@ -96,23 +96,38 @@ public class TypingGateTests
         PaneFixtures.MiniRecentlyBlockedPopulatedStripped,
     };
 
+    // Each refusal says which check fired, so a report from a machine nobody
+    // here can see names its cause. Never any of the screen's text.
     [Fact]
-    public async Task AScreenThatIsNeitherRefusesAsUnreadable()
+    public async Task AScreenThatIsNeitherRefusesAsUnreadableAndSaysWhy()
     {
         var verdict = await new Reads { Screen = "⏺ Working on it…\n✻ Cogitating" }.Judge(readable: true);
 
-        Assert.Equal(new TypingVerdict(false, TypingGate.UnreadableWhy), verdict);
+        Assert.Equal((false, TypingGate.UnreadableWhy), (verdict.Allowed, verdict.Why));
+        Assert.Equal("lines=2 check=no-prompt-mark", verdict.Diagnostic);
     }
 
     [Fact]
-    public async Task ACaptureThatReturnsNothingRefuses() =>
-        Assert.Equal(new TypingVerdict(false, TypingGate.UnreadableWhy),
-            await new Reads { Screen = null }.Judge(readable: true));
+    public async Task ACaptureThatReturnsNothingRefusesAndSaysSo()
+    {
+        var verdict = await new Reads { Screen = null }.Judge(readable: true);
+
+        Assert.Equal((false, TypingGate.UnreadableWhy), (verdict.Allowed, verdict.Why));
+        Assert.Equal("capture=null", verdict.Diagnostic);
+    }
 
     [Fact]
-    public async Task ACaptureThatThrowsRefuses() =>
-        Assert.Equal(new TypingVerdict(false, TypingGate.UnreadableWhy),
-            await new Reads { Throw = true }.Judge(readable: true));
+    public async Task ACaptureThatThrowsRefusesAndSaysSo()
+    {
+        var verdict = await new Reads { Throw = true }.Judge(readable: true);
+
+        Assert.Equal((false, TypingGate.UnreadableWhy), (verdict.Allowed, verdict.Why));
+        Assert.Equal("capture=threw", verdict.Diagnostic);
+    }
+
+    [Fact]
+    public async Task AnAllowedPromptStillSaysHowItRead() =>
+        Assert.Equal("lines=45 check=prompt", (await new Reads().Judge(readable: true)).Diagnostic);
 
     [Fact]
     public async Task AnUnreadableRouteIsTypedIntoWhenTheRecordIsQuiet()
@@ -142,9 +157,27 @@ public class TypingGateTests
         // decides nothing, and the screen does.
         var reads = new Reads { Record = record };
 
-        Assert.Equal(TypingVerdict.Allow, await reads.Judge(readable: true));
+        Assert.True((await reads.Judge(readable: true)).Allowed);
         Assert.Equal(1, reads.Captures);
     }
+
+    // The two mini screens the installed build was reported refusing. Both
+    // read as prompts here, so the report's cause was not these bytes; they
+    // are pinned so it never becomes them.
+    [Theory]
+    [MemberData(nameof(MiniPrompts))]
+    public async Task TheMinisRealPromptsAreTypedInto(string screen)
+    {
+        var verdict = await new Reads { Screen = screen }.Judge(readable: true);
+
+        Assert.True(verdict.Allowed, verdict.Diagnostic);
+        Assert.EndsWith("check=prompt", verdict.Diagnostic);
+    }
+
+    public static TheoryData<string> MiniPrompts => new()
+    {
+        PaneFixtures.MiniUpdateLinePrompt, PaneFixtures.MiniTeamListPrompt,
+    };
 }
 
 // The one helper every typed path calls: TypingGate.GuardedTypeAsync.
@@ -177,7 +210,7 @@ public class GuardedTypeTests
         // The back-compat contract: a harness built before the gate types.
         var pane = new Pane { Screen = PaneFixtures.PermissionsAllow };
 
-        Assert.Equal((true, (string?)null),
+        Assert.Equal((true, (string?)null, (string?)null),
             await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, null, null, null));
         Assert.Equal(new[] { "hi" }, pane.Typed);
         Assert.Equal(0, pane.Captures);
@@ -188,10 +221,11 @@ public class GuardedTypeTests
     {
         var pane = new Pane { Screen = PaneFixtures.MiniExitDialog };
 
-        var (typed, refusal) = await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true);
+        var (typed, refusal, diagnostic) = await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true);
 
         Assert.False(typed);
         Assert.StartsWith("it is showing a dialog: ", refusal);
+        Assert.StartsWith("lines=", diagnostic);
         Assert.Empty(pane.Typed);
     }
 
@@ -200,7 +234,7 @@ public class GuardedTypeTests
     {
         var pane = new Pane();
 
-        Assert.Equal((true, (string?)null),
+        Assert.Equal((true, (string?)null, (string?)null),
             await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true));
         Assert.Equal(1, pane.Captures);
     }
@@ -212,9 +246,9 @@ public class GuardedTypeTests
         // unreadable; waiting refuses and anything else types.
         var pane = new Pane();
 
-        Assert.Equal((false, TypingGate.WaitingWhy),
+        Assert.Equal((false, (string?)TypingGate.WaitingWhy, (string?)null),
             await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "waiting", null, null));
-        Assert.Equal((true, (string?)null),
+        Assert.Equal((true, (string?)null, (string?)null),
             await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", null, null));
     }
 
