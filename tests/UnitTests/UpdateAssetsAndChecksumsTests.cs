@@ -54,6 +54,34 @@ public class UpdateAssetsAndChecksumsTests
     }
 
     [Fact]
+    public void AVersionThatWouldEscapeTheUpdatesFolderIsRefusedBeforeAnythingIsWritten()
+    {
+        // Constructed directly: UpdateFeed normalises the version so a real feed
+        // cannot produce this, but Select must hold on its own. Control beside it.
+        var hostile = new UpdateRelease("v1.0.4", "1.0.4+a/../../x", false, "",
+            [new UpdateAsset("Orbweaver-1.0.4+a/../../x-osx-arm64.dmg", "http://x/y", 1), new UpdateAsset("SHA256SUMS.txt", "http://x/s", 1)]);
+        var ex = Assert.Throws<UpdateException>(() => UpdateAssets.Select(hostile, "osx-arm64"));
+        Assert.Equal(UpdateFailure.UnsafeName, ex.Kind);
+
+        var normal = new UpdateRelease("v1.0.4", "1.0.4", false, "",
+            [new UpdateAsset("Orbweaver-1.0.4-osx-arm64.dmg", "http://x/y", 1), new UpdateAsset("SHA256SUMS.txt", "http://x/s", 1)]);
+        Assert.Equal("Orbweaver-1.0.4-osx-arm64.dmg", UpdateAssets.Select(normal, "osx-arm64").Installer.Name);
+    }
+
+    [Theory]
+    [InlineData("Orbweaver-1.0.4-osx-arm64.dmg", true)]
+    [InlineData("a.b-c_d", true)]
+    [InlineData("", false)]
+    [InlineData(".", false)]
+    [InlineData("..", false)]
+    [InlineData("a/b", false)]
+    [InlineData("../x", false)]
+    [InlineData("a\\b", false)]
+    [InlineData("a\0b", false)]
+    public void PlainFileNameRule(string name, bool plain) =>
+        Assert.Equal(plain, UpdateAssets.IsPlainFileName(name));
+
+    [Fact]
     public void AMissingInstallerIsATypedFailure()
     {
         var r = Real() with { Assets = Real().Assets.Where(a => !a.Name.EndsWith(".dmg")).ToList() };

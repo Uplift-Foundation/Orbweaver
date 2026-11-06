@@ -164,14 +164,27 @@ namespace Orbweaver
         {
             if (!_settings.AutoCheck) return;
 
-            var result = (await CheckAsync(manual: false).ConfigureAwait(false)).Result;
-            lock (_gate)
+            UpdateCheckResult? result = null;
+            try
             {
-                if (_disposed) return;
-                _timer?.Dispose();
-                _timer = _schedule(
-                    result.Outcome == UpdateCheckOutcome.Failed ? UpdateSchedule.FailureRetry : UpdateSchedule.Interval,
-                    OnTimer);
+                result = (await CheckAsync(manual: false).ConfigureAwait(false)).Result;
+            }
+            finally
+            {
+                // However the check ended, the next one is armed: a schedule that
+                // depends on every line above behaving is one surprise from silence.
+                lock (_gate)
+                {
+                    if (!_disposed)
+                    {
+                        _timer?.Dispose();
+                        _timer = _schedule(
+                            result is { Outcome: UpdateCheckOutcome.Available or UpdateCheckOutcome.UpToDate }
+                                ? UpdateSchedule.Interval
+                                : UpdateSchedule.FailureRetry,
+                            OnTimer);
+                    }
+                }
             }
         }
 
@@ -249,8 +262,13 @@ namespace Orbweaver
             return new CheckSnapshot(fetched, includePre, result);
         }
 
-        private void RaiseCompleted(UpdateCheckResult result) =>
-            Guard("Completed", () => Completed?.Invoke(result));
+        // Each subscriber in its own try/catch, so one bad handler cannot starve the
+        // ones after it in the invocation list.
+        private void RaiseCompleted(UpdateCheckResult result)
+        {
+            foreach (var handler in Completed?.GetInvocationList() ?? [])
+                Guard("Completed", () => ((Action<UpdateCheckResult>)handler)(result));
+        }
 
         // Subscribers are UI code on someone else's schedule. One that throws must
         // not unwind into RunAutomaticAsync, which would skip its reschedule and
@@ -270,7 +288,9 @@ namespace Orbweaver
                 changed = _pending?.Tag != next?.Tag;
                 _pending = next;
             }
-            if (changed) Guard("PendingChanged", () => PendingChanged?.Invoke());
+            if (!changed) return;
+            foreach (var handler in PendingChanged?.GetInvocationList() ?? [])
+                Guard("PendingChanged", () => ((Action)handler)());
         }
 
         /// <summary>"Skip this version": quiet until a different release is published.</summary>

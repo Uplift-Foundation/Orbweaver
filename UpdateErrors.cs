@@ -18,6 +18,8 @@ namespace Orbweaver
         ChecksumMismatch,
         /// <summary>The disk refused: no room, no permission, or the file vanished mid-write.</summary>
         Storage,
+        /// <summary>A name that would reach the filesystem is not a plain file name (separators, "..", invalid characters). Refused before anything is written.</summary>
+        UnsafeName,
     }
 
     /// <summary>

@@ -23,11 +23,25 @@ namespace Orbweaver
                 ? $"{Brand.ShortName}-{version}-{rid}.dmg"
                 : $"{Brand.ShortName}-{version}-{rid}-setup.exe";
 
+        // The rule for any name derived from the network that reaches the
+        // filesystem: it must survive GetFileName unchanged, hold no invalid
+        // character (backslash included, which GetInvalidFileNameChars omits on
+        // macOS but Windows treats as a separator), and not be "." or "..".
+        internal static bool IsPlainFileName(string name) =>
+            name.Length > 0
+            && name != "." && name != ".."
+            && Path.GetFileName(name) == name
+            && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+            && !name.Contains('\\');
+
         // Names compare ordinally: a release also holds OrbweaverSpeech-*.zip
         // assets, and a loose "contains" would one day pick one of those.
         internal static (UpdateAsset Installer, UpdateAsset Checksums) Select(UpdateRelease release, string rid)
         {
             var wanted = ExpectedAssetName(release.Version, rid);
+            if (!IsPlainFileName(wanted))
+                throw new UpdateException(UpdateFailure.UnsafeName,
+                    $"Release {release.Tag} would name its installer \"{wanted}\", which is not a plain file name; refusing to write it.");
             var installer = release.Assets.FirstOrDefault(a => string.Equals(a.Name, wanted, StringComparison.Ordinal));
             if (installer is null)
                 throw new UpdateException(UpdateFailure.NoInstaller,

@@ -427,6 +427,25 @@ public class UpdateCheckerTests
     }
 
     [Fact]
+    public async Task OneBadSubscriberDoesNotStarveTheOnesAfterIt()
+    {
+        var r = new Rig();
+        r.F.Releases = [Rel("1.0.4")];
+        var completedAfter = 0;
+        var pendingAfter = 0;
+        r.C.Completed += _ => throw new InvalidOperationException("first handler throws");
+        r.C.Completed += _ => completedAfter++;
+        r.C.PendingChanged += () => throw new InvalidOperationException("first handler throws");
+        r.C.PendingChanged += () => pendingAfter++;
+
+        await r.C.RunAutomaticAsync();
+
+        Assert.Equal(1, completedAfter);
+        Assert.Equal(1, pendingAfter);
+        Assert.Equal(UpdateSchedule.Interval, r.LastDelay);
+    }
+
+    [Fact]
     public async Task AThrowingCompletedSubscriberDoesNotBreakAManualCheck()
     {
         var r = new Rig();
