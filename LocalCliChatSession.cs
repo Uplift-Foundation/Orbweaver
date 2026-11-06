@@ -1416,7 +1416,27 @@ namespace Orbweaver
 
             _pending = null;
             Note(NotAtPromptNote(verdict.Why));
+            MirrorLog.Say("local-typing-refused", RefusalLogDetail(SessionId, verdict));
             return ChatSendOutcome.Failed;
+        }
+
+        // What the log says about a local refusal, so a refusal on a real
+        // machine can be told apart after the fact: the record said waiting, the
+        // screen was a dialog, or the screen could not be read (and then which
+        // check fired, or that the capture came back null or threw). Never any
+        // screen text: a dialog's title is reduced to the word "dialog", and the
+        // diagnostic is Celeste's own vocabulary of counts and check names.
+        internal static string RefusalLogDetail(string sessionId, TypingVerdict verdict)
+        {
+            var kind = verdict.Why switch
+            {
+                TypingGate.WaitingWhy => "record-waiting",
+                TypingGate.UnreadableWhy => "unreadable",
+                { } why when why.StartsWith("it is showing a dialog", StringComparison.Ordinal) => "dialog",
+                _ => "other",
+            };
+
+            return $"session={sessionId} kind={kind} diag={verdict.Diagnostic ?? "none"}";
         }
 
         internal static string NotAtPromptNote(string? why) =>
