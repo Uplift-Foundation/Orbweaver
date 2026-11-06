@@ -72,7 +72,7 @@ public class UpdateInstallWindowsTests : IDisposable
 
     [Theory]
     [InlineData(@"C:\Users\ada\AppData\Local\Programs\Orbweaver\Orbweaver.exe")]
-    [InlineData(@"C:\Users\ada\AppData\Local\Programs\ClaudeBuddy\orbweaver.EXE")]
+    [InlineData(@"C:\Users\ada\AppData\Local\Apps\Tools\orbweaver.EXE")]
     public void Preflight_accepts_the_installed_exe(string path) =>
         Assert.Null(UpdateInstallPlan.WinPreflight(path));
 
