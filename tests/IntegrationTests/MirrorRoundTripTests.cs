@@ -2414,6 +2414,22 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(new[] { "/ship-it" }, typed);
     }
 
+    // The regression Warren hit on 2f8a228f: a peer asked for the form on a
+    // screen shaped like this and was told no-prompt.
+    [Fact]
+    public async Task AFormAboveBlankRowsAndABottomTitledRuleIsOfferedToAPeer()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniFormTitledRuleAtBottom };
+        harness.AddSession("qa-mini-d", WriteTranscript("bottom-rule.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa-mini-d");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("qa-mini-d");
+
+        Assert.Null(error);
+        Assert.Equal("Which fruit? (qa-mini-d)", prompt!.Title);
+        Assert.Equal(4, prompt.Options.Count);
+    }
+
     private static MirrorProtocol.MirrorFrame AnswerFrame(string id, string name, string key, string fp, byte[]? text) =>
         MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Answer, id,
             new Dictionary<string, string>

@@ -1503,6 +1503,33 @@ namespace Orbweaver.Tests
                     ────────────────────────────────────────────────────────────────────
                     """ + blanks) is null);
 
+            // A form at the top, blank rows, and the session's titled rule on the
+            // last row (QA's mini capture on 2f8a228f): the window counts drawn
+            // lines, so the blanks in between do not push the form out of it.
+            var bottomRule = ChatTranscript.ParseAskForm(PaneFixtures.MiniFormTitledRuleAtBottom);
+            Check("a form above blank rows and a bottom titled rule reads as a form",
+                bottomRule is not null && bottomRule.Prompt.Options.Count == 4
+                && bottomRule.Prompt.Title == "Which fruit? (qa-mini-d)" && bottomRule.FreeTextKey == "3",
+                bottomRule?.Prompt.Title ?? "null");
+            Check("…as a dialog, and its screen as a dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.MiniFormTitledRuleAtBottom) is not null
+                && PaneScreen.Classify(PaneFixtures.MiniFormTitledRuleAtBottom) == PaneReading.Dialog);
+            Check("the capture really has blank rows between the form and its last row",
+                PaneFixtures.MiniFormTitledRuleAtBottom.Split('\n').Length == 45
+                && !string.IsNullOrWhiteSpace(PaneFixtures.MiniFormTitledRuleAtBottom.Split('\n')[^1])
+                && PaneFixtures.MiniFormTitledRuleAtBottom.Split('\n').Count(string.IsNullOrWhiteSpace) >= 15);
+
+            // Counting drawn lines widens the window only over blanks: a
+            // /permissions tab, a prose list above a live box, and a prompt keep
+            // their readings with blank rows and a titled rule under them.
+            var spacer = string.Concat(Enumerable.Repeat("\n", 25)) + "──────────────────────────────── qa ─";
+            Check("/permissions over blank rows and a bottom rule is still not a dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + spacer) is null
+                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + spacer) == PaneReading.Unknown);
+            Check("the window holds thirty drawn lines, not thirty rows",
+                ChatTranscript.WindowStart(Enumerable.Repeat("x", 40).Concat(Enumerable.Repeat("", 50)).ToArray()) == 10
+                && ChatTranscript.WindowStart(new[] { "a", "", "b" }) == 0);
+
             // A cleared session in a 45-row pane, measured: the box is pinned to
             // the bottom, so a prompt never had blank rows below it.
             Check("a /clear'ed session in a tall pane is a prompt",

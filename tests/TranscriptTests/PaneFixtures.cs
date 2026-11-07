@@ -1308,5 +1308,59 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
   ⏵⏵ bypass permissions on (shift+tab to cycle)
 """"";
 
+        // Mac mini, a QA throwaway session (qa307-mini-d) on build 2f8a228f: a
+        // live two-question form drawn near the top of a 120x45 pane, ~20
+        // blank rows, then the session's titled rule on the LAST row.
+        // Byte-exact, every row kept. It parsed as nothing on every commit back
+        // to 6310763e: the bottom window counted raw rows and held only blanks
+        // and that rule. (regress/mini-d-2f8a228f.txt)
+        internal const string MiniFormTitledRuleAtBottom = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307-mini-d · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two single-select questions. Q1: question "Which
+  fruit? (qa-mini-d)", header "Fruit", options Apple and Pear (with short descriptions). Q2: question "Which size?
+  (qa-mini-d)", header "Size", options Small and Large (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruit  ☐ Size  ✔ Submit  →
+
+Which fruit? (qa-mini-d)
+
+❯ 1. Apple
+     Crisp and sweet
+  2. Pear
+     Soft and juicy
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mini-d ─
+""""";
+
     }
 }

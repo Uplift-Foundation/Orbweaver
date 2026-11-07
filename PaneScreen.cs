@@ -63,7 +63,7 @@ namespace Orbweaver
             if (ChatTranscript.ParseDialog(screen) is not null) return (PaneReading.Dialog, "dialog");
 
             var lines = ChatTranscript.ScreenLines(screen).Select(l => l.Trim()).ToArray();
-            var from = Math.Max(0, lines.Length - ChatTranscript.DialogWindow);
+            var from = ChatTranscript.WindowStart(lines);
 
             var mark = -1;
             for (var i = lines.Length - 1; i >= from && mark < 0; i--)

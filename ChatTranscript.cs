@@ -471,7 +471,7 @@ namespace Orbweaver
 
             if (IsNavigatedList(cleaned)) return null;
 
-            var from = Math.Max(0, cleaned.Length - DialogWindow);
+            var from = WindowStart(cleaned);
 
             // The *last* run of numbered lines in the window. Last, because
             // anything the assistant wrote earlier in the conversation is above
@@ -564,7 +564,7 @@ namespace Orbweaver
             var prompt = ParseDialogCore(screen, out var cleaned, out var first);
             if (prompt is null || first < 0) return null;
 
-            var from = Math.Max(0, cleaned.Length - DialogWindow);
+            var from = WindowStart(cleaned);
             var raw = ScreenLines(screen).Select(l => l.Trim()).ToArray();
 
             // The bar or the single-question header: the nearest one above the
@@ -720,6 +720,27 @@ namespace Orbweaver
             var end = lines.Length;
             while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
             return end == lines.Length ? lines : lines[..end];
+        }
+
+        // Where the bottom DialogWindow *drawn* lines start: counted up from the
+        // bottom over lines that hold something, so blank rows anywhere on the
+        // screen do not use the window up.
+        //
+        // A real form on the mini (regress/mini-d-2f8a228f.txt) is drawn near
+        // the top of a 45-row pane, then ~20 blank rows, then the session's
+        // titled rule on the very last row. Counting raw rows, the window held
+        // only blanks and that rule and the form parsed as nothing — on every
+        // commit back to 6310763e, so it was never a regression, only a screen
+        // shape no fixture had. Trimming trailing blanks (ScreenLines) cannot
+        // help it, because the last row is not blank.
+        internal static int WindowStart(IReadOnlyList<string> lines)
+        {
+            var drawn = 0;
+            for (var i = lines.Count - 1; i >= 0; i--)
+            {
+                if (!string.IsNullOrWhiteSpace(lines[i]) && ++drawn == DialogWindow) return i;
+            }
+            return 0;
         }
 
         // The full-width line the TUI draws above and below its input box.
