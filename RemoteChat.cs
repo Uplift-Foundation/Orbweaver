@@ -716,6 +716,18 @@ namespace Orbweaver
     // prompt that has no terminal to go to, and a prompt that sets it keeps the
     // panel open when that link is used, since the answer to "where else" is a note
     // in the transcript and not another window.
+    // CB-307 addendum item 3: an AskUserQuestion form read off the screen —
+    // ChatTranscript.ParseAskForm says how. Prompt is the options as buttons,
+    // titled with the whole question; Tabs and CurrentTab say which question of
+    // a multi-question form is showing (-1 when that cannot be told); the two
+    // keys name the "Type something" and "Chat about this" options by label.
+    public sealed record AskForm(
+        ChatPrompt Prompt, IReadOnlyList<AskTab> Tabs, int CurrentTab, string? FreeTextKey, string? ChatAboutKey);
+
+    public sealed record AskTab(string Name, AskTabState State);
+
+    public enum AskTabState { Open, Answered, Submit }
+
     public sealed record ChatPrompt(
         string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false,
         string? ElsewhereLabel = null);

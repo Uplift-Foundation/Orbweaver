@@ -451,14 +451,23 @@ namespace Orbweaver
         //
         // Null on anything unexpected, and every caller treats null as "send the
         // person to the terminal".
-        public static ChatPrompt? ParseDialog(string screen)
+        public static ChatPrompt? ParseDialog(string screen) => ParseDialogCore(screen, out _, out _);
+
+        // ParseDialog, also handing back the cleaned lines and the index of
+        // option 1, so ParseAskForm reads the same option run rather than a
+        // second one of its own.
+        private static ChatPrompt? ParseDialogCore(string screen, out string[] cleanedLines, out int firstOption)
         {
+            cleanedLines = Array.Empty<string>();
+            firstOption = -1;
+
             var lines = screen.Replace("\r", "").Split('\n');
 
             // Box drawing is stripped anyway: it costs nothing, and an
             // elicitation dialog may still be framed even though a permission
             // prompt isn't.
             var cleaned = lines.Select(l => l.Trim().Trim('│', '┃', '|', '║').Trim()).ToArray();
+            cleanedLines = cleaned;
 
             if (IsNavigatedList(cleaned)) return null;
 
@@ -533,8 +542,90 @@ namespace Orbweaver
             var title = t >= 0 ? cleaned[t] : "";
             if (title.Length == 0 || !title.Any(char.IsLetterOrDigit)) title = "Waiting for input";
 
+            firstOption = runStart;
             return new ChatPrompt(title, options);
         }
+
+        // --- AskUserQuestion forms (CB-307 addendum item 3) ---
+
+        // A form Claude Code draws for AskUserQuestion: ParseDialog's options,
+        // plus what makes it a form rather than a yes/no dialog. Read off a real
+        // capture of the mini's form (PaneFixtures.MiniAskForm), bottom up: the
+        // footer, "6. Chat about this" under a rule, "5. Type something.",
+        // numbered options with indented descriptions, a │-framed question, and
+        // a tab bar "←  ☒ …  ☐ …  ✔ Submit  →" in which ☒ is a question already
+        // answered, ☐ one still open and ✔ Submit the last tab. A form with one
+        // question draws a "☐ <header>" line instead of the bar.
+        //
+        // Null for anything that is not a form, including every ordinary dialog
+        // — those keep reading through ParseDialog exactly as before.
+        internal static AskForm? ParseAskForm(string screen)
+        {
+            var prompt = ParseDialogCore(screen, out var cleaned, out var first);
+            if (prompt is null || first < 0) return null;
+
+            var from = Math.Max(0, cleaned.Length - DialogWindow);
+            var raw = screen.Replace("\r", "").Split('\n').Select(l => l.Trim()).ToArray();
+
+            // The bar or the single-question header: the nearest one above the
+            // options, inside the window.
+            var head = -1;
+            for (var i = first - 1; i >= from && head < 0; i--)
+                if (IsTabBar(cleaned[i]) || cleaned[i].StartsWith("☐ ", StringComparison.Ordinal)) head = i;
+
+            var freeText = prompt.Options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key;
+            var chatAbout = prompt.Options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key;
+
+            if (head < 0 && freeText is null) return null;
+
+            var tabs = head < 0 ? new List<AskTab>()
+                : IsTabBar(cleaned[head]) ? TabsOf(cleaned[head])
+                : new List<AskTab> { new(cleaned[head][2..].Trim(), AskTabState.Open) };
+
+            // The question is the │-framed block between the head and option 1,
+            // which wraps; ParseDialog's title is only its last line.
+            var question = new List<string>();
+            for (var i = Math.Max(head + 1, from); i < first; i++)
+                if (raw[i].StartsWith('│')) question.Add(cleaned[i]);
+
+            var title = question.Count > 0 ? string.Join(" ", question) : prompt.Title;
+
+            // Which tab is showing: the terminal marks it in reverse video,
+            // which capture-pane -p does not carry. The first still-open tab is
+            // the one Claude Code moves to after an answer; with none open, the
+            // Submit tab. Anything else is not claimed.
+            var current = tabs.FindIndex(t => t.State == AskTabState.Open);
+            if (current < 0) current = tabs.FindIndex(t => t.State == AskTabState.Submit);
+
+            return new AskForm(prompt with { Title = title }, tabs, current, freeText, chatAbout);
+        }
+
+        internal const string FreeTextLabel = "Type something";
+        internal const string ChatAboutLabel = "Chat about this";
+
+        private static bool IsTabBar(string line) =>
+            line.StartsWith('←') && line.EndsWith('→') && line.IndexOfAny(new[] { '☐', '☒', '✔' }) >= 0;
+
+        private static List<AskTab> TabsOf(string bar)
+        {
+            var inner = bar.Trim('←', '→').Trim();
+            var tabs = new List<AskTab>();
+
+            foreach (Match m in TabCell.Matches(inner))
+            {
+                var state = m.Groups[1].Value switch
+                {
+                    "☒" => AskTabState.Answered,
+                    "✔" => AskTabState.Submit,
+                    _ => AskTabState.Open,
+                };
+                tabs.Add(new AskTab(m.Groups[2].Value.Trim(), state));
+            }
+
+            return tabs;
+        }
+
+        private static readonly Regex TabCell = new(@"([☐☒✔])\s+(.*?)(?=\s+[☐☒✔]\s|$)", RegexOptions.Compiled);
 
         // (4) above: whether these trimmed, frame-stripped lines are a
         // navigated list such as `/permissions` rather than a question.

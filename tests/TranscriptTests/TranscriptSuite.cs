@@ -1352,6 +1352,63 @@ namespace Orbweaver.Tests
                 PaneScreen.Read("────────────────────────────────────────\n❯ \n────────────────────────────────────────\n1. Yes").Check
                     == "options-under-box");
 
+            // --- AskUserQuestion forms (CB-307 addendum item 3) ---
+
+            var form = ChatTranscript.ParseAskForm(PaneFixtures.MiniAskForm);
+            Check("the mini's real AskUserQuestion form reads as a form", form is not null);
+            Check("its six options, keys 1 to 6",
+                form is not null && form.Prompt.Options.Select(o => o.Key).SequenceEqual(new[] { "1", "2", "3", "4", "5", "6" }),
+                string.Join(",", form?.Prompt.Options.Select(o => o.Key) ?? Array.Empty<string>()));
+            Check("the title is the whole wrapped question, not its last line",
+                form?.Prompt.Title.StartsWith("xxxxx xx xxx xxxxx") == true
+                && form.Prompt.Title.EndsWith("xx xxxxxx xxxxxxx.") == true,
+                form?.Prompt.Title ?? "null");
+            Check("its four tabs, in order, with their states",
+                form is not null && form.Tabs.Select(t => t.State).SequenceEqual(new[]
+                    { AskTabState.Answered, AskTabState.Open, AskTabState.Open, AskTabState.Submit }),
+                string.Join(",", form?.Tabs.Select(t => $"{t.State}:{t.Name}") ?? Array.Empty<string>()));
+            Check("tab names keep their spaces, and the last is Submit",
+                form?.Tabs[1].Name == "xxx xxxx" && form.Tabs[3].Name == "Submit",
+                string.Join("|", form?.Tabs.Select(t => t.Name) ?? Array.Empty<string>()));
+            Check("the showing question is the first still open",
+                form?.CurrentTab == 1, form?.CurrentTab.ToString() ?? "null");
+            Check("Type something and Chat about this are found by label",
+                form?.FreeTextKey == "5" && form.ChatAboutKey == "6",
+                $"{form?.FreeTextKey}/{form?.ChatAboutKey}");
+            Check("ParseDialog still reads the same six options",
+                ChatTranscript.ParseDialog(PaneFixtures.MiniAskForm)?.Options.Count == 6);
+
+            var single = ChatTranscript.ParseAskForm(PaneFixtures.MacModelSwitchDialog);
+            Check("a single-question form with a ☐ header reads as a form", single is not null);
+            Check("…with one open tab named by its header, showing",
+                single is not null && single.Tabs.Count == 1 && single.Tabs[0].Name == "Model switch"
+                && single.Tabs[0].State == AskTabState.Open && single.CurrentTab == 0,
+                string.Join(",", single?.Tabs.Select(t => t.Name) ?? Array.Empty<string>()));
+            Check("…its question joined across its frame lines",
+                single?.Prompt.Title.StartsWith("Opus 5.5's safeguards flagged this session.") == true
+                && single.Prompt.Title.EndsWith("You can change this later in /config.") == true,
+                single?.Prompt.Title ?? "null");
+            Check("…and its free-text and chat options by label",
+                single?.FreeTextKey == "3" && single.ChatAboutKey == "4");
+
+            var bareForm = ChatTranscript.ParseAskForm(PaneFixtures.MiniOpenclawQuestionDialog);
+            Check("a form with no bar or header in view is still a form by its Type something option",
+                bareForm is not null && bareForm.Tabs.Count == 0 && bareForm.CurrentTab == -1
+                && bareForm.FreeTextKey == "4" && bareForm.ChatAboutKey == "5");
+
+            Check("the exit dialog is not a form", ChatTranscript.ParseAskForm(PaneFixtures.MiniExitDialog) is null);
+            Check("a Bash approval is not a form", ChatTranscript.ParseAskForm(BashApproval) is null);
+            Check("a plan prompt is not a form", ChatTranscript.ParseAskForm(PlanApproval) is null);
+            Check("a prompt is not a form", ChatTranscript.ParseAskForm(PaneFixtures.MacPromptAfterEsc) is null);
+            Check("a /permissions tab is not a form", ChatTranscript.ParseAskForm(PaneFixtures.PermissionsAllow) is null);
+
+            // With everything answered, the Submit tab is the one showing.
+            var allAnswered = PaneFixtures.MiniAskForm.Replace("☐", "☒");
+            Check("with every question answered the Submit tab is current",
+                ChatTranscript.ParseAskForm(allAnswered)?.CurrentTab == 3);
+            Check("a bar with no Submit and nothing open claims no current tab",
+                ChatTranscript.ParseAskForm(allAnswered.Replace("✔ Submit", "☒ Submit"))?.CurrentTab == -1);
+
             // Whatever the parser makes of /permissions, none of it is a prompt.
             foreach (var (name, screen) in new[]
                      {

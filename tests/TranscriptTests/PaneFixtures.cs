@@ -748,5 +748,66 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
   ◯ xxxxx-4  xxxxx: xxxxxxxx xxxxxxx xxxxxx     1x 21x 1x
 """"";
 
+        // Mac mini, a real AskUserQuestion form (CB-307 addendum item 3), read
+        // with capture-pane only from a live session; nothing was sent to it.
+        // **Redacted**: every letter of the conversation, the question, the
+        // options, their descriptions, the tab names and the session name is x,
+        // and every digit except an option's own number is 0 — while Claude
+        // Code's fixed words (`✔ Submit`, `Type something.`, `Chat about this`,
+        // the footer) are kept verbatim, since they are what a form is read by.
+        // Every line keeps its exact width; spacing, │ frames, rules and the
+        // ←/☒/☐/✔/→ marks are as captured.
+        internal const string MiniAskForm = """""
+  ⎿  xxxxxxxxxxxx:xxxxxxx xxxx: 👋 xxxxxxxx xxxxx xxxx.
+     xxxx xxxxxxxx xxxxxxx: 00_xxxxxx/xxxxxxx_xxxxxxx_xxxxx
+     xxx_xxxxxxx_0000-00-00.xxx.
+
+⏺ xxxxxxxxx xxxxx xxxx, xxxxxx xxx xxxxxx xxxxx
+  xxxxxxx · xxxx xxx xxxx "xxxxxxxxxxxxxx": xxxxx
+  xx xxxxxxxx.xxxx
+
+❯ xxx xxxxx xxxxxx?
+
+⏺ x'x xxxxx xxxx. x'x xxxxxxxx xxxxx, xxxx xx xxxxxxxx x.
+  xxxxxxx; xx xxx xx xxxxxxx xxx xxxxxxx xxx xxx 00/0
+  xxxxxxx. xxxxxxxxx xx xxxx xxxxx 0 xxx xxxxxx xxx
+  xxxxxxxx xxx xxxxxxxxx xxxx xxxx xxxx.
+
+  xxx xxxxxxxx xxxx xx xxxx xxxxxxx xx xxxxx xxxx: xxxxx
+  xxx xxxx xxx xxxx xx xxxxxxxxxxxxxxx xxxx xxxx? x'xx
+  xxxxxxxx xxxx xxxxxxxxx xxx xxxxxx'x xxxx xx. xx xxx
+  xxxxxxxx xxx xxxx xx, x xxxxx xxxx xx x xxxx, x'xx xxxxx
+  xx xxxx. xxxxxxxxx x'xx xxxxx xxx xxxxx xxx xxx xxxxxxx
+  xxx xxxxx xxxxxx xx xxxxx 0 (xxxxxxx, xxxxxx, xxxxxxxxxxx
+  xxx xxx xxxxx). xxxxxxx xxxx xxx xxxxxxx xxxx xxxxxxxx.
+
+❯ xxx xxx xx xxxxxxxxx xxxx xxxxxxxxxxxx x xxxxxxxx xx xx
+  xxxxxxxx
+───────────────────────────────────────────────────────────
+←  ☒ xxxxxx  ☐ xxx xxxx  ☐ xxxxx 0  ✔ Submit  →
+
+│ xxxxx xx xxx xxxxx xxx xxx xxxx xx xxxxxx xxxxxxxxxxxxxxx
+│ xxxx xxxx? x xxxxxx'x xxxx xx xx xxxxxx xxxxxxx.
+
+❯ 1. xxxxx xxxx
+     xxxxxxx xxxx xxx xxxxx xxxx xxx xxxxx, x.x. xxxx xxxxx
+     xxx xxxxx xx 00/0.
+  2. xxxx xxxxxxx
+     xx xxxx xx xxxx, xx x xxx'x xxx xx. xxx'x xxxx xx
+     xxxxx xx xx.
+  3. xxxxx'x xxxxxxxxx xxxx
+     xx'x xxxxxxxx xxx xxxxx 0–0 xxxx xx
+     xxx_xxxxxxx_xxxxxxxxxx_0000-00-00.xx.
+  4. xxx'x xxxxxxxx
+     xxxx xx xxx xxxx xxxxx xxxx xxx xxxxxxxx.
+  5. Type something.
+───────────────────────────────────────────────────────────
+  6. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to
+cancel
+─────────────────────────────────────────── xxxxxx-xxxxxx ─
+""""";
+
     }
 }
