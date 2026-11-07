@@ -1569,6 +1569,31 @@ namespace Orbweaver.Tests
                 ChatTranscript.WindowStart(Enumerable.Repeat("x", 40).Concat(Enumerable.Repeat("", 50)).ToArray()) == 10
                 && ChatTranscript.WindowStart(new[] { "a", "", "b" }) == 0);
 
+            // CRLF: a screen captured or pasted on Windows ends its lines with
+            // \r\n. ScreenLines strips \r, so every real capture reads exactly as
+            // its LF original does — form, dialog, prompt or nothing.
+            foreach (var (name, screen) in new[]
+                     {
+                         ("live form", PaneFixtures.MiniAskForm), ("named form", PaneFixtures.MacNamedForm),
+                         ("bottom rule form", PaneFixtures.MiniFormTitledRuleAtBottom),
+                         ("tall pane form", PaneFixtures.MacLiveFormTallPane), ("exit dialog", PaneFixtures.MiniExitDialog),
+                         ("prompt", PaneFixtures.MacPromptAfterEsc), ("titled prompt", PaneFixtures.MiniUpdateLinePrompt),
+                         ("/permissions", PaneFixtures.PermissionsAllow), ("review", PaneFixtures.QaReview),
+                     })
+            {
+                var lf = screen.Replace("\r\n", "\n");
+                var crlf = lf.Replace("\n", "\r\n");
+                Check($"CRLF reads as LF does ({name}): classifier", PaneScreen.Read(crlf) == PaneScreen.Read(lf),
+                    $"{PaneScreen.Read(crlf)} vs {PaneScreen.Read(lf)}");
+                Check($"CRLF reads as LF does ({name}): dialog",
+                    ChatTranscript.ParseDialog(crlf)?.Options.Select(o => o.Key + o.Label).SequenceEqual(
+                        ChatTranscript.ParseDialog(lf)?.Options.Select(o => o.Key + o.Label) ?? Array.Empty<string>())
+                    ?? ChatTranscript.ParseDialog(lf) is null);
+                Check($"CRLF reads as LF does ({name}): form",
+                    ChatTranscript.ParseAskForm(crlf)?.Prompt.Title == ChatTranscript.ParseAskForm(lf)?.Prompt.Title);
+            }
+            Check("CRLF lines carry no trailing carriage return", ChatTranscript.ScreenLines("a\r\nb\r\n").SequenceEqual(new[] { "a", "b" }));
+
             // A cleared session in a 45-row pane, measured: the box is pinned to
             // the bottom, so a prompt never had blank rows below it.
             Check("a /clear'ed session in a tall pane is a prompt",
