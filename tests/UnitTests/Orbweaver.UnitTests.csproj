@@ -51,5 +51,6 @@
     <Compile Include="..\GlyphTests\GlyphSuite.cs" />
     <Compile Include="..\TranscriptTests\TranscriptSuite.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" />
+    <Compile Include="..\TranscriptTests\AskFormFixtures.cs" />
   </ItemGroup>
 </Project>

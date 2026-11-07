@@ -621,11 +621,12 @@
                     <Grid x:Name="PromptFreeText" IsVisible="False" ColumnDefinitions="*,Auto">
                         <TextBox x:Name="PromptFreeTextBox" Grid.Column="0"
                                  AcceptsReturn="False" FontSize="11"
-                                 KeyDown="PromptFreeTextBox_KeyDown"/>
+                                 KeyDown="PromptFreeTextBox_KeyDown"
+                                 TextChanged="PromptFreeTextBox_TextChanged"/>
                         <Border x:Name="PromptFreeTextSend" Grid.Column="1"
                                 Margin="4,0,0,0" Padding="9,4" CornerRadius="6"
                                 Background="#33FFFFFF" BorderBrush="#40FFFFFF"
-                                BorderThickness="1" Cursor="Hand"
+                                BorderThickness="1" Cursor="Hand" IsEnabled="False"
                                 PointerPressed="PromptFreeTextSend_PointerPressed">
                             <TextBlock Text="Send" Foreground="#EEFFFFFF" FontSize="11"/>
                         </Border>

@@ -3259,6 +3259,7 @@ namespace Orbweaver
             {
                 _freeTextOption = option;
                 PromptFreeTextBox.Text = "";
+                UpdateFreeTextSend();
                 PromptFreeText.IsVisible = true;
                 PromptFreeTextBox.Focus();
                 return;
@@ -3275,7 +3276,16 @@ namespace Orbweaver
             _freeTextOption = null;
             PromptFreeText.IsVisible = false;
             PromptFreeTextBox.Text = "";
+            UpdateFreeTextSend();
         }
+
+        // Send is live only for text that says something. On the far screen an
+        // empty "Type something." row declines the whole form when Enter lands on
+        // it, so a blank or whitespace-only answer must never be sendable.
+        private void PromptFreeTextBox_TextChanged(object? sender, TextChangedEventArgs e) => UpdateFreeTextSend();
+
+        private void UpdateFreeTextSend() =>
+            PromptFreeTextSend.IsEnabled = !string.IsNullOrWhiteSpace(PromptFreeTextBox.Text);
 
         private void PromptFreeTextBox_KeyDown(object? sender, KeyEventArgs e)
         {

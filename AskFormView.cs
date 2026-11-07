@@ -18,11 +18,36 @@ namespace Orbweaver
         internal static ChatPrompt ToPrompt(AskForm form)
         {
             var options = form.Prompt.Options
-                .Select(o => o with { FreeText = o.Key == form.FreeTextKey })
+                .Select(o => o with { FreeText = o.Key == form.FreeTextKey, Label = CheckboxLabel(o.Label) })
                 .ToList();
 
-            return form.Prompt with { Options = options, Progress = ProgressOf(form) };
+            return form.Prompt with
+            {
+                Options = options,
+                Progress = ProgressOf(form),
+
+                // The Submit tab's two buttons are answers that cannot be taken
+                // back: "Submit answers" sends everything, and "Cancel" declines
+                // the whole form. Armed, so neither fires on a press that began
+                // before the buttons had settled or is dragged off them, and
+                // neither is ever pressed by anything but a deliberate click.
+                ArmedActivation = OnSubmitTab(form),
+            };
         }
+
+        // The terminal draws a multi-select's checkboxes as "[ ]" and "[✔]", and
+        // a digit toggles that row without leaving the question. Shown as real
+        // checkbox glyphs, one label per row, so a panel reads as a checklist; the
+        // option's key is still the digit that toggles it.
+        internal static string CheckboxLabel(string label) =>
+            label.StartsWith("[ ] ", System.StringComparison.Ordinal) ? "\u2610 " + label[4..]
+            : label.StartsWith("[\u2714] ", System.StringComparison.Ordinal) ? "\u2611 " + label[4..]
+            : label;
+
+        // The form is showing its Submit tab ("Review your answers").
+        internal static bool OnSubmitTab(AskForm form) =>
+            form.CurrentTab >= 0 && form.CurrentTab < form.Tabs.Count
+            && form.Tabs[form.CurrentTab].State == AskTabState.Submit;
 
         // A prompt the far Buddy read off its own pane and sent over the link, as
         // the panel shows it. Tab states travel as lowercase words; anything

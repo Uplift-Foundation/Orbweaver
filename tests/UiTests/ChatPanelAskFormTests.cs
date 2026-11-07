@@ -308,4 +308,165 @@ public class ChatPanelAskFormTests : IDisposable
         Assert.False(FreeText(panel).IsVisible);
         Assert.Equal("3", Assert.Single(session.Answered).Key);
     }
+
+    // --- Send is live only for text that says something -------------------------
+
+    private static bool SendEnabled(ChatPanel panel) =>
+        panel.FindControl<Border>("PromptFreeTextSend")!.IsEnabled;
+
+    // On the far screen an empty "Type something." row declines the whole form
+    // when Enter lands on it, so blank text must never be sendable.
+    [AvaloniaFact]
+    public void SendIsDisabledUntilThereIsRealText()
+    {
+        var (panel, session) = Open(Form());
+        Click(panel, Option(panel, 2));
+        Flush();
+
+        Assert.False(SendEnabled(panel));
+
+        FreeTextBox(panel).Text = "   ";
+        Flush();
+        Assert.False(SendEnabled(panel));
+
+        FreeTextBox(panel).Text = "B";
+        Flush();
+        Assert.True(SendEnabled(panel));
+
+        FreeTextBox(panel).Text = "";
+        Flush();
+        Assert.False(SendEnabled(panel));
+        Assert.Empty(session.Typed);
+    }
+
+    [AvaloniaFact]
+    public void ABoxReopenedForAnotherQuestionStartsWithSendDisabled()
+    {
+        var (panel, session) = Open(Form());
+        Click(panel, Option(panel, 2));
+        FreeTextBox(panel).Text = "typed";
+        Flush();
+        Assert.True(SendEnabled(panel));
+
+        session.Show(new ChatPrompt("Which month?",
+            new[] { new ChatPromptOption("1", "June"), new ChatPromptOption("2", "Type something.", FreeText: true) }));
+        Flush();
+        Assert.False(SendEnabled(panel));
+    }
+
+    // --- the Submit tab: two explicit buttons, Cancel never pressed implicitly ---
+
+    private static ChatPrompt SubmitTab() => AskFormView.ToPrompt(ChatTranscript.ParseAskForm(AskFormFixtures.SubmitTab)!);
+
+    private static Pointer NewPointer() => new(Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true);
+
+    private static void Press(ChatPanel panel, Border option)
+    {
+        var at = option.TranslatePoint(new Point(2, 2), panel) ?? new Point(2, 2);
+        option.RaiseEvent(new PointerPressedEventArgs(
+            option, NewPointer(), panel, at, 0,
+            new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
+            KeyModifiers.None, 1));
+    }
+
+    private static void Release(ChatPanel panel, Border option)
+    {
+        var at = option.TranslatePoint(new Point(2, 2), panel) ?? new Point(2, 2);
+        option.RaiseEvent(new PointerReleasedEventArgs(
+            option, NewPointer(), panel, at, 0,
+            new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
+            KeyModifiers.None, MouseButton.Left));
+    }
+
+    private readonly Func<DateTime> _previousClock = ChatPanel.PromptClock;
+    private DateTime _now = new(2026, 11, 7, 12, 0, 0, DateTimeKind.Utc);
+
+    [AvaloniaFact]
+    public void TheSubmitTabOffersSubmitAnswersAndCancelAsLabelledButtons()
+    {
+        var (panel, _) = Open(SubmitTab());
+
+        Assert.Equal("Ready to submit your answers?", panel.FindControl<TextBlock>("PromptTitle")!.Text);
+        var labels = panel.FindControl<ItemsControl>("PromptOptions")!.ItemsPanelRoot!.Children
+            .Select(c => ((Control)c).GetVisualDescendants().OfType<TextBlock>().First().Text).ToList();
+        Assert.Equal(new[] { "Submit answers", "Cancel" }, labels);
+    }
+
+    // Armed: a press alone answers nothing. Cancel declines the whole form, so
+    // it is only ever given by a click that is pressed and released on it after
+    // the buttons have been up for a moment.
+    [AvaloniaFact]
+    public void CancelIsNeverPressedByAPressAloneOrAClickBeforeTheButtonsSettle()
+    {
+        ChatPanel.PromptClock = () => _now;
+        try
+        {
+            var (panel, session) = Open(SubmitTab());
+
+            // Pressed straight away: inside the arming window.
+            Press(panel, Option(panel, 1));
+            Release(panel, Option(panel, 1));
+            Flush();
+            Assert.Empty(session.Answered);
+
+            // After the window, a press with no release still answers nothing.
+            _now += TimeSpan.FromSeconds(5);
+            Press(panel, Option(panel, 1));
+            Flush();
+            Assert.Empty(session.Answered);
+
+            // Released over a different button than it was pressed on: nothing.
+            Release(panel, Option(panel, 0));
+            Flush();
+            Assert.Empty(session.Answered);
+        }
+        finally
+        {
+            ChatPanel.PromptClock = _previousClock;
+        }
+    }
+
+    [AvaloniaFact]
+    public void ADeliberateClickOnSubmitAnswersAnswersOnlyThatButton()
+    {
+        ChatPanel.PromptClock = () => _now;
+        try
+        {
+            var (panel, session) = Open(SubmitTab());
+            _now += TimeSpan.FromSeconds(5);
+
+            Press(panel, Option(panel, 0));
+            Release(panel, Option(panel, 0));
+            Flush();
+
+            var answered = Assert.Single(session.Answered);
+            Assert.Equal("1", answered.Key);
+            Assert.Equal("Submit answers", answered.Label);
+        }
+        finally
+        {
+            ChatPanel.PromptClock = _previousClock;
+        }
+    }
+
+    [AvaloniaFact]
+    public void ADeliberateClickOnCancelAnswersCancelAndNothingElse()
+    {
+        ChatPanel.PromptClock = () => _now;
+        try
+        {
+            var (panel, session) = Open(SubmitTab());
+            _now += TimeSpan.FromSeconds(5);
+
+            Press(panel, Option(panel, 1));
+            Release(panel, Option(panel, 1));
+            Flush();
+
+            Assert.Equal("2", Assert.Single(session.Answered).Key);
+        }
+        finally
+        {
+            ChatPanel.PromptClock = _previousClock;
+        }
+    }
 }
