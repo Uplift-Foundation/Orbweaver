@@ -251,6 +251,12 @@ Note the probe is itself subject to the gate, because `dotnet` is a third-party 
 
 `<Version>` in `Orbweaver.csproj` is the single source of truth for the shipped version.
 
+## Testing the updater without publishing a release
+
+**Never test an update against the real GitHub feed, and never in a suite.** The updater has two environment levers so a real run can be pointed at something you control: `ORBWEAVER_UPDATE_FEED_URL` replaces the GitHub releases endpoint with a fixture server, and `ORBWEAVER_UPDATE_CURRENT_VERSION` makes the app believe it is an older version, so a fixture release counts as newer. `tools/update-feed-fixture/` is a small Python server that serves the release JSON, the installer assets and a `SHA256SUMS.txt` it computes from them. Point a built app at it, e.g. `ORBWEAVER_UPDATE_FEED_URL=http://127.0.0.1:<port> ORBWEAVER_UPDATE_CURRENT_VERSION=0.0.1`, and a manual **Check for updates…** offers the fixture release.
+
+Run the negatives as well as the happy path, because a green install proves nothing about the gate: serve an asset with one byte changed (the checksum must refuse it), an ad-hoc-signed macOS app (the Team ID check must refuse it), and a feed with the same version (it must say up to date). Suites never run `hdiutil`, `codesign` on a real bundle, `spctl`, `open`, `setup.exe`, a real process exit or github.com — every one of those sits behind a seam (`IUpdateInstaller` for the UI) and the UI suites drive a fake.
+
 ## Every feature ships with its tests
 
 **A feature request is not finished when the feature works. It is finished when the feature works and the code that makes it work is covered.** Tests land in the same branch as the behaviour, not a follow-up, and the target for the lines that branch adds or changes is **100%** — every new method, every arm of every new conditional, every error path you wrote a `catch` for.

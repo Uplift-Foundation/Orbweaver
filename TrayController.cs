@@ -142,6 +142,7 @@ namespace Orbweaver
                             + $"|orbs={SessionManager.Instance?.OrbsVisible}"
                             + $"|usage={SessionManager.Instance?.UsageOrbsVisible}"
                             + $"|muted={AudioMute.IsMuted}"
+                            + $"|update={UpdateMenu.PendingVersion() ?? "-"}"
                             + $"|{ClaudeDesktopManager.Digest()}";
             if (signature == _lastSignature) return;
 
@@ -296,6 +297,14 @@ namespace Orbweaver
             var newChatItem = new NativeMenuItem("New chat…");
             newChatItem.Click += (_, _) => OpenNewChat();
             menu.Add(newChatItem);
+
+            // Above Settings… and not in it: an offered update is time-sensitive in
+            // a way a preference is not, and this menu is the one surface that is
+            // always there. With nothing pending it is the on-demand check; with an
+            // update waiting it names the version and opens the notice (CB-308).
+            var updateItem = new NativeMenuItem(UpdateMenu.Label(UpdateMenu.PendingVersion()));
+            updateItem.Click += (_, _) => UpdateMenu.Activate();
+            menu.Add(updateItem);
 
             var settingsItem = new NativeMenuItem("Settings…");
             settingsItem.Click += (_, _) => OpenSettings();

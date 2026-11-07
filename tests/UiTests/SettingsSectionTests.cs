@@ -27,7 +27,7 @@ public class SettingsSectionTests
     {
         "orbs", "orb-click", "auto-organize", "group-outlines", "orb-colours", "chat-panel",
         "voice", "sounds", "claude-code", "codex", "grok", "openclaw", "claude-cloud",
-        "bridge-commands", "peer-link", "claude-desktop"
+        "bridge-commands", "peer-link", "updates", "claude-desktop"
     };
 
     private static SettingsWindow NewWindow()

@@ -244,6 +244,26 @@ public class KeepAliveInstallScriptTests
     }
 
     [MacKeepAliveFact]
+    public void PrintKeepalivePlist_AbandonsTheProcessGroup_SoTheUpdaterFinisherSurvivesAppExit()
+    {
+        // CB-308: launchd otherwise kills everything left in the app's process
+        // group when the app exits, and the update finisher is launched from
+        // the app.
+        var result = Run(["--print-keepalive-plist", "/tmp/fake/Orbweaver"]);
+
+        Assert.Equal(0, result.ExitCode);
+        var doc = System.Xml.Linq.XDocument.Parse(
+            result.Stdout.Replace("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">", ""));
+        var keys = doc.Descendants("dict").First().Elements().ToList();
+        var at = keys.FindIndex(e => e.Name == "key" && e.Value == "AbandonProcessGroup");
+        Assert.True(at >= 0, "AbandonProcessGroup key missing");
+        Assert.Equal("true", keys[at + 1].Name.LocalName);
+        // Control: a neighbouring boolean-less key is not mistaken for it.
+        var throttle = keys.FindIndex(e => e.Name == "key" && e.Value == "ThrottleInterval");
+        Assert.Equal("integer", keys[throttle + 1].Name.LocalName);
+    }
+
+    [MacKeepAliveFact]
     public void PrintKeepalivePlist_IsWellFormedXml()
     {
         var result = Run(["--print-keepalive-plist", "/tmp/fake/Orbweaver"]);

@@ -68,6 +68,10 @@ STAGE="$DIST/dmg-stage"
 ./tools/build-macos-app.sh --rid "$RID"
 
 echo "==> Staging DMG contents"
+# The auto-updater (CB-308, UpdateInstallMacOS.Stage) mounts this image and
+# requires exactly ONE real .app at its root -- symlinks do not count, which is
+# why the Applications drag target below is safe. Do not add a second .app here
+# (a helper, a docs bundle) without teaching MacFindSingleApp about it.
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 

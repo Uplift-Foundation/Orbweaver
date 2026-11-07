@@ -375,13 +375,19 @@ namespace Orbweaver
 
         // One line per thing the migration did, next to the crash log — the
         // place a person looking for "where did my settings go" will look.
-        internal static void AppendLog(string directory, string line)
+        internal static void AppendLog(string directory, string line) =>
+            AppendLog(directory, LogFile, line);
+
+        // The same writer for another log in the same folder. CB-308's updater
+        // keeps its own update.log, because a person asking "why did my update
+        // not take" should not have to read it out of a migration log.
+        internal static void AppendLog(string directory, string fileName, string line)
         {
             try
             {
                 Directory.CreateDirectory(directory);
                 File.AppendAllText(
-                    Path.Combine(directory, LogFile),
+                    Path.Combine(directory, fileName),
                     $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz} {line}{Environment.NewLine}");
             }
             catch
