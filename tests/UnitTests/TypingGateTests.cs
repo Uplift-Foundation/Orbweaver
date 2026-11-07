@@ -92,7 +92,7 @@ public class TypingGateTests
     {
         PaneFixtures.PermissionsAllow, PaneFixtures.PermissionsAsk, PaneFixtures.PermissionsDeny,
         PaneFixtures.PermissionsAutoMode, PaneFixtures.PermissionsWorkspace,
-        PaneFixtures.PermissionsRecentlyBlockedEmpty, PaneFixtures.PermissionsPermissionsTab,
+        PaneFixtures.PermissionsRecentlyBlockedEmpty,
         PaneFixtures.MiniRecentlyBlockedPopulatedStripped,
     };
 
@@ -291,6 +291,17 @@ public class GuardedTypeTests
     [Fact]
     public async Task NoCaptureMeansNoScreenEvenOnAReadableRoute() =>
         Assert.True((await TypingGate.JudgeAsync(Status, _ => "idle", null, paneReadable: true)).Allowed);
+
+    [Fact]
+    public async Task ShadowModeLogsAnAllowedVerdictAsAllowed()
+    {
+        var pane = new Pane { Screen = PaneFixtures.MacPromptAfterEsc };
+        var log = new List<string>();
+
+        Assert.True((await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true,
+            () => true, (what, _) => log.Add(what), "s1")).Typed);
+        Assert.Equal(new[] { "remote-typing-allowed" }, log);
+    }
 
     [Fact]
     public async Task AShadowLineWithNoSessionNameSaysSo()

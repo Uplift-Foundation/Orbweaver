@@ -263,6 +263,9 @@ namespace Orbweaver.Tests
 """"";
 
         // MacBook, /permissions, Workspace tab. (05-tab4.txt)
+        // The capture labelled 07-permissions-tab.txt is byte-identical to this
+        // one — the tab never moved when it was taken — so it is not a separate
+        // fixture: QA's gate found it running as a duplicate theory case.
         internal const string PermissionsWorkspace = """""
 
  ▐▛███▛█   Claude Code v2.1.319
@@ -356,55 +359,6 @@ namespace Orbweaver.Tests
    Permissions  Recently blocked   Allow   Ask   Deny   Auto mode   Workspace
 
    No recent blocks. Commands auto mode blocks will appear here.
-
-   ←/→ to switch · ↓ to select · Esc to cancel
-""""";
-
-        // MacBook, /permissions, Permissions tab. (07-permissions-tab.txt)
-        internal const string PermissionsPermissionsTab = """""
-
- ▐▛███▛█   Claude Code v2.1.319
-▝▜██████▀  Opus 5.5 with medium effort · Claude Team
- ▝▝   ▝▝   /…/-Users-someoneexample-Source-Orbweaver/39bceece-c540-4b61-bb97-e28fb1870c5d/scratchpad/permfix · /rc
-
-  ⎿  SessionStart:startup says: 👋 here. Most recently touched: 01-permissions.txt.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
-   Permissions  Recently blocked   Allow   Ask   Deny   Auto mode   Workspace
-
-   Claude Code can read files in the workspace, and make edits when auto-accept edits is on.
-
-     -  /private/tmp/claude-501/-Users-someoneexample-Source-Orbweaver/39bceece-c540-4b61-bb97 (Original working
-     -e28fb1870c5d/scratchpad/permfix                                                          directory)
-     1. Add directory…
-
 
    ←/→ to switch · ↓ to select · Esc to cancel
 """"";

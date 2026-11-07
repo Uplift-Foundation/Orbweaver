@@ -7,6 +7,7 @@ namespace Orbweaver.UnitTests;
 // listed. The shapes are the real ones measured on the MacBook 2026-11-07:
 // four config dirs holding projects/ and sessions/, and two siblings holding
 // neither.
+[Collection("Settings")]
 public class ConfigDirDiscoveryTests
 {
     private const string Home = "/home/u";

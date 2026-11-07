@@ -1185,7 +1185,6 @@ namespace Orbweaver.Tests
                          ("Deny", PaneFixtures.PermissionsDeny), ("Auto mode", PaneFixtures.PermissionsAutoMode),
                          ("Workspace", PaneFixtures.PermissionsWorkspace),
                          ("Recently blocked (empty)", PaneFixtures.PermissionsRecentlyBlockedEmpty),
-                         ("Permissions", PaneFixtures.PermissionsPermissionsTab),
                          ("Recently blocked (populated, stripped)", PaneFixtures.MiniRecentlyBlockedPopulatedStripped),
                      })
             {
@@ -1590,7 +1589,6 @@ namespace Orbweaver.Tests
                          ("Deny", PaneFixtures.PermissionsDeny), ("Auto mode", PaneFixtures.PermissionsAutoMode),
                          ("Workspace", PaneFixtures.PermissionsWorkspace),
                          ("Recently blocked (empty)", PaneFixtures.PermissionsRecentlyBlockedEmpty),
-                         ("Permissions", PaneFixtures.PermissionsPermissionsTab),
                          ("Recently blocked (populated, stripped)", PaneFixtures.MiniRecentlyBlockedPopulatedStripped),
                      })
                 Check($"/permissions {name} is not a prompt", PaneScreen.Classify(screen) != PaneReading.Prompt,

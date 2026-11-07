@@ -104,6 +104,20 @@ public class FormAnswerTests
         Assert.Empty(pane.Typed);
     }
 
+    // The cursor below the row moves Up; an Up the pane refuses stops there.
+    [Fact]
+    public async Task AnUpThePaneRefusesStopsTheFreeTextBeforeAnything()
+    {
+        var below = PaneFixtures.QaFormQ1.Replace("❯ 1. Red", "  1. Red").Replace("  4. Chat about this", "❯ 4. Chat about this");
+        var pane = new Pane(below);
+        var typed = new List<string>();
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed, await FormAnswer.AnswerAsync(Status, pane.Capture,
+            (_, key) => { typed.Add(key); return Task.FromResult(false); }, pane.Type, pane.Fp, "3", null, "green"));
+        Assert.Equal(new[] { "Up" }, typed);
+        Assert.Empty(pane.Typed);
+    }
+
     [Fact]
     public async Task NoKeyAndNoActionIsRefused()
     {

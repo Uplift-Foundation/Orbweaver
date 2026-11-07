@@ -647,7 +647,11 @@ namespace Orbweaver
 
             string? cursor = null;
             for (var i = first; i < cleaned.Length && cursor is null; i++)
-                if (cleaned[i].StartsWith('❯') && OptionLine.Match(cleaned[i]) is { Success: true } m) cursor = m.Groups[1].Value;
+            {
+                if (!cleaned[i].StartsWith('❯')) continue;
+                var mark = OptionLine.Match(cleaned[i]);
+                if (mark.Success) cursor = mark.Groups[1].Value;
+            }
 
             string? KeyOf(string label) => isReview ? options.FirstOrDefault(o => o.Label == label)?.Key : null;
 
@@ -716,8 +720,9 @@ namespace Orbweaver
         // after "Enter to select"/"Esc to cancel".
         private static bool IsBottomBorder(string[] cleaned, int runEnd, int rule)
         {
-            for (var j = rule + 1; j < cleaned.Length; j++)
-                if (!string.IsNullOrWhiteSpace(cleaned[j])) return false;
+            // Last drawn line: ScreenLines has already dropped the blank rows
+            // below it, so "last" is simply the end of the array.
+            if (rule != cleaned.Length - 1) return false;
 
             for (var j = runEnd + 1; j < rule; j++)
                 if (cleaned[j].Contains("Enter to select", StringComparison.Ordinal)
