@@ -62,6 +62,16 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
     private bool _replyEnabled = true;
     private bool _canType = true;
+
+    // CB-307 addendum: the far pane's screen for the typing gate. Null leaves
+    // the gate unwired, which is every test written before it.
+    private string? _farScreen;
+
+    // CB-307 item 3: the keys the far side pressed to answer a form, and the
+    // state its session reports (the roster's `waiting` is what makes a panel
+    // ask for a form at all). Null state leaves the status as it always was.
+    private readonly List<string> _pressed = new();
+    private string? _farState;
     private bool _typeResult = true;
     private bool _mangle;
     private bool _mangleInput;
@@ -649,6 +659,243 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Contains("over there", last.Text);
 
         Assert.Equal(ChatSendOutcome.Failed, outcome);
+    }
+
+    // CB-307 addendum: the far pane is on /permissions. Nothing is typed, the
+    // send fails, and the note under it names the far screen and says what to
+    // do — the sentence a person actually reads.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneOnADialogIsRefusedWithANoteThatSaysWhy()
+    {
+        _farScreen = PaneFixtures.PermissionsAllow;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var outcome = await session.SendAsync("please carry on");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Empty(_typed);
+
+        var last = session.History[^1];
+        Assert.Equal(ChatRole.System, last.Role);
+        Assert.StartsWith($"{Name}'s terminal isn't at its prompt — ", last.Text);
+        Assert.EndsWith("answer that screen in the terminal and send again.", last.Text);
+    }
+
+    // ...and the control: the same wiring on a real prompt types.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneAtItsPromptIsTyped()
+    {
+        _farScreen = PaneFixtures.MacPromptAfterEsc;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.SendAsync("please carry on"));
+        Assert.Single(_typed);
+    }
+
+    // --- CB-307 item 3: a question form on the far screen ---------------------
+
+    // The whole round trip over the harness's real server and client: the far
+    // roster says waiting, the panel asks for the form, shows it, and a click
+    // presses exactly that key on the far side — nothing was typed.
+    [AvaloniaFact]
+    public async Task AFormOnTheFarScreenIsShownAndAnAnswerPressesItsKey()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        // The screen cannot say which tab is showing, so no number is claimed.
+        Assert.Null(session.Prompt!.Progress);
+        Assert.StartsWith("xxxxx xx xxx xxxxx", session.Prompt.Title);
+
+        // The link carries text now, so "Type something." is offered as the box.
+        Assert.Equal("5", Assert.Single(session.Prompt.Options, o => o.FreeText).Key);
+
+        await session.AnswerAsync(session.Prompt.Options[1]);
+
+        Assert.Equal(new[] { "2" }, _pressed);
+        Assert.Empty(_typed);
+    }
+
+    // A multiSelect over the real link: ticking is a digit, and the explicit
+    // Submit button is Right on the far side — never a digit, never typed.
+    [AvaloniaFact]
+    public async Task AMultiSelectTicksWithADigitAndCommitsWithRight()
+    {
+        _farScreen = AskFormFixtures.MultiSelectQ2;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.Equal(new[] { "\u2610 Cheese", "\u2610 Ham", "\u2610 Olives" },
+            session.Prompt!.Options.Take(3).Select(o => o.Label));
+        Assert.Equal(AskFormView.CommitKey, session.Prompt.Options[^1].Key);
+
+        await session.AnswerAsync(session.Prompt.Options[1]);
+        Assert.Equal(new[] { "2" }, _pressed);
+
+        // The terminal ticks the box, as a real one does: the form as the next
+        // poll reads it is a different one (a box is ticked), so it is shown at
+        // once. An unchanged form would be held back while the screen catches up.
+        _farScreen = AskFormFixtures.MultiSelectTwoChecked;
+        await PumpUntilAsync(() => session.Prompt is not null);
+        await session.AnswerAsync(session.Prompt!.Options[^1]);
+
+        Assert.Equal(new[] { "2", "Right" }, _pressed);
+        Assert.Empty(_typed);
+    }
+
+    // The Submit tab over the real link: "Submit answers" presses its own key.
+    [AvaloniaFact]
+    public async Task TheReviewScreenOffersSubmitAnswersAndCancelAndPressesOnlyTheChosenOne()
+    {
+        _farScreen = AskFormFixtures.SubmitTab;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.True(session.Prompt!.ArmedActivation);
+        Assert.Equal(new[] { "Submit answers", "Cancel" }, session.Prompt.Options.Select(o => o.Label));
+
+        await session.AnswerAsync(session.Prompt.Options[0]);
+
+        Assert.Equal(new[] { "1" }, _pressed);
+    }
+
+    // Production wiring, which the harness's own client hides: the link raises
+    // MirrorChanged with the DEFAULT account only (a socket is not account-scoped),
+    // while a session under ~/.claude-board belongs to ".claude-board". A panel
+    // opened before the roster lands used to ignore that event, so it never
+    // upgraded to a live view and never noticed its session was waiting — it
+    // needed a second open. It must upgrade and ask on the roster landing alone.
+    [AvaloniaFact]
+    public async Task APanelForANonDefaultAccountUpgradesAndAsksWhenTheLinkRaisesTheDefaultAccount()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        // A client wired as PeerSessions wires the app's: no per-account
+        // subscription, and the roster event raised for the default account.
+        RemoteControlSessions.ResetForTests();
+        _client = new RemoteMirrorClient(Account, new RemoteMirrorClient.Seams(SendToServerAsync));
+        PeerSessions.UseClientForTests(_client);
+        _client.RosterUpdated += () => RemoteControlSessions.RaiseMirrorChanged(".claude");
+        Assert.NotEqual(".claude", Account);
+
+        var session = NewSession();
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.True(session.IsMirroring, "the roster landing alone should upgrade the panel");
+        Assert.NotNull(session.Prompt);
+    }
+
+    // Every account and config dir on the far machine: a form must be asked for
+    // and answerable from a panel whichever config dir its session lives under
+    // (~/.claude, ~/.claude-loginid, ~/.claude-board), because the link is not
+    // account-scoped. The client is wired as the app wires it, raising the roster
+    // event for the DEFAULT account only; the first panel is opened before the
+    // roster lands, the others after, so both orders are covered per account.
+    [AvaloniaFact]
+    public async Task AFormIsAskedForAndAnsweredFromAPanelUnderEveryAccount()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        RemoteControlSessions.ResetForTests();
+        _client = new RemoteMirrorClient(Account, new RemoteMirrorClient.Seams(SendToServerAsync));
+        PeerSessions.UseClientForTests(_client);
+        _client.RosterUpdated += () => RemoteControlSessions.RaiseMirrorChanged(".claude");
+
+        var accounts = new[] { ".claude-board", ".claude", ".claude-loginid" };
+        var sessions = new List<RemoteControlChatSession>();
+
+        for (var i = 0; i < accounts.Length; i++)
+        {
+            var session = new RemoteControlChatSession($"rc:{accounts[i]}:{Name}", accounts[i], Name);
+            sessions.Add(session);
+            session.PanelOpened();
+
+            // Only the first is opened ahead of the roster.
+            if (i == 0) await _client.DiscoverAsync(Peers, new[] { Name });
+        }
+
+        foreach (var (session, account) in sessions.Zip(accounts))
+        {
+            await PumpUntilAsync(() => session.Prompt is not null);
+            Assert.True(session.Prompt is not null, $"no form for a panel under {account}");
+        }
+
+        // And each one answers: the key reaches the far pane.
+        for (var i = 0; i < sessions.Count; i++)
+        {
+            await sessions[i].AnswerAsync(sessions[i].Prompt!.Options[0]);
+            Assert.Equal(i + 1, _pressed.Count);
+            Assert.Equal("1", _pressed[i]);
+        }
+
+        Assert.Empty(_typed);
+    }
+
+    // The screen moves on between the form being shown and the click: the far
+    // side presses nothing, and the panel is shown what is there now with a note
+    // saying so, which the user can answer.
+    [AvaloniaFact]
+    public async Task AnAnswerToAFormThatMovedOnPressesNothingAndShowsTheNewOne()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+        var shown = session.Prompt!;
+
+        _farScreen = PaneFixtures.MacModelSwitchDialog;
+        await session.AnswerAsync(shown.Options[1]);
+
+        Assert.Empty(_pressed);
+        Assert.NotEqual(shown.Title, session.Prompt?.Title);
+        Assert.StartsWith("Opus 5.5's safeguards flagged this session.", session.Prompt!.Title);
+        Assert.Contains(session.History, t => t.Text.Contains("had changed, so nothing was answered", StringComparison.Ordinal));
+    }
+
+    // The control: a far session that is not waiting is never asked, so no form
+    // is fetched and nothing can be pressed.
+    [AvaloniaFact]
+    public async Task AFarSessionThatIsNotWaitingIsNeverAskedForAForm()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => false, attempts: 30);
+
+        Assert.Null(session.Prompt);
+        Assert.Empty(_pressed);
+        Assert.DoesNotContain(MirrorProtocol.Prompt, _toServer);
+    }
+
+    private static async Task PumpUntilAsync(Func<bool> done, int attempts = 200)
+    {
+        for (var i = 0; i < attempts && !done(); i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
     }
 
     // --- CB-52: the integrity wording ------------------------------------------
@@ -1828,7 +2075,8 @@ public class RemoteMirrorChatSessionTests : IDisposable
             Source = SessionSource.ClaudeCode,
             TranscriptPath = _path,
             TmuxPane = "%1",
-            SessionPid = 4242
+            SessionPid = 4242,
+            State = _farState ?? new SessionStatus().State
         }));
 
         BuildServer();
@@ -1880,7 +2128,10 @@ public class RemoteMirrorChatSessionTests : IDisposable
             // somebody pinned by typing a code. A harness says yes explicitly.
             PeerAllowed: _ => true,
             // CB-252: never the developer's real persona files.
-            UserConfigDirs: () => Array.Empty<string>()));
+            UserConfigDirs: () => Array.Empty<string>(),
+            CapturePane: _farScreen is null ? null : _ => Task.FromResult<string?>(_farScreen),
+            CanReadPane: _farScreen is null ? null : _ => true,
+            PressKey: _farScreen is null ? null : (_, key) => { _pressed.Add(key); return Task.FromResult(true); }));
 
     private void BuildClient()
     {
@@ -1973,4 +2224,59 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
     private static string AssistantRow(string uuid, string text) =>
         $"{{\"type\":\"assistant\",\"uuid\":\"{uuid}\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}";
+
+    // The far machine's own name, joined to the session's title, once the roster
+    // has said which machine serves it.
+    [AvaloniaFact]
+    public async Task TheSessionIsNamedByTitleAndMachineOnceTheRosterHasSaidWhich()
+    {
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Equal(Name, session.FarTitle);
+        Assert.Equal($"{Name} on {FarRelay}", session.FarName);
+        Assert.Equal(FarRelay, session.FarMachine);
+    }
+
+    // A far Buddy that does not say it answers PROMPT is asked again, not given up
+    // on, and says why nothing was asked: not "unsupported", which is final.
+    [AvaloniaFact]
+    public async Task AFarSideThatDoesNotAdvertisePromptsIsNotAskedAndSaysWhy()
+    {
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var lines = new List<string>();
+        var session = NewSession();
+        session.PromptLog = (_, detail) => lines.Add(detail);
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        await PumpUntilAsync(() => lines.Any(l => l.Contains("far-side-not-known-to-answer-prompts")));
+
+        Assert.Null(session.Prompt);
+        Assert.Contains(lines, l => l.Contains("far-side-not-known-to-answer-prompts"));
+        Assert.DoesNotContain(MirrorProtocol.Prompt, _toServer);
+    }
+
+    // With a link but no fingerprint to answer against, the answer is a failure
+    // and presses nothing.
+    [AvaloniaFact]
+    public async Task AnAnswerWithNoFingerprintToAnswerAgainstPressesNothing()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt,
+            new ChatPrompt("Which?", new[] { new ChatPromptOption("1", "One") }), null));
+
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(_pressed);
+        Assert.Contains(session.History, t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal));
+    }
 }

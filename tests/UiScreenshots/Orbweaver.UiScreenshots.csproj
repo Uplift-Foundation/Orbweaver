@@ -104,6 +104,7 @@
     <!-- CB-306: the real commands.list and /status card, as constants. -->
     <Compile Include="..\UnitTests\OpenClawSlashFixtures.cs" Link="OpenClawSlashFixtures.cs" />
     <Compile Include="..\UnitTests\UpdateReleaseNotesFixture.cs" Link="UpdateReleaseNotesFixture.cs" />
+    <Compile Include="..\TranscriptTests\AskFormFixtures.cs" Link="AskFormFixtures.cs" />
     <ProjectReference Include="..\..\Orbweaver.csproj" />
   </ItemGroup>
 </Project>

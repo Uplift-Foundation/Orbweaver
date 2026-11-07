@@ -286,6 +286,10 @@ namespace Orbweaver
                     lock (_gate) _askingAll.Remove(peer);
                 }
 
+                // Read on every answer, the bare "unchanged" OK included, so a
+                // far Buddy upgraded mid-session is noticed on its next poll.
+                NoteSpeaksPrompts(peer, reply);
+
                 if (!reply.Ok || reply.Payload is null) continue;
 
                 var decoded = MirrorProtocol.DecodeRoster(reply.Payload);
@@ -419,6 +423,8 @@ namespace Orbweaver
                     // two failures: the flood was at least still trying.
                     lock (_gate) foreach (var n in ask) _asking.Remove(n);
                 }
+
+                NoteSpeaksPrompts(relay, reply);
 
                 if (!reply.Ok || reply.Payload is null)
                 {
@@ -892,7 +898,13 @@ namespace Orbweaver
             {
                 var code = reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
                 Log("input", $"n={name} -> err code={code}");
-                return new InputOutcome(code, null, null);
+
+                // CB-307 addendum: the far side's reason rides along as Why,
+                // so a refusal that names a dialog reaches the panel. The
+                // reason is msg, or the code itself when the far side sent
+                // none, so it is never the meaningful part only by accident.
+                return new InputOutcome(code, null, null,
+                    reply.Reason is { } reason && reason != code ? reason : null);
             }
 
             Log("input", $"n={name} -> ok via="
@@ -906,6 +918,126 @@ namespace Orbweaver
                     ? MirrorProtocol.Decode(why) : null,
                 reply.Fields is not null && reply.Fields.TryGetValue(MirrorProtocol.VerdictField, out var verdict)
                     ? verdict : null);
+        }
+
+        // --- answering a dialog (CB-307 addendum item 3) -----------------------
+
+        // What the far session is waiting on: its dialog or AskUserQuestion
+        // form, read off its own pane by the far Buddy. Error is the far side's
+        // code (ErrNoPrompt, ErrReplyOff, ErrNoPane, ErrUnsupported from a
+        // Buddy that predates this) and Prompt is null whenever Error is set.
+        private readonly HashSet<string> _speaksPrompts = new(StringComparer.OrdinalIgnoreCase);
+
+        // Both HELLO paths (the named ask and the complete roster) record it.
+        private void NoteSpeaksPrompts(string peer, Reply reply)
+        {
+            if (!reply.Ok) return;
+
+            lock (_gate)
+            {
+                if (MirrorProtocol.SaysItAnswersPrompts(reply.Fields)) _speaksPrompts.Add(peer);
+                else _speaksPrompts.Remove(peer);
+            }
+        }
+
+        // Whether the machine serving this session said it answers PROMPT and
+        // ANSWER (MirrorProtocol.PromptsField). False before its first reply.
+        public bool SpeaksPrompts(string name)
+        {
+            lock (_gate)
+            {
+                var key = ExistingKey(name);
+                return key is not null && _servedBy.TryGetValue(key, out var relay) && _speaksPrompts.Contains(relay);
+            }
+        }
+
+        internal readonly record struct PromptOutcome(MirrorProtocol.WirePrompt? Prompt, string? Error);
+
+        public async Task<PromptOutcome> FetchPromptAsync(string name)
+        {
+            if (RelayFor(name) is not { } relay)
+            {
+                Log("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
+                return new PromptOutcome(null, MirrorProtocol.ErrNoSession);
+            }
+
+            var reply = await RequestAsync(relay, MirrorProtocol.Prompt,
+                new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) }, payload: null,
+                TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
+
+            var outcome = PromptOutcomeOf(reply.Ok, reply.ErrCode, reply.Payload);
+            Log("prompt", outcome.Prompt is { } p ? $"n={name} -> ok fp={p.Fingerprint}" : $"n={name} -> err code={outcome.Error}");
+            return outcome;
+        }
+
+        // What a PROMPT reply means, pure so each arm is asserted without a
+        // far side that misbehaves on cue: a refusal is its code, a request
+        // that never got an answer (no code at all) reads as unsupported, and
+        // so does an OK whose payload is not a prompt — the panel then offers
+        // the terminal rather than buttons it cannot trust.
+        internal static PromptOutcome PromptOutcomeOf(bool ok, string? errCode, byte[]? payload)
+        {
+            if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrUnsupported);
+
+            return MirrorProtocol.DecodePrompt(payload) is { } prompt
+                ? new PromptOutcome(prompt, null)
+                : new PromptOutcome(null, MirrorProtocol.ErrUnsupported);
+        }
+
+        // And an ANSWER reply: null when it was taken, otherwise the code, with
+        // no code at all (never answered) read as unsupported.
+        internal static string? AnswerErrorOf(bool ok, string? errCode) =>
+            ok ? null : errCode ?? MirrorProtocol.ErrUnsupported;
+
+        // Take one option of the dialog Fingerprint names. Null on success,
+        // otherwise the far side's code — ErrPromptChanged means the screen
+        // moved on and nothing was pressed, so ask FetchPromptAsync again.
+        public Task<string?> AnswerPromptAsync(string name, string key, string fingerprint) =>
+            SendAnswerAsync(name, fingerprint, key, action: null, text: null);
+
+        // The "Type something" option with this text. Refused here, before
+        // anything is sent, when the text is empty, blank or more than one
+        // line: Enter on an empty field declines the whole form, and the far
+        // side refuses the same text for the same reason (ErrBadKey).
+        public Task<string?> AnswerFreeTextAsync(string name, string key, string fingerprint, string text)
+        {
+            if (!FormAnswer.IsUsableFreeText(text))
+            {
+                Log("answer", $"n={name} key={key} -> err code={MirrorProtocol.ErrBadKey} (no text)");
+                return Task.FromResult<string?>(MirrorProtocol.ErrBadKey);
+            }
+
+            return SendAnswerAsync(name, fingerprint, key, action: null, text);
+        }
+
+        // Move a multi-select question on with its ticks kept.
+        public Task<string?> CommitPromptAsync(string name, string fingerprint) =>
+            SendAnswerAsync(name, fingerprint, key: null, MirrorProtocol.ActionCommit, text: null);
+
+        private async Task<string?> SendAnswerAsync(string name, string fingerprint, string? key, string? action, string? text)
+        {
+            var what = action is null ? $"key={key}" : $"act={action}";
+            if (RelayFor(name) is not { } relay)
+            {
+                Log("answer", $"n={name} {what} -> err code={MirrorProtocol.ErrNoSession}");
+                return MirrorProtocol.ErrNoSession;
+            }
+
+            var fields = new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode(name),
+                [MirrorProtocol.FingerprintField] = fingerprint,
+            };
+            if (key is not null) fields[MirrorProtocol.KeyField] = key;
+            if (action is not null) fields[MirrorProtocol.ActionField] = action;
+
+            var reply = await RequestAsync(relay, MirrorProtocol.Answer, fields,
+                text is null ? null : System.Text.Encoding.UTF8.GetBytes(text),
+                TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
+
+            var error = AnswerErrorOf(reply.Ok, reply.ErrCode);
+            Log("answer", $"n={name} {what} -> " + (error is null ? "ok" : $"err code={error}"));
+            return error;
         }
 
         // CB-306: the INPUT's fields, with the slash flag only when it is set,

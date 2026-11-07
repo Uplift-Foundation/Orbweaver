@@ -62,6 +62,8 @@ namespace Orbweaver
         public const string Input = "INPUT";       // client → server: type this into that session
         public const string Resend = "RESEND";     // client → server: that piece failed its hash
         public const string Avatar = "AVATAR";     // client → server: a persona picture, by its id (CB-216)
+        public const string Prompt = "PROMPT";     // client → server: what is that session waiting on? (CB-307 item 3)
+        public const string Answer = "ANSWER";     // client → server: take this option of it (CB-307 item 3)
         public const string Ok = "OK";             // server → client: done
         public const string Err = "ERR";           // server → client: couldn't
 
@@ -84,6 +86,25 @@ namespace Orbweaver
         // the other is almost always macOS Automation consent not yet given,
         // or the window having been closed since the status file was written.
         public const string ErrTypeFailed = "type-failed";
+
+        // CB-307 addendum: the session's terminal is there and typeable, but it
+        // is not at its prompt — a dialog, a navigated list like /permissions,
+        // or a screen that could not be read as a prompt — so typing would be
+        // keystrokes on that screen rather than a message. Refused before
+        // anything is typed. The ERR's msg carries TypingGate's reason, which
+        // the near panel quotes; an older near Buddy that does not know the
+        // code shows its generic "couldn't type that" instead.
+        public const string ErrNotAtPrompt = "not-at-prompt";
+
+        // CB-307 addendum item 3, answering a form or dialog over the link.
+        // ErrNoPrompt: nothing on that session's screen is a dialog right now.
+        // ErrPromptChanged: the screen no longer shows the dialog the answer
+        // was chosen from — the far side re-read it and refused rather than
+        // press a key on something else; ask PROMPT again. ErrBadKey: the key
+        // is not one of the options on that screen.
+        public const string ErrNoPrompt = "no-prompt";
+        public const string ErrPromptChanged = "prompt-changed";
+        public const string ErrBadKey = "bad-key";
 
         public const string ErrReplyOff = "reply-off";
         public const string ErrBadHash = "bad-hash";
@@ -893,6 +914,142 @@ namespace Orbweaver
                 return text.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
             }
             catch
+            {
+                return null;
+            }
+        }
+
+        // --- prompts over the link (CB-307 addendum item 3) -------------------
+
+        public const string KeyField = "key";
+
+        // An ANSWER that is an action rather than an option: "commit" moves a
+        // multi-select question on with its ticks kept. Pressed as Right, the
+        // one way on QA saw work (capture 10 reached the Submit tab with the
+        // ticks intact); Enter on the unnumbered Submit row was not tried, so
+        // it is not what this does.
+        public const string ActionField = "act";
+        public const string ActionCommit = "commit";
+
+        // Set to "1" on a HELLO reply by a Buddy that answers PROMPT and
+        // ANSWER. A Buddy that predates them ignores those frames and never
+        // replies, so a near side asks only a far side that said it can: a
+        // missing field is "no", and a panel then offers the terminal instead
+        // of waiting out a timeout.
+        public const string PromptsField = "pr";
+
+        // Whether a HELLO reply's fields say the far Buddy answers prompts.
+        // No fields is "no", like a missing field.
+        public static bool SaysItAnswersPrompts(IReadOnlyDictionary<string, string>? fields) =>
+            fields is not null && fields.TryGetValue(PromptsField, out var v) && v == "1";
+        public const string FingerprintField = "fp";
+
+        // Bounds on what a PROMPT answer carries, so a screen full of
+        // something odd cannot become a large frame or a panel of buttons.
+        public const int MaxPromptOptions = 12;
+        public const int MaxPromptText = 200;
+        public const int MaxPromptTitle = 600;
+
+        // A dialog as it crosses the link: the parsed options and, for an
+        // AskUserQuestion form, its tabs — never the raw screen. Fp names
+        // exactly this dialog, so an ANSWER can say which one it was chosen
+        // from and the far side can refuse when the screen has moved on.
+        public sealed record WirePrompt(
+            [property: JsonPropertyName("title")] string Title,
+            [property: JsonPropertyName("options")] IReadOnlyList<WireOption> Options,
+            [property: JsonPropertyName("fp")] string Fingerprint,
+            [property: JsonPropertyName("tabs")] IReadOnlyList<WireTab>? Tabs = null,
+            [property: JsonPropertyName("current")] int Current = -1,
+            [property: JsonPropertyName("freeText")] string? FreeTextKey = null,
+            [property: JsonPropertyName("chatAbout")] string? ChatAboutKey = null,
+            // From QA's real captures (item3/): a multi-select question's
+            // ticked keys and its unnumbered Submit row, and the Submit tab's
+            // review — what it lists and its two options by label.
+            [property: JsonPropertyName("multi")] bool MultiSelect = false,
+            [property: JsonPropertyName("checked")] IReadOnlyList<string>? Checked = null,
+            [property: JsonPropertyName("submitRow")] bool HasSubmitRow = false,
+            [property: JsonPropertyName("review")] IReadOnlyList<WireReviewItem>? Review = null,
+            [property: JsonPropertyName("submitKey")] string? SubmitAnswersKey = null,
+            [property: JsonPropertyName("cancelKey")] string? CancelKey = null,
+            [property: JsonPropertyName("cursor")] string? CursorKey = null);
+
+        public sealed record WireReviewItem(
+            [property: JsonPropertyName("q")] string Question,
+            [property: JsonPropertyName("a")] string Answer);
+
+        public sealed record WireOption(
+            [property: JsonPropertyName("key")] string Key,
+            [property: JsonPropertyName("label")] string Label);
+
+        public sealed record WireTab(
+            [property: JsonPropertyName("name")] string Name,
+            [property: JsonPropertyName("state")] string State);
+
+        // What a screen offers, read the one way both sides agree on: a form if
+        // it is one, otherwise a plain dialog, otherwise nothing.
+        public static WirePrompt? PromptFromScreen(string? screen)
+        {
+            if (string.IsNullOrWhiteSpace(screen)) return null;
+
+            if (ChatTranscript.ParseAskForm(screen) is { } form) return Bounded(form);
+
+            return ChatTranscript.ParseDialog(screen) is { } dialog
+                ? Bounded(new AskForm(dialog, Array.Empty<AskTab>(), -1, null, null))
+                : null;
+        }
+
+        private static WirePrompt Bounded(AskForm form)
+        {
+            var title = Clip(form.Prompt.Title, MaxPromptTitle);
+            var options = form.Prompt.Options.Take(MaxPromptOptions)
+                .Select(o => new WireOption(o.Key, Clip(o.Label, MaxPromptText))).ToList();
+            var wireTabs = form.Tabs.Take(MaxPromptOptions)
+                .Select(t => new WireTab(Clip(t.Name, MaxPromptText), t.State.ToString().ToLowerInvariant())).ToList();
+            var ticked = (form.Checked ?? Array.Empty<string>()).Where(k => options.Any(o => o.Key == k)).ToList();
+            var review = (form.Review ?? Array.Empty<AskReviewItem>()).Take(MaxPromptOptions)
+                .Select(r => new WireReviewItem(Clip(r.Question, MaxPromptText), Clip(r.Answer, MaxPromptText))).ToList();
+
+            string? Known(string? key) => options.Any(o => o.Key == key) ? key : null;
+
+            return new WirePrompt(title, options, PromptFingerprint(title, options, form.CurrentTab, ticked, wireTabs),
+                wireTabs, form.CurrentTab, Known(form.FreeTextKey), Known(form.ChatAboutKey),
+                form.MultiSelect, ticked, form.HasSubmitRow, review,
+                Known(form.SubmitAnswersKey), Known(form.CancelKey), Known(form.CursorKey));
+        }
+
+        private static string Clip(string text, int max) => text.Length <= max ? text : text[..max];
+
+        // The dialog's identity: its question, its options in order, and which
+        // tab is showing. A different tab of the same form is a different
+        // dialog, which is the point — an answer chosen for question 1 must not
+        // land on question 2. Sixteen hex characters is ample to tell two
+        // screens apart and short enough to go in a field.
+        // The boxes ticked are part of it too: a tick is an answer, and a
+        // panel that saw a box clear must not toggle it again once it is set.
+        // So are the tabs' states: which tab is showing cannot be read (see
+        // ParseAskForm), so any change in the bar counts as a different
+        // dialog — strictly more refusals, never fewer.
+        public static string PromptFingerprint(
+            string title, IEnumerable<WireOption> options, int current, IEnumerable<string>? ticked = null,
+            IEnumerable<WireTab>? tabs = null)
+        {
+            var text = title + "\u0001" + string.Join("\u0002", options.Select(o => o.Key + "\u0003" + o.Label))
+                       + "\u0001" + current + "\u0001" + string.Join(",", ticked ?? Array.Empty<string>())
+                       + "\u0001" + string.Join(",", (tabs ?? Array.Empty<WireTab>()).Select(t => t.State + ":" + t.Name));
+            return Hash(Encoding.UTF8.GetBytes(text))[..16];
+        }
+
+        public static byte[] EncodePrompt(WirePrompt prompt) => JsonSerializer.SerializeToUtf8Bytes(prompt);
+
+        public static WirePrompt? DecodePrompt(byte[]? bytes)
+        {
+            if (bytes is null) return null;
+            try
+            {
+                var prompt = JsonSerializer.Deserialize<WirePrompt>(bytes);
+                return prompt is { Title: not null, Options: not null, Fingerprint: not null } ? prompt : null;
+            }
+            catch (JsonException)
             {
                 return null;
             }

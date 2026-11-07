@@ -146,6 +146,12 @@ namespace Orbweaver
                 Status.Contains("running", StringComparison.OrdinalIgnoreCase)
                 || Status.Contains("busy", StringComparison.OrdinalIgnoreCase)
                 || Status.Contains("working", StringComparison.OrdinalIgnoreCase);
+
+            // CB-307 addendum: the far machine's session is on a dialog and says
+            // so. Before this it arrived as idle, because Working only knows the
+            // three words above, so a remote orb never drew `waiting` at all. An
+            // older near side still reads it as idle, which is what it did.
+            public bool Waiting => Status.Equals("waiting", StringComparison.OrdinalIgnoreCase);
         }
 
         // Empty whenever the feature is off, which is what makes the scan's job

@@ -26,7 +26,8 @@ namespace Orbweaver
         internal static IReadOnlyList<string> For(
             string home,
             IReadOnlyList<string> remoteControlProfileDirs,
-            IReadOnlyList<string> claudeCodeProfileDirs)
+            IReadOnlyList<string> claudeCodeProfileDirs,
+            IReadOnlyList<string>? discovered = null)
         {
             var dirs = new List<string>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -52,6 +53,11 @@ namespace Orbweaver
             Add(OrbweaverSettings.DefaultRemoteControlProfileDir);
             foreach (var dir in claudeCodeProfileDirs) Add(dir);
 
+            // CB-307: then every config dir found under home that no list named,
+            // so a session under any of them is served with no setting to keep.
+            // Last, so every existing install keeps its label and tie-break.
+            foreach (var dir in discovered ?? Array.Empty<string>()) Add(dir);
+
             return dirs;
         }
 
@@ -60,10 +66,11 @@ namespace Orbweaver
         // settings; the rule is For above, and the settings seam is covered by
         // the integration test that calls this with a scratch home.
         [ExcludeFromCodeCoverage]
-        internal static IReadOnlyList<string> Configured(string? home = null) =>
-            For(
-                home ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                OrbweaverSettings.RemoteControlProfileDirs,
-                OrbweaverSettings.ClaudeCodeProfileDirs);
+        internal static IReadOnlyList<string> Configured(string? home = null)
+        {
+            home ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return For(home, OrbweaverSettings.RemoteControlProfileDirs, OrbweaverSettings.ClaudeCodeProfileDirs,
+                ClaudeConfigRoots.DiscoveredCached(home));
+        }
     }
 }

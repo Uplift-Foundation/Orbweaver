@@ -1553,4 +1553,701 @@ public class LocalCliChatSessionTests : IDisposable
             OrbweaverSettings.ClaudeCodeReplyEnabled = before;
         }
     }
+
+    // --- CB-307 addendum: never type into a dialog -------------------------------
+
+    // ShadowOn is pinned off unless a test says otherwise, so these never depend
+    // on a marker file or variable left on the machine running them.
+    private static LocalCliChatSession Gated(
+        Func<SessionStatus, Task<TypingVerdict>> gate, bool shadow = false) =>
+        new("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode,
+            State = "idle",
+            Title = "",
+            TmuxPane = "%42",
+        })
+        { Gate = gate, ShadowOn = () => shadow };
+
+    [AvaloniaFact]
+    public async Task ASendIsRefusedWithTheReasonAndNothingIsTyped()
+    {
+        SessionStatus? asked = null;
+        var session = Gated(status =>
+        {
+            asked = status;
+            return Task.FromResult(new TypingVerdict(false, TypingGate.DialogWhy("Permissions")));
+        });
+
+        var outcome = await session.RefuseIfNotAtPromptAsync();
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.NotNull(asked);
+
+        // The note names the dialog and says nothing was typed, under the
+        // composer, where the user's own text is still sitting.
+        var note = Assert.Single(session.History).Text;
+        Assert.Contains("isn't at its prompt", note, StringComparison.Ordinal);
+        Assert.Contains("it is showing a dialog: Permissions", note, StringComparison.Ordinal);
+        Assert.Contains("Nothing was typed", note, StringComparison.Ordinal);
+    }
+
+    // The control: at a prompt the gate says yes, nothing is noted, and the
+    // caller goes on to type.
+    [AvaloniaFact]
+    public async Task ASendAtAPromptIsNotRefusedAndLeavesNoNote()
+    {
+        var calls = 0;
+        var session = Gated(_ => { calls++; return Task.FromResult(TypingVerdict.Allow); });
+
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Equal(1, calls);
+        Assert.Empty(session.History);
+    }
+
+    [AvaloniaFact]
+    public async Task ARefusalWithNoReasonStillExplainsItself()
+    {
+        var session = Gated(_ => Task.FromResult(new TypingVerdict(false, null)));
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RefuseIfNotAtPromptAsync());
+        Assert.Equal(
+            "This terminal isn't at its prompt. Nothing was typed; answer that screen in the terminal and send again.",
+            Assert.Single(session.History).Text);
+    }
+
+    [Fact]
+    public void TheRefusalNoteJoinsTheReasonWithADash() =>
+        Assert.Equal(
+            "This terminal isn't at its prompt — Claude Code reports it is waiting on a dialog. "
+            + "Nothing was typed; answer that screen in the terminal and send again.",
+            LocalCliChatSession.NotAtPromptNote(TypingGate.WaitingWhy));
+
+    // The log line that tells a real refusal's cause apart afterwards. Never any
+    // screen text: a dialog's title is reduced to the word "dialog".
+    [Theory]
+    [InlineData(TypingGate.WaitingWhy, null, "session=s1 kind=record-waiting diag=none")]
+    [InlineData(TypingGate.UnreadableWhy, "capture=null", "session=s1 kind=unreadable diag=capture=null")]
+    [InlineData(TypingGate.UnreadableWhy, "capture=threw", "session=s1 kind=unreadable diag=capture=threw")]
+    [InlineData("it is showing a dialog: Permissions", null, "session=s1 kind=dialog diag=none")]
+    [InlineData("something new", null, "session=s1 kind=other diag=none")]
+    [InlineData(null, null, "session=s1 kind=allowed diag=none")]
+    public void ARefusalIsLoggedWithItsCauseAndNeverTheScreen(string? why, string? diagnostic, string expected)
+    {
+        var verdict = new TypingVerdict(false, why) { Diagnostic = diagnostic };
+
+        var line = LocalCliChatSession.RefusalLogDetail("s1", verdict);
+
+        Assert.Equal(expected, line);
+        Assert.DoesNotContain("Permissions", line, StringComparison.Ordinal);
+    }
+
+    // --- shadow mode: work out the verdict, log it, type anyway ------------------
+
+    [AvaloniaFact]
+    public async Task InShadowModeARefusalIsLoggedButTheSendGoesAhead()
+    {
+        var calls = 0;
+        var session = Gated(_ =>
+        {
+            calls++;
+            return Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy) { Diagnostic = "capture=null" });
+        }, shadow: true);
+
+        // Null is "go ahead and type", and nothing is noted under the composer.
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Equal(1, calls);
+        Assert.Empty(session.History);
+    }
+
+    [AvaloniaFact]
+    public async Task InShadowModeAnAllowedSendIsAlsoLeftAlone()
+    {
+        var session = Gated(_ => Task.FromResult(TypingVerdict.Allow), shadow: true);
+
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Empty(session.History);
+    }
+
+    // Control: the same refusal with shadow off still refuses.
+    [AvaloniaFact]
+    public async Task WithShadowOffTheSameRefusalStillRefuses()
+    {
+        var session = Gated(
+            _ => Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy)), shadow: false);
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RefuseIfNotAtPromptAsync());
+        Assert.Single(session.History);
+    }
+
+    // What the gate saw, reported as presence only: the line carries no path, no
+    // pane id and no screen text.
+    [Fact]
+    public void TheLogSaysWhichStatusFieldsTheGateSawAndNoValues()
+    {
+        var status = new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", SessionPid = 4321,
+            TmuxSocket = "/private/tmp/tmux-501/default", TmuxPane = "%42", TmuxBin = "",
+        };
+
+        var line = LocalCliChatSession.RefusalLogDetail(
+            "s1", new TypingVerdict(false, TypingGate.UnreadableWhy) { Diagnostic = "capture=null" },
+            status, canReadPane: true, shadow: true);
+
+        Assert.Equal(
+            "session=s1 kind=unreadable diag=capture=null shadow=1 state=idle source=ClaudeCode pid=set "
+            + "tmux_socket=set tmux_pane=set tmux_bin=empty can_read_pane=true",
+            line);
+        Assert.DoesNotContain("/private", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("%42", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASessionWithNoPidOrTmuxFieldsSaysSoPlainly()
+    {
+        var line = LocalCliChatSession.RefusalLogDetail(
+            "s1", TypingVerdict.Allow, new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle" });
+
+        Assert.Equal(
+            "session=s1 kind=allowed diag=none state=idle source=ClaudeCode pid=none "
+            + "tmux_socket=empty tmux_pane=empty tmux_bin=empty can_read_pane=false",
+            line);
+    }
+
+    // --- CB-307 item 3: answering a question form from the local panel ----------
+
+    // A pane that moves as a real one does: a screen, and every key pressed and
+    // text typed recorded. Handed to the session through its capture, press and
+    // type seams, so the shared procedure (FormAnswer) runs for real over it.
+    private sealed class Pane(string screen)
+    {
+        public string Screen = screen;
+        public List<string> Pressed { get; } = new();
+        public List<string> Typed { get; } = new();
+        public Func<string, string?> AfterPress = _ => null;
+        public Func<string, string?> AfterType = _ => null;
+
+        // When set, a capture waits for it and returns what it is given: a read
+        // that began earlier and comes back later, as a slow one does.
+        public TaskCompletionSource<string?>? Gate;
+
+        public Task<string?> Capture(SessionStatus _) => Gate?.Task ?? Task.FromResult<string?>(Screen);
+
+        public Task<bool> Press(SessionStatus _, string key)
+        {
+            Pressed.Add(key);
+            if (AfterPress(key) is { } next) Screen = next;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> Type(SessionStatus _, string text)
+        {
+            Typed.Add(text);
+            if (AfterType(text) is { } next) Screen = next;
+            return Task.FromResult(true);
+        }
+    }
+
+    // A session waiting on the pane's screen, with the form read and on show.
+    private static async Task<LocalCliChatSession> WaitingOn(Pane pane)
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = pane.Capture,
+            PressKey = pane.Press,
+            TypeLiteral = pane.Type,
+        };
+
+        // The scan's own update is what reads the prompt, once, off the pane.
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+
+        for (var i = 0; i < 200 && session.Prompt is null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        Assert.NotNull(session.Prompt);
+        return session;
+    }
+
+    private static async Task WithReplyOn(Func<Task> work)
+    {
+        var before = OrbweaverSettings.ClaudeCodeReplyEnabled;
+        try
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = true;
+            await work();
+        }
+        finally
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = before;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AFormIsShownWithItsTypeSomethingOptionAsAButton()
+    {
+        await WithReplyOn(async () =>
+        {
+            var session = await WaitingOn(new Pane(PaneFixtures.QaFormQ1));
+
+            Assert.Equal("3", Assert.Single(session.Prompt!.Options, o => o.FreeText).Key);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task ADigitIsPressedWhenTheFormIsStillTheOneShown()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+
+            Assert.Equal(new[] { "2" }, pane.Pressed);
+            Assert.Null(session.Prompt);
+        });
+    }
+
+    // The screen moved on between the form being shown and the click: nothing is
+    // pressed, and the user is told, and shown what is there now.
+    [AvaloniaFact]
+    public async Task AnAnswerToAFormThatMovedOnPressesNothingAndSaysSo()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            pane.Screen = PaneFixtures.MacModelSwitchDialog;
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+
+            Assert.Empty(pane.Pressed);
+            Assert.Contains(session.History, t => t.Text.Contains("had changed, so nothing was answered", StringComparison.Ordinal));
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task TheMultiSelectSubmitButtonPressesRightAndNotADigit()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(AskFormFixtures.MultiSelectTwoChecked);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[^1]);
+
+            Assert.Equal(new[] { "Right" }, pane.Pressed);
+        });
+    }
+
+    // On a single-select question that digit selects the row empty, which
+    // declines the whole form: it is never pressed, and the user is told where
+    // the answer goes.
+    [AvaloniaFact]
+    public async Task TheFreeTextOptionIsNeverPressedByItsDigit()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options.Single(o => o.FreeText));
+
+            Assert.Empty(pane.Pressed);
+            Assert.Contains(session.History, t => t.Text.Contains("in the box, then send it", StringComparison.Ordinal));
+        });
+    }
+
+    // The typed answer: cursor onto the row, the text typed and seen, and only
+    // then Enter — the shared procedure, run over a pane that moves like QA's.
+    [AvaloniaFact]
+    public async Task TypedTextGoesCursorThenTextThenEnter()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var downs = 0;
+            pane.AfterPress = k => k == "Down" && ++downs == 2 ? PaneFixtures.QaCursorOnFreeText : null;
+            pane.AfterType = _ => PaneFixtures.QaFreeTextTyped;
+            var session = await WaitingOn(pane);
+
+            await session.AnswerFreeTextAsync(session.Prompt!.Options.Single(o => o.FreeText), "my own answer");
+
+            Assert.Equal(new[] { "Down", "Down", "Enter" }, pane.Pressed);
+            Assert.Equal(new[] { "my own answer" }, pane.Typed);
+        });
+    }
+
+    // Blank text is refused with nothing pressed or typed: Enter on the empty
+    // row would decline the whole form.
+    [AvaloniaFact]
+    public async Task BlankTextIsRefusedAndNothingIsPressedOrTyped()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerFreeTextAsync(session.Prompt!.Options.Single(o => o.FreeText), "   ");
+
+            Assert.Empty(pane.Pressed);
+            Assert.Empty(pane.Typed);
+            Assert.Contains(session.History, t => t.Text.Contains("That can't be answered that way. Nothing was pressed.", StringComparison.Ordinal));
+        });
+    }
+
+    // Only a form's own free-text option takes text, and only a form on show.
+    [AvaloniaFact]
+    public async Task TextForAnythingButTheFreeTextOptionOfAFormDoesNothing()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerFreeTextAsync(session.Prompt!.Options[0], "Red please");
+
+            Assert.Empty(pane.Pressed);
+            Assert.Empty(pane.Typed);
+
+            var plain = new LocalCliChatSession("s2", new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle" });
+            await plain.AnswerFreeTextAsync(new ChatPromptOption("1", "x", FreeText: true), "text");
+            Assert.Empty(plain.History);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task WithReplyingOffNothingIsAnsweredAndTheUserIsTold()
+    {
+        var before = OrbweaverSettings.ClaudeCodeReplyEnabled;
+        try
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = false;
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            await session.AnswerFreeTextAsync(session.Prompt.Options.Single(o => o.FreeText), "x");
+
+            Assert.Empty(pane.Pressed);
+            Assert.Equal(2, session.History.Count(t => t.Text.StartsWith("Replying is off", StringComparison.Ordinal)));
+        }
+        finally
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = before;
+        }
+    }
+
+    // An ordinary dialog (a permission bar) still answers by its key, exactly as
+    // it always did: only a question form goes through the shared procedure.
+    [AvaloniaFact]
+    public async Task AnOrdinaryDialogStillAnswersByItsKey()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.MiniExitDialog);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(new[] { "1" }, pane.Pressed);
+        });
+    }
+
+    [Fact]
+    public void EveryRefusalCodeSaysWhatHappened()
+    {
+        Assert.Contains("had changed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrPromptChanged));
+        Assert.Equal("That question was already answered.", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrNoPrompt));
+        Assert.Contains("Nothing was pressed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrBadKey));
+        Assert.Contains("Answer it in the terminal", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrUnsupported));
+        Assert.Contains("Couldn't answer", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrTypeFailed));
+    }
+
+    [Fact]
+    public void ALocalMultiSelectOffersItsBoxesChatAndSubmit()
+    {
+        var prompt = LocalCliChatSession.ReadPrompt(AskFormFixtures.MultiSelectQ2)!;
+
+        Assert.Equal(new[] { "1", "2", "3", "5", AskFormView.CommitKey }, prompt.Options.Select(o => o.Key));
+    }
+
+    // --- a second click on a form that was just answered (local) ----------------
+
+    private static async Task<(LocalCliChatSession Session, Pane Pane, Func<DateTime> Now, Action<TimeSpan> Advance)> ClockedForm()
+    {
+        var now = new DateTime(2026, 11, 7, 12, 0, 0, DateTimeKind.Utc);
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = pane.Capture, PressKey = pane.Press, TypeLiteral = pane.Type,
+            Clock = () => now,
+        };
+
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+        for (var i = 0; i < 200 && session.Prompt is null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        return (session, pane, () => now, d => now += d);
+    }
+
+    private static async Task Rescan(LocalCliChatSession session)
+    {
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+        for (var i = 0; i < 40; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+    }
+
+    // The terminal has not advanced yet, so the next scan reads the same form
+    // again: it must not put live buttons back on a question already answered.
+    [AvaloniaFact]
+    public async Task TheFormJustAnsweredIsNotShownAgainBeforeTheTerminalAdvances()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pane, _, advance) = await ClockedForm();
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+            Assert.Null(session.Prompt);
+
+            await Rescan(session);
+            Assert.Null(session.Prompt);
+            Assert.Equal(new[] { "2" }, pane.Pressed);
+
+            // Still the same form once the settle window has passed: the answer
+            // did not take, so the buttons come back.
+            advance(LocalCliChatSession.SettleAfterAnswer + TimeSpan.FromSeconds(1));
+            await Rescan(session);
+            Assert.NotNull(session.Prompt);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task TheNextQuestionIsShownAtOnceWhenTheTerminalHasAdvanced()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pane, _, _) = await ClockedForm();
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+            pane.Screen = PaneFixtures.MacModelSwitchDialog;
+
+            await Rescan(session);
+
+            Assert.NotNull(session.Prompt);
+            Assert.StartsWith("Opus 5.5's safeguards flagged this session.", session.Prompt!.Title);
+        });
+    }
+
+    // A refusal presses nothing, so the same form comes straight back.
+    [AvaloniaFact]
+    public async Task ARefusedAnswerBringsTheSameFormStraightBack()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pane, _, _) = await ClockedForm();
+            var option = session.Prompt!.Options.Single(o => o.FreeText);
+
+            await session.AnswerFreeTextAsync(option, "   ");
+            await Rescan(session);
+
+            Assert.NotNull(session.Prompt);
+            Assert.Empty(pane.Pressed);
+        });
+    }
+
+    // --- a stale read must never redraw an answered form (local) ---------------
+
+    // A capture already in flight when an answer goes out saw the screen as it
+    // was before the key. It returns afterwards, showing the old form, and must
+    // be dropped rather than drawn as current.
+    [AvaloniaFact]
+    public async Task ACaptureThatReturnsAfterAnAnswerIsDropped()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+            var option = session.Prompt!.Options[1];
+
+            // The first answer lands and the terminal moves on.
+            pane.AfterPress = _ => PaneFixtures.MacModelSwitchDialog;
+            await session.AnswerAsync(option);
+            Assert.Null(session.Prompt);
+
+            // A scan reads the pane again, and that read is slow...
+            pane.Gate = new TaskCompletionSource<string?>();
+            session.UpdateStatus(new SessionStatus
+            {
+                Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+            });
+            await Task.Delay(30);
+
+            // ...an answer goes out meanwhile...
+            await session.AnswerAsync(option);
+
+            // ...and the slow read comes back with an OLD form — a different one
+            // from the one answered, so the hold-back on the answered form does
+            // not catch it and only the generation guard can.
+            pane.Gate.SetResult(AskFormFixtures.MultiSelectQ2);
+            for (var i = 0; i < 40; i++)
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(5);
+            }
+
+            Assert.Null(session.Prompt);
+        });
+    }
+
+    // The control: the same slow read with no answer in between is drawn.
+    [AvaloniaFact]
+    public async Task TheSameSlowReadIsDrawnWhenNoAnswerWentOutMeanwhile()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+            pane.AfterPress = _ => PaneFixtures.MacModelSwitchDialog;
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+
+            pane.Gate = new TaskCompletionSource<string?>();
+            session.UpdateStatus(new SessionStatus
+            {
+                Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+            });
+            await Task.Delay(30);
+            pane.Gate.SetResult(PaneFixtures.MacModelSwitchDialog);
+            for (var i = 0; i < 40; i++)
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(5);
+            }
+
+            Assert.NotNull(session.Prompt);
+        });
+    }
+
+    // Nothing is waiting any more: a second click on a form that is already gone
+    // clears quietly and is never reported as a failure.
+    [AvaloniaFact]
+    public async Task ANoPromptReplyToAnAnswerIsNotAnError()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            pane.Screen = PaneFixtures.MacPromptAfterEsc;
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Contains(session.History, t => t.Text == "That question was already answered.");
+            Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't answer", StringComparison.Ordinal));
+            Assert.Empty(pane.Pressed);
+        });
+    }
+
+    // --- the default seams, and the arms only they reach ------------------------
+
+    // The real gate and the real shadow switch, on a session with no pane and no
+    // record: nothing can be read, so nothing is refused, and nothing spawns.
+    [AvaloniaFact]
+    public async Task TheDefaultGateOnASessionWithNoPaneAllowsTheSend()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "",
+        });
+
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Empty(session.History);
+    }
+
+    // CB-307, the lead's decision: the guard ships log-only. With no marker
+    // and no variable (the test settings folder is empty and the variable
+    // unset), the real switch lets a refused send through — logged, not
+    // blocked, and no refusal note under it.
+    [AvaloniaFact]
+    public async Task TheDefaultShadowSwitchIsLogOnly()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "",
+        })
+        {
+            Gate = _ => Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy)),
+        };
+
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Empty(session.History);
+    }
+
+    // A pane that cannot be captured: the form could not be read, so the honest
+    // prompt is the one with nothing to click and the terminal link.
+    [AvaloniaFact]
+    public async Task AnUnreadablePaneShowsTheWaitingPromptWithNoOptions()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = _ => Task.FromResult<string?>(null),
+        };
+
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+        for (var i = 0; i < 200 && session.Prompt is null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        Assert.Equal("Waiting for input", session.Prompt!.Title);
+        Assert.Empty(session.Prompt.Options);
+    }
+
+    // The real clock, not a test's: a form re-read straight after an answer is
+    // held back with the default clock too.
+    [AvaloniaFact]
+    public async Task TheFormJustAnsweredIsHeldBackOnTheRealClockToo()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+            await Rescan(session);
+
+            Assert.Null(session.Prompt);
+        });
+    }
 }

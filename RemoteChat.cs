@@ -705,7 +705,12 @@ namespace Orbweaver
     // ApprovalId binds an option to the one request it was drawn for (CB-270 Stage
     // 6): a click answers that request or nothing, never whichever one happens to
     // be showing by the time it lands. Null for every other kind of prompt.
-    public sealed record ChatPromptOption(string Key, string Label, string? ApprovalId = null);
+    public sealed record ChatPromptOption(
+        string Key, string Label, string? ApprovalId = null,
+        // CB-307 item 3: the option that opens a text entry ("Type something.")
+        // rather than answering by itself. The panel shows a text box for it and
+        // sends through IRemoteChatFreeText, never through AnswerAsync.
+        bool FreeText = false);
 
     // ArmedActivation marks a prompt whose answer cannot be undone and must not be
     // given by accident: its options ignore presses for a moment after the prompt
@@ -716,9 +721,38 @@ namespace Orbweaver
     // prompt that has no terminal to go to, and a prompt that sets it keeps the
     // panel open when that link is used, since the answer to "where else" is a note
     // in the transcript and not another window.
+    // CB-307 addendum item 3: an AskUserQuestion form read off the screen —
+    // ChatTranscript.ParseAskForm says how. Prompt is the options as buttons,
+    // titled with the whole question; Tabs and CurrentTab say which question of
+    // a multi-question form is showing (-1 when that cannot be told); the two
+    // keys name the "Type something" and "Chat about this" options by label.
+    //
+    // From QA's real captures of every form state (item3/ fixtures):
+    // MultiSelect is a question drawn with [ ]/[✔] boxes, Checked the keys
+    // ticked (and on a single-select question the one chosen earlier, drawn
+    // "Blue ✔"), HasSubmitRow the unnumbered "Submit" row a multi-select
+    // question draws, CursorKey the option the terminal's ❯ is on. IsReview is
+    // the Submit tab's "Review your answers" screen, with what it lists and
+    // the keys of its two options, matched by label: "Submit answers" and
+    // "Cancel".
+    public sealed record AskForm(
+        ChatPrompt Prompt, IReadOnlyList<AskTab> Tabs, int CurrentTab, string? FreeTextKey, string? ChatAboutKey,
+        bool MultiSelect = false, IReadOnlyList<string>? Checked = null, bool HasSubmitRow = false,
+        string? CursorKey = null, bool IsReview = false, IReadOnlyList<AskReviewItem>? Review = null,
+        string? SubmitAnswersKey = null, string? CancelKey = null);
+
+    public sealed record AskReviewItem(string Question, string Answer);
+
+    public sealed record AskTab(string Name, AskTabState State);
+
+    public enum AskTabState { Open, Answered, Submit }
+
     public sealed record ChatPrompt(
         string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false,
-        string? ElsewhereLabel = null);
+        string? ElsewhereLabel = null,
+        // CB-307 item 3: "Question 2 of 4" for a multi-question form, or null
+        // when the form's current question cannot be told from the screen.
+        string? Progress = null);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can
@@ -790,6 +824,16 @@ namespace Orbweaver
         // The fall back for when the dialog could not be read, which is the only
         // honest answer at that point.
         void AnswerElsewhere();
+    }
+
+    // CB-307 item 3: answering with text. The one place text reaches a dialog,
+    // so it is its own interface rather than a quiet extra on AnswerAsync: a
+    // session that cannot do it simply does not implement this, and the panel
+    // does not offer a text box. Only ever called with the FreeText option of
+    // the prompt currently on show, and nothing here presses Escape.
+    public interface IRemoteChatFreeText
+    {
+        Task AnswerFreeTextAsync(ChatPromptOption option, string text);
     }
 }
 

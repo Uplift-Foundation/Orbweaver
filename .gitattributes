@@ -1,3 +1,10 @@
 # These run under Git Bash and macOS; a CRLF checkout on Windows breaks them.
 *.sh text eol=lf
 tools/*.py text eol=lf
+
+# CB-307: byte-exact tmux captures held as raw strings. They are LF because
+# tmux wrote them LF; a Windows checkout converting them to CRLF changes the
+# fixture, not the screen it records, and tests that edit a fixture by its
+# "\n" boundaries then stop matching. The parsers are separately pinned to
+# read CRLF screens the same (TranscriptSuite, "CRLF").
+tests/TranscriptTests/*.cs text eol=lf

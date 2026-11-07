@@ -212,20 +212,36 @@ public class PeerRosterProfilesTests : IDisposable
         Assert.True(gap.Actionable);
     }
 
-    // No new Serve, no restart: the next hello sees the profile.
+    // CB-307: no setting names the profile at all, and it is served anyway —
+    // discovery finds ~/.claude-loginid because it holds projects/. This used
+    // to pin the CB-300 repro (served only once the profile was added to
+    // settings); Warren's rule is that no per-dir list is needed.
     [Fact]
-    public async Task AProfileAddedWhileRunningIsOfferedByTheNextHello()
+    public async Task AProfileNoSettingNamesIsServedThroughDiscovery()
     {
         WriteSettings("{\"remoteControlProfileDirs\":[\".claude\",\".claude-board\"]}");
+        ClaudeConfigRoots.ForgetDiscovered();
         var wire = new Wire(Home, () => PeerRosterDirs.Configured(Home), LoginidSessions(4));
-
-        Assert.Equal(0, await wire.AskAsync());
-        Assert.False(Assert.Single(wire.Server.LastRosterGaps).Asked);
-
-        OrbweaverSettings.AddClaudeCodeProfileDir(".claude-loginid");
 
         Assert.Equal(4, await wire.AskAsync());
         Assert.Empty(wire.Server.LastRosterGaps);
+        Assert.Contains(".claude-loginid", PeerRosterDirs.Configured(Home));
+    }
+
+    // ...and its control: a ~/.claude-<name> Claude Code never ran in (no
+    // projects/ or sessions/, like the MacBook's .claude-work) is not one of
+    // the dirs served from.
+    [Fact]
+    public void AFolderWithoutProjectsOrSessionsIsNotDiscovered()
+    {
+        WriteSettings("{\"remoteControlProfileDirs\":[\".claude\",\".claude-board\"]}");
+        Directory.CreateDirectory(Path.Combine(Home, ".claude-work", "notes"));
+        Directory.CreateDirectory(Path.Combine(Home, ".claude-sundaysky", "sessions"));
+        ClaudeConfigRoots.ForgetDiscovered();
+
+        var dirs = PeerRosterDirs.Configured(Home);
+        Assert.DoesNotContain(".claude-work", dirs);
+        Assert.Contains(".claude-sundaysky", dirs);
     }
 
     // A root outside home is logged (non-actionable gaps are log-only) but by

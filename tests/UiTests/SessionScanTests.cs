@@ -3860,4 +3860,127 @@ public class SessionScanTests
         Assert.Equal("lead-id", manager.StatusFor("member")!.Lead);
         Assert.Equal(OrbPresence.Parked, manager.StatusFor("member")!.Presence);
     }
+
+    // --- CB-307 addendum: a session on a dialog is waiting, never parked -------
+
+    private static SessionManager WithRecord(Scratch scratch, string? record)
+    {
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        OrbweaverSettings.CodexEnabled = true;
+        return new SessionManager(scratch.Dir) { RecordStatusOf = (_, _) => record };
+    }
+
+    // The real case: Warren's /permissions screen. The hook's file says idle
+    // (no hook fires for a modal screen), the last turn is a day old, and the
+    // record says waiting. The orb must be waiting and bright, not parked.
+    [AvaloniaFact]
+    public void AnIdleFileWithAWaitingRecordIsWaitingAndNotParked()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "dialog", DateTime.UtcNow - Quiet);
+        scratch.Write("dialog", title: "openclaw", transcriptPath: transcript);
+
+        var manager = WithRecord(scratch, "waiting");
+        manager.ScanAndUpdate();
+
+        var status = manager.StatusFor("dialog")!;
+        Assert.Equal("waiting", status.State);
+        Assert.True(status.RecordWaiting);
+        Assert.Equal(OrbPresence.Present, status.Presence);
+    }
+
+    // Control, the same file and the same day-old turn: with no waiting record
+    // it is parked, so the promotion is the only thing that differs.
+    [AvaloniaFact]
+    public void TheSameSessionWithNoWaitingRecordIsParked()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "dialog", DateTime.UtcNow - Quiet);
+        scratch.Write("dialog", title: "openclaw", transcriptPath: transcript);
+
+        var manager = WithRecord(scratch, null);
+        manager.ScanAndUpdate();
+
+        Assert.Equal("idle", manager.StatusFor("dialog")!.State);
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("dialog")!.Presence);
+    }
+
+    // The negative control that justifies acting on `waiting` alone: `busy` was
+    // measured two days wrong on a session at its prompt, so it changes nothing.
+    [AvaloniaFact]
+    public void ABusyRecordChangesNothing()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "stale", DateTime.UtcNow - Quiet);
+        scratch.Write("stale", title: "lawyer-search", transcriptPath: transcript);
+
+        var manager = WithRecord(scratch, "busy");
+        manager.ScanAndUpdate();
+
+        var status = manager.StatusFor("stale")!;
+        Assert.Equal("idle", status.State);
+        Assert.False(status.RecordWaiting);
+        Assert.Equal(OrbPresence.Parked, status.Presence);
+    }
+
+    // A session on a dialog does not expire either: the lifetime rule already
+    // exempts waiting, and the promotion happens before it is judged.
+    [AvaloniaFact]
+    public void AWaitingSessionOutlivesKeepOrbsFor()
+    {
+        using var scratch = new Scratch();
+        scratch.Write("dialog", title: "openclaw", written: DateTime.UtcNow.AddDays(-3));
+
+        var gone = WithRecord(scratch, null);
+        gone.ScanAndUpdate();
+        Assert.Empty(OrbIds(gone));
+
+        var kept = WithRecord(scratch, "waiting");
+        kept.ScanAndUpdate();
+        Assert.Equal(new[] { "dialog" }, OrbIds(kept));
+    }
+
+    // And its transcript is never opened: waiting is never parked, so the last
+    // turn is not asked for.
+    [AvaloniaFact]
+    public void AWaitingSessionsTranscriptIsNeverRead()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "dialog", DateTime.UtcNow - Quiet);
+        scratch.Write("dialog", title: "openclaw", transcriptPath: transcript);
+
+        var reads = 0;
+        var manager = new SessionManager(scratch.Dir)
+        {
+            RecordStatusOf = (_, _) => "waiting",
+            LastTurns = new LastTurnCache(
+                path => new FileInfo(path).Length,
+                path => { reads++; return File.ReadLines(path); }),
+        };
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        manager.ScanAndUpdate();
+
+        Assert.Equal(0, reads);
+    }
+
+    // The dialog closes and the record goes back to idle: the next scan puts
+    // the session back to idle (and, being a day quiet, parked again).
+    [AvaloniaFact]
+    public void TheWaitingStateClearsWhenTheRecordStopsSayingIt()
+    {
+        using var scratch = new Scratch();
+        var transcript = TurnTranscript(scratch, "dialog", DateTime.UtcNow - Quiet);
+        scratch.Write("dialog", title: "openclaw", transcriptPath: transcript);
+
+        string? record = "waiting";
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        var manager = new SessionManager(scratch.Dir) { RecordStatusOf = (_, _) => record };
+        manager.ScanAndUpdate();
+        Assert.Equal("waiting", manager.StatusFor("dialog")!.State);
+
+        record = "idle";
+        manager.ScanAndUpdate();
+        Assert.Equal("idle", manager.StatusFor("dialog")!.State);
+        Assert.Equal(OrbPresence.Parked, manager.StatusFor("dialog")!.Presence);
+    }
 }

@@ -64,6 +64,8 @@
          single. -->
     <Compile Include="..\ArrangementTests\ArrangementSweep.cs" />
     <Compile Include="..\UnitTests\TestBudgets.cs" Link="TestBudgets.cs" />
+    <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
+    <Compile Include="..\TranscriptTests\AskFormFixtures.cs" Link="AskFormFixtures.cs" />
     <!-- CB-270 Stage 3: the unit suite's in-memory gateway socket and the
          scrubbed capture of two native runs, so a panel can be driven against a
          real OpenClawGateway and the real events without second copies. -->

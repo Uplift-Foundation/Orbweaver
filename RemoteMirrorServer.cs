@@ -122,7 +122,35 @@ namespace Orbweaver
             // flag. Null means a cache of this server's own over the real
             // disk, which is what the app uses; a test passes one with
             // injected arms to count reads or to fail them.
-            LastTurnCache? LastTurns = null);
+            LastTurnCache? LastTurns = null,
+
+            // CB-307 addendum: what TypingGate reads before anything is typed —
+            // Claude Code's own session record, the pane's screen, and whether
+            // that screen can be read at all on this session's route. Null on
+            // both reads means ungated (TypingGate.GuardedTypeAsync), so every
+            // harness built before this types exactly as it did; LiveSeams
+            // wires all three.
+            Func<SessionStatus, string?>? RecordStatus = null,
+            Func<SessionStatus, Task<string?>>? CapturePane = null,
+            Func<SessionStatus, bool>? CanReadPane = null,
+
+            // CB-307 addendum item 3: press one key in the session's pane — a
+            // dialog option's digit, never anything a person typed. Null means
+            // this server cannot answer a dialog, and ANSWER is refused as
+            // unsupported; LiveSeams wires TerminalFocuser.SendPaneKey.
+            Func<SessionStatus, string, Task<bool>>? PressKey = null,
+
+            // CB-307 item 3: type text into the pane literally, with no Enter —
+            // the free-text row of a form, after the server has put the cursor
+            // on it and seen it there. Null refuses free text as unsupported;
+            // LiveSeams wires TerminalFocuser.SendPaneText.
+            Func<SessionStatus, string, Task<bool>>? TypeLiteral = null,
+
+            // CB-307: the typing gate's shadow mode on this machine — verdicts
+            // logged, typing let through (TypingGate.GuardedTypeAsync). Null is
+            // off; LiveSeams reads the same marker file and environment
+            // variable as the local panel's gate.
+            Func<bool>? Shadow = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -382,7 +410,7 @@ namespace Orbweaver
             // inside CanDeliver/Deliver keeps this the same shape as every
             // other seam above: LiveSeams runs once, at startup, and what it
             // wires up is what runs on every tick after.
-            var messenger = new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.All()));
+            var messenger = new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.AllWithDiscovered()));
 
             // MachineNames.Tag(), not .Mine(): the other CB-105 slice
             // (LocalCliChatSession.DeliverViaMessengerAsync) already settled
@@ -416,7 +444,11 @@ namespace Orbweaver
                         cloudApi,
                         CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
                         CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
-                        System.Threading.CancellationToken.None))));
+                        System.Threading.CancellationToken.None)),
+                RecordStatus: status => RecordStatusFor(status, localSessions),
+                CapturePane: TerminalFocuser.CapturePane,
+                CanReadPane: TerminalFocuser.CanReadPane,
+                Shadow: RealShadowOn));
 
             return new(
                 sendFrame,
@@ -436,7 +468,39 @@ namespace Orbweaver
                 },
                 SlashCommandsFor: slash.CommandsFor,
                 RunSlash: slash.RunAsync,
-                PersonaFor: PeerPersonaCache.Shared.Peek);
+                PersonaFor: PeerPersonaCache.Shared.Peek,
+                RecordStatus: status => RecordStatusFor(status, localSessions),
+                CapturePane: TerminalFocuser.CapturePane,
+                CanReadPane: TerminalFocuser.CanReadPane,
+                PressKey: TerminalFocuser.SendPaneKey,
+                TypeLiteral: TerminalFocuser.SendPaneText,
+                Shadow: RealShadowOn);
+        }
+
+        // CB-307: shadow mode, read the way the local panel's gate reads it —
+        // the marker file in this machine's settings folder, or the env var.
+        [ExcludeFromCodeCoverage]
+        private static bool RealShadowOn() =>
+            ShadowSwitch.IsOn(OrbweaverSettings.Directory, BrandEnv.Get(BrandEnv.LocalGateShadow), File.Exists);
+
+        // CB-307 addendum: Claude Code's own record status for a session, for
+        // the typing gate. SessionStatus carries the pid but not the session
+        // id SessionPark needs to refuse a reused pid's record, so the id is
+        // looked up in this server's own session list by reference — the same
+        // list the status came out of. Excluded with the rest of LiveSeams:
+        // it reads real files under the real config roots.
+        [ExcludeFromCodeCoverage]
+        private static string? RecordStatusFor(
+            SessionStatus status,
+            Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> localSessions)
+        {
+            if (status.SessionPid <= 0) return null;
+
+            foreach (var (sessionId, candidate) in localSessions())
+                if (ReferenceEquals(candidate, status))
+                    return SessionPark.RecordStatus(status.SessionPid, sessionId);
+
+            return null;
         }
 
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
@@ -461,7 +525,7 @@ namespace Orbweaver
         {
             if (status.SessionPid <= 0) return null;
 
-            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.All()))
+            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()))
             {
                 if (entry.Pid == status.SessionPid && ProcessLiveness.IsRunning(entry.Pid)) return entry;
             }
@@ -513,6 +577,14 @@ namespace Orbweaver
 
                 case MirrorProtocol.Avatar:
                     await AvatarAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.Prompt:
+                    await PromptAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.Answer:
+                    await AnswerAsync(fromPeer, frame).ConfigureAwait(false);
                     break;
             }
         }
@@ -751,6 +823,7 @@ namespace Orbweaver
             var raw = MirrorProtocol.RosterBytes(entries);
             var hash = MirrorProtocol.Hash(raw);
             var reply = new Dictionary<string, string> { [MirrorProtocol.RosterHashField] = hash };
+            if (_seams.CapturePane is not null && _seams.PressKey is not null) reply[MirrorProtocol.PromptsField] = "1";
 
             if (MirrorProtocol.RosterUnchanged(frame.Get(MirrorProtocol.RosterHashField), hash))
             {
@@ -848,6 +921,127 @@ namespace Orbweaver
                 new Dictionary<string, string> { [MirrorProtocol.AvatarIdField] = id! }, sub: null)
                 .ConfigureAwait(false);
         }
+
+        // --- answering a dialog (CB-307 addendum item 3) -----------------------
+
+        // What that session is waiting on, read off its own pane on this
+        // machine and sent as parsed options, never as the screen.
+        //
+        // A peer panel used to show a session waiting on an AskUserQuestion
+        // form as a bare "· AskUserQuestion" and nothing else, and the typing
+        // gate then (rightly) refused a typed reply, so it could not be
+        // answered from anywhere but the terminal. This, with ANSWER below, is
+        // the way through: the far side reads its own screen, and presses only
+        // a key it has just read there.
+        private async Task PromptAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
+            if (status is null) { AnswerLog("prompt", $"n={name} -> err code={refused}"); return; }
+
+            var prompt = await ReadPromptAsync(status).ConfigureAwait(false);
+            if (prompt is null)
+            {
+                AnswerLog("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoPrompt}");
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoPrompt, name).ConfigureAwait(false);
+                return;
+            }
+
+            AnswerLog("prompt", $"n={name} -> ok options={prompt.Options.Count} fp={prompt.Fingerprint}");
+            await SendTransferAsync(fromPeer, frame.Id, MirrorProtocol.EncodePrompt(prompt),
+                new Dictionary<string, string> { [MirrorProtocol.FingerprintField] = prompt.Fingerprint }, sub: null)
+                .ConfigureAwait(false);
+        }
+
+        // Take one option. The screen is read again first, and the key is
+        // pressed only if the dialog there is still the one the answer was
+        // chosen from (same fingerprint) and the key is one of its options.
+        // Anything else is refused with nothing pressed: a panel a few seconds
+        // stale must not answer the next question with the last one's choice.
+        //
+        // The answer itself is FormAnswer's, shared with the local panel so the
+        // two can never drift; this adds the link's gates around it. Three
+        // kinds of answer, each pinned to QA's real captures (item3/):
+        //
+        //  - an option's digit. On a single-select question it selects and
+        //    moves on; on a multi-select one it toggles a box and stays.
+        //  - "commit" (MirrorProtocol.ActionCommit), a multi-select question
+        //    only: Right, which moves on with the ticks kept.
+        //  - free text, the "Type something" option with text. That row is the
+        //    field itself: the server moves the cursor onto it, sees it there,
+        //    types the text, sees it in the row, and only then presses Enter.
+        //
+        // **Enter on an empty "Type something" declines the whole form**
+        // (capture 03), and a digit on it on a single-select question selects
+        // it empty, which is the same thing. So that option is never pressed by
+        // its digit, never with empty, whitespace-only or multi-line text, and
+        // Enter goes only after the typed text has been read back off the row.
+        // Free text on a multi-select question is refused: QA did not capture
+        // typing into its "[ ] Type something" row.
+        private async Task AnswerAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
+            if (status is null) { AnswerLog("answer", $"n={name} -> err code={refused}"); return; }
+
+            var key = frame.Get(MirrorProtocol.KeyField) ?? "";
+            var action = frame.Get(MirrorProtocol.ActionField);
+            var wanted = frame.Get(MirrorProtocol.FingerprintField) ?? "";
+            var text = frame.Payload is { Length: > 0 } bytes ? Encoding.UTF8.GetString(bytes) : null;
+
+            var code = _seams.PressKey is not { } press
+                ? MirrorProtocol.ErrUnsupported
+                : await FormAnswer.AnswerAsync(status, _seams.CapturePane!, press, _seams.TypeLiteral,
+                    wanted, key, action, text).ConfigureAwait(false);
+
+            var what = action is null ? $"key={key}" : $"act={action}";
+            if (code is not null)
+            {
+                AnswerLog("answer", $"n={name} {what} -> err code={code}");
+                await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+                return;
+            }
+
+            AnswerLog("answer", $"n={name} {what} -> ok");
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id)).ConfigureAwait(false);
+        }
+
+        // The session a PROMPT or ANSWER names, with the same gates INPUT has:
+        // a verified frame, a session that resolves, this machine's own reply
+        // setting (answering a dialog is input), and a pane this machine can
+        // read. On a refusal the ERR has been sent and Status is null.
+        private async Task<(SessionStatus? Status, string Name, string? Refused)> DialogSessionAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var name = frame.Text("n") ?? "?";
+
+            string? code = null;
+            SessionStatus? status = null;
+
+            if (frame.Payload is not null && !frame.PayloadVerified) code = MirrorProtocol.ErrBadHash;
+            else if (frame.Text("n") is null
+                     || Resolve(name, _seams.Agents(), _seams.LocalSessions()) is not { } resolved)
+                code = MirrorProtocol.ErrNoSession;
+            else if (!_seams.ReplyEnabled(resolved.Status.Source)) code = MirrorProtocol.ErrReplyOff;
+            else if (_seams.CapturePane is null || !(_seams.CanReadPane?.Invoke(resolved.Status) ?? true))
+                code = MirrorProtocol.ErrNoPane;
+            else status = resolved.Status;
+
+            if (code is not null) await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+            return (status, name, code);
+        }
+
+        private async Task<MirrorProtocol.WirePrompt?> ReadPromptAsync(SessionStatus status)
+        {
+            string? screen;
+            try { screen = await _seams.CapturePane!(status).ConfigureAwait(false); }
+            catch { screen = null; }
+
+            return MirrorProtocol.PromptFromScreen(screen);
+        }
+
+        // The sink for prompt and answer outcomes: the route, the key and the
+        // fingerprint, never a label or the screen. Same arrangement as
+        // InputLog.
+        internal Action<string, string> AnswerLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
 
         // The commands that session can actually run, read off this machine's
         // disk rather than asked of a model.
@@ -1962,9 +2156,22 @@ namespace Orbweaver
                 return;
             }
 
-            bool typed;
-            try { typed = await _seams.TypeInto(status, text).ConfigureAwait(false); }
-            catch { typed = false; }
+            // CB-307 addendum: past the gate, or not at all. A refusal is its
+            // own code with the reason as msg, logged with the reason and
+            // never the text.
+            (bool Typed, string? Refusal, string? Diagnostic) attempt;
+            try { attempt = await GuardedTypeAsync(status, text, name).ConfigureAwait(false); }
+            catch { attempt = (false, null, null); }
+
+            if (attempt.Refusal is { } why)
+            {
+                InputLog("input", $"n={name} -> err code={MirrorProtocol.ErrNotAtPrompt} why={why}"
+                    + (attempt.Diagnostic is { } diag ? " " + diag : ""));
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNotAtPrompt, why).ConfigureAwait(false);
+                return;
+            }
+
+            var typed = attempt.Typed;
 
             InputLog("input", typed
                 ? $"n={name} -> ok via={MirrorProtocol.ViaTyped}"
@@ -2043,10 +2250,21 @@ namespace Orbweaver
             if (!_seams.CanType(status))
                 return new SlashOutcome(MirrorProtocol.ViaRefused, SlashRouting.PeerSocketReason);
 
-            return await _seams.TypeInto(status, line).ConfigureAwait(false)
+            var (typed, refusal, _) = await GuardedTypeAsync(status, line, "slash").ConfigureAwait(false);
+            if (refusal is not null)
+                return new SlashOutcome(MirrorProtocol.ViaRefused, TypingGate.NotAtPromptReason(refusal));
+
+            return typed
                 ? new SlashOutcome(MirrorProtocol.ViaTyped, null)
                 : new SlashOutcome(MirrorProtocol.ViaRefused, "the terminal refused the text");
         }
+
+        // The only way this server types: TypingGate first, with this
+        // server's seams as its reads.
+        private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
+            SessionStatus status, string text, string who) =>
+            TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
+                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who);
 
         // --- sending ------------------------------------------------------------
 

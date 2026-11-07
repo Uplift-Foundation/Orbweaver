@@ -425,4 +425,32 @@ public class TypingRefusalTests
         Assert.DoesNotContain("take a minute", said);
         Assert.DoesNotContain("a minute:", said);
     }
+
+    // CB-307 addendum: the far terminal was on a dialog. The far side's reason
+    // is quoted, and the note says what only the person at that terminal can
+    // do about it.
+    [Fact]
+    public void NotAtPromptQuotesTheFarSidesReason()
+    {
+        var said = RemoteControlChatSession.TypingRefusal(
+            MirrorProtocol.ErrNotAtPrompt, Remote, "it is showing a dialog: Background work is running");
+
+        Assert.Equal(
+            $"{Remote}'s terminal isn't at its prompt — it is showing a dialog: Background work is running. "
+            + "Nothing was typed; answer that screen in the terminal and send again.", said);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public void NotAtPromptWithNoReasonStillReadsAsASentence(string? detail) =>
+        Assert.Equal(
+            $"{Remote}'s terminal isn't at its prompt. Nothing was typed; answer that screen in the terminal and send again.",
+            RemoteControlChatSession.TypingRefusal(MirrorProtocol.ErrNotAtPrompt, Remote, detail));
+
+    [Fact]
+    public void EveryOtherArmIgnoresTheDetail() =>
+        Assert.Equal(
+            RemoteControlChatSession.TypingRefusal(MirrorProtocol.ErrReplyOff, Remote),
+            RemoteControlChatSession.TypingRefusal(MirrorProtocol.ErrReplyOff, Remote, "anything"));
 }

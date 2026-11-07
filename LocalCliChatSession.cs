@@ -42,7 +42,7 @@ namespace Orbweaver
     //    produced. The contract's "TurnUpdated carries the whole turn" holds
     //    trivially, since the whole turn is all there ever is.
     internal sealed class LocalCliChatSession :
-        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts,
+        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
         IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
         IRemoteChatPeerInbound, IDisposable
     {
@@ -144,9 +144,9 @@ namespace Orbweaver
             _format = CliChatFormat.For(status.Source);
             DisplayName = status.Title ?? "";
             _findTranscript = findTranscript ?? (id => TranscriptReader.FindTranscriptFor(id));
-            _messenger = messenger ?? new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.All()));
+            _messenger = messenger ?? new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.AllWithDiscovered()));
             _findRegistry = findRegistry ?? (id => SessionRegistry.Find(
-                SessionRegistry.Scan(ClaudeConfigRoots.All()), id, ProcessLiveness.IsRunning));
+                SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()), id, ProcessLiveness.IsRunning));
             _startWatcher = startWatcher ?? StartRealWatcher;
             _cloudApi = cloudApi;
             _credentialsFor = credentialsFor;
@@ -1362,6 +1362,12 @@ namespace Orbweaver
         private async Task<ChatSendOutcome> TypeIntoTerminalAsync(
             string typedText, string displayText, byte[]? imageBytes)
         {
+            // CB-307: keystrokes mean whatever the pane is showing, so ask first.
+            // Before Add(mine), so a refused line never appears as a sent
+            // bubble. The decision and the note are RefuseIfNotAtPromptAsync's,
+            // which is covered; only this one call line is not.
+            if (await RefuseIfNotAtPromptAsync() is { } refused) return refused;
+
             var mine = new ChatTurn
             {
                 Role = ChatRole.User,
@@ -1384,6 +1390,104 @@ namespace Orbweaver
             Note("Couldn't send that to the terminal.");
             return ChatSendOutcome.Failed;
         }
+
+        // CB-307: the typing gate, asked once per send and never per frame.
+        // Injectable so a test hands over a verdict instead of a real tmux pane;
+        // the default reads Claude Code's own session record and, where it can
+        // (tmux), the pane itself.
+        internal Func<SessionStatus, Task<TypingVerdict>>? Gate { get; init; }
+
+        [ExcludeFromCodeCoverage]
+        private Task<TypingVerdict> RealGate(SessionStatus status) =>
+            TypingGate.JudgeAsync(
+                status,
+                s => SessionPark.RecordStatus(s.SessionPid, SessionId),
+                TerminalFocuser.CapturePane,
+                TerminalFocuser.CanReadPane(status));
+
+        // Null when typing may go ahead. Otherwise the note has been written
+        // under the composer, nothing is pending, and the send has Failed — so
+        // the composer keeps the user's text, which is the right thing to do
+        // with words that never reached anything.
+        internal async Task<ChatSendOutcome?> RefuseIfNotAtPromptAsync()
+        {
+            var verdict = await (Gate ?? RealGate)(_status);
+            var shadow = (ShadowOn ?? RealShadowOn)();
+
+            // Shadow mode (CB-307): compute the verdict and say what it was,
+            // along with what the gate saw, and then let the send go ahead.
+            // For reading the cause of a refusal that only happens in the
+            // running app without blocking anyone while it is read. Off unless
+            // the marker file or the env var asks for it.
+            if (shadow)
+            {
+                MirrorLog.Say(
+                    verdict.Allowed ? "local-typing-allowed" : "local-typing-refused",
+                    RefusalLogDetail(SessionId, verdict, _status, CanReadPane(_status), shadow: true));
+                return null;
+            }
+
+            if (verdict.Allowed) return null;
+
+            _pending = null;
+            Note(NotAtPromptNote(verdict.Why));
+            MirrorLog.Say(
+                "local-typing-refused",
+                RefusalLogDetail(SessionId, verdict, _status, CanReadPane(_status), shadow: false));
+            return ChatSendOutcome.Failed;
+        }
+
+        // Whether the gate only logs. A seam so a test turns it on without a
+        // file or an environment variable; the default reads the marker file
+        // beside mirror-log, or the env var.
+        internal Func<bool>? ShadowOn { get; init; }
+
+        [ExcludeFromCodeCoverage]
+        private static bool RealShadowOn() =>
+            ShadowSwitch.IsOn(OrbweaverSettings.Directory, BrandEnv.Get(BrandEnv.LocalGateShadow), File.Exists);
+
+        [ExcludeFromCodeCoverage]
+        private static bool CanReadPane(SessionStatus status) => TerminalFocuser.CanReadPane(status);
+
+        // What the log says about a gate decision, so a refusal on a real
+        // machine can be told apart after the fact: the record said waiting,
+        // the screen was a dialog, or the screen could not be read (and then
+        // which check fired, or that the capture came back null or threw).
+        // Also which status fields the gate was handed, because the failure that
+        // prompted this is one that only the running app shows, where the
+        // panel's cached status can differ from the file. Never any screen text
+        // or any path: a dialog's title is reduced to the word "dialog", and
+        // the tmux fields are reported only as set or empty.
+        internal static string RefusalLogDetail(
+            string sessionId, TypingVerdict verdict, SessionStatus? status = null,
+            bool canReadPane = false, bool shadow = false)
+        {
+            var kind = verdict.Why switch
+            {
+                null => "allowed",
+                TypingGate.WaitingWhy => "record-waiting",
+                TypingGate.UnreadableWhy => "unreadable",
+                { } why when why.StartsWith("it is showing a dialog", StringComparison.Ordinal) => "dialog",
+                _ => "other",
+            };
+
+            var line = $"session={sessionId} kind={kind} diag={verdict.Diagnostic ?? "none"}";
+            if (shadow) line += " shadow=1";
+            if (status is not null)
+            {
+                line += $" state={status.State} source={status.Source} pid={(status.SessionPid > 0 ? "set" : "none")}"
+                    + $" tmux_socket={SetOrEmpty(status.TmuxSocket)} tmux_pane={SetOrEmpty(status.TmuxPane)}"
+                    + $" tmux_bin={SetOrEmpty(status.TmuxBin)} can_read_pane={canReadPane.ToString().ToLowerInvariant()}";
+            }
+
+            return line;
+        }
+
+        private static string SetOrEmpty(string? value) => string.IsNullOrEmpty(value) ? "empty" : "set";
+
+        internal static string NotAtPromptNote(string? why) =>
+            "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)
+            + ". Nothing was typed; answer that screen in the terminal and send again.";
 
         // The body of a delivered message, unwrapped from the tag Claude Code's
         // own transcript holds it in.
@@ -1513,7 +1617,12 @@ namespace Orbweaver
 
             try
             {
-                var screen = await TerminalFocuser.CapturePane(_status);
+                var generation = _generation;
+                var screen = await Capture(_status);
+
+                // An answer went out while this capture was running: it saw the
+                // screen before the key, and is stale.
+                if (generation != _generation) return;
 
                 // Still waiting? The capture runs a process and the answer may
                 // have been given in the terminal while it did.
@@ -1522,7 +1631,39 @@ namespace Orbweaver
                 // A prompt with no options is the honest outcome when the dialog
                 // could not be read: something is waiting, we cannot say what,
                 // and the panel offers the terminal instead of a guess.
-                var parsed = screen is null ? null : ChatTranscript.ParseDialog(screen);
+                //
+                // A question form (CB-307) first: it is a dialog with more on it
+                // (the whole question, which tab, a text option), and anything
+                // that is not a form falls through to the ordinary reading.
+                var parsed = screen is null ? null : ReadPrompt(screen);
+
+                // The fingerprint of a form as it was shown, so an answer to it
+                // is refused if the screen has since moved on. Null for an
+                // ordinary dialog, which answers by its key as it always has.
+                _formFingerprint = screen is not null && ChatTranscript.ParseAskForm(screen) is not null
+                    // A screen that parses as a form always has a wire reading
+                    // (PromptFromScreen reads the same form first), so there is no
+                    // null to guard here.
+                    ? MirrorProtocol.PromptFromScreen(screen)!.Fingerprint
+                    : null;
+
+                // The form just answered, read again before the terminal has
+                // moved on, is not shown again: live buttons on an answered
+                // question invite a second click that lands on the next one. Held
+                // back until it changes, or has stayed long enough that the
+                // answer plainly did not take.
+                if (_answeredFingerprint is not null)
+                {
+                    if (_formFingerprint == _answeredFingerprint
+                        && Clock() - _answeredAt < SettleAfterAnswer)
+                    {
+                        _formFingerprint = null;
+                        return;
+                    }
+
+                    _answeredFingerprint = null;
+                }
+
                 SetPrompt(parsed ?? new ChatPrompt("Waiting for input", Array.Empty<ChatPromptOption>()));
             }
             finally
@@ -1530,6 +1671,34 @@ namespace Orbweaver
                 _refreshing = false;
             }
         }
+
+        // The pane seams, so a test can hand over a screen and count what an
+        // answer sends. The defaults are the real tmux/terminal reads and presses.
+        internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } = TerminalFocuser.SendPaneKey;
+        internal Func<SessionStatus, Task<string?>> Capture { get; init; } = TerminalFocuser.CapturePane;
+        internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } = TerminalFocuser.SendPaneText;
+
+        // The fingerprint of the question form on show, or null when the prompt
+        // is an ordinary dialog (or nothing).
+        private string? _formFingerprint;
+
+        // The form just answered, and when, so a re-read of it before the
+        // terminal advances is held back. See RefreshPromptAsync.
+        internal static readonly TimeSpan SettleAfterAnswer = TimeSpan.FromSeconds(4);
+        internal Func<DateTime> Clock { get; init; } = () => DateTime.UtcNow;
+        private string? _answeredFingerprint;
+        private DateTime _answeredAt;
+
+        // Which read of the pane is current: bumped when an answer is sent and
+        // again when it finishes, so a capture already in flight — the screen as
+        // it was before the key landed — is dropped when it returns instead of
+        // being drawn as the current form.
+        private int _generation;
+
+        internal static ChatPrompt? ReadPrompt(string screen) =>
+            ChatTranscript.ParseAskForm(screen) is { } form
+                ? AskFormView.ToPrompt(form)
+                : ChatTranscript.ParseDialog(screen);
 
         // internal: the transitions around a prompt are what decide whether the
         // panel is still offering buttons for a dialog that has been answered,
@@ -1550,13 +1719,38 @@ namespace Orbweaver
                 return;
             }
 
+            // A question form is answered through the one procedure the mirror
+            // runs too (FormAnswer), which re-reads the screen and presses
+            // nothing unless it is still the form that was shown.
+            if (_formFingerprint is not null)
+            {
+                // The free-text option is never pressed by its digit: on a
+                // single-select question that selects it empty, which declines
+                // the whole form. It is answered with text, from the box.
+                if (option.FreeText)
+                {
+                    Note("Type your answer in the box, then send it.");
+                    return;
+                }
+
+                await AnswerFormAsync(option, text: null);
+                return;
+            }
+
             // Cleared first. The hook will report the session generating again
             // within a moment, but the buttons should stop being clickable the
             // instant one is clicked rather than staying live for a second
             // answer to the dialog that is already gone.
             SetPrompt(null);
 
-            if (await TerminalFocuser.SendPaneKey(_status, option.Key)) return;
+            // A capture already in flight saw the screen before this key, and is
+            // dropped when it returns; bumped again once the key is down.
+            _generation++;
+            bool pressed;
+            try { pressed = await PressKey(_status, option.Key); }
+            finally { _generation++; }
+
+            if (pressed) return;
 
             Note("Couldn't answer that in the terminal.");
 
@@ -1565,6 +1759,83 @@ namespace Orbweaver
             // stopped when it doesn't.
             if (_waiting) await RefreshPromptAsync();
         }
+
+        // The typed answer of a form's "Type something." row. Only for a form on
+        // show and only for its free-text option; FormAnswer refuses blank or
+        // multi-line text, and free text on a multi-select, with nothing pressed.
+        public async Task AnswerFreeTextAsync(ChatPromptOption option, string text)
+        {
+            if (!_format.ReplyEnabled())
+            {
+                Note("Replying is off, so this can only be answered in the terminal.");
+                return;
+            }
+
+            if (_formFingerprint is null || !option.FreeText) return;
+
+            await AnswerFormAsync(option, text);
+        }
+
+        private async Task AnswerFormAsync(ChatPromptOption option, string? text)
+        {
+            var fingerprint = _formFingerprint!;
+            var commit = option.Key == AskFormView.CommitKey;
+            _answeredFingerprint = fingerprint;
+            _answeredAt = Clock();
+
+            // Cleared first, for the reason the ordinary path gives.
+            SetPrompt(null);
+            _formFingerprint = null;
+            _generation++;
+
+            string? code;
+            try
+            {
+                code = await FormAnswer.AnswerAsync(
+                    _status,
+                    Capture,
+                    PressKey,
+                    TypeLiteral,
+                    fingerprint,
+                    key: commit ? null : option.Key,
+                    action: commit ? MirrorProtocol.ActionCommit : null,
+                    text: text);
+            }
+            finally
+            {
+                // Again on the way out: a capture that began during the answer is
+                // as stale as one that began before it.
+                _generation++;
+            }
+
+            if (code is null) return;
+
+            // Nothing (more) was pressed, so there is no screen about to move
+            // on: the buttons may come straight back.
+            _answeredFingerprint = null;
+
+            Note(FormRefusalNote(code));
+
+            // Put the buttons back: nothing was answered, or not all of it.
+            if (_waiting) await RefreshPromptAsync();
+        }
+
+        // What a refusal from the shared procedure says, as a function of the
+        // code, because each is a different fact about the screen.
+        internal static string FormRefusalNote(string code) => code switch
+        {
+            MirrorProtocol.ErrPromptChanged =>
+                "That question had changed, so nothing was answered. Here is the current one.",
+
+            // Nothing is waiting any more: the form was answered a moment ago (a
+            // second click on it) or in the terminal. Not an error.
+            MirrorProtocol.ErrNoPrompt => "That question was already answered.",
+            MirrorProtocol.ErrBadKey =>
+                "That can't be answered that way. Nothing was pressed.",
+            MirrorProtocol.ErrUnsupported =>
+                "That can't be answered from here. Answer it in the terminal.",
+            _ => "Couldn't answer that in the terminal.",
+        };
 
         // A Desktop session has no terminal for TerminalFocuser to find, so its
         // Focus returned early and this button did nothing (CB-265's gap). Its

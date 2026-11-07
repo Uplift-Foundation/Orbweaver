@@ -247,6 +247,66 @@ public class ChatPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-parked-attach.png");
     }
 
+    // CB-307 addendum: a line sent while the terminal sat on a dialog. The
+    // note is the refusal's own wording, built by the same function the panel
+    // calls, with the dialog the real /permissions capture parses as. The
+    // user's text stays in the composer, which a FakeChatSession cannot show
+    // being kept, so the capture's job is the note: whether the sentence
+    // reads as "nothing was typed, go answer that screen" at a glance.
+    [AvaloniaFact]
+    public void ALineRefusedBecauseTheTerminalIsOnADialog()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "run the nightly digest" },
+            new ChatTurn
+            {
+                Role = ChatRole.System, IsComplete = true,
+                Text = LocalCliChatSession.NotAtPromptNote(TypingGate.WaitingWhy),
+            },
+        });
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-not-at-prompt.png");
+    }
+
+    // CB-307 addendum item 3: three real question-form screens, as the panel
+    // shows them. Each prompt is what the parser makes of QA's real capture of a
+    // two-question form (single select, then multiSelect), through the same view
+    // the app uses, so the picture is the app's own reading of a real screen:
+    // a single-select with the "Type something." answer, a multiSelect as a
+    // checklist with its explicit Submit button, and the review screen with its
+    // two armed buttons and the answers it lists.
+    private void OpenForm(string screen, string file)
+    {
+        var form = ChatTranscript.ParseAskForm(screen)!;
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "ask me two questions" },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "Two quick questions." },
+        }, displayName: "evidence");
+
+        fake.Prompt = AskFormView.ToPrompt(form) with { ElsewhereLabel = "Answer on mac-mini" };
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, file);
+    }
+
+    [AvaloniaFact]
+    public void ASingleSelectQuestionWithATypedAnswerOption() =>
+        OpenForm(AskFormFixtures.SingleSelectQ1, "chat-panel-ask-form.png");
+
+    [AvaloniaFact]
+    public void AMultiSelectQuestionAsAChecklistWithItsSubmitButton() =>
+        OpenForm(AskFormFixtures.MultiSelectTwoChecked, "chat-panel-ask-multiselect.png");
+
+    [AvaloniaFact]
+    public void TheReviewScreenWithItsTwoArmedButtons() =>
+        OpenForm(AskFormFixtures.SubmitTab, "chat-panel-ask-review.png");
+
     // CB-270 Stage 3: a gateway chat in which an agent ran two tools between the
     // two halves of its reply, the second of which failed. One tool line in the
     // quiet system ink and one in the panel's red, with the reply split around
