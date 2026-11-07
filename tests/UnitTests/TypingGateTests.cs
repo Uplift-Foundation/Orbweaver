@@ -267,6 +267,27 @@ public class GuardedTypeTests
         Assert.Equal(1, pane.Captures);
     }
 
+    // CB-307 shadow mode: the verdict is logged and the text typed anyway;
+    // with no sink wired it still types, and off it refuses as before.
+    [Fact]
+    public async Task ShadowModeTypesWhateverTheVerdictAndLogsIt()
+    {
+        var pane = new Pane { Screen = PaneFixtures.PermissionsAllow };
+        var log = new List<string>();
+
+        Assert.Equal((true, (string?)null, (string?)null), await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true, (what, _) => log.Add(what), "s1"));
+        Assert.Equal(new[] { "remote-typing-refused" }, log);
+
+        Assert.True((await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true)).Typed);
+
+        Assert.False((await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => false, (what, _) => log.Add(what))).Typed);
+        Assert.Single(log);
+        Assert.Equal(new[] { "hi", "hi" }, pane.Typed);
+    }
+
     [Fact]
     public void TheSlashReasonWrapsTheGatesOwn() =>
         Assert.Equal("the terminal there isn't at its prompt (it is showing a dialog: X)",

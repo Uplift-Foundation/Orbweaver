@@ -144,7 +144,13 @@ namespace Orbweaver
             // the free-text row of a form, after the server has put the cursor
             // on it and seen it there. Null refuses free text as unsupported;
             // LiveSeams wires TerminalFocuser.SendPaneText.
-            Func<SessionStatus, string, Task<bool>>? TypeLiteral = null);
+            Func<SessionStatus, string, Task<bool>>? TypeLiteral = null,
+
+            // CB-307: the typing gate's shadow mode on this machine — verdicts
+            // logged, typing let through (TypingGate.GuardedTypeAsync). Null is
+            // off; LiveSeams reads the same marker file and environment
+            // variable as the local panel's gate.
+            Func<bool>? Shadow = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -441,7 +447,8 @@ namespace Orbweaver
                         System.Threading.CancellationToken.None)),
                 RecordStatus: status => RecordStatusFor(status, localSessions),
                 CapturePane: TerminalFocuser.CapturePane,
-                CanReadPane: TerminalFocuser.CanReadPane));
+                CanReadPane: TerminalFocuser.CanReadPane,
+                Shadow: RealShadowOn));
 
             return new(
                 sendFrame,
@@ -466,8 +473,15 @@ namespace Orbweaver
                 CapturePane: TerminalFocuser.CapturePane,
                 CanReadPane: TerminalFocuser.CanReadPane,
                 PressKey: TerminalFocuser.SendPaneKey,
-                TypeLiteral: TerminalFocuser.SendPaneText);
+                TypeLiteral: TerminalFocuser.SendPaneText,
+                Shadow: RealShadowOn);
         }
+
+        // CB-307: shadow mode, read the way the local panel's gate reads it —
+        // the marker file in this machine's settings folder, or the env var.
+        [ExcludeFromCodeCoverage]
+        private static bool RealShadowOn() =>
+            ShadowSwitch.IsOn(OrbweaverSettings.Directory, BrandEnv.Get(BrandEnv.LocalGateShadow), File.Exists);
 
         // CB-307 addendum: Claude Code's own record status for a session, for
         // the typing gate. SessionStatus carries the pid but not the session
@@ -2146,7 +2160,7 @@ namespace Orbweaver
             // own code with the reason as msg, logged with the reason and
             // never the text.
             (bool Typed, string? Refusal, string? Diagnostic) attempt;
-            try { attempt = await GuardedTypeAsync(status, text).ConfigureAwait(false); }
+            try { attempt = await GuardedTypeAsync(status, text, name).ConfigureAwait(false); }
             catch { attempt = (false, null, null); }
 
             if (attempt.Refusal is { } why)
@@ -2236,7 +2250,7 @@ namespace Orbweaver
             if (!_seams.CanType(status))
                 return new SlashOutcome(MirrorProtocol.ViaRefused, SlashRouting.PeerSocketReason);
 
-            var (typed, refusal, _) = await GuardedTypeAsync(status, line).ConfigureAwait(false);
+            var (typed, refusal, _) = await GuardedTypeAsync(status, line, "slash").ConfigureAwait(false);
             if (refusal is not null)
                 return new SlashOutcome(MirrorProtocol.ViaRefused, TypingGate.NotAtPromptReason(refusal));
 
@@ -2247,9 +2261,10 @@ namespace Orbweaver
 
         // The only way this server types: TypingGate first, with this
         // server's seams as its reads.
-        private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(SessionStatus status, string text) =>
+        private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
+            SessionStatus status, string text, string who) =>
             TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
-                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane);
+                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who);
 
         // --- sending ------------------------------------------------------------
 

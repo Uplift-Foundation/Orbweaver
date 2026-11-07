@@ -2228,6 +2228,113 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(new[] { "my own answer" }, harness.Literal);
     }
 
+    // --- CB-307: shadow mode on every remote typing path ----------------------
+    //
+    // With shadow on, the far machine still works out the gate's verdict and
+    // logs it — in the local gate's format, never with the screen or the text
+    // — and then types anyway. Off, it refuses exactly as before. The same
+    // for INPUT, the server's default slash runner and the slash host.
+
+    [Theory]
+    [InlineData("dialog")]
+    [InlineData("record-waiting")]
+    [InlineData("prompt")]
+    public async Task ShadowModeLogsTheRemoteVerdictAndTypesAnyway(string shape)
+    {
+        var harness = new Harness(_dir)
+        {
+            ShadowOn = true,
+            Screen = shape == "dialog" ? PaneFixtures.PermissionsAllow : PaneFixtures.MacPromptAfterEsc,
+            Record = shape == "record-waiting" ? "waiting" : "idle",
+        };
+        var log = new List<(string What, string Detail)>();
+        harness.Server.InputLog = (what, detail) => log.Add((what, detail));
+        harness.AddSession("openclaw", WriteTranscript("shadow-" + shape + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Null(await harness.Client.SendInputAsync("openclaw", "please carry on"));
+        Assert.Equal(new[] { ("openclaw", "please carry on") }, harness.Typed);
+
+        var line = Assert.Single(log, l => l.What.StartsWith("remote-typing-", StringComparison.Ordinal));
+        Assert.Equal(shape == "prompt" ? "remote-typing-allowed" : "remote-typing-refused", line.What);
+        Assert.Contains("shadow=1", line.Detail);
+        Assert.Contains(shape switch
+        {
+            "dialog" => "kind=unreadable",
+            "record-waiting" => "kind=record-waiting",
+            _ => "kind=allowed",
+        }, line.Detail);
+        Assert.DoesNotContain(log, l => l.Detail.Contains("please carry on") || l.Detail.Contains("Add a new rule"));
+    }
+
+    [Fact]
+    public async Task WithShadowOffARemoteTypedLineIntoADialogIsStillRefused()
+    {
+        var harness = new Harness(_dir) { ShadowOn = false, Screen = PaneFixtures.PermissionsAllow };
+        var log = new List<string>();
+        harness.Server.InputLog = (what, _) => log.Add(what);
+        harness.AddSession("openclaw", WriteTranscript("shadow-off.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, await harness.Client.SendInputAsync("openclaw", "hello"));
+        Assert.Empty(harness.Typed);
+        Assert.DoesNotContain(log, w => w.StartsWith("remote-typing-", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheDefaultSlashRunnerHonoursShadow(bool shadow)
+    {
+        var harness = new Harness(_dir) { ShadowOn = shadow, Screen = PaneFixtures.MiniExitDialog };
+        var log = new List<string>();
+        harness.Server.InputLog = (what, _) => log.Add(what);
+        harness.AddSession("ll", WriteTranscript("shadow-slash-" + shadow + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("ll", "/color green", slash: true);
+        await harness.Server.SlashInFlight;
+
+        Assert.Equal(shadow ? MirrorProtocol.ViaTyped : MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(shadow ? 1 : 0, harness.Typed.Count);
+        Assert.Equal(shadow, log.Contains("remote-typing-refused"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheSlashHostsTypedArmHonoursShadow(bool shadow)
+    {
+        var harness = new Harness(_dir, wireSlash: true) { Screen = PaneFixtures.PermissionsAllow };
+        var typed = new List<string>();
+        var log = new List<(string What, string Detail)>();
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            _ => new[] { new SlashCommand("/ship-it", "") },
+            (_, line) => { typed.Add(line); return Task.FromResult(true); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            RecordStatus: harness.ReadRecord,
+            CapturePane: harness.CaptureScreen,
+            CanReadPane: _ => true,
+            Shadow: () => shadow,
+            Log: (what, detail) => log.Add((what, detail))));
+        harness.AddSession("openclaw", WriteTranscript("shadow-host-" + shadow + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "/ship-it", slash: true);
+
+        Assert.Equal(shadow ? MirrorProtocol.ViaTyped : MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(shadow ? new[] { "/ship-it" } : Array.Empty<string>(), typed);
+        if (shadow)
+        {
+            var line = Assert.Single(log);
+            Assert.Equal("remote-typing-refused", line.What);
+            Assert.Contains("session=slash-host", line.Detail);
+            Assert.Contains("shadow=1", line.Detail);
+        }
+        else Assert.Empty(log);
+    }
+
     private static MirrorProtocol.MirrorFrame AnswerFrame(string id, string name, string key, string fp, byte[]? text) =>
         MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Answer, id,
             new Dictionary<string, string>
@@ -3580,6 +3687,9 @@ public class MirrorRoundTripTests : IDisposable
         public Func<string, string?>? AfterType { get; set; }
         public List<string> Literal { get; } = new();
         public bool TypeLiteralFails { get; set; }
+
+        // CB-307: the typing gate's shadow mode on the far machine.
+        public bool ShadowOn { get; set; }
         public int RecordReads { get; private set; }
 
         public bool ReplyEnabled { get; init; } = true;
@@ -3701,6 +3811,7 @@ public class MirrorRoundTripTests : IDisposable
                     if (AfterPress?.Invoke(key) is { } next) Screen = next;
                     return Task.FromResult(true);
                 },
+                Shadow: () => ShadowOn,
                 TypeLiteral: ungated || noTypeLiteral ? null : (_, text) =>
                 {
                     if (TypeLiteralFails) return Task.FromResult(false);

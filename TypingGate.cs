@@ -64,23 +64,41 @@ namespace Orbweaver
         // (canReadPane null means "yes, if there is a capture" — a test seam
         // that supplies a screen means it). Refusal returns the gate's reason
         // and types nothing.
+        //
+        // **Shadow mode** (CB-307): when shadow says on — the same marker file
+        // and environment variable as the local panel's gate (ShadowSwitch),
+        // read on the machine doing the typing — the verdict is still worked
+        // out and logged as remote-typing-allowed or remote-typing-refused, in
+        // the local gate's own format and never with any screen text, and then
+        // the text is typed whatever it said. For reading why a real machine
+        // refuses without blocking anyone while the cause is read. Off, nothing
+        // changes and nothing extra is logged.
         internal static async Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
             SessionStatus status,
             string text,
             Func<SessionStatus, string, Task<bool>> typeInto,
             Func<SessionStatus, string?>? recordStatus,
             Func<SessionStatus, Task<string?>>? capturePane,
-            Func<SessionStatus, bool>? canReadPane)
+            Func<SessionStatus, bool>? canReadPane,
+            Func<bool>? shadow = null,
+            Action<string, string>? log = null,
+            string? who = null)
         {
             if (recordStatus is not null || capturePane is not null)
             {
+                var readable = capturePane is not null && (canReadPane?.Invoke(status) ?? true);
                 var verdict = await JudgeAsync(
                     status,
                     recordStatus ?? (_ => null),
                     capturePane ?? (_ => Task.FromResult<string?>(null)),
-                    capturePane is not null && (canReadPane?.Invoke(status) ?? true)).ConfigureAwait(false);
+                    readable).ConfigureAwait(false);
 
-                if (!verdict.Allowed) return (false, verdict.Why, verdict.Diagnostic);
+                if (shadow?.Invoke() == true)
+                {
+                    log?.Invoke(verdict.Allowed ? "remote-typing-allowed" : "remote-typing-refused",
+                        LocalCliChatSession.RefusalLogDetail(who ?? "?", verdict, status, readable, shadow: true));
+                }
+                else if (!verdict.Allowed) return (false, verdict.Why, verdict.Diagnostic);
             }
 
             return (await typeInto(status, text).ConfigureAwait(false), null, null);
