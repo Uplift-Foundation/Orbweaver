@@ -272,6 +272,38 @@ public class ChatPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-not-at-prompt.png");
     }
 
+    // CB-307 addendum item 3: a question form, as the panel shows it. The whole
+    // question as the title, "Question 2 of 3", the options as buttons (the
+    // "Type something." one is the text answer), and the terminal link naming the
+    // machine the form is on. Invented wording, shaped like the real form: the
+    // capture is for the layout, and a real form's text is not committed.
+    [AvaloniaFact]
+    public void AQuestionFormWithProgressAndATypedAnswerOption()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "plan the migration" },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "Two things to settle before I start." },
+        }, displayName: "evidence");
+
+        fake.Prompt = new ChatPrompt(
+            "Which environment should the migration run against first, given that staging is shared with QA this week?",
+            new[]
+            {
+                new ChatPromptOption("1", "Staging"),
+                new ChatPromptOption("2", "A fresh copy of production"),
+                new ChatPromptOption("3", "Type something.", FreeText: true),
+                new ChatPromptOption("4", "Chat about this"),
+            },
+            ElsewhereLabel: "Answer on mac-mini",
+            Progress: "Question 2 of 3");
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-ask-form.png");
+    }
+
     // CB-270 Stage 3: a gateway chat in which an agent ran two tools between the
     // two halves of its reply, the second of which failed. One tool line in the
     // quiet system ink and one in the panel's red, with the reply split around

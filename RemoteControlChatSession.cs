@@ -33,7 +33,7 @@ namespace Orbweaver
     // half a minute, and nobody should have to close a panel and reopen it to
     // find out it could have been a live view all along. HistoryReplaced is what
     // makes that free — the panel already redraws from History when it fires.
-    internal sealed class RemoteControlChatSession :
+    internal sealed partial class RemoteControlChatSession :
         IRemoteChatSession, IRemoteChatComposer, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatBacklog,
         IRemoteChatFetchWait, IRemoteChatMachine, IDisposable
     {
@@ -207,6 +207,10 @@ namespace Orbweaver
             {
                 MachineChanged?.Invoke();
                 TryUpgrade();
+
+                // The roster is what says the far session started or stopped
+                // waiting, which is what decides whether to ask for a form.
+                EnsurePromptPolling();
             });
         }
 
@@ -1017,11 +1021,15 @@ namespace Orbweaver
             // The handshake may have finished while nothing was open.
             if (!_mirroring) TryUpgrade();
             else if (RemoteControlSessions.MirrorClientFor(_account) is { } client) Observe(client.ReopenAsync(_remoteName));
+
+            // A form may be waiting on the far screen (CB-307).
+            EnsurePromptPolling();
         }
 
         public void PanelClosed()
         {
             _panelOpen = false;
+            StopPromptPolling();
 
             // Whatever was in flight is no longer being waited for by anybody.
             // Reopening starts a fresh fetch (CloseAsync drops the feed), so a
@@ -1041,6 +1049,7 @@ namespace Orbweaver
         {
             if (_disposed) return;
             _disposed = true;
+            StopPromptPolling();
 
             RemoteControlSessions.MirrorChanged -= OnMirrorChanged;
 
