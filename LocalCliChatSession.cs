@@ -1626,7 +1626,11 @@ namespace Orbweaver
                 // A prompt with no options is the honest outcome when the dialog
                 // could not be read: something is waiting, we cannot say what,
                 // and the panel offers the terminal instead of a guess.
-                var parsed = screen is null ? null : ChatTranscript.ParseDialog(screen);
+                //
+                // A question form (CB-307) first: it is a dialog with more on it
+                // (the whole question, which tab, a text option), and anything
+                // that is not a form falls through to the ordinary reading.
+                var parsed = screen is null ? null : ReadPrompt(screen);
                 SetPrompt(parsed ?? new ChatPrompt("Waiting for input", Array.Empty<ChatPromptOption>()));
             }
             finally
@@ -1634,6 +1638,9 @@ namespace Orbweaver
                 _refreshing = false;
             }
         }
+
+        internal static ChatPrompt? ReadPrompt(string screen) =>
+            ChatTranscript.ParseAskForm(screen) is { } form ? AskFormView.ToPrompt(form) : ChatTranscript.ParseDialog(screen);
 
         // internal: the transitions around a prompt are what decide whether the
         // panel is still offering buttons for a dialog that has been answered,
