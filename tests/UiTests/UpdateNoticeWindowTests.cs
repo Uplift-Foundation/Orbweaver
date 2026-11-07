@@ -121,6 +121,7 @@ public class UpdateNoticeWindowTests : IDisposable
     public void ProgressWithoutASizeIsIndeterminateRatherThanAFalseFraction()
     {
         var (w, _, _, _) = Build();
+        w.State = UpdateNoticeWindow.Phase.Working;
 
         w.OnProgress(new UpdateProgress(UpdateStage.Downloading, 10, 0));
         Assert.True(w.Bar.IsIndeterminate);
@@ -196,6 +197,31 @@ public class UpdateNoticeWindowTests : IDisposable
         Assert.Equal(2, installer.Calls);
         Assert.Equal(UpdateNoticeWindow.Phase.Working, w.State);
         Assert.False(w.RetryButton.IsVisible);
+    }
+
+    // Progress is posted to the dispatcher, so a report can still be queued when
+    // the installer fails. It must not overwrite the failure sentence (seen on
+    // Windows as a red "Downloading — 49%…" where the error should be).
+    [AvaloniaFact]
+    public async Task ALateProgressReportDoesNotOverwriteTheFailure()
+    {
+        var (w, installer, _, _) = Build();
+        IProgress<UpdateProgress>? reporter = null;
+        installer.Run = (progress, _) =>
+        {
+            reporter = progress;
+            return Task.FromResult(new InstallOutcome(InstallStatus.Failed, "The connection was lost mid-download."));
+        };
+
+        await w.InstallAsync();
+        Assert.Equal(UpdateNoticeWindow.Phase.Failed, w.State);
+
+        // The straggler: reported from a pool thread after the failure landed.
+        await Task.Run(() => reporter!.Report(new UpdateProgress(UpdateStage.Downloading, 49, 100)));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("The connection was lost mid-download.", w.StatusText.Text);
+        Assert.False(w.Bar.IsVisible);
     }
 
     [AvaloniaFact]

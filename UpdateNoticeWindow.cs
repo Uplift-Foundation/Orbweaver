@@ -44,7 +44,7 @@ namespace Orbweaver
         private CancellationTokenSource? _cts;
 
         internal UpdateRelease Release { get; private set; }
-        internal Phase State { get; private set; } = Phase.Offer;
+        internal Phase State { get; set; } = Phase.Offer;
 
         internal TextBlock HeadlineText { get; } = new();
         // Right margin reserves the scrollbar's width: a classic (Windows) scrollbar sits
@@ -262,6 +262,11 @@ namespace Orbweaver
 
         internal void OnProgress(UpdateProgress progress)
         {
+            // Reports are posted to the dispatcher, so one can land after the install
+            // has already failed (or been walked away from) and would overwrite the
+            // failure sentence with a stale "Downloading — 49%…".
+            if (State != Phase.Working) return;
+
             StatusText.Text = StageText(progress);
 
             if (progress.Stage == UpdateStage.Downloading && progress.BytesTotal > 0)
