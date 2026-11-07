@@ -108,7 +108,7 @@ namespace Orbweaver
             if (screen is null) return new TypingVerdict(false, UnreadableWhy) { Diagnostic = "capture=null" };
 
             var (reading, check) = PaneScreen.Read(screen);
-            var diagnostic = $"lines={screen.Replace("\r", "").Split('\n').Length} check={check}";
+            var diagnostic = $"lines={ChatTranscript.ScreenLines(screen).Length} check={check}";
 
             return reading switch
             {

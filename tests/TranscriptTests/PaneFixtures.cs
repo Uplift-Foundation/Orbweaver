@@ -1161,5 +1161,152 @@ Pick a color
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 """"";
 
+        // MacBook, QA's throwaway session: a live two-question form in a 120x45 pane with a short conversation, so the form ends on row 23 and 22 blank rows follow. Byte-exact INCLUDING those trailing blank rows, which are the point: before ScreenLines dropped them, this parsed as nothing. (item3/macbook-live-form-q1.txt)
+        internal const string MacLiveFormTallPane = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307c · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Color  ☐ Toppings  ✔ Submit  →
+
+Pick a color
+
+❯ 1. Red
+     A warm, bold color
+  2. Blue
+     A cool, calm color
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+""""";
+
+        // The same capture as QaFormQ1 but byte-exact to its 45 rows, trailing blanks kept. QaFormQ1 was generated with them trimmed, which is how the blank-row defect hid from every test. (item3/01-form-q1.txt)
+        internal const string QaFormQ1FullHeight = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Color  ☐ Toppings  ✔ Submit  →
+
+Pick a color
+
+❯ 1. Red
+     A warm, bold color
+  2. Blue
+     A cool, calm color
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+""""";
+
+        // MacBook, a throwaway session of Engineer A's on a scratch tmux socket, in a 120x45 pane, right after /clear. Byte-exact. Measured, not assumed: Claude Code pins its input box to the bottom of the pane even when cleared, so a prompt has no blank rows below it; this reads as a prompt before and after the ScreenLines change.
+        internal const string MacClearedPrompt = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /…/98f83c0b-d991-481c-9fcf-8f9ee07f5bfa/scratchpad/cb307clear · /rc
+
+
+❯ /clear
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PE…
+  Opus 5.5 | ~/cb307clear | [.claude]
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+""""";
+
     }
 }

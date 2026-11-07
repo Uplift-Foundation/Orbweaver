@@ -461,7 +461,7 @@ namespace Orbweaver
             cleanedLines = Array.Empty<string>();
             firstOption = -1;
 
-            var lines = screen.Replace("\r", "").Split('\n');
+            var lines = ScreenLines(screen);
 
             // Box drawing is stripped anyway: it costs nothing, and an
             // elicitation dialog may still be framed even though a permission
@@ -565,7 +565,7 @@ namespace Orbweaver
             if (prompt is null || first < 0) return null;
 
             var from = Math.Max(0, cleaned.Length - DialogWindow);
-            var raw = screen.Replace("\r", "").Split('\n').Select(l => l.Trim()).ToArray();
+            var raw = ScreenLines(screen).Select(l => l.Trim()).ToArray();
 
             // The bar or the single-question header: the nearest one above the
             // options, inside the window.
@@ -702,6 +702,25 @@ namespace Orbweaver
 
         private static bool IsBlankOrFrame(string line) =>
             line.Length == 0 || line.All(c => char.IsWhiteSpace(c) || BoxDrawing.Contains(c));
+
+        // A captured screen as lines, with the blank rows below the last
+        // drawn line dropped. Every reader of a pane goes through this.
+        //
+        // capture-pane -p returns every row of the pane, and a screen that is
+        // not full — a fresh or /clear'ed session, a short conversation, a tall
+        // pane — has its dialog or input box near the top and empty rows
+        // beneath. Every rule here looks at the bottom DialogWindow lines, so
+        // those empty rows pushed the whole dialog out of view: QA's real
+        // capture of a live form in a 45-row pane (content ending on row 23)
+        // parsed as nothing, and the peer panel showed no form. The fixtures
+        // had hidden it, because generating them trimmed exactly those rows.
+        internal static string[] ScreenLines(string screen)
+        {
+            var lines = screen.Replace("\r", "").Split('\n');
+            var end = lines.Length;
+            while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
+            return end == lines.Length ? lines : lines[..end];
+        }
 
         // The full-width line the TUI draws above and below its input box.
         // Length matters: a short run of dashes is punctuation in a sentence.

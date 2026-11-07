@@ -1460,6 +1460,54 @@ namespace Orbweaver.Tests
             Check("an ordinary form has no submit or cancel keys",
                 q1.SubmitAnswersKey is null && q1.CancelKey is null && q1.Review!.Count == 0);
 
+            // --- blank rows below a screen that is not full (QA, item 3) ---
+            //
+            // capture-pane returns every row of the pane. A form in a tall pane
+            // with a short conversation ends near the top, and the empty rows
+            // under it pushed it out of every reader's bottom window.
+
+            var tall = ChatTranscript.ParseAskForm(PaneFixtures.MacLiveFormTallPane);
+            Check("a live form near the top of a tall pane reads as a form",
+                tall is not null && tall.Prompt.Options.Count == 4 && tall.FreeTextKey == "3",
+                tall?.Prompt.Options.Count.ToString() ?? "null");
+            Check("…and as a dialog, and its screen as a dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.MacLiveFormTallPane) is not null
+                && PaneScreen.Classify(PaneFixtures.MacLiveFormTallPane) == PaneReading.Dialog);
+            Check("the mini's full-height first form reads too",
+                ChatTranscript.ParseAskForm(PaneFixtures.QaFormQ1FullHeight)?.Prompt.Options.Count == 4);
+            Check("the full-height fixture really has its blank rows",
+                PaneFixtures.QaFormQ1FullHeight.Split('\n').Length == 45
+                && string.IsNullOrWhiteSpace(PaneFixtures.QaFormQ1FullHeight.Split('\n')[^1]));
+
+            // Blank rows never make something a dialog or a prompt that is not.
+            var blanks = string.Concat(Enumerable.Repeat("\n", 30));
+            Check("/permissions with blank rows below is still not a dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + blanks) is null
+                && ChatTranscript.ParseAskForm(PaneFixtures.PermissionsAllow + blanks) is null
+                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + blanks) == PaneReading.Unknown);
+            Check("a numbered list above a live box with blank rows below is still prose",
+                ChatTranscript.ParseDialog("""
+                    ⏺ Three things worth doing:
+                      1. Extract the geometry
+                      2. Add the test
+                    ────────────────────────────────────────────────────────────────────
+                    ❯
+                    ────────────────────────────────────────────────────────────────────
+                    """ + blanks) is null);
+
+            // A cleared session in a 45-row pane, measured: the box is pinned to
+            // the bottom, so a prompt never had blank rows below it.
+            Check("a /clear'ed session in a tall pane is a prompt",
+                PaneScreen.Read(PaneFixtures.MacClearedPrompt) == (PaneReading.Prompt, "prompt"),
+                PaneScreen.Read(PaneFixtures.MacClearedPrompt).ToString());
+
+            Check("ScreenLines drops only trailing blank rows",
+                ChatTranscript.ScreenLines("a\r\n\nb\n  \n\n").SequenceEqual(new[] { "a", "", "b" }));
+            Check("ScreenLines keeps a screen with no trailing blanks whole",
+                ChatTranscript.ScreenLines("a\nb").SequenceEqual(new[] { "a", "b" }));
+            Check("ScreenLines of an all-blank screen is empty",
+                ChatTranscript.ScreenLines("\n \n").Length == 0);
+
             // Whatever the parser makes of /permissions, none of it is a prompt.
             foreach (var (name, screen) in new[]
                      {

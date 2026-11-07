@@ -2194,6 +2194,40 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(new[] { "1" }, harness.Pressed);
     }
 
+    // QA's first real run: PROMPT answered no-prompt for a live form near the
+    // top of a tall pane, because the empty rows below it pushed it out of
+    // the reader's window. The same capture, byte-exact with those rows.
+    [Fact]
+    public async Task AFormNearTheTopOfATallPaneIsOfferedToAPeer()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MacLiveFormTallPane };
+        harness.AddSession("qa", WriteTranscript("tall.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("qa");
+
+        Assert.Null(error);
+        Assert.Equal(4, prompt!.Options.Count);
+        Assert.Equal("3", prompt.FreeTextKey);
+    }
+
+    // Capture 02 as the starting screen: the cursor is already on the free-text
+    // row, so nothing is moved — the text is typed, read back, then Enter.
+    [Fact]
+    public async Task FreeTextWithTheCursorAlreadyOnTheRowMovesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaCursorOnFreeText };
+        harness.AfterType = _ => PaneFixtures.QaFreeTextTyped;
+        harness.AddSession("qa", WriteTranscript("free-02.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal("3", prompt.CursorKey);
+        Assert.Null(await harness.Client.AnswerFreeTextAsync("qa", "3", prompt.Fingerprint, "my own answer"));
+        Assert.Equal(new[] { "Enter" }, harness.Pressed);
+        Assert.Equal(new[] { "my own answer" }, harness.Literal);
+    }
+
     private static MirrorProtocol.MirrorFrame AnswerFrame(string id, string name, string key, string fp, byte[]? text) =>
         MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Answer, id,
             new Dictionary<string, string>
