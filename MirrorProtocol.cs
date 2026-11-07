@@ -62,6 +62,8 @@ namespace Orbweaver
         public const string Input = "INPUT";       // client → server: type this into that session
         public const string Resend = "RESEND";     // client → server: that piece failed its hash
         public const string Avatar = "AVATAR";     // client → server: a persona picture, by its id (CB-216)
+        public const string Prompt = "PROMPT";     // client → server: what is that session waiting on? (CB-307 item 3)
+        public const string Answer = "ANSWER";     // client → server: take this option of it (CB-307 item 3)
         public const string Ok = "OK";             // server → client: done
         public const string Err = "ERR";           // server → client: couldn't
 
@@ -93,6 +95,16 @@ namespace Orbweaver
         // the near panel quotes; an older near Buddy that does not know the
         // code shows its generic "couldn't type that" instead.
         public const string ErrNotAtPrompt = "not-at-prompt";
+
+        // CB-307 addendum item 3, answering a form or dialog over the link.
+        // ErrNoPrompt: nothing on that session's screen is a dialog right now.
+        // ErrPromptChanged: the screen no longer shows the dialog the answer
+        // was chosen from — the far side re-read it and refused rather than
+        // press a key on something else; ask PROMPT again. ErrBadKey: the key
+        // is not one of the options on that screen.
+        public const string ErrNoPrompt = "no-prompt";
+        public const string ErrPromptChanged = "prompt-changed";
+        public const string ErrBadKey = "bad-key";
 
         public const string ErrReplyOff = "reply-off";
         public const string ErrBadHash = "bad-hash";
@@ -902,6 +914,103 @@ namespace Orbweaver
                 return text.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
             }
             catch
+            {
+                return null;
+            }
+        }
+
+        // --- prompts over the link (CB-307 addendum item 3) -------------------
+
+        public const string KeyField = "key";
+
+        // Set to "1" on a HELLO reply by a Buddy that answers PROMPT and
+        // ANSWER. A Buddy that predates them ignores those frames and never
+        // replies, so a near side asks only a far side that said it can: a
+        // missing field is "no", and a panel then offers the terminal instead
+        // of waiting out a timeout.
+        public const string PromptsField = "pr";
+        public const string FingerprintField = "fp";
+
+        // Bounds on what a PROMPT answer carries, so a screen full of
+        // something odd cannot become a large frame or a panel of buttons.
+        public const int MaxPromptOptions = 12;
+        public const int MaxPromptText = 200;
+        public const int MaxPromptTitle = 600;
+
+        // A dialog as it crosses the link: the parsed options and, for an
+        // AskUserQuestion form, its tabs — never the raw screen. Fp names
+        // exactly this dialog, so an ANSWER can say which one it was chosen
+        // from and the far side can refuse when the screen has moved on.
+        public sealed record WirePrompt(
+            [property: JsonPropertyName("title")] string Title,
+            [property: JsonPropertyName("options")] IReadOnlyList<WireOption> Options,
+            [property: JsonPropertyName("fp")] string Fingerprint,
+            [property: JsonPropertyName("tabs")] IReadOnlyList<WireTab>? Tabs = null,
+            [property: JsonPropertyName("current")] int Current = -1,
+            [property: JsonPropertyName("freeText")] string? FreeTextKey = null,
+            [property: JsonPropertyName("chatAbout")] string? ChatAboutKey = null);
+
+        public sealed record WireOption(
+            [property: JsonPropertyName("key")] string Key,
+            [property: JsonPropertyName("label")] string Label);
+
+        public sealed record WireTab(
+            [property: JsonPropertyName("name")] string Name,
+            [property: JsonPropertyName("state")] string State);
+
+        // What a screen offers, read the one way both sides agree on: a form if
+        // it is one, otherwise a plain dialog, otherwise nothing.
+        public static WirePrompt? PromptFromScreen(string? screen)
+        {
+            if (string.IsNullOrWhiteSpace(screen)) return null;
+
+            if (ChatTranscript.ParseAskForm(screen) is { } form)
+                return Bounded(form.Prompt, form.Tabs, form.CurrentTab, form.FreeTextKey, form.ChatAboutKey);
+
+            return ChatTranscript.ParseDialog(screen) is { } dialog
+                ? Bounded(dialog, Array.Empty<AskTab>(), -1, null, null)
+                : null;
+        }
+
+        private static WirePrompt Bounded(
+            ChatPrompt prompt, IReadOnlyList<AskTab> tabs, int current, string? freeText, string? chatAbout)
+        {
+            var title = Clip(prompt.Title, MaxPromptTitle);
+            var options = prompt.Options.Take(MaxPromptOptions)
+                .Select(o => new WireOption(o.Key, Clip(o.Label, MaxPromptText))).ToList();
+            var wireTabs = tabs.Take(MaxPromptOptions)
+                .Select(t => new WireTab(Clip(t.Name, MaxPromptText), t.State.ToString().ToLowerInvariant())).ToList();
+
+            return new WirePrompt(title, options, PromptFingerprint(title, options, current), wireTabs, current,
+                options.Any(o => o.Key == freeText) ? freeText : null,
+                options.Any(o => o.Key == chatAbout) ? chatAbout : null);
+        }
+
+        private static string Clip(string text, int max) => text.Length <= max ? text : text[..max];
+
+        // The dialog's identity: its question, its options in order, and which
+        // tab is showing. A different tab of the same form is a different
+        // dialog, which is the point — an answer chosen for question 1 must not
+        // land on question 2. Sixteen hex characters is ample to tell two
+        // screens apart and short enough to go in a field.
+        public static string PromptFingerprint(string title, IEnumerable<WireOption> options, int current)
+        {
+            var text = title + "\u0001" + string.Join("\u0002", options.Select(o => o.Key + "\u0003" + o.Label))
+                       + "\u0001" + current;
+            return Hash(Encoding.UTF8.GetBytes(text))[..16];
+        }
+
+        public static byte[] EncodePrompt(WirePrompt prompt) => JsonSerializer.SerializeToUtf8Bytes(prompt);
+
+        public static WirePrompt? DecodePrompt(byte[]? bytes)
+        {
+            if (bytes is null) return null;
+            try
+            {
+                var prompt = JsonSerializer.Deserialize<WirePrompt>(bytes);
+                return prompt is { Title: not null, Options: not null, Fingerprint: not null } ? prompt : null;
+            }
+            catch (JsonException)
             {
                 return null;
             }

@@ -286,6 +286,10 @@ namespace Orbweaver
                     lock (_gate) _askingAll.Remove(peer);
                 }
 
+                // Read on every answer, the bare "unchanged" OK included, so a
+                // far Buddy upgraded mid-session is noticed on its next poll.
+                NoteSpeaksPrompts(peer, reply);
+
                 if (!reply.Ok || reply.Payload is null) continue;
 
                 var decoded = MirrorProtocol.DecodeRoster(reply.Payload);
@@ -419,6 +423,8 @@ namespace Orbweaver
                     // two failures: the flood was at least still trying.
                     lock (_gate) foreach (var n in ask) _asking.Remove(n);
                 }
+
+                NoteSpeaksPrompts(relay, reply);
 
                 if (!reply.Ok || reply.Payload is null)
                 {
@@ -912,6 +918,90 @@ namespace Orbweaver
                     ? MirrorProtocol.Decode(why) : null,
                 reply.Fields is not null && reply.Fields.TryGetValue(MirrorProtocol.VerdictField, out var verdict)
                     ? verdict : null);
+        }
+
+        // --- answering a dialog (CB-307 addendum item 3) -----------------------
+
+        // What the far session is waiting on: its dialog or AskUserQuestion
+        // form, read off its own pane by the far Buddy. Error is the far side's
+        // code (ErrNoPrompt, ErrReplyOff, ErrNoPane, ErrUnsupported from a
+        // Buddy that predates this) and Prompt is null whenever Error is set.
+        private readonly HashSet<string> _speaksPrompts = new(StringComparer.OrdinalIgnoreCase);
+
+        // Both HELLO paths (the named ask and the complete roster) record it.
+        private void NoteSpeaksPrompts(string peer, Reply reply)
+        {
+            if (!reply.Ok) return;
+
+            lock (_gate)
+            {
+                if (reply.Fields?.GetValueOrDefault(MirrorProtocol.PromptsField) == "1") _speaksPrompts.Add(peer);
+                else _speaksPrompts.Remove(peer);
+            }
+        }
+
+        // Whether the machine serving this session said it answers PROMPT and
+        // ANSWER (MirrorProtocol.PromptsField). False before its first reply.
+        public bool SpeaksPrompts(string name)
+        {
+            lock (_gate)
+            {
+                var key = ExistingKey(name);
+                return key is not null && _servedBy.TryGetValue(key, out var relay) && _speaksPrompts.Contains(relay);
+            }
+        }
+
+        internal readonly record struct PromptOutcome(MirrorProtocol.WirePrompt? Prompt, string? Error);
+
+        public async Task<PromptOutcome> FetchPromptAsync(string name)
+        {
+            if (RelayFor(name) is not { } relay)
+            {
+                Log("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
+                return new PromptOutcome(null, MirrorProtocol.ErrNoSession);
+            }
+
+            var reply = await RequestAsync(relay, MirrorProtocol.Prompt,
+                new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) }, payload: null,
+                TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
+
+            if (!reply.Ok)
+            {
+                var code = reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
+                Log("prompt", $"n={name} -> err code={code}");
+                return new PromptOutcome(null, code);
+            }
+
+            var prompt = MirrorProtocol.DecodePrompt(reply.Payload);
+            Log("prompt", prompt is null ? $"n={name} -> err unreadable" : $"n={name} -> ok fp={prompt.Fingerprint}");
+            return prompt is null
+                ? new PromptOutcome(null, MirrorProtocol.ErrUnsupported)
+                : new PromptOutcome(prompt, null);
+        }
+
+        // Take one option of the dialog Fingerprint names. Null on success,
+        // otherwise the far side's code — ErrPromptChanged means the screen
+        // moved on and nothing was pressed, so ask FetchPromptAsync again.
+        public async Task<string?> AnswerPromptAsync(string name, string key, string fingerprint)
+        {
+            if (RelayFor(name) is not { } relay)
+            {
+                Log("answer", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
+                return MirrorProtocol.ErrNoSession;
+            }
+
+            var reply = await RequestAsync(relay, MirrorProtocol.Answer,
+                new Dictionary<string, string>
+                {
+                    ["n"] = MirrorProtocol.Encode(name),
+                    [MirrorProtocol.KeyField] = key,
+                    [MirrorProtocol.FingerprintField] = fingerprint,
+                },
+                payload: null, TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
+
+            var error = reply.Ok ? null : reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
+            Log("answer", $"n={name} key={key} -> " + (error is null ? "ok" : $"err code={error}"));
+            return error;
         }
 
         // CB-306: the INPUT's fields, with the slash flag only when it is set,

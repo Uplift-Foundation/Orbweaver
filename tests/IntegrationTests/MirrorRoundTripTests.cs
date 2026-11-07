@@ -1833,6 +1833,174 @@ public class MirrorRoundTripTests : IDisposable
         Assert.True(known.Single(e => e.Name == "claude quiet").Parked);
     }
 
+    // --- CB-307 addendum item 3: answering a dialog over the link -------------
+
+    // The real (redacted) AskUserQuestion form on the far pane: the near side
+    // learns the far Buddy answers prompts, reads the form, and one click
+    // presses exactly that option's key there — and nothing else.
+    [Fact]
+    public async Task AFarFormIsReadAndOneClickPressesExactlyItsKey()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", WriteTranscript("ask.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        Assert.True(harness.Client.SpeaksPrompts("evidence"));
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("evidence");
+        Assert.Null(error);
+        Assert.Equal(6, prompt!.Options.Count);
+        Assert.Equal(4, prompt.Tabs!.Count);
+        Assert.Equal("5", prompt.FreeTextKey);
+
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint));
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+        Assert.Empty(harness.Typed);
+
+        // Logged by key and fingerprint, never by what an option says.
+        Assert.Contains(log, l => l.EndsWith("key=2 -> ok"));
+        Assert.DoesNotContain(log, l => prompt.Options.Any(o => l.Contains(o.Label)));
+    }
+
+    // An answer chosen from a screen that has since moved on presses nothing.
+    [Fact]
+    public async Task AnAnswerToAScreenThatChangedIsRefusedAndPressesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("moved.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        // The first question was answered in the terminal: the next tab shows.
+        harness.Screen = PaneFixtures.MiniAskForm.Replace("☐ xxx xxxx", "☒ xxx xxxx");
+
+        Assert.Equal(MirrorProtocol.ErrPromptChanged,
+            await harness.Client.AnswerPromptAsync("evidence", "1", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+
+        // And a dialog that went away altogether.
+        harness.Screen = PaneFixtures.MacPromptAfterEsc;
+        Assert.Equal(MirrorProtocol.ErrNoPrompt,
+            await harness.Client.AnswerPromptAsync("evidence", "1", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    [Fact]
+    public async Task AKeyThatIsNotOnTheScreenIsRefused()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("ll", WriteTranscript("badkey.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+        var prompt = (await harness.Client.FetchPromptAsync("ll")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerPromptAsync("ll", "9", prompt.Fingerprint));
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerPromptAsync("ll", "Escape", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    [Fact]
+    public async Task AScreenThatIsNotADialogHasNoPrompt()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job", WriteTranscript("noprompt.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job");
+
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoPrompt),
+            await harness.Client.FetchPromptAsync("job"));
+    }
+
+    [Fact]
+    public async Task TheFarMachinesReplySettingAndItsPaneDecide()
+    {
+        var off = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog, ReplyEnabled = false };
+        off.AddSession("ll", WriteTranscript("off.jsonl", Conversation(2)));
+        await off.HandshakeAsync("ll");
+        Assert.Equal(MirrorProtocol.ErrReplyOff, (await off.Client.FetchPromptAsync("ll")).Error);
+        Assert.Equal(MirrorProtocol.ErrReplyOff, await off.Client.AnswerPromptAsync("ll", "1", "x"));
+
+        var unreadable = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog, PaneReadable = false };
+        unreadable.AddSession("ll", WriteTranscript("unreadable.jsonl", Conversation(2)));
+        await unreadable.HandshakeAsync("ll");
+        Assert.Equal(MirrorProtocol.ErrNoPane, (await unreadable.Client.FetchPromptAsync("ll")).Error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AKeyThePaneRefusedIsATypeFailure(bool throws)
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog, PressFails = !throws, PressThrows = throws };
+        harness.AddSession("ll", WriteTranscript("pressfail-" + throws + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+        var prompt = (await harness.Client.FetchPromptAsync("ll")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed, await harness.Client.AnswerPromptAsync("ll", "3", prompt.Fingerprint));
+    }
+
+    // A server that cannot answer dialogs does not say it can, and refuses an
+    // ANSWER outright; free text is refused until its screen is captured.
+    [Fact]
+    public async Task WhatCannotBeAnsweredHereIsRefusedAsUnsupported()
+    {
+        var ungated = new Harness(_dir, ungated: true) { Screen = PaneFixtures.MiniExitDialog };
+        ungated.AddSession("ll", WriteTranscript("unsupported.jsonl", Conversation(2)));
+        await ungated.HandshakeAsync("ll");
+        Assert.False(ungated.Client.SpeaksPrompts("ll"));
+        Assert.Equal(MirrorProtocol.ErrNoPane, (await ungated.Client.FetchPromptAsync("ll")).Error);
+
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("freetext.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        await harness.Server.HandleAsync(Harness.NearRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Answer, "free1",
+            new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode("evidence"),
+                [MirrorProtocol.KeyField] = "5",
+                [MirrorProtocol.FingerprintField] = prompt.Fingerprint,
+            },
+            Encoding.UTF8.GetBytes("my own answer")))!);
+
+        Assert.Contains(harness.ToClient, l => l.Contains(";t=" + MirrorProtocol.Err + ";")
+                                               && l.Contains(MirrorProtocol.ErrUnsupported));
+        Assert.Empty(harness.Pressed);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The frame-level gates: a session nobody has, a payload that failed its
+    // hash, a frame with no name, and a near side that asks about a session
+    // it was never offered.
+    [Fact]
+    public async Task AnAnswerThatNamesNothingOrFailedItsHashIsRefused()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("ll", WriteTranscript("gates.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+
+        MirrorProtocol.MirrorFrame Frame(string id, Dictionary<string, string> fields, byte[]? payload = null) =>
+            MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Prompt, id, fields, payload))!;
+
+        await harness.Server.HandleAsync(Harness.NearRelay,
+            Frame("g1", new() { ["n"] = MirrorProtocol.Encode("nobody-here") }));
+        await harness.Server.HandleAsync(Harness.NearRelay, Frame("g2", new()));
+        await harness.Server.HandleAsync(Harness.NearRelay,
+            Frame("g3", new() { ["n"] = MirrorProtocol.Encode("ll") }, new byte[] { 1 }) with { PayloadVerified = false });
+
+        string ErrOf(string id) => harness.ToClient.Single(l => l.Contains(";id=" + id + ";") || l.Contains("id=" + id));
+        Assert.Contains(MirrorProtocol.ErrNoSession, ErrOf("g1"));
+        Assert.Contains(MirrorProtocol.ErrNoSession, ErrOf("g2"));
+        Assert.Contains(MirrorProtocol.ErrBadHash, ErrOf("g3"));
+
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoSession),
+            await harness.Client.FetchPromptAsync("never-offered"));
+        Assert.Equal(MirrorProtocol.ErrNoSession, await harness.Client.AnswerPromptAsync("never-offered", "1", "x"));
+        Assert.False(harness.Client.SpeaksPrompts("never-offered"));
+    }
+
     // A single turn a day before the fixture's own rows: the shape of a quiet
     // session at the fixture's clock, written by hand because Conversation
     // stamps every row at RowAt.
@@ -3162,6 +3330,13 @@ public class MirrorRoundTripTests : IDisposable
         public string? Screen { get; set; } = PaneFixtures.MacPromptAfterEsc;
         public string? Record { get; set; } = "idle";
         public int Captures { get; private set; }
+
+        // CB-307 item 3: the keys the far side pressed to answer a dialog, and
+        // the ways that can go wrong. Wired unless the harness is ungated.
+        public List<string> Pressed { get; } = new();
+        public bool PressFails { get; set; }
+        public bool PressThrows { get; set; }
+        public bool PaneReadable { get; set; } = true;
         public int RecordReads { get; private set; }
 
         public bool ReplyEnabled { get; init; } = true;
@@ -3274,7 +3449,14 @@ public class MirrorRoundTripTests : IDisposable
                 LastTurns: lastTurns,
                 RecordStatus: ungated ? null : ReadRecord,
                 CapturePane: ungated ? null : CaptureScreen,
-                CanReadPane: ungated ? null : _ => true));
+                CanReadPane: ungated ? null : _ => PaneReadable,
+                PressKey: ungated ? null : (_, key) =>
+                {
+                    if (PressThrows) throw new InvalidOperationException("tmux went away");
+                    if (PressFails) return Task.FromResult(false);
+                    Pressed.Add(key);
+                    return Task.FromResult(true);
+                }));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //

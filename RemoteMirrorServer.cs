@@ -132,7 +132,13 @@ namespace Orbweaver
             // wires all three.
             Func<SessionStatus, string?>? RecordStatus = null,
             Func<SessionStatus, Task<string?>>? CapturePane = null,
-            Func<SessionStatus, bool>? CanReadPane = null);
+            Func<SessionStatus, bool>? CanReadPane = null,
+
+            // CB-307 addendum item 3: press one key in the session's pane — a
+            // dialog option's digit, never anything a person typed. Null means
+            // this server cannot answer a dialog, and ANSWER is refused as
+            // unsupported; LiveSeams wires TerminalFocuser.SendPaneKey.
+            Func<SessionStatus, string, Task<bool>>? PressKey = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -452,7 +458,8 @@ namespace Orbweaver
                 PersonaFor: PeerPersonaCache.Shared.Peek,
                 RecordStatus: status => RecordStatusFor(status, localSessions),
                 CapturePane: TerminalFocuser.CapturePane,
-                CanReadPane: TerminalFocuser.CanReadPane);
+                CanReadPane: TerminalFocuser.CanReadPane,
+                PressKey: TerminalFocuser.SendPaneKey);
         }
 
         // CB-307 addendum: Claude Code's own record status for a session, for
@@ -549,6 +556,14 @@ namespace Orbweaver
 
                 case MirrorProtocol.Avatar:
                     await AvatarAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.Prompt:
+                    await PromptAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.Answer:
+                    await AnswerAsync(fromPeer, frame).ConfigureAwait(false);
                     break;
             }
         }
@@ -787,6 +802,7 @@ namespace Orbweaver
             var raw = MirrorProtocol.RosterBytes(entries);
             var hash = MirrorProtocol.Hash(raw);
             var reply = new Dictionary<string, string> { [MirrorProtocol.RosterHashField] = hash };
+            if (_seams.CapturePane is not null && _seams.PressKey is not null) reply[MirrorProtocol.PromptsField] = "1";
 
             if (MirrorProtocol.RosterUnchanged(frame.Get(MirrorProtocol.RosterHashField), hash))
             {
@@ -884,6 +900,126 @@ namespace Orbweaver
                 new Dictionary<string, string> { [MirrorProtocol.AvatarIdField] = id! }, sub: null)
                 .ConfigureAwait(false);
         }
+
+        // --- answering a dialog (CB-307 addendum item 3) -----------------------
+
+        // What that session is waiting on, read off its own pane on this
+        // machine and sent as parsed options, never as the screen.
+        //
+        // A peer panel used to show a session waiting on an AskUserQuestion
+        // form as a bare "· AskUserQuestion" and nothing else, and the typing
+        // gate then (rightly) refused a typed reply, so it could not be
+        // answered from anywhere but the terminal. This, with ANSWER below, is
+        // the way through: the far side reads its own screen, and presses only
+        // a key it has just read there.
+        private async Task PromptAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
+            if (status is null) { AnswerLog("prompt", $"n={name} -> err code={refused}"); return; }
+
+            var prompt = await ReadPromptAsync(status).ConfigureAwait(false);
+            if (prompt is null)
+            {
+                AnswerLog("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoPrompt}");
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoPrompt, name).ConfigureAwait(false);
+                return;
+            }
+
+            AnswerLog("prompt", $"n={name} -> ok options={prompt.Options.Count} fp={prompt.Fingerprint}");
+            await SendTransferAsync(fromPeer, frame.Id, MirrorProtocol.EncodePrompt(prompt),
+                new Dictionary<string, string> { [MirrorProtocol.FingerprintField] = prompt.Fingerprint }, sub: null)
+                .ConfigureAwait(false);
+        }
+
+        // Take one option. The screen is read again first, and the key is
+        // pressed only if the dialog there is still the one the answer was
+        // chosen from (same fingerprint) and the key is one of its options.
+        // Anything else is refused with nothing pressed: a panel a few seconds
+        // stale must not answer the next question with the last one's choice.
+        //
+        // Free text ("Type something") is refused for now — its entry screen
+        // has not been captured, and the lead's rule is that no arm ships on a
+        // shape nobody has seen; the panel offers the terminal instead.
+        private async Task AnswerAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
+            if (status is null) { AnswerLog("answer", $"n={name} -> err code={refused}"); return; }
+
+            if (_seams.PressKey is not { } press || frame.Payload is { Length: > 0 })
+            {
+                AnswerLog("answer", $"n={name} -> err code={MirrorProtocol.ErrUnsupported}");
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnsupported,
+                    "that can only be answered in the terminal").ConfigureAwait(false);
+                return;
+            }
+
+            var key = frame.Get(MirrorProtocol.KeyField) ?? "";
+            var wanted = frame.Get(MirrorProtocol.FingerprintField) ?? "";
+
+            var prompt = await ReadPromptAsync(status).ConfigureAwait(false);
+            string? code =
+                prompt is null ? MirrorProtocol.ErrNoPrompt
+                : prompt.Fingerprint != wanted ? MirrorProtocol.ErrPromptChanged
+                : prompt.Options.All(o => o.Key != key) ? MirrorProtocol.ErrBadKey
+                : null;
+
+            if (code is null)
+            {
+                bool pressed;
+                try { pressed = await press(status, key).ConfigureAwait(false); }
+                catch { pressed = false; }
+                if (!pressed) code = MirrorProtocol.ErrTypeFailed;
+            }
+
+            if (code is not null)
+            {
+                AnswerLog("answer", $"n={name} key={key} -> err code={code}");
+                await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+                return;
+            }
+
+            AnswerLog("answer", $"n={name} key={key} -> ok");
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id)).ConfigureAwait(false);
+        }
+
+        // The session a PROMPT or ANSWER names, with the same gates INPUT has:
+        // a verified frame, a session that resolves, this machine's own reply
+        // setting (answering a dialog is input), and a pane this machine can
+        // read. On a refusal the ERR has been sent and Status is null.
+        private async Task<(SessionStatus? Status, string Name, string? Refused)> DialogSessionAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var name = frame.Text("n") ?? "?";
+
+            string? code = null;
+            SessionStatus? status = null;
+
+            if (frame.Payload is not null && !frame.PayloadVerified) code = MirrorProtocol.ErrBadHash;
+            else if (frame.Text("n") is null
+                     || Resolve(name, _seams.Agents(), _seams.LocalSessions()) is not { } resolved)
+                code = MirrorProtocol.ErrNoSession;
+            else if (!_seams.ReplyEnabled(resolved.Status.Source)) code = MirrorProtocol.ErrReplyOff;
+            else if (_seams.CapturePane is null || !(_seams.CanReadPane?.Invoke(resolved.Status) ?? true))
+                code = MirrorProtocol.ErrNoPane;
+            else status = resolved.Status;
+
+            if (code is not null) await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+            return (status, name, code);
+        }
+
+        private async Task<MirrorProtocol.WirePrompt?> ReadPromptAsync(SessionStatus status)
+        {
+            string? screen;
+            try { screen = await _seams.CapturePane!(status).ConfigureAwait(false); }
+            catch { screen = null; }
+
+            return MirrorProtocol.PromptFromScreen(screen);
+        }
+
+        // The sink for prompt and answer outcomes: the route, the key and the
+        // fingerprint, never a label or the screen. Same arrangement as
+        // InputLog.
+        internal Action<string, string> AnswerLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
 
         // The commands that session can actually run, read off this machine's
         // disk rather than asked of a model.
