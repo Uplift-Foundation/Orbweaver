@@ -955,4 +955,166 @@ public class RemoteControlChatSessionPromptTests
         Assert.True(RemoteControlChatSession.IsRoute(null));
         Assert.False(RemoteControlChatSession.IsRoute("lawyer-search"));
     }
+
+    // --- the remaining arms --------------------------------------------------------
+
+    // A cancelled ask is the panel closing or the session going away: the loop
+    // ends quietly and nothing is shown, and a later open can poll again.
+    [AvaloniaFact]
+    public async Task AnAskThatIsCancelledEndsThePollQuietly()
+    {
+        var h = new Harness();
+        var asks = 0;
+        h.Session.Ask = _ =>
+        {
+            asks++;
+            if (asks == 1) throw new OperationCanceledException();
+            return Task.FromResult(Shown("fp1"));
+        };
+
+        h.Open();
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);
+        Assert.Equal(1, asks);
+
+        h.Session.PanelClosed();
+        h.Open();
+        await h.Settle();
+
+        Assert.NotNull(h.Session.Prompt);
+    }
+
+    // A read that comes back after the panel was closed is not applied.
+    [AvaloniaFact]
+    public async Task AReadThatReturnsAfterThePanelClosedIsNotApplied()
+    {
+        var h = new Harness();
+        var gate = new TaskCompletionSource<PromptReply>();
+        h.Session.Ask = _ => gate.Task;
+        h.Open();
+        await h.Settle();
+
+        h.Session.PanelClosed();
+        gate.SetResult(Shown("fp1"));
+        await h.Settle();
+
+        Assert.Null(h.Session.Prompt);
+    }
+
+    // Every reply kind, applied directly.
+    [AvaloniaFact]
+    public void EveryReplyKindIsAppliedAsItShouldBe()
+    {
+        var h = new Harness();
+
+        // A prompt reply that carries no prompt is not a form.
+        h.Session.ApplyReply(new PromptReply(PromptReplyKind.Prompt, null, "fp"));
+        Assert.Null(h.Session.Prompt);
+
+        h.Session.ApplyReply(Shown("fp1"));
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Session.ApplyReply(new PromptReply(PromptReplyKind.Transient));
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Session.ApplyReply(new PromptReply(PromptReplyKind.NotYet));
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Session.ApplyReply(new PromptReply(PromptReplyKind.NoPrompt));
+        Assert.Null(h.Session.Prompt);
+
+        h.Session.ApplyReply(Shown("fp1"));
+        h.Session.ApplyReply(new PromptReply(PromptReplyKind.Unsupported));
+        Assert.Null(h.Session.Prompt);
+    }
+
+    // A kind this side has never heard of (a newer far Buddy's) leaves what is on
+    // show alone rather than guessing.
+    [AvaloniaFact]
+    public void AReplyKindNobodyKnowsLeavesTheFormAlone()
+    {
+        var h = new Harness();
+        h.Session.ApplyReply(Shown("fp1"));
+
+        h.Session.ApplyReply(new PromptReply((PromptReplyKind)99));
+
+        Assert.NotNull(h.Session.Prompt);
+    }
+
+    // A label the far side already set is kept, not replaced by ours.
+    [AvaloniaFact]
+    public void AnElsewhereLabelAlreadySetIsKept()
+    {
+        var h = new Harness();
+
+        h.Session.ApplyReply(new PromptReply(
+            PromptReplyKind.Prompt, Form() with { ElsewhereLabel = "Answer over there" }, "fp1"));
+
+        Assert.Equal("Answer over there", h.Session.Prompt!.ElsewhereLabel);
+    }
+
+    // With no loop running (nothing has woken it), an answer must still finish:
+    // there is simply nobody to wake.
+    [AvaloniaFact]
+    public async Task AnAnswerWithNoPollLoopRunningStillFinishesForEveryOutcome()
+    {
+        foreach (var kind in new[]
+                 {
+                     AnswerKind.Done, AnswerKind.AlreadyAnswered, AnswerKind.Refused, AnswerKind.Failed,
+                 })
+        {
+            var h = new Harness { Waiting = false };
+            h.NextAnswer = new AnswerReply(kind);
+            h.Session.ApplyReply(Shown("fp1"));
+
+            await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+
+            Assert.Single(h.Answers);
+            Assert.Null(h.Session.Prompt);
+        }
+    }
+
+    // The screen moved on but the far side gave no form to show: nothing to put
+    // up, so the user is told it could not be answered.
+    [AvaloniaFact]
+    public async Task AChangedAnswerWithNoNewFormIsReportedAsNotAnswered()
+    {
+        var h = new Harness { Waiting = false };
+        h.NextAnswer = new AnswerReply(AnswerKind.Changed, null);
+        h.Session.ApplyReply(Shown("fp1"));
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+
+        Assert.Contains(h.Session.History, t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal));
+    }
+
+    // The default transport with nothing to talk to: no link, so the answer is a
+    // failure, said as one, rather than a crash or a silence.
+    [AvaloniaFact]
+    public async Task AnAnswerWithNoLinkAtAllIsAFailure()
+    {
+        PeerSessions.UseClientForTests(null);
+        var session = new RemoteControlChatSession("rc:.claude:evidence", ".claude", "evidence")
+        {
+            WaitingNow = () => false,
+        };
+        session.ApplyReply(Shown("fp1"));
+
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Contains(session.History, t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal));
+    }
+
+    // A refusal with no detail has no dash.
+    [Fact]
+    public void ANotAtPromptRefusalWithNoDetailHasNoDash()
+    {
+        var note = RemoteControlChatSession.TypingRefusal(MirrorProtocol.ErrNotAtPrompt, "evidence", null);
+
+        Assert.Equal(
+            "evidence's terminal isn't at its prompt. Nothing was typed; answer that screen in the terminal and send again.",
+            note);
+        Assert.Contains(" — it is on a dialog",
+            RemoteControlChatSession.TypingRefusal(MirrorProtocol.ErrNotAtPrompt, "evidence", "it is on a dialog"));
+    }
 }

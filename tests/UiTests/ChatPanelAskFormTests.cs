@@ -469,4 +469,57 @@ public class ChatPanelAskFormTests : IDisposable
             ChatPanel.PromptClock = _previousClock;
         }
     }
+
+    // --- the remaining arms of the free-text box ----------------------------------
+
+    private static void PressSend(ChatPanel panel)
+    {
+        var send = panel.FindControl<Border>("PromptFreeTextSend")!;
+        var at = send.TranslatePoint(new Point(2, 2), panel) ?? new Point(2, 2);
+        send.RaiseEvent(new PointerPressedEventArgs(
+            send, new Pointer(Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true), panel, at, 0,
+            new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
+            KeyModifiers.None, 1));
+    }
+
+    [AvaloniaFact]
+    public void ClickingSendSendsTheText()
+    {
+        var (panel, session) = Open(Form());
+        Click(panel, Option(panel, 2));
+        Flush();
+        FreeTextBox(panel).Text = "lead with B";
+        Flush();
+
+        PressSend(panel);
+        Flush();
+
+        Assert.Equal("lead with B", Assert.Single(session.Typed).Text);
+        Assert.False(FreeText(panel).IsVisible);
+    }
+
+    // Nothing is open, so there is nothing to send.
+    [AvaloniaFact]
+    public void SubmittingWithNoBoxOpenDoesNothing()
+    {
+        var (panel, session) = Open(Form());
+
+        panel.SubmitFreeText();
+
+        Assert.Empty(session.Typed);
+    }
+
+    [AvaloniaFact]
+    public void ABoxWhoseTextIsNullSendsNothing()
+    {
+        var (panel, session) = Open(Form());
+        Click(panel, Option(panel, 2));
+        Flush();
+
+        FreeTextBox(panel).Text = null;
+        panel.SubmitFreeText();
+
+        Assert.Empty(session.Typed);
+        Assert.True(FreeText(panel).IsVisible);
+    }
 }

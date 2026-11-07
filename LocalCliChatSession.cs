@@ -1618,7 +1618,7 @@ namespace Orbweaver
             try
             {
                 var generation = _generation;
-                var screen = await (Capture ?? TerminalFocuser.CapturePane)(_status);
+                var screen = await Capture(_status);
 
                 // An answer went out while this capture was running: it saw the
                 // screen before the key, and is stale.
@@ -1641,7 +1641,10 @@ namespace Orbweaver
                 // is refused if the screen has since moved on. Null for an
                 // ordinary dialog, which answers by its key as it always has.
                 _formFingerprint = screen is not null && ChatTranscript.ParseAskForm(screen) is not null
-                    ? MirrorProtocol.PromptFromScreen(screen)?.Fingerprint
+                    // A screen that parses as a form always has a wire reading
+                    // (PromptFromScreen reads the same form first), so there is no
+                    // null to guard here.
+                    ? MirrorProtocol.PromptFromScreen(screen)!.Fingerprint
                     : null;
 
                 // The form just answered, read again before the terminal has
@@ -1652,7 +1655,7 @@ namespace Orbweaver
                 if (_answeredFingerprint is not null)
                 {
                     if (_formFingerprint == _answeredFingerprint
-                        && (Clock ?? (() => DateTime.UtcNow))() - _answeredAt < SettleAfterAnswer)
+                        && Clock() - _answeredAt < SettleAfterAnswer)
                     {
                         _formFingerprint = null;
                         return;
@@ -1671,9 +1674,9 @@ namespace Orbweaver
 
         // The pane seams, so a test can hand over a screen and count what an
         // answer sends. The defaults are the real tmux/terminal reads and presses.
-        internal Func<SessionStatus, string, Task<bool>>? PressKey { get; init; }
-        internal Func<SessionStatus, Task<string?>>? Capture { get; init; }
-        internal Func<SessionStatus, string, Task<bool>>? TypeLiteral { get; init; }
+        internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } = TerminalFocuser.SendPaneKey;
+        internal Func<SessionStatus, Task<string?>> Capture { get; init; } = TerminalFocuser.CapturePane;
+        internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } = TerminalFocuser.SendPaneText;
 
         // The fingerprint of the question form on show, or null when the prompt
         // is an ordinary dialog (or nothing).
@@ -1682,7 +1685,7 @@ namespace Orbweaver
         // The form just answered, and when, so a re-read of it before the
         // terminal advances is held back. See RefreshPromptAsync.
         internal static readonly TimeSpan SettleAfterAnswer = TimeSpan.FromSeconds(4);
-        internal Func<DateTime>? Clock { get; init; }
+        internal Func<DateTime> Clock { get; init; } = () => DateTime.UtcNow;
         private string? _answeredFingerprint;
         private DateTime _answeredAt;
 
@@ -1744,7 +1747,7 @@ namespace Orbweaver
             // dropped when it returns; bumped again once the key is down.
             _generation++;
             bool pressed;
-            try { pressed = await (PressKey ?? TerminalFocuser.SendPaneKey)(_status, option.Key); }
+            try { pressed = await PressKey(_status, option.Key); }
             finally { _generation++; }
 
             if (pressed) return;
@@ -1778,7 +1781,7 @@ namespace Orbweaver
             var fingerprint = _formFingerprint!;
             var commit = option.Key == AskFormView.CommitKey;
             _answeredFingerprint = fingerprint;
-            _answeredAt = (Clock ?? (() => DateTime.UtcNow))();
+            _answeredAt = Clock();
 
             // Cleared first, for the reason the ordinary path gives.
             SetPrompt(null);
@@ -1790,9 +1793,9 @@ namespace Orbweaver
             {
                 code = await FormAnswer.AnswerAsync(
                     _status,
-                    Capture ?? TerminalFocuser.CapturePane,
-                    PressKey ?? TerminalFocuser.SendPaneKey,
-                    TypeLiteral ?? TerminalFocuser.SendPaneText,
+                    Capture,
+                    PressKey,
+                    TypeLiteral,
                     fingerprint,
                     key: commit ? null : option.Key,
                     action: commit ? MirrorProtocol.ActionCommit : null,

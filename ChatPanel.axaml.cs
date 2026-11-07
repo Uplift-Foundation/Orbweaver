@@ -3255,9 +3255,10 @@ namespace Orbweaver
             // The option that asks for typed text opens a text box and answers
             // nothing yet. Only when the session can carry text: otherwise it is
             // an ordinary option, and pressing its key is what AnswerAsync does.
-            if (option.FreeText && _session is IRemoteChatFreeText)
+            if (option.FreeText && _session is IRemoteChatFreeText freeText)
             {
                 _freeTextOption = option;
+                _freeTextSession = freeText;
                 PromptFreeTextBox.Text = "";
                 UpdateFreeTextSend();
                 PromptFreeText.IsVisible = true;
@@ -3271,9 +3272,14 @@ namespace Orbweaver
         // The free-text option a text box is open for, or null.
         private ChatPromptOption? _freeTextOption;
 
+        // The session the box was opened for, kept with the option so sending
+        // never has to ask the panel's current session whether it takes text.
+        private IRemoteChatFreeText? _freeTextSession;
+
         private void HideFreeText()
         {
             _freeTextOption = null;
+            _freeTextSession = null;
             PromptFreeText.IsVisible = false;
             PromptFreeTextBox.Text = "";
             UpdateFreeTextSend();
@@ -3306,9 +3312,9 @@ namespace Orbweaver
         internal void SubmitFreeText()
         {
             var option = _freeTextOption;
+            var free = _freeTextSession;
             var text = (PromptFreeTextBox.Text ?? "").Trim();
-            if (option is null || text.Length == 0) return;
-            if (_session is not IRemoteChatFreeText free) return;
+            if (option is null || free is null || text.Length == 0) return;
 
             HideFreeText();
             _ = free.AnswerFreeTextAsync(option, text);

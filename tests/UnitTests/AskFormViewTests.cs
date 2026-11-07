@@ -265,4 +265,20 @@ public class AskFormViewTests
 
         Assert.True(AskFormView.FromWire(MirrorProtocol.PromptFromScreen(AskFormFixtures.SubmitTab)!).ArmedActivation);
     }
+
+    // A far Buddy that sends no tabs at all still reads as a form.
+    [Fact]
+    public void AWirePromptWithNoTabsStillReads()
+    {
+        var wire = new MirrorProtocol.WirePrompt(
+            "Which one?",
+            new[] { new MirrorProtocol.WireOption("1", "A"), new MirrorProtocol.WireOption("2", "B") },
+            "fp");
+
+        var prompt = AskFormView.FromWire(wire);
+
+        Assert.Equal("Which one?", prompt.Title);
+        Assert.Equal(new[] { "A", "B" }, prompt.Options.Select(o => o.Label));
+        Assert.Null(prompt.Progress);
+    }
 }

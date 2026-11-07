@@ -2171,4 +2171,79 @@ public class LocalCliChatSessionTests : IDisposable
             Assert.Empty(pane.Pressed);
         });
     }
+
+    // --- the default seams, and the arms only they reach ------------------------
+
+    // The real gate and the real shadow switch, on a session with no pane and no
+    // record: nothing can be read, so nothing is refused, and nothing spawns.
+    [AvaloniaFact]
+    public async Task TheDefaultGateOnASessionWithNoPaneAllowsTheSend()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "",
+        });
+
+        Assert.Null(await session.RefuseIfNotAtPromptAsync());
+        Assert.Empty(session.History);
+    }
+
+    [AvaloniaFact]
+    public async Task TheDefaultShadowSwitchIsOffUnlessAskedFor()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "",
+        })
+        {
+            Gate = _ => Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy)),
+        };
+
+        // Off by default, so the refusal stands.
+        Assert.Equal(ChatSendOutcome.Failed, await session.RefuseIfNotAtPromptAsync());
+    }
+
+    // A pane that cannot be captured: the form could not be read, so the honest
+    // prompt is the one with nothing to click and the terminal link.
+    [AvaloniaFact]
+    public async Task AnUnreadablePaneShowsTheWaitingPromptWithNoOptions()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = _ => Task.FromResult<string?>(null),
+        };
+
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+        for (var i = 0; i < 200 && session.Prompt is null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        Assert.Equal("Waiting for input", session.Prompt!.Title);
+        Assert.Empty(session.Prompt.Options);
+    }
+
+    // The real clock, not a test's: a form re-read straight after an answer is
+    // held back with the default clock too.
+    [AvaloniaFact]
+    public async Task TheFormJustAnsweredIsHeldBackOnTheRealClockToo()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+            await Rescan(session);
+
+            Assert.Null(session.Prompt);
+        });
+    }
 }

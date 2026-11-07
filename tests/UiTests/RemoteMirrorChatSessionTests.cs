@@ -2224,4 +2224,59 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
     private static string AssistantRow(string uuid, string text) =>
         $"{{\"type\":\"assistant\",\"uuid\":\"{uuid}\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}";
+
+    // The far machine's own name, joined to the session's title, once the roster
+    // has said which machine serves it.
+    [AvaloniaFact]
+    public async Task TheSessionIsNamedByTitleAndMachineOnceTheRosterHasSaidWhich()
+    {
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Equal(Name, session.FarTitle);
+        Assert.Equal($"{Name} on {FarRelay}", session.FarName);
+        Assert.Equal(FarRelay, session.FarMachine);
+    }
+
+    // A far Buddy that does not say it answers PROMPT is asked again, not given up
+    // on, and says why nothing was asked: not "unsupported", which is final.
+    [AvaloniaFact]
+    public async Task AFarSideThatDoesNotAdvertisePromptsIsNotAskedAndSaysWhy()
+    {
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var lines = new List<string>();
+        var session = NewSession();
+        session.PromptLog = (_, detail) => lines.Add(detail);
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        await PumpUntilAsync(() => lines.Any(l => l.Contains("far-side-not-known-to-answer-prompts")));
+
+        Assert.Null(session.Prompt);
+        Assert.Contains(lines, l => l.Contains("far-side-not-known-to-answer-prompts"));
+        Assert.DoesNotContain(MirrorProtocol.Prompt, _toServer);
+    }
+
+    // With a link but no fingerprint to answer against, the answer is a failure
+    // and presses nothing.
+    [AvaloniaFact]
+    public async Task AnAnswerWithNoFingerprintToAnswerAgainstPressesNothing()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt,
+            new ChatPrompt("Which?", new[] { new ChatPromptOption("1", "One") }), null));
+
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(_pressed);
+        Assert.Contains(session.History, t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal));
+    }
 }

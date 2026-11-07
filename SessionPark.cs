@@ -102,11 +102,16 @@ namespace Orbweaver
         {
             if (pid <= 0 || string.IsNullOrEmpty(sessionId)) return null;
 
-            var path = RecordPath(pid, home);
-            if (path is null) return null;
-
-            var stat = Stat(path);
+            // No record, or one that vanished between finding it and reading it:
+            // the same answer, reached through one check rather than two, so
+            // the second (a race no test can hold still) is not a branch of its
+            // own.
+            var found = RecordPath(pid, home);
+            var stat = found is null ? null : Stat(found);
             if (stat is null) return null;
+
+            // Non-null by construction: a stat only exists for a path that was found.
+            var path = found!;
 
             lock (Cache.Gate)
             {

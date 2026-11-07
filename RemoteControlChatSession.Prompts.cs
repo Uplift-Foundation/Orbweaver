@@ -245,8 +245,14 @@ namespace Orbweaver
                     SaySkip("far-side-not-known-to-answer-prompts", "asked again next tick");
                     break;
 
-                // Transient, or a Prompt reply with no prompt: leave what is on
-                // show alone and ask again.
+                // A one-off failure: leave what is on show alone and ask again.
+                case PromptReplyKind.Transient:
+                    break;
+
+                // A prompt reply that carries no prompt is no form: leave what is
+                // on show alone and ask again.
+                default:
+                    break;
             }
         }
 
