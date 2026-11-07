@@ -15,7 +15,8 @@ public class PromptWireTests
 
         Assert.Equal(new[] { "1", "2", "3", "4", "5", "6" }, prompt.Options.Select(o => o.Key));
         Assert.Equal(new[] { "answered", "open", "open", "submit" }, prompt.Tabs!.Select(t => t.State));
-        Assert.Equal(1, prompt.Current);
+        // Which question of several is showing cannot be read (QA's captures).
+        Assert.Equal(-1, prompt.Current);
         Assert.Equal("5", prompt.FreeTextKey);
         Assert.Equal("6", prompt.ChatAboutKey);
         Assert.Matches("^[0-9a-f]{16}$", prompt.Fingerprint);
@@ -98,4 +99,63 @@ public class PromptWireTests
         Assert.Null(MirrorProtocol.DecodePrompt("{not json"u8.ToArray()));
         Assert.Null(MirrorProtocol.DecodePrompt("{\"title\":\"x\"}"u8.ToArray()));
     }
+
+    // --- the arms QA's captures unblocked --------------------------------------
+
+    [Fact]
+    public void AMultiSelectQuestionCarriesItsTicksAndSubmitRow()
+    {
+        var prompt = MirrorProtocol.PromptFromScreen(PaneFixtures.QaMultiSelectOneTicked)!;
+
+        Assert.True(prompt.MultiSelect);
+        Assert.True(prompt.HasSubmitRow);
+        Assert.Equal(new[] { "1" }, prompt.Checked);
+        Assert.Equal("Cheese", prompt.Options[0].Label);
+    }
+
+    [Fact]
+    public void ATickOrATabChangeIsADifferentDialog()
+    {
+        Assert.NotEqual(MirrorProtocol.PromptFromScreen(PaneFixtures.QaMultiSelect)!.Fingerprint,
+            MirrorProtocol.PromptFromScreen(PaneFixtures.QaMultiSelectOneTicked)!.Fingerprint);
+        Assert.NotEqual(MirrorProtocol.PromptFromScreen(PaneFixtures.QaFormQ1)!.Fingerprint,
+            MirrorProtocol.PromptFromScreen(PaneFixtures.QaFormQ1.Replace("☐ Color", "☒ Color"))!.Fingerprint);
+
+        // Where the cursor sits is not: moving it is not answering.
+        Assert.Equal(MirrorProtocol.PromptFromScreen(PaneFixtures.QaFormQ1)!.Fingerprint,
+            MirrorProtocol.PromptFromScreen(PaneFixtures.QaCursorOnFreeText)!.Fingerprint);
+    }
+
+    [Fact]
+    public void TheReviewScreenCarriesItsAnswersAndBothKeysByLabel()
+    {
+        var prompt = MirrorProtocol.PromptFromScreen(PaneFixtures.QaReview)!;
+
+        Assert.Equal("1", prompt.SubmitAnswersKey);
+        Assert.Equal("2", prompt.CancelKey);
+        Assert.Equal(new MirrorProtocol.WireReviewItem("Pick toppings", "Cheese, Ham, Olives"), prompt.Review![1]);
+
+        var back = MirrorProtocol.DecodePrompt(MirrorProtocol.EncodePrompt(prompt))!;
+        Assert.Equal(prompt.Review, back.Review);
+        Assert.Equal(prompt.CancelKey, back.CancelKey);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData("two\nlines", false)]
+    [InlineData("ends\r", false)]
+    [InlineData("my own answer", true)]
+    public void OnlyOneLineOfRealTextIsUsableFreeText(string? text, bool usable) =>
+        Assert.Equal(usable, RemoteMirrorServer.IsUsableFreeText(text));
+
+    [Theory]
+    [InlineData("my own answer", "my own answer", true)]
+    [InlineData("my own…", "my own answer", true)]
+    [InlineData("my own…", "your own answer", false)]
+    [InlineData("…", "anything", false)]
+    [InlineData("Type something.", "my own answer", false)]
+    public void TheRowReadsBackAsWhatWasTyped(string label, string text, bool shown) =>
+        Assert.Equal(shown, RemoteMirrorServer.ShowsTyped(label, text));
 }

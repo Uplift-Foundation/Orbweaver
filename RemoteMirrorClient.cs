@@ -982,25 +982,51 @@ namespace Orbweaver
         // Take one option of the dialog Fingerprint names. Null on success,
         // otherwise the far side's code — ErrPromptChanged means the screen
         // moved on and nothing was pressed, so ask FetchPromptAsync again.
-        public async Task<string?> AnswerPromptAsync(string name, string key, string fingerprint)
+        public Task<string?> AnswerPromptAsync(string name, string key, string fingerprint) =>
+            SendAnswerAsync(name, fingerprint, key, action: null, text: null);
+
+        // The "Type something" option with this text. Refused here, before
+        // anything is sent, when the text is empty, blank or more than one
+        // line: Enter on an empty field declines the whole form, and the far
+        // side refuses the same text for the same reason (ErrBadKey).
+        public Task<string?> AnswerFreeTextAsync(string name, string key, string fingerprint, string text)
         {
+            if (!RemoteMirrorServer.IsUsableFreeText(text))
+            {
+                Log("answer", $"n={name} key={key} -> err code={MirrorProtocol.ErrBadKey} (no text)");
+                return Task.FromResult<string?>(MirrorProtocol.ErrBadKey);
+            }
+
+            return SendAnswerAsync(name, fingerprint, key, action: null, text);
+        }
+
+        // Move a multi-select question on with its ticks kept.
+        public Task<string?> CommitPromptAsync(string name, string fingerprint) =>
+            SendAnswerAsync(name, fingerprint, key: null, MirrorProtocol.ActionCommit, text: null);
+
+        private async Task<string?> SendAnswerAsync(string name, string fingerprint, string? key, string? action, string? text)
+        {
+            var what = action is null ? $"key={key}" : $"act={action}";
             if (RelayFor(name) is not { } relay)
             {
-                Log("answer", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
+                Log("answer", $"n={name} {what} -> err code={MirrorProtocol.ErrNoSession}");
                 return MirrorProtocol.ErrNoSession;
             }
 
-            var reply = await RequestAsync(relay, MirrorProtocol.Answer,
-                new Dictionary<string, string>
-                {
-                    ["n"] = MirrorProtocol.Encode(name),
-                    [MirrorProtocol.KeyField] = key,
-                    [MirrorProtocol.FingerprintField] = fingerprint,
-                },
-                payload: null, TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
+            var fields = new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode(name),
+                [MirrorProtocol.FingerprintField] = fingerprint,
+            };
+            if (key is not null) fields[MirrorProtocol.KeyField] = key;
+            if (action is not null) fields[MirrorProtocol.ActionField] = action;
+
+            var reply = await RequestAsync(relay, MirrorProtocol.Answer, fields,
+                text is null ? null : System.Text.Encoding.UTF8.GetBytes(text),
+                TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
 
             var error = reply.Ok ? null : reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
-            Log("answer", $"n={name} key={key} -> " + (error is null ? "ok" : $"err code={error}"));
+            Log("answer", $"n={name} {what} -> " + (error is null ? "ok" : $"err code={error}"));
             return error;
         }
 

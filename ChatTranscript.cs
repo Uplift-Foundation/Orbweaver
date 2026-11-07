@@ -573,10 +573,43 @@ namespace Orbweaver
             for (var i = first - 1; i >= from && head < 0; i--)
                 if (IsTabBar(cleaned[i]) || cleaned[i].StartsWith("☐ ", StringComparison.Ordinal)) head = i;
 
-            var freeText = prompt.Options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key;
-            var chatAbout = prompt.Options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key;
+            // Multi-select options are drawn "[ ] Cheese" / "[✔] Cheese", and a
+            // single-select option chosen earlier "Blue ✔". The box and the
+            // mark are state, not label: they are stripped, and the keys ticked
+            // are kept.
+            var checkedKeys = new List<string>();
+            var multi = false;
+            var options = prompt.Options.Select(o =>
+            {
+                var label = o.Label;
+                if (label.StartsWith("[ ] ", StringComparison.Ordinal)) { multi = true; label = label[4..]; }
+                else if (label.StartsWith("[✔] ", StringComparison.Ordinal))
+                {
+                    multi = true; label = label[4..]; checkedKeys.Add(o.Key);
+                }
+                else if (label.EndsWith(" ✔", StringComparison.Ordinal))
+                {
+                    label = label[..^2].TrimEnd(); checkedKeys.Add(o.Key);
+                }
+                return o with { Label = label };
+            }).ToList();
 
-            if (head < 0 && freeText is null) return null;
+            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key;
+            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key;
+
+            // The Submit tab's own screen: "Review your answers", the answers as
+            // "● question" / "→ answer" pairs, then Submit answers / Cancel.
+            var isReview = false;
+            var review = new List<AskReviewItem>();
+            for (var i = from; i < first; i++)
+            {
+                if (cleaned[i] == ReviewHeading) isReview = true;
+                if (cleaned[i].StartsWith("● ", StringComparison.Ordinal) && i + 1 < first
+                    && cleaned[i + 1].StartsWith("→ ", StringComparison.Ordinal))
+                    review.Add(new AskReviewItem(cleaned[i][2..].Trim(), cleaned[i + 1][2..].Trim()));
+            }
+
+            if (head < 0 && freeText is null && !isReview) return null;
 
             var tabs = head < 0 ? new List<AskTab>()
                 : IsTabBar(cleaned[head]) ? TabsOf(cleaned[head])
@@ -590,15 +623,43 @@ namespace Orbweaver
 
             var title = question.Count > 0 ? string.Join(" ", question) : prompt.Title;
 
-            // Which tab is showing: the terminal marks it in reverse video,
-            // which capture-pane -p does not carry. The first still-open tab is
-            // the one Claude Code moves to after an answer; with none open, the
-            // Submit tab. Anything else is not claimed.
-            var current = tabs.FindIndex(t => t.State == AskTabState.Open);
-            if (current < 0) current = tabs.FindIndex(t => t.State == AskTabState.Submit);
+            // Which tab is showing cannot be read off the bar: the terminal
+            // marks it in reverse video, which capture-pane -p does not carry,
+            // and the ☐/☒ marks are no guide — QA's captures show "☒ Toppings"
+            // while still on Toppings (one box ticked) and "☐ Toppings" after
+            // going back to Color. So only what the body proves is claimed: the
+            // review screen is the Submit tab, and a form with one question is
+            // on it. Anything else is -1, and the panel says nothing.
+            var questions = tabs.Count(t => t.State != AskTabState.Submit);
+            var current = isReview ? tabs.FindIndex(t => t.State == AskTabState.Submit)
+                : questions == 1 ? tabs.FindIndex(t => t.State != AskTabState.Submit)
+                : -1;
 
-            return new AskForm(prompt with { Title = title }, tabs, current, freeText, chatAbout);
+            // The unnumbered row a multi-select question draws under its
+            // options, and the option the terminal's cursor is on.
+            var submitRow = false;
+            var lastOption = prompt.Options[^1].Key + ".";
+            for (var i = first; i < cleaned.Length; i++)
+            {
+                if (cleaned[i].TrimStart('❯', ' ').StartsWith(lastOption, StringComparison.Ordinal)) break;
+                if (cleaned[i] == SubmitRowLabel) submitRow = true;
+            }
+
+            string? cursor = null;
+            for (var i = first; i < cleaned.Length && cursor is null; i++)
+                if (cleaned[i].StartsWith('❯') && OptionLine.Match(cleaned[i]) is { Success: true } m) cursor = m.Groups[1].Value;
+
+            string? KeyOf(string label) => isReview ? options.FirstOrDefault(o => o.Label == label)?.Key : null;
+
+            return new AskForm(prompt with { Title = title, Options = options }, tabs, current, freeText, chatAbout,
+                multi, checkedKeys, submitRow, cursor, isReview, review,
+                KeyOf(SubmitAnswersLabel), KeyOf(CancelLabel));
         }
+
+        internal const string ReviewHeading = "Review your answers";
+        internal const string SubmitAnswersLabel = "Submit answers";
+        internal const string CancelLabel = "Cancel";
+        internal const string SubmitRowLabel = "Submit";
 
         internal const string FreeTextLabel = "Type something";
         internal const string ChatAboutLabel = "Chat about this";

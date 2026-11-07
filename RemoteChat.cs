@@ -726,8 +726,22 @@ namespace Orbweaver
     // titled with the whole question; Tabs and CurrentTab say which question of
     // a multi-question form is showing (-1 when that cannot be told); the two
     // keys name the "Type something" and "Chat about this" options by label.
+    //
+    // From QA's real captures of every form state (item3/ fixtures):
+    // MultiSelect is a question drawn with [ ]/[✔] boxes, Checked the keys
+    // ticked (and on a single-select question the one chosen earlier, drawn
+    // "Blue ✔"), HasSubmitRow the unnumbered "Submit" row a multi-select
+    // question draws, CursorKey the option the terminal's ❯ is on. IsReview is
+    // the Submit tab's "Review your answers" screen, with what it lists and
+    // the keys of its two options, matched by label: "Submit answers" and
+    // "Cancel".
     public sealed record AskForm(
-        ChatPrompt Prompt, IReadOnlyList<AskTab> Tabs, int CurrentTab, string? FreeTextKey, string? ChatAboutKey);
+        ChatPrompt Prompt, IReadOnlyList<AskTab> Tabs, int CurrentTab, string? FreeTextKey, string? ChatAboutKey,
+        bool MultiSelect = false, IReadOnlyList<string>? Checked = null, bool HasSubmitRow = false,
+        string? CursorKey = null, bool IsReview = false, IReadOnlyList<AskReviewItem>? Review = null,
+        string? SubmitAnswersKey = null, string? CancelKey = null);
+
+    public sealed record AskReviewItem(string Question, string Answer);
 
     public sealed record AskTab(string Name, AskTabState State);
 

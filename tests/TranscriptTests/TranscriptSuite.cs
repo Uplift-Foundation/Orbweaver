@@ -1370,8 +1370,12 @@ namespace Orbweaver.Tests
             Check("tab names keep their spaces, and the last is Submit",
                 form?.Tabs[1].Name == "xxx xxxx" && form.Tabs[3].Name == "Submit",
                 string.Join("|", form?.Tabs.Select(t => t.Name) ?? Array.Empty<string>()));
-            Check("the showing question is the first still open",
-                form?.CurrentTab == 1, form?.CurrentTab.ToString() ?? "null");
+            // QA's captures disproved "the first still-open tab is the one
+            // showing": the bar reads ☒ on a multi-select question as soon as
+            // one box is ticked, and ☐ on a later question after going back. So
+            // a multi-question form's current tab is not claimed.
+            Check("which question of several is showing is not claimed",
+                form?.CurrentTab == -1, form?.CurrentTab.ToString() ?? "null");
             Check("Type something and Chat about this are found by label",
                 form?.FreeTextKey == "5" && form.ChatAboutKey == "6",
                 $"{form?.FreeTextKey}/{form?.ChatAboutKey}");
@@ -1402,12 +1406,59 @@ namespace Orbweaver.Tests
             Check("a prompt is not a form", ChatTranscript.ParseAskForm(PaneFixtures.MacPromptAfterEsc) is null);
             Check("a /permissions tab is not a form", ChatTranscript.ParseAskForm(PaneFixtures.PermissionsAllow) is null);
 
-            // With everything answered, the Submit tab is the one showing.
-            var allAnswered = PaneFixtures.MiniAskForm.Replace("☐", "☒");
-            Check("with every question answered the Submit tab is current",
-                ChatTranscript.ParseAskForm(allAnswered)?.CurrentTab == 3);
-            Check("a bar with no Submit and nothing open claims no current tab",
-                ChatTranscript.ParseAskForm(allAnswered.Replace("✔ Submit", "☒ Submit"))?.CurrentTab == -1);
+            // --- QA's real captures of every form state (qa307) ---
+
+            var q1 = ChatTranscript.ParseAskForm(PaneFixtures.QaFormQ1)!;
+            Check("an unframed question is the line above the options", q1.Prompt.Title == "Pick a color", q1.Prompt.Title);
+            Check("a single-select question is not multi-select, with nothing ticked",
+                !q1.MultiSelect && q1.Checked!.Count == 0 && !q1.HasSubmitRow && !q1.IsReview);
+            Check("its cursor is on option 1", q1.CursorKey == "1", q1.CursorKey ?? "null");
+            Check("its free text and chat keys", q1.FreeTextKey == "3" && q1.ChatAboutKey == "4");
+            Check("two questions and a Submit tab, none claimed as showing",
+                q1.Tabs.Count == 3 && q1.CurrentTab == -1);
+
+            var onFree = ChatTranscript.ParseAskForm(PaneFixtures.QaCursorOnFreeText)!;
+            Check("the cursor on Type something reads as that key", onFree.CursorKey == "3");
+            var typed = ChatTranscript.ParseAskForm(PaneFixtures.QaFreeTextTyped)!;
+            Check("typed text replaces the free-text row's label",
+                typed.CursorKey == "3" && typed.Prompt.Options[2].Label == "my own answer" && typed.FreeTextKey is null,
+                typed.Prompt.Options[2].Label);
+            Check("the declined form's screen is no form at all",
+                ChatTranscript.ParseAskForm(PaneFixtures.QaDeclinedByEmptyEnter) is null);
+
+            var multiQ = ChatTranscript.ParseAskForm(PaneFixtures.QaMultiSelect)!;
+            Check("a boxed question is multi-select with its Submit row",
+                multiQ.MultiSelect && multiQ.HasSubmitRow && multiQ.Checked!.Count == 0);
+            Check("boxes are state, not label",
+                multiQ.Prompt.Options.Select(o => o.Label).Take(3).SequenceEqual(new[] { "Cheese", "Ham", "Olives" }),
+                string.Join("|", multiQ.Prompt.Options.Select(o => o.Label)));
+            Check("its free text is option 4 and chat option 5; Submit is no option",
+                multiQ.FreeTextKey == "4" && multiQ.ChatAboutKey == "5" && multiQ.Prompt.Options.Count == 5
+                && multiQ.Prompt.Options.All(o => o.Label != "Submit"));
+            Check("one box ticked", ChatTranscript.ParseAskForm(PaneFixtures.QaMultiSelectOneTicked)!.Checked!
+                .SequenceEqual(new[] { "1" }));
+            Check("a digit toggles without advancing: three ticked, cursor stays",
+                ChatTranscript.ParseAskForm(PaneFixtures.QaMultiSelectDigitToggled) is { } toggled
+                && toggled.Checked!.SequenceEqual(new[] { "1", "2", "3" }) && toggled.CursorKey == "2");
+
+            var back = ChatTranscript.ParseAskForm(PaneFixtures.QaBackOnQ1)!;
+            Check("an earlier single-select choice is a mark, not part of the label",
+                back.Prompt.Options[1].Label == "Blue" && back.Checked!.SequenceEqual(new[] { "2" }) && !back.MultiSelect);
+
+            var review = ChatTranscript.ParseAskForm(PaneFixtures.QaReview)!;
+            Check("the Submit tab's review screen is a form", review.IsReview);
+            Check("its two options are found by label",
+                review.SubmitAnswersKey == "1" && review.CancelKey == "2", $"{review.SubmitAnswersKey}/{review.CancelKey}");
+            Check("it lists the answers to be submitted",
+                review.Review!.Select(r => $"{r.Question}={r.Answer}").SequenceEqual(new[]
+                    { "Pick a color=my own answer", "Pick toppings=Cheese, Ham, Olives" }));
+            Check("and it is the Submit tab", review.CurrentTab == 2);
+            Check("Submit answers and Cancel are matched by label, not position",
+                ChatTranscript.ParseAskForm(PaneFixtures.QaReview
+                    .Replace("1. Submit answers", "1. Cancel__").Replace("2. Cancel", "2. Submit answers")
+                    .Replace("1. Cancel__", "1. Cancel")) is { SubmitAnswersKey: "2", CancelKey: "1" });
+            Check("an ordinary form has no submit or cancel keys",
+                q1.SubmitAnswersKey is null && q1.CancelKey is null && q1.Review!.Count == 0);
 
             // Whatever the parser makes of /permissions, none of it is a prompt.
             foreach (var (name, screen) in new[]

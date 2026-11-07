@@ -914,6 +914,26 @@ namespace Orbweaver
             });
         }
 
+        // CB-307 item 3: text into the pane exactly as given, with no Enter —
+        // the free-text row of a question form, which the caller has already
+        // seen the cursor on. `send-keys -l` so nothing in the text is read as
+        // a key name. Excluded from coverage like the rest of the tmux calls;
+        // what decides when it runs is RemoteMirrorServer's, and covered.
+        [ExcludeFromCodeCoverage]
+        public static Task<bool> SendPaneText(SessionStatus? status, string text)
+        {
+            if (status is null || string.IsNullOrEmpty(text)) return Task.FromResult(false);
+            if (!CanSendQuietly(status)) return Task.FromResult(false);
+
+            return Task.Run(() =>
+            {
+                var tmux = ResolveTmuxBinary(status.TmuxBin);
+                if (tmux is null) return false;
+
+                return TryRun(tmux, out _, TmuxArgs(status, "send-keys", "-l", "-t", status.TmuxPane, text));
+            });
+        }
+
         // What the pane is showing right now, as text.
         //
         // This is how a permission prompt gets answered from the panel without

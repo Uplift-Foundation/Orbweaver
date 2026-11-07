@@ -923,6 +923,14 @@ namespace Orbweaver
 
         public const string KeyField = "key";
 
+        // An ANSWER that is an action rather than an option: "commit" moves a
+        // multi-select question on with its ticks kept. Pressed as Right, the
+        // one way on QA saw work (capture 10 reached the Submit tab with the
+        // ticks intact); Enter on the unnumbered Submit row was not tried, so
+        // it is not what this does.
+        public const string ActionField = "act";
+        public const string ActionCommit = "commit";
+
         // Set to "1" on a HELLO reply by a Buddy that answers PROMPT and
         // ANSWER. A Buddy that predates them ignores those frames and never
         // replies, so a near side asks only a far side that said it can: a
@@ -948,7 +956,21 @@ namespace Orbweaver
             [property: JsonPropertyName("tabs")] IReadOnlyList<WireTab>? Tabs = null,
             [property: JsonPropertyName("current")] int Current = -1,
             [property: JsonPropertyName("freeText")] string? FreeTextKey = null,
-            [property: JsonPropertyName("chatAbout")] string? ChatAboutKey = null);
+            [property: JsonPropertyName("chatAbout")] string? ChatAboutKey = null,
+            // From QA's real captures (item3/): a multi-select question's
+            // ticked keys and its unnumbered Submit row, and the Submit tab's
+            // review — what it lists and its two options by label.
+            [property: JsonPropertyName("multi")] bool MultiSelect = false,
+            [property: JsonPropertyName("checked")] IReadOnlyList<string>? Checked = null,
+            [property: JsonPropertyName("submitRow")] bool HasSubmitRow = false,
+            [property: JsonPropertyName("review")] IReadOnlyList<WireReviewItem>? Review = null,
+            [property: JsonPropertyName("submitKey")] string? SubmitAnswersKey = null,
+            [property: JsonPropertyName("cancelKey")] string? CancelKey = null,
+            [property: JsonPropertyName("cursor")] string? CursorKey = null);
+
+        public sealed record WireReviewItem(
+            [property: JsonPropertyName("q")] string Question,
+            [property: JsonPropertyName("a")] string Answer);
 
         public sealed record WireOption(
             [property: JsonPropertyName("key")] string Key,
@@ -964,26 +986,30 @@ namespace Orbweaver
         {
             if (string.IsNullOrWhiteSpace(screen)) return null;
 
-            if (ChatTranscript.ParseAskForm(screen) is { } form)
-                return Bounded(form.Prompt, form.Tabs, form.CurrentTab, form.FreeTextKey, form.ChatAboutKey);
+            if (ChatTranscript.ParseAskForm(screen) is { } form) return Bounded(form);
 
             return ChatTranscript.ParseDialog(screen) is { } dialog
-                ? Bounded(dialog, Array.Empty<AskTab>(), -1, null, null)
+                ? Bounded(new AskForm(dialog, Array.Empty<AskTab>(), -1, null, null))
                 : null;
         }
 
-        private static WirePrompt Bounded(
-            ChatPrompt prompt, IReadOnlyList<AskTab> tabs, int current, string? freeText, string? chatAbout)
+        private static WirePrompt Bounded(AskForm form)
         {
-            var title = Clip(prompt.Title, MaxPromptTitle);
-            var options = prompt.Options.Take(MaxPromptOptions)
+            var title = Clip(form.Prompt.Title, MaxPromptTitle);
+            var options = form.Prompt.Options.Take(MaxPromptOptions)
                 .Select(o => new WireOption(o.Key, Clip(o.Label, MaxPromptText))).ToList();
-            var wireTabs = tabs.Take(MaxPromptOptions)
+            var wireTabs = form.Tabs.Take(MaxPromptOptions)
                 .Select(t => new WireTab(Clip(t.Name, MaxPromptText), t.State.ToString().ToLowerInvariant())).ToList();
+            var ticked = (form.Checked ?? Array.Empty<string>()).Where(k => options.Any(o => o.Key == k)).ToList();
+            var review = (form.Review ?? Array.Empty<AskReviewItem>()).Take(MaxPromptOptions)
+                .Select(r => new WireReviewItem(Clip(r.Question, MaxPromptText), Clip(r.Answer, MaxPromptText))).ToList();
 
-            return new WirePrompt(title, options, PromptFingerprint(title, options, current), wireTabs, current,
-                options.Any(o => o.Key == freeText) ? freeText : null,
-                options.Any(o => o.Key == chatAbout) ? chatAbout : null);
+            string? Known(string? key) => options.Any(o => o.Key == key) ? key : null;
+
+            return new WirePrompt(title, options, PromptFingerprint(title, options, form.CurrentTab, ticked, wireTabs),
+                wireTabs, form.CurrentTab, Known(form.FreeTextKey), Known(form.ChatAboutKey),
+                form.MultiSelect, ticked, form.HasSubmitRow, review,
+                Known(form.SubmitAnswersKey), Known(form.CancelKey), Known(form.CursorKey));
         }
 
         private static string Clip(string text, int max) => text.Length <= max ? text : text[..max];
@@ -993,10 +1019,18 @@ namespace Orbweaver
         // dialog, which is the point — an answer chosen for question 1 must not
         // land on question 2. Sixteen hex characters is ample to tell two
         // screens apart and short enough to go in a field.
-        public static string PromptFingerprint(string title, IEnumerable<WireOption> options, int current)
+        // The boxes ticked are part of it too: a tick is an answer, and a
+        // panel that saw a box clear must not toggle it again once it is set.
+        // So are the tabs' states: which tab is showing cannot be read (see
+        // ParseAskForm), so any change in the bar counts as a different
+        // dialog — strictly more refusals, never fewer.
+        public static string PromptFingerprint(
+            string title, IEnumerable<WireOption> options, int current, IEnumerable<string>? ticked = null,
+            IEnumerable<WireTab>? tabs = null)
         {
             var text = title + "\u0001" + string.Join("\u0002", options.Select(o => o.Key + "\u0003" + o.Label))
-                       + "\u0001" + current;
+                       + "\u0001" + current + "\u0001" + string.Join(",", ticked ?? Array.Empty<string>())
+                       + "\u0001" + string.Join(",", (tabs ?? Array.Empty<WireTab>()).Select(t => t.State + ":" + t.Name));
             return Hash(Encoding.UTF8.GetBytes(text))[..16];
         }
 

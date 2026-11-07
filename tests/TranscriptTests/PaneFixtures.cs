@@ -809,5 +809,357 @@ cancel
 ─────────────────────────────────────────── xxxxxx-xxxxxx ─
 """"";
 
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): a two-question form on its first, single-select question. Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (01-form-q1.txt)
+        internal const string QaFormQ1 = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Color  ☐ Toppings  ✔ Submit  →
+
+Pick a color
+
+❯ 1. Red
+     A warm, bold color
+  2. Blue
+     A cool, calm color
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): the cursor moved onto "Type something." (the footer gains "ctrl+g to edit in Vim"). Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (02-q1-cursor-on-type-something.txt)
+        internal const string QaCursorOnFreeText = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Color  ☐ Toppings  ✔ Submit  →
+
+Pick a color
+
+  1. Red
+     A warm, bold color
+  2. Blue
+     A cool, calm color
+❯ 3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · ctrl+g to edit in Vim · Esc to cancel
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): what Enter on an EMPTY "Type something." does: the whole form is declined. Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (03-q1-free-text-entry.txt)
+        internal const string QaDeclinedByEmptyEnter = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+
+⏺ User declined to answer questions
+  ⎿  · Pick a color (Red / Blue)
+     · Pick toppings (Cheese / Ham / Olives)
+
+✻ Cooked for 2s · done 11:42 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                    ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 | ~/qa307m | 22% (7d:26%) | [.claude]
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): text typed into "Type something.": the row itself is the field, its label replaced. Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (05-q1-free-text-typed.txt)
+        internal const string QaFreeTextTyped = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+
+⏺ User declined to answer questions
+  ⎿  · Pick a color (Red / Blue)
+     · Pick toppings (Cheese / Ham / Olives)
+
+✻ Cooked for 2s · done 11:42 AM
+
+❯ Ask the same two questions again with the AskUserQuestion tool, one call. Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Color  ☐ Toppings  ✔ Submit  →
+
+Pick a color
+
+  1. Red
+     A warm, bold color
+  2. Blue
+     A cool, calm color
+❯ 3. my own answer
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · ctrl+g to edit in Vim · Esc to cancel
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): the multi-select question: [ ] boxes, an unnumbered Submit row. Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (06-q2-multiselect.txt)
+        internal const string QaMultiSelect = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+
+⏺ User declined to answer questions
+  ⎿  · Pick a color (Red / Blue)
+     · Pick toppings (Cheese / Ham / Olives)
+
+✻ Cooked for 2s · done 11:42 AM
+
+❯ Ask the same two questions again with the AskUserQuestion tool, one call. Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☐ Toppings  ✔ Submit  →
+
+Pick toppings
+
+❯ 1. [ ] Cheese
+         Classic melted cheese
+  2. [ ] Ham
+         Savory sliced ham
+  3. [ ] Olives
+         Briny sliced olives
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): one box ticked with Space; the tab already reads ☒. Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (07-q2-after-space.txt)
+        internal const string QaMultiSelectOneTicked = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+
+⏺ User declined to answer questions
+  ⎿  · Pick a color (Red / Blue)
+     · Pick toppings (Cheese / Ham / Olives)
+
+✻ Cooked for 2s · done 11:42 AM
+
+❯ Ask the same two questions again with the AskUserQuestion tool, one call. Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☒ Toppings  ✔ Submit  →
+
+Pick toppings
+
+❯ 1. [✔] Cheese
+         Classic melted cheese
+  2. [ ] Ham
+         Savory sliced ham
+  3. [ ] Olives
+         Briny sliced olives
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): a digit toggled option 3 and did not advance. Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (09-q2-after-digit3.txt)
+        internal const string QaMultiSelectDigitToggled = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+
+⏺ User declined to answer questions
+  ⎿  · Pick a color (Red / Blue)
+     · Pick toppings (Cheese / Ham / Olives)
+
+✻ Cooked for 2s · done 11:42 AM
+
+❯ Ask the same two questions again with the AskUserQuestion tool, one call. Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☒ Toppings  ✔ Submit  →
+
+Pick toppings
+
+  1. [✔] Cheese
+         Classic melted cheese
+❯ 2. [✔] Ham
+         Savory sliced ham
+  3. [✔] Olives
+         Briny sliced olives
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): the Submit tab: "Review your answers", Submit answers / Cancel. Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (10-submit-tab.txt)
+        internal const string QaReview = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307m · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+
+⏺ User declined to answer questions
+  ⎿  · Pick a color (Red / Blue)
+     · Pick toppings (Cheese / Ham / Olives)
+
+✻ Cooked for 2s · done 11:42 AM
+
+❯ Ask the same two questions again with the AskUserQuestion tool, one call. Do nothing else until I answer.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☒ Toppings  ✔ Submit  →
+
+Review your answers
+
+ ● Pick a color
+   → my own answer
+ ● Pick toppings
+   → Cheese, Ham, Olives
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+""""";
+
+        // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
+        // 3): back on question 1 after Left: the chosen option drawn "Blue ✔", the bar still "☐ Toppings". Byte-exact capture-pane -p; the content is QA's own test
+        // form, so nothing needed redacting. (13-after-left.txt)
+        internal const string QaBackOnQ1 = """""
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
+  "Color", single select, options Red and Blue (with short descriptions). Q2: question "Pick toppings", header
+  "Toppings", multiSelect true, options Cheese, Ham, Olives (with short descriptions). Do nothing else until I answer.
+
+⏺ User declined to answer questions
+  ⎿  · Pick a color (Red / Blue)
+     · Pick toppings (Cheese / Ham / Olives)
+
+✻ Cooked for 2s · done 11:42 AM
+
+❯ Ask the same two questions again with the AskUserQuestion tool, one call. Do nothing else until I answer.
+
+⏺ User answered Claude's questions:
+  ⎿  · Pick a color → my own answer
+     · Pick toppings → Cheese, Ham, Olives
+
+⏺ Your answers:
+
+  - Color: you chose "Other" and typed "my own answer", not Red or Blue.
+  - Toppings: Cheese, Ham and Olives (all three).
+
+  If "my own answer" was meant to stand for a specific color, tell me which one.
+
+✻ Worked for 4s · done 11:43 AM
+
+❯ Ask the same two questions once more with the AskUserQuestion tool in one call. Nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☐ Toppings  ✔ Submit  →
+
+Pick a color
+
+❯ 1. Red
+     A warm, bold color
+  2. Blue ✔
+     A cool, calm color
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""""";
+
     }
 }
