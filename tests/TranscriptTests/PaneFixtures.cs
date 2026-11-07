@@ -17,8 +17,17 @@ namespace Orbweaver.Tests
 {
     internal static class PaneFixtures
     {
+        // Every fixture as LF, however the file was checked out. .gitattributes
+        // keeps this file eol=lf, but a tree converted some other way (a
+        // Windows checkout before that entry, a CRLF copy) puts "\r\n" into
+        // these raw strings, and tests that edit a fixture at its "\n"
+        // boundaries then stop matching — PR #219's Windows leg failed four of
+        // them exactly so. The parsers read CRLF regardless (ScreenLines); this
+        // is only so the fixture-editing checks see the bytes tmux wrote.
+        private static string Lf(string text) => text.Replace("\r\n", "\n");
+
         // MacBook, Claude Code 2.1.319, a fresh prompt with its placeholder. (00-startup.txt)
-        internal const string MacPromptStartup = """""
+        internal static readonly string MacPromptStartup = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -64,10 +73,10 @@ namespace Orbweaver.Tests
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Opus 5.5 | ~/permfix | [.claude]
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents
-""""";
+""""");
 
         // MacBook, /permissions, Allow tab (the one it opens on). (01-permissions.txt)
-        internal const string PermissionsAllow = """""
+        internal static readonly string PermissionsAllow = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -113,10 +122,10 @@ namespace Orbweaver.Tests
    ↓ 10. mcp__nocodb__add_column
 
    ←/→ to switch · ↓ to select · Esc to cancel
-""""";
+""""");
 
         // MacBook, /permissions, Ask tab. (02-tab1.txt)
-        internal const string PermissionsAsk = """""
+        internal static readonly string PermissionsAsk = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -162,10 +171,10 @@ namespace Orbweaver.Tests
      1. Add a new rule…
 
    ←/→ to switch · ↓ to select · Esc to cancel
-""""";
+""""");
 
         // MacBook, /permissions, Deny tab. (03-tab2.txt)
-        internal const string PermissionsDeny = """""
+        internal static readonly string PermissionsDeny = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -211,10 +220,10 @@ namespace Orbweaver.Tests
      1. Add a new rule…
 
    ←/→ to switch · ↓ to select · Esc to cancel
-""""";
+""""");
 
         // MacBook, /permissions, Auto mode tab, list scrolled. (04-tab3.txt)
-        internal const string PermissionsAutoMode = """""
+        internal static readonly string PermissionsAutoMode = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -260,13 +269,13 @@ namespace Orbweaver.Tests
    ↓ 10. Hard deny           [x] Built-in rules · 1
 
    ←/→ to switch · ↓ to select · Esc to cancel
-""""";
+""""");
 
         // MacBook, /permissions, Workspace tab. (05-tab4.txt)
         // The capture labelled 07-permissions-tab.txt is byte-identical to this
         // one — the tab never moved when it was taken — so it is not a separate
         // fixture: QA's gate found it running as a duplicate theory case.
-        internal const string PermissionsWorkspace = """""
+        internal static readonly string PermissionsWorkspace = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -312,10 +321,10 @@ namespace Orbweaver.Tests
 
 
    ←/→ to switch · ↓ to select · Esc to cancel
-""""";
+""""");
 
         // MacBook, /permissions, Recently blocked tab, empty. (06-recently-blocked.txt)
-        internal const string PermissionsRecentlyBlockedEmpty = """""
+        internal static readonly string PermissionsRecentlyBlockedEmpty = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -361,10 +370,10 @@ namespace Orbweaver.Tests
    No recent blocks. Commands auto mode blocks will appear here.
 
    ←/→ to switch · ↓ to select · Esc to cancel
-""""";
+""""");
 
         // MacBook, the prompt immediately after Esc closed /permissions. (08-back-at-prompt.txt)
-        internal const string MacPromptAfterEsc = """""
+        internal static readonly string MacPromptAfterEsc = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -410,10 +419,10 @@ namespace Orbweaver.Tests
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Opus 5.5 | ~/permfix | 20% (7d:12%) | [.claude]
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents
-""""";
+""""");
 
         // Mac mini, exit-sess01: the exit dialog, record said waiting. (mini-exit-sess01-exit-dialog.txt)
-        internal const string MiniExitDialog = """""
+        internal static readonly string MiniExitDialog = Lf("""""
 
 ✻ Cogitated for 49s · done 11:26 AM · 1 shell still running
 
@@ -436,10 +445,10 @@ branch, so the task is fully closed. … (ctrl+o to expand)
      3. Stay
 
    Enter to confirm · Esc to cancel
-""""";
+""""");
 
         // Mac mini, openclaw: a populated Recently blocked tab. NOT byte-exact: blank lines stripped and the top of the pane cut off at capture time. (mini-recently-blocked-populated.STRIPPED.txt)
-        internal const string MiniRecentlyBlockedPopulatedStripped = """""
+        internal static readonly string MiniRecentlyBlockedPopulatedStripped = Lf("""""
   - example-sync-job, example-monitor-job and example-check-job
     were switched off automatically after repeated failures.
   - The example-guard and example-notice plugins are only partly
@@ -460,7 +469,7 @@ branch, so the task is fully closed. … (ctrl+o to expand)
     │ | tail -12
    ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
    Enter to approve · r to retry · Esc to approve 1 blocked
-""""";
+""""");
         // Mac mini, openclaw (pane %42): a normal prompt whose upper rule carries
         // the session name. **Reconstructed, not captured into a file**: the
         // capture exists only in the architect's session log, and these lines
@@ -472,16 +481,16 @@ branch, so the task is fully closed. … (ctrl+o to expand)
         // email and profile names, which must be redacted first (see
         // MiniOpenclawQuestionDialog), and when this was written the pane was
         // on a dialog, so there was no prompt to capture anyway.
-        internal const string MiniTitledPromptReconstructed = """""
+        internal static readonly string MiniTitledPromptReconstructed = Lf("""""
 ✻ Cooked for 2s · done 1:47 PM
 ──────────────────────────────────────────────────────────────────── openclaw ─
 ❯ 
 ────────────────────────────────────────────────────────────────────────────────
   Opus 5.5 | ~/.openclaw | [.claude-example]
   ⏵⏵ auto mode on (shift+tab to cycle)
-""""";
+""""");
         // MacBook, a real "Model switch" dialog, byte-exact (QA, CB-307 addendum). ParseDialog does not recognise it (a rule follows its options), so only PaneScreen stands between it and a typed line. (qa/macbook-model-switch-dialog.txt)
-        internal const string MacModelSwitchDialog = """""
+        internal static readonly string MacModelSwitchDialog = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -527,10 +536,10 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
 
 ✻ Waiting for API response · will retry in 2m 40s · check your network
-""""";
+""""");
 
         // The same capture with ONE edit by QA: the two-line wrapped echo of the user's message replaced with `❯ hi`. Derived, not captured. It is the screen that read as a prompt under the first PaneScreen rule, because the short echo put the dialog's top border within three lines of a ❯. (qa/macbook-model-switch-dialog.SHORT-ECHO.txt)
-        internal const string MacModelSwitchDialogShortEcho = """""
+        internal static readonly string MacModelSwitchDialogShortEcho = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -575,7 +584,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
 
 ✻ Waiting for API response · will retry in 2m 40s · check your network
-""""";
+""""");
 
         // Mac mini, openclaw (pane %42): an AskUserQuestion-style dialog, with
         // the session's titled rule (`──── openclaw ─`) BELOW it. Byte-exact
@@ -584,7 +593,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         // replaced by placeholders of the same length, so every line keeps its
         // width. Options carry
         // multi-line descriptions and a rule separates 4 from 5.
-        internal const string MiniOpenclawQuestionDialog = """""
+        internal static readonly string MiniOpenclawQuestionDialog = Lf("""""
 │ runtime, and for that runtime no saved token profile (anthropic:someone00 or
 │ anthropic:prof2) can ever be recorded on an automation, so the scheduler
 │ always refuses it. The only route that passes is the documented
@@ -609,7 +618,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
 Enter to select · ↑/↓ to navigate · Esc to cancel
 ───────────────────────────────────────────────────────────────────── openclaw ─
-""""";
+""""");
 
         // Mac mini, a real idle prompt: titled upper rule, `❯`+NBSP, the "✔ Update installed" line just above the box. Read-only capture (CB-307 addendum, the screen
         // the installed build was reported refusing), **redacted**: every ASCII
@@ -617,7 +626,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         // names and the paths are gone while every digit, space, punctuation
         // mark and box-drawing character — the whole shape a screen parser
         // reads — is exactly as captured.
-        internal const string MiniUpdateLinePrompt = """""
+        internal static readonly string MiniUpdateLinePrompt = Lf("""""
 
 ✻ xxxxxx xxx 1x 22x · xxxx 8:08 xx
 
@@ -642,7 +651,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 ────────────────────────────────────────────────────────────────────────────────
   xxxx 5.5 | ~/xxx-xxxxxx | 17% (7x:12%) | [.xxxxxx]
   ⏵⏵ xxxxxx xxxxxxxxxxx xx (xxxxx+xxx xx xxxxx)
-""""";
+""""");
 
         // Mac mini, a real idle prompt with an agent-team list (`⏺ main`, `◯ …`) drawn UNDER the box. Read-only capture (CB-307 addendum, the screen
         // the installed build was reported refusing), **redacted**: every ASCII
@@ -650,7 +659,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         // names and the paths are gone while every digit, space, punctuation
         // mark and box-drawing character — the whole shape a screen parser
         // reads — is exactly as captured.
-        internal const string MiniTeamListPrompt = """""
+        internal static readonly string MiniTeamListPrompt = Lf("""""
   - 10 xxxxx xxxxxxx xx xxxxxx, xxxx xxx xxxxxxx
   - 11 xxxxxxxxx, xx xxxxxxxxxx xxx xxx xxxx xxxxxxxx xx
     xxxxxx
@@ -700,7 +709,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
   ◯ xxxxx-2  xxxxx: xxxxxxxx xxxxxxx xxxxxx    1x 21x 12x
   ◯ xxxxx-3  xxxxx: xxxxxxxx xxxxxxx xxxxxx     1x 21x 3x
   ◯ xxxxx-4  xxxxx: xxxxxxxx xxxxxxx xxxxxx     1x 21x 1x
-""""";
+""""");
 
         // Mac mini, a real AskUserQuestion form (CB-307 addendum item 3), read
         // with capture-pane only from a live session; nothing was sent to it.
@@ -711,7 +720,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         // the footer) are kept verbatim, since they are what a form is read by.
         // Every line keeps its exact width; spacing, │ frames, rules and the
         // ←/☒/☐/✔/→ marks are as captured.
-        internal const string MiniAskForm = """""
+        internal static readonly string MiniAskForm = Lf("""""
   ⎿  xxxxxxxxxxxx:xxxxxxx xxxx: 👋 xxxxxxxx xxxxx xxxx.
      xxxx xxxxxxxx xxxxxxx: 00_xxxxxx/xxxxxxx_xxxxxxx_xxxxx
      xxx_xxxxxxx_0000-00-00.xxx.
@@ -761,12 +770,12 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 Enter to select · Tab/Arrow keys to navigate · Esc to
 cancel
 ─────────────────────────────────────────── xxxxxx-xxxxxx ─
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): a two-question form on its first, single-select question. Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (01-form-q1.txt)
-        internal const string QaFormQ1 = """""
+        internal static readonly string QaFormQ1 = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -790,12 +799,12 @@ Pick a color
   4. Chat about this
 
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): the cursor moved onto "Type something." (the footer gains "ctrl+g to edit in Vim"). Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (02-q1-cursor-on-type-something.txt)
-        internal const string QaCursorOnFreeText = """""
+        internal static readonly string QaCursorOnFreeText = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -819,12 +828,12 @@ Pick a color
   4. Chat about this
 
 Enter to select · Tab/Arrow keys to navigate · ctrl+g to edit in Vim · Esc to cancel
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): what Enter on an EMPTY "Type something." does: the whole form is declined. Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (03-q1-free-text-entry.txt)
-        internal const string QaDeclinedByEmptyEnter = """""
+        internal static readonly string QaDeclinedByEmptyEnter = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -870,12 +879,12 @@ Enter to select · Tab/Arrow keys to navigate · ctrl+g to edit in Vim · Esc to
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Opus 5.5 | ~/qa307m | 22% (7d:26%) | [.claude]
   ⏵⏵ bypass permissions on (shift+tab to cycle)
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): text typed into "Type something.": the row itself is the field, its label replaced. Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (05-q1-free-text-typed.txt)
-        internal const string QaFreeTextTyped = """""
+        internal static readonly string QaFreeTextTyped = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -907,12 +916,12 @@ Pick a color
   4. Chat about this
 
 Enter to select · Tab/Arrow keys to navigate · ctrl+g to edit in Vim · Esc to cancel
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): the multi-select question: [ ] boxes, an unnumbered Submit row. Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (06-q2-multiselect.txt)
-        internal const string QaMultiSelect = """""
+        internal static readonly string QaMultiSelect = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -947,12 +956,12 @@ Pick toppings
   5. Chat about this
 
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): one box ticked with Space; the tab already reads ☒. Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (07-q2-after-space.txt)
-        internal const string QaMultiSelectOneTicked = """""
+        internal static readonly string QaMultiSelectOneTicked = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -987,12 +996,12 @@ Pick toppings
   5. Chat about this
 
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): a digit toggled option 3 and did not advance. Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (09-q2-after-digit3.txt)
-        internal const string QaMultiSelectDigitToggled = """""
+        internal static readonly string QaMultiSelectDigitToggled = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1027,12 +1036,12 @@ Pick toppings
   5. Chat about this
 
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): the Submit tab: "Review your answers", Submit answers / Cancel. Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (10-submit-tab.txt)
-        internal const string QaReview = """""
+        internal static readonly string QaReview = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1065,12 +1074,12 @@ Ready to submit your answers?
 
 ❯ 1. Submit answers
   2. Cancel
-""""";
+""""");
 
         // Mac mini, QA's throwaway session on its own qa307 socket (CB-307 item
         // 3): back on question 1 after Left: the chosen option drawn "Blue ✔", the bar still "☐ Toppings". Byte-exact capture-pane -p; the content is QA's own test
         // form, so nothing needed redacting. (13-after-left.txt)
-        internal const string QaBackOnQ1 = """""
+        internal static readonly string QaBackOnQ1 = Lf("""""
 
 
 ❯ Use the AskUserQuestion tool right now in ONE call with exactly two questions. Q1: question "Pick a color", header
@@ -1113,10 +1122,10 @@ Pick a color
   4. Chat about this
 
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
-""""";
+""""");
 
         // MacBook, QA's throwaway session: a live two-question form in a 120x45 pane with a short conversation, so the form ends on row 23 and 22 blank rows follow. Byte-exact INCLUDING those trailing blank rows, which are the point: before ScreenLines dropped them, this parsed as nothing. (item3/macbook-live-form-q1.txt)
-        internal const string MacLiveFormTallPane = """""
+        internal static readonly string MacLiveFormTallPane = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1162,10 +1171,10 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 
-""""";
+""""");
 
         // The same capture as QaFormQ1 but byte-exact to its 45 rows, trailing blanks kept. QaFormQ1 was generated with them trimmed, which is how the blank-row defect hid from every test. (item3/01-form-q1.txt)
-        internal const string QaFormQ1FullHeight = """""
+        internal static readonly string QaFormQ1FullHeight = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1211,10 +1220,10 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 
-""""";
+""""");
 
         // MacBook, a throwaway session of Engineer A's on a scratch tmux socket, in a 120x45 pane, right after /clear. Byte-exact. Measured, not assumed: Claude Code pins its input box to the bottom of the pane even when cleared, so a prompt has no blank rows below it; this reads as a prompt before and after the ScreenLines change.
-        internal const string MacClearedPrompt = """""
+        internal static readonly string MacClearedPrompt = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1260,7 +1269,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
   ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PE…
   Opus 5.5 | ~/cb307clear | [.claude]
   ⏵⏵ bypass permissions on (shift+tab to cycle)
-""""";
+""""");
 
         // Mac mini, a QA throwaway session (qa307-mini-d) on build 2f8a228f: a
         // live two-question form drawn near the top of a 120x45 pane, ~20
@@ -1268,7 +1277,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
         // Byte-exact, every row kept. It parsed as nothing on every commit back
         // to 6310763e: the bottom window counted raw rows and held only blanks
         // and that rule. (regress/mini-d-2f8a228f.txt)
-        internal const string MiniFormTitledRuleAtBottom = """""
+        internal static readonly string MiniFormTitledRuleAtBottom = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1314,10 +1323,10 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mini-d ─
-""""";
+""""");
 
         // Mac mini, a QA session started with `claude -n qa-mini-d`: a form at the top, blank rows, and the session's name drawn into the bottom border on the last row. Byte-exact. (item3/named/mini-named-form-q1.txt)
-        internal const string MiniNamedForm = """""
+        internal static readonly string MiniNamedForm = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1363,10 +1372,10 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mini-d ─
-""""";
+""""");
 
         // MacBook, the same with `claude -n qa-mac-d`. Byte-exact. (item3/named/mac-named-form-q1.txt)
-        internal const string MacNamedForm = """""
+        internal static readonly string MacNamedForm = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1412,10 +1421,10 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mac-d ─
-""""";
+""""");
 
         // MacBook, a named session under .claude-board (qa-mac-b). Byte-exact. (item3/named/mac-named-form-board-q1.txt)
-        internal const string MacNamedFormBoard = """""
+        internal static readonly string MacNamedFormBoard = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with high effort · Claude Team
@@ -1461,10 +1470,10 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mac-b ─
-""""";
+""""");
 
         // DERIVED from MacNamedForm: its footer wrapped onto two lines ("…Esc to" / "cancel"), the shape one of Warren's real forms had, under the same named border.
-        internal const string MacNamedFormWrappedFooter = """""
+        internal static readonly string MacNamedFormWrappedFooter = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1511,10 +1520,10 @@ cancel
 
 
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mac-d ─
-""""";
+""""");
 
         // DERIVED from MacNamedForm: the bottom border cut before the name, as tmux does on a narrower pane, leaving a pure rule as the last drawn line.
-        internal const string MacNamedFormClippedName = """""
+        internal static readonly string MacNamedFormClippedName = Lf("""""
 
  ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Opus 5.5 with medium effort · Claude Team
@@ -1560,7 +1569,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-""""";
+""""");
 
     }
 }
