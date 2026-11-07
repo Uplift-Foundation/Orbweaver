@@ -2706,6 +2706,8 @@ namespace Orbweaver
             // id sits, on a display without sub-pixel layout.
             PromptTitle.LineHeight = Math.Ceiling(PromptTitle.FontSize * 1.25);
             PromptOptions.FontSize = 11 * scale;
+            PromptProgress.FontSize = 10 * scale;
+            PromptFreeTextBox.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 
             // CB-267's box sits right over the composer and is read before
@@ -3166,6 +3168,8 @@ namespace Orbweaver
                 _promptSignature = null;
                 _promptArmed = false;
                 _pressedPromptOption = null;
+                HideFreeText();
+                PromptProgress.IsVisible = false;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
                 return;
@@ -3180,7 +3184,13 @@ namespace Orbweaver
             {
                 _promptSignature = signature;
                 _promptShownAt = PromptClock();
+
+                // A different question than the one a text box was opened for.
+                HideFreeText();
             }
+
+            PromptProgress.Text = prompt.Progress;
+            PromptProgress.IsVisible = !string.IsNullOrEmpty(prompt.Progress);
 
             _promptArmed = prompt.ArmedActivation;
 
@@ -3242,7 +3252,56 @@ namespace Orbweaver
             if (control?.DataContext is not ChatPromptOption option) return;
             if (_session is not IRemoteChatPrompts prompts) return;
 
+            // The option that asks for typed text opens a text box and answers
+            // nothing yet. Only when the session can carry text: otherwise it is
+            // an ordinary option, and pressing its key is what AnswerAsync does.
+            if (option.FreeText && _session is IRemoteChatFreeText)
+            {
+                _freeTextOption = option;
+                PromptFreeTextBox.Text = "";
+                PromptFreeText.IsVisible = true;
+                PromptFreeTextBox.Focus();
+                return;
+            }
+
             _ = prompts.AnswerAsync(option);
+        }
+
+        // The free-text option a text box is open for, or null.
+        private ChatPromptOption? _freeTextOption;
+
+        private void HideFreeText()
+        {
+            _freeTextOption = null;
+            PromptFreeText.IsVisible = false;
+            PromptFreeTextBox.Text = "";
+        }
+
+        private void PromptFreeTextBox_KeyDown(object? sender, KeyEventArgs e)
+        {
+            // Enter sends. Nothing handles Escape: see the markup's note.
+            if (e.Key != Key.Enter) return;
+
+            e.Handled = true;
+            SubmitFreeText();
+        }
+
+        private void PromptFreeTextSend_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+            SubmitFreeText();
+        }
+
+        // Internal: driven by the UI suite.
+        internal void SubmitFreeText()
+        {
+            var option = _freeTextOption;
+            var text = (PromptFreeTextBox.Text ?? "").Trim();
+            if (option is null || text.Length == 0) return;
+            if (_session is not IRemoteChatFreeText free) return;
+
+            HideFreeText();
+            _ = free.AnswerFreeTextAsync(option, text);
         }
 
         private void PromptElsewhere_PointerPressed(object? sender, PointerPressedEventArgs e)

@@ -705,7 +705,12 @@ namespace Orbweaver
     // ApprovalId binds an option to the one request it was drawn for (CB-270 Stage
     // 6): a click answers that request or nothing, never whichever one happens to
     // be showing by the time it lands. Null for every other kind of prompt.
-    public sealed record ChatPromptOption(string Key, string Label, string? ApprovalId = null);
+    public sealed record ChatPromptOption(
+        string Key, string Label, string? ApprovalId = null,
+        // CB-307 item 3: the option that opens a text entry ("Type something.")
+        // rather than answering by itself. The panel shows a text box for it and
+        // sends through IRemoteChatFreeText, never through AnswerAsync.
+        bool FreeText = false);
 
     // ArmedActivation marks a prompt whose answer cannot be undone and must not be
     // given by accident: its options ignore presses for a moment after the prompt
@@ -730,7 +735,10 @@ namespace Orbweaver
 
     public sealed record ChatPrompt(
         string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false,
-        string? ElsewhereLabel = null);
+        string? ElsewhereLabel = null,
+        // CB-307 item 3: "Question 2 of 4" for a multi-question form, or null
+        // when the form's current question cannot be told from the screen.
+        string? Progress = null);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can
@@ -802,6 +810,16 @@ namespace Orbweaver
         // The fall back for when the dialog could not be read, which is the only
         // honest answer at that point.
         void AnswerElsewhere();
+    }
+
+    // CB-307 item 3: answering with text. The one place text reaches a dialog,
+    // so it is its own interface rather than a quiet extra on AnswerAsync: a
+    // session that cannot do it simply does not implement this, and the panel
+    // does not offer a text box. Only ever called with the FreeText option of
+    // the prompt currently on show, and nothing here presses Escape.
+    public interface IRemoteChatFreeText
+    {
+        Task AnswerFreeTextAsync(ChatPromptOption option, string text);
     }
 }
 

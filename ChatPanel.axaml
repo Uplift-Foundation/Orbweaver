@@ -578,6 +578,10 @@
                     <!-- Bounded and scrollable: an approval shows its whole
                          command, up to four thousand characters, and a block
                          that tall must not push the buttons off the panel. -->
+                    <!-- "Question 2 of 4" for a multi-question form (CB-307):
+                         only when the screen says which tab is current. -->
+                    <TextBlock x:Name="PromptProgress" IsVisible="False"
+                               FontSize="10" Foreground="#B3FFFFFF"/>
                     <ScrollViewer x:Name="PromptTitleScroll" MaxHeight="150"
                                   VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled">
@@ -610,6 +614,22 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    <!-- The free-text answer (CB-307): shown after the option
+                         that asks for typed text is chosen. Enter sends; there
+                         is deliberately no Escape handling, because on some of
+                         these screens Escape does something other than cancel. -->
+                    <Grid x:Name="PromptFreeText" IsVisible="False" ColumnDefinitions="*,Auto">
+                        <TextBox x:Name="PromptFreeTextBox" Grid.Column="0"
+                                 AcceptsReturn="False" FontSize="11"
+                                 KeyDown="PromptFreeTextBox_KeyDown"/>
+                        <Border x:Name="PromptFreeTextSend" Grid.Column="1"
+                                Margin="4,0,0,0" Padding="9,4" CornerRadius="6"
+                                Background="#33FFFFFF" BorderBrush="#40FFFFFF"
+                                BorderThickness="1" Cursor="Hand"
+                                PointerPressed="PromptFreeTextSend_PointerPressed">
+                            <TextBlock Text="Send" Foreground="#EEFFFFFF" FontSize="11"/>
+                        </Border>
+                    </Grid>
                     <!-- Always offered, not only as a fall back: the dialog's
                          last option is usually "no, and tell Claude what to do
                          differently", which needs a sentence typed rather than
