@@ -60,6 +60,9 @@ public class RemoteControlChatSessionPromptTests
                 return Task.FromResult(NextAnswer);
             };
 
+            // The transport can carry typed text here, so the "Type something."
+            // option is offered; the tests of the withheld case turn it off.
+            Session.CarriesText = true;
             Session.PromptChanged += () => PromptChanges++;
             Session.AssumeMirroringForTests();
         }
@@ -428,5 +431,95 @@ public class RemoteControlChatSessionPromptTests
 
         var bare = new RemoteControlChatSession("rc:.claude:x", ".claude", "x");
         await bare.AnswerAsync(new ChatPromptOption("1", "x"));
+    }
+
+    // Until the transport can carry typed text, the "Type something." option is
+    // withheld from a peer's form: pressing its key alone would leave the far
+    // screen on a text-entry state nothing here can finish.
+    [AvaloniaFact]
+    public async Task TheTypeSomethingOptionIsWithheldWhenTheTransportCannotCarryText()
+    {
+        var h = new Harness();
+        h.Session.CarriesText = false;
+        h.Replies.Enqueue(Shown("fp1"));
+
+        h.Open();
+        await h.Settle();
+
+        Assert.Equal(new[] { "1", "2" }, h.Session.Prompt!.Options.Select(o => o.Key));
+    }
+
+    // --- the wire, as the panel reads it --------------------------------------
+
+    private static MirrorProtocol.WirePrompt Wire(
+        string? freeText = "3", int current = 1, params (string Name, string State)[] tabs) =>
+        new("Which exhibit?",
+            new[]
+            {
+                new MirrorProtocol.WireOption("1", "Exhibit A"),
+                new MirrorProtocol.WireOption("2", "Exhibit B"),
+                new MirrorProtocol.WireOption("3", "Type something."),
+            },
+            "fp9",
+            tabs.Select(t => new MirrorProtocol.WireTab(t.Name, t.State)).ToList(),
+            current, freeText);
+
+    [Fact]
+    public void AFetchedFormBecomesAPromptWithProgressAndAFreeTextOption()
+    {
+        var reply = MapFetch(new RemoteMirrorClient.PromptOutcome(
+            Wire(tabs: new[] { ("A", "answered"), ("B", "open"), ("C", "open"), ("Submit", "submit") }), null));
+
+        Assert.Equal(PromptReplyKind.Prompt, reply.Kind);
+        Assert.Equal("fp9", reply.Fingerprint);
+        Assert.Equal("Question 2 of 3", reply.Prompt!.Progress);
+        Assert.Equal("3", Assert.Single(reply.Prompt.Options, o => o.FreeText).Key);
+    }
+
+    [Fact]
+    public void AnUnknownTabStateReadsAsOpenAndNeverInventsAProgress()
+    {
+        var reply = MapFetch(new RemoteMirrorClient.PromptOutcome(
+            Wire(current: -1, tabs: new[] { ("A", "mystery"), ("B", "open") }), null));
+
+        Assert.Null(reply.Prompt!.Progress);
+    }
+
+    // Looped rather than a [Theory]: the kinds are internal, and a public xUnit
+    // method may not take an internal parameter type.
+    [Fact]
+    public void AFetchErrorMapsToWhatThisSideDoesAboutIt()
+    {
+        var cases = new (string? Code, PromptReplyKind Expected)[]
+        {
+            (MirrorProtocol.ErrNoPrompt, PromptReplyKind.NoPrompt),
+            (MirrorProtocol.ErrUnsupported, PromptReplyKind.Unsupported),
+            (MirrorProtocol.ErrNoPane, PromptReplyKind.Unsupported),
+            (MirrorProtocol.ErrReplyOff, PromptReplyKind.Unsupported),
+            (MirrorProtocol.ErrNoSession, PromptReplyKind.Transient),
+            ("something-new", PromptReplyKind.Transient),
+            (null, PromptReplyKind.Transient),
+        };
+
+        foreach (var (code, expected) in cases)
+            Assert.Equal(expected, MapFetch(new RemoteMirrorClient.PromptOutcome(null, code)).Kind);
+    }
+
+    [Fact]
+    public void AnAnswerCodeMapsToWhatThisSideDoesAboutIt()
+    {
+        var cases = new (string? Code, AnswerKind Expected)[]
+        {
+            (null, AnswerKind.Done),
+            (MirrorProtocol.ErrPromptChanged, AnswerKind.Changed),
+            (MirrorProtocol.ErrBadKey, AnswerKind.Changed),
+            (MirrorProtocol.ErrUnsupported, AnswerKind.Unsupported),
+            (MirrorProtocol.ErrNoPane, AnswerKind.Unsupported),
+            (MirrorProtocol.ErrReplyOff, AnswerKind.Unsupported),
+            ("something-new", AnswerKind.Failed),
+        };
+
+        foreach (var (code, expected) in cases)
+            Assert.Equal(expected, MapAnswerCode(code));
     }
 }

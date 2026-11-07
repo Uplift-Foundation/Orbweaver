@@ -24,6 +24,28 @@ namespace Orbweaver
             return form.Prompt with { Options = options, Progress = ProgressOf(form) };
         }
 
+        // A prompt the far Buddy read off its own pane and sent over the link, as
+        // the panel shows it. Tab states travel as lowercase words; anything
+        // unrecognised reads as Open, the cautious end (it can only withhold a
+        // question number, never invent one).
+        internal static ChatPrompt FromWire(MirrorProtocol.WirePrompt wire)
+        {
+            var tabs = (wire.Tabs ?? System.Array.Empty<MirrorProtocol.WireTab>())
+                .Select(t => new AskTab(t.Name, t.State switch
+                {
+                    "answered" => AskTabState.Answered,
+                    "submit" => AskTabState.Submit,
+                    _ => AskTabState.Open,
+                }))
+                .ToList();
+
+            var prompt = new ChatPrompt(
+                wire.Title,
+                wire.Options.Select(o => new ChatPromptOption(o.Key, o.Label)).ToList());
+
+            return ToPrompt(new AskForm(prompt, tabs, wire.Current, wire.FreeTextKey, wire.ChatAboutKey));
+        }
+
         // Questions, not tabs: the Submit tab is where the form ends, not one
         // of its questions. A single-question form claims nothing, since "1 of
         // 1" is noise.

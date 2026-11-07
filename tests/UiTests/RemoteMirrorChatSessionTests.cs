@@ -66,6 +66,12 @@ public class RemoteMirrorChatSessionTests : IDisposable
     // CB-307 addendum: the far pane's screen for the typing gate. Null leaves
     // the gate unwired, which is every test written before it.
     private string? _farScreen;
+
+    // CB-307 item 3: the keys the far side pressed to answer a form, and the
+    // state its session reports (the roster's `waiting` is what makes a panel
+    // ask for a form at all). Null state leaves the status as it always was.
+    private readonly List<string> _pressed = new();
+    private string? _farState;
     private bool _typeResult = true;
     private bool _mangle;
     private bool _mangleInput;
@@ -687,6 +693,82 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         Assert.Equal(ChatSendOutcome.Sent, await session.SendAsync("please carry on"));
         Assert.Single(_typed);
+    }
+
+    // --- CB-307 item 3: a question form on the far screen ---------------------
+
+    // The whole round trip over the harness's real server and client: the far
+    // roster says waiting, the panel asks for the form, shows it, and a click
+    // presses exactly that key on the far side — nothing was typed.
+    [AvaloniaFact]
+    public async Task AFormOnTheFarScreenIsShownAndAnAnswerPressesItsKey()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.Equal("Question 2 of 3", session.Prompt!.Progress);
+        Assert.StartsWith("xxxxx xx xxx xxxxx", session.Prompt.Title);
+
+        // "Type something." is withheld until the link can carry text.
+        Assert.DoesNotContain(session.Prompt.Options, o => o.FreeText);
+        Assert.DoesNotContain(session.Prompt.Options, o => o.Label.StartsWith("Type something"));
+
+        await session.AnswerAsync(session.Prompt.Options[1]);
+
+        Assert.Equal(new[] { "2" }, _pressed);
+        Assert.Empty(_typed);
+    }
+
+    // The screen moves on between the form being shown and the click: the far
+    // side presses nothing, and the panel is shown what is there now with a note
+    // saying so, which the user can answer.
+    [AvaloniaFact]
+    public async Task AnAnswerToAFormThatMovedOnPressesNothingAndShowsTheNewOne()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+        var shown = session.Prompt!;
+
+        _farScreen = PaneFixtures.MacModelSwitchDialog;
+        await session.AnswerAsync(shown.Options[1]);
+
+        Assert.Empty(_pressed);
+        Assert.NotEqual(shown.Title, session.Prompt?.Title);
+        Assert.StartsWith("Opus 5.5's safeguards flagged this session.", session.Prompt!.Title);
+        Assert.Contains(session.History, t => t.Text.Contains("had changed, so nothing was answered", StringComparison.Ordinal));
+    }
+
+    // The control: a far session that is not waiting is never asked, so no form
+    // is fetched and nothing can be pressed.
+    [AvaloniaFact]
+    public async Task AFarSessionThatIsNotWaitingIsNeverAskedForAForm()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => false, attempts: 30);
+
+        Assert.Null(session.Prompt);
+        Assert.Empty(_pressed);
+        Assert.DoesNotContain(MirrorProtocol.Prompt, _toServer);
+    }
+
+    private static async Task PumpUntilAsync(Func<bool> done, int attempts = 200)
+    {
+        for (var i = 0; i < attempts && !done(); i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
     }
 
     // --- CB-52: the integrity wording ------------------------------------------
@@ -1866,7 +1948,8 @@ public class RemoteMirrorChatSessionTests : IDisposable
             Source = SessionSource.ClaudeCode,
             TranscriptPath = _path,
             TmuxPane = "%1",
-            SessionPid = 4242
+            SessionPid = 4242,
+            State = _farState ?? new SessionStatus().State
         }));
 
         BuildServer();
@@ -1920,7 +2003,8 @@ public class RemoteMirrorChatSessionTests : IDisposable
             // CB-252: never the developer's real persona files.
             UserConfigDirs: () => Array.Empty<string>(),
             CapturePane: _farScreen is null ? null : _ => Task.FromResult<string?>(_farScreen),
-            CanReadPane: _farScreen is null ? null : _ => true));
+            CanReadPane: _farScreen is null ? null : _ => true,
+            PressKey: _farScreen is null ? null : (_, key) => { _pressed.Add(key); return Task.FromResult(true); }));
 
     private void BuildClient()
     {

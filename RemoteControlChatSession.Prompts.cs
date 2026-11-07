@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -49,10 +50,16 @@ namespace Orbweaver
         // How often an unchanged waiting form is re-read.
         internal static readonly TimeSpan PollEvery = TimeSpan.FromSeconds(3);
 
-        // The seams. Null means "not wired", which reads as unsupported, so a
-        // session built before the transport exists simply never asks.
+        // The seams, defaulting to the link's client. A test replaces them to
+        // hand over answers without a socket.
         internal Func<CancellationToken, Task<PromptReply>>? Ask { get; set; }
         internal Func<string, string?, string?, Task<AnswerReply>>? Answer { get; set; }
+
+        // Whether the transport can carry typed text with an answer. It cannot
+        // yet, so the "Type something" option is withheld from a peer's form
+        // rather than offered and left half-done: pressing its key alone puts
+        // the far screen on a text-entry state nothing here can finish.
+        internal bool CarriesText { get; set; }
         internal Func<bool>? WaitingNow { get; set; }
         internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
 
@@ -111,9 +118,7 @@ namespace Orbweaver
                         return;
                     }
 
-                    var reply = Ask is null
-                        ? new PromptReply(PromptReplyKind.Unsupported)
-                        : await SafeAsk(ct).ConfigureAwait(true);
+                    var reply = await SafeAsk(ct).ConfigureAwait(true);
 
                     if (ct.IsCancellationRequested) return;
                     ApplyReply(reply);
@@ -135,7 +140,7 @@ namespace Orbweaver
 
         private async Task<PromptReply> SafeAsk(CancellationToken ct)
         {
-            try { return await Ask!(ct).ConfigureAwait(true); }
+            try { return await (Ask ?? AskTheFarSide)(ct).ConfigureAwait(true); }
             catch (OperationCanceledException) { throw; }
             catch { return new PromptReply(PromptReplyKind.Transient); }
         }
@@ -164,6 +169,9 @@ namespace Orbweaver
 
         private void SetPrompt(ChatPrompt prompt, string? fingerprint)
         {
+            if (!CarriesText && prompt.Options.Any(o => o.FreeText))
+                prompt = prompt with { Options = prompt.Options.Where(o => !o.FreeText).ToList() };
+
             // The same form again is not a change, so a 3-second re-read does not
             // restart the panel's arming clock or close a half-typed text box.
             if (_promptFingerprint is not null && _promptFingerprint == fingerprint && Prompt is not null) return;
@@ -202,7 +210,7 @@ namespace Orbweaver
 
         private async Task AnswerWith(ChatPromptOption option, string? text)
         {
-            if (Prompt is null || Answer is null) return;
+            if (Prompt is null) return;
 
             // The fingerprint the user saw, sent so the far side can refuse an
             // answer to a form that has since moved on. Cleared first, as the
@@ -212,7 +220,7 @@ namespace Orbweaver
             ClearPrompt();
 
             AnswerReply reply;
-            try { reply = await Answer(option.Key, fingerprint, text).ConfigureAwait(true); }
+            try { reply = await (Answer ?? AnswerOnTheFarSide)(option.Key, fingerprint, text).ConfigureAwait(true); }
             catch { reply = new AnswerReply(AnswerKind.Failed); }
 
             switch (reply.Kind)
@@ -243,6 +251,68 @@ namespace Orbweaver
                     break;
             }
         }
+
+        // --- the transport: the link's client, read through each time ----------
+
+        private async Task<PromptReply> AskTheFarSide(CancellationToken ct)
+        {
+            if (RemoteControlSessions.MirrorClientFor(_account) is not { } client)
+                return new PromptReply(PromptReplyKind.Transient);
+
+            // A far Buddy that predates PROMPT and ANSWER: nothing to ask.
+            if (!client.SpeaksPrompts(_remoteName)) return new PromptReply(PromptReplyKind.Unsupported);
+
+            return MapFetch(await client.FetchPromptAsync(_remoteName).ConfigureAwait(true));
+        }
+
+        private async Task<AnswerReply> AnswerOnTheFarSide(string key, string? fingerprint, string? text)
+        {
+            if (RemoteControlSessions.MirrorClientFor(_account) is not { } client || fingerprint is null)
+                return new AnswerReply(AnswerKind.Failed);
+
+            var code = await client.AnswerPromptAsync(_remoteName, key, fingerprint).ConfigureAwait(true);
+            var kind = MapAnswerCode(code);
+            if (kind != AnswerKind.Changed) return new AnswerReply(kind);
+
+            // The screen moved on before the key was pressed, so nothing was.
+            // Read what is there now, so the user answers that.
+            return MapFetch(await client.FetchPromptAsync(_remoteName).ConfigureAwait(true)) is
+                { Kind: PromptReplyKind.Prompt, Prompt: { } now } fresh
+                    ? new AnswerReply(AnswerKind.Changed, now, fresh.Fingerprint)
+                    : new AnswerReply(AnswerKind.Failed);
+        }
+
+        internal static PromptReply MapFetch(RemoteMirrorClient.PromptOutcome outcome)
+        {
+            if (outcome.Prompt is { } wire && outcome.Error is null)
+                return new PromptReply(PromptReplyKind.Prompt, AskFormView.FromWire(wire), wire.Fingerprint);
+
+            return outcome.Error switch
+            {
+                MirrorProtocol.ErrNoPrompt => new PromptReply(PromptReplyKind.NoPrompt),
+
+                // This far Buddy cannot answer, cannot read its pane, or has had
+                // replying switched off: asking again will not change that.
+                MirrorProtocol.ErrUnsupported or MirrorProtocol.ErrNoPane or MirrorProtocol.ErrReplyOff =>
+                    new PromptReply(PromptReplyKind.Unsupported),
+
+                _ => new PromptReply(PromptReplyKind.Transient),
+            };
+        }
+
+        internal static AnswerKind MapAnswerCode(string? code) => code switch
+        {
+            null => AnswerKind.Done,
+
+            // The screen no longer shows what the answer was chosen from, or the
+            // key is not on it any more: the far side pressed nothing.
+            MirrorProtocol.ErrPromptChanged or MirrorProtocol.ErrBadKey => AnswerKind.Changed,
+
+            MirrorProtocol.ErrUnsupported or MirrorProtocol.ErrNoPane or MirrorProtocol.ErrReplyOff =>
+                AnswerKind.Unsupported,
+
+            _ => AnswerKind.Failed,
+        };
 
         // The terminal is on another machine, so there is nothing to bring
         // forward here: say where it is.
