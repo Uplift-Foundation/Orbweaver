@@ -272,37 +272,40 @@ public class ChatPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-not-at-prompt.png");
     }
 
-    // CB-307 addendum item 3: a question form, as the panel shows it. The whole
-    // question as the title, "Question 2 of 3", the options as buttons (the
-    // "Type something." one is the text answer), and the terminal link naming the
-    // machine the form is on. Invented wording, shaped like the real form: the
-    // capture is for the layout, and a real form's text is not committed.
-    [AvaloniaFact]
-    public void AQuestionFormWithProgressAndATypedAnswerOption()
+    // CB-307 addendum item 3: three real question-form screens, as the panel
+    // shows them. Each prompt is what the parser makes of QA's real capture of a
+    // two-question form (single select, then multiSelect), through the same view
+    // the app uses, so the picture is the app's own reading of a real screen:
+    // a single-select with the "Type something." answer, a multiSelect as a
+    // checklist with its explicit Submit button, and the review screen with its
+    // two armed buttons and the answers it lists.
+    private void OpenForm(string screen, string file)
     {
+        var form = ChatTranscript.ParseAskForm(screen)!;
         var fake = NewFake(new[]
         {
-            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "plan the migration" },
-            new ChatTurn { Role = ChatRole.Assistant, Text = "Two things to settle before I start." },
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "ask me two questions" },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "Two quick questions." },
         }, displayName: "evidence");
 
-        fake.Prompt = new ChatPrompt(
-            "Which environment should the migration run against first, given that staging is shared with QA this week?",
-            new[]
-            {
-                new ChatPromptOption("1", "Staging"),
-                new ChatPromptOption("2", "A fresh copy of production"),
-                new ChatPromptOption("3", "Type something.", FreeText: true),
-                new ChatPromptOption("4", "Chat about this"),
-            },
-            ElsewhereLabel: "Answer on mac-mini",
-            Progress: "Question 2 of 3");
+        fake.Prompt = AskFormView.ToPrompt(form) with { ElsewhereLabel = "Answer on mac-mini" };
 
         ChatPanel.OpenFor(NewOrb(), fake);
         ScreenshotHelper.Flush();
-        ScreenshotHelper.CaptureAlreadyShown(
-            ChatPanelTestAccess.Instance!, "chat-panel-ask-form.png");
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, file);
     }
+
+    [AvaloniaFact]
+    public void ASingleSelectQuestionWithATypedAnswerOption() =>
+        OpenForm(AskFormFixtures.SingleSelectQ1, "chat-panel-ask-form.png");
+
+    [AvaloniaFact]
+    public void AMultiSelectQuestionAsAChecklistWithItsSubmitButton() =>
+        OpenForm(AskFormFixtures.MultiSelectTwoChecked, "chat-panel-ask-multiselect.png");
+
+    [AvaloniaFact]
+    public void TheReviewScreenWithItsTwoArmedButtons() =>
+        OpenForm(AskFormFixtures.SubmitTab, "chat-panel-ask-review.png");
 
     // CB-270 Stage 3: a gateway chat in which an agent ran two tools between the
     // two halves of its reply, the second of which failed. One tool line in the

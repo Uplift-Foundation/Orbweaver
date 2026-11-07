@@ -1714,4 +1714,97 @@ public class LocalCliChatSessionTests : IDisposable
             + "tmux_socket=empty tmux_pane=empty tmux_bin=empty can_read_pane=false",
             line);
     }
+
+    // --- CB-307 item 3: answering a question form from the local panel ----------
+
+    private static (LocalCliChatSession Session, List<string> Pressed) FormSession()
+    {
+        var pressed = new List<string>();
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        })
+        {
+            PressKey = (_, key) => { pressed.Add(key); return Task.FromResult(true); },
+        };
+
+        return (session, pressed);
+    }
+
+    private static async Task WithReplyOn(Func<Task> work)
+    {
+        var before = OrbweaverSettings.ClaudeCodeReplyEnabled;
+        try
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = true;
+            await work();
+        }
+        finally
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = before;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AnOrdinaryOptionPressesItsDigit()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pressed) = FormSession();
+
+            await session.AnswerAsync(new ChatPromptOption("2", "Blue"));
+
+            Assert.Equal(new[] { "2" }, pressed);
+        });
+    }
+
+    // The multi-select's explicit Submit is Right, which moves on with the ticks
+    // kept, and never a digit.
+    [AvaloniaFact]
+    public async Task TheSubmitButtonPressesRightAndNotADigit()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pressed) = FormSession();
+
+            await session.AnswerAsync(new ChatPromptOption(AskFormView.CommitKey, "Submit"));
+
+            Assert.Equal(new[] { "Right" }, pressed);
+        });
+    }
+
+    // On a single-select question that digit selects the row empty, which
+    // declines the whole form: it is never pressed.
+    [AvaloniaFact]
+    public async Task TheFreeTextOptionIsNeverPressedByItsDigit()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pressed) = FormSession();
+
+            await session.AnswerAsync(new ChatPromptOption("3", "Type something.", FreeText: true));
+
+            Assert.Empty(pressed);
+        });
+    }
+
+    // A local form does not offer the typed answer yet: the option is not among
+    // the buttons, and the form is otherwise read exactly as the app reads it.
+    [Fact]
+    public void ALocalFormWithholdsTheTypedAnswerOptionUntilItCanDoIt()
+    {
+        var prompt = LocalCliChatSession.ReadPrompt(AskFormFixtures.SingleSelectQ1)!;
+
+        Assert.DoesNotContain(prompt.Options, o => o.FreeText);
+        Assert.DoesNotContain(prompt.Options, o => o.Label.StartsWith("Type something"));
+        Assert.Equal(new[] { "Red", "Blue", "Chat about this" }, prompt.Options.Select(o => o.Label));
+    }
+
+    [Fact]
+    public void ALocalMultiSelectOffersItsBoxesChatAndSubmit()
+    {
+        var prompt = LocalCliChatSession.ReadPrompt(AskFormFixtures.MultiSelectQ2)!;
+
+        Assert.Equal(new[] { "1", "2", "3", "5", AskFormView.CommitKey }, prompt.Options.Select(o => o.Key));
+    }
 }

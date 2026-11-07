@@ -1639,8 +1639,21 @@ namespace Orbweaver
             }
         }
 
-        internal static ChatPrompt? ReadPrompt(string screen) =>
-            ChatTranscript.ParseAskForm(screen) is { } form ? AskFormView.ToPrompt(form) : ChatTranscript.ParseDialog(screen);
+        // Pressing a key in this session's pane. A seam so a test can count the
+        // keys an answer sends; the default is the real tmux/terminal press.
+        internal Func<SessionStatus, string, Task<bool>>? PressKey { get; init; }
+
+        // A local form's "Type something." answer is not wired yet: it needs the
+        // same cursor-move, type, read-back, Enter procedure the mirror runs, and
+        // a second copy of it is how the two drift. Until then the option is not
+        // offered here, and "Answer in the terminal" is the way to give it.
+        internal static ChatPrompt? ReadPrompt(string screen)
+        {
+            if (ChatTranscript.ParseAskForm(screen) is not { } form) return ChatTranscript.ParseDialog(screen);
+
+            var prompt = AskFormView.ToPrompt(form);
+            return prompt with { Options = prompt.Options.Where(o => !o.FreeText).ToList() };
+        }
 
         // internal: the transitions around a prompt are what decide whether the
         // panel is still offering buttons for a dialog that has been answered,
@@ -1661,13 +1674,23 @@ namespace Orbweaver
                 return;
             }
 
+            // The free-text option is never pressed by its digit: on a single-
+            // select question that selects it empty, which declines the whole
+            // form. (Typing into it locally is not offered yet, so the option is
+            // withheld from a local form's buttons; see ReadPrompt.)
+            if (option.FreeText) return;
+
+            // The explicit Submit button of a multi-select is Right, which moves
+            // on with the ticks kept; every other option is its own digit.
+            var key = option.Key == AskFormView.CommitKey ? "Right" : option.Key;
+
             // Cleared first. The hook will report the session generating again
             // within a moment, but the buttons should stop being clickable the
             // instant one is clicked rather than staying live for a second
             // answer to the dialog that is already gone.
             SetPrompt(null);
 
-            if (await TerminalFocuser.SendPaneKey(_status, option.Key)) return;
+            if (await (PressKey ?? TerminalFocuser.SendPaneKey)(_status, key)) return;
 
             Note("Couldn't answer that in the terminal.");
 

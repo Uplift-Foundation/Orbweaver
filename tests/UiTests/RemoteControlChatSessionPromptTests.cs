@@ -522,4 +522,42 @@ public class RemoteControlChatSessionPromptTests
         foreach (var (code, expected) in cases)
             Assert.Equal(expected, MapAnswerCode(code));
     }
+
+    // The free-text option is never answered by its key: on the far screen that
+    // digit would select it empty, which declines the whole form. Pressing it
+    // without text sends nothing and says what to do.
+    [AvaloniaFact]
+    public async Task TheFreeTextOptionIsNeverSentWithoutText()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[2]);
+
+        Assert.Empty(h.Answers);
+        Assert.Contains(h.Session.History, t => t.Text.Contains("in the box, then send it", StringComparison.Ordinal));
+        Assert.NotNull(h.Session.Prompt);
+    }
+
+    // The explicit Submit button's answer goes out under its own key, with the
+    // fingerprint the user saw, and not as a digit.
+    [AvaloniaFact]
+    public async Task TheSubmitButtonIsSentUnderTheCommitKey()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(new PromptReply(PromptReplyKind.Prompt, new ChatPrompt("Pick toppings?",
+            new[]
+            {
+                new ChatPromptOption("1", "\u2610 Cheese"),
+                new ChatPromptOption(AskFormView.CommitKey, "Submit"),
+            }), "fp7"));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[1]);
+
+        Assert.Equal((AskFormView.CommitKey, "fp7", (string?)null), Assert.Single(h.Answers));
+    }
 }

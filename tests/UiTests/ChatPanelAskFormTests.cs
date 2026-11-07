@@ -386,7 +386,7 @@ public class ChatPanelAskFormTests : IDisposable
     {
         var (panel, _) = Open(SubmitTab());
 
-        Assert.Equal("Ready to submit your answers?", panel.FindControl<TextBlock>("PromptTitle")!.Text);
+        Assert.StartsWith("Ready to submit your answers?", panel.FindControl<TextBlock>("PromptTitle")!.Text);
         var labels = panel.FindControl<ItemsControl>("PromptOptions")!.ItemsPanelRoot!.Children
             .Select(c => ((Control)c).GetVisualDescendants().OfType<TextBlock>().First().Text).ToList();
         Assert.Equal(new[] { "Submit answers", "Cancel" }, labels);

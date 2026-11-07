@@ -710,17 +710,63 @@ public class RemoteMirrorChatSessionTests : IDisposable
         var session = await OpenAsync();
         await PumpUntilAsync(() => session.Prompt is not null);
 
-        Assert.Equal("Question 2 of 3", session.Prompt!.Progress);
+        // The screen cannot say which tab is showing, so no number is claimed.
+        Assert.Null(session.Prompt!.Progress);
         Assert.StartsWith("xxxxx xx xxx xxxxx", session.Prompt.Title);
 
-        // "Type something." is withheld until the link can carry text.
-        Assert.DoesNotContain(session.Prompt.Options, o => o.FreeText);
-        Assert.DoesNotContain(session.Prompt.Options, o => o.Label.StartsWith("Type something"));
+        // The link carries text now, so "Type something." is offered as the box.
+        Assert.Equal("5", Assert.Single(session.Prompt.Options, o => o.FreeText).Key);
 
         await session.AnswerAsync(session.Prompt.Options[1]);
 
         Assert.Equal(new[] { "2" }, _pressed);
         Assert.Empty(_typed);
+    }
+
+    // A multiSelect over the real link: ticking is a digit, and the explicit
+    // Submit button is Right on the far side — never a digit, never typed.
+    [AvaloniaFact]
+    public async Task AMultiSelectTicksWithADigitAndCommitsWithRight()
+    {
+        _farScreen = AskFormFixtures.MultiSelectQ2;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.Equal(new[] { "\u2610 Cheese", "\u2610 Ham", "\u2610 Olives" },
+            session.Prompt!.Options.Take(3).Select(o => o.Label));
+        Assert.Equal(AskFormView.CommitKey, session.Prompt.Options[^1].Key);
+
+        await session.AnswerAsync(session.Prompt.Options[1]);
+        Assert.Equal(new[] { "2" }, _pressed);
+
+        // The same form again, as the next poll reads it; commit it.
+        await PumpUntilAsync(() => session.Prompt is not null);
+        await session.AnswerAsync(session.Prompt!.Options[^1]);
+
+        Assert.Equal(new[] { "2", "Right" }, _pressed);
+        Assert.Empty(_typed);
+    }
+
+    // The Submit tab over the real link: "Submit answers" presses its own key.
+    [AvaloniaFact]
+    public async Task TheReviewScreenOffersSubmitAnswersAndCancelAndPressesOnlyTheChosenOne()
+    {
+        _farScreen = AskFormFixtures.SubmitTab;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.True(session.Prompt!.ArmedActivation);
+        Assert.Equal(new[] { "Submit answers", "Cancel" }, session.Prompt.Options.Select(o => o.Label));
+
+        await session.AnswerAsync(session.Prompt.Options[0]);
+
+        Assert.Equal(new[] { "1" }, _pressed);
     }
 
     // The screen moves on between the form being shown and the click: the far

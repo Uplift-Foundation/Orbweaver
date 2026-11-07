@@ -55,11 +55,12 @@ namespace Orbweaver
         internal Func<CancellationToken, Task<PromptReply>>? Ask { get; set; }
         internal Func<string, string?, string?, Task<AnswerReply>>? Answer { get; set; }
 
-        // Whether the transport can carry typed text with an answer. It cannot
-        // yet, so the "Type something" option is withheld from a peer's form
-        // rather than offered and left half-done: pressing its key alone puts
-        // the far screen on a text-entry state nothing here can finish.
-        internal bool CarriesText { get; set; }
+        // Whether the transport can carry typed text with an answer. It can: the
+        // far side moves the cursor onto the row, types, reads it back and only
+        // then presses Enter. Kept as a switch because a form's "Type
+        // something." option is withheld whenever it is false, rather than
+        // offered and left half-done.
+        internal bool CarriesText { get; set; } = true;
         internal Func<bool>? WaitingNow { get; set; }
         internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
 
@@ -212,6 +213,15 @@ namespace Orbweaver
         {
             if (Prompt is null) return;
 
+            // The free-text option is never answered by its key: on the far
+            // screen that digit would select it empty, which declines the whole
+            // form. It is answered with text, from the box the panel opens.
+            if (option.FreeText && text is null)
+            {
+                Note($"Type your answer for {_remoteName} in the box, then send it.");
+                return;
+            }
+
             // The fingerprint the user saw, sent so the far side can refuse an
             // answer to a form that has since moved on. Cleared first, as the
             // local session does: the buttons stop being live the instant one is
@@ -270,7 +280,14 @@ namespace Orbweaver
             if (RemoteControlSessions.MirrorClientFor(_account) is not { } client || fingerprint is null)
                 return new AnswerReply(AnswerKind.Failed);
 
-            var code = await client.AnswerPromptAsync(_remoteName, key, fingerprint).ConfigureAwait(true);
+            // Three different acts, each its own call: the explicit Submit button
+            // moves a multi-select on with its ticks kept, typed text goes into
+            // the free-text row, and anything else is a digit read off the screen.
+            var code = key == AskFormView.CommitKey
+                ? await client.CommitPromptAsync(_remoteName, fingerprint).ConfigureAwait(true)
+                : text is not null
+                    ? await client.AnswerFreeTextAsync(_remoteName, key, fingerprint, text).ConfigureAwait(true)
+                    : await client.AnswerPromptAsync(_remoteName, key, fingerprint).ConfigureAwait(true);
             var kind = MapAnswerCode(code);
             if (kind != AnswerKind.Changed) return new AnswerReply(kind);
 

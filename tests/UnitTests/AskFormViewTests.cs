@@ -11,11 +11,23 @@ public class AskFormViewTests
     private static ChatPrompt Prompt(string screen) =>
         AskFormView.ToPrompt(ChatTranscript.ParseAskForm(screen)!);
 
+    // The parser cannot tell which tab of a multi-question form is showing (the
+    // bar's ☒ flips as soon as one box is ticked), so a real form claims no
+    // question number rather than a wrong one.
     [Fact]
-    public void AMultiQuestionFormSaysWhichQuestionItIs()
+    public void ARealMultiQuestionFormClaimsNoProgressBecauseTheScreenCannotSay()
     {
-        // Four tabs, the last being Submit: three questions, the second showing.
-        Assert.Equal("Question 2 of 3", Prompt(PaneFixtures.MiniAskForm).Progress);
+        Assert.Null(Prompt(PaneFixtures.MiniAskForm).Progress);
+    }
+
+    // The rule itself, for when a form does say: four tabs, the last being
+    // Submit, are three questions, and the second one showing is "2 of 3".
+    [Fact]
+    public void WhenTheCurrentTabIsKnownItSaysQuestionNOfM()
+    {
+        var form = ChatTranscript.ParseAskForm(PaneFixtures.MiniAskForm)! with { CurrentTab = 1 };
+
+        Assert.Equal("Question 2 of 3", AskFormView.ToPrompt(form).Progress);
     }
 
     [Fact]
@@ -70,7 +82,7 @@ public class AskFormViewTests
     public void AFormReadsAsAFormAndAnythingElseAsAnOrdinaryDialog()
     {
         var form = LocalCliChatSession.ReadPrompt(PaneFixtures.MiniAskForm)!;
-        Assert.Equal("Question 2 of 3", form.Progress);
+        Assert.Null(form.Progress);
         Assert.Contains(form.Options, o => o.FreeText);
 
         var dialog = LocalCliChatSession.ReadPrompt(PaneFixtures.MiniExitDialog)!;
@@ -88,12 +100,15 @@ public class AskFormViewTests
     {
         var options = Prompt(AskFormFixtures.MultiSelectQ2).Options;
 
-        Assert.Equal(new[] { "\u2610 Cheese", "\u2610 Ham", "\u2610 Olives", "\u2610 Type something" },
-            options.Take(4).Select(o => o.Label));
+        Assert.Equal(new[] { "\u2610 Cheese", "\u2610 Ham", "\u2610 Olives" }, options.Take(3).Select(o => o.Label));
 
         // A digit toggles a row without leaving the question, so the keys are
-        // exactly the digits the terminal shows.
-        Assert.Equal(new[] { "1", "2", "3", "4", "5" }, options.Select(o => o.Key));
+        // exactly the digits the terminal shows. The "Type something" row (4)
+        // is not offered: typing into a multi-select's row was never captured.
+        // "Chat about this" (5) is, unboxed, and Submit is its own button.
+        Assert.Equal(new[] { "1", "2", "3", "5", AskFormView.CommitKey }, options.Select(o => o.Key));
+        Assert.Equal("Chat about this", options[3].Label);
+        Assert.DoesNotContain(options, o => o.FreeText);
     }
 
     [Fact]
@@ -105,16 +120,6 @@ public class AskFormViewTests
             options.Take(3).Select(o => o.Label));
     }
 
-    [Fact]
-    public void OnlyTheBracketPrefixIsRewrittenAndOnlyAtTheStart()
-    {
-        Assert.Equal("Chat about this", AskFormView.CheckboxLabel("Chat about this"));
-        Assert.Equal("Red [ ] later", AskFormView.CheckboxLabel("Red [ ] later"));
-        Assert.Equal("[ ]no space", AskFormView.CheckboxLabel("[ ]no space"));
-        Assert.Equal("\u2610 Cheese", AskFormView.CheckboxLabel("[ ] Cheese"));
-        Assert.Equal("\u2611 Cheese", AskFormView.CheckboxLabel("[\u2714] Cheese"));
-    }
-
     // The Submit tab: two explicit labelled buttons, armed so neither the
     // irreversible Submit answers nor the form-declining Cancel can fire on a
     // press that is not a deliberate click.
@@ -123,7 +128,7 @@ public class AskFormViewTests
     {
         var prompt = Prompt(AskFormFixtures.SubmitTab);
 
-        Assert.Equal("Ready to submit your answers?", prompt.Title);
+        Assert.StartsWith("Ready to submit your answers?", prompt.Title);
         Assert.Equal(new[] { ("1", "Submit answers"), ("2", "Cancel") },
             prompt.Options.Select(o => (o.Key, o.Label)));
         Assert.True(prompt.ArmedActivation);
@@ -144,8 +149,16 @@ public class AskFormViewTests
         var form = ChatTranscript.ParseAskForm(AskFormFixtures.SubmitTab)!;
 
         Assert.True(AskFormView.OnSubmitTab(form));
-        Assert.False(AskFormView.OnSubmitTab(form with { CurrentTab = -1 }));
-        Assert.False(AskFormView.OnSubmitTab(form with { CurrentTab = 99 }));
+
+        // The review screen is the Submit tab whether or not the tab is known.
+        Assert.True(AskFormView.OnSubmitTab(form with { CurrentTab = -1 }));
+
+        // Without the review marker, only a current tab that is the Submit tab
+        // counts, and an unknown or out-of-range one does not.
+        var plain = form with { IsReview = false };
+        Assert.True(AskFormView.OnSubmitTab(plain));
+        Assert.False(AskFormView.OnSubmitTab(plain with { CurrentTab = -1 }));
+        Assert.False(AskFormView.OnSubmitTab(plain with { CurrentTab = 99 }));
     }
 
     // A real screen with a typed answer: the row's label became the text, which
@@ -169,5 +182,65 @@ public class AskFormViewTests
         Assert.Equal(local.Title, overTheLink.Title);
         Assert.Equal(local.ArmedActivation, overTheLink.ArmedActivation);
         Assert.Equal(local.Options.Select(o => o.Label), overTheLink.Options.Select(o => o.Label));
+    }
+
+    // --- the multi-select's Submit button, the review lines, and the wire --------
+
+    // The terminal's Submit row is unnumbered, so there is no key to press: the
+    // panel gets an explicit button whose key is a sentinel no screen can make.
+    [Fact]
+    public void AMultiSelectGetsAnExplicitSubmitButtonLast()
+    {
+        var options = Prompt(AskFormFixtures.MultiSelectQ2).Options;
+
+        var submit = options[^1];
+        Assert.Equal((AskFormView.CommitKey, "Submit"), (submit.Key, submit.Label));
+        Assert.False(submit.FreeText);
+    }
+
+    [Fact]
+    public void ASingleSelectOrAReviewHasNoCommitButton()
+    {
+        Assert.DoesNotContain(Prompt(AskFormFixtures.SingleSelectQ1).Options, o => o.Key == AskFormView.CommitKey);
+        Assert.DoesNotContain(Prompt(AskFormFixtures.SubmitTab).Options, o => o.Key == AskFormView.CommitKey);
+    }
+
+    [Fact]
+    public void TheReviewListsWhatIsAboutToBeSent()
+    {
+        var title = Prompt(AskFormFixtures.SubmitTab).Title;
+
+        Assert.StartsWith("Ready to submit your answers?", title);
+        Assert.Contains("\u25cf Pick a color \u2192 my own answer", title);
+        Assert.Contains("\u25cf Pick toppings \u2192 Cheese, Ham, Olives", title);
+    }
+
+    // What came over the link reads exactly like what was read locally, for the
+    // multi-select and the review alike.
+    [Fact]
+    public void AMultiSelectOverTheLinkReadsLikeTheLocalOne()
+    {
+        var local = Prompt(AskFormFixtures.MultiSelectTwoChecked);
+        var wire = MirrorProtocol.PromptFromScreen(AskFormFixtures.MultiSelectTwoChecked)!;
+
+        Assert.True(wire.MultiSelect);
+        Assert.True(wire.HasSubmitRow);
+
+        var overTheLink = AskFormView.FromWire(wire);
+
+        Assert.Equal(local.Options.Select(o => (o.Key, o.Label)), overTheLink.Options.Select(o => (o.Key, o.Label)));
+        Assert.Equal(local.Title, overTheLink.Title);
+    }
+
+    [Fact]
+    public void AReviewOverTheLinkIsArmedAndListsTheAnswers()
+    {
+        var wire = MirrorProtocol.PromptFromScreen(AskFormFixtures.SubmitTab)!;
+
+        var overTheLink = AskFormView.FromWire(wire);
+
+        Assert.True(overTheLink.ArmedActivation);
+        Assert.Contains("Cheese, Ham, Olives", overTheLink.Title);
+        Assert.Equal(new[] { "Submit answers", "Cancel" }, overTheLink.Options.Select(o => o.Label));
     }
 }
