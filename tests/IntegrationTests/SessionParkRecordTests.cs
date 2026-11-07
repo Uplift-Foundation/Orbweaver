@@ -57,15 +57,29 @@ public class SessionParkRecordTests
         }
     }
 
+    // CB-307 reversed what this used to pin. Warren's rule: every Claude Code
+    // config dir behaves like ~/.claude with no setting to keep, so a second
+    // account nobody configured is found by discovery (a ~/.claude-<name>
+    // holding sessions/ or projects/) and its record is read.
     [Fact]
-    public void ASecondAccountThatIsNotConfiguredIsNotSearched()
+    public void ASecondAccountNobodyConfiguredIsFoundByDiscovery()
     {
-        // The same layout as above with the setting left off: the record is
-        // there on disk and the app has no reason to know about it. Stated so
-        // the previous test is proving the setting is what reaches it, rather
-        // than an accidental deep walk.
         var home = NewHome();
         WriteRecord(home, ".claude-board", 70580, Record(Owner, "e4f5c5e4"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.True(SessionPark.IsParked(70580, Owner, home));
+    }
+
+    // ...and the control that it is discovery, not an accidental deep walk:
+    // the same record under a folder that is not named like a config dir is
+    // never searched.
+    [Fact]
+    public void AFolderNotNamedLikeAConfigDirIsNotSearched()
+    {
+        var home = NewHome();
+        WriteRecord(home, "claude-board", 70580, Record(Owner, "e4f5c5e4"));
+        WriteRecord(home, ".claudeboard", 70580, Record(Owner, "e4f5c5e4"));
 
         SessionPark.ClearCacheForTests();
         Assert.False(SessionPark.IsParked(70580, Owner, home));
@@ -195,17 +209,23 @@ public class SessionParkRecordTests
         }
     }
 
-    // The control: an account the user never configured is not searched, so its
-    // record says nothing — which is why every account must be configured.
+    // CB-307: an account nobody configured is discovered, so its waiting
+    // record is read like ~/.claude's — no setting needed. The control is a
+    // folder not named like a config dir, whose record says nothing.
     [Fact]
-    public void AnUnconfiguredAccountsRecordIsNotRead()
+    public void AnUnconfiguredAccountsRecordIsReadThroughDiscovery()
     {
         var home = NewHome();
         Directory.CreateDirectory(Path.Combine(home, ".claude", "sessions"));
-        WriteRecord(home, ".claude-board", 32273, StatusRecord("waiting"));
+        WriteRecord(home, ".claude-sundaysky", 32273, StatusRecord("waiting"));
 
         SessionPark.ClearCacheForTests();
-        Assert.Null(SessionPark.RecordStatus(32273, Owner, home));
+        Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+
+        var other = NewHome();
+        WriteRecord(other, "claude-sundaysky", 32273, StatusRecord("waiting"));
+        SessionPark.ClearCacheForTests();
+        Assert.Null(SessionPark.RecordStatus(32273, Owner, other));
     }
 
     [Fact]

@@ -410,7 +410,7 @@ namespace Orbweaver
             // inside CanDeliver/Deliver keeps this the same shape as every
             // other seam above: LiveSeams runs once, at startup, and what it
             // wires up is what runs on every tick after.
-            var messenger = new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.All()));
+            var messenger = new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.AllWithDiscovered()));
 
             // MachineNames.Tag(), not .Mine(): the other CB-105 slice
             // (LocalCliChatSession.DeliverViaMessengerAsync) already settled
@@ -525,7 +525,7 @@ namespace Orbweaver
         {
             if (status.SessionPid <= 0) return null;
 
-            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.All()))
+            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()))
             {
                 if (entry.Pid == status.SessionPid && ProcessLiveness.IsRunning(entry.Pid)) return entry;
             }

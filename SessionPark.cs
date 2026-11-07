@@ -226,7 +226,7 @@ namespace Orbweaver
         {
             var name = pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".json";
 
-            foreach (var root in ClaudeConfigRoots.All(home))
+            foreach (var root in ClaudeConfigRoots.AllWithDiscovered(home))
             {
                 try
                 {

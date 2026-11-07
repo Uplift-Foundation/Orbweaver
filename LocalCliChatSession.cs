@@ -144,9 +144,9 @@ namespace Orbweaver
             _format = CliChatFormat.For(status.Source);
             DisplayName = status.Title ?? "";
             _findTranscript = findTranscript ?? (id => TranscriptReader.FindTranscriptFor(id));
-            _messenger = messenger ?? new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.All()));
+            _messenger = messenger ?? new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.AllWithDiscovered()));
             _findRegistry = findRegistry ?? (id => SessionRegistry.Find(
-                SessionRegistry.Scan(ClaudeConfigRoots.All()), id, ProcessLiveness.IsRunning));
+                SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()), id, ProcessLiveness.IsRunning));
             _startWatcher = startWatcher ?? StartRealWatcher;
             _cloudApi = cloudApi;
             _credentialsFor = credentialsFor;

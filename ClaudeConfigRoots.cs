@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Orbweaver
 {
@@ -46,6 +47,94 @@ namespace Orbweaver
 
             return roots;
         }
+
+        // --- discovery (CB-307) ---------------------------------------------------
+        //
+        // Warren's rule: a session under any Claude Code config dir behaves like
+        // one under ~/.claude — orbs, waiting, served to a peer, forms, typing —
+        // with no per-dir list to keep. So the dirs are found, not listed: every
+        // ~/.claude and ~/.claude-<name> that holds a projects/ or sessions/
+        // folder, which Claude Code creates in a config dir it has run in.
+        // Measured on the MacBook 2026-11-07: .claude, .claude-board,
+        // .claude-loginid and .claude-sundaysky all hold both;
+        // .claude-memory-merge-backup and .claude-work hold neither and are not
+        // config dirs. The settings lists still count — a dir named there is
+        // always used, found or not — so discovery only ever adds.
+        //
+        // Deliberately not used for credentials (ClaudeCliCredentials keeps
+        // All): each root there is a Keychain read, and an account nobody listed
+        // is exactly the one whose first read can raise a Keychain prompt over a
+        // headless app — the CB-301 freeze.
+
+        // Whether a directory under home is a Claude Code config dir, by name
+        // and by what it holds.
+        internal static bool IsConfigDirName(string name) =>
+            name == ".claude" || (name.StartsWith(".claude-", StringComparison.Ordinal) && name.Length > ".claude-".Length);
+
+        internal static bool LooksLikeConfigDir(string path, Func<string, bool> dirExists) =>
+            dirExists(Path.Combine(path, "projects")) || dirExists(Path.Combine(path, "sessions"));
+
+        // The config dirs found under home, as names relative to it (".claude",
+        // ".claude-board"), ~/.claude first and the rest in name order. The two
+        // seams are the file system, so the rule is tested on real shapes
+        // without a home of its own.
+        internal static IReadOnlyList<string> Discover(
+            string home, Func<string, IEnumerable<string>> childDirs, Func<string, bool> dirExists)
+        {
+            IEnumerable<string> names;
+            try { names = childDirs(home).Select(Path.GetFileName).Where(n => n is not null)!; }
+            catch { return Array.Empty<string>(); }
+
+            return names
+                .Where(n => IsConfigDirName(n!))
+                .Where(n => LooksLikeConfigDir(Path.Combine(home, n!), dirExists))
+                .OrderBy(n => n == ".claude" ? 0 : 1)
+                .ThenBy(n => n, StringComparer.Ordinal)
+                .Select(n => n!)
+                .ToList();
+        }
+
+        // The configured roots (All) with every discovered one after them, as
+        // full paths. What every session consumer asks: the status of a waiting
+        // session, the registry a message goes through, a persona's user dirs,
+        // the dirs a peer is served from.
+        internal static IReadOnlyList<string> AllWithDiscovered(string? home = null)
+        {
+            home ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+            var roots = All(home).ToList();
+            foreach (var name in DiscoveredCached(home))
+            {
+                var full = Path.Combine(home, name);
+                if (!roots.Contains(full, StringComparer.Ordinal)) roots.Add(full);
+            }
+            return roots;
+        }
+
+        // Discovery is a directory listing of home, and some callers ask per
+        // session per scan (SessionPark), so the answer is held for a while. A
+        // new account shows up within that window; nothing here needs it
+        // sooner.
+        internal static readonly TimeSpan DiscoveryHeldFor = TimeSpan.FromSeconds(30);
+        internal static Func<DateTime> Now { get; set; } = () => DateTime.UtcNow;
+        internal static Func<string, IEnumerable<string>> ChildDirs { get; set; } = Directory.EnumerateDirectories;
+        internal static Func<string, bool> DirExists { get; set; } = Directory.Exists;
+
+        private static readonly object Gate = new();
+        private static readonly Dictionary<string, (DateTime At, IReadOnlyList<string> Names)> Held = new(StringComparer.Ordinal);
+
+        internal static IReadOnlyList<string> DiscoveredCached(string home)
+        {
+            var now = Now();
+            lock (Gate)
+                if (Held.TryGetValue(home, out var held) && now - held.At < DiscoveryHeldFor) return held.Names;
+
+            var names = Discover(home, ChildDirs, DirExists);
+            lock (Gate) Held[home] = (now, names);
+            return names;
+        }
+
+        internal static void ForgetDiscovered() { lock (Gate) Held.Clear(); }
 
         // The config root a transcript lives under: the parent of the "projects"
         // segment, so ~/.claude/projects/<slug>/<id>.jsonl gives ~/.claude. The
