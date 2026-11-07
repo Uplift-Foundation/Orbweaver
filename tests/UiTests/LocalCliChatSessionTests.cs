@@ -1717,18 +1717,61 @@ public class LocalCliChatSessionTests : IDisposable
 
     // --- CB-307 item 3: answering a question form from the local panel ----------
 
-    private static (LocalCliChatSession Session, List<string> Pressed) FormSession()
+    // A pane that moves as a real one does: a screen, and every key pressed and
+    // text typed recorded. Handed to the session through its capture, press and
+    // type seams, so the shared procedure (FormAnswer) runs for real over it.
+    private sealed class Pane(string screen)
     {
-        var pressed = new List<string>();
+        public string Screen = screen;
+        public List<string> Pressed { get; } = new();
+        public List<string> Typed { get; } = new();
+        public Func<string, string?> AfterPress = _ => null;
+        public Func<string, string?> AfterType = _ => null;
+
+        public Task<string?> Capture(SessionStatus _) => Task.FromResult<string?>(Screen);
+
+        public Task<bool> Press(SessionStatus _, string key)
+        {
+            Pressed.Add(key);
+            if (AfterPress(key) is { } next) Screen = next;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> Type(SessionStatus _, string text)
+        {
+            Typed.Add(text);
+            if (AfterType(text) is { } next) Screen = next;
+            return Task.FromResult(true);
+        }
+    }
+
+    // A session waiting on the pane's screen, with the form read and on show.
+    private static async Task<LocalCliChatSession> WaitingOn(Pane pane)
+    {
         var session = new LocalCliChatSession("s1", new SessionStatus
         {
-            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
         })
         {
-            PressKey = (_, key) => { pressed.Add(key); return Task.FromResult(true); },
+            Capture = pane.Capture,
+            PressKey = pane.Press,
+            TypeLiteral = pane.Type,
         };
 
-        return (session, pressed);
+        // The scan's own update is what reads the prompt, once, off the pane.
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+
+        for (var i = 0; i < 200 && session.Prompt is null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        Assert.NotNull(session.Prompt);
+        return session;
     }
 
     private static async Task WithReplyOn(Func<Task> work)
@@ -1746,58 +1789,185 @@ public class LocalCliChatSessionTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task AnOrdinaryOptionPressesItsDigit()
+    public async Task AFormIsShownWithItsTypeSomethingOptionAsAButton()
     {
         await WithReplyOn(async () =>
         {
-            var (session, pressed) = FormSession();
+            var session = await WaitingOn(new Pane(PaneFixtures.QaFormQ1));
 
-            await session.AnswerAsync(new ChatPromptOption("2", "Blue"));
-
-            Assert.Equal(new[] { "2" }, pressed);
+            Assert.Equal("3", Assert.Single(session.Prompt!.Options, o => o.FreeText).Key);
         });
     }
 
-    // The multi-select's explicit Submit is Right, which moves on with the ticks
-    // kept, and never a digit.
     [AvaloniaFact]
-    public async Task TheSubmitButtonPressesRightAndNotADigit()
+    public async Task ADigitIsPressedWhenTheFormIsStillTheOneShown()
     {
         await WithReplyOn(async () =>
         {
-            var (session, pressed) = FormSession();
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
 
-            await session.AnswerAsync(new ChatPromptOption(AskFormView.CommitKey, "Submit"));
+            await session.AnswerAsync(session.Prompt!.Options[1]);
 
-            Assert.Equal(new[] { "Right" }, pressed);
+            Assert.Equal(new[] { "2" }, pane.Pressed);
+            Assert.Null(session.Prompt);
+        });
+    }
+
+    // The screen moved on between the form being shown and the click: nothing is
+    // pressed, and the user is told, and shown what is there now.
+    [AvaloniaFact]
+    public async Task AnAnswerToAFormThatMovedOnPressesNothingAndSaysSo()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            pane.Screen = PaneFixtures.MacModelSwitchDialog;
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+
+            Assert.Empty(pane.Pressed);
+            Assert.Contains(session.History, t => t.Text.Contains("had changed, so nothing was answered", StringComparison.Ordinal));
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task TheMultiSelectSubmitButtonPressesRightAndNotADigit()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(AskFormFixtures.MultiSelectTwoChecked);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[^1]);
+
+            Assert.Equal(new[] { "Right" }, pane.Pressed);
         });
     }
 
     // On a single-select question that digit selects the row empty, which
-    // declines the whole form: it is never pressed.
+    // declines the whole form: it is never pressed, and the user is told where
+    // the answer goes.
     [AvaloniaFact]
     public async Task TheFreeTextOptionIsNeverPressedByItsDigit()
     {
         await WithReplyOn(async () =>
         {
-            var (session, pressed) = FormSession();
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
 
-            await session.AnswerAsync(new ChatPromptOption("3", "Type something.", FreeText: true));
+            await session.AnswerAsync(session.Prompt!.Options.Single(o => o.FreeText));
 
-            Assert.Empty(pressed);
+            Assert.Empty(pane.Pressed);
+            Assert.Contains(session.History, t => t.Text.Contains("in the box, then send it", StringComparison.Ordinal));
         });
     }
 
-    // A local form does not offer the typed answer yet: the option is not among
-    // the buttons, and the form is otherwise read exactly as the app reads it.
-    [Fact]
-    public void ALocalFormWithholdsTheTypedAnswerOptionUntilItCanDoIt()
+    // The typed answer: cursor onto the row, the text typed and seen, and only
+    // then Enter — the shared procedure, run over a pane that moves like QA's.
+    [AvaloniaFact]
+    public async Task TypedTextGoesCursorThenTextThenEnter()
     {
-        var prompt = LocalCliChatSession.ReadPrompt(AskFormFixtures.SingleSelectQ1)!;
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var downs = 0;
+            pane.AfterPress = k => k == "Down" && ++downs == 2 ? PaneFixtures.QaCursorOnFreeText : null;
+            pane.AfterType = _ => PaneFixtures.QaFreeTextTyped;
+            var session = await WaitingOn(pane);
 
-        Assert.DoesNotContain(prompt.Options, o => o.FreeText);
-        Assert.DoesNotContain(prompt.Options, o => o.Label.StartsWith("Type something"));
-        Assert.Equal(new[] { "Red", "Blue", "Chat about this" }, prompt.Options.Select(o => o.Label));
+            await session.AnswerFreeTextAsync(session.Prompt!.Options.Single(o => o.FreeText), "my own answer");
+
+            Assert.Equal(new[] { "Down", "Down", "Enter" }, pane.Pressed);
+            Assert.Equal(new[] { "my own answer" }, pane.Typed);
+        });
+    }
+
+    // Blank text is refused with nothing pressed or typed: Enter on the empty
+    // row would decline the whole form.
+    [AvaloniaFact]
+    public async Task BlankTextIsRefusedAndNothingIsPressedOrTyped()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerFreeTextAsync(session.Prompt!.Options.Single(o => o.FreeText), "   ");
+
+            Assert.Empty(pane.Pressed);
+            Assert.Empty(pane.Typed);
+            Assert.Contains(session.History, t => t.Text.Contains("That can't be answered that way. Nothing was pressed.", StringComparison.Ordinal));
+        });
+    }
+
+    // Only a form's own free-text option takes text, and only a form on show.
+    [AvaloniaFact]
+    public async Task TextForAnythingButTheFreeTextOptionOfAFormDoesNothing()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerFreeTextAsync(session.Prompt!.Options[0], "Red please");
+
+            Assert.Empty(pane.Pressed);
+            Assert.Empty(pane.Typed);
+
+            var plain = new LocalCliChatSession("s2", new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle" });
+            await plain.AnswerFreeTextAsync(new ChatPromptOption("1", "x", FreeText: true), "text");
+            Assert.Empty(plain.History);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task WithReplyingOffNothingIsAnsweredAndTheUserIsTold()
+    {
+        var before = OrbweaverSettings.ClaudeCodeReplyEnabled;
+        try
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = false;
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            await session.AnswerFreeTextAsync(session.Prompt.Options.Single(o => o.FreeText), "x");
+
+            Assert.Empty(pane.Pressed);
+            Assert.Equal(2, session.History.Count(t => t.Text.StartsWith("Replying is off", StringComparison.Ordinal)));
+        }
+        finally
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = before;
+        }
+    }
+
+    // An ordinary dialog (a permission bar) still answers by its key, exactly as
+    // it always did: only a question form goes through the shared procedure.
+    [AvaloniaFact]
+    public async Task AnOrdinaryDialogStillAnswersByItsKey()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.MiniExitDialog);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(new[] { "1" }, pane.Pressed);
+        });
+    }
+
+    [Fact]
+    public void EveryRefusalCodeSaysWhatHappened()
+    {
+        Assert.Contains("had changed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrPromptChanged));
+        Assert.Contains("had changed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrNoPrompt));
+        Assert.Contains("Nothing was pressed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrBadKey));
+        Assert.Contains("Answer it in the terminal", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrUnsupported));
+        Assert.Contains("Couldn't answer", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrTypeFailed));
     }
 
     [Fact]

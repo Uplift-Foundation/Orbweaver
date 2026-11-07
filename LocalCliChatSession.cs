@@ -42,7 +42,7 @@ namespace Orbweaver
     //    produced. The contract's "TurnUpdated carries the whole turn" holds
     //    trivially, since the whole turn is all there ever is.
     internal sealed class LocalCliChatSession :
-        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts,
+        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
         IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
         IRemoteChatPeerInbound, IDisposable
     {
@@ -1617,7 +1617,7 @@ namespace Orbweaver
 
             try
             {
-                var screen = await TerminalFocuser.CapturePane(_status);
+                var screen = await (Capture ?? TerminalFocuser.CapturePane)(_status);
 
                 // Still waiting? The capture runs a process and the answer may
                 // have been given in the terminal while it did.
@@ -1631,6 +1631,14 @@ namespace Orbweaver
                 // (the whole question, which tab, a text option), and anything
                 // that is not a form falls through to the ordinary reading.
                 var parsed = screen is null ? null : ReadPrompt(screen);
+
+                // The fingerprint of a form as it was shown, so an answer to it
+                // is refused if the screen has since moved on. Null for an
+                // ordinary dialog, which answers by its key as it always has.
+                _formFingerprint = screen is not null && ChatTranscript.ParseAskForm(screen) is not null
+                    ? MirrorProtocol.PromptFromScreen(screen)?.Fingerprint
+                    : null;
+
                 SetPrompt(parsed ?? new ChatPrompt("Waiting for input", Array.Empty<ChatPromptOption>()));
             }
             finally
@@ -1639,21 +1647,20 @@ namespace Orbweaver
             }
         }
 
-        // Pressing a key in this session's pane. A seam so a test can count the
-        // keys an answer sends; the default is the real tmux/terminal press.
+        // The pane seams, so a test can hand over a screen and count what an
+        // answer sends. The defaults are the real tmux/terminal reads and presses.
         internal Func<SessionStatus, string, Task<bool>>? PressKey { get; init; }
+        internal Func<SessionStatus, Task<string?>>? Capture { get; init; }
+        internal Func<SessionStatus, string, Task<bool>>? TypeLiteral { get; init; }
 
-        // A local form's "Type something." answer is not wired yet: it needs the
-        // same cursor-move, type, read-back, Enter procedure the mirror runs, and
-        // a second copy of it is how the two drift. Until then the option is not
-        // offered here, and "Answer in the terminal" is the way to give it.
-        internal static ChatPrompt? ReadPrompt(string screen)
-        {
-            if (ChatTranscript.ParseAskForm(screen) is not { } form) return ChatTranscript.ParseDialog(screen);
+        // The fingerprint of the question form on show, or null when the prompt
+        // is an ordinary dialog (or nothing).
+        private string? _formFingerprint;
 
-            var prompt = AskFormView.ToPrompt(form);
-            return prompt with { Options = prompt.Options.Where(o => !o.FreeText).ToList() };
-        }
+        internal static ChatPrompt? ReadPrompt(string screen) =>
+            ChatTranscript.ParseAskForm(screen) is { } form
+                ? AskFormView.ToPrompt(form)
+                : ChatTranscript.ParseDialog(screen);
 
         // internal: the transitions around a prompt are what decide whether the
         // panel is still offering buttons for a dialog that has been answered,
@@ -1674,15 +1681,23 @@ namespace Orbweaver
                 return;
             }
 
-            // The free-text option is never pressed by its digit: on a single-
-            // select question that selects it empty, which declines the whole
-            // form. (Typing into it locally is not offered yet, so the option is
-            // withheld from a local form's buttons; see ReadPrompt.)
-            if (option.FreeText) return;
+            // A question form is answered through the one procedure the mirror
+            // runs too (FormAnswer), which re-reads the screen and presses
+            // nothing unless it is still the form that was shown.
+            if (_formFingerprint is not null)
+            {
+                // The free-text option is never pressed by its digit: on a
+                // single-select question that selects it empty, which declines
+                // the whole form. It is answered with text, from the box.
+                if (option.FreeText)
+                {
+                    Note("Type your answer in the box, then send it.");
+                    return;
+                }
 
-            // The explicit Submit button of a multi-select is Right, which moves
-            // on with the ticks kept; every other option is its own digit.
-            var key = option.Key == AskFormView.CommitKey ? "Right" : option.Key;
+                await AnswerFormAsync(option, text: null);
+                return;
+            }
 
             // Cleared first. The hook will report the session generating again
             // within a moment, but the buttons should stop being clickable the
@@ -1690,7 +1705,7 @@ namespace Orbweaver
             // answer to the dialog that is already gone.
             SetPrompt(null);
 
-            if (await (PressKey ?? TerminalFocuser.SendPaneKey)(_status, key)) return;
+            if (await (PressKey ?? TerminalFocuser.SendPaneKey)(_status, option.Key)) return;
 
             Note("Couldn't answer that in the terminal.");
 
@@ -1699,6 +1714,62 @@ namespace Orbweaver
             // stopped when it doesn't.
             if (_waiting) await RefreshPromptAsync();
         }
+
+        // The typed answer of a form's "Type something." row. Only for a form on
+        // show and only for its free-text option; FormAnswer refuses blank or
+        // multi-line text, and free text on a multi-select, with nothing pressed.
+        public async Task AnswerFreeTextAsync(ChatPromptOption option, string text)
+        {
+            if (!_format.ReplyEnabled())
+            {
+                Note("Replying is off, so this can only be answered in the terminal.");
+                return;
+            }
+
+            if (_formFingerprint is null || !option.FreeText) return;
+
+            await AnswerFormAsync(option, text);
+        }
+
+        private async Task AnswerFormAsync(ChatPromptOption option, string? text)
+        {
+            var fingerprint = _formFingerprint!;
+            var commit = option.Key == AskFormView.CommitKey;
+
+            // Cleared first, for the reason the ordinary path gives.
+            SetPrompt(null);
+            _formFingerprint = null;
+
+            var code = await FormAnswer.AnswerAsync(
+                _status,
+                Capture ?? TerminalFocuser.CapturePane,
+                PressKey ?? TerminalFocuser.SendPaneKey,
+                TypeLiteral ?? TerminalFocuser.SendPaneText,
+                fingerprint,
+                key: commit ? null : option.Key,
+                action: commit ? MirrorProtocol.ActionCommit : null,
+                text: text);
+
+            if (code is null) return;
+
+            Note(FormRefusalNote(code));
+
+            // Put the buttons back: nothing was answered, or not all of it.
+            if (_waiting) await RefreshPromptAsync();
+        }
+
+        // What a refusal from the shared procedure says, as a function of the
+        // code, because each is a different fact about the screen.
+        internal static string FormRefusalNote(string code) => code switch
+        {
+            MirrorProtocol.ErrPromptChanged or MirrorProtocol.ErrNoPrompt =>
+                "That question had changed, so nothing was answered. Here is the current one.",
+            MirrorProtocol.ErrBadKey =>
+                "That can't be answered that way. Nothing was pressed.",
+            MirrorProtocol.ErrUnsupported =>
+                "That can't be answered from here. Answer it in the terminal.",
+            _ => "Couldn't answer that in the terminal.",
+        };
 
         // A Desktop session has no terminal for TerminalFocuser to find, so its
         // Focus returned early and this button did nothing (CB-265's gap). Its
