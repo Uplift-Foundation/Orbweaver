@@ -937,6 +937,11 @@ namespace Orbweaver
         // missing field is "no", and a panel then offers the terminal instead
         // of waiting out a timeout.
         public const string PromptsField = "pr";
+
+        // Whether a HELLO reply's fields say the far Buddy answers prompts.
+        // No fields is "no", like a missing field.
+        public static bool SaysItAnswersPrompts(IReadOnlyDictionary<string, string>? fields) =>
+            fields is not null && fields.TryGetValue(PromptsField, out var v) && v == "1";
         public const string FingerprintField = "fp";
 
         // Bounds on what a PROMPT answer carries, so a screen full of

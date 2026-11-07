@@ -935,7 +935,7 @@ namespace Orbweaver
 
             lock (_gate)
             {
-                if (reply.Fields?.GetValueOrDefault(MirrorProtocol.PromptsField) == "1") _speaksPrompts.Add(peer);
+                if (MirrorProtocol.SaysItAnswersPrompts(reply.Fields)) _speaksPrompts.Add(peer);
                 else _speaksPrompts.Remove(peer);
             }
         }
@@ -965,19 +965,29 @@ namespace Orbweaver
                 new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) }, payload: null,
                 TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
 
-            if (!reply.Ok)
-            {
-                var code = reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
-                Log("prompt", $"n={name} -> err code={code}");
-                return new PromptOutcome(null, code);
-            }
-
-            var prompt = MirrorProtocol.DecodePrompt(reply.Payload);
-            Log("prompt", prompt is null ? $"n={name} -> err unreadable" : $"n={name} -> ok fp={prompt.Fingerprint}");
-            return prompt is null
-                ? new PromptOutcome(null, MirrorProtocol.ErrUnsupported)
-                : new PromptOutcome(prompt, null);
+            var outcome = PromptOutcomeOf(reply.Ok, reply.ErrCode, reply.Payload);
+            Log("prompt", outcome.Prompt is { } p ? $"n={name} -> ok fp={p.Fingerprint}" : $"n={name} -> err code={outcome.Error}");
+            return outcome;
         }
+
+        // What a PROMPT reply means, pure so each arm is asserted without a
+        // far side that misbehaves on cue: a refusal is its code, a request
+        // that never got an answer (no code at all) reads as unsupported, and
+        // so does an OK whose payload is not a prompt — the panel then offers
+        // the terminal rather than buttons it cannot trust.
+        internal static PromptOutcome PromptOutcomeOf(bool ok, string? errCode, byte[]? payload)
+        {
+            if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrUnsupported);
+
+            return MirrorProtocol.DecodePrompt(payload) is { } prompt
+                ? new PromptOutcome(prompt, null)
+                : new PromptOutcome(null, MirrorProtocol.ErrUnsupported);
+        }
+
+        // And an ANSWER reply: null when it was taken, otherwise the code, with
+        // no code at all (never answered) read as unsupported.
+        internal static string? AnswerErrorOf(bool ok, string? errCode) =>
+            ok ? null : errCode ?? MirrorProtocol.ErrUnsupported;
 
         // Take one option of the dialog Fingerprint names. Null on success,
         // otherwise the far side's code — ErrPromptChanged means the screen
@@ -1025,7 +1035,7 @@ namespace Orbweaver
                 text is null ? null : System.Text.Encoding.UTF8.GetBytes(text),
                 TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
 
-            var error = reply.Ok ? null : reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
+            var error = AnswerErrorOf(reply.Ok, reply.ErrCode);
             Log("answer", $"n={name} {what} -> " + (error is null ? "ok" : $"err code={error}"));
             return error;
         }

@@ -289,6 +289,22 @@ public class GuardedTypeTests
     }
 
     [Fact]
+    public async Task NoCaptureMeansNoScreenEvenOnAReadableRoute() =>
+        Assert.True((await TypingGate.JudgeAsync(Status, _ => "idle", null, paneReadable: true)).Allowed);
+
+    [Fact]
+    public async Task AShadowLineWithNoSessionNameSaysSo()
+    {
+        var pane = new Pane { Screen = PaneFixtures.PermissionsAllow };
+        var details = new List<string>();
+
+        await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true,
+            () => true, (_, detail) => details.Add(detail));
+
+        Assert.StartsWith("session=? ", Assert.Single(details));
+    }
+
+    [Fact]
     public void TheSlashReasonWrapsTheGatesOwn() =>
         Assert.Equal("the terminal there isn't at its prompt (it is showing a dialog: X)",
             TypingGate.NotAtPromptReason(TypingGate.DialogWhy("X")));

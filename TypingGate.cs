@@ -90,7 +90,7 @@ namespace Orbweaver
                 var verdict = await JudgeAsync(
                     status,
                     recordStatus ?? (_ => null),
-                    capturePane ?? (_ => Task.FromResult<string?>(null)),
+                    capturePane,
                     readable).ConfigureAwait(false);
 
                 if (shadow?.Invoke() == true)
@@ -107,13 +107,14 @@ namespace Orbweaver
         internal static async Task<TypingVerdict> JudgeAsync(
             SessionStatus status,
             Func<SessionStatus, string?> recordStatus,
-            Func<SessionStatus, Task<string?>> capturePane,
+            Func<SessionStatus, Task<string?>>? capturePane,
             bool paneReadable)
         {
             if (string.Equals(recordStatus(status), "waiting", StringComparison.Ordinal))
                 return new TypingVerdict(false, WaitingWhy);
 
-            if (!paneReadable) return TypingVerdict.Allow;
+            // No screen to read: the record is the only guard (see the header).
+            if (!paneReadable || capturePane is null) return TypingVerdict.Allow;
 
             string? screen;
             try { screen = await capturePane(status).ConfigureAwait(false); }

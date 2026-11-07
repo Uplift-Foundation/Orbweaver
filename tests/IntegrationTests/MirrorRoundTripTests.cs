@@ -2335,6 +2335,85 @@ public class MirrorRoundTripTests : IDisposable
         else Assert.Empty(log);
     }
 
+    // --- the remaining server arms (coverage QA asked for) ---------------------
+
+    [Fact]
+    public async Task AServerThatCannotPressKeysRefusesAnAnswerAndDoesNotOfferPrompts()
+    {
+        var harness = new Harness(_dir, noPressKey: true) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("nopress.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.False(harness.Client.SpeaksPrompts("qa"));
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+        Assert.Equal(MirrorProtocol.ErrUnsupported, await harness.Client.AnswerPromptAsync("qa", "1", prompt.Fingerprint));
+    }
+
+    // No route check wired is "readable": the capture itself decides.
+    [Fact]
+    public async Task WithNoRouteCheckTheCaptureDecides()
+    {
+        var harness = new Harness(_dir, noCanReadPane: true) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("noroute.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.Equal(4, (await harness.Client.FetchPromptAsync("qa")).Prompt!.Options.Count);
+    }
+
+    [Fact]
+    public async Task ACaptureThatThrowsIsNoPrompt()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("capthrows.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        harness.CaptureThrows = true;
+
+        Assert.Equal(MirrorProtocol.ErrNoPrompt, (await harness.Client.FetchPromptAsync("qa")).Error);
+    }
+
+    // An ANSWER that names no fingerprint matches no dialog.
+    [Fact]
+    public async Task AnAnswerWithNoFingerprintIsAChangedScreen()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("nofp.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        await harness.Server.HandleAsync(Harness.NearRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Answer, "nofp", new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode("qa"),
+                [MirrorProtocol.KeyField] = "1",
+            }))!);
+
+        Assert.Contains(harness.ToClient, l => l.Contains(MirrorProtocol.ErrPromptChanged));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // The slash host with shadow on and no log sink of its own logs through
+    // the app's mirror log (off in a test, so nothing is written), and types.
+    [Fact]
+    public async Task TheSlashHostsShadowLogsToTheMirrorLogWhenGivenNoSink()
+    {
+        var harness = new Harness(_dir, wireSlash: true) { Screen = PaneFixtures.PermissionsAllow };
+        var typed = new List<string>();
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            _ => new[] { new SlashCommand("/ship-it", "") },
+            (_, line) => { typed.Add(line); return Task.FromResult(true); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            RecordStatus: harness.ReadRecord,
+            CapturePane: harness.CaptureScreen,
+            CanReadPane: _ => true,
+            Shadow: () => true));
+        harness.AddSession("openclaw", WriteTranscript("shadow-host-nolog.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Equal(MirrorProtocol.ViaTyped,
+            (await harness.Client.SendInputDetailedAsync("openclaw", "/ship-it", slash: true)).Via);
+        Assert.Equal(new[] { "/ship-it" }, typed);
+    }
+
     private static MirrorProtocol.MirrorFrame AnswerFrame(string id, string name, string key, string fp, byte[]? text) =>
         MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Answer, id,
             new Dictionary<string, string>
@@ -3690,6 +3769,9 @@ public class MirrorRoundTripTests : IDisposable
 
         // CB-307: the typing gate's shadow mode on the far machine.
         public bool ShadowOn { get; set; }
+
+        // A capture that throws rather than answering.
+        public bool CaptureThrows { get; set; }
         public int RecordReads { get; private set; }
 
         public bool ReplyEnabled { get; init; } = true;
@@ -3745,7 +3827,8 @@ public class MirrorRoundTripTests : IDisposable
         public IReadOnlyList<string> UserConfigDirs { get; set; } = Array.Empty<string>();
 
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
-            LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false)
+            LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
+            bool noPressKey = false, bool noCanReadPane = false)
         {
             _dir = dir;
 
@@ -3802,8 +3885,8 @@ public class MirrorRoundTripTests : IDisposable
                 LastTurns: lastTurns,
                 RecordStatus: ungated ? null : ReadRecord,
                 CapturePane: ungated ? null : CaptureScreen,
-                CanReadPane: ungated ? null : _ => PaneReadable,
-                PressKey: ungated ? null : (_, key) =>
+                CanReadPane: ungated || noCanReadPane ? null : _ => PaneReadable,
+                PressKey: ungated || noPressKey ? null : (_, key) =>
                 {
                     if (PressThrows) throw new InvalidOperationException("tmux went away");
                     if (PressFails) return Task.FromResult(false);
@@ -3855,6 +3938,7 @@ public class MirrorRoundTripTests : IDisposable
         public Task<string?> CaptureScreen(SessionStatus _)
         {
             Captures++;
+            if (CaptureThrows) throw new InvalidOperationException("tmux went away");
             return Task.FromResult(Screen);
         }
 

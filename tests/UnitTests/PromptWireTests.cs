@@ -158,4 +158,38 @@ public class PromptWireTests
     [InlineData("Type something.", "my own answer", false)]
     public void TheRowReadsBackAsWhatWasTyped(string label, string text, bool shown) =>
         Assert.Equal(shown, FormAnswer.ShowsTyped(label, text));
+
+    // --- the client's reading of a reply (coverage QA asked for) ---------------
+
+    [Fact]
+    public void APromptReplyMapsToItsPromptOrItsCode()
+    {
+        var good = MirrorProtocol.EncodePrompt(MirrorProtocol.PromptFromScreen(PaneFixtures.QaFormQ1)!);
+
+        Assert.NotNull(RemoteMirrorClient.PromptOutcomeOf(true, null, good).Prompt);
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoPrompt),
+            RemoteMirrorClient.PromptOutcomeOf(false, MirrorProtocol.ErrNoPrompt, null));
+        // Never answered: no code at all.
+        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error);
+        // An OK whose payload is not a prompt.
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrUnsupported),
+            RemoteMirrorClient.PromptOutcomeOf(true, null, "nope"u8.ToArray()));
+    }
+
+    [Fact]
+    public void AnAnswerReplyMapsToNothingOrItsCode()
+    {
+        Assert.Null(RemoteMirrorClient.AnswerErrorOf(true, null));
+        Assert.Equal(MirrorProtocol.ErrBadKey, RemoteMirrorClient.AnswerErrorOf(false, MirrorProtocol.ErrBadKey));
+        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.AnswerErrorOf(false, null));
+    }
+
+    [Fact]
+    public void OnlyAnExplicitPrOneSaysAFarBuddyAnswersPrompts()
+    {
+        Assert.True(MirrorProtocol.SaysItAnswersPrompts(new Dictionary<string, string> { ["pr"] = "1" }));
+        Assert.False(MirrorProtocol.SaysItAnswersPrompts(new Dictionary<string, string> { ["pr"] = "0" }));
+        Assert.False(MirrorProtocol.SaysItAnswersPrompts(new Dictionary<string, string>()));
+        Assert.False(MirrorProtocol.SaysItAnswersPrompts(null));
+    }
 }

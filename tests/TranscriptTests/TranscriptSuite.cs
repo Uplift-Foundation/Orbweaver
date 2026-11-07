@@ -1441,6 +1441,14 @@ namespace Orbweaver.Tests
                 ChatTranscript.ParseAskForm(PaneFixtures.QaMultiSelectDigitToggled) is { } toggled
                 && toggled.Checked!.SequenceEqual(new[] { "1", "2", "3" }) && toggled.CursorKey == "2");
 
+            // A ❯ on a row that is not an option — derived from capture 06 by
+            // moving the cursor to its unnumbered Submit row; that exact screen
+            // was not captured — is no cursor key, and nothing claims one.
+            var onSubmitRow = ChatTranscript.ParseAskForm(PaneFixtures.QaMultiSelect
+                .Replace("❯ 1. [ ] Cheese", "  1. [ ] Cheese").Replace("     Submit", "❯    Submit"));
+            Check("a cursor on a non-option row is no cursor key", onSubmitRow is { CursorKey: null },
+                onSubmitRow?.CursorKey ?? "null");
+
             var back = ChatTranscript.ParseAskForm(PaneFixtures.QaBackOnQ1)!;
             Check("an earlier single-select choice is a mark, not part of the label",
                 back.Prompt.Options[1].Label == "Blue" && back.Checked!.SequenceEqual(new[] { "2" }) && !back.MultiSelect);

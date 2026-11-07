@@ -105,6 +105,56 @@ public class FormAnswerTests
     }
 
     [Fact]
+    public async Task NoKeyAndNoActionIsRefused()
+    {
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+
+        Assert.Equal(MirrorProtocol.ErrBadKey, await pane.Answer(null));
+        Assert.Empty(pane.Pressed);
+    }
+
+    // Every way the free-text sequence can fail to see its step on screen, or
+    // fail to make it, stops before Enter.
+    [Theory]
+    [InlineData("down-fails")]
+    [InlineData("form-gone-after-move")]
+    [InlineData("other-form-after-move")]
+    [InlineData("type-throws")]
+    [InlineData("form-gone-after-typing")]
+    [InlineData("row-gone-after-typing")]
+    [InlineData("cursor-moved-after-typing")]
+    public async Task FreeTextStopsBeforeEnterWhenAnyStepFails(string fault)
+    {
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        var downs = 0;
+        pane.AfterPress = k => k != "Down" || ++downs < 2 ? null : fault switch
+        {
+            "form-gone-after-move" => PaneFixtures.MacPromptAfterEsc,
+            "other-form-after-move" => PaneFixtures.QaMultiSelect,
+            _ => PaneFixtures.QaCursorOnFreeText,
+        };
+        pane.AfterType = _ => fault switch
+        {
+            "form-gone-after-typing" => PaneFixtures.MacPromptAfterEsc,
+            "row-gone-after-typing" => PaneFixtures.QaReview,
+            "cursor-moved-after-typing" => PaneFixtures.QaFreeTextTyped
+                .Replace("  1. Red", "❯ 1. Red").Replace("❯ 3. my own answer", "  3. my own answer"),
+            _ => PaneFixtures.QaFreeTextTyped,
+        };
+
+        Func<SessionStatus, string, Task<bool>> press = fault == "down-fails"
+            ? (_, _) => Task.FromResult(false)
+            : pane.Press;
+        Func<SessionStatus, string, Task<bool>> type = fault == "type-throws"
+            ? (_, _) => throw new InvalidOperationException("tmux")
+            : pane.Type;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await FormAnswer.AnswerAsync(Status, pane.Capture, press, type, pane.Fp, "3", null, "my own answer"));
+        Assert.DoesNotContain("Enter", pane.Pressed);
+    }
+
+    [Fact]
     public async Task WithNoLiteralTypingFreeTextIsUnsupported()
     {
         var pane = new Pane(PaneFixtures.QaFormQ1);
