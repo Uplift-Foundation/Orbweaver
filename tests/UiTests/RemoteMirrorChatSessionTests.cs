@@ -742,7 +742,10 @@ public class RemoteMirrorChatSessionTests : IDisposable
         await session.AnswerAsync(session.Prompt.Options[1]);
         Assert.Equal(new[] { "2" }, _pressed);
 
-        // The same form again, as the next poll reads it; commit it.
+        // The terminal ticks the box, as a real one does: the form as the next
+        // poll reads it is a different one (a box is ticked), so it is shown at
+        // once. An unchanged form would be held back while the screen catches up.
+        _farScreen = AskFormFixtures.MultiSelectTwoChecked;
         await PumpUntilAsync(() => session.Prompt is not null);
         await session.AnswerAsync(session.Prompt!.Options[^1]);
 
@@ -797,6 +800,54 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         Assert.True(session.IsMirroring, "the roster landing alone should upgrade the panel");
         Assert.NotNull(session.Prompt);
+    }
+
+    // Every account and config dir on the far machine: a form must be asked for
+    // and answerable from a panel whichever config dir its session lives under
+    // (~/.claude, ~/.claude-loginid, ~/.claude-board), because the link is not
+    // account-scoped. The client is wired as the app wires it, raising the roster
+    // event for the DEFAULT account only; the first panel is opened before the
+    // roster lands, the others after, so both orders are covered per account.
+    [AvaloniaFact]
+    public async Task AFormIsAskedForAndAnsweredFromAPanelUnderEveryAccount()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        RemoteControlSessions.ResetForTests();
+        _client = new RemoteMirrorClient(Account, new RemoteMirrorClient.Seams(SendToServerAsync));
+        PeerSessions.UseClientForTests(_client);
+        _client.RosterUpdated += () => RemoteControlSessions.RaiseMirrorChanged(".claude");
+
+        var accounts = new[] { ".claude-board", ".claude", ".claude-loginid" };
+        var sessions = new List<RemoteControlChatSession>();
+
+        for (var i = 0; i < accounts.Length; i++)
+        {
+            var session = new RemoteControlChatSession($"rc:{accounts[i]}:{Name}", accounts[i], Name);
+            sessions.Add(session);
+            session.PanelOpened();
+
+            // Only the first is opened ahead of the roster.
+            if (i == 0) await _client.DiscoverAsync(Peers, new[] { Name });
+        }
+
+        foreach (var (session, account) in sessions.Zip(accounts))
+        {
+            await PumpUntilAsync(() => session.Prompt is not null);
+            Assert.True(session.Prompt is not null, $"no form for a panel under {account}");
+        }
+
+        // And each one answers: the key reaches the far pane.
+        for (var i = 0; i < sessions.Count; i++)
+        {
+            await sessions[i].AnswerAsync(sessions[i].Prompt!.Options[0]);
+            Assert.Equal(i + 1, _pressed.Count);
+            Assert.Equal("1", _pressed[i]);
+        }
+
+        Assert.Empty(_typed);
     }
 
     // The screen moves on between the form being shown and the click: the far

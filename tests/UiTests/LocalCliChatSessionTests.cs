@@ -1977,4 +1977,103 @@ public class LocalCliChatSessionTests : IDisposable
 
         Assert.Equal(new[] { "1", "2", "3", "5", AskFormView.CommitKey }, prompt.Options.Select(o => o.Key));
     }
+
+    // --- a second click on a form that was just answered (local) ----------------
+
+    private static async Task<(LocalCliChatSession Session, Pane Pane, Func<DateTime> Now, Action<TimeSpan> Advance)> ClockedForm()
+    {
+        var now = new DateTime(2026, 11, 7, 12, 0, 0, DateTimeKind.Utc);
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = pane.Capture, PressKey = pane.Press, TypeLiteral = pane.Type,
+            Clock = () => now,
+        };
+
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+        for (var i = 0; i < 200 && session.Prompt is null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        return (session, pane, () => now, d => now += d);
+    }
+
+    private static async Task Rescan(LocalCliChatSession session)
+    {
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+        for (var i = 0; i < 40; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+    }
+
+    // The terminal has not advanced yet, so the next scan reads the same form
+    // again: it must not put live buttons back on a question already answered.
+    [AvaloniaFact]
+    public async Task TheFormJustAnsweredIsNotShownAgainBeforeTheTerminalAdvances()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pane, _, advance) = await ClockedForm();
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+            Assert.Null(session.Prompt);
+
+            await Rescan(session);
+            Assert.Null(session.Prompt);
+            Assert.Equal(new[] { "2" }, pane.Pressed);
+
+            // Still the same form once the settle window has passed: the answer
+            // did not take, so the buttons come back.
+            advance(LocalCliChatSession.SettleAfterAnswer + TimeSpan.FromSeconds(1));
+            await Rescan(session);
+            Assert.NotNull(session.Prompt);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task TheNextQuestionIsShownAtOnceWhenTheTerminalHasAdvanced()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pane, _, _) = await ClockedForm();
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+            pane.Screen = PaneFixtures.MacModelSwitchDialog;
+
+            await Rescan(session);
+
+            Assert.NotNull(session.Prompt);
+            Assert.StartsWith("Opus 5.5's safeguards flagged this session.", session.Prompt!.Title);
+        });
+    }
+
+    // A refusal presses nothing, so the same form comes straight back.
+    [AvaloniaFact]
+    public async Task ARefusedAnswerBringsTheSameFormStraightBack()
+    {
+        await WithReplyOn(async () =>
+        {
+            var (session, pane, _, _) = await ClockedForm();
+            var option = session.Prompt!.Options.Single(o => o.FreeText);
+
+            await session.AnswerFreeTextAsync(option, "   ");
+            await Rescan(session);
+
+            Assert.NotNull(session.Prompt);
+            Assert.Empty(pane.Pressed);
+        });
+    }
 }

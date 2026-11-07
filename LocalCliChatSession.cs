@@ -1639,6 +1639,23 @@ namespace Orbweaver
                     ? MirrorProtocol.PromptFromScreen(screen)?.Fingerprint
                     : null;
 
+                // The form just answered, read again before the terminal has
+                // moved on, is not shown again: live buttons on an answered
+                // question invite a second click that lands on the next one. Held
+                // back until it changes, or has stayed long enough that the
+                // answer plainly did not take.
+                if (_answeredFingerprint is not null)
+                {
+                    if (_formFingerprint == _answeredFingerprint
+                        && (Clock ?? (() => DateTime.UtcNow))() - _answeredAt < SettleAfterAnswer)
+                    {
+                        _formFingerprint = null;
+                        return;
+                    }
+
+                    _answeredFingerprint = null;
+                }
+
                 SetPrompt(parsed ?? new ChatPrompt("Waiting for input", Array.Empty<ChatPromptOption>()));
             }
             finally
@@ -1656,6 +1673,13 @@ namespace Orbweaver
         // The fingerprint of the question form on show, or null when the prompt
         // is an ordinary dialog (or nothing).
         private string? _formFingerprint;
+
+        // The form just answered, and when, so a re-read of it before the
+        // terminal advances is held back. See RefreshPromptAsync.
+        internal static readonly TimeSpan SettleAfterAnswer = TimeSpan.FromSeconds(4);
+        internal Func<DateTime>? Clock { get; init; }
+        private string? _answeredFingerprint;
+        private DateTime _answeredAt;
 
         internal static ChatPrompt? ReadPrompt(string screen) =>
             ChatTranscript.ParseAskForm(screen) is { } form
@@ -1735,6 +1759,8 @@ namespace Orbweaver
         {
             var fingerprint = _formFingerprint!;
             var commit = option.Key == AskFormView.CommitKey;
+            _answeredFingerprint = fingerprint;
+            _answeredAt = (Clock ?? (() => DateTime.UtcNow))();
 
             // Cleared first, for the reason the ordinary path gives.
             SetPrompt(null);
@@ -1751,6 +1777,10 @@ namespace Orbweaver
                 text: text);
 
             if (code is null) return;
+
+            // Nothing (more) was pressed, so there is no screen about to move
+            // on: the buttons may come straight back.
+            _answeredFingerprint = null;
 
             Note(FormRefusalNote(code));
 

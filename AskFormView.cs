@@ -103,7 +103,14 @@ namespace Orbweaver
             return ToPrompt(new AskForm(
                 prompt, tabs, wire.Current, wire.FreeTextKey, wire.ChatAboutKey,
                 MultiSelect: wire.MultiSelect, Checked: wire.Checked, HasSubmitRow: wire.HasSubmitRow,
-                CursorKey: wire.CursorKey, IsReview: wire.Review is not null,
+                CursorKey: wire.CursorKey,
+
+                // The wire's Review is always a list, empty on every screen but
+                // the review, so "is not null" said every peer form was a review
+                // and armed every button of it (a half-second dead zone and
+                // press-and-release only). It is a review when it lists
+                // something, or names the two review buttons.
+                IsReview: wire.Review is { Count: > 0 } || wire.SubmitAnswersKey is not null,
                 Review: wire.Review?.Select(r => new AskReviewItem(r.Question, r.Answer)).ToList(),
                 SubmitAnswersKey: wire.SubmitAnswersKey, CancelKey: wire.CancelKey));
         }

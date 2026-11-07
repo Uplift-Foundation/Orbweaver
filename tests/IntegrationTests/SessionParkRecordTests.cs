@@ -170,6 +170,44 @@ public class SessionParkRecordTests
         Assert.Equal("idle", SessionPark.RecordStatus(32273, Owner, home));
     }
 
+    // Every config dir a session can live under: the record is found, and says
+    // waiting, whichever account owns it. ~/.claude-board is the one Warren's
+    // lawyer session lives under; the others are the machine's own accounts.
+    [Fact]
+    public void AWaitingRecordIsReadBackUnderEveryConfiguredAccount()
+    {
+        foreach (var account in new[] { ".claude", ".claude-loginid", ".claude-board" })
+        {
+            var home = NewHome();
+            Directory.CreateDirectory(Path.Combine(home, ".claude", "sessions"));
+            WriteRecord(home, account, 32273, StatusRecord("waiting"));
+
+            if (account != ".claude") OrbweaverSettings.AddClaudeCodeProfileDir(account);
+            try
+            {
+                SessionPark.ClearCacheForTests();
+                Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+            }
+            finally
+            {
+                if (account != ".claude") OrbweaverSettings.RemoveClaudeCodeProfileDir(account);
+            }
+        }
+    }
+
+    // The control: an account the user never configured is not searched, so its
+    // record says nothing — which is why every account must be configured.
+    [Fact]
+    public void AnUnconfiguredAccountsRecordIsNotRead()
+    {
+        var home = NewHome();
+        Directory.CreateDirectory(Path.Combine(home, ".claude", "sessions"));
+        WriteRecord(home, ".claude-board", 32273, StatusRecord("waiting"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Null(SessionPark.RecordStatus(32273, Owner, home));
+    }
+
     [Fact]
     public void NoRecordMeansNoStatus()
     {

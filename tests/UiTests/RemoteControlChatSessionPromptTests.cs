@@ -20,6 +20,7 @@ public class RemoteControlChatSessionPromptTests
 {
     private sealed class Harness
     {
+        public DateTime Now = new(2026, 11, 7, 12, 0, 0, DateTimeKind.Utc);
         public bool Waiting = true;
         public int Asks;
         public readonly Queue<PromptReply> Replies = new();
@@ -63,18 +64,27 @@ public class RemoteControlChatSessionPromptTests
             // The transport can carry typed text here, so the "Type something."
             // option is offered; the tests of the withheld case turn it off.
             Session.CarriesText = true;
+            Session.Clock = () => Now;
             Session.PromptChanged += () => PromptChanges++;
             Session.AssumeMirroringForTests();
         }
 
         public void Open() => Session.PanelOpened();
 
-        // One poll interval elapsing.
+        // One poll interval elapsing. Every pending delay completes: one that was
+        // overtaken by a wake-up is still queued and, in real time, would simply
+        // have run out on its own, so completing the oldest alone would tick a
+        // loop that had already moved on.
         public void Tick()
         {
-            TaskCompletionSource? next = null;
-            lock (_ticks) if (_ticks.Count > 0) next = _ticks.Dequeue();
-            next?.TrySetResult();
+            List<TaskCompletionSource> due;
+            lock (_ticks)
+            {
+                due = _ticks.ToList();
+                _ticks.Clear();
+            }
+
+            foreach (var tick in due) tick.TrySetResult();
         }
 
         public async Task Settle()
@@ -689,5 +699,87 @@ public class RemoteControlChatSessionPromptTests
         Assert.Equal(2, log.Count);
         Assert.Contains("not-waiting", log[0].Detail);
         Assert.Contains("not-eligible", log[1].Detail);
+    }
+
+    // --- a second click on a question that was just answered -------------------
+
+    // The far screen takes a moment to advance after a key, so an immediate
+    // re-ask reads the question that was just answered. Live buttons back on it
+    // invite a second click that answers the NEXT question blind. It is held back.
+    [AvaloniaFact]
+    public async Task TheFormJustAnsweredIsNotShownAgainWhileTheScreenCatchesUp()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+
+        Assert.Equal(2, h.Asks);
+        Assert.Null(h.Session.Prompt);
+    }
+
+    [AvaloniaFact]
+    public async Task TheNextQuestionIsShownTheMomentItArrives()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp2", "Which month?"));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);
+
+        h.Tick();
+        await h.Settle();
+
+        Assert.Equal("Which month?", h.Session.Prompt!.Title);
+    }
+
+    // If the same form is still there after the settle window, the answer did not
+    // take, and the buttons come back.
+    [AvaloniaFact]
+    public async Task AFormStillThereAfterTheSettleWindowIsShownAgain()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);
+
+        h.Now += RemoteControlChatSession.SettleAfterAnswer + TimeSpan.FromSeconds(1);
+        h.Tick();
+        await h.Settle();
+
+        Assert.NotNull(h.Session.Prompt);
+    }
+
+    // Nothing was pressed when the far side refused or failed, so there is no
+    // screen about to move on: the buttons come straight back.
+    [AvaloniaFact]
+    public async Task AnAnswerThatFailedBringsTheSameFormStraightBack()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.NextAnswer = new AnswerReply(AnswerKind.Failed);
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+
+        Assert.NotNull(h.Session.Prompt);
     }
 }

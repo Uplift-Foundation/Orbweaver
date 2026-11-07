@@ -78,6 +78,18 @@ namespace Orbweaver
 
         public event Action? PromptChanged;
 
+        // How long the form just answered is held back if it is read again
+        // unchanged. The far screen takes a moment to advance after a key, and
+        // an immediate re-ask reads the question that was just answered, which
+        // would put live buttons back on it — and a second click on them answers
+        // the NEXT question blind (or the same one twice).
+        internal static readonly TimeSpan SettleAfterAnswer = TimeSpan.FromSeconds(4);
+
+        internal Func<DateTime> Clock { get; set; } = () => DateTime.UtcNow;
+
+        private string? _answeredFingerprint;
+        private DateTime _answeredAt;
+
         private string? _promptFingerprint;
         private bool _promptsUnsupported;
         private bool _polling;
@@ -217,6 +229,16 @@ namespace Orbweaver
 
         private void SetPrompt(ChatPrompt prompt, string? fingerprint)
         {
+            // The form that was just answered, read again before the far screen
+            // has moved on: held back until it changes, or until it has stayed
+            // long enough that the answer plainly did not take.
+            if (_answeredFingerprint is not null)
+            {
+                if (fingerprint == _answeredFingerprint && Clock() - _answeredAt < SettleAfterAnswer) return;
+
+                _answeredFingerprint = null;
+            }
+
             if (!CarriesText && prompt.Options.Any(o => o.FreeText))
                 prompt = prompt with { Options = prompt.Options.Where(o => !o.FreeText).ToList() };
 
@@ -274,6 +296,8 @@ namespace Orbweaver
             // local session does: the buttons stop being live the instant one is
             // clicked rather than staying open for a second answer.
             var fingerprint = _promptFingerprint;
+            _answeredFingerprint = fingerprint;
+            _answeredAt = Clock();
             ClearPrompt();
 
             AnswerReply reply;
@@ -290,6 +314,8 @@ namespace Orbweaver
                     break;
 
                 case AnswerKind.Changed when reply.Prompt is not null:
+                    _answeredFingerprint = null;
+
                     // The screen moved on before this answer landed, and the far
                     // side pressed nothing. Show what is there now.
                     SetPrompt(reply.Prompt, reply.Fingerprint);
@@ -297,6 +323,8 @@ namespace Orbweaver
                     break;
 
                 case AnswerKind.Refused:
+                    _answeredFingerprint = null;
+
                     // Not the screen moving on: the request itself could not be
                     // honoured as asked, and nothing was pressed. Look again so
                     // the buttons come back.
@@ -311,6 +339,7 @@ namespace Orbweaver
                     break;
 
                 default:
+                    _answeredFingerprint = null;
                     Note($"Couldn't answer that on {_remoteName}.");
                     _wake?.TrySetResult();
                     EnsurePromptPolling();

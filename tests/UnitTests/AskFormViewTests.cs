@@ -243,4 +243,26 @@ public class AskFormViewTests
         Assert.Contains("Cheese, Ham, Olives", overTheLink.Title);
         Assert.Equal(new[] { "Submit answers", "Cancel" }, overTheLink.Options.Select(o => o.Label));
     }
+
+    // The wire's Review is an empty list on every screen but the review, which
+    // once made every peer form read as a review and arm all of its buttons.
+    // An ordinary question over the link is not armed, and the real review is.
+    [Fact]
+    public void AnOrdinaryQuestionOverTheLinkIsNotArmedAndTheReviewIs()
+    {
+        foreach (var screen in new[]
+                 {
+                     AskFormFixtures.SingleSelectQ1, AskFormFixtures.MultiSelectQ2,
+                     AskFormFixtures.FreeTextTyped, PaneFixtures.MiniAskForm,
+                 })
+        {
+            var wire = MirrorProtocol.PromptFromScreen(screen)!;
+
+            Assert.NotNull(wire.Review);
+            Assert.Empty(wire.Review!);
+            Assert.False(AskFormView.FromWire(wire).ArmedActivation);
+        }
+
+        Assert.True(AskFormView.FromWire(MirrorProtocol.PromptFromScreen(AskFormFixtures.SubmitTab)!).ArmedActivation);
+    }
 }
