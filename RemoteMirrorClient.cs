@@ -991,7 +991,7 @@ namespace Orbweaver
         // side refuses the same text for the same reason (ErrBadKey).
         public Task<string?> AnswerFreeTextAsync(string name, string key, string fingerprint, string text)
         {
-            if (!RemoteMirrorServer.IsUsableFreeText(text))
+            if (!FormAnswer.IsUsableFreeText(text))
             {
                 Log("answer", $"n={name} key={key} -> err code={MirrorProtocol.ErrBadKey} (no text)");
                 return Task.FromResult<string?>(MirrorProtocol.ErrBadKey);

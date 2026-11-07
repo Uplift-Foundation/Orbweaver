@@ -944,7 +944,9 @@ namespace Orbweaver
         // Anything else is refused with nothing pressed: a panel a few seconds
         // stale must not answer the next question with the last one's choice.
         //
-        // Three kinds of answer, each pinned to QA's real captures (item3/):
+        // The answer itself is FormAnswer's, shared with the local panel so the
+        // two can never drift; this adds the link's gates around it. Three
+        // kinds of answer, each pinned to QA's real captures (item3/):
         //
         //  - an option's digit. On a single-select question it selects and
         //    moves on; on a multi-select one it toggles a box and stays.
@@ -971,20 +973,10 @@ namespace Orbweaver
             var wanted = frame.Get(MirrorProtocol.FingerprintField) ?? "";
             var text = frame.Payload is { Length: > 0 } bytes ? Encoding.UTF8.GetString(bytes) : null;
 
-            string? code;
-            if (_seams.PressKey is not { } press) code = MirrorProtocol.ErrUnsupported;
-            else
-            {
-                var prompt = await ReadPromptAsync(status).ConfigureAwait(false);
-                code = prompt is null ? MirrorProtocol.ErrNoPrompt
-                    : prompt.Fingerprint != wanted ? MirrorProtocol.ErrPromptChanged
-                    : action == MirrorProtocol.ActionCommit
-                        ? (prompt.MultiSelect && prompt.HasSubmitRow ? await PressAsync(press, status, "Right") : MirrorProtocol.ErrBadKey)
-                    : action is not null ? MirrorProtocol.ErrBadKey
-                    : key == prompt.FreeTextKey ? await FreeTextAsync(press, status, prompt, text)
-                    : text is not null || prompt.Options.All(o => o.Key != key) ? MirrorProtocol.ErrBadKey
-                    : await PressAsync(press, status, key);
-            }
+            var code = _seams.PressKey is not { } press
+                ? MirrorProtocol.ErrUnsupported
+                : await FormAnswer.AnswerAsync(status, _seams.CapturePane!, press, _seams.TypeLiteral,
+                    wanted, key, action, text).ConfigureAwait(false);
 
             var what = action is null ? $"key={key}" : $"act={action}";
             if (code is not null)
@@ -996,63 +988,6 @@ namespace Orbweaver
 
             AnswerLog("answer", $"n={name} {what} -> ok");
             await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id)).ConfigureAwait(false);
-        }
-
-        private static async Task<string?> PressAsync(Func<SessionStatus, string, Task<bool>> press, SessionStatus status, string key)
-        {
-            try { return await press(status, key).ConfigureAwait(false) ? null : MirrorProtocol.ErrTypeFailed; }
-            catch { return MirrorProtocol.ErrTypeFailed; }
-        }
-
-        // Free text, with the screen read back between every step (see
-        // AnswerAsync). Null when Enter was pressed on the typed row.
-        private async Task<string?> FreeTextAsync(
-            Func<SessionStatus, string, Task<bool>> press, SessionStatus status, MirrorProtocol.WirePrompt prompt, string? text)
-        {
-            if (!IsUsableFreeText(text)) return MirrorProtocol.ErrBadKey;
-            if (prompt.MultiSelect || _seams.TypeLiteral is not { } type) return MirrorProtocol.ErrUnsupported;
-
-            var keys = prompt.Options.Select(o => o.Key).ToList();
-            var from = prompt.CursorKey is { } c ? keys.IndexOf(c) : -1;
-            var to = keys.IndexOf(prompt.FreeTextKey!);
-            if (from < 0) return MirrorProtocol.ErrTypeFailed;
-
-            for (var i = 0; i < Math.Abs(to - from); i++)
-                if (await PressAsync(press, status, to > from ? "Down" : "Up") is { } failed) return failed;
-
-            // On the row, and still the same form.
-            var there = await ReadPromptAsync(status).ConfigureAwait(false);
-            if (there is null || there.Fingerprint != prompt.Fingerprint || there.CursorKey != prompt.FreeTextKey)
-                return MirrorProtocol.ErrTypeFailed;
-
-            bool typed;
-            try { typed = await type(status, text!).ConfigureAwait(false); }
-            catch { typed = false; }
-            if (!typed) return MirrorProtocol.ErrTypeFailed;
-
-            // The row now shows the text (capture 05), and nothing else moved.
-            var filled = await ReadPromptAsync(status).ConfigureAwait(false);
-            var row = filled?.Options.FirstOrDefault(o => o.Key == prompt.FreeTextKey);
-            if (filled is null || row is null || filled.CursorKey != prompt.FreeTextKey || !ShowsTyped(row.Label, text!))
-                return MirrorProtocol.ErrTypeFailed;
-
-            return await PressAsync(press, status, "Enter").ConfigureAwait(false);
-        }
-
-        // Text the free-text row can take: something to say, on one line. An
-        // empty or blank answer would be Enter on an empty field, which
-        // declines the form; a newline would be Enter in the middle of it.
-        internal static bool IsUsableFreeText(string? text) =>
-            !string.IsNullOrWhiteSpace(text) && text.IndexOfAny(new[] { '\n', '\r' }) < 0;
-
-        // Whether the row reads back as what was typed — whole, or cut short
-        // with an ellipsis on a narrow pane.
-        internal static bool ShowsTyped(string label, string text)
-        {
-            var shown = label.Trim();
-            var wanted = text.Trim();
-            if (shown == wanted) return true;
-            return shown.EndsWith('…') && shown.Length > 1 && wanted.StartsWith(shown[..^1].TrimEnd(), StringComparison.Ordinal);
         }
 
         // The session a PROMPT or ANSWER names, with the same gates INPUT has:

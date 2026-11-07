@@ -148,7 +148,7 @@ public class PromptWireTests
     [InlineData("ends\r", false)]
     [InlineData("my own answer", true)]
     public void OnlyOneLineOfRealTextIsUsableFreeText(string? text, bool usable) =>
-        Assert.Equal(usable, RemoteMirrorServer.IsUsableFreeText(text));
+        Assert.Equal(usable, FormAnswer.IsUsableFreeText(text));
 
     [Theory]
     [InlineData("my own answer", "my own answer", true)]
@@ -157,5 +157,5 @@ public class PromptWireTests
     [InlineData("…", "anything", false)]
     [InlineData("Type something.", "my own answer", false)]
     public void TheRowReadsBackAsWhatWasTyped(string label, string text, bool shown) =>
-        Assert.Equal(shown, RemoteMirrorServer.ShowsTyped(label, text));
+        Assert.Equal(shown, FormAnswer.ShowsTyped(label, text));
 }
