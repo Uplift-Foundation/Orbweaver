@@ -399,9 +399,16 @@ namespace Orbweaver
 
         // --- the transport: the link's client, read through each time ----------
 
+        // The client this panel's prompts travel on: the link's, unless a test
+        // hands one over, so a test of the transport needs no process-wide state.
+        internal Func<RemoteMirrorClient?>? ClientSeam { get; set; }
+
+        private RemoteMirrorClient? Link() =>
+            ClientSeam is { } seam ? seam() : RemoteControlSessions.MirrorClientFor(_account);
+
         private async Task<PromptReply> AskTheFarSide(CancellationToken ct)
         {
-            if (RemoteControlSessions.MirrorClientFor(_account) is not { } client)
+            if (Link() is not { } client)
                 return new PromptReply(PromptReplyKind.Transient);
 
             // Not yet known to answer PROMPT and ANSWER: that is said on the roster
@@ -414,7 +421,7 @@ namespace Orbweaver
 
         private async Task<AnswerReply> AnswerOnTheFarSide(string key, string? fingerprint, string? text)
         {
-            if (RemoteControlSessions.MirrorClientFor(_account) is not { } client || fingerprint is null)
+            if (Link() is not { } client || fingerprint is null)
                 return new AnswerReply(AnswerKind.Failed);
 
             // Three different acts, each its own call: the explicit Submit button

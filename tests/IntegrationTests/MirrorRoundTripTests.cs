@@ -2003,6 +2003,200 @@ public class MirrorRoundTripTests : IDisposable
 
     // --- CB-307 item 3, the arms QA's captures unblocked ----------------------
 
+    // --- the near panel's own transport, over the real link --------------------
+
+    // RemoteControlChatSession's default transport (the one the app runs) driven
+    // through this harness's real server and client, in the suite that measures
+    // the async method with branch points the UI suite's engine counts
+    // differently: every way an answer can leave the panel, and every way the
+    // far side can answer it. The client is handed over rather than installed
+    // process-wide: other classes run in parallel and own that state.
+    private async Task<(RemoteControlChatSession Session, Harness Harness)> PanelOver(
+        string name, string screen, Action<Harness>? setup = null)
+    {
+        var harness = new Harness(_dir) { Screen = screen };
+        setup?.Invoke(harness);
+        harness.AddSession(name, WriteTranscript(name + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync(name);
+
+        var session = new RemoteControlChatSession("rc:.claude:" + name, ".claude", name)
+        {
+            ClientSeam = () => harness.Client,
+        };
+
+        var wire = (await harness.Client.FetchPromptAsync(name)).Prompt!;
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt, AskFormView.FromWire(wire), wire.Fingerprint));
+
+        return (session, harness);
+    }
+
+    [Fact]
+    public async Task APanelAnswersADigitThroughTheDefaultTransport()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        await session.AnswerAsync(session.Prompt!.Options[1]);
+
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
+    [Fact]
+    public async Task APanelCommitsAMultiSelectWithRightThroughTheDefaultTransport()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.QaMultiSelect);
+
+        await session.AnswerAsync(session.Prompt!.Options[^1]);
+
+        Assert.Equal(new[] { "Right" }, harness.Pressed);
+    }
+
+    [Fact]
+    public async Task APanelTypesFreeTextThroughTheDefaultTransport()
+    {
+        var (session, harness) = await PanelOver("qa", PaneFixtures.QaFormQ1, h =>
+        {
+            var downs = 0;
+            h.AfterPress = key => key switch
+            {
+                "Down" when ++downs == 2 => PaneFixtures.QaCursorOnFreeText,
+                "Enter" => PaneFixtures.QaMultiSelect,
+                _ => null,
+            };
+            h.AfterType = text => text == "my own answer" ? PaneFixtures.QaFreeTextTyped : null;
+        });
+
+        await session.AnswerFreeTextAsync(session.Prompt!.Options.Single(o => o.FreeText), "my own answer");
+
+        Assert.Equal(new[] { "Down", "Down", "Enter" }, harness.Pressed);
+        Assert.Equal(new[] { "my own answer" }, harness.Literal);
+    }
+
+    // The screen moved on to ANOTHER form: nothing is pressed, and that form is
+    // what the user is shown, with the note.
+    [Fact]
+    public async Task APanelShownAFormThatMovedOnGetsTheNewFormAndPressesNothing()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        harness.Screen = PaneFixtures.MacModelSwitchDialog;
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(harness.Pressed);
+        Assert.StartsWith("Opus 5.5's safeguards flagged this session.", session.Prompt!.Title);
+        Assert.Contains(session.History, t => t.Text.Contains("nothing was answered", StringComparison.Ordinal));
+    }
+
+    // The screen moved on to NOTHING readable: nothing is pressed, and since there
+    // is no form to show, the answer is reported as not given.
+    [Fact]
+    public async Task APanelShownAFormThatMovedOnToNothingPressesNothingAndSaysSo()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        // A different form first (so the key is refused as changed), then gone
+        // by the time the panel re-reads it.
+        harness.Screen = PaneFixtures.MiniAskForm.Replace("☐ xxx xxxx", "☒ xxx xxxx");
+        harness.SwitchAfterCaptures = (harness.Captures + 1, PaneFixtures.MacPromptAfterEsc);
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(harness.Pressed);
+        Assert.Contains(session.History, t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal));
+    }
+
+    // Nothing is waiting any more: the form was already answered, which is said
+    // quietly and is not an error.
+    [Fact]
+    public async Task APanelAnsweringAFormThatIsAlreadyGoneIsToldSoQuietly()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        harness.Screen = PaneFixtures.MacPromptAfterEsc;
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(harness.Pressed);
+        Assert.Contains(session.History, t => t.Text == "That question was already answered.");
+        Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't answer", StringComparison.Ordinal));
+    }
+
+    // A form shown with no fingerprint, or no link at all, cannot be answered.
+    [Fact]
+    public async Task APanelWithNoFingerprintOrNoLinkReportsAFailure()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+        var shown = session.Prompt!;
+
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt, shown with { Title = "no fingerprint" }, null));
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+        Assert.Empty(harness.Pressed);
+
+        // No link at all.
+        session.ClientSeam = () => null;
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt, shown, "fp"));
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Equal(2, session.History.Count(t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal)));
+    }
+
+    // The ask half of the same transport, polled the way the panel polls it: a
+    // form on the far screen reaches the panel; no link is a one-off failure; a
+    // far side that does not advertise prompts is "not yet", never final.
+    private static async Task<RemoteControlChatSession> PollingPanel(
+        string name, RemoteMirrorClient? client)
+    {
+        var session = new RemoteControlChatSession("rc:.claude:" + name, ".claude", name)
+        {
+            ClientSeam = () => client,
+            WaitingNow = () => true,
+            PromptLog = (_, _) => { },
+        };
+        session.AssumeMirroringForTests();
+        session.PanelOpened();
+
+        for (var i = 0; i < 100 && session.Prompt is null; i++) await Task.Delay(5);
+        return session;
+    }
+
+    [Fact]
+    public async Task APollingPanelReadsTheFormOffTheFarScreen()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("poll.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        var session = await PollingPanel("evidence", harness.Client);
+
+        Assert.NotNull(session.Prompt);
+        Assert.StartsWith("xxxxx xx xxx xxxxx", session.Prompt!.Title);
+        session.PanelClosed();
+    }
+
+    [Fact]
+    public async Task APollingPanelWithNoLinkAsksNothingAndShowsNothing()
+    {
+        var session = await PollingPanel("evidence", null);
+
+        Assert.Null(session.Prompt);
+        session.PanelClosed();
+    }
+
+    [Fact]
+    public async Task APollingPanelOverAFarSideThatDoesNotAdvertisePromptsShowsNothingAndAsksNothing()
+    {
+        var harness = new Harness(_dir, ungated: true) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("old.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        Assert.False(harness.Client.SpeaksPrompts("evidence"));
+
+        var session = await PollingPanel("evidence", harness.Client);
+
+        Assert.Null(session.Prompt);
+        Assert.Equal(0, harness.Captures);
+        session.PanelClosed();
+    }
+
     // QA's two-question form, its free-text row filled from the near side the
     // only safe way: cursor onto the row and seen there, text typed and seen
     // in the row, and only then Enter. Each step's screen is QA's real one.
@@ -3783,6 +3977,7 @@ public class MirrorRoundTripTests : IDisposable
         public string? Screen { get; set; } = PaneFixtures.MacPromptAfterEsc;
         public string? Record { get; set; } = "idle";
         public int Captures { get; private set; }
+        public (int After, string Then)? SwitchAfterCaptures { get; set; }
 
         // CB-307 item 3: the keys the far side pressed to answer a dialog, and
         // the ways that can go wrong. Wired unless the harness is ungated.
@@ -3970,7 +4165,12 @@ public class MirrorRoundTripTests : IDisposable
         {
             Captures++;
             if (CaptureThrows) throw new InvalidOperationException("tmux went away");
-            return Task.FromResult(Screen);
+            var shown = Screen;
+
+            // The screen moves on after this many reads: what the next read sees.
+            if (SwitchAfterCaptures is { } later && Captures >= later.After) Screen = later.Then;
+
+            return Task.FromResult(shown);
         }
 
         // The machines to ask, by name. A direct link knows the machines it is
