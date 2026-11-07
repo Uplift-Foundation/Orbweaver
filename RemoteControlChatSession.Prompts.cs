@@ -36,6 +36,11 @@ namespace Orbweaver
             Unsupported,
             // A one-off failure. Asked again next tick.
             Transient,
+            // The far machine has not said yet that it answers PROMPT, which is
+            // not the same as saying it does not: the answer rides on the roster
+            // reply, and a panel can be asking a moment before it lands. Asked
+            // again next tick, and never settled as unsupported.
+            NotYet,
         }
 
         internal sealed record PromptReply(PromptReplyKind Kind, ChatPrompt? Prompt = null, string? Fingerprint = null);
@@ -85,6 +90,29 @@ namespace Orbweaver
 
         private bool Waiting() => (WaitingNow ?? RosterSaysWaiting)();
 
+        // What the far roster says this session is doing, for the log line that
+        // explains why a form was not asked for. Null when it says nothing.
+        private string? RosterStatus() => RemoteControlSessions.MirrorFor(_account, _remoteName)?.Status;
+
+        // Why a form was not asked for, said once per reason per session and
+        // changed reason: a panel polls every few seconds, and a silent skip is
+        // how "the form never appeared" went unexplained. Never any screen text.
+        private string? _lastSkip;
+
+        internal void SaySkip(string reason, string detail)
+        {
+            var line = $"{reason} {detail}".TrimEnd();
+            if (_lastSkip == line) return;
+
+            _lastSkip = line;
+            PromptLog("prompt-skip", $"n={_remoteName} {line}");
+        }
+
+        // Its own sink, apart from the session's Log, so what this says never
+        // mixes into the open/reopen lines that sink is asserted on. MirrorLog in
+        // the app; a capture in a test.
+        internal Action<string, string> PromptLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
+
         // The far roster's own word. Hana's promotion on the far host turns a
         // dialog-blocked session's `idle` into `waiting` before it is served.
         private bool RosterSaysWaiting() =>
@@ -96,16 +124,26 @@ namespace Orbweaver
         // the panel opened, the roster landed, an answer went in.
         internal void EnsurePromptPolling()
         {
-            if (_disposed || !_panelOpen || !_mirroring || _promptsUnsupported) return;
+            if (_disposed || !_panelOpen || !_mirroring || _promptsUnsupported)
+            {
+                SaySkip("not-eligible",
+                    $"disposed={_disposed} panel-open={_panelOpen} mirroring={_mirroring} unsupported={_promptsUnsupported}");
+                return;
+            }
 
             if (!Waiting())
             {
                 // Left waiting: whatever was on show is not being asked any more.
+                SaySkip("not-waiting", $"roster-status={RosterStatus() ?? "none"} account={_account}");
                 ClearPrompt();
                 return;
             }
 
-            if (_polling) return;
+            if (_polling)
+            {
+                SaySkip("already-polling", "");
+                return;
+            }
 
             _polling = true;
             _pollCts = new CancellationTokenSource();
@@ -166,6 +204,10 @@ namespace Orbweaver
 
                 case PromptReplyKind.NoPrompt:
                     ClearPrompt();
+                    break;
+
+                case PromptReplyKind.NotYet:
+                    SaySkip("far-side-not-known-to-answer-prompts", "asked again next tick");
                     break;
 
                 // Transient, or a Prompt reply with no prompt: leave what is on
@@ -283,8 +325,10 @@ namespace Orbweaver
             if (RemoteControlSessions.MirrorClientFor(_account) is not { } client)
                 return new PromptReply(PromptReplyKind.Transient);
 
-            // A far Buddy that predates PROMPT and ANSWER: nothing to ask.
-            if (!client.SpeaksPrompts(_remoteName)) return new PromptReply(PromptReplyKind.Unsupported);
+            // Not yet known to answer PROMPT and ANSWER: that is said on the roster
+            // reply, which may not have landed, and a far Buddy upgraded mid-session
+            // is noticed on its next poll. So not "unsupported", which is final.
+            if (!client.SpeaksPrompts(_remoteName)) return new PromptReply(PromptReplyKind.NotYet);
 
             return MapFetch(await client.FetchPromptAsync(_remoteName).ConfigureAwait(true));
         }

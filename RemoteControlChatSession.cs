@@ -199,7 +199,13 @@ namespace Orbweaver
 
         private void OnMirrorChanged(string account)
         {
-            if (!account.Equals(_account, StringComparison.Ordinal)) return;
+            // Every roster landing counts, whatever account it names. The link
+            // raises this with the DEFAULT account only, because a socket is not
+            // account-scoped — and a panel for a session under any other config
+            // dir (~/.claude-board) filtered that out, so it never upgraded when
+            // the roster landed and never noticed its session start waiting.
+            // MirrorClientFor ignores the account too, so there is no other
+            // account's roster to be confused with.
 
             // The roster landing is what makes the far machine knowable, so this
             // is the moment a panel opened before it can be told.

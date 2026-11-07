@@ -769,6 +769,36 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(new[] { "1" }, _pressed);
     }
 
+    // Production wiring, which the harness's own client hides: the link raises
+    // MirrorChanged with the DEFAULT account only (a socket is not account-scoped),
+    // while a session under ~/.claude-board belongs to ".claude-board". A panel
+    // opened before the roster lands used to ignore that event, so it never
+    // upgraded to a live view and never noticed its session was waiting — it
+    // needed a second open. It must upgrade and ask on the roster landing alone.
+    [AvaloniaFact]
+    public async Task APanelForANonDefaultAccountUpgradesAndAsksWhenTheLinkRaisesTheDefaultAccount()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        // A client wired as PeerSessions wires the app's: no per-account
+        // subscription, and the roster event raised for the default account.
+        RemoteControlSessions.ResetForTests();
+        _client = new RemoteMirrorClient(Account, new RemoteMirrorClient.Seams(SendToServerAsync));
+        PeerSessions.UseClientForTests(_client);
+        _client.RosterUpdated += () => RemoteControlSessions.RaiseMirrorChanged(".claude");
+        Assert.NotEqual(".claude", Account);
+
+        var session = NewSession();
+        session.PanelOpened();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.True(session.IsMirroring, "the roster landing alone should upgrade the panel");
+        Assert.NotNull(session.Prompt);
+    }
+
     // The screen moves on between the form being shown and the click: the far
     // side presses nothing, and the panel is shown what is there now with a note
     // saying so, which the user can answer.

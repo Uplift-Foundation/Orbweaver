@@ -582,4 +582,112 @@ public class RemoteControlChatSessionPromptTests
         Assert.Equal(2, h.Asks);
         Assert.NotNull(h.Session.Prompt);
     }
+
+    // --- not yet known is not unsupported; and a skip says why ----------------
+
+    // The far machine's "I answer PROMPT" rides on the roster reply, which may
+    // land a moment after a panel starts asking. That is not "unsupported", which
+    // is final: the next tick asks again and the form arrives.
+    [AvaloniaFact]
+    public async Task AFarSideNotYetKnownToAnswerPromptsIsAskedAgainAndNeverSettledAsUnsupported()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(new PromptReply(PromptReplyKind.NotYet));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);
+        Assert.Equal(1, h.Asks);
+
+        h.Tick();
+        await h.Settle();
+
+        Assert.Equal(2, h.Asks);
+        Assert.NotNull(h.Session.Prompt);
+    }
+
+    private static List<(string What, string Detail)> Logged(RemoteControlChatSession session)
+    {
+        var lines = new List<(string, string)>();
+        session.PromptLog = (what, detail) => lines.Add((what, detail));
+        return lines;
+    }
+
+    // A session that is not waiting says so, with what the roster did say, once.
+    [AvaloniaFact]
+    public async Task ASkipForNotWaitingNamesTheRosterStatusAndIsSaidOnce()
+    {
+        var h = new Harness { Waiting = false };
+        var log = Logged(h.Session);
+
+        h.Open();
+        await h.Settle();
+        h.Session.EnsurePromptPolling();
+        h.Session.EnsurePromptPolling();
+
+        var line = Assert.Single(log);
+        Assert.Equal("prompt-skip", line.What);
+        Assert.Contains("n=evidence not-waiting", line.Detail);
+        Assert.Contains("account=.claude", line.Detail);
+    }
+
+    [AvaloniaFact]
+    public async Task ASkipForANotEligiblePanelSaysWhichConditionFailed()
+    {
+        var h = new Harness();
+        var log = Logged(h.Session);
+
+        // Never opened.
+        h.Session.EnsurePromptPolling();
+        await h.Settle();
+
+        var line = Assert.Single(log);
+        Assert.Contains("not-eligible", line.Detail);
+        Assert.Contains("panel-open=False", line.Detail);
+        Assert.Contains("mirroring=True", line.Detail);
+    }
+
+    [AvaloniaFact]
+    public async Task ASkipForAlreadyPollingSaysSo()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+        var log = Logged(h.Session);
+
+        h.Session.EnsurePromptPolling();
+
+        Assert.Contains(log, l => l.Detail.Contains("already-polling"));
+    }
+
+    [AvaloniaFact]
+    public async Task ANotYetReplySaysItWillAskAgain()
+    {
+        var h = new Harness();
+        var log = Logged(h.Session);
+        h.Replies.Enqueue(new PromptReply(PromptReplyKind.NotYet));
+
+        h.Open();
+        await h.Settle();
+
+        Assert.Contains(log, l => l.Detail.Contains("far-side-not-known-to-answer-prompts"));
+    }
+
+    // A different reason is a different line, so a change is never swallowed.
+    [AvaloniaFact]
+    public async Task ADifferentSkipReasonIsSaidAgain()
+    {
+        var h = new Harness { Waiting = false };
+        var log = Logged(h.Session);
+
+        h.Open();
+        await h.Settle();
+        h.Session.PanelClosed();
+        h.Session.EnsurePromptPolling();
+
+        Assert.Equal(2, log.Count);
+        Assert.Contains("not-waiting", log[0].Detail);
+        Assert.Contains("not-eligible", log[1].Detail);
+    }
 }
