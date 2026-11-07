@@ -1519,6 +1519,46 @@ namespace Orbweaver.Tests
                 && !string.IsNullOrWhiteSpace(PaneFixtures.MiniFormTitledRuleAtBottom.Split('\n')[^1])
                 && PaneFixtures.MiniFormTitledRuleAtBottom.Split('\n').Count(string.IsNullOrWhiteSpace) >= 15);
 
+            // Named sessions (`claude -n`): the name drawn into the bottom border
+            // under the form's footer. QA's three real captures, a wrapped
+            // footer under it, and the name cut off entirely.
+            foreach (var (name, screen, want) in new[]
+                     {
+                         ("mini", PaneFixtures.MiniNamedForm, "Which fruit? (qa-mini-d)"),
+                         ("MacBook", PaneFixtures.MacNamedForm, "Which fruit? (qa-mac-d)"),
+                         ("MacBook board", PaneFixtures.MacNamedFormBoard, "Which fruit? (qa-mac-b)"),
+                         ("wrapped footer", PaneFixtures.MacNamedFormWrappedFooter, "Which fruit? (qa-mac-d)"),
+                         ("name cut off", PaneFixtures.MacNamedFormClippedName, "Which fruit? (qa-mac-d)"),
+                     })
+            {
+                var named = ChatTranscript.ParseAskForm(screen);
+                Check($"a named session's form reads as a form ({name})",
+                    named is not null && named.Prompt.Options.Count == 4 && named.Prompt.Title == want,
+                    named?.Prompt.Title ?? "null");
+                Check($"…and its screen as a dialog ({name})", PaneScreen.Classify(screen) == PaneReading.Dialog);
+            }
+            Check("the cut-off border really is a pure rule on the last line",
+                ChatTranscript.IsHorizontalRule(PaneFixtures.MacNamedFormClippedName.TrimEnd().Split('\n')[^1].Trim()));
+
+            // A bare trailing rule is still the input box everywhere else: with
+            // no footer hint above it, or with something drawn below it.
+            Check("a numbered list over a trailing rule with no footer hint is not a dialog",
+                ChatTranscript.ParseDialog("""
+                     Pick one
+                     ❯ 1. Yes
+                       2. No
+                    ────────────────────────────────────────
+                    """) is null);
+            Check("a rule after the footer with a line under it is not a border",
+                ChatTranscript.ParseDialog("""
+                     Pick one
+                     ❯ 1. Yes
+                       2. No
+                    Enter to select · Esc to cancel
+                    ────────────────────────────────────────
+                    ❯
+                    """) is null);
+
             // Counting drawn lines widens the window only over blanks: a
             // /permissions tab, a prose list above a live box, and a prompt keep
             // their readings with blank rows and a titled rule under them.

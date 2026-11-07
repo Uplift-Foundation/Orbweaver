@@ -1362,5 +1362,251 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mini-d ─
 """"";
 
+        // Mac mini, a QA session started with `claude -n qa-mini-d`: a form at the top, blank rows, and the session's name drawn into the bottom border on the last row. Byte-exact. (item3/named/mini-named-form-q1.txt)
+        internal const string MiniNamedForm = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307-mini-d · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two single-select questions. Q1: question "Which
+  fruit? (qa-mini-d)", header "Fruit", options Apple and Pear (with short descriptions). Q2: question "Which size?
+  (qa-mini-d)", header "Size", options Small and Large (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruit  ☐ Size  ✔ Submit  →
+
+Which fruit? (qa-mini-d)
+
+❯ 1. Apple
+     Crisp and sweet
+  2. Pear
+     Soft and juicy
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mini-d ─
+""""";
+
+        // MacBook, the same with `claude -n qa-mac-d`. Byte-exact. (item3/named/mac-named-form-q1.txt)
+        internal const string MacNamedForm = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307-mac-d · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two single-select questions. Q1: question "Which
+  fruit? (qa-mac-d)", header "Fruit", options Apple and Pear (with short descriptions). Q2: question "Which size?
+  (qa-mac-d)", header "Size", options Small and Large (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruit  ☐ Size  ✔ Submit  →
+
+Which fruit? (qa-mac-d)
+
+❯ 1. Apple
+     Crisp, sweet or tart
+  2. Pear
+     Soft, juicy and mild
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mac-d ─
+""""";
+
+        // MacBook, a named session under .claude-board (qa-mac-b). Byte-exact. (item3/named/mac-named-form-board-q1.txt)
+        internal const string MacNamedFormBoard = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with high effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307-mac-b · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two single-select questions. Q1: question "Which
+  fruit? (qa-mac-b)", header "Fruit", options Apple and Pear (with short descriptions). Q2: question "Which size?
+  (qa-mac-b)", header "Size", options Small and Large (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruit  ☐ Size  ✔ Submit  →
+
+Which fruit? (qa-mac-b)
+
+❯ 1. Apple
+     Crisp, sweet or tart, round fruit
+  2. Pear
+     Soft, juicy, bell-shaped fruit
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mac-b ─
+""""";
+
+        // DERIVED from MacNamedForm: its footer wrapped onto two lines ("…Esc to" / "cancel"), the shape one of Warren's real forms had, under the same named border.
+        internal const string MacNamedFormWrappedFooter = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307-mac-d · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two single-select questions. Q1: question "Which
+  fruit? (qa-mac-d)", header "Fruit", options Apple and Pear (with short descriptions). Q2: question "Which size?
+  (qa-mac-d)", header "Size", options Small and Large (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruit  ☐ Size  ✔ Submit  →
+
+Which fruit? (qa-mac-d)
+
+❯ 1. Apple
+     Crisp, sweet or tart
+  2. Pear
+     Soft, juicy and mild
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to
+cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────── qa-mac-d ─
+""""";
+
+        // DERIVED from MacNamedForm: the bottom border cut before the name, as tmux does on a narrower pane, leaving a pure rule as the last drawn line.
+        internal const string MacNamedFormClippedName = """""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/qa307-mac-d · /rc
+
+
+❯ Use the AskUserQuestion tool right now in ONE call with exactly two single-select questions. Q1: question "Which
+  fruit? (qa-mac-d)", header "Fruit", options Apple and Pear (with short descriptions). Q2: question "Which size?
+  (qa-mac-d)", header "Size", options Small and Large (with short descriptions). Do nothing else until I answer.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruit  ☐ Size  ✔ Submit  →
+
+Which fruit? (qa-mac-d)
+
+❯ 1. Apple
+     Crisp, sweet or tart
+  2. Pear
+     Soft, juicy and mild
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+""""";
+
     }
 }

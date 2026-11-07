@@ -2430,6 +2430,21 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(4, prompt.Options.Count);
     }
 
+    // Every named session draws its name into the bottom border; a peer asking
+    // for one's form gets it (QA's real MacBook capture).
+    [Fact]
+    public async Task ANamedSessionsFormIsOfferedToAPeer()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MacNamedForm };
+        harness.AddSession("qa-mac-d", WriteTranscript("named.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa-mac-d");
+
+        var prompt = (await harness.Client.FetchPromptAsync("qa-mac-d")).Prompt;
+
+        Assert.Equal("Which fruit? (qa-mac-d)", prompt!.Title);
+        Assert.Equal(4, prompt.Options.Count);
+    }
+
     private static MirrorProtocol.MirrorFrame AnswerFrame(string id, string name, string key, string fp, byte[]? text) =>
         MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Answer, id,
             new Dictionary<string, string>

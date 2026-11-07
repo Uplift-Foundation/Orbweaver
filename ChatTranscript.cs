@@ -532,7 +532,7 @@ namespace Orbweaver
             // The input box, still drawn below — so the session is not blocked
             // on this and these numbers are prose. See (3) above.
             for (var i = runEnd + 1; i < cleaned.Length; i++)
-                if (IsHorizontalRule(cleaned[i])) return null;
+                if (IsHorizontalRule(cleaned[i]) && !IsBottomBorder(cleaned, runEnd, i)) return null;
 
             var t = runStart - 1;
             while (t >= 0 && IsBlankOrFrame(cleaned[t])) t--;
@@ -702,6 +702,31 @@ namespace Orbweaver
 
         private static bool IsBlankOrFrame(string line) =>
             line.Length == 0 || line.All(c => char.IsWhiteSpace(c) || BoxDrawing.Contains(c));
+
+        // The session's own bottom border under a form, not an input box. A
+        // session started with a name (`claude -n <name>`) draws that name into
+        // a rule on the last row, under the form's footer — QA's real captures
+        // of named sessions (item3/named/). The name carries letters, so the
+        // rule is not "pure" and never tripped the input-box check; but on a
+        // narrow pane tmux cuts the line from the right, and cut before the
+        // name it is a pure rule, which read as a live input box and refused
+        // the form. So a pure rule that is the last drawn line, after the
+        // form's own footer hint, is the border. An input box is followed by
+        // its ❯ line and its status line, never by nothing, and never comes
+        // after "Enter to select"/"Esc to cancel".
+        private static bool IsBottomBorder(string[] cleaned, int runEnd, int rule)
+        {
+            for (var j = rule + 1; j < cleaned.Length; j++)
+                if (!string.IsNullOrWhiteSpace(cleaned[j])) return false;
+
+            for (var j = runEnd + 1; j < rule; j++)
+                if (cleaned[j].Contains("Enter to select", StringComparison.Ordinal)
+                    || cleaned[j].Contains("Enter to confirm", StringComparison.Ordinal)
+                    || cleaned[j].Contains("Esc to cancel", StringComparison.Ordinal))
+                    return true;
+
+            return false;
+        }
 
         // A captured screen as lines, with the blank rows below the last
         // drawn line dropped. Every reader of a pane goes through this.
