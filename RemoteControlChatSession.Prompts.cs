@@ -43,7 +43,12 @@ namespace Orbweaver
         // What an answer came back with. Changed carries the form as it is now,
         // for when the screen moved on between asking and answering: the key was
         // not pressed, and the user is shown the new question instead.
-        internal enum AnswerKind { Done, Changed, Unsupported, Failed }
+        //
+        // Refused is the far side declining the request as asked, with nothing
+        // pressed (a key not on the screen, text where none is taken, a commit on
+        // a question with nothing to commit): a different fact from the screen
+        // having moved on, and worded differently.
+        internal enum AnswerKind { Done, Changed, Refused, Unsupported, Failed }
 
         internal sealed record AnswerReply(AnswerKind Kind, ChatPrompt? Prompt = null, string? Fingerprint = null);
 
@@ -249,6 +254,15 @@ namespace Orbweaver
                     Note($"{_remoteName}'s question had changed, so nothing was answered. Here is the current one.");
                     break;
 
+                case AnswerKind.Refused:
+                    // Not the screen moving on: the request itself could not be
+                    // honoured as asked, and nothing was pressed. Look again so
+                    // the buttons come back.
+                    Note($"That can't be answered that way on {_remoteName}. Nothing was pressed.");
+                    _wake?.TrySetResult();
+                    EnsurePromptPolling();
+                    break;
+
                 case AnswerKind.Unsupported:
                     _promptsUnsupported = true;
                     Note($"{_remoteName} can't take an answer from here. Answer it in its terminal.");
@@ -323,7 +337,10 @@ namespace Orbweaver
 
             // The screen no longer shows what the answer was chosen from, or the
             // key is not on it any more: the far side pressed nothing.
-            MirrorProtocol.ErrPromptChanged or MirrorProtocol.ErrBadKey => AnswerKind.Changed,
+            MirrorProtocol.ErrPromptChanged or MirrorProtocol.ErrNoPrompt => AnswerKind.Changed,
+
+            // The far side refused the request as asked and pressed nothing.
+            MirrorProtocol.ErrBadKey => AnswerKind.Refused,
 
             MirrorProtocol.ErrUnsupported or MirrorProtocol.ErrNoPane or MirrorProtocol.ErrReplyOff =>
                 AnswerKind.Unsupported,

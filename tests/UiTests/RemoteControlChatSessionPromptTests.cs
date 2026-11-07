@@ -512,7 +512,8 @@ public class RemoteControlChatSessionPromptTests
         {
             (null, AnswerKind.Done),
             (MirrorProtocol.ErrPromptChanged, AnswerKind.Changed),
-            (MirrorProtocol.ErrBadKey, AnswerKind.Changed),
+            (MirrorProtocol.ErrNoPrompt, AnswerKind.Changed),
+            (MirrorProtocol.ErrBadKey, AnswerKind.Refused),
             (MirrorProtocol.ErrUnsupported, AnswerKind.Unsupported),
             (MirrorProtocol.ErrNoPane, AnswerKind.Unsupported),
             (MirrorProtocol.ErrReplyOff, AnswerKind.Unsupported),
@@ -559,5 +560,26 @@ public class RemoteControlChatSessionPromptTests
         await h.Session.AnswerAsync(h.Session.Prompt!.Options[1]);
 
         Assert.Equal((AskFormView.CommitKey, "fp7", (string?)null), Assert.Single(h.Answers));
+    }
+
+    // The far side declined the request as asked, which is not the screen having
+    // moved on: nothing was pressed, the buttons come back, and the note says so.
+    [AvaloniaFact]
+    public async Task ARefusedAnswerSaysNothingWasPressedAndBringsTheButtonsBack()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.NextAnswer = new AnswerReply(AnswerKind.Refused);
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+
+        Assert.Contains(h.Session.History, t => t.Text.Contains("can't be answered that way on evidence. Nothing was pressed.", StringComparison.Ordinal));
+        Assert.DoesNotContain(h.Session.History, t => t.Text.Contains("had changed", StringComparison.Ordinal));
+        Assert.Equal(2, h.Asks);
+        Assert.NotNull(h.Session.Prompt);
     }
 }
