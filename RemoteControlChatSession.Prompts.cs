@@ -53,7 +53,11 @@ namespace Orbweaver
         // pressed (a key not on the screen, text where none is taken, a commit on
         // a question with nothing to commit): a different fact from the screen
         // having moved on, and worded differently.
-        internal enum AnswerKind { Done, Changed, Refused, Unsupported, Failed }
+        //
+        // AlreadyAnswered is the far side saying nothing is waiting any more
+        // (ErrNoPrompt): the form is gone, which is what answering it does, so a
+        // late second click on it is not a failure and is never reported as one.
+        internal enum AnswerKind { Done, Changed, AlreadyAnswered, Refused, Unsupported, Failed }
 
         internal sealed record AnswerReply(AnswerKind Kind, ChatPrompt? Prompt = null, string? Fingerprint = null);
 
@@ -89,6 +93,16 @@ namespace Orbweaver
 
         private string? _answeredFingerprint;
         private DateTime _answeredAt;
+
+        // Which read of the far screen is current. Bumped when an answer is sent
+        // and again when it comes back, so a read that began before either — a
+        // poll already in flight, whose reply is the screen as it was before the
+        // key landed — is dropped when it arrives instead of being drawn as
+        // current. That is how the final review screen showed twice: the old
+        // form returned after the answer had gone out and was put back up with
+        // live buttons.
+        private int _generation;
+        private bool _answering;
 
         private string? _promptFingerprint;
         private bool _promptsUnsupported;
@@ -174,11 +188,20 @@ namespace Orbweaver
                         return;
                     }
 
-                    var reply = await SafeAsk(ct).ConfigureAwait(true);
+                    // Not while an answer is in flight, and never apply a read that
+                    // began before the latest answer: see _generation.
+                    if (!_answering)
+                    {
+                        var generation = _generation;
+                        var reply = await SafeAsk(ct).ConfigureAwait(true);
 
-                    if (ct.IsCancellationRequested) return;
-                    ApplyReply(reply);
-                    if (_promptsUnsupported) return;
+                        if (ct.IsCancellationRequested) return;
+
+                        if (generation == _generation && !_answering) ApplyReply(reply);
+                        else SaySkip("stale-read-dropped", "a read that began before the latest answer");
+
+                        if (_promptsUnsupported) return;
+                    }
 
                     _wake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     await Task.WhenAny(Delay(PollEvery, ct), _wake.Task).ConfigureAwait(true);
@@ -250,7 +273,7 @@ namespace Orbweaver
             // must not dismiss the panel: its answer is a note saying where.
             _promptFingerprint = fingerprint;
             Prompt = prompt.ElsewhereLabel is null
-                ? prompt with { ElsewhereLabel = $"Answer on {_remoteName}" }
+                ? prompt with { ElsewhereLabel = $"Answer on {FarMachine}" }
                 : prompt;
             OnUi(() => PromptChanged?.Invoke());
         }
@@ -287,7 +310,7 @@ namespace Orbweaver
             // form. It is answered with text, from the box the panel opens.
             if (option.FreeText && text is null)
             {
-                Note($"Type your answer for {_remoteName} in the box, then send it.");
+                Note($"Type your answer for {FarName} in the box, then send it.");
                 return;
             }
 
@@ -298,11 +321,21 @@ namespace Orbweaver
             var fingerprint = _promptFingerprint;
             _answeredFingerprint = fingerprint;
             _answeredAt = Clock();
+            _generation++;
+            _answering = true;
             ClearPrompt();
 
             AnswerReply reply;
             try { reply = await (Answer ?? AnswerOnTheFarSide)(option.Key, fingerprint, text).ConfigureAwait(true); }
             catch { reply = new AnswerReply(AnswerKind.Failed); }
+            finally
+            {
+                // Bumped again on the way out: a read that began while the answer
+                // was in flight saw the screen before or during the key, and is
+                // as stale as one that began before it.
+                _generation++;
+                _answering = false;
+            }
 
             switch (reply.Kind)
             {
@@ -319,7 +352,18 @@ namespace Orbweaver
                     // The screen moved on before this answer landed, and the far
                     // side pressed nothing. Show what is there now.
                     SetPrompt(reply.Prompt, reply.Fingerprint);
-                    Note($"{_remoteName}'s question had changed, so nothing was answered. Here is the current one.");
+                    Note($"{FarTitle}'s question had changed, so nothing was answered. Here is the current one.");
+                    break;
+
+                case AnswerKind.AlreadyAnswered:
+                    // Nothing is waiting any more, which is what answering does:
+                    // the form is gone, and said so quietly rather than as a
+                    // failure. A later question, if there is one, arrives from
+                    // the next read.
+                    _answeredFingerprint = null;
+                    Note("That question was already answered.");
+                    _wake?.TrySetResult();
+                    EnsurePromptPolling();
                     break;
 
                 case AnswerKind.Refused:
@@ -328,19 +372,19 @@ namespace Orbweaver
                     // Not the screen moving on: the request itself could not be
                     // honoured as asked, and nothing was pressed. Look again so
                     // the buttons come back.
-                    Note($"That can't be answered that way on {_remoteName}. Nothing was pressed.");
+                    Note($"That can't be answered that way on {FarName}. Nothing was pressed.");
                     _wake?.TrySetResult();
                     EnsurePromptPolling();
                     break;
 
                 case AnswerKind.Unsupported:
                     _promptsUnsupported = true;
-                    Note($"{_remoteName} can't take an answer from here. Answer it in its terminal.");
+                    Note($"{FarName} can't take an answer from here. Answer it in its terminal.");
                     break;
 
                 default:
                     _answeredFingerprint = null;
-                    Note($"Couldn't answer that on {_remoteName}.");
+                    Note($"Couldn't answer that on {FarName}.");
                     _wake?.TrySetResult();
                     EnsurePromptPolling();
                     break;
@@ -410,7 +454,11 @@ namespace Orbweaver
 
             // The screen no longer shows what the answer was chosen from, or the
             // key is not on it any more: the far side pressed nothing.
-            MirrorProtocol.ErrPromptChanged or MirrorProtocol.ErrNoPrompt => AnswerKind.Changed,
+            MirrorProtocol.ErrPromptChanged => AnswerKind.Changed,
+
+            // Nothing is waiting any more: the form was answered (by this panel
+            // a moment ago, or in the terminal), which is not an error.
+            MirrorProtocol.ErrNoPrompt => AnswerKind.AlreadyAnswered,
 
             // The far side refused the request as asked and pressed nothing.
             MirrorProtocol.ErrBadKey => AnswerKind.Refused,
@@ -424,6 +472,6 @@ namespace Orbweaver
         // The terminal is on another machine, so there is nothing to bring
         // forward here: say where it is.
         public void AnswerElsewhere() =>
-            Note($"This question is on {_remoteName}'s terminal. Answer it there.");
+            Note($"This question is in the terminal of {FarName}. Answer it there.");
     }
 }

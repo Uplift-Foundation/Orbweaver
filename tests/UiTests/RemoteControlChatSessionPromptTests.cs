@@ -132,10 +132,10 @@ public class RemoteControlChatSessionPromptTests
         h.Open();
         await h.Settle();
 
-        Assert.Equal("Answer on evidence", h.Session.Prompt!.ElsewhereLabel);
+        Assert.Equal("Answer on the other machine", h.Session.Prompt!.ElsewhereLabel);
 
         h.Session.AnswerElsewhere();
-        Assert.Contains(h.Session.History, t => t.Text.Contains("evidence's terminal", StringComparison.Ordinal));
+        Assert.Contains(h.Session.History, t => t.Text.Contains("terminal of evidence", StringComparison.Ordinal));
     }
 
     [AvaloniaFact]
@@ -522,7 +522,7 @@ public class RemoteControlChatSessionPromptTests
         {
             (null, AnswerKind.Done),
             (MirrorProtocol.ErrPromptChanged, AnswerKind.Changed),
-            (MirrorProtocol.ErrNoPrompt, AnswerKind.Changed),
+            (MirrorProtocol.ErrNoPrompt, AnswerKind.AlreadyAnswered),
             (MirrorProtocol.ErrBadKey, AnswerKind.Refused),
             (MirrorProtocol.ErrUnsupported, AnswerKind.Unsupported),
             (MirrorProtocol.ErrNoPane, AnswerKind.Unsupported),
@@ -781,5 +781,178 @@ public class RemoteControlChatSessionPromptTests
         await h.Settle();
 
         Assert.NotNull(h.Session.Prompt);
+    }
+
+    // --- a stale read must never redraw an answered form -------------------------
+
+    // The real failure, in the order it happened: a poll is in flight when the
+    // answer goes out, its reply is the screen as it was before the key landed,
+    // and it arrives afterwards. It must be dropped, not drawn as current — the
+    // final review screen showed twice, and the second Submit was a no-prompt
+    // error, in every one of Warren's runs.
+    [AvaloniaFact]
+    public async Task APollReplyThatArrivesAfterAnAnswerIsDropped()
+    {
+        var h = new Harness();
+        var gate = new TaskCompletionSource<PromptReply>();
+        var asks = 0;
+        h.Session.Ask = _ =>
+        {
+            asks++;
+            return asks == 1 ? Task.FromResult(Shown("fp1")) : gate.Task;
+        };
+        h.Open();
+        await h.Settle();
+        Assert.NotNull(h.Session.Prompt);
+
+        // A poll goes out and is still in flight...
+        h.Tick();
+        await h.Settle();
+        Assert.Equal(2, asks);
+
+        // ...the answer is sent...
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        Assert.Null(h.Session.Prompt);
+
+        // ...and only then does the old read come back, showing the old form. The
+        // settle window is allowed to run out first, so what drops it is the
+        // generation guard and not the hold-back that would also catch it.
+        h.Now += RemoteControlChatSession.SettleAfterAnswer + TimeSpan.FromSeconds(1);
+        gate.SetResult(Shown("fp1"));
+        await h.Settle();
+
+        Assert.Null(h.Session.Prompt);
+    }
+
+    // The control: the same reply arriving with no answer in between is drawn.
+    [AvaloniaFact]
+    public async Task TheSameReplyIsDrawnWhenNoAnswerWentOutMeanwhile()
+    {
+        var h = new Harness();
+        var gate = new TaskCompletionSource<PromptReply>();
+        var asks = 0;
+        h.Session.Ask = _ =>
+        {
+            asks++;
+            return asks == 1 ? Task.FromResult(new PromptReply(PromptReplyKind.NoPrompt)) : gate.Task;
+        };
+        h.Open();
+        await h.Settle();
+        h.Tick();
+        await h.Settle();
+
+        gate.SetResult(Shown("fp1"));
+        await h.Settle();
+
+        Assert.NotNull(h.Session.Prompt);
+    }
+
+    // No new poll goes out while an answer is in flight.
+    [AvaloniaFact]
+    public async Task NoPollGoesOutWhileAnAnswerIsInFlight()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        var release = new TaskCompletionSource<AnswerReply>();
+        h.Session.Answer = (_, _, _) => release.Task;
+        h.Open();
+        await h.Settle();
+        var before = h.Asks;
+
+        var answering = h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        h.Tick();
+        await h.Settle();
+
+        Assert.Equal(before, h.Asks);
+
+        release.SetResult(new AnswerReply(AnswerKind.Done));
+        await answering;
+    }
+
+    // --- a no-prompt reply to an answer is not an error ----------------------------
+
+    // The form was already answered — by this panel a moment ago, or in the
+    // terminal. Cleared quietly: a dim note, never "Couldn't answer".
+    [AvaloniaFact]
+    public async Task ANoPromptReplyToAnAnswerClearsTheFormQuietly()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.NextAnswer = new AnswerReply(AnswerKind.AlreadyAnswered);
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+
+        Assert.Null(h.Session.Prompt);
+        Assert.Contains(h.Session.History, t => t.Text == "That question was already answered.");
+        Assert.DoesNotContain(h.Session.History, t => t.Text.Contains("Couldn't answer", StringComparison.Ordinal));
+    }
+
+    // --- nothing a person reads names the route ------------------------------------
+
+    private static RemoteControlChatSession ByRoute() =>
+        new("rc:.claude-board:sid:b5e36eef-9491-40d1-8604-3f31e9a467ae", ".claude-board",
+            "sid:b5e36eef-9491-40d1-8604-3f31e9a467ae");
+
+    [AvaloniaFact]
+    public void ASessionAddressedByRouteIsNeverNamedByItInTheComposerOrTheHeader()
+    {
+        var session = ByRoute();
+
+        Assert.DoesNotContain("sid:", session.ComposerHint);
+        Assert.DoesNotContain("sid:", session.DisplayName);
+        Assert.DoesNotContain("sid:", session.WaitingFor);
+        Assert.Equal("that session", session.FarTitle);
+    }
+
+    private static async Task<RemoteControlChatSession> OpenedByRoute(AnswerKind answer)
+    {
+        var session = ByRoute();
+        session.WaitingNow = () => true;
+        session.AssumeMirroringForTests();
+        session.Ask = _ => Task.FromResult(new PromptReply(PromptReplyKind.Prompt, Form(), "fp1"));
+        session.Answer = (_, _, _) => Task.FromResult(new AnswerReply(answer));
+        session.PanelOpened();
+        await new Harness().Settle();
+        return session;
+    }
+
+    // Every note a prompt can produce, for a session addressed by route.
+    [AvaloniaFact]
+    public async Task EveryPromptNoteNamesTheTitleNotTheRoute()
+    {
+        foreach (var kind in new[]
+                 {
+                     AnswerKind.Failed, AnswerKind.Refused, AnswerKind.Unsupported, AnswerKind.AlreadyAnswered,
+                 })
+        {
+            var session = await OpenedByRoute(kind);
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.All(session.History, t => Assert.DoesNotContain("sid:", t.Text));
+            Assert.All(session.History, t => Assert.DoesNotContain("b5e36eef", t.Text));
+        }
+
+        var other = await OpenedByRoute(AnswerKind.Done);
+        other.AnswerElsewhere();
+        await other.AnswerAsync(other.Prompt!.Options.First(o => o.FreeText));
+
+        Assert.All(other.History, t => Assert.DoesNotContain("sid:", t.Text));
+        Assert.Contains(other.History, t => t.Text.Contains("that session", StringComparison.Ordinal));
+        Assert.Equal("Answer on the other machine", ByRouteLabel(other));
+    }
+
+    private static string? ByRouteLabel(RemoteControlChatSession session) => session.Prompt?.ElsewhereLabel;
+
+    [Fact]
+    public void ARouteIsRecognisedAsOneAndATitleIsNot()
+    {
+        Assert.True(RemoteControlChatSession.IsRoute("sid:b5e36eef"));
+        Assert.True(RemoteControlChatSession.IsRoute("SID:abc"));
+        Assert.True(RemoteControlChatSession.IsRoute(""));
+        Assert.True(RemoteControlChatSession.IsRoute(null));
+        Assert.False(RemoteControlChatSession.IsRoute("lawyer-search"));
     }
 }

@@ -98,7 +98,7 @@ namespace Orbweaver
             // Deliberately does not promise a live view yet. Saying "mirroring…"
             // and then falling back would be worse than saying "checking" and
             // then succeeding.
-            Note($"Messages you send {remoteName} appear here, with its replies. "
+            Note($"Messages you send {FarTitle} appear here, with its replies. "
                 + "Checking whether a live view of its conversation is available…");
 
             RemoteControlSessions.MirrorChanged += OnMirrorChanged;
@@ -110,7 +110,16 @@ namespace Orbweaver
 
         public string SessionId { get; }
 
-        public string DisplayName { get; set; }
+        // The title the roster gives, never the route the link addresses it by:
+        // set to the route at construction (the only name known then) and read
+        // back as the far session's title once the roster has said it.
+        public string DisplayName
+        {
+            get => IsRoute(_displayName) ? FarTitle : _displayName;
+            set => _displayName = value;
+        }
+
+        private string _displayName = "";
 
         public RemoteChatState State { get; private set; } = RemoteChatState.Connected;
 
@@ -132,7 +141,7 @@ namespace Orbweaver
         // Said in the input box itself. "Message…" would be a lie by omission
         // here: this one leaves the machine, and in live view it is typed into
         // somebody else's terminal, which is worth being even plainer about.
-        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, _remoteName);
+        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, FarTitle);
 
         // Pure and static so the three-way choice is a unit test rather than
         // a screenshot — the same arrangement WaitLabel and FetchingNote are
@@ -265,7 +274,7 @@ namespace Orbweaver
             // Not a problem to clean up afterwards: the window that ends this
             // wait clears the history outright and replaces it with the far
             // conversation, so this line goes with it.
-            if (!_painted) Note(FetchingNote(_remoteName));
+            if (!_painted) Note(FetchingNote(FarTitle));
 
             // Started here rather than inside OpenAsync so the indicator covers
             // the whole wait the user experiences, including the part where the
@@ -314,6 +323,34 @@ namespace Orbweaver
 
         public event Action? MachineChanged;
 
+        // How the far session is named to a person: its title, never the route
+        // ("sid:b5e36eef-…") the link addresses it by, and with the machine it is
+        // on when that is known ("lawyer-search on Warrens-Mac-mini"). Every
+        // string this panel shows uses these; the route is for the wire and the
+        // log, and a person reading "sid:b5e36eef…'s terminal" cannot tell which
+        // session it means.
+        internal string FarTitle
+        {
+            get
+            {
+                var title = FarTitleFromRoster();
+                if (string.IsNullOrWhiteSpace(title)) title = _displayName;
+                return IsRoute(title) ? "that session" : title;
+            }
+        }
+
+        private string? FarTitleFromRoster() =>
+            RemoteControlSessions.MirrorFor(_account, _remoteName)?.Name is { Length: > 0 } name && !IsRoute(name)
+                ? name : null;
+
+        internal string FarName => MachineName is { Length: > 0 } machine ? $"{FarTitle} on {machine}" : FarTitle;
+
+        // "the other machine", when the roster has not said which.
+        internal string FarMachine => MachineName is { Length: > 0 } machine ? machine : "the other machine";
+
+        internal static bool IsRoute(string? name) =>
+            string.IsNullOrWhiteSpace(name) || name.StartsWith("sid:", StringComparison.OrdinalIgnoreCase);
+
         // --- the wait, while it is happening --------------------------------
 
         // See IRemoteChatFetchWait. Set immediately before the fetch and cleared
@@ -323,7 +360,7 @@ namespace Orbweaver
 
         public DateTimeOffset? WaitingSince => _waitingSince;
 
-        public string WaitingFor => $"{_remoteName}'s conversation";
+        public string WaitingFor => $"{FarTitle}'s conversation";
 
         public event Action? WaitChanged;
 
@@ -406,7 +443,7 @@ namespace Orbweaver
             // replies were "written for you". That channel was the relay, which
             // is gone (937de9ec): a session the far Buddy cannot show cannot be
             // written to from here either (see NoWayToSendNote).
-            Note(NoLiveViewNote(_remoteName));
+            Note(NoLiveViewNote(FarTitle));
         }
 
         // Said once, when the far Buddy has answered that it cannot show this
@@ -469,7 +506,7 @@ namespace Orbweaver
                     {
                         Role = ChatRole.System,
                         IsComplete = true,
-                        Text = $"Live view: this panel mirrors {_remoteName}'s own conversation from "
+                        Text = $"Live view: this panel mirrors {FarTitle}'s own conversation from "
                              + "the other machine, a few seconds behind. Messages you type are typed "
                              + "into its terminal."
                     });
@@ -510,7 +547,7 @@ namespace Orbweaver
                 // stuck relay was waiting on. The relay is gone (CB-238), and
                 // the table it read was never filled by anything else, so it
                 // could not be reached.
-                Note($"Couldn't verify {_remoteName}'s transcript — {why}. Showing nothing rather "
+                Note($"Couldn't verify {FarTitle}'s transcript — {why}. Showing nothing rather "
                      + "than something altered; close and reopen the panel to try again.");
             });
         }
@@ -623,7 +660,7 @@ namespace Orbweaver
             // Said plainly rather than left as a dead composer. A message that
             // vanishes with no explanation is the failure this panel has spent
             // six tickets learning not to produce.
-            Note(NoWayToSendNote(_remoteName));
+            Note(NoWayToSendNote(FarTitle));
             return ChatSendOutcome.Failed;
         }
 
@@ -672,7 +709,7 @@ namespace Orbweaver
                 if (_mirroring && _canType) return await SendAsync(line).ConfigureAwait(true);
 
                 Add(mine);
-                Note(OldFarBuddyNote(_remoteName));
+                Note(OldFarBuddyNote(FarTitle));
                 return ChatSendOutcome.Failed;
             }
 
@@ -688,7 +725,7 @@ namespace Orbweaver
         {
             if (outcome.Error is not null)
             {
-                Note(TypingRefusal(outcome.Error, _remoteName, outcome.Why));
+                Note(TypingRefusal(outcome.Error, FarTitle, outcome.Why));
                 return ChatSendOutcome.Failed;
             }
 
@@ -705,8 +742,8 @@ namespace Orbweaver
                     // including no verdict from an older far Buddy, is
                     // delivered without an answer and said as that.
                     Note(outcome.Verdict == MirrorProtocol.VerdictDone
-                        ? SlashRanNote(line, _remoteName)
-                        : SlashUnconfirmedNote(line, _remoteName));
+                        ? SlashRanNote(line, FarTitle)
+                        : SlashUnconfirmedNote(line, FarTitle));
                     return ChatSendOutcome.Sent;
 
                 default:
@@ -785,7 +822,7 @@ namespace Orbweaver
                 // way it already does for the old relay fallback's
                 // cross-session-message tag.
                 if (string.Equals(outcome.Via, MirrorProtocol.ViaMessage, StringComparison.Ordinal))
-                    Note(DeliveredRemotelyNote(_remoteName, outcome.AgentStatus));
+                    Note(DeliveredRemotelyNote(FarTitle, outcome.AgentStatus));
 
                 return ChatSendOutcome.Sent;
             }
@@ -810,7 +847,7 @@ namespace Orbweaver
             // request arriving over a wire does not change it.
             _pending = null;
 
-            Note(TypingRefusal(outcome.Error, _remoteName, outcome.Why));
+            Note(TypingRefusal(outcome.Error, FarTitle, outcome.Why));
             return ChatSendOutcome.Failed;
         }
 

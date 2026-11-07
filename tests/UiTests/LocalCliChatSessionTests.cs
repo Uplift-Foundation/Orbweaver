@@ -1728,7 +1728,11 @@ public class LocalCliChatSessionTests : IDisposable
         public Func<string, string?> AfterPress = _ => null;
         public Func<string, string?> AfterType = _ => null;
 
-        public Task<string?> Capture(SessionStatus _) => Task.FromResult<string?>(Screen);
+        // When set, a capture waits for it and returns what it is given: a read
+        // that began earlier and comes back later, as a slow one does.
+        public TaskCompletionSource<string?>? Gate;
+
+        public Task<string?> Capture(SessionStatus _) => Gate?.Task ?? Task.FromResult<string?>(Screen);
 
         public Task<bool> Press(SessionStatus _, string key)
         {
@@ -1964,7 +1968,7 @@ public class LocalCliChatSessionTests : IDisposable
     public void EveryRefusalCodeSaysWhatHappened()
     {
         Assert.Contains("had changed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrPromptChanged));
-        Assert.Contains("had changed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrNoPrompt));
+        Assert.Equal("That question was already answered.", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrNoPrompt));
         Assert.Contains("Nothing was pressed", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrBadKey));
         Assert.Contains("Answer it in the terminal", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrUnsupported));
         Assert.Contains("Couldn't answer", LocalCliChatSession.FormRefusalNote(MirrorProtocol.ErrTypeFailed));
@@ -2073,6 +2077,97 @@ public class LocalCliChatSessionTests : IDisposable
             await Rescan(session);
 
             Assert.NotNull(session.Prompt);
+            Assert.Empty(pane.Pressed);
+        });
+    }
+
+    // --- a stale read must never redraw an answered form (local) ---------------
+
+    // A capture already in flight when an answer goes out saw the screen as it
+    // was before the key. It returns afterwards, showing the old form, and must
+    // be dropped rather than drawn as current.
+    [AvaloniaFact]
+    public async Task ACaptureThatReturnsAfterAnAnswerIsDropped()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+            var option = session.Prompt!.Options[1];
+
+            // The first answer lands and the terminal moves on.
+            pane.AfterPress = _ => PaneFixtures.MacModelSwitchDialog;
+            await session.AnswerAsync(option);
+            Assert.Null(session.Prompt);
+
+            // A scan reads the pane again, and that read is slow...
+            pane.Gate = new TaskCompletionSource<string?>();
+            session.UpdateStatus(new SessionStatus
+            {
+                Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+            });
+            await Task.Delay(30);
+
+            // ...an answer goes out meanwhile...
+            await session.AnswerAsync(option);
+
+            // ...and the slow read comes back with an OLD form — a different one
+            // from the one answered, so the hold-back on the answered form does
+            // not catch it and only the generation guard can.
+            pane.Gate.SetResult(AskFormFixtures.MultiSelectQ2);
+            for (var i = 0; i < 40; i++)
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(5);
+            }
+
+            Assert.Null(session.Prompt);
+        });
+    }
+
+    // The control: the same slow read with no answer in between is drawn.
+    [AvaloniaFact]
+    public async Task TheSameSlowReadIsDrawnWhenNoAnswerWentOutMeanwhile()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+            pane.AfterPress = _ => PaneFixtures.MacModelSwitchDialog;
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+
+            pane.Gate = new TaskCompletionSource<string?>();
+            session.UpdateStatus(new SessionStatus
+            {
+                Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+            });
+            await Task.Delay(30);
+            pane.Gate.SetResult(PaneFixtures.MacModelSwitchDialog);
+            for (var i = 0; i < 40; i++)
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(5);
+            }
+
+            Assert.NotNull(session.Prompt);
+        });
+    }
+
+    // Nothing is waiting any more: a second click on a form that is already gone
+    // clears quietly and is never reported as a failure.
+    [AvaloniaFact]
+    public async Task ANoPromptReplyToAnAnswerIsNotAnError()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(PaneFixtures.QaFormQ1);
+            var session = await WaitingOn(pane);
+
+            pane.Screen = PaneFixtures.MacPromptAfterEsc;
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Contains(session.History, t => t.Text == "That question was already answered.");
+            Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't answer", StringComparison.Ordinal));
             Assert.Empty(pane.Pressed);
         });
     }

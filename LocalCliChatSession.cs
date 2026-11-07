@@ -1617,7 +1617,12 @@ namespace Orbweaver
 
             try
             {
+                var generation = _generation;
                 var screen = await (Capture ?? TerminalFocuser.CapturePane)(_status);
+
+                // An answer went out while this capture was running: it saw the
+                // screen before the key, and is stale.
+                if (generation != _generation) return;
 
                 // Still waiting? The capture runs a process and the answer may
                 // have been given in the terminal while it did.
@@ -1681,6 +1686,12 @@ namespace Orbweaver
         private string? _answeredFingerprint;
         private DateTime _answeredAt;
 
+        // Which read of the pane is current: bumped when an answer is sent and
+        // again when it finishes, so a capture already in flight — the screen as
+        // it was before the key landed — is dropped when it returns instead of
+        // being drawn as the current form.
+        private int _generation;
+
         internal static ChatPrompt? ReadPrompt(string screen) =>
             ChatTranscript.ParseAskForm(screen) is { } form
                 ? AskFormView.ToPrompt(form)
@@ -1729,7 +1740,14 @@ namespace Orbweaver
             // answer to the dialog that is already gone.
             SetPrompt(null);
 
-            if (await (PressKey ?? TerminalFocuser.SendPaneKey)(_status, option.Key)) return;
+            // A capture already in flight saw the screen before this key, and is
+            // dropped when it returns; bumped again once the key is down.
+            _generation++;
+            bool pressed;
+            try { pressed = await (PressKey ?? TerminalFocuser.SendPaneKey)(_status, option.Key); }
+            finally { _generation++; }
+
+            if (pressed) return;
 
             Note("Couldn't answer that in the terminal.");
 
@@ -1765,16 +1783,27 @@ namespace Orbweaver
             // Cleared first, for the reason the ordinary path gives.
             SetPrompt(null);
             _formFingerprint = null;
+            _generation++;
 
-            var code = await FormAnswer.AnswerAsync(
-                _status,
-                Capture ?? TerminalFocuser.CapturePane,
-                PressKey ?? TerminalFocuser.SendPaneKey,
-                TypeLiteral ?? TerminalFocuser.SendPaneText,
-                fingerprint,
-                key: commit ? null : option.Key,
-                action: commit ? MirrorProtocol.ActionCommit : null,
-                text: text);
+            string? code;
+            try
+            {
+                code = await FormAnswer.AnswerAsync(
+                    _status,
+                    Capture ?? TerminalFocuser.CapturePane,
+                    PressKey ?? TerminalFocuser.SendPaneKey,
+                    TypeLiteral ?? TerminalFocuser.SendPaneText,
+                    fingerprint,
+                    key: commit ? null : option.Key,
+                    action: commit ? MirrorProtocol.ActionCommit : null,
+                    text: text);
+            }
+            finally
+            {
+                // Again on the way out: a capture that began during the answer is
+                // as stale as one that began before it.
+                _generation++;
+            }
 
             if (code is null) return;
 
@@ -1792,8 +1821,12 @@ namespace Orbweaver
         // code, because each is a different fact about the screen.
         internal static string FormRefusalNote(string code) => code switch
         {
-            MirrorProtocol.ErrPromptChanged or MirrorProtocol.ErrNoPrompt =>
+            MirrorProtocol.ErrPromptChanged =>
                 "That question had changed, so nothing was answered. Here is the current one.",
+
+            // Nothing is waiting any more: the form was answered a moment ago (a
+            // second click on it) or in the terminal. Not an error.
+            MirrorProtocol.ErrNoPrompt => "That question was already answered.",
             MirrorProtocol.ErrBadKey =>
                 "That can't be answered that way. Nothing was pressed.",
             MirrorProtocol.ErrUnsupported =>
