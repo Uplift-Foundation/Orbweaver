@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayPrompt.cs, RelayCrypto.cs)",
-    "orbweaver_sha": "d64ae345",
+    "orbweaver_sha": "7b48234b",
     "spec": "CB-315 architect plan #11248 rev 2 §2; Orbweaver-Mobile contracts/frames-v3.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; screen_hash, nonce, sig and e are base64url without padding"
   },
@@ -209,12 +209,12 @@
     },
     {
       "name": "wt-codex-prompt",
-      "screen": "│ model:     gpt-5.6-sol   /model to change │\n│ directory: ~\\cb313\\wt-codex               │\n╰───────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true\n\n• You have 2 usage limit resets available. Run /usage to use one.\n\n\n› [200~run this exact shell command outside the sandbox: New-Item C:/Users/warre/cb313-probe -ItemType File[201~\n\n\n• I’ll run that exact PowerShell command with elevated filesystem access.\n\n◦ Running New-Item C:/Users/warre/cb313-probe -ItemType File\n\n\n  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n\n  $ New-Item C:/Users/warre/cb313-probe -ItemType File\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `New-Item C:/Users/warre/cb313-probe -ItemType File` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+      "screen": "│ model:     gpt-5.6-sol   /model to change │\n│ directory: ~\\cb313\\wt-codex               │\n╰───────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true\n\n• You have 2 usage limit resets available. Run /usage to use one.\n\n\n› [200~run this exact shell command outside the sandbox: New-Item C:/Users/someone/cb313-probe -ItemType File[201~\n\n\n• I’ll run that exact PowerShell command with elevated filesystem access.\n\n◦ Running New-Item C:/Users/someone/cb313-probe -ItemType File\n\n\n  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n\n  $ New-Item C:/Users/someone/cb313-probe -ItemType File\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `New-Item C:/Users/someone/cb313-probe -ItemType File` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
       "_note": "CB-313 fixture, Windows Terminal; the dialog starts under the ◦/• Running line, which flips glyph while it waits and so is not hashed",
       "dialog": true,
-      "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n$ New-Item C:/Users/warre/cb313-probe -ItemType File\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `New-Item C:/Users/warre/cb313-probe -ItemType File` (p)\n3. No, and tell Codex what to do differently (esc)",
-      "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696e6720746865207265717565737465642070726f62652066696c65206f7574736964652074686520776f726b73706163652073616e64626f783f0a24204e65772d4974656d20433a2f55736572732f77617272652f63623331332d70726f6265202d4974656d547970652046696c650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820604e65772d4974656d20433a2f55736572732f77617272652f63623331332d70726f6265202d4974656d547970652046696c6560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
-      "screen_hash": "axL4GUSaioMHod_amopYA6jJYX4inqUoNA56AuICr5Y",
+      "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n$ New-Item C:/Users/someone/cb313-probe -ItemType File\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `New-Item C:/Users/someone/cb313-probe -ItemType File` (p)\n3. No, and tell Codex what to do differently (esc)",
+      "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696e6720746865207265717565737465642070726f62652066696c65206f7574736964652074686520776f726b73706163652073616e64626f783f0a24204e65772d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d70726f6265202d4974656d547970652046696c650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820604e65772d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d70726f6265202d4974656d547970652046696c6560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
+      "screen_hash": "A7iI6EdXe22jnmNn_YSspkBM4CaVruypmO9ZbrZE8Yo",
       "options": [
         {
           "key": "1",
@@ -223,9 +223,9 @@
         },
         {
           "key": "2",
-          "label": "Yes, and don't ask again for commands that start with `New-Item C:/Users/warre/cb313-probe -ItemType File` (p)",
+          "label": "Yes, and don't ask again for commands that start with `New-Item C:/Users/someone/cb313-probe -ItemType File` (p)",
           "kind": "always",
-          "scope": "New-Item C:/Users/warre/cb313-probe -ItemType File"
+          "scope": "New-Item C:/Users/someone/cb313-probe -ItemType File"
         },
         {
           "key": "3",
