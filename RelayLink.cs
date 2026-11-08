@@ -140,6 +140,12 @@ namespace Orbweaver
         // CB-315 gate (a): the relay's ok pushed / push_throttled /
         // push_no_token for an amber, with APNs's round trip when it gave one.
         internal event Action<string, string, int?> PushReplied = delegate { };
+        // CB-315 gate (a): the phone's notification extension acknowledging an
+        // amber over /v1/ack (phone id, request id, the phone's at_ms). The one
+        // unsealed ct in the protocol (frames-v3 http.ack), so it is read only
+        // here, only on class control, only in its exact shape, and it reaches
+        // nothing but this timing event — never the answer gate.
+        internal event Action<string, string, long> PushAcked = delegate { };
 
         // ---- connection -------------------------------------------------------
 
@@ -310,6 +316,13 @@ namespace Orbweaver
             {
                 if (cls == "pair") OnPairRequest(from, Str(f, "offer"), ct);
                 else Note($"envelope from unpaired {Safe(from)} class={Known(cls, Classes)}");
+                return [];
+            }
+
+            if (cls == "control")
+            {
+                if (ParsePushAck(ct) is { } ack) PushAcked(from, ack.RequestId, ack.AtMs);
+                else Note($"control envelope from {Safe(from)} not a push-ack; ignored");
                 return [];
             }
 
@@ -537,6 +550,21 @@ namespace Orbweaver
             SealTo(c, "state", "", c.Stream.Roster(_book.Snapshot()));
 
         // ---- CB-315 prompts ------------------------------------------------------
+
+        private static readonly System.Text.RegularExpressions.Regex UlidShape = new("^[0-9A-HJKMNP-TV-Z]{26}$");
+
+        // A push-ack's plaintext ct: base64 of {"t":"push-ack","request_id":<ULID>,"at_ms":N}.
+        // Null for anything else, including a well-formed JSON of another shape.
+        internal static (string RequestId, long AtMs)? ParsePushAck(string ct)
+        {
+            byte[] raw;
+            try { raw = Convert.FromBase64String(ct); }
+            catch (FormatException) { return null; }
+            if (Json(raw) is not { } j || Str(j, "t") != "push-ack" || Str(j, "request_id") is not { } rid || !UlidShape.IsMatch(rid)
+                || !j.TryGetProperty("at_ms", out var at) || at.ValueKind != JsonValueKind.Number || !at.TryGetInt64(out var ms))
+                return null;
+            return (rid, ms);
+        }
 
         // The answer frame's fields, or null when any is missing or the wrong
         // type: a frame the gate could not even read is not an answer.

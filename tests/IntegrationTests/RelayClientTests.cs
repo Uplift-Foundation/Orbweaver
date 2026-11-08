@@ -408,6 +408,27 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Equal("prompt", OpenAsPhone(amber, phone, identity).GetProperty("t").GetString());
     }
 
+    // Gate (a): the notification extension's /v1/ack reaches the desktop as a
+    // control envelope with a plaintext ct; the client raises it with the
+    // request id and the phone's at_ms.
+    [Fact]
+    public async Task A_push_ack_from_the_phone_is_raised_with_its_request_id()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var client = Client(identity);
+        var acks = new List<(string, string, long)>();
+        client.PushAcked += (p, r, t) => { lock (acks) acks.Add((p, r, t)); };
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        var ct = Convert.ToBase64String(Encoding.UTF8.GetBytes("""{"t":"push-ack","request_id":"01JC9R0A5N2Q7W8X3E4T6Y9ZBD","at_ms":1794111792500}"""));
+        await _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "k1", from = phone.Id, to = _stub.DeviceId, ts = 0, @class = "control", push = "none", ck = "", ct }));
+        await Until(() => { lock (acks) return acks.Count == 1; });
+        lock (acks) Assert.Equal((phone.Id, "01JC9R0A5N2Q7W8X3E4T6Y9ZBD", 1794111792500L), acks[0]);
+    }
+
     [Fact]
     public async Task With_no_phone_paired_no_pane_is_read()
     {

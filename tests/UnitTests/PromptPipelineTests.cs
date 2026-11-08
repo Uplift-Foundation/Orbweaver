@@ -632,4 +632,15 @@ public class PromptPipelineTests
         await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
         Assert.Equal(["key 1", "log press"], events);
     }
+
+    [Fact]
+    public async Task An_answer_is_logged_the_moment_it_reaches_the_desk()
+    {
+        await _p.OnScannedAsync(Snap());
+        var a = AnswerTo();
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        var at = _log.IndexOf($"answer {a.RequestId} from {PhoneId}");
+        Assert.True(at >= 0);
+        Assert.True(at < _log.FindIndex(l => l.StartsWith("press ")));
+    }
 }

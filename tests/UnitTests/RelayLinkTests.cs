@@ -1086,4 +1086,57 @@ public class RelayLinkTests : IDisposable
         Assert.Equal(amber.GetProperty("ck").GetString(), resolve.GetProperty("ck").GetString());
         Assert.Equal("{\"v\":1,\"t\":\"resolved\"}", Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, resolve.GetProperty("e").GetString())!));
     }
+
+    // ---- gate (a): the notification extension's push-ack ------------------------
+
+    private static string AckEnvelope(string from, string ct) =>
+        JsonSerializer.Serialize(new { v = 2, id = "k", from, to = DesktopId, ts = 0, @class = "control", push = "none", ck = "", ct });
+
+    private static string AckCt(string body) => Convert.ToBase64String(Encoding.UTF8.GetBytes(body));
+
+    [Fact]
+    public void A_push_ack_raises_its_request_id_and_time_and_nothing_else()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var acks = new List<(string, string, long)>();
+        var answered = false;
+        link.PushAcked += (p, r, t) => acks.Add((p, r, t));
+        link.AnswerReceived += (_, _, _) => answered = true;
+        Assert.Empty(link.OnFrame(AckEnvelope(phone.Id, AckCt($$"""{"t":"push-ack","request_id":"{{Rid}}","at_ms":1794111792500}"""))));
+        Assert.Equal([(phone.Id, Rid, 1794111792500L)], acks);
+        Assert.False(answered);
+    }
+
+    [Theory]
+    [InlineData("""{"t":"answer","request_id":"01JC9R0A5N2Q7W8X3E4T6Y9ZBD","at_ms":1}""")]
+    [InlineData("""{"t":"push-ack","request_id":"not-a-ulid","at_ms":1}""")]
+    [InlineData("""{"t":"push-ack","request_id":"01JC9R0A5N2Q7W8X3E4T6Y9ZBD","at_ms":"1"}""")]
+    [InlineData("""{"t":"push-ack","request_id":"01JC9R0A5N2Q7W8X3E4T6Y9ZBD"}""")]
+    [InlineData("""[1,2]""")]
+    public void Anything_but_an_exact_push_ack_on_control_is_ignored(string body)
+    {
+        var (link, _, phone, notes, _) = Paired();
+        var acks = 0;
+        link.PushAcked += (_, _, _) => acks++;
+        link.OnFrame(AckEnvelope(phone.Id, AckCt(body)));
+        Assert.Equal(0, acks);
+        Assert.Contains(notes, n => n.Contains("not a push-ack"));
+    }
+
+    [Fact]
+    public void A_control_envelope_that_is_not_base64_is_ignored()
+    {
+        Assert.Null(RelayLink.ParsePushAck("@@@ not base64"));
+        Assert.Null(RelayLink.ParsePushAck(Convert.ToBase64String([0xff, 0xfe])));
+    }
+
+    [Fact]
+    public void A_push_ack_from_an_unpaired_device_is_not_raised()
+    {
+        var (link, _, _, _, _) = Paired();
+        var acks = 0;
+        link.PushAcked += (_, _, _) => acks++;
+        link.OnFrame(AckEnvelope("ph_ffffffffffffffff", AckCt($$"""{"t":"push-ack","request_id":"{{Rid}}","at_ms":1}""")));
+        Assert.Equal(0, acks);
+    }
 }

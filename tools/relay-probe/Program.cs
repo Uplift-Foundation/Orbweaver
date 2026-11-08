@@ -79,24 +79,38 @@ if (args.Contains("--answer-phone"))
 if (args.Contains("--prompt-desktop"))
 {
     string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
+    // Every value of a repeated flag: --pane %1 --pane %2 (or --pid / --term-id)
+    // makes one session each, gate-1, gate-2, … — so a device run can rotate
+    // sessions past the relay's one-amber-per-session-per-30-s throttle.
+    List<string> All(string name) => args.Select((a, i) => (a, i)).Where(x => x.a == name && x.i + 1 < args.Length).Select(x => args[x.i + 1]).ToList();
     var pane = Arg("--pane", "");
-    if (pane.Length == 0) { Console.WriteLine("--pane %N (or --pane - with --term-program/--term-id) is required"); return 2; }
+    if (pane.Length == 0) { Console.WriteLine("--pane %N (or --pane - with --term-program/--term-id or --pid) is required"); return 2; }
     var source = Arg("--cli", "claude") switch { "codex" => SessionSource.Codex, "grok" => SessionSource.Grok, _ => SessionSource.ClaudeCode };
     // Or a non-tmux terminal: --term-program iTerm.app|WezTerm|kitty|Apple_Terminal
     // --term-id <session GUID / pane id / window id> [--tty /dev/ttysNNN]
     // [--pid N] (Windows console: the CLI's own pid).
-    var status = new SessionStatus
+    var panes = All("--pane").Where(p => p != "-").ToList();
+    var pids = All("--pid");
+    var termIds = All("--term-id");
+    var count = Math.Max(1, Math.Max(panes.Count, Math.Max(pids.Count, termIds.Count)));
+    var sessions = Enumerable.Range(0, count).Select(i => ($"gate-{i + 1}", new SessionStatus
     {
-        State = "waiting", Source = source, Title = "relay probe", TmuxPane = pane == "-" ? "" : pane, TmuxSocket = Arg("--socket", ""),
-        TermProgram = Arg("--term-program", ""), TermId = Arg("--term-id", ""), Tty = Arg("--tty", ""),
-        SessionPid = int.Parse(Arg("--pid", "0")),
-    };
-    Console.WriteLine($"route {TerminalFocuser.RouteFor(status)}; presses silently: {TerminalFocuser.CanPressSilently(status)}");
+        State = "waiting", Source = source, Title = $"gate {i + 1}", TmuxPane = i < panes.Count ? panes[i] : "", TmuxSocket = Arg("--socket", ""),
+        TermProgram = Arg("--term-program", ""), TermId = i < termIds.Count ? termIds[i] : "", Tty = Arg("--tty", ""),
+        SessionPid = i < pids.Count ? int.Parse(pids[i]) : 0,
+    })).ToList();
+    foreach (var (sid, st) in sessions)
+        Console.WriteLine($"{sid}: route {TerminalFocuser.RouteFor(st)}; presses silently: {TerminalFocuser.CanPressSilently(st)}");
     var seams = new PromptPipeline.Seams(
         s => ScreenReaders.For(s)?.ReadAsync(s) ?? Task.FromResult<string?>(null), TerminalFocuser.PressKey, TerminalFocuser.TypeQuietly,
         () => DateTimeOffset.UtcNow, Task.Delay, l => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"),
         TerminalFocuser.CanPressSilently, TerminalFocuser.CaptureAndPress);
-    var pd = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport(), promptSeams: seams);
+    var pd = new RelayClient(identity, new RelayClient.Options(baseUrl, OperatingSystem.IsWindows() ? "win" : "mac", "probe",
+        Arg("--name", OperatingSystem.IsWindows() ? "Relay Probe PC" : "Relay Probe Mac")), new WebSocketRelayTransport(), promptSeams: seams);
+    // Gate (a)'s timing, as the desktop sees it: the relay's push reply (with
+    // APNs's round trip) and the notification extension's push-ack.
+    pd.PushReplied += (id, code, ms) => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} push-reply {id} {code}{(ms is { } n ? $" apns_ms={n}" : "")}");
+    pd.PushAcked += (phone, id, at) => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} push-ack {id} from {phone} at_ms={at}");
     // Say every connection change: a probe that goes quiet after the relay
     // closed its socket must show whether it reconnected.
     pd.StateChanged += () => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} relay {pd.State}{(pd.LastError is { } le ? " (" + le + ")" : "")}");
@@ -105,6 +119,7 @@ if (args.Contains("--prompt-desktop"))
     var pdOffer = await pd.BeginPairingAsync();
     Console.WriteLine($"desktop {identity.DeviceId} connected to {baseUrl}");
     Console.WriteLine($"QR {pdOffer.QrText}");
+    if (Arg("--qr-out", "") is { Length: > 0 } qrOut) File.WriteAllText(qrOut, pdOffer.QrText);
     var pdAsked = new TaskCompletionSource<RelayLink.PairRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
     pd.PairRequested += r => pdAsked.TrySetResult(r);
     var pr = await pdAsked.Task.WaitAsync(pdOffer.ExpiresAt - DateTimeOffset.UtcNow);
@@ -113,7 +128,7 @@ if (args.Contains("--prompt-desktop"))
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; quit.Cancel(); };
     while (!quit.IsCancellationRequested)
     {
-        await pd.OnStatuses([("probe-session", status)]);
+        await pd.OnStatuses(sessions);
         await Task.Delay(1000, quit.Token).ContinueWith(_ => { });
     }
     await pd.StopAsync();

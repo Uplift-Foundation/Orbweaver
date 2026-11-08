@@ -253,6 +253,8 @@ namespace Orbweaver
 
         internal async Task OnAnswerAsync(string phoneId, byte[] phoneIdPublic, PhoneAnswer answer)
         {
+            // Gate (a)'s breakdown starts here: when the answer reached the desk.
+            _seams.Log($"answer {answer.RequestId} from {phoneId}");
             await _gate.WaitAsync().ConfigureAwait(false);
             try
             {
