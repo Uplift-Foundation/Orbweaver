@@ -269,10 +269,9 @@ namespace Orbweaver
                 // line can press this dialog again.
                 var pending = live!.Pending;
                 pending.Answered = true;
-                _seams.Log($"press {answer.RequestId} {d.Key}");
                 var outcome = answer.Action == "tell"
-                    ? await PressTellAsync(live.Status, pending, d.Key!, answer.Note).ConfigureAwait(false)
-                    : await PressOnceAsync(live.Status, pending, d.Key!).ConfigureAwait(false);
+                    ? await PressTellAsync(live.Status, pending, answer.RequestId, d.Key!, answer.Note).ConfigureAwait(false)
+                    : await PressOnceAsync(live.Status, pending, answer.RequestId, d.Key!).ConfigureAwait(false);
 
                 if (outcome == PressOutcome.LandedElsewhere)
                 {
@@ -293,6 +292,7 @@ namespace Orbweaver
                     // watcher settles it as gone for every phone on its next
                     // look, and this phone hears why now.
                     pending.Answered = false;
+                    _seams.Log($"settle-refused {answer.RequestId}");
                     Refuse(phoneId, answer, AnswerGate.StalePrompt);
                     return;
                 }
@@ -336,7 +336,7 @@ namespace Orbweaver
         // "Approved" is the canonical hash, not the raw text: a live timer or
         // spinner outside the dialog (Grok's "22s", Codex's ◦/•) changes the raw
         // screen every read, and would never settle.
-        private async Task<PressOutcome?> PressAsync(SessionStatus status, PendingPrompt pending, string key)
+        private async Task<PressOutcome?> PressAsync(SessionStatus status, PendingPrompt pending, string requestId, string key)
         {
             bool Approved(string? screen) => PromptFingerprint.Of(screen)?.Hash == pending.ScreenHash;
             await _seams.Delay(SettleCheck).ConfigureAwait(false);
@@ -344,6 +344,10 @@ namespace Orbweaver
                 ? await both(status, key, Approved).ConfigureAwait(false)
                 : await CaptureThenPress(status, key, Approved).ConfigureAwait(false);
             if (!pressed) return Approved(before) || before is null ? PressOutcome.NoEffect : PressOutcome.Changed;
+            // Only now, with the key sent: a "press" line is a key that went
+            // in, never one the settle check stopped (QA read 13 refused tries
+            // as presses when this was logged before the second capture).
+            _seams.Log($"press {requestId} {key}");
             if (!Approved(before)) return PressOutcome.LandedElsewhere;
             return null;   // went into the approved dialog; the caller checks it went away
         }
@@ -355,9 +359,9 @@ namespace Orbweaver
             return (await _seams.PressKey(status, key).ConfigureAwait(false), before);
         }
 
-        private async Task<PressOutcome> PressOnceAsync(SessionStatus status, PendingPrompt pending, string key)
+        private async Task<PressOutcome> PressOnceAsync(SessionStatus status, PendingPrompt pending, string requestId, string key)
         {
-            if (await PressAsync(status, pending, key).ConfigureAwait(false) is { } early) return early;
+            if (await PressAsync(status, pending, requestId, key).ConfigureAwait(false) is { } early) return early;
             await _seams.Delay(SettleDelay).ConfigureAwait(false);
             return AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false))
                 ? PressOutcome.Took : PressOutcome.NoEffect;
@@ -366,9 +370,9 @@ namespace Orbweaver
         // tell: press the option, wait for the dialog to clear (the CLI then
         // shows its own input), and only then type the note and Enter. If the
         // dialog never clears the note is not typed anywhere.
-        private async Task<PressOutcome> PressTellAsync(SessionStatus status, PendingPrompt pending, string key, string note)
+        private async Task<PressOutcome> PressTellAsync(SessionStatus status, PendingPrompt pending, string requestId, string key, string note)
         {
-            if (await PressAsync(status, pending, key).ConfigureAwait(false) is { } early) return early;
+            if (await PressAsync(status, pending, requestId, key).ConfigureAwait(false) is { } early) return early;
             var waited = TimeSpan.Zero;
             while (true)
             {

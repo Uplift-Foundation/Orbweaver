@@ -605,4 +605,31 @@ public class PromptPipelineTests
         await p.OnScannedAsync(Snap());
         Assert.Single(_sent.Prompts);
     }
+
+    // A "press" line means a key went in. A settle refusal logs
+    // settle-refused and no press line; a real press logs press after the key.
+    [Fact]
+    public async Task A_settle_refusal_logs_settle_refused_and_no_press_line()
+    {
+        var captures = 0;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(++captures <= 2 ? Dialog : DialogB), _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Contains($"settle-refused {a.RequestId}", _log);
+        Assert.DoesNotContain(_log, l => l.StartsWith("press "));
+        Assert.Empty(_pane.Keys);
+    }
+
+    [Fact]
+    public async Task The_press_line_comes_after_the_key()
+    {
+        var events = new List<string>();
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, (s, k) => { events.Add("key " + k); return _pane.Press(s, k); },
+            _pane.Type, () => _now, _ => Task.CompletedTask, l => { if (l.StartsWith("press ")) events.Add("log press"); }), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Equal(["key 1", "log press"], events);
+    }
 }
