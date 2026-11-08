@@ -942,4 +942,138 @@ public class RelayLinkTests : IDisposable
         Assert.True(string.CompareOrdinal(a, b) < 0);
         Assert.Equal(a[..10], RelayLink.Ulid(_now)[..10]);
     }
+
+    // ---- CB-315 prompts ----------------------------------------------------------
+
+    private const string Rid = "01JC9R0A5N2Q7W8X3E4T6Y9ZBD";
+
+    [Fact]
+    public void A_prompt_goes_to_every_paired_phone_as_an_amber_with_its_own_e()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.Disconnected();
+        link.OnFrame(Welcome());   // welcomed, phone offline: action frames are queued by the relay, so it still gets one
+        var frames = link.SendPrompt(Rid, "sess-1", "{\"t\":\"prompt\"}", "{\"v\":1}");
+        var env = J(Assert.Single(frames));
+        Assert.Equal((Rid, "action", "amber"), (env.GetProperty("id").GetString(), env.GetProperty("class").GetString(), env.GetProperty("push").GetString()));
+        Assert.Equal("prompt", phone.OpenFromDesktop(frames[0]).GetProperty("t").GetString());
+        Assert.Equal("{\"v\":1}", Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, env.GetProperty("e").GetString())!));
+        Assert.Equal(Ck(CoalesceKey(phone.Base()), "sess-1"), env.GetProperty("ck").GetString());
+    }
+
+    [Fact]
+    public void A_prompt_whose_push_did_not_fit_carries_no_e()
+    {
+        var (link, _, _, _, _) = Paired();
+        var env = J(Assert.Single(link.SendPrompt(Rid, "sess-1", "{}", null)));
+        Assert.False(env.TryGetProperty("e", out _));
+        Assert.Equal("amber", env.GetProperty("push").GetString());
+    }
+
+    [Fact]
+    public void Resolved_is_push_resolve_with_the_request_id_and_no_e()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var frames = link.SendResolved(Rid, "sess-1", "desk");
+        var env = J(Assert.Single(frames));
+        Assert.Equal((Rid, "resolve"), (env.GetProperty("id").GetString(), env.GetProperty("push").GetString()));
+        Assert.False(env.TryGetProperty("e", out _));
+        var body = phone.OpenFromDesktop(frames[0]);
+        Assert.Equal(("resolved", "desk"), (body.GetProperty("t").GetString(), body.GetProperty("by").GetString()));
+    }
+
+    [Fact]
+    public void A_refusal_goes_only_to_the_phone_that_answered()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var frames = link.SendRefusal(phone.Id, Rid, "sess-1", AnswerGate.Replayed);
+        var env = J(Assert.Single(frames));
+        Assert.Equal("none", env.GetProperty("push").GetString());
+        Assert.Equal("replayed", phone.OpenFromDesktop(frames[0]).GetProperty("code").GetString());
+        Assert.Empty(link.SendRefusal("ph_unknown", Rid, "sess-1", AnswerGate.Replayed));
+    }
+
+    [Fact]
+    public void Nothing_is_sent_while_not_welcomed()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnFrame("""{"t":"err","ref":"hello","code":"version"}""");
+        Assert.Empty(link.SendPrompt(Rid, "s", "{}", null));
+        Assert.Empty(link.SendResolved(Rid, "s", "desk"));
+        Assert.Empty(link.SendRefusal(phone.Id, Rid, "s", AnswerGate.Expired));
+    }
+
+    private static string AnswerJson(string? drop = null, string? t = "answer")
+    {
+        var fields = new Dictionary<string, object?>
+        {
+            ["t"] = t, ["request_id"] = Rid, ["session_id"] = "sess-1", ["action"] = "approve", ["scope"] = "", ["note"] = "",
+            ["nonce"] = "AAAAAAAAAAAAAAAAAAAAAA", ["expires_at"] = 1794113592L, ["screen_hash"] = "h", ["sig"] = "s",
+        };
+        if (drop is not null) fields.Remove(drop);
+        return JsonSerializer.Serialize(fields);
+    }
+
+    [Fact]
+    public void An_action_answer_reaches_the_gate_with_the_phones_identity_key()
+    {
+        var (link, _, phone, _, _) = Paired();
+        (string Phone, byte[] Key, PhoneAnswer Answer)? got = null;
+        link.AnswerReceived += (p, k, a) => got = (p, k, a);
+        link.OnFrame(phone.Sealed("action", AnswerJson()));
+        Assert.NotNull(got);
+        Assert.Equal(phone.Id, got.Value.Phone);
+        Assert.Equal(phone.IdKey.Public, got.Value.Key);
+        Assert.Equal(new PhoneAnswer(Rid, "sess-1", "approve", "", "", "AAAAAAAAAAAAAAAAAAAAAA", 1794113592, "h", "s"), got.Value.Answer);
+    }
+
+    [Theory]
+    [InlineData("state", "answer", null)]      // an answer on any class but action
+    [InlineData("control", "answer", null)]
+    [InlineData("action", "push-ack", null)]   // a push-ack's shape, even sealed, is not an answer
+    [InlineData("action", "answer", "sig")]    // malformed: a field missing
+    [InlineData("action", "answer", "expires_at")]
+    public void Nothing_but_a_complete_action_answer_reaches_the_gate(string cls, string t, string? drop)
+    {
+        var (link, _, phone, notes, _) = Paired();
+        var raised = false;
+        link.AnswerReceived += (_, _, _) => raised = true;
+        link.OnFrame(phone.Sealed(cls, AnswerJson(drop, t)));
+        Assert.False(raised);
+        if (drop is not null) Assert.Contains(notes, n => n.Contains("malformed"));
+    }
+
+    [Fact]
+    public void An_unsealed_push_ack_cannot_reach_the_gate()
+    {
+        var (link, _, phone, notes, _) = Paired();
+        var raised = false;
+        link.AnswerReceived += (_, _, _) => raised = true;
+        var ack = Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"t\":\"push-ack\",\"request_id\":\"" + Rid + "\",\"at_ms\":1}"));
+        link.OnFrame(JsonSerializer.Serialize(new { v = 2, id = "z", from = phone.Id, to = DesktopId, ts = 0, @class = "control", push = "none", ck = "", ct = ack }));
+        link.OnFrame(JsonSerializer.Serialize(new { v = 2, id = "z", from = phone.Id, to = DesktopId, ts = 0, @class = "action", push = "none", ck = "", ct = ack }));
+        Assert.False(raised);
+    }
+
+    [Fact]
+    public void ParseAnswer_refuses_a_wrongly_typed_field()
+    {
+        Assert.Null(RelayLink.ParseAnswer(J(AnswerJson().Replace("\"expires_at\":1794113592", "\"expires_at\":\"1794113592\""))));
+        Assert.Null(RelayLink.ParseAnswer(J(AnswerJson().Replace("\"scope\":\"\"", "\"scope\":3"))));
+        Assert.Null(RelayLink.ParseAnswer(J(AnswerJson().Replace("\"expires_at\":1794113592", "\"expires_at\":1.5"))));
+    }
+
+    [Fact]
+    public void The_relays_push_replies_are_raised_with_apns_ms_when_given()
+    {
+        var (link, _, _) = New();
+        var got = new List<(string, string, int?)>();
+        link.PushReplied += (r, c, ms) => got.Add((r, c, ms));
+        link.OnFrame($$"""{"t":"ok","ref":"{{Rid}}","code":"pushed","apns_ms":142}""");
+        link.OnFrame($$"""{"t":"ok","ref":"{{Rid}}","code":"push_throttled"}""");
+        link.OnFrame($$"""{"t":"ok","ref":"{{Rid}}","code":"push_no_token","apns_ms":"x"}""");
+        link.OnFrame($$"""{"t":"ok","ref":"{{Rid}}","code":"pushed","apns_ms":1.5}""");
+        link.OnFrame("""{"t":"ok","code":"pushed"}""");
+        Assert.Equal([(Rid, "pushed", 142), (Rid, "push_throttled", null), (Rid, "push_no_token", null), (Rid, "pushed", null)], got);
+    }
 }

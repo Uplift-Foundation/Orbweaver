@@ -21,7 +21,7 @@ namespace Orbweaver
     // one writer per connection sends them in order, so a socket never sees
     // two concurrent sends. Events this raises are raised outside that lock,
     // on whatever thread produced them — the UI marshals.
-    internal sealed class RelayClient : IDisposable, IPairingClient
+    internal sealed class RelayClient : IDisposable, IPairingClient, IPromptSender
     {
         internal const string DefaultHost = "orbweaver-relay.uplifttech.org";
 
@@ -105,7 +105,7 @@ namespace Orbweaver
 
         internal RelayClient(RelayIdentity identity, Options options, IRelayTransport transport,
             HttpMessageHandler? http = null, Func<DateTimeOffset>? now = null,
-            Func<TimeSpan, CancellationToken, Task>? delay = null)
+            Func<TimeSpan, CancellationToken, Task>? delay = null, PromptPipeline.Seams? promptSeams = null)
         {
             _identity = identity;
             _options = options;
@@ -130,7 +130,38 @@ namespace Orbweaver
             _link.PresenceChanged += () => Defer(() => PhonesChanged());
             _link.Note += note => { MirrorLog.Say("relay", note); Raise(() => Logged(note)); };
             _link.RetryDue += (key, attempt) => Defer(() => _ = RetryLaterAsync(key, attempt));
+
+            // CB-315: the amber loop. The pipeline awaits captures and presses,
+            // so it runs off the event pump (fire and forget, serialized inside
+            // the pipeline) and never under the lock.
+            Prompts = new PromptPipeline(promptSeams ?? DefaultPromptSeams(_now), this, options.DesktopName);
+            _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
+            _link.PushReplied += (id, code, ms) => MirrorLog.Say("relay", $"push {id} {code}{(ms is { } n ? $" apns_ms={n}" : "")}");
         }
+
+        internal PromptPipeline Prompts { get; }
+
+        // The real panes. Excluded: each is one line into TerminalFocuser,
+        // whose tmux calls a headless runner must not make.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static PromptPipeline.Seams DefaultPromptSeams(Func<DateTimeOffset> now) => new(
+            TerminalFocuser.CapturePane, TerminalFocuser.SendPaneKey, TerminalFocuser.SendPaneText,
+            now, Task.Delay, line => MirrorLog.Say("relay", line));
+
+        // The whole scan, for the prompt watcher; the roster gets its
+        // projection through OnScanned.
+        // Nothing is captured for a desktop with no phone to send a prompt to.
+        internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot) =>
+            _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
+
+        void IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
+            Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
+
+        void IPromptSender.Resolved(string requestId, string sessionId, string by) =>
+            Dispatch(() => _link.SendResolved(requestId, sessionId, by));
+
+        void IPromptSender.Refusal(string phoneId, string requestId, string sessionId, string code) =>
+            Dispatch(() => _link.SendRefusal(phoneId, requestId, sessionId, code));
 
         // ---- what the UI sees ------------------------------------------------
 

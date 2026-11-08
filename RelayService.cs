@@ -77,6 +77,8 @@ namespace Orbweaver
             var dirs = UserConfigDirs();
             client.OnScanned(RelayRoster.Project(snapshot, status =>
                 RelayRoster.PersonaFrom(PersonaName(status, dirs), status)));
+            // CB-315: and the prompt watcher, off this thread — it captures panes.
+            _ = client.OnStatuses(snapshot);
         }
 
         // "Pair phone…" calls this. Idempotent.

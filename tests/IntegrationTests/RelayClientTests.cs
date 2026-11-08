@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Xunit;
@@ -45,7 +46,7 @@ public class RelayClientTests : IAsyncLifetime
 
     private RelayIdentity Identity() => new(_dir, _store);
 
-    private RelayClient Client(RelayIdentity identity, TimeSpan? ping = null, TimeSpan? silence = null)
+    private RelayClient Client(RelayIdentity identity, TimeSpan? ping = null, TimeSpan? silence = null, PromptPipeline.Seams? prompts = null)
     {
         var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
         {
@@ -54,7 +55,7 @@ public class RelayClientTests : IAsyncLifetime
             MinBackoff = TimeSpan.FromMilliseconds(20),
             MaxBackoff = TimeSpan.FromMilliseconds(100),
         };
-        _client = new RelayClient(identity, options, new WebSocketRelayTransport());
+        _client = new RelayClient(identity, options, new WebSocketRelayTransport(), promptSeams: prompts);
         return _client;
     }
 
@@ -208,6 +209,86 @@ public class RelayClientTests : IAsyncLifetime
         var client = Client(identity);
         await Assert.ThrowsAsync<RelayHttpException>(() => client.BeginPairingAsync());
         Assert.Null(identity.Token);
+    }
+
+    // CB-315: the amber loop over a real socket. A waiting session's dialog
+    // goes out as push amber with an e the phone can open; the phone's signed
+    // answer comes back sealed, the fake pane gets exactly one key, and resolved
+    // goes out as push resolve under the same id.
+    [Fact]
+    public async Task A_prompt_goes_out_amber_and_a_signed_answer_presses_once_and_resolves()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var keys = new List<string>();
+        var seams = new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) => { lock (keys) keys.Add(k); screen = "> \n"; return Task.FromResult(true); },
+            (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { });
+        var client = Client(identity, prompts: seams);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(IsEnvelope);
+        Assert.Equal(("action", "amber"), (amber.GetProperty("class").GetString(), amber.GetProperty("push").GetString()));
+        var prompt = OpenAsPhone(amber, phone, identity);
+        var rid = prompt.GetProperty("request_id").GetString()!;
+        Assert.Equal(rid, amber.GetProperty("id").GetString());
+        var push = JsonDocument.Parse(PushSeal.Open(phone.KaKey, amber.GetProperty("e").GetString())!).RootElement;
+        Assert.Equal(rid, push.GetProperty("request_id").GetString());
+
+        await _stub.Send($$"""{"t":"ok","ref":"{{rid}}","code":"pushed","apns_ms":9}""");
+        await _stub.Send($$"""{"t":"ok","ref":"{{rid}}","code":"push_throttled"}""");
+
+        var exp = prompt.GetProperty("expires_at").GetInt64();
+        var desktopId = amber.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        ulong counter = 0;
+        Task SendAnswer(KeyPair signer)
+        {
+            var nonce = Base64Url(RandomNumberGenerator.GetBytes(16));
+            var sig = Base64Url(Sign(signer, AnswerSigning.Message(AnswerSigning.Body(rid, "s1", "approve", "", nonce, exp))));
+            var answer = JsonSerializer.Serialize(new
+            {
+                t = "answer", request_id = rid, session_id = "s1", action = "approve", scope = "", note = "", nonce,
+                expires_at = exp, screen_hash = prompt.GetProperty("screen_hash").GetString(), sig,
+            });
+            var ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, counter++), Encoding.UTF8.GetBytes(answer), Aad(phone.Id, desktopId, "action"));
+            return _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "a" + counter, from = phone.Id, to = desktopId, ts = 0, @class = "action", push = "none", ck = "", ct }));
+        }
+
+        // Signed by some other key: refused, sealed, to this phone, nothing pressed.
+        await SendAnswer(GenerateKeyPair());
+        var refusal = await _stub.Next(IsEnvelope);
+        Assert.Equal("none", refusal.GetProperty("push").GetString());
+        Assert.Equal(("err", "bad_signature"), (OpenAsPhone(refusal, phone, identity).GetProperty("t").GetString(), OpenAsPhone(refusal, phone, identity).GetProperty("code").GetString()));
+        lock (keys) Assert.Empty(keys);
+
+        await SendAnswer(phone.IdKey);
+
+        var resolve = await _stub.Next(IsEnvelope);
+        Assert.Equal(("resolve", rid), (resolve.GetProperty("push").GetString(), resolve.GetProperty("id").GetString()));
+        var resolved = OpenAsPhone(resolve, phone, identity);
+        Assert.Equal(("resolved", "phone:" + phone.Id), (resolved.GetProperty("t").GetString(), resolved.GetProperty("by").GetString()));
+        lock (keys) Assert.Equal(["1"], keys);
+    }
+
+    [Fact]
+    public async Task With_no_phone_paired_no_pane_is_read()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var captures = 0;
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => { captures++; return Task.FromResult<string?>(null); }, (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode })]);
+        Assert.Equal(0, captures);
     }
 
     [Fact]
