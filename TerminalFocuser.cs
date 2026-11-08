@@ -579,75 +579,18 @@ namespace Orbweaver
         // machine someone is sitting at is not an acceptable way to answer
         // remotely — so its prompts go to the phone "Open on desk". Every
         // argument travels through argv or stdin, never into script source.
-        internal static bool CanPressSilently(SessionStatus? status) => PressesSilently(RouteFor(status));
-
-        internal static bool PressesSilently(TerminalTyping.Route route) => route is
-            TerminalTyping.Route.Tmux or TerminalTyping.Route.Kitty or TerminalTyping.Route.WezTerm
-            or TerminalTyping.Route.ITerm2 or TerminalTyping.Route.WindowsConsole;
-
-        // The bytes a key is: a single ASCII digit as itself, Enter as CR (not
-        // LF, which Claude Code and Codex read as "insert a newline"; see
-        // KittySend). Anything else is not a key this path presses: null.
-        internal static string? PressBytes(string key) =>
-            key == "Enter" ? "\r" : key.Length == 1 && char.IsAsciiDigit(key[0]) ? key : null;
-
-        internal static (string Stdin, string[] Args) KittyPress(SessionStatus status, string bytes) =>
-            (bytes, new[] { "@", "send-text", "--match", "id:" + status.TermId, "--stdin" });
-
-        internal static (string Stdin, string[] Args) WezTermPress(SessionStatus status, string bytes) =>
-            (bytes, new[] { "cli", "send-text", "--pane-id", status.TermId, "--no-paste" });
-
-        // `write text` with `newline NO` puts exactly the body in; an empty body
-        // with the default newline is Enter.
-        internal static readonly string[] ITerm2PressScript =
-        {
-            "on run argv",
-            "set wanted to item 1 of argv",
-            "set body to item 2 of argv",
-            "tell application \"iTerm2\"",
-            "repeat with w in windows",
-            "repeat with t in tabs of w",
-            "repeat with s in sessions of t",
-            "if ((id of s) as string) is wanted then",
-            "if body is \"\" then",
-            "tell s to write text \"\"",
-            "else",
-            "tell s to write text body newline NO",
-            "end if",
-            "return \"ok\"",
-            "end if",
-            "end repeat",
-            "end repeat",
-            "end repeat",
-            "end tell",
-            "return \"no\"",
-            "end run",
-        };
-
-        // For a key, the iTerm2 body: the digit, or "" for Enter. For typed
-        // text (a tell's note), the bracketed text, no newline.
-        internal static string[] ITerm2PressArgs(SessionStatus status, string body) =>
-            OsascriptArgs(ITerm2PressScript, status.TermId, body);
-
-        // The console records for one key: the digit as a down/up pair, or
-        // VK_RETURN with '\r'. Nothing after it.
-        internal static List<NativeMethods.InputRecord> ConsoleKeyRecords(string bytes)
-        {
-            var records = new List<NativeMethods.InputRecord>(bytes.Length * 2);
-            foreach (var c in bytes) AddKeystroke(records, c, virtualKey: c == '\r' ? (ushort)0x0D : (ushort)0);
-            return records;
-        }
+        internal static bool CanPressSilently(SessionStatus? status) => TerminalPress.Silent(RouteFor(status));
 
         public static Task<bool> PressKey(SessionStatus? status, string key)
         {
-            if (status is null || PressBytes(key) is not { } bytes || !CanPressSilently(status)) return Task.FromResult(false);
+            if (status is null || TerminalPress.Bytes(key) is not { } bytes || !CanPressSilently(status)) return Task.FromResult(false);
             return RouteFor(status) switch
             {
                 TerminalTyping.Route.Tmux => SendPaneKey(status, key),
-                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), KittyPress(status, bytes))),
-                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), WezTermPress(status, bytes))),
-                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, ITerm2PressArgs(status, key == "Enter" ? "" : bytes))),
-                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, ConsoleKeyRecords(bytes))),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), TerminalPress.Kitty(status, bytes))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), TerminalPress.WezTerm(status, bytes))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, TerminalPress.ITerm2Args(status, key == "Enter" ? "" : bytes))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, TerminalPress.ConsoleRecords(bytes))),
             };
         }
 
@@ -660,10 +603,10 @@ namespace Orbweaver
             return RouteFor(status) switch
             {
                 TerminalTyping.Route.Tmux => SendPaneText(status, text),
-                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), KittyPress(status, body))),
-                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), WezTermPress(status, body))),
-                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, ITerm2PressArgs(status, body))),
-                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, ConsoleKeyRecords(body))),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), TerminalPress.Kitty(status, body))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), TerminalPress.WezTerm(status, body))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, TerminalPress.ITerm2Args(status, body))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, TerminalPress.ConsoleRecords(body))),
             };
         }
 

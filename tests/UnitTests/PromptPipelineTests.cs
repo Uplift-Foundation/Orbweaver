@@ -405,7 +405,7 @@ public class PromptPipelineTests
     public async Task A_Terminal_app_prompt_carries_no_pressable_option()
     {
         var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add,
-            CanPress: s => TerminalFocuser.PressesSilently(TerminalTyping.RouteFor(s, onMacOS: true, onWindows: false, TerminalTyping.Tools.None))), _sent, "Test Mac");
+            CanPress: s => TerminalPress.Silent(TerminalTyping.RouteFor(s, onMacOS: true, onWindows: false, TerminalTyping.Tools.None))), _sent, "Test Mac");
         var terminal = new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, TermProgram = TerminalTyping.TerminalAppProgram, Tty = "/dev/ttys004" };
         await p.OnScannedAsync([("s1", terminal)]);
         var sent = JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement;

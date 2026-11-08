@@ -22,12 +22,12 @@ public class TerminalPressTests
     [InlineData("", null)]
     [InlineData("y", null)]
     [InlineData("１", null)]   // a fullwidth digit is not an ASCII digit
-    public void Only_a_digit_or_Enter_is_a_key(string key, string? bytes) => Assert.Equal(bytes, TerminalFocuser.PressBytes(key));
+    public void Only_a_digit_or_Enter_is_a_key(string key, string? bytes) => Assert.Equal(bytes, TerminalPress.Bytes(key));
 
     [Fact]
     public void Kitty_sends_exactly_the_key_on_stdin_with_no_paste_markers_or_enter()
     {
-        var (stdin, args) = TerminalFocuser.KittyPress(S("7"), "1");
+        var (stdin, args) = TerminalPress.Kitty(S("7"), "1");
         Assert.Equal("1", stdin);
         Assert.Equal(["@", "send-text", "--match", "id:7", "--stdin"], args);
     }
@@ -35,7 +35,7 @@ public class TerminalPressTests
     [Fact]
     public void WezTerm_sends_exactly_the_key_with_no_paste()
     {
-        var (stdin, args) = TerminalFocuser.WezTermPress(S("3"), "\r");
+        var (stdin, args) = TerminalPress.WezTerm(S("3"), "\r");
         Assert.Equal("\r", stdin);
         Assert.Equal(["cli", "send-text", "--pane-id", "3", "--no-paste"], args);
     }
@@ -43,18 +43,18 @@ public class TerminalPressTests
     [Fact]
     public void ITerm2_passes_the_session_and_key_through_argv_with_newline_off()
     {
-        var args = TerminalFocuser.ITerm2PressArgs(S("w0t0p0:ABC"), "2");
+        var args = TerminalPress.ITerm2Args(S("w0t0p0:ABC"), "2");
         Assert.Equal(["w0t0p0:ABC", "2"], args[^2..]);
-        var script = string.Join("\n", TerminalFocuser.ITerm2PressScript);
+        var script = string.Join("\n", TerminalPress.ITerm2Script);
         Assert.Contains("write text body newline NO", script);
         Assert.DoesNotContain("w0t0p0:ABC", script);   // never in the source
-        Assert.Equal(TerminalFocuser.ITerm2PressScript.Length, args.Count(a => a == "-e"));
+        Assert.Equal(TerminalPress.ITerm2Script.Length, args.Count(a => a == "-e"));
     }
 
     [Fact]
     public void A_console_digit_is_one_down_up_pair_and_nothing_after()
     {
-        var r = TerminalFocuser.ConsoleKeyRecords("3");
+        var r = TerminalPress.ConsoleRecords("3");
         Assert.Equal(2, r.Count);
         Assert.All(r, x => Assert.Equal('3', x.Char));
         Assert.Equal([1, 0], r.Select(x => x.KeyDown));
@@ -64,7 +64,7 @@ public class TerminalPressTests
     [Fact]
     public void A_console_enter_is_vk_return_with_cr()
     {
-        var r = TerminalFocuser.ConsoleKeyRecords("\r");
+        var r = TerminalPress.ConsoleRecords("\r");
         Assert.All(r, x => Assert.Equal((0x0D, '\r'), (x.VirtualKeyCode, x.Char)));
     }
 
@@ -77,7 +77,7 @@ public class TerminalPressTests
     [InlineData("TerminalApp", false)]   // needs Accessibility and focus: Open on desk
     [InlineData("None", false)]
     public void Only_routes_that_write_without_focus_press(string route, bool presses) =>
-        Assert.Equal(presses, TerminalFocuser.PressesSilently(Enum.Parse<TerminalTyping.Route>(route)));
+        Assert.Equal(presses, TerminalPress.Silent(Enum.Parse<TerminalTyping.Route>(route)));
 
     [Theory]
     [InlineData("1")]
