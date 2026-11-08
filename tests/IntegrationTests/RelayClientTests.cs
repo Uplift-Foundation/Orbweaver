@@ -273,6 +273,12 @@ public class RelayClientTests : IAsyncLifetime
 
         var resolve = await _stub.Next(IsEnvelope);
         Assert.Equal(("resolve", rid), (resolve.GetProperty("push").GetString(), resolve.GetProperty("id").GetString()));
+        // The resolve's ck is the amber's, so the passive alert replaces the
+        // amber in its thread; its e is the sealed resolve, to this phone.
+        Assert.Equal(amber.GetProperty("ck").GetString(), resolve.GetProperty("ck").GetString());
+        var sealedResolve = JsonDocument.Parse(PushSeal.Open(phone.KaKey, resolve.GetProperty("e").GetString())!).RootElement;
+        Assert.Equal(("resolved", "phone:" + phone.Id, "proj on Test Mac"),
+            (sealedResolve.GetProperty("t").GetString(), sealedResolve.GetProperty("by").GetString(), sealedResolve.GetProperty("label").GetString()));
         var resolved = OpenAsPhone(resolve, phone, identity);
         Assert.Equal(("resolved", "phone:" + phone.Id), (resolved.GetProperty("t").GetString(), resolved.GetProperty("by").GetString()));
         lock (keys) Assert.Equal(["1"], keys);

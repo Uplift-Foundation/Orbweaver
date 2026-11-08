@@ -569,16 +569,22 @@ namespace Orbweaver
             return frames;
         }
 
-        // resolved to every paired phone, so a sheet open on any of them closes;
-        // push resolve with no e, envelope id = the request_id it resolves.
-        internal IReadOnlyList<string> SendResolved(string requestId, string sessionId, string by)
+        // resolved to every paired phone, so a sheet open on any of them closes:
+        // push resolve, envelope id = the request_id it resolves, and ck the
+        // amber's own (the same session's Ck) so the passive "Answered at the
+        // desk" alert replaces the amber in its thread. e, when the pipeline
+        // gives a plaintext, is the sealed resolve, per phone, for that alert.
+        internal IReadOnlyList<string> SendResolved(string requestId, string sessionId, string by, string? pushPlaintext = null)
         {
             if (!Welcomed) return [];
             var plain = System.Text.Encoding.UTF8.GetBytes(PromptFrames.Resolved(requestId, sessionId, by));
             var frames = new List<string>();
             foreach (var c in _channels.Values)
-                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, "resolve") is { } frame)
+            {
+                var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
+                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, "resolve", e) is { } frame)
                     frames.Add(frame);
+            }
             return frames;
         }
 

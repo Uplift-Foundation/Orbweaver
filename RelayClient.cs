@@ -174,8 +174,8 @@ namespace Orbweaver
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
 
-        void IPromptSender.Resolved(string requestId, string sessionId, string by) =>
-            Dispatch(() => _link.SendResolved(requestId, sessionId, by));
+        void IPromptSender.Resolved(string requestId, string sessionId, string by, string? pushPlaintext) =>
+            Dispatch(() => _link.SendResolved(requestId, sessionId, by, pushPlaintext));
 
         void IPromptSender.Refusal(string phoneId, string requestId, string sessionId, string code) =>
             Dispatch(() => _link.SendRefusal(phoneId, requestId, sessionId, code));

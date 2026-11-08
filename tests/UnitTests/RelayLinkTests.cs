@@ -1076,4 +1076,14 @@ public class RelayLinkTests : IDisposable
         link.OnFrame("""{"t":"ok","code":"pushed"}""");
         Assert.Equal([(Rid, "pushed", 142), (Rid, "push_throttled", null), (Rid, "push_no_token", null), (Rid, "pushed", null)], got);
     }
+
+    [Fact]
+    public void A_sealed_resolve_rides_as_e_with_the_ambers_ck()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var amber = J(Assert.Single(link.SendPrompt(Rid, "sess-1", "{}", null)));
+        var resolve = J(Assert.Single(link.SendResolved(Rid, "sess-1", "desk", "{\"v\":1,\"t\":\"resolved\"}")));
+        Assert.Equal(amber.GetProperty("ck").GetString(), resolve.GetProperty("ck").GetString());
+        Assert.Equal("{\"v\":1,\"t\":\"resolved\"}", Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, resolve.GetProperty("e").GetString())!));
+    }
 }

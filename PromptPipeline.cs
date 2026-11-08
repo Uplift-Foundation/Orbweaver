@@ -16,7 +16,10 @@ namespace Orbweaver
         // which the pipeline only logs: ResendPendingAsync sends every pending
         // prompt again on each welcome regardless.
         bool Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext);
-        void Resolved(string requestId, string sessionId, string by);
+        // pushPlaintext: the sealed resolve's plaintext (PromptFrames.ResolvedPush),
+        // which the phone's notification extension uses to replace the amber
+        // with a quiet "Answered at the desk" alert.
+        void Resolved(string requestId, string sessionId, string by, string? pushPlaintext);
         void Refusal(string phoneId, string requestId, string sessionId, string code);
     }
 
@@ -75,6 +78,7 @@ namespace Orbweaver
             internal required SessionStatus Status;
             internal required string Prompt;
             internal required string? Push;
+            internal required string Label;
         }
 
         private readonly Seams _seams;
@@ -151,7 +155,7 @@ namespace Orbweaver
         {
             _live.Remove(sid);
             if (live.Pending.Answered) return;
-            _send.Resolved(live.Pending.RequestId, sid, by);
+            _send.Resolved(live.Pending.RequestId, sid, by, PromptFrames.ResolvedPush(live.Pending.RequestId, sid, by, live.Label));
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
         }
 
@@ -178,7 +182,7 @@ namespace Orbweaver
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var push = PromptFrames.FitPush(requestId, sid, label, tool, SummaryOf(tool), preview, expires, options, fp.Hash);
 
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly), Status = status, Prompt = prompt, Push = push?.Plaintext };
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
             _live[sid] = live;
             _send.Prompt(requestId, sid, prompt, push?.Plaintext);
             _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")}");
@@ -266,7 +270,7 @@ namespace Orbweaver
                     // settled for everyone, by an actor nobody can name.
                     _seams.Log($"warning press-landed-elsewhere {answer.RequestId} {d.Key}");
                     _live.Remove(answer.SessionId);
-                    _send.Resolved(answer.RequestId, answer.SessionId, "unknown");
+                    _send.Resolved(answer.RequestId, answer.SessionId, "unknown", PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "unknown", live.Label));
                     _seams.Log($"resolved {answer.RequestId} unknown");
                     return;
                 }
@@ -292,7 +296,7 @@ namespace Orbweaver
                 }
 
                 _live.Remove(answer.SessionId);
-                _send.Resolved(answer.RequestId, answer.SessionId, "phone:" + phoneId);
+                _send.Resolved(answer.RequestId, answer.SessionId, "phone:" + phoneId, PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "phone:" + phoneId, live.Label));
                 _seams.Log($"resolved {answer.RequestId} phone:{phoneId}");
             }
             finally { _gate.Release(); }

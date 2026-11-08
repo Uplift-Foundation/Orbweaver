@@ -156,7 +156,7 @@ internal static class PromptVectors
 
         var resolved = new JsonArray();
         ulong counter = 1;
-        foreach (var by in new[] { "desk", "phone:" + PhoneId, "gone" })
+        foreach (var by in new[] { "desk", "phone:" + PhoneId, "gone", "unknown" })
             resolved.Add(Sealed(epochKey, DesktopId, PhoneId, DesktopToPhone, counter++, PromptFrames.Resolved(RequestId, SessionId, by)));
         var refusals = new JsonArray();
         foreach (var code in AnswerGate.Codes)
@@ -441,6 +441,29 @@ internal static class PromptVectors
         byte[] Mut(Action<byte[]> f) { var c = (byte[])raw.Clone(); f(c); return c; }
         var other = KeyPairFromPrivate(Label("phone-agreement-other"));
 
+        // The sealed resolve (surface D's plaintext, accepted by the lead): the
+        // resolve envelope's e, for the quiet "Answered at the desk" alert
+        // that replaces the amber in place. One per by.
+        var resolves = new JsonArray();
+        foreach (var by in new[] { "desk", "phone:" + PhoneId, "gone", "unknown" })
+        {
+            var name = "resolve-" + by.Split(':')[0];
+            var pt = PromptFrames.ResolvedPush(RequestId, SessionId, by, label);
+            var eph = KeyPairFromPrivate(Label("push-eph-" + name));
+            var nonce = Label("push-nonce-" + name)[..NonceLength];
+            var ss = SharedSecret(eph, phKa.Public);
+            resolves.Add(new JsonObject
+            {
+                ["name"] = name,
+                ["plaintext"] = pt,
+                ["eph"] = Pair(eph),
+                ["nonce"] = Hex(nonce),
+                ["shared_secret"] = Hex(ss),
+                ["key"] = Hex(PushSeal.Key(ss, eph.Public, phKa.Public)),
+                ["e"] = PushSeal.SealWith(eph, nonce, phKa.Public, System.Text.Encoding.UTF8.GetBytes(pt)),
+            });
+        }
+
         return new JsonObject
         {
             ["_source"] = source.DeepClone(),
@@ -453,6 +476,10 @@ internal static class PromptVectors
             ["inputs"] = new JsonObject { ["phone_agreement"] = Pair(phKa) },
             ["positives"] = positives,
             ["no_e"] = refused,
+            ["resolves"] = resolves,
+            ["_resolves"] = "The resolve envelope's e (push resolve, envelope id = request_id, ck = the amber's ck): the same construction, plaintext " +
+                            "{v:1, t:\"resolved\", request_id, session_id, by, label}. t tells it from the amber plaintext, which has none. by is desk, phone:<id>, " +
+                            "gone (the dialog was replaced) or unknown (a key landed on a screen other than the approved dialog; never credited to a phone).",
             ["negatives"] = new JsonArray
             {
                 new JsonObject { ["name"] = "tag-flipped", ["e"] = Base64Url(Mut(b => b[^1] ^= 1)), ["expect"] = "open_fails" },
@@ -461,6 +488,7 @@ internal static class PromptVectors
                 new JsonObject { ["name"] = "version-2", ["e"] = Base64Url(Mut(b => b[0] = 2)), ["expect"] = "open_fails" },
                 new JsonObject { ["name"] = "truncated", ["e"] = Base64Url(raw[..(PushSeal.HeaderLength + NonceLength + TagLength - 1)]), ["expect"] = "open_fails" },
                 new JsonObject { ["name"] = "other-phone", ["e"] = good, ["phone_agreement"] = Pair(other), ["expect"] = "open_fails", ["_note"] = "the frames-v3-example e, opened with another phone's key" },
+                new JsonObject { ["name"] = "resolve-other-phone", ["e"] = resolves[0]!["e"]!.GetValue<string>(), ["phone_agreement"] = Pair(other), ["expect"] = "open_fails", ["_note"] = "a sealed resolve, opened with another phone's key" },
             },
         };
     }

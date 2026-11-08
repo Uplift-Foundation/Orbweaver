@@ -55,7 +55,8 @@ public class PromptPipelineTests
         public readonly List<(string Phone, string Rid, string Code)> Refusals = new();
         public bool Online = true;   // false: the relay is down and no frame is produced
         bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, s, p, push)); return Online; }
-        void IPromptSender.Resolved(string r, string s, string by) => Resolved.Add((r, s, by));
+        public readonly List<string?> ResolvedPushes = new();
+        void IPromptSender.Resolved(string r, string s, string by, string? push) { Resolved.Add((r, s, by)); ResolvedPushes.Add(push); }
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
     }
 
@@ -491,5 +492,34 @@ public class PromptPipelineTests
         await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());   // capture 2: the gate; 3: the last look fails
         Assert.Empty(_pane.Keys);
         Assert.Contains(_log, l => l.StartsWith("press-no-effect "));
+    }
+
+    [Theory]
+    [InlineData("desk")]
+    [InlineData("gone")]
+    public async Task Every_resolve_carries_its_sealed_plaintext_with_the_ambers_label(string by)
+    {
+        await _p.OnScannedAsync(Snap());
+        if (by == "gone") _pane.Screen = DialogB;
+        await _p.OnScannedAsync(by == "gone" ? Snap() : Snap("idle"));
+        var push = JsonDocument.Parse(Assert.Single(_sent.ResolvedPushes)!).RootElement;
+        Assert.Equal((1, "resolved", _sent.Prompts[0].Rid, "s1", by, "orbweaver on Test Mac"),
+            (push.GetProperty("v").GetInt32(), push.GetProperty("t").GetString(), push.GetProperty("request_id").GetString(),
+             push.GetProperty("session_id").GetString(), push.GetProperty("by").GetString(), push.GetProperty("label").GetString()));
+    }
+
+    [Fact]
+    public async Task A_phone_answer_resolve_and_an_unknown_one_carry_their_by_in_the_plaintext()
+    {
+        await _p.OnScannedAsync(Snap());
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Equal("phone:" + PhoneId, JsonDocument.Parse(_sent.ResolvedPushes.Single()!).RootElement.GetProperty("by").GetString());
+
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add,
+            CaptureAndPress: (_, _, _) => Task.FromResult<(bool, string?)>((true, DialogB))), _sent, "Test Mac");
+        _pane.Screen = Dialog;
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(prompt: 1));
+        Assert.Equal("unknown", JsonDocument.Parse(_sent.ResolvedPushes[^1]!).RootElement.GetProperty("by").GetString());
     }
 }

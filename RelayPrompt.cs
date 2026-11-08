@@ -323,6 +323,19 @@ namespace Orbweaver
         internal static string Refusal(string requestId, string sessionId, string code) =>
             new JsonObject { ["t"] = "err", ["request_id"] = requestId, ["session_id"] = sessionId, ["code"] = code }.ToJsonString(Json);
 
+        // The sealed resolve's plaintext (accepted from surface D): t tells it
+        // from the amber plaintext, which has none. Small, so no fitting.
+        internal static string ResolvedPush(string requestId, string sessionId, string by, string label) =>
+            new JsonObject
+            {
+                ["v"] = 1,
+                ["t"] = "resolved",
+                ["request_id"] = requestId,
+                ["session_id"] = sessionId,
+                ["by"] = by,
+                ["label"] = label,
+            }.ToJsonString(Json);
+
         internal static string PushPlaintext(string requestId, string sessionId, string label, string tool, string summary,
             string detail, long expiresAt, IReadOnlyList<PromptOption> options, string screenHash) =>
             new JsonObject
