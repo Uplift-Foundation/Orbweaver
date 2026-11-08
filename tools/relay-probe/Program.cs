@@ -38,7 +38,9 @@ void Report(bool ok, string step, string detail = "")
 
 var dir = Path.Combine(Path.GetTempPath(), "relay-probe-" + Guid.NewGuid().ToString("N")[..8]);
 var identity = new RelayIdentity(dir, PlainSecretStore.Instance);
-var client = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport());
+// --no-pacer: the burst test of the relay's own rate limiter (hana's PR #9),
+// with the client's pacing switched off so the relay sees the raw burst.
+var client = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac") { PaceFrames = !args.Contains("--no-pacer") }, new WebSocketRelayTransport());
 MirrorLog.Say("relay-probe", "start");
 
 // ---- phone-only mode ---------------------------------------------------------
@@ -248,6 +250,15 @@ Report(skipped is not null && gapSeq == expect + 1 && fresh is { } fr && fr.GetP
     "a seq gap and a resync bring a fresh roster from seq 1 with the current state", $"gap seen at seq {gapSeq}, expected {expect} first");
 
 // ---- remove -----------------------------------------------------------------
+// With --no-pacer, Remove happens in the middle of a 300-delta flood, which
+// is the case hana's PR #9 fixes: the unlink must still land, and frames the
+// relay refuses must come back as rate_limited with a ref (read the desktop's
+// mirror log with ORBWEAVER_MIRROR_LOG=1 to count them).
+if (args.Contains("--no-pacer"))
+{
+    for (var i = 0; i < 300; i++) client.OnScanned([rows[0] with { State = i % 2 == 0 ? "generating" : "idle" }]);
+    Console.WriteLine("      queued 300 unpaced deltas; removing the phone during the flood");
+}
 client.Remove(phoneId);
 var revoke = await Next(e => Env(e, "pair"));
 var revokeBody = revoke is null ? null : OpenState(revoke.Value.Frame);

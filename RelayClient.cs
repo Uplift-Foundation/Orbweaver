@@ -39,6 +39,10 @@ namespace Orbweaver
             // A WebSocket connect has no timeout of its own, so one that hangs
             // (a SYN into the void) would stall the loop with nothing logged.
             internal TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(20);
+
+            // On in every real build. Off only for tools/relay-probe's burst
+            // test of the relay's own limiter (--no-pacer).
+            internal bool PaceFrames { get; init; } = true;
             internal TimeSpan MaxBackoff { get; init; } = TimeSpan.FromSeconds(60);
 
             internal Uri SocketUri => new UriBuilder(Base)
@@ -276,7 +280,7 @@ namespace Orbweaver
         {
             await foreach (var frame in outbox.ReadAllAsync(token).ConfigureAwait(false))
             {
-                var wait = pacer.Reserve(_now());
+                var wait = _options.PaceFrames ? pacer.Reserve(_now()) : TimeSpan.Zero;
                 if (wait > TimeSpan.Zero) await _delay(wait, token).ConfigureAwait(false);
                 await socket.SendAsync(frame, token).ConfigureAwait(false);
             }

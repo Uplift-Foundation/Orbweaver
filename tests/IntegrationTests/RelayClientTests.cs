@@ -322,6 +322,33 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Equal([phone.Id], identity.PendingUnlinks);                               // still owed, for the next run
     }
 
+    // The probe's --no-pacer switch: the same burst arrives whole and in
+    // order, only faster — what the relay's own limiter is then tested with.
+    [Fact]
+    public async Task With_pacing_off_a_burst_goes_out_at_once_and_in_order()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac") { PaceFrames = false, PingInterval = TimeSpan.FromMinutes(5), Silence = TimeSpan.FromMinutes(5) };
+        _client = new RelayClient(identity, options, new WebSocketRelayTransport());
+        _client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", "idle", null, null)]);
+        _client.Start();
+        await _stub.NextT("hello");
+        await Until(() => _client.State == RelayClient.Status.Connected);
+        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true }));
+        await _stub.Next(IsEnvelope);
+
+        for (var i = 0; i < 30; i++)
+            _client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", i % 2 == 0 ? "generating" : "idle", null, null)]);
+        var started = DateTime.UtcNow;
+        var seqs = new List<long>();
+        for (var i = 0; i < 30; i++)
+            seqs.Add(OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("seq").GetInt64());
+        Assert.Equal(Enumerable.Range(2, 30).Select(i => (long)i), seqs);
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromMilliseconds(400), "unpaced frames were held back");
+    }
+
     [Fact]
     public async Task Remove_sends_revoke_and_unlink_to_the_relay()
     {
