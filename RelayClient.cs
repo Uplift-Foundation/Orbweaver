@@ -149,7 +149,9 @@ namespace Orbweaver
         internal static PromptPipeline.Seams DefaultPromptSeams(Func<DateTimeOffset> now) => new(
             status => ScreenReaders.For(status)?.ReadAsync(status) ?? Task.FromResult<string?>(null),
             TerminalFocuser.SendPaneKey, TerminalFocuser.SendPaneText,
-            now, Task.Delay, line => MirrorLog.Say("relay", line));
+            now, Task.Delay, line => MirrorLog.Say("relay", line),
+            // SendPaneKey presses into tmux alone, so far.
+            TerminalFocuser.CanReadPane);
 
         // The whole scan, for the prompt watcher; the roster gets its
         // projection through OnScanned.

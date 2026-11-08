@@ -385,4 +385,16 @@ public class PromptPipelineTests
         Assert.All(_sent.Refusals, r => Assert.Equal(AnswerGate.ForbiddenOption, r.Code));
         Assert.Equal(3, _sent.Refusals.Count);
     }
+
+    [Fact]
+    public async Task A_screen_that_can_be_read_but_not_pressed_goes_out_open_on_desk()
+    {
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add,
+            CanPress: _ => false), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        Assert.Equal(0, JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement.GetProperty("options").GetArrayLength());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.ForbiddenOption, Assert.Single(_sent.Refusals).Code);
+    }
 }

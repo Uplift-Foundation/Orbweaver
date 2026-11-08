@@ -43,7 +43,11 @@ namespace Orbweaver
             Func<SessionStatus, string, Task<bool>> TypeLiteral,
             Func<DateTimeOffset> Now,
             Func<TimeSpan, Task> Delay,
-            Action<string> Log);
+            Action<string> Log,
+            // Whether PressKey can reach this session. A screen the app can
+            // read but not press goes out "Open on desk" rather than as a prompt
+            // whose every answer would end in press-no-effect. Null: always.
+            Func<SessionStatus, bool>? CanPress = null);
 
         // How long after a press the recapture waits, and how long a tell waits
         // for the dialog to clear before typing (plan §4: ≤ 4 s).
@@ -147,7 +151,7 @@ namespace Orbweaver
             // permission dialog, so the fingerprint alone cannot tell them apart.
             // It goes to the phone as "Open on desk": the same prompt with no
             // options, and the gate refuses anything an answer names.
-            var deskOnly = FirstRunDialogs.Is(screen);
+            var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true);
             var options = deskOnly ? [] : fp.Prompt.Options.Select(o =>
             {
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
