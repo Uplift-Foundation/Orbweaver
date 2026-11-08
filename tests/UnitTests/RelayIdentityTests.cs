@@ -133,14 +133,15 @@ public class RelayIdentityTests : IDisposable
         var kaPub = RelayCrypto.GenerateKeyPair().Public;
         var p = a.AddPhone("ph_1", "Warren's iPhone", idPub, kaPub);
         Assert.Equal(("ph_1", "Warren's iPhone", T0, (ushort)0, false), (p.PhoneId, p.Name, p.PairedAt, p.SendEpoch, p.SendExhausted));
-        Assert.Null(p.ReceiveEpoch);
+        Assert.Null(p.Received);
         Assert.Equal(idPub, p.IdPublic);
         Assert.Equal(kaPub, p.KaPublic);
 
         Assert.True(a.SaveSendEpoch("ph_1", 7, false));
         a.SaveReceive("ph_1", 3, 42);
         var reloaded = New(store).PhoneById("ph_1")!;
-        Assert.Equal((7, false, (ushort?)3, (ulong?)42), (reloaded.SendEpoch, reloaded.SendExhausted, reloaded.ReceiveEpoch, reloaded.ReceiveCounter));
+        Assert.Equal((7, false), (reloaded.SendEpoch, reloaded.SendExhausted));
+        Assert.Equal(((ushort)3, 42UL), reloaded.Received);
 
         a.AddPhone("ph_1", "Renamed", idPub, kaPub);                      // re-pair restarts the epoch
         Assert.Equal(0, New(store).PhoneById("ph_1")!.SendEpoch);
@@ -183,6 +184,17 @@ public class RelayIdentityTests : IDisposable
         var id = New(new FakeStore());
         Assert.Empty(id.Phones);
         Assert.Equal("dsk_x", id.DeviceId);
+    }
+
+    [Fact]
+    public void A_receive_position_with_only_one_half_reads_as_none()
+    {
+        var a = New(new FakeStore());
+        a.AddPhone("ph_1", "P", RelayCrypto.GenerateKeyPair().Public, RelayCrypto.GenerateKeyPair().Public);
+        var path = Path.Combine(_dir, RelayIdentity.FileName);
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"send_exhausted\": false", "\"send_exhausted\": false, \"recv_epoch\": 4"));
+        Assert.Contains("recv_epoch", File.ReadAllText(path));
+        Assert.Null(New(new FakeStore()).PhoneById("ph_1")!.Received);
     }
 
     [Fact]

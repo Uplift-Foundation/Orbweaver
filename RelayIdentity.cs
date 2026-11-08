@@ -31,8 +31,7 @@ namespace Orbweaver
             DateTimeOffset PairedAt,
             ushort SendEpoch,
             bool SendExhausted,
-            ushort? ReceiveEpoch,
-            ulong? ReceiveCounter);
+            (ushort Epoch, ulong Counter)? Received);
 
         private sealed class StoredPhone
         {
@@ -253,7 +252,10 @@ namespace Orbweaver
             // Always hex this class wrote, and EnsureLoaded drops any phone
             // whose keys do not parse, so neither can be null here.
             RelayCrypto.FromHex(p.IdPublic)!, RelayCrypto.FromHex(p.KaPublic)!,
-            p.PairedAt, p.SendEpoch, p.SendExhausted, p.ReceiveEpoch, p.ReceiveCounter);
+            p.PairedAt, p.SendEpoch, p.SendExhausted,
+            // Both or nothing: a hand-edited file with only one half has no
+            // position anyone can trust, so it reads as none.
+            p.ReceiveEpoch is { } e && p.ReceiveCounter is { } c ? (e, c) : null);
 
         private void EnsureLoaded()
         {
