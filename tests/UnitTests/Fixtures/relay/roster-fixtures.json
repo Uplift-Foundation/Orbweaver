@@ -1,11 +1,11 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayCrypto.cs)",
-    "orbweaver_sha": "f4ea7bfa",
+    "orbweaver_sha": "d920815a",
     "spec": "CB-314 architect plan rev 1, sections 2.2 and 2.3",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16); QR k/s, sig fields inside plaintexts, and ck are base64url without padding"
   },
-  "_rules": "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true shows ended once then drops the row; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is an INTEGER of Unix seconds, the same type and unit as ts and last_seen (addendum 4). parent_session_id and persona are omitted when absent; persona.color is optional and, when present, one of the lowercase names in persona-colors.json (never hex) — render absent or unknown names neutral.",
+  "_rules": "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true drops the row from the roster immediately — there is no 'ended shown once' state in the data, though the UI may animate the exit; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is an INTEGER of Unix seconds, the same type and unit as ts and last_seen (addendum 4). parent_session_id and persona are omitted when absent; persona.color is optional and, when present, one of the lowercase names in persona-colors.json (never hex) — render absent or unknown names neutral.",
   "macbook_roster": {
     "t": "roster",
     "seq": 1,
