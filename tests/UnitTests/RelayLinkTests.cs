@@ -160,6 +160,7 @@ public class RelayLinkTests : IDisposable
     [InlineData("""{"hello":1}""")]
     [InlineData("""{"t":"mystery"}""")]
     [InlineData("""{"t":"err","ref":"x","code":"rate_limited"}""")]
+    [InlineData("""{"t":"err","ref":"01M6X5","code":"bad_envelope"}""")]
     [InlineData("""{"t":"pong"}""")]
     [InlineData("""{"t":5}""")]
     [InlineData("""{"t":"ok","ref":"link","code":"linked"}""")]

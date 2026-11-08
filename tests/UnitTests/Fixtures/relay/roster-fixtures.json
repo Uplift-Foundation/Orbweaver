@@ -1,11 +1,11 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayCrypto.cs)",
-    "orbweaver_sha": "5fcf3cfd",
+    "orbweaver_sha": "0e9c2a38",
     "spec": "CB-314 architect plan rev 1, sections 2.2 and 2.3",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16); QR k/s, sig fields inside plaintexts, and ck are base64url without padding"
   },
-  "_rules": "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true shows ended once then drops the row; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is UTC whole seconds. parent_session_id and persona (and persona.color) are omitted when absent.",
+  "_rules": "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true shows ended once then drops the row; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is an INTEGER of Unix seconds, the same type and unit as ts and last_seen (addendum 4). parent_session_id and persona are omitted when absent; persona.color is optional and, when present, one of the lowercase names in persona-colors.json (never hex) — render absent or unknown names neutral.",
   "macbook_roster": {
     "t": "roster",
     "seq": 1,
@@ -16,7 +16,7 @@
         "title": "CB-314 relay milestone",
         "cwd": "/Users/someone/Source/Orbweaver",
         "state": "generating",
-        "since": "2026-11-08T08:00:00Z",
+        "since": 1794124800,
         "persona": {
           "name": "Jennifer Voss",
           "initials": "JV",
@@ -29,7 +29,7 @@
         "title": "tamsin-oyelaran",
         "cwd": "/Users/someone/Source/Orbweaver-wt/tamsin-oyelaran",
         "state": "waiting",
-        "since": "2026-11-08T08:00:12Z",
+        "since": 1794124812,
         "parent_session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
         "persona": {
           "name": "Tamsin Oyelaran",
@@ -43,7 +43,7 @@
         "title": "Orbweaver-Mobile",
         "cwd": "/Users/someone/Source/Orbweaver-Mobile",
         "state": "idle",
-        "since": "2026-11-08T08:05:00Z"
+        "since": 1794125100
       }
     ]
   },
@@ -57,7 +57,7 @@
         "title": "orbweaver",
         "cwd": "C:\\Users\\someone\\Source\\Orbweaver",
         "state": "idle",
-        "since": "2026-11-08T08:00:40Z"
+        "since": 1794124840
       },
       {
         "session_id": "1e2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5b",
@@ -65,7 +65,7 @@
         "title": "scratch",
         "cwd": "C:\\Users\\someone\\scratch",
         "state": "generating",
-        "since": "2026-11-08T08:00:55Z",
+        "since": 1794124855,
         "persona": {
           "name": "Pixel",
           "initials": "PI"
@@ -84,14 +84,14 @@
       "seq": 2,
       "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
       "state": "idle",
-      "since": "2026-11-08T08:01:30Z"
+      "since": 1794124890
     },
     {
       "t": "delta",
       "seq": 3,
       "session_id": "b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9",
       "state": "generating",
-      "since": "2026-11-08T08:01:35Z"
+      "since": 1794124895
     },
     {
       "t": "delta",
@@ -104,7 +104,7 @@
       "seq": 5,
       "session_id": "b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9",
       "state": "ended",
-      "since": "2026-11-08T08:02:00Z",
+      "since": 1794124920,
       "removed": true
     }
   ],
@@ -115,7 +115,7 @@
       "seq": 3,
       "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
       "state": "waiting",
-      "since": "2026-11-08T08:03:20Z"
+      "since": 1794125000
     }
   }
 }
