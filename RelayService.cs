@@ -58,7 +58,17 @@ namespace Orbweaver
         {
             sessions.SessionsScanned += OnScanned;
             if (OrbweaverSettings.RelayEnabled) Enable();
+            // CB-314's scripted pairing, only with the explicit env opt-in.
+            if (HooksEnabled()) _ = HooksRunner(Enable());
         }
+
+        internal static Func<bool> HooksEnabled { get; set; } = () => RelayTestHooks.Enabled(Environment.GetEnvironmentVariable);
+
+        internal static Func<IPairingClient, Task> HooksRunner { get; set; } = RunRealHooks;
+
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage] // the real directory, clock and delay; RelayTestHooks itself is tested
+        internal static Task RunRealHooks(IPairingClient client) =>
+            RelayTestHooks.RunAsync(client, OrbweaverSettings.Directory, () => DateTimeOffset.UtcNow, Task.Delay, CancellationToken.None);
 
         internal static void OnScanned(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {

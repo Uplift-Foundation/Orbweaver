@@ -434,6 +434,43 @@ public class RelaySettingsAndServiceTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task Attach_runs_the_test_hooks_only_when_they_are_switched_on()
+    {
+        RelayService.Factory = () => Client();
+        var ran = new List<IPairingClient>();
+        RelayService.HooksRunner = c => { ran.Add(c); return Task.CompletedTask; };
+        var dir = Path.Combine(_dir, "status-hooks");
+        Directory.CreateDirectory(dir);
+        var manager = new SessionManager(dir,
+            () => new Dictionary<string, string>(StringComparer.Ordinal),
+            () => new HashSet<string>(StringComparer.Ordinal),
+            dependents: _ => SessionDependents.Nothing,
+            paneOwners: claims => claims.ToDictionary(TmuxPaneKey.Of, _ => (string?)null),
+            agentViewer: _ => null,
+            teams: pids => pids.ToDictionary(p => p, _ => AgentTeam.None),
+            fileTeams: _ => new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
+        try
+        {
+            OrbweaverSettings.RelayEnabled = false;
+            RelayService.HooksEnabled = () => false;
+            RelayService.Attach(manager);
+            Assert.Empty(ran);
+            Assert.Null(RelayService.Client);
+
+            RelayService.HooksEnabled = () => true;
+            RelayService.Attach(manager);
+            Assert.Same(RelayService.Client, Assert.Single(ran));
+            Assert.False(RelayTestHooks.Enabled(_ => null));                   // and the real default is off
+        }
+        finally
+        {
+            RelayService.HooksEnabled = () => RelayTestHooks.Enabled(Environment.GetEnvironmentVariable);
+            RelayService.HooksRunner = RelayService.RunRealHooks;
+            await RelayService.DisableAsync();
+        }
+    }
+
+    [AvaloniaFact]
     public void Defaults_name_this_platform_and_version()
     {
         var o = RelayService.DefaultOptions();

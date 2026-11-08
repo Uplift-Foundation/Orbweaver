@@ -187,8 +187,8 @@ foreach (var sid in new[] { "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b", "b2c4d6e8-0a
     cks.Add(new JsonObject { ["session_id"] = sid, ["ck"] = Ck(ckKey, sid) });
 
 const string rosterPlain = "{\"t\":\"roster\",\"seq\":1,\"sessions\":[{\"session_id\":\"8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b\"," +
-    "\"cli\":\"claude\",\"title\":\"orbweaver\",\"cwd\":\"/Users/someone/Source/Orbweaver\",\"state\":\"generating\",\"since\":\"2026-11-08T08:00:00Z\"}]}";
-const string deltaPlain = "{\"t\":\"delta\",\"seq\":2,\"session_id\":\"8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b\",\"state\":\"idle\",\"since\":\"2026-11-08T08:00:05Z\"}";
+    "\"cli\":\"claude\",\"title\":\"orbweaver\",\"cwd\":\"/Users/someone/Source/Orbweaver\",\"state\":\"generating\",\"since\":1794124800}]}";
+const string deltaPlain = "{\"t\":\"delta\",\"seq\":2,\"session_id\":\"8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b\",\"state\":\"idle\",\"since\":1794124805}";
 const string phonePlain = "{\"t\":\"probe\",\"note\":\"milestone 2 sends nothing sealed phone-to-desktop on the socket; this vector pins the direction prefix\"}";
 
 JsonObject SealVector(string name, uint dir, ushort e, ulong c, string from, string to, string cls, string plain)

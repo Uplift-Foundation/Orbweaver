@@ -30,13 +30,14 @@ namespace Orbweaver.Tests
         // plus LIVE_DAEMON_TESTS, the opt-in gate on DaemonStopLiveTests (CB-264),
         // four of CB-291's, the OpenClaw probe's three (CB-270 Stage 6), the
         // updater's two test levers (CB-308), LOCAL_GATE_SHADOW, the
-        // log-only switch for the typing gate (CB-307), and CB-314's two:
+        // log-only switch for the typing gate (CB-307), and CB-314's three:
         // KEYCHAIN_TESTS, the opt-in gate on the one test that writes the login
-        // Keychain, and RELAY_URL, which points a build at a stub relay.
+        // Keychain, RELAY_URL, which points a build at a stub relay, and
+        // RELAY_TEST_HOOKS, the scripted pairing for an end-to-end harness.
         [Fact]
-        public void TheListHoldsTwentyEightDistinctVariables()
+        public void TheListHoldsTwentyNineDistinctVariables()
         {
-            Assert.Equal(28, BrandEnv.All.Count);
+            Assert.Equal(29, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

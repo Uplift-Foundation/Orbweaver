@@ -90,6 +90,10 @@ namespace Orbweaver
         // the same shape as UPDATE_FEED_URL. Unset means the real relay.
         internal const string RelayUrl = "RELAY_URL";
 
+        // CB-314: scripted pairing for an end-to-end harness (RelayTestHooks).
+        // Explicit opt-in only; nothing sets it by default.
+        internal const string RelayTestHooks = "RELAY_TEST_HOOKS";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -98,7 +102,7 @@ namespace Orbweaver
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
-            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl,
+            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test
