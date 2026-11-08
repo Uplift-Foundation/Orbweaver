@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayPrompt.cs, RelayCrypto.cs)",
-    "orbweaver_sha": "7b48234b",
+    "orbweaver_sha": "13202bf5",
     "spec": "CB-315 architect plan #11248 rev 2 §2; Orbweaver-Mobile contracts/frames-v3.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; screen_hash, nonce, sig and e are base64url without padding"
   },
@@ -18,6 +18,7 @@
       "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
       "_note": "the frames-v3.json prompt example, drawn as Claude Code draws it",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
       "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f556e697454657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
       "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
@@ -45,6 +46,7 @@
       "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n   1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n ❯ 3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
       "_note": "control: the ❯ cursor on option 3 instead of 1 — the same question, so the SAME screen_hash as frames-v3-example",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
       "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f556e697454657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
       "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
@@ -72,6 +74,7 @@
       "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
       "_note": "control: twenty blank rows under the dialog — the SAME screen_hash as frames-v3-example",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
       "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f556e697454657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
       "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
@@ -99,6 +102,7 @@
       "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/IntegrationTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
       "_note": "negative: one word of the command changed — a DIFFERENT screen_hash; the gate refuses an answer to frames-v3-example against this screen (stale_prompt)",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Bash command\ndotnet test tests/IntegrationTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
       "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f496e746567726174696f6e54657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
       "screen_hash": "ol5SNbRcOsqCHW8dgHljhG2Ew5m1YSobAOBzSFOEg1E",
@@ -126,6 +130,7 @@
       "screen": "\n ▐▛███▛█   Claude Code v2.1.319\n▝▜██████▀  Opus 5.5 with medium effort · Claude Team\n ▝▝   ▝▝   /private/tmp/c3/tmux-claude · /rc\n\n\n❯ run: touch cb313-probe-file\n\n  Creating empty probe file\n  ⎿  $ touch cb313-probe-file\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Bash command\n Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n Create empty probe file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n touch cb313-probe-file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and always allow access to /private/tmp/c3/tmux-claude from this project\n   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n   4. No\n\n Esc to cancel · Tab to amend\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
       "_note": "CB-313 fixture; option 3 is Claude Code's switch-to-auto-mode, kind mode",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Bash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\nCreate empty probe file\ntouch cb313-probe-file\nDo you want to proceed?\n1. Yes\n2. Yes, and always allow access to /private/tmp/c3/tmux-claude from this project\n3. Yes, and switch to auto mode · auto mode handles these prompts for you\n4. No",
       "canonical_text_utf8": "4261736820636f6d6d616e640a5469703a206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f7520e280942063686f6f7365202273776974636820746f206175746f206d6f6465222062656c6f770a43726561746520656d7074792070726f62652066696c650a746f7563682063623331332d70726f62652d66696c650a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420616c7761797320616c6c6f772061636365737320746f202f707269766174652f746d702f63332f746d75782d636c617564652066726f6d20746869732070726f6a6563740a332e205965732c20616e642073776974636820746f206175746f206d6f646520c2b7206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f750a342e204e6f",
       "screen_hash": "xdm22Yj0bb4sWC7lmnk3jHMoWUOnP2UTQLEDrU-lGiQ",
@@ -158,6 +163,7 @@
       "screen": "\n  >_ OpenAI Codex (v0.167.0)\n     /private/tmp/c3/tmux-codex\n\n  To get started, describe a task or try one of these commands:\n\n  /init - create an AGENTS.md file with instructions for Codex\n  /status - show current session configuration\n  /permissions - choose what Codex is allowed to do\n  /model - choose what model and reasoning effort to use\n  /review - review any changes and find issues\n\n\n› run this exact shell command outside the sandbox: touch $HOME/cb313-probe\n\n\n• I’ll run that exact command with elevated sandbox access.\n\n• Running touch $HOME/cb313-probe\n\n\n\n\n\n\n\n  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you want to allow creation of the requested probe file in your home directory?\n\n  $ touch $HOME/cb313-probe\n\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
       "_note": "CB-313 fixture; option 2's scope is the backticked prefix",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creation of the requested probe file in your home directory?\n$ touch $HOME/cb313-probe\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)\n3. No, and tell Codex what to do differently (esc)",
       "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696f6e206f6620746865207265717565737465642070726f62652066696c6520696e20796f757220686f6d65206469726563746f72793f0a2420746f7563682024484f4d452f63623331332d70726f62650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e6473207468617420737461727420776974682060746f7563682024484f4d452f63623331332d70726f626560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
       "screen_hash": "qKi3rioclgmkzXB38_vlrFyY4XGMtuh79gp79DzU2Ng",
@@ -185,6 +191,7 @@
       "screen": " \n  >_ OpenAI Codex (v0.167.0)\n     /private/tmp/c3/wez120-codex\n \n  To get started, describe a task or try one of these commands:\n \n  /init - create an AGENTS.md file with instructions for Codex\n  /status - show current session configuration\n  /permissions - choose what Codex is allowed to do\n  /model - choose what model and reasoning effort to use\n  /review - review any changes and find issues\n \n                                                                                                                        \n› run this exact shell command outside the sandbox: touch $HOME/cb313-probe                                             \n                                                                                                                        \n                                                                                                                        \n• I’ll run that exact command with sandbox restrictions lifted.                                                         \n                                                                                                                        \n• Running touch $HOME/cb313-probe                                                                                       \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  Would you like to run the following command?                                                                          \n                                                                                                                        \n  Environment: local                                                                                                    \n                                                                                                                        \n  Reason: Do you want to allow creation of the requested probe file in your home directory outside the workspace?       \n                                                                                                                        \n  $ touch $HOME/cb313-probe                                                                                             \n                                                                                                                        \n                                                                                                                        \n› 1. Yes, proceed (y)                                                                                                   \n  2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)                                \n  3. No, and tell Codex what to do differently (esc)                                                                    \n                                                                                                                        \n  Press enter to confirm or esc to cancel                                                                               \n",
       "_note": "CB-313 fixture at 120 columns",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creation of the requested probe file in your home directory outside the workspace?\n$ touch $HOME/cb313-probe\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)\n3. No, and tell Codex what to do differently (esc)",
       "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696f6e206f6620746865207265717565737465642070726f62652066696c6520696e20796f757220686f6d65206469726563746f7279206f7574736964652074686520776f726b73706163653f0a2420746f7563682024484f4d452f63623331332d70726f62650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e6473207468617420737461727420776974682060746f7563682024484f4d452f63623331332d70726f626560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
       "screen_hash": "ssDTzfAvE1-KkbkRs3wCKlOR3UzLmpuM9WCX38z_Whk",
@@ -212,6 +219,7 @@
       "screen": "│ model:     gpt-5.6-sol   /model to change │\n│ directory: ~\\cb313\\wt-codex               │\n╰───────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true\n\n• You have 2 usage limit resets available. Run /usage to use one.\n\n\n› [200~run this exact shell command outside the sandbox: New-Item C:/Users/someone/cb313-probe -ItemType File[201~\n\n\n• I’ll run that exact PowerShell command with elevated filesystem access.\n\n◦ Running New-Item C:/Users/someone/cb313-probe -ItemType File\n\n\n  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n\n  $ New-Item C:/Users/someone/cb313-probe -ItemType File\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `New-Item C:/Users/someone/cb313-probe -ItemType File` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
       "_note": "CB-313 fixture, Windows Terminal; the dialog starts under the ◦/• Running line, which flips glyph while it waits and so is not hashed",
       "dialog": true,
+      "desk_only": false,
       "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n$ New-Item C:/Users/someone/cb313-probe -ItemType File\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `New-Item C:/Users/someone/cb313-probe -ItemType File` (p)\n3. No, and tell Codex what to do differently (esc)",
       "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696e6720746865207265717565737465642070726f62652066696c65206f7574736964652074686520776f726b73706163652073616e64626f783f0a24204e65772d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d70726f6265202d4974656d547970652046696c650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820604e65772d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d70726f6265202d4974656d547970652046696c6560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
       "screen_hash": "A7iI6EdXe22jnmNn_YSspkBM4CaVruypmO9ZbrZE8Yo",
@@ -239,6 +247,317 @@
       "screen": "\n ▐▛███▛█   Claude Code v2.1.319\n▝▜██████▀  Opus 5.5 with medium effort · Claude Team\n ▝▝   ▝▝   /private/tmp/c3/tmux-claude · /rc\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n❯\u00A0Try \"write a test for <filepath>\"\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  Opus 5.5 | ~/tmux-claude | [.claude]\n  ⏸ manual mode on · ← 2 agents\n",
       "_note": "no dialog on screen: no prompt is sent",
       "dialog": false
+    },
+    {
+      "name": "conhost-claude-none",
+      "screen": "\n ▐▛███▛█   Claude Code v2.1.319\n▝▜██████▀  Sonnet 5.5 · Claude Team\n ▝▝   ▝▝   ~\\cb313\\conhost-claude · /rc\n\n  Updated to latest. Got 20 features, 109 bugfixes, and 42 other changes.\n  code.claude.com/docs/en/changelog for details\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n                                                                                                    ◐ medium · /effort\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n>\u00A0Try \"how does <filepath> work?\"\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  Sonnet 5.5 | ~/conhost-claude | [.claude]\n  ⏸ manual mode on · ← for agents\n",
+      "_note": "Windows console at conhost's > idle prompt: no prompt is sent",
+      "dialog": false
+    },
+    {
+      "name": "tmux-claude-prompt-wrapped",
+      "screen": "\n ▐▛███▛█   Claude Code v2.1.319\n▝▜██████▀  Opus 5.5 with medium effort · Claude Team\n ▝▝   ▝▝   /…/378edad5-0680-4c2b-8d26-a6bd64a8052a/scratchpad/cb313/tmux · /rc\n\n\n❯ run: touch cb313-probe-file\n\n⏺ Creating empty probe file\n  ⎿  $ touch cb313-probe-file && ls -l cb313-probe-file\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Bash command\n Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n Create empty probe file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n touch cb313-probe-file && ls -l cb313-probe-file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and always allow access to /private/tmp/claude-501/-Users-xxxxxxxxxxxxxx-Source-Orbweaver/378edad5-0680-4c2b-\n      8d26-a6bd64a8052a/scratchpad/cb313/tmux from this project\n   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n   4. No\n\n Esc to cancel · Tab to amend\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "_note": "option 2's label wraps at a hyphen; the parser rejoins it with no space",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": "Bash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\nCreate empty probe file\ntouch cb313-probe-file && ls -l cb313-probe-file\nDo you want to proceed?\n1. Yes\n2. Yes, and always allow access to /private/tmp/claude-501/-Users-xxxxxxxxxxxxxx-Source-Orbweaver/378edad5-0680-4c2b-8d26-a6bd64a8052a/scratchpad/cb313/tmux from this project\n3. Yes, and switch to auto mode · auto mode handles these prompts for you\n4. No",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a5469703a206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f7520e280942063686f6f7365202273776974636820746f206175746f206d6f6465222062656c6f770a43726561746520656d7074792070726f62652066696c650a746f7563682063623331332d70726f62652d66696c65202626206c73202d6c2063623331332d70726f62652d66696c650a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420616c7761797320616c6c6f772061636365737320746f202f707269766174652f746d702f636c617564652d3530312f2d55736572732d78787878787878787878787878782d536f757263652d4f72627765617665722f33373865646164352d303638302d346332622d386432362d6136626436346138303532612f736372617463687061642f63623331332f746d75782066726f6d20746869732070726f6a6563740a332e205965732c20616e642073776974636820746f206175746f206d6f646520c2b7206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f750a342e204e6f",
+      "screen_hash": "pSyjkG4wZC-KYlyam3BOyWbblxLYvuSN6cCRxOTc9F8",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and always allow access to /private/tmp/claude-501/-Users-xxxxxxxxxxxxxx-Source-Orbweaver/378edad5-0680-4c2b-8d26-a6bd64a8052a/scratchpad/cb313/tmux from this project",
+          "kind": "always",
+          "scope": "/private/tmp/claude-501/-Users-xxxxxxxxxxxxxx-Source-Orbweaver/378edad5-0680-4c2b-8d26-a6bd64a8052a/scratchpad/cb313/tmux"
+        },
+        {
+          "key": "3",
+          "label": "Yes, and switch to auto mode · auto mode handles these prompts for you",
+          "kind": "mode"
+        },
+        {
+          "key": "4",
+          "label": "No",
+          "kind": "deny"
+        }
+      ]
+    },
+    {
+      "name": "iterm2-claude-prompt",
+      "screen": "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n  The chandelier has not fallen yet. Yet is doing a great deal of work in that sentence. \n \n \n \uDB80\uDC35  \uDB80\uDEDC  \uDB84\uDCFE main-ai  \uDB83\uDE0F  us-east-1                                          \uDB82\uDD54 21:18 \n† cd /tmp/c3/iterm-claude && clear && claude --permission-mode default \n \n❯ run: touch cb313-probe-file                                                   \n \n⏺ Creating empty probe file \n  ⎿  $ touch cb313-probe-file && ls -l cb313-probe-file \n \n────────────────────────────────────────────────────────────────────────────────\n Bash command \n Tip: auto mode handles these prompts for you — choose \"switch to auto mode\"  \n below \n Create empty probe file \n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n touch cb313-probe-file && ls -l cb313-probe-file \n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n Do you want to proceed? \n ❯ 1. Yes \n   2. Yes, and always allow access to /private/tmp/c3/iterm-claude from this \n      project \n   3. Yes, and switch to auto mode · auto mode handles these prompts for you \n   4. No \n \n Esc to cancel · Tab to amend \n\n",
+      "_note": "80 columns: option 2's label wraps and is rejoined with one space",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": "Bash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\"\nbelow\nCreate empty probe file\ntouch cb313-probe-file && ls -l cb313-probe-file\nDo you want to proceed?\n1. Yes\n2. Yes, and always allow access to /private/tmp/c3/iterm-claude from this project\n3. Yes, and switch to auto mode · auto mode handles these prompts for you\n4. No",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a5469703a206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f7520e280942063686f6f7365202273776974636820746f206175746f206d6f6465220a62656c6f770a43726561746520656d7074792070726f62652066696c650a746f7563682063623331332d70726f62652d66696c65202626206c73202d6c2063623331332d70726f62652d66696c650a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420616c7761797320616c6c6f772061636365737320746f202f707269766174652f746d702f63332f697465726d2d636c617564652066726f6d20746869732070726f6a6563740a332e205965732c20616e642073776974636820746f206175746f206d6f646520c2b7206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f750a342e204e6f",
+      "screen_hash": "K2Uolg-3ChiK3enQOkOCrxpUIYSEq7uMxM1QszW96hw",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and always allow access to /private/tmp/c3/iterm-claude from this project",
+          "kind": "always",
+          "scope": "/private/tmp/c3/iterm-claude"
+        },
+        {
+          "key": "3",
+          "label": "Yes, and switch to auto mode · auto mode handles these prompts for you",
+          "kind": "mode"
+        },
+        {
+          "key": "4",
+          "label": "No",
+          "kind": "deny"
+        }
+      ]
+    },
+    {
+      "name": "wezterm-claude-prompt",
+      "screen": " ▝▝   ▝▝   /private/tmp/c3/wez-claude · /rc\n                                                                                \n                                                                                \n❯ run: touch cb313-probe-file                                                   \n\n⏺ Creating empty probe file\n  ⎿  $ touch cb313-probe-file\n\n────────────────────────────────────────────────────────────────────────────────\n Bash command\n Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" \n below\n Create empty probe file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n touch cb313-probe-file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n Do you want to proceed?\n ❯ 1. Yes                                                                       \n   2. Yes, and always allow access to /private/tmp/c3/wez-claude from this\n      project\n   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n   4. No\n                                                                                \n Esc to cancel · Tab to amend\n",
+      "_note": "80 columns: option 2's label wraps and is rejoined with one space",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": "Bash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\"\nbelow\nCreate empty probe file\ntouch cb313-probe-file\nDo you want to proceed?\n1. Yes\n2. Yes, and always allow access to /private/tmp/c3/wez-claude from this project\n3. Yes, and switch to auto mode · auto mode handles these prompts for you\n4. No",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a5469703a206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f7520e280942063686f6f7365202273776974636820746f206175746f206d6f6465220a62656c6f770a43726561746520656d7074792070726f62652066696c650a746f7563682063623331332d70726f62652d66696c650a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420616c7761797320616c6c6f772061636365737320746f202f707269766174652f746d702f63332f77657a2d636c617564652066726f6d20746869732070726f6a6563740a332e205965732c20616e642073776974636820746f206175746f206d6f646520c2b7206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f750a342e204e6f",
+      "screen_hash": "QOVMuLh8MHoBduQLVTFzltbhH-rK7s9jtWPJbjX4niM",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and always allow access to /private/tmp/c3/wez-claude from this project",
+          "kind": "always",
+          "scope": "/private/tmp/c3/wez-claude"
+        },
+        {
+          "key": "3",
+          "label": "Yes, and switch to auto mode · auto mode handles these prompts for you",
+          "kind": "mode"
+        },
+        {
+          "key": "4",
+          "label": "No",
+          "kind": "deny"
+        }
+      ]
+    },
+    {
+      "name": "tmux-grok-prompt",
+      "screen": " /p/t/c3/tmux-grok                                                                             24K / 256K │ [Dashboard]\n\n    run this exact shell command: touch $HOME/cb313-probe                                                     9:14 PM\n\n    ◆ Thought for 0.1s\n\n    I'll run that command exactly as written.                                                                 9:14 PM\n\n    ◆ Running create the cb313-probe file in home\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  ◆ Create the cb313-probe file in home… 22s                                                       26s ⇣24.0k [↓][stop]\n ┃\n ┃  ›  Create the cb313-probe file in home\n ┃  │ touch $HOME/cb313-probe\n ┃\n ┃  1 (○) Yes, and don't ask again for anything (always-approve mode)\n ┃  2 (●) Yes, proceed\n ┃  3 (○) No, reject (type to add feedback)\n ┃\n\n 1/3:select  │  Tab:next option  │  Ctrl+o:always-approve  │  Ctrl+c:cancel  │  Esc:scrollback\n",
+      "_note": "Grok on the Mac: N (○) label radio rows, the marks not part of the label; the always-approve option is kind mode; the live '22s' line above the frame is not hashed",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": "›  Create the cb313-probe file in home\n│ touch $HOME/cb313-probe\n1. Yes, and don't ask again for anything (always-approve mode)\n2. Yes, proceed\n3. No, reject (type to add feedback)",
+      "canonical_text_utf8": "e280ba2020437265617465207468652063623331332d70726f62652066696c6520696e20686f6d650ae2948220746f7563682024484f4d452f63623331332d70726f62650a312e205965732c20616e6420646f6e27742061736b20616761696e20666f7220616e797468696e672028616c776179732d617070726f7665206d6f6465290a322e205965732c2070726f636565640a332e204e6f2c2072656a65637420287479706520746f2061646420666565646261636b29",
+      "screen_hash": "7RgOOsurNmYNqhfzlLxfIOTGIi9RM8yynQ0-Jlg-AKM",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, and don't ask again for anything (always-approve mode)",
+          "kind": "mode"
+        },
+        {
+          "key": "2",
+          "label": "Yes, proceed",
+          "kind": "approve"
+        },
+        {
+          "key": "3",
+          "label": "No, reject (type to add feedback)",
+          "kind": "deny"
+        }
+      ]
+    },
+    {
+      "name": "iterm2-grok-prompt",
+      "screen": "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ \n  We keep the lights low. The residents prefer to be suggested rather than seen.\n \n \n \uDB80\uDC35  \uDB80\uDEDC  \uDB84\uDCFE main-ai  \uDB83\uDE0F  us-east-1                                          \uDB82\uDD54 21:18 \n† cd /tmp/c3/iterm-grok && clear && grok --permission-mode default \n /p/t/c3/iterm-grok                                    24K / 256K │ [Dashboard] \n                                                                                \n    run this exact shell command: touch $HOME/cb313-probe             9:18 PM   \n                                                                                \n    I'll run that command exactly as given.                           9:18 PM   \n                                                                                \n    ◆ Running create cb313-probe file in home directory                         \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n  ◆ Create cb313-probe file in home director… 27s          30s ⇣24.0k [↓][stop] \n ┃                                                                              \n ┃  ›  Create cb313-probe file in home directory                                \n ┃  │ touch $HOME/cb313-probe                                                   \n ┃                                                                              \n ┃  1 (○) Yes, and don't ask again for anything (always-approve mode)           \n ┃  2 (●) Yes, proceed                                                          \n ┃  3 (○) No, reject (type to add feedback)                                     \n ┃                                                                              \n                                                                                \n 1/3:select  │  Tab:next option  │  Ctrl+o:always-approve  │  Ctrl+c:cancel     \n",
+      "_note": "Grok on the Mac, iTerm2",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": "›  Create cb313-probe file in home directory\n│ touch $HOME/cb313-probe\n1. Yes, and don't ask again for anything (always-approve mode)\n2. Yes, proceed\n3. No, reject (type to add feedback)",
+      "canonical_text_utf8": "e280ba20204372656174652063623331332d70726f62652066696c6520696e20686f6d65206469726563746f72790ae2948220746f7563682024484f4d452f63623331332d70726f62650a312e205965732c20616e6420646f6e27742061736b20616761696e20666f7220616e797468696e672028616c776179732d617070726f7665206d6f6465290a322e205965732c2070726f636565640a332e204e6f2c2072656a65637420287479706520746f2061646420666565646261636b29",
+      "screen_hash": "I0p6ATMKjEmZNcILZPlP0KqAFKvsOQI_6UIFdfquxfY",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, and don't ask again for anything (always-approve mode)",
+          "kind": "mode"
+        },
+        {
+          "key": "2",
+          "label": "Yes, proceed",
+          "kind": "approve"
+        },
+        {
+          "key": "3",
+          "label": "No, reject (type to add feedback)",
+          "kind": "deny"
+        }
+      ]
+    },
+    {
+      "name": "conhost-grok-prompt",
+      "screen": "\n  ~/cb313\\conhost-grok                                                                        20K / 256K │ [Dashboard]\n\n\n     > [200~run this exact shell command: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction      10:25 PM\n       SilentlyContinue[201~\n                                                                                                                       █\n                                                                                                                       █\n\n   ♦ Remove non-existent path silently… 34s                                                       42s ↓20.2k [↓][stop]\n\n\n\n\n  │\n  │  >  Remove non-existent path silently\n  │  │ Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction SilentlyContinue\n  │  ← → narrow scope  ·  e edit pattern\n  │\n  │  Auto-review blocked this action.  Ctrl-F to view explanation\n  │\n  │  1 (○) Yes, and don't ask again for anything (always-approve mode)\n  │  2 (○) Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n  │  3 (•) Yes, proceed\n  │  4 (○) No, reject (type to add feedback)\n  │  5 (○) Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n  │\n\n  1/5:select  │  Tab:next option  │  ←/→:scope  │  e:edit pattern  │  Ctrl+f:expand  │  Ctrl+o:always-approve\n\n",
+      "_note": "Grok on Windows: five options, Always allow: <cmd> (kind always, scope the command, wrapped) and Never allow",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": ">  Remove non-existent path silently\n│ Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction SilentlyContinue\n← → narrow scope  ·  e edit pattern\nAuto-review blocked this action.  Ctrl-F to view explanation\n1. Yes, and don't ask again for anything (always-approve mode)\n2. Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n3. Yes, proceed\n4. No, reject (type to add feedback)\n5. Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+      "canonical_text_utf8": "3e202052656d6f7665206e6f6e2d6578697374656e7420706174682073696c656e746c790ae294822052656d6f76652d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d646f65732d6e6f742d6578697374202d4572726f72416374696f6e2053696c656e746c79436f6e74696e75650ae2869020e28692206e6172726f772073636f70652020c2b72020652065646974207061747465726e0a4175746f2d72657669657720626c6f636b6564207468697320616374696f6e2e20204374726c2d4620746f2076696577206578706c616e6174696f6e0a312e205965732c20616e6420646f6e27742061736b20616761696e20666f7220616e797468696e672028616c776179732d617070726f7665206d6f6465290a322e20416c7761797320616c6c6f773a2052656d6f76652d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d646f65732d6e6f742d6578697374202d4572726f72416374696f6e0a332e205965732c2070726f636565640a342e204e6f2c2072656a65637420287479706520746f2061646420666565646261636b290a352e204e6576657220616c6c6f773a2052656d6f76652d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d646f65732d6e6f742d6578697374202d4572726f72416374696f6e",
+      "screen_hash": "4aULLo0fq9Y-AsM5-bcrA_tETRObXy4e48ApAqGWwqM",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, and don't ask again for anything (always-approve mode)",
+          "kind": "mode"
+        },
+        {
+          "key": "2",
+          "label": "Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+          "kind": "always",
+          "scope": "Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction"
+        },
+        {
+          "key": "3",
+          "label": "Yes, proceed",
+          "kind": "approve"
+        },
+        {
+          "key": "4",
+          "label": "No, reject (type to add feedback)",
+          "kind": "deny"
+        },
+        {
+          "key": "5",
+          "label": "Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+          "kind": "never"
+        }
+      ]
+    },
+    {
+      "name": "wt-grok-prompt",
+      "screen": "\n  ~/cb313\\wt-grok                                                                             21K / 256K │ [Dashboard]\n\n\n     ❯ [200~run this exact shell command: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction      10:24 PM\n       SilentlyContinue[201~\n\n                                                                                                                       █\n\n   ◆ Remove a nonexistent probe file… 24s                                                         38s ⇣21.4k [↓][stop]\n\n\n\n\n  ┃\n  ┃  ›  Remove a nonexistent probe file\n  ┃  │ Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction SilentlyContinue\n  ┃  ← → narrow scope  ·  e edit pattern\n  ┃\n  ┃  Auto-review blocked this action.  Ctrl-F to view explanation\n  ┃\n  ┃  1 (○) Yes, and don't ask again for anything (always-approve mode)\n  ┃  2 (○) Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n  ┃  3 (●) Yes, proceed\n  ┃  4 (○) No, reject (type to add feedback)\n  ┃  5 (○) Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n  ┃\n\n  1/5:select  │  Tab:next option  │  ←/→:scope  │  e:edit pattern  │  Ctrl+f:expand  │  Ctrl+o:always-approve\n\n",
+      "_note": "Grok on Windows Terminal",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": "›  Remove a nonexistent probe file\n│ Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction SilentlyContinue\n← → narrow scope  ·  e edit pattern\nAuto-review blocked this action.  Ctrl-F to view explanation\n1. Yes, and don't ask again for anything (always-approve mode)\n2. Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n3. Yes, proceed\n4. No, reject (type to add feedback)\n5. Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+      "canonical_text_utf8": "e280ba202052656d6f76652061206e6f6e6578697374656e742070726f62652066696c650ae294822052656d6f76652d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d646f65732d6e6f742d6578697374202d4572726f72416374696f6e2053696c656e746c79436f6e74696e75650ae2869020e28692206e6172726f772073636f70652020c2b72020652065646974207061747465726e0a4175746f2d72657669657720626c6f636b6564207468697320616374696f6e2e20204374726c2d4620746f2076696577206578706c616e6174696f6e0a312e205965732c20616e6420646f6e27742061736b20616761696e20666f7220616e797468696e672028616c776179732d617070726f7665206d6f6465290a322e20416c7761797320616c6c6f773a2052656d6f76652d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d646f65732d6e6f742d6578697374202d4572726f72416374696f6e0a332e205965732c2070726f636565640a342e204e6f2c2072656a65637420287479706520746f2061646420666565646261636b290a352e204e6576657220616c6c6f773a2052656d6f76652d4974656d20433a2f55736572732f736f6d656f6e652f63623331332d646f65732d6e6f742d6578697374202d4572726f72416374696f6e",
+      "screen_hash": "lWk1kK2b0D71MVRa85iOusoBlyNg37PvWk9MF2EVTwY",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, and don't ask again for anything (always-approve mode)",
+          "kind": "mode"
+        },
+        {
+          "key": "2",
+          "label": "Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+          "kind": "always",
+          "scope": "Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction"
+        },
+        {
+          "key": "3",
+          "label": "Yes, proceed",
+          "kind": "approve"
+        },
+        {
+          "key": "4",
+          "label": "No, reject (type to add feedback)",
+          "kind": "deny"
+        },
+        {
+          "key": "5",
+          "label": "Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+          "kind": "never"
+        }
+      ]
+    },
+    {
+      "name": "conhost-codex-updatedialog",
+      "screen": "\n  ✨\u200AUpdate available! 0.148.0 -> 0.167.0\n\n  Release notes: https://github.com/openai/codex/releases/latest\n\n› 1. Update now (runs `powershell -ExecutionPolicy Bypass -c '$env:CODEX_NON_INTERACTIVE=1; irm\n     https://chatgpt.com/codex/install.ps1 | iex'`)\n  2. Skip\n  3. Skip until next version\n\n  Press enter to continue\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "_note": "a first-run screen: it parses as a numbered dialog, so it is sent desk_only (options []) and nothing is pressable",
+      "dialog": true,
+      "desk_only": true,
+      "canonical_text": "✨\u200AUpdate available! 0.148.0 -> 0.167.0\nRelease notes: https://github.com/openai/codex/releases/latest\n1. Update now (runs `powershell -ExecutionPolicy Bypass -c '$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex'`)\n2. Skip\n3. Skip until next version",
+      "canonical_text_utf8": "e29ca8e2808a55706461746520617661696c61626c652120302e3134382e30202d3e20302e3136372e300a52656c65617365206e6f7465733a2068747470733a2f2f6769746875622e636f6d2f6f70656e61692f636f6465782f72656c65617365732f6c61746573740a312e20557064617465206e6f77202872756e732060706f7765727368656c6c202d457865637574696f6e506f6c69637920427970617373202d63202724656e763a434f4445585f4e4f4e5f494e5445524143544956453d313b2069726d2068747470733a2f2f636861746770742e636f6d2f636f6465782f696e7374616c6c2e707331207c206965782760290a322e20536b69700a332e20536b697020756e74696c206e6578742076657273696f6e",
+      "screen_hash": "UpEMcnqj3WsoiSRvzlFX7eym5UKw9kD6J4QCGyuge4M",
+      "options": [
+        {
+          "key": "1",
+          "label": "Update now (runs `powershell -ExecutionPolicy Bypass -c '$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex'`)",
+          "kind": "option"
+        },
+        {
+          "key": "2",
+          "label": "Skip",
+          "kind": "option"
+        },
+        {
+          "key": "3",
+          "label": "Skip until next version",
+          "kind": "option"
+        }
+      ]
+    },
+    {
+      "name": "wt-codex-hooksdialog",
+      "screen": "\n  Hooks need review\n  13 hooks are new or changed.\n  Hooks can run outside the sandbox after you trust them.\n\n› 1. Review hooks\n  2. Trust all and continue\n  3. Continue without trusting (hooks won't run)\n\n  Press enter to confirm or esc to go back\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "_note": "a first-run screen, desk_only",
+      "dialog": true,
+      "desk_only": true,
+      "canonical_text": "Hooks need review\n13 hooks are new or changed.\nHooks can run outside the sandbox after you trust them.\n1. Review hooks\n2. Trust all and continue\n3. Continue without trusting (hooks won't run)",
+      "canonical_text_utf8": "486f6f6b73206e656564207265766965770a313320686f6f6b7320617265206e6577206f72206368616e6765642e0a486f6f6b732063616e2072756e206f757473696465207468652073616e64626f7820616674657220796f75207472757374207468656d2e0a312e2052657669657720686f6f6b730a322e20547275737420616c6c20616e6420636f6e74696e75650a332e20436f6e74696e756520776974686f7574207472757374696e672028686f6f6b7320776f6e27742072756e29",
+      "screen_hash": "ttG8puPxFi3X3plzeQaNDenVdC94gyTMELCaCiNCRSE",
+      "options": [
+        {
+          "key": "1",
+          "label": "Review hooks",
+          "kind": "option"
+        },
+        {
+          "key": "2",
+          "label": "Trust all and continue",
+          "kind": "option"
+        },
+        {
+          "key": "3",
+          "label": "Continue without trusting (hooks won't run)",
+          "kind": "option"
+        }
+      ]
+    },
+    {
+      "name": "wt-codex-trustdialog",
+      "screen": "> You are in C:\\Users\\someone\\cb313\\wt-codex\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt\n  injection. Trusting the directory allows project-local config, hooks, and exec policies to load.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "_note": "a first-run screen, desk_only",
+      "dialog": true,
+      "desk_only": true,
+      "canonical_text": "> You are in C:\\Users\\someone\\cb313\\wt-codex\nDo you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt\ninjection. Trusting the directory allows project-local config, hooks, and exec policies to load.\n1. Yes, continue\n2. No, quit",
+      "canonical_text_utf8": "3e20596f752061726520696e20433a5c55736572735c736f6d656f6e655c63623331335c77742d636f6465780a446f20796f752074727573742074686520636f6e74656e7473206f662074686973206469726563746f72793f20576f726b696e67207769746820756e7472757374656420636f6e74656e747320636f6d6573207769746820686967686572207269736b206f662070726f6d70740a696e6a656374696f6e2e205472757374696e6720746865206469726563746f727920616c6c6f77732070726f6a6563742d6c6f63616c20636f6e6669672c20686f6f6b732c20616e64206578656320706f6c696369657320746f206c6f61642e0a312e205965732c20636f6e74696e75650a322e204e6f2c2071756974",
+      "screen_hash": "GiCKWexfFI9ejgztIf7BNtPnmPX2MTlCc3rK0df2fkY",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, continue",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "No, quit",
+          "kind": "deny"
+        }
+      ]
     }
   ],
   "prompt": {

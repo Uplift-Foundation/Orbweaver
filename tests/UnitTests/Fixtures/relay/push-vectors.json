@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayPrompt.cs, RelayCrypto.cs)",
-    "orbweaver_sha": "7b48234b",
+    "orbweaver_sha": "13202bf5",
     "spec": "CB-315 architect plan #11248 rev 2 §2; Orbweaver-Mobile contracts/frames-v3.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; screen_hash, nonce, sig and e are base64url without padding"
   },
