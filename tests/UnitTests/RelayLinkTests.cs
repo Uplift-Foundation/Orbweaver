@@ -184,8 +184,8 @@ public class RelayLinkTests : IDisposable
         Assert.Same(exact, RelayLink.Safe(exact));                                   // at the cap, kept whole
         Assert.Equal(exact + "…", RelayLink.Safe(exact + "a"));                      // one past it, cut
         Assert.Equal("state", RelayLink.Known("state", RelayLink.Classes));
-        Assert.Equal("unknown", RelayLink.Known("SECRET", RelayLink.Classes));
-        Assert.Equal("unknown", RelayLink.Known(null, RelayLink.Classes));
+        Assert.Equal("other", RelayLink.Known("SECRET", RelayLink.Classes));
+        Assert.Equal("other", RelayLink.Known(null, RelayLink.Classes));
     }
 
     [Fact]
@@ -203,7 +203,7 @@ public class RelayLinkTests : IDisposable
         Assert.All(notes, n => Assert.True(n.Length < 200, n.Length.ToString()));
         Assert.Contains("relay frame t=xFAKErelayline… ignored", notes);
         Assert.Contains("resync for ph_xFAKE… ignored: not an online paired phone (not paired)", notes);
-        Assert.Contains("envelope from unpaired ph_xFAKE… class=unknown", notes);
+        Assert.Contains("envelope from unpaired ph_xFAKE… class=other", notes);
     }
 
     [Fact]

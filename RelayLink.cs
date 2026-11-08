@@ -678,9 +678,9 @@ namespace Orbweaver
         internal static readonly string[] Classes = ["state", "action", "chat", "pair", "control"];
         internal const int MaxLoggedLength = 64;
 
-        // A value from a fixed vocabulary, or "unknown".
+        // A value from a fixed vocabulary, or "other".
         internal static string Known(string? value, string[] allowed) =>
-            value is not null && Array.IndexOf(allowed, value) >= 0 ? value : "unknown";
+            value is not null && Array.IndexOf(allowed, value) >= 0 ? value : "other";
 
         // An id, ref or code: only the characters those ever use (the relay's
         // own envelope-id rule, letters, digits and _ . : -), at most 64 of
