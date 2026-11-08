@@ -106,9 +106,19 @@ internal static class PromptVectors
         };
     }
 
+    // The CB-313 captures name a real account in their paths. The vectors go
+    // to a repository that keeps those out (Orbweaver-Mobile's PR #16 scrub),
+    // so the account segment of any home path becomes "someone" before the
+    // screen is fingerprinted — the hash is then of the scrubbed screen, which
+    // is what the vector carries.
+    internal static string Scrub(string screen) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            System.Text.RegularExpressions.Regex.Replace(screen, @"(?i)(C:[\\/]+Users[\\/]+)[^\\/\s`]+", "${1}someone"),
+            @"/Users/(?!x+\b)[^/\s`]+", "/Users/someone");
+
     private static JsonObject Prompts(JsonObject source, byte[] epochKey, string fixturesDir)
     {
-        string Fixture(string f) => File.ReadAllText(Path.Combine(fixturesDir, f)).Replace("\r", "");
+        string Fixture(string f) => Scrub(File.ReadAllText(Path.Combine(fixturesDir, f)).Replace("\r", ""));
 
         var moved = FramesV3Screen.Replace(" ❯ 1. Yes", "   1. Yes").Replace("   3. No, and", " ❯ 3. No, and");
         var changed = FramesV3Screen.Replace("dotnet test tests/UnitTests", "dotnet test tests/IntegrationTests");
@@ -183,7 +193,7 @@ internal static class PromptVectors
             new("deny", "deny", "", ""),
             new("always", "always", "dotnet test", "", "scope is the pending option's exact prefix"),
             new("always-quote", "always", "echo \"hi\"", ""),
-            new("always-backslash", "always", @"C:\Users\warre\cb313", ""),
+            new("always-backslash", "always", @"C:\Users\someone\cb313", ""),
             new("always-html-plus-slash", "always", "a<b&c'd+e/f", "", "< & ' + / are literal, never \\u003c or \\/"),
             new("always-non-ascii", "always", "touch ~/ノート 🙂 café", "", "non-ASCII is literal UTF-8, never \\uXXXX"),
             new("always-tab", "always", "printf a\tb", "", "a tab is \\u0009, never \\t"),
@@ -345,7 +355,7 @@ internal static class PromptVectors
         var fp = PromptFingerprint.Of(FramesV3Screen)!;
         var opts = OptionsOf(fp, "permission");
         var preview = string.Join("\n", fp.Preview);
-        const string label = "orbweaver on Warrens-MacBook-Pro";
+        const string label = "orbweaver on MacBook Pro";
 
         var longDetail = "dotnet test " + string.Concat(Enumerable.Range(0, 400).Select(i => $"tests/Suite{i:D3} "));
         var manyLong = Enumerable.Range(1, 14).Select(i =>

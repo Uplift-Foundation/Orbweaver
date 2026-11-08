@@ -67,7 +67,7 @@ public class PromptPipelineTests
     public PromptPipelineTests()
     {
         _p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add),
-            _sent, "Warrens-MacBook-Pro");
+            _sent, "Test Mac");
     }
 
     private static SessionStatus Status(string state = "waiting", SessionSource source = SessionSource.ClaudeCode, string title = "orbweaver") =>
@@ -99,7 +99,7 @@ public class PromptPipelineTests
             (j.GetProperty("t").GetString(), sid, j.GetProperty("cli").GetString(), j.GetProperty("tool").GetString(), j.GetProperty("screen_hash").GetString()));
         Assert.Equal(_now.ToUnixTimeSeconds() + 1800, j.GetProperty("expires_at").GetInt64());
         var e = JsonDocument.Parse(push!).RootElement;
-        Assert.Equal(("orbweaver on Warrens-MacBook-Pro", "Wants to run a command"), (e.GetProperty("label").GetString(), e.GetProperty("summary").GetString()));
+        Assert.Equal(("orbweaver on Test Mac", "Wants to run a command"), (e.GetProperty("label").GetString(), e.GetProperty("summary").GetString()));
         Assert.Equal(rid, j.GetProperty("request_id").GetString());
         Assert.Contains($"prompt {rid} {PromptFingerprint.Of(Dialog)!.Hash}", _log);
 
@@ -311,6 +311,6 @@ public class PromptPipelineTests
     public async Task A_session_with_no_title_is_labelled_by_the_machine_alone()
     {
         await _p.OnScannedAsync([("s1", Status(title: ""))]);
-        Assert.Equal("Warrens-MacBook-Pro", JsonDocument.Parse(_sent.Prompts[0].Push!).RootElement.GetProperty("label").GetString());
+        Assert.Equal("Test Mac", JsonDocument.Parse(_sent.Prompts[0].Push!).RootElement.GetProperty("label").GetString());
     }
 }
