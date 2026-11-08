@@ -97,47 +97,12 @@ internal static class WindowsConsole
         }
     }
 
+    // The read is the app's own (ScreenReaders/WindowsConsoleRead.cs), not a copy.
     internal static string Read(int pid)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("wincon reads a Windows console");
 
-        lock (Gate)
-        {
-            FreeConsole();
-            if (!AttachConsole((uint)pid))
-                throw new InvalidOperationException($"AttachConsole({pid}) failed, error {Marshal.GetLastWin32Error()}");
-
-            var h = IntPtr.Zero;
-            try
-            {
-                // GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|WRITE, OPEN_EXISTING
-                h = CreateFileW("CONOUT$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-                if (h == new IntPtr(-1))
-                    throw new InvalidOperationException($"CONOUT$ open failed, error {Marshal.GetLastWin32Error()}");
-
-                var info = new ScreenBufferInfoEx { cbSize = (uint)Marshal.SizeOf<ScreenBufferInfoEx>(), ColorTable = new uint[16] };
-                if (!GetConsoleScreenBufferInfoEx(h, ref info))
-                    throw new InvalidOperationException($"GetConsoleScreenBufferInfoEx failed, error {Marshal.GetLastWin32Error()}");
-
-                var width = info.srWindow.Right - info.srWindow.Left + 1;
-                var sb = new StringBuilder();
-                for (var row = info.srWindow.Top; row <= info.srWindow.Bottom; row++)
-                {
-                    var buf = new char[width];
-                    if (!ReadConsoleOutputCharacterW(h, buf, (uint)width, new Coord { X = info.srWindow.Left, Y = row }, out var n))
-                        throw new InvalidOperationException($"ReadConsoleOutputCharacterW row {row} failed, error {Marshal.GetLastWin32Error()}");
-                    sb.Append(buf, 0, (int)n).Append('\n');
-                }
-
-                // Row by row, trailing blanks off - the same normalisation the
-                // tmux route gets for free.
-                return string.Join('\n', sb.ToString().Split('\n').Select(l => l.TrimEnd()));
-            }
-            finally
-            {
-                if (h != IntPtr.Zero && h != new IntPtr(-1)) CloseHandle(h);
-                FreeConsole();
-            }
-        }
+        return WindowsConsoleRead.Read((uint)pid, Gate, out var error)
+            ?? throw new InvalidOperationException($"console read of pid {pid} failed, Win32 error {error}");
     }
 }
