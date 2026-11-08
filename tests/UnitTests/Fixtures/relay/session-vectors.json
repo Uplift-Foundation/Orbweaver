@@ -1,0 +1,195 @@
+{
+  "_source": {
+    "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayCrypto.cs)",
+    "orbweaver_sha": "34e66f88",
+    "spec": "CB-314 architect plan rev 1, sections 2.2 and 2.3",
+    "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16); QR k/s, sig fields inside plaintexts, and ck are base64url without padding"
+  },
+  "inputs": {
+    "desktop_id": "dsk_5f3c9a0e1b7d2468",
+    "phone_id": "ph_a1b2c3d4e5f60718",
+    "desktop_agreement": {
+      "private": "fc598a92325f705e593397557b579153315f6053934264a5e9b6ae65b5d598c7",
+      "public": "04bb39e8edc99dd6c2e18a9511378ec858cf8872bb7b42d20973cfaafbd91acaf18e730773513fe1316a8b1adcc5c240b7cb6f2d70fb8e9938e8cd3e396c90af72"
+    },
+    "phone_agreement": {
+      "private": "a8a840c28d24ee5bbdd7fe4f9785b81ba783503d5c340b43fa6e713c9e6c9ba9",
+      "public": "0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40"
+    }
+  },
+  "shared_secret": "9366797ec2143168b83eabb44671a94b9bdee4bb0a04267bd1d33b8065b268ea",
+  "base": "f87f70a09285424463d5f09225acfd9f8e7d15f490e8bf50007e66f865d891f2",
+  "ck_key": "92437d33c0840b762b12fb611f649fa9eb368478d7480db5965c5c69eea3e8cf",
+  "epoch_keys": [
+    {
+      "epoch": 0,
+      "key": "fd29e2fccfc9b572152a029f7daa4d30428fe4cd7e04a08aa4a2ad96e5dc2e52"
+    },
+    {
+      "epoch": 1,
+      "key": "4f935e7de9a191e594b99d5b9cd3dc7c7aa2125a989e7945d25141cfce604a52"
+    },
+    {
+      "epoch": 2,
+      "key": "e2a328698d8dc39eacc67fd975e9c986a51dcc054ec4b030ffe40357c0cae9dd"
+    },
+    {
+      "epoch": 65535,
+      "key": "67556774e9f1d784df42c321a78c208c9a18e800e3414c19bf25a43f788ad4a7"
+    }
+  ],
+  "nonces": [
+    {
+      "direction": 0,
+      "epoch": 0,
+      "counter": 0,
+      "nonce": "000000000000000000000000"
+    },
+    {
+      "direction": 1,
+      "epoch": 0,
+      "counter": 0,
+      "nonce": "000000010000000000000000"
+    },
+    {
+      "direction": 0,
+      "epoch": 1,
+      "counter": 9999,
+      "nonce": "00000000000100000000270f"
+    },
+    {
+      "direction": 1,
+      "epoch": 258,
+      "counter": 4328719365,
+      "nonce": "000000010102000102030405"
+    },
+    {
+      "direction": 0,
+      "epoch": 65535,
+      "counter": 281474976710655,
+      "nonce": "00000000ffffffffffffffff"
+    }
+  ],
+  "ck": [
+    {
+      "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
+      "ck": "81kJh8DLbbMeun6JgMl-Tw"
+    },
+    {
+      "session_id": "b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9",
+      "ck": "DuWgE72So0vVGxClFPOSgg"
+    },
+    {
+      "session_id": "x",
+      "ck": "gXbobcA5wVNmwM8cARX35g"
+    }
+  ],
+  "seal": [
+    {
+      "name": "desktop_roster",
+      "direction": 0,
+      "epoch": 1,
+      "counter": 0,
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "state",
+      "key": "4f935e7de9a191e594b99d5b9cd3dc7c7aa2125a989e7945d25141cfce604a52",
+      "nonce": "000000000001000000000000",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+      "plaintext": "{\"t\":\"roster\",\"seq\":1,\"sessions\":[{\"session_id\":\"8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b\",\"cli\":\"claude\",\"title\":\"orbweaver\",\"cwd\":\"/Users/someone/Source/Orbweaver\",\"state\":\"generating\",\"since\":\"2026-11-08T08:00:00Z\"}]}",
+      "ct": "AAAAAAABAAAAAAAAUntenV0VrY35+Tbey4FV8fI1B8M6JCKnoxk30f6e74q5Y34UUKH1zX0wOFp9kKrueGsPng/0d3vG3/N8PcmM/+5x0MDn2mpiksy0gFMQU6X8EXIQKc2MVp5a2IKrp59EpPCSkYv3PMffi/DUgEqbg/pqI+X7msJLrTRQtdvLhGO/kFEPMywb5FcsUQxH/fREocEPMC8tAzBquijnNOe86jbJcW+p0UjaWbvLccrwzgHoUzfpTTQ9/ArjbqP1A8eOAraqxV9wMSq3xoggQ9ARnjrEqu7UI+KnypPLc8ESZri8WOzMwr95aA=="
+    },
+    {
+      "name": "desktop_delta",
+      "direction": 0,
+      "epoch": 1,
+      "counter": 1,
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "state",
+      "key": "4f935e7de9a191e594b99d5b9cd3dc7c7aa2125a989e7945d25141cfce604a52",
+      "nonce": "000000000001000000000001",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+      "plaintext": "{\"t\":\"delta\",\"seq\":2,\"session_id\":\"8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b\",\"state\":\"idle\",\"since\":\"2026-11-08T08:00:05Z\"}",
+      "ct": "AAAAAAABAAAAAAABZAIaVanH9bwh2+Hw+OTgWRbNTCP/Ngi8itdrA+j5/9O+/QjeHd/tXLSONi15JhSe4wTp73Z4Oc8CV3zk8nIuHHV/45MhgpELtXYZH+70ZcT8IB+5VwV1odl3w2+PPuSvD89DLFdVbfZK3C60CewCBjVsZ7mPH2TYku1qjIZnuw/hyGZGO/eX"
+    },
+    {
+      "name": "phone_generic",
+      "direction": 1,
+      "epoch": 3,
+      "counter": 7,
+      "from": "ph_a1b2c3d4e5f60718",
+      "to": "dsk_5f3c9a0e1b7d2468",
+      "class": "control",
+      "key": "f95a9e4765dfa97b72eac5e66a8b24abb43157a1c445427584631d547a393528",
+      "nonce": "000000010003000000000007",
+      "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c636f6e74726f6c",
+      "plaintext": "{\"t\":\"probe\",\"note\":\"milestone 2 sends nothing sealed phone-to-desktop on the socket; this vector pins the direction prefix\"}",
+      "ct": "AAAAAQADAAAAAAAHhW36Vssv/fPnHQQ8XdT9s9iy3FSj7NUqpK0FjjAC8R9n3NmSOnd/71rC5t+7hdSLnq1olrULJ/1BBLQP89SdjLFi/AGW4lhVcIHLfJmybIoPCnG7iIbnXGraxeEg1A4DVcppCvHTVZ5Hc3/r8P/MVoSQ1Upez/vmhkuQi1nNKOrEyKes9DFRVtbftFij"
+    }
+  ],
+  "negatives": [
+    {
+      "name": "wrong_epoch_key",
+      "key": "e2a328698d8dc39eacc67fd975e9c986a51dcc054ec4b030ffe40357c0cae9dd",
+      "ct": "AAAAAAABAAAAAAAAUntenV0VrY35+Tbey4FV8fI1B8M6JCKnoxk30f6e74q5Y34UUKH1zX0wOFp9kKrueGsPng/0d3vG3/N8PcmM/+5x0MDn2mpiksy0gFMQU6X8EXIQKc2MVp5a2IKrp59EpPCSkYv3PMffi/DUgEqbg/pqI+X7msJLrTRQtdvLhGO/kFEPMywb5FcsUQxH/fREocEPMC8tAzBquijnNOe86jbJcW+p0UjaWbvLccrwzgHoUzfpTTQ9/ArjbqP1A8eOAraqxV9wMSq3xoggQ9ARnjrEqu7UI+KnypPLc8ESZri8WOzMwr95aA==",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+      "expect": "open_fails"
+    },
+    {
+      "name": "wrong_direction_class_aad",
+      "key": "4f935e7de9a191e594b99d5b9cd3dc7c7aa2125a989e7945d25141cfce604a52",
+      "ct": "AAAAAAABAAAAAAAAUntenV0VrY35+Tbey4FV8fI1B8M6JCKnoxk30f6e74q5Y34UUKH1zX0wOFp9kKrueGsPng/0d3vG3/N8PcmM/+5x0MDn2mpiksy0gFMQU6X8EXIQKc2MVp5a2IKrp59EpPCSkYv3PMffi/DUgEqbg/pqI+X7msJLrTRQtdvLhGO/kFEPMywb5FcsUQxH/fREocEPMC8tAzBquijnNOe86jbJcW+p0UjaWbvLccrwzgHoUzfpTTQ9/ArjbqP1A8eOAraqxV9wMSq3xoggQ9ARnjrEqu7UI+KnypPLc8ESZri8WOzMwr95aA==",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "expect": "open_fails"
+    },
+    {
+      "name": "tampered_tag",
+      "key": "4f935e7de9a191e594b99d5b9cd3dc7c7aa2125a989e7945d25141cfce604a52",
+      "ct": "AAAAAAABAAAAAAAAUntenV0VrY35+Tbey4FV8fI1B8M6JCKnoxk30f6e74q5Y34UUKH1zX0wOFp9kKrueGsPng/0d3vG3/N8PcmM/+5x0MDn2mpiksy0gFMQU6X8EXIQKc2MVp5a2IKrp59EpPCSkYv3PMffi/DUgEqbg/pqI+X7msJLrTRQtdvLhGO/kFEPMywb5FcsUQxH/fREocEPMC8tAzBquijnNOe86jbJcW+p0UjaWbvLccrwzgHoUzfpTTQ9/ArjbqP1A8eOAraqxV9wMSq3xoggQ9ARnjrEqu7UI+KnypPLc8ESZri8WOzMwr95aQ==",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+      "expect": "open_fails"
+    },
+    {
+      "name": "truncated",
+      "key": "4f935e7de9a191e594b99d5b9cd3dc7c7aa2125a989e7945d25141cfce604a52",
+      "ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+      "expect": "open_fails"
+    }
+  ],
+  "replay": {
+    "_note": "receiver last accepted (epoch, counter) = (1, 5) in this direction; accept only strictly greater, compared epoch first",
+    "last": {
+      "epoch": 1,
+      "counter": 5
+    },
+    "cases": [
+      {
+        "epoch": 1,
+        "counter": 5,
+        "accept": false
+      },
+      {
+        "epoch": 1,
+        "counter": 4,
+        "accept": false
+      },
+      {
+        "epoch": 0,
+        "counter": 9999,
+        "accept": false
+      },
+      {
+        "epoch": 1,
+        "counter": 6,
+        "accept": true
+      },
+      {
+        "epoch": 2,
+        "counter": 0,
+        "accept": true
+      }
+    ]
+  }
+}

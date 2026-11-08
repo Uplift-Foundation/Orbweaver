@@ -1,0 +1,1 @@
+Copied verbatim from Uplift-Foundation/Orbweaver-Mobile `contracts/` at ad8ae4d (PR #4, CB-314). Each file's `_source.orbweaver_sha` names the RelayCrypto commit that generated it. Do not edit these by hand: regenerate with `tools/relay-vectors`, land them in Orbweaver-Mobile first, then copy them here and update this sha.
