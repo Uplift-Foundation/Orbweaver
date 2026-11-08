@@ -113,6 +113,20 @@ public class ScreenReadFixtureTests
         }
     }
 
+    // The radio mark moves with the selection, so it must never be part of a label: if it were,
+    // every cursor move would change the label (and any hash taken over it).
+    [Fact]
+    public void Grok_labels_do_not_change_when_the_selected_radio_moves()
+    {
+        var screen = Screen("tmux-grok-prompt");
+        var moved = screen.Replace("(●)", "(X)").Replace("(○)", "(●)").Replace("(X)", "(○)");
+        Assert.NotEqual(screen, moved);
+        var a = ChatTranscript.ParseDialog(screen)!.Options.Select(o => o.Label);
+        var b = ChatTranscript.ParseDialog(moved)!.Options.Select(o => o.Label);
+        Assert.Equal(a, b);
+        Assert.DoesNotContain(a, l => l.Contains('○') || l.Contains('●'));
+    }
+
     [Fact]
     public void Grok_mac_dialog_has_its_three_options_and_the_command_as_its_title()
     {
