@@ -35,6 +35,56 @@ var identity = new RelayIdentity(dir, PlainSecretStore.Instance);
 var client = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport());
 MirrorLog.Say("relay-probe", "start");
 
+// ---- desktop-only mode -----------------------------------------------------
+// For pairing a real phone client (surface C's LiveClient in a test harness)
+// against the shipped desktop client: print the QR text, Allow the first
+// request (printing both check codes' inputs so the harness can compare),
+// then flip one session's state every --flip-every seconds. stdin takes
+// "flip", "remove" and "quit".
+if (args.Contains("--desktop-only"))
+{
+    var every = args.SkipWhile(a => a != "--flip-every").Skip(1).Select(int.Parse).FirstOrDefault(5);
+    client.Start();
+    while (client.State != RelayClient.Status.Connected) await Task.Delay(50);
+    Console.WriteLine($"desktop {identity.DeviceId} connected to {baseUrl}");
+    var o = await client.BeginPairingAsync();
+    Console.WriteLine($"QR {o.QrText}");
+    Console.WriteLine($"offer {o.OfferId} expires {o.ExpiresAt:O}");
+    var paired = new TaskCompletionSource<RelayLink.PairRequest>();
+    client.PairRequested += r => paired.TrySetResult(r);
+    RelayLink.PairRequest request;
+    try { request = await paired.Task.WaitAsync(o.ExpiresAt - DateTimeOffset.UtcNow); }
+    catch (TimeoutException) { Console.WriteLine("offer expired with no request"); await client.StopAsync(); client.Dispose(); return 1; }
+    Console.WriteLine($"request from {request.PhoneId} \"{request.Name}\" check code {request.CheckCodeDisplay}");
+    Console.WriteLine(client.Allow(request) ? "allowed" : "allow could not be sent");
+    var row = new RelaySession("desktop-only-session", "claude", "relay probe", "/tmp/relay-probe", "idle", null, null);
+    client.OnScanned([row]);
+    using var stop = new CancellationTokenSource();
+    var flipper = Task.Run(async () =>
+    {
+        var n = 0;
+        while (!stop.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(every), stop.Token).ContinueWith(_ => { });
+            if (stop.IsCancellationRequested) break;
+            row = row with { State = ++n % 2 == 1 ? "generating" : "idle" };
+            client.OnScanned([row]);
+            Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} state -> {row.State}");
+        }
+    });
+    string? line;
+    while ((line = Console.ReadLine()) is not null && line != "quit")
+    {
+        if (line == "flip") { row = row with { State = row.State == "idle" ? "waiting" : "idle" }; client.OnScanned([row]); Console.WriteLine($"state -> {row.State}"); }
+        if (line == "remove") { client.Remove(request.PhoneId); Console.WriteLine("removed"); }
+    }
+    stop.Cancel();
+    await flipper;
+    await client.StopAsync();
+    client.Dispose();
+    return 0;
+}
+
 // ---- desktop up ---------------------------------------------------------
 client.Start();
 var sw = Stopwatch.StartNew();
