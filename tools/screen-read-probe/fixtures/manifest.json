@@ -782,23 +782,6 @@
     "labelsComplete": true
   },
   {
-    "fixture": "wt-grok-none.txt",
-    "terminal": "wt",
-    "terminalName": "Windows Terminal (ConPTY, OpenConsole)",
-    "terminalVersion": "1.24.12741.0",
-    "cli": "grok",
-    "cliVersion": "1.0.34",
-    "host": "Windows PC (192.168.1.24), Windows 11 build 10.0.26200",
-    "reader": "AttachConsole + ReadConsoleOutputCharacterW",
-    "capturedAt": "2026-11-07",
-    "kind": "none",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
-  },
-  {
     "fixture": "wt-grok-signin.txt",
     "terminal": "wt",
     "terminalName": "Windows Terminal (ConPTY, OpenConsole)",

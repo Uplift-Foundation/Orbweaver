@@ -28,7 +28,7 @@ Prompt captured per cell by asking the CLI to run a harmless `touch` (Windows: `
 
 Versions: Mac Claude Code 2.1.319, Codex 0.167.0, Grok 1.0.77 (it auto-updated from 1.0.70 during the session; every Grok capture is 1.0.77). Windows Claude Code 2.1.316, Grok 1.0.34, Codex 0.148.0 for the Windows Terminal captures and 0.167.0 for conhost (see "Unplanned change" below). The exact version of each capture is in `manifest.json`.
 
-**Negative control, per cell.** Every cell has an idle capture (`<terminal>-<cli>-none`) of the same session before any prompt was raised, and none parses as a dialog (`Every_idle_capture_is_not_a_dialog`). Where the Windows Grok cells have no prompt, the sign-in screens are the only captures and they also do not parse as a dialog. The adversarial control from the plan (an assistant message with a numbered 1..3 list and the input box drawn below it) is **not** captured; it is QA's.
+**Negative control, per cell.** Every cell except the two Windows Grok ones has an idle capture (`<terminal>-<cli>-none`, plus `none-120` for the 120-column iTerm2 and WezTerm cells) of the same session before any prompt was raised: 23 in all, and none parses as a dialog (`Every_idle_capture_is_not_a_dialog` covers all 23, `none-120` included). The two Windows Grok cells have no idle capture because there was never a Grok session to be idle: only the sign-in screens (`wt-grok-signin`, `conhost-grok-signin`), which also do not parse as a dialog. The adversarial control from the plan (an assistant message with a numbered 1..3 list and the input box drawn below it) is **not** captured; it is QA's.
 
 ## The ConPTY answer
 

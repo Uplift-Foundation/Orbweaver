@@ -72,7 +72,7 @@ public class ScreenReadFixtureTests
     {
         var rows = JsonSerializer.Deserialize<List<Row>>(File.ReadAllText(Path.Combine(Dir, "manifest.json")), Json)!;
         var idle = rows.Where(r => r.Kind.StartsWith("none", StringComparison.Ordinal)).ToList();
-        Assert.True(idle.Count >= 24, "expected an idle capture per cell");
+        Assert.True(idle.Count >= 23, "expected an idle capture per cell");
         foreach (var r in idle)
             Assert.Null(ChatTranscript.ParseDialog(File.ReadAllText(Path.Combine(Dir, r.Fixture))));
     }
