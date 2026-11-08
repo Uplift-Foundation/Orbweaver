@@ -166,6 +166,66 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Equal(RelayClient.Status.Connecting, _client.State);
     }
 
+    // The connection loop must outlive any exception, not only the ones it
+    // expects: one it did not list used to escape RunAsync and end the loop
+    // silently — no reconnect, nothing logged, answers queued at the relay for
+    // a desktop that never came back (seen as "logged nothing after the
+    // socket closed" in QA's run). First a connect that throws something
+    // unexpected, then a socket that does mid-session; the client must come
+    // back both times.
+    [Fact]
+    public async Task An_unexpected_exception_does_not_end_the_connection_loop()
+    {
+        var identity = Identity();
+        identity.Keys();
+        identity.SetRegistration("dsk_stub000000000001", "tok");
+        var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
+        {
+            MinBackoff = TimeSpan.FromMilliseconds(10),
+            MaxBackoff = TimeSpan.FromMilliseconds(20),
+        };
+        var flaky = new Flaky(new WebSocketRelayTransport());
+        _client = new RelayClient(identity, options, flaky);
+        _client.Start();
+        await _stub.NextT("hello");                              // came back after the throwing connect
+        await Until(() => _client.State == RelayClient.Status.Connected);
+        flaky.ThrowOnNextReceive = true;
+        await _stub.Send("""{"t":"ping"}""");                    // the receive that throws
+        await _stub.NextT("hello");                              // and came back again
+        Assert.True(flaky.Connects >= 2);
+        Assert.Equal(RelayClient.Status.Connected, await WaitState(_client, RelayClient.Status.Connected));
+    }
+
+    private static async Task<RelayClient.Status> WaitState(RelayClient c, RelayClient.Status want)
+    {
+        await Until(() => c.State == want);
+        return c.State;
+    }
+
+    private sealed class Flaky(IRelayTransport inner) : IRelayTransport
+    {
+        public int Connects;
+        public volatile bool ThrowOnNextReceive;
+
+        public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token)
+        {
+            if (Interlocked.Increment(ref Connects) == 1) throw new InvalidOperationException("not a connection error the loop lists");
+            return new Socket(this, await inner.ConnectAsync(uri, token));
+        }
+
+        private sealed class Socket(Flaky owner, IRelaySocket inner) : IRelaySocket
+        {
+            public Task SendAsync(string frame, CancellationToken token) => inner.SendAsync(frame, token);
+            public async Task<string?> ReceiveAsync(CancellationToken token)
+            {
+                var text = await inner.ReceiveAsync(token);
+                if (owner.ThrowOnNextReceive) { owner.ThrowOnNextReceive = false; throw new ObjectDisposedException("socket"); }
+                return text;
+            }
+            public ValueTask DisposeAsync() => inner.DisposeAsync();
+        }
+    }
+
     private sealed class Hangs(Action counted) : IRelayTransport
     {
         public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token)

@@ -261,6 +261,16 @@ namespace Orbweaver
                     LastError = ex.Message;
                     MirrorLog.Say("relay", $"connection ended: {ex.GetType().Name}: {ex.Message}");
                 }
+                // Anything else as well. An exception this loop did not list
+                // used to escape it and end the client for good — no reconnect
+                // and nothing logged, with the relay queueing answers for a
+                // desktop that never came back. A bug thrown from a socket or a
+                // frame handler costs one connection, not the client.
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    MirrorLog.Say("relay", $"connection ended unexpectedly: {ex.GetType().Name}: {RelayLink.Safe(ex.Message)}");
+                }
 
                 if (_refusedCode is { } code)
                 {

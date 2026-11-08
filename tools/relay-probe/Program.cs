@@ -97,6 +97,9 @@ if (args.Contains("--prompt-desktop"))
         () => DateTimeOffset.UtcNow, Task.Delay, l => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"),
         TerminalFocuser.CanPressSilently, TerminalFocuser.CaptureAndPress);
     var pd = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport(), promptSeams: seams);
+    // Say every connection change: a probe that goes quiet after the relay
+    // closed its socket must show whether it reconnected.
+    pd.StateChanged += () => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} relay {pd.State}{(pd.LastError is { } le ? " (" + le + ")" : "")}");
     pd.Start();
     while (pd.State != RelayClient.Status.Connected) await Task.Delay(50);
     var pdOffer = await pd.BeginPairingAsync();

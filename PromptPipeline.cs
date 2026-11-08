@@ -148,6 +148,12 @@ namespace Orbweaver
                     Mint(sid, status, fp, screen);
                 }
             }
+            // Fired and forgotten by the caller, like an answer: said, not lost,
+            // and the next scan runs.
+            catch (Exception ex)
+            {
+                _seams.Log($"warning scan-failed {ex.GetType().Name}");
+            }
             finally
             {
                 _gate.Release();
@@ -304,6 +310,13 @@ namespace Orbweaver
                 _live.Remove(answer.SessionId);
                 _send.Resolved(answer.RequestId, answer.SessionId, "phone:" + phoneId, PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "phone:" + phoneId, live.Label));
                 _seams.Log($"resolved {answer.RequestId} phone:{phoneId}");
+            }
+            // The caller fires this and forgets it, so an exception here would
+            // vanish with the answer. Said instead; the gate is released below
+            // either way, so the next answer is not stuck behind it.
+            catch (Exception ex)
+            {
+                _seams.Log($"warning answer-failed {answer.RequestId} {ex.GetType().Name}");
             }
             finally { _gate.Release(); }
         }

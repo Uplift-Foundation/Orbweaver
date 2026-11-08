@@ -575,4 +575,34 @@ public class PromptPipelineTests
         Assert.Equal((a.RequestId, AnswerGate.StalePrompt), (Assert.Single(_sent.Refusals).Rid, _sent.Refusals[0].Code));
         Assert.DoesNotContain(_sent.Resolved, r => r.By.StartsWith("phone:"));
     }
+
+    [Fact]
+    public async Task An_answer_that_throws_is_logged_and_does_not_block_the_next()
+    {
+        var fail = true;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            s => fail ? throw new InvalidOperationException("boom") : _pane.Capture(s), _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        fail = false;
+        await p.OnScannedAsync(Snap());
+        fail = true;
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Contains($"warning answer-failed {a.RequestId} InvalidOperationException", _log);
+        fail = false;
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());   // the gate was released
+        Assert.Equal(["1"], _pane.Keys);
+    }
+
+    [Fact]
+    public async Task A_scan_that_throws_is_logged_and_the_next_scan_runs()
+    {
+        var fail = true;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            s => fail ? throw new InvalidOperationException("boom") : _pane.Capture(s), _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        Assert.Contains("warning scan-failed InvalidOperationException", _log);
+        fail = false;
+        await p.OnScannedAsync(Snap());
+        Assert.Single(_sent.Prompts);
+    }
 }
