@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayPrompt.cs, RelayCrypto.cs)",
-    "orbweaver_sha": "13202bf5",
+    "orbweaver_sha": "7549632c",
     "spec": "CB-315 architect plan #11248 rev 2 §2; Orbweaver-Mobile contracts/frames-v3.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; screen_hash, nonce, sig and e are base64url without padding"
   },
@@ -335,6 +335,57 @@
       "_note": "does not fit even after both cuts, because a scope is never cut: no e is sent (the prompt still goes over the socket)"
     }
   ],
+  "resolves": [
+    {
+      "name": "resolve-desk",
+      "plaintext": "{\"v\":1,\"t\":\"resolved\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"by\":\"desk\",\"label\":\"orbweaver on MacBook Pro\"}",
+      "eph": {
+        "private": "8e509635a8d5e68520ea486ff46611a60b91251259c11309ad9160989e81b610",
+        "public": "041f84a4696408c9e684cc1917169bffb67110f54968842c95a316ace72d9b5b35d2da3fbfcc421ac958412becaa4d0ea004da39f079e2b425784cdeb5b514882a"
+      },
+      "nonce": "e2e6fe9d341b8f390b4cf079",
+      "shared_secret": "c5c3cd83e27b20d7d303361f28513b6c4fd8fe0cc69bc21b04db8f683393bc83",
+      "key": "fef2383dbff0cb669eca27afbaa3005d0251d9e639aee44a10687f9f3f74ef8a",
+      "e": "AQQfhKRpZAjJ5oTMGRcWm_-2cRD1SWiELJWjFqznLZtbNdLaP7_MQhrJWEEr7KpNDqAE2jnweeK0JXhM3rW1FIgq4ub-nTQbjzkLTPB5p9lKVXtm1X5SCB1Ikl0Bh3u6SKUd5Sg-YkH2DDVL0Y2q4IIwpfy_SBOm2XpZXO5_8a1mx9LE8mvyU0hkJF-B8jSkO7dW6Be_Uf8vl4bTBDQ1gkJtvMn-HHjCURLh167znIZxewl6SDhtPsqUziBb_bznrHIAAF_KnS_ZXvtvHphhI6EyPRTzTxkIMR0L_PlGzfFOuzmn1A"
+    },
+    {
+      "name": "resolve-phone",
+      "plaintext": "{\"v\":1,\"t\":\"resolved\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"by\":\"phone:ph_a1b2c3d4e5f60718\",\"label\":\"orbweaver on MacBook Pro\"}",
+      "eph": {
+        "private": "b8649078861c70bf14f309df585be59567cdbeef71875e4ef0d7b68ed6f465ad",
+        "public": "04311829a351cfb20cbb98ebb04531cc3ea2d36edb62ea127f5343fd1f24cbe10ece3dd4f0a4a94da8ad7238f39242540e2c9af6bf63812f5a617c0d28ba80234f"
+      },
+      "nonce": "9c4f77a25fe2e3a2b63bedbf",
+      "shared_secret": "15a650e50c2e7f7d85238288a2dbeb2b1347d51fd96ff24c307fc915c31332a9",
+      "key": "6aecf7ae8f42eec83f6ff505fd75fc3bf19bbe733324e0829510afdaa7dc21fb",
+      "e": "AQQxGCmjUc-yDLuY67BFMcw-otNu22LqEn9TQ_0fJMvhDs491PCkqU2orXI485JCVA4smva_Y4EvWmF8DSi6gCNPnE93ol_i46K2O-2_Z-07ZlUrFhaisR6vmSY2SKgNl-npJeL4qsuv3f0uvQvk9596z0P7Kxy5Igso0CaLEEEhzHox7XOTjkqvN71Ywdfm6xd_hvz-OgNZpoUgpd0omCh3W6hnYEm1tfINx-r-1RcDAgDcktKeesv1bNbqYJJ7A1YZy5YRJzIjBksPAe2Qcn5lVQ8X6y0MRG5F6tV6taAboQcnrVfOA_mBL8YQr2KS3jc33-uZeWpT6Q"
+    },
+    {
+      "name": "resolve-gone",
+      "plaintext": "{\"v\":1,\"t\":\"resolved\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"by\":\"gone\",\"label\":\"orbweaver on MacBook Pro\"}",
+      "eph": {
+        "private": "3358ca1b14bbee900ff0a82f52876defcafa68e34dc3b0a58743a2167c3ff346",
+        "public": "04de7e457121b7efce0d53766a272fc51a60a2cff65a37bd338c13590beeea613d6f7d74fc9547a467b3d54ab44b7c952d9cc81b3d1e641e337891a4e8e96868e2"
+      },
+      "nonce": "8e10de5315b661c6195525f0",
+      "shared_secret": "87c9fe7d3cb969f8d4341035ff9dae1b41451615ccb64cd810f2888065992c08",
+      "key": "b2cf7dacb845e7bf394eb78f7645d06a03949ef88f37b5f44e357d8459d43b00",
+      "e": "AQTefkVxIbfvzg1TdmonL8UaYKLP9lo3vTOME1kL7uphPW99dPyVR6Rns9VKtEt8lS2cyBs9HmQeM3iRpOjpaGjijhDeUxW2YcYZVSXwv1kF_Gw0LhqGKhEONxjc6yB-j5HqKjfKMXWeZkjV9LplK4cMsc_hn5gpPf0NYMF2WoAhoqON14ocLjVFMnsNgTx-r28kPSCUJ9g4pVw0XOr5d_bVOC4iSUmRDOy_LdOQX51W0L8GI64PSul2wS6XSLBaTKaOKuxyjDDp2maITEY_5Wm_i9Zwspe_E3HG2HVZplCA5n-2AA"
+    },
+    {
+      "name": "resolve-unknown",
+      "plaintext": "{\"v\":1,\"t\":\"resolved\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"by\":\"unknown\",\"label\":\"orbweaver on MacBook Pro\"}",
+      "eph": {
+        "private": "c050bf1f6f2af88822470642c308442ed383755f0b14b9c3465e13d743ad8ef7",
+        "public": "049d68a2648cd03ba2f0d3d89134301d8fa6c856d3b1fcd25a1862d5fef19e60bbf053fab6482f73797c1d4a436cdbd1e1e3efbc938539b7bd3ddbc50f3cf20076"
+      },
+      "nonce": "314d4382130902b1c68ef0fe",
+      "shared_secret": "a93f9496af7b36fa5cf57f2659ed22b11ed5498cdd16f7e01e6937c3381b13ed",
+      "key": "e1b26973fcf9c00b8e7da3b0e9ca0a6c35cffef65d330ed753075fd242e2c5c1",
+      "e": "AQSdaKJkjNA7ovDT2JE0MB2PpshW07H80loYYtX-8Z5gu_BT-rZIL3N5fB1KQ2zb0eHj77yThTm3vT3bxQ888gB2MU1DghMJArHGjvD-4EjInbdNGWhX_1yjbZY3TWBPNFCe6mXdYIambCze4T9eCJK6AdRiTAj7CNmT88jZAmAOaE6EOo5_TF8q5Hmr5to1FVVzbpvhB3JNxvSdrjcETrFerPScvgtfIAbhMAdzioSzrsVFI6QTPfoLrI4RxXdBbsNIGqVvsqtPNQyHr_YmNvDyPelT01RuJC58NsIcub_j91VF7LZ_FA"
+    }
+  ],
+  "_resolves": "The resolve envelope's e (push resolve, envelope id = request_id, ck = the amber's ck): the same construction, plaintext {v:1, t:\"resolved\", request_id, session_id, by, label}. t tells it from the amber plaintext, which has none. by is desk, phone:<id>, gone (the dialog was replaced) or unknown (a key landed on a screen other than the approved dialog; never credited to a phone).",
   "negatives": [
     {
       "name": "tag-flipped",
@@ -371,6 +422,16 @@
       },
       "expect": "open_fails",
       "_note": "the frames-v3-example e, opened with another phone's key"
+    },
+    {
+      "name": "resolve-other-phone",
+      "e": "AQQfhKRpZAjJ5oTMGRcWm_-2cRD1SWiELJWjFqznLZtbNdLaP7_MQhrJWEEr7KpNDqAE2jnweeK0JXhM3rW1FIgq4ub-nTQbjzkLTPB5p9lKVXtm1X5SCB1Ikl0Bh3u6SKUd5Sg-YkH2DDVL0Y2q4IIwpfy_SBOm2XpZXO5_8a1mx9LE8mvyU0hkJF-B8jSkO7dW6Be_Uf8vl4bTBDQ1gkJtvMn-HHjCURLh167znIZxewl6SDhtPsqUziBb_bznrHIAAF_KnS_ZXvtvHphhI6EyPRTzTxkIMR0L_PlGzfFOuzmn1A",
+      "phone_agreement": {
+        "private": "08676cf3d1aa8e20d581ac473eb9bb6ddbbb5ab6033ff3345fca4042c63e5d95",
+        "public": "04973d54b35cb576eab960bf2dea517affcc2709e91b867fdfc5d18b6136f8d6d85031ef257c03b1a4a7f3a1993614a66b25a6ce651b88d993850677c512f41d1b"
+      },
+      "expect": "open_fails",
+      "_note": "a sealed resolve, opened with another phone's key"
     }
   ]
 }
