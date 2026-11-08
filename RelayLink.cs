@@ -694,7 +694,7 @@ namespace Orbweaver
                 if (kept.Length == MaxLoggedLength) break;
                 if (char.IsAsciiLetterOrDigit(ch) || ch is '_' or '.' or ':' or '-') kept.Append(ch);
             }
-            return kept.Length == value.Length ? value : kept + "…";
+            return kept.Length == value.Length ? value : kept.Append('…').ToString();
         }
 
         private static IReadOnlyList<string> Collect(string? frame) => frame is null ? [] : [frame];

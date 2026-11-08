@@ -180,6 +180,9 @@ public class RelayLinkTests : IDisposable
     public void Safe_caps_length_and_known_falls_back_to_unknown()
     {
         Assert.Equal(RelayLink.MaxLoggedLength + 1, RelayLink.Safe(new string('a', 500)).Length);
+        var exact = new string('a', RelayLink.MaxLoggedLength);
+        Assert.Same(exact, RelayLink.Safe(exact));                                   // at the cap, kept whole
+        Assert.Equal(exact + "…", RelayLink.Safe(exact + "a"));                      // one past it, cut
         Assert.Equal("state", RelayLink.Known("state", RelayLink.Classes));
         Assert.Equal("unknown", RelayLink.Known("SECRET", RelayLink.Classes));
         Assert.Equal("unknown", RelayLink.Known(null, RelayLink.Classes));
