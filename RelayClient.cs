@@ -147,7 +147,8 @@ namespace Orbweaver
         // whose tmux calls a headless runner must not make.
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static PromptPipeline.Seams DefaultPromptSeams(Func<DateTimeOffset> now) => new(
-            TerminalFocuser.CapturePane, TerminalFocuser.SendPaneKey, TerminalFocuser.SendPaneText,
+            status => ScreenReaders.For(status)?.ReadAsync(status) ?? Task.FromResult<string?>(null),
+            TerminalFocuser.SendPaneKey, TerminalFocuser.SendPaneText,
             now, Task.Delay, line => MirrorLog.Say("relay", line));
 
         // The whole scan, for the prompt watcher; the roster gets its

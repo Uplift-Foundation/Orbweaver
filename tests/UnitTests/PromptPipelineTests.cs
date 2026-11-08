@@ -363,4 +363,26 @@ public class PromptPipelineTests
         await _p.ResendUndeliveredAsync();
         Assert.Single(_sent.Prompts);
     }
+
+    // ---- first-run screens -----------------------------------------------------
+
+    [Theory]
+    [InlineData("conhost-codex-updatedialog.txt")]
+    [InlineData("wt-codex-hooksdialog.txt")]
+    [InlineData("wt-codex-trustdialog.txt")]
+    public async Task A_first_run_screen_goes_out_open_on_desk_and_nothing_presses_it(string fixture)
+    {
+        _pane.Screen = AnswerGateTests.Screenshot(fixture);
+        await _p.OnScannedAsync([("s1", Status(source: SessionSource.Codex))]);
+        var sent = Assert.Single(_sent.Prompts);
+        Assert.Equal(0, JsonDocument.Parse(sent.Prompt).RootElement.GetProperty("options").GetArrayLength());
+        Assert.Equal(0, JsonDocument.Parse(sent.Push!).RootElement.GetProperty("options").GetArrayLength());
+        Assert.Contains(_log, l => l.StartsWith("prompt ") && l.Contains(" desk-only"));
+
+        foreach (var action in new[] { "approve", "option:1", "deny" })
+            await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: action));
+        Assert.Empty(_pane.Keys);
+        Assert.All(_sent.Refusals, r => Assert.Equal(AnswerGate.ForbiddenOption, r.Code));
+        Assert.Equal(3, _sent.Refusals.Count);
+    }
 }

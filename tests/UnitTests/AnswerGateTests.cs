@@ -213,11 +213,43 @@ public class AnswerGateTests
     public void Rule7_a_mode_option_is_never_pressed() =>
         Refused(Decide(AnswerFor(ModeScreen, "option:2"), PendingFor(ModeScreen), ModeScreen), 7, AnswerGate.ForbiddenOption);
 
-    [Fact]
-    public void Rule7_a_mode_option_flagged_by_the_parser_is_never_pressed()
+    internal static string Screenshot(string name) =>
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScreenReadFixtures", name)).Replace("\r", "");
+
+    // Real Grok captures (surface C's fixtures): the parser flags the
+    // always-approve option as Mode. It is never pressed, by its key or by
+    // approve, which presses the plain "Yes, proceed" instead.
+    [Theory]
+    [InlineData("tmux-grok-prompt.txt")]
+    [InlineData("iterm2-grok-prompt.txt")]
+    [InlineData("conhost-grok-prompt.txt")]
+    [InlineData("wt-grok-prompt.txt")]
+    public void Rule7_a_mode_option_flagged_by_the_parser_is_never_pressed(string fixture)
     {
-        var d = AnswerGate.Decide(Pending(), Answer(), Screen, PhoneId, Phone.Public, Now, new NonceWindow(), modeFlag: k => k == "1");
-        Refused(d, 7, AnswerGate.ForbiddenOption);
+        var screen = Screenshot(fixture);
+        var modeKey = PromptFingerprint.Of(screen)!.Prompt.Options.Single(o => o.Mode).Key;
+        Refused(AnswerGate.Decide(PendingFor(screen), AnswerFor(screen, "option:" + modeKey), screen, PhoneId, Phone.Public, Now, new NonceWindow()),
+            7, AnswerGate.ForbiddenOption);
+        var approve = AnswerGate.Decide(PendingFor(screen), AnswerFor(screen, "approve"), screen, PhoneId, Phone.Public, Now, new NonceWindow());
+        Assert.True(approve.Press);
+        Assert.NotEqual(modeKey, approve.Key);
+    }
+
+    [Theory]
+    [InlineData("conhost-codex-updatedialog.txt")]
+    [InlineData("wt-codex-hooksdialog.txt")]
+    [InlineData("wt-codex-trustdialog.txt")]
+    public void Rule7_a_first_run_screen_is_never_pressed(string fixture)
+    {
+        var screen = Screenshot(fixture);
+        Assert.NotNull(PromptFingerprint.Of(screen));   // it does parse as a numbered dialog: that is the danger
+        var hash = PromptFingerprint.Of(screen)!.Hash;
+        // minted desk-only
+        Refused(AnswerGate.Decide(new PendingPrompt(RequestId, SessionId, "permission", hash, Expires, deskOnly: true),
+            AnswerFor(screen, "approve"), screen, PhoneId, Phone.Public, Now, new NonceWindow()), 7, AnswerGate.ForbiddenOption);
+        // or minted as a prompt somehow: the fresh screen alone refuses it
+        Refused(AnswerGate.Decide(PendingFor(screen), AnswerFor(screen, "option:1"), screen, PhoneId, Phone.Public, Now, new NonceWindow()),
+            7, AnswerGate.ForbiddenOption);
     }
 
     [Fact]

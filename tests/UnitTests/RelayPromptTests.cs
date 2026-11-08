@@ -240,7 +240,7 @@ internal static class PromptVectorsShim
     internal static List<PromptOption> OptionsOf(PromptFingerprint fp) =>
         fp.Prompt.Options.Select(o =>
         {
-            var c = OptionKinds.Classify("permission", o.Label);
+            var c = OptionKinds.Classify("permission", o.Label, o.Mode);
             return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
         }).ToList();
 }
@@ -337,6 +337,7 @@ public class RelayPromptRuleTests
     [InlineData("permission", "Yes, and switch to auto mode · auto mode handles these prompts for you", false, "mode", null)]
     [InlineData("permission", "Yes, and don't ask again for anything (always-approve mode)", false, "mode", null)]
     [InlineData("permission", "Yes", true, "mode", null)]
+    [InlineData("permission", "Yes, proceed", true, "mode", null)]   // the parser's flag alone
     [InlineData("permission", "Skip", false, "option", null)]
     [InlineData("question", "Yes", false, "option", null)]
     [InlineData("question", "Blue", true, "mode", null)]

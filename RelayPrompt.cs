@@ -121,12 +121,13 @@ namespace Orbweaver
 
         internal sealed record Classified(string Kind, string? Scope);
 
-        // `mode` is the parser's flag (surface C sets it where it reads the
-        // option); the label test below stands in only until that flag exists,
-        // and the flag wins whenever it is set.
+        // `mode` is the parser's ChatPromptOption.Mode (surface C), which it
+        // sets from OptionModes — the one rule. The label is asked of that same
+        // rule as well, so an option built without the flag still cannot come
+        // out as approve.
         internal static Classified Classify(string kind, string label, bool modeFlag = false)
         {
-            if (modeFlag || IsModeLabel(label)) return new(Mode, null);
+            if (modeFlag || OptionModes.IsMode(label)) return new(Mode, null);
             if (kind != "permission") return new(Option, null);
 
             var l = label.Trim();
@@ -152,10 +153,6 @@ namespace Orbweaver
             }
             return new(Option, null);
         }
-
-        internal static bool IsModeLabel(string label) =>
-            label.Contains("auto mode", StringComparison.OrdinalIgnoreCase)
-            || label.Contains("always-approve mode", StringComparison.OrdinalIgnoreCase);
 
         // The exact prefix when the label names one, otherwise the whole label:
         // either way the phone signs the text it showed, and rule 7 compares it

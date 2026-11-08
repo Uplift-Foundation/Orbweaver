@@ -70,7 +70,7 @@ internal static class PromptVectors
     internal static List<PromptOption> OptionsOf(PromptFingerprint fp, string kind) =>
         fp.Prompt.Options.Select(o =>
         {
-            var c = OptionKinds.Classify(kind, o.Label);
+            var c = OptionKinds.Classify(kind, o.Label, o.Mode);
             return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
         }).ToList();
 

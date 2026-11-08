@@ -116,7 +116,7 @@ namespace Orbweaver
                     // AskUserQuestion forms are answered through FormAnswer's
                     // own procedure on the desk; CB-315 sends no prompt for one.
                     if (ChatTranscript.ParseAskForm(screen) is not null) continue;
-                    Mint(sid, status, fp);
+                    Mint(sid, status, fp, screen);
                 }
             }
             finally
@@ -136,16 +136,21 @@ namespace Orbweaver
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
         }
 
-        private void Mint(string sid, SessionStatus status, PromptFingerprint fp)
+        private void Mint(string sid, SessionStatus status, PromptFingerprint fp, string screen)
         {
             var now = _seams.Now();
             var requestId = RelayLink.Ulid(now);
             var expires = now.ToUnixTimeSeconds() + PromptFrames.Lifetime;
             var cli = MirrorProtocol.CliFor(status.Source);
             const string kind = "permission";
-            var options = fp.Prompt.Options.Select(o =>
+            // A trust, update or hooks-review screen numbers its choices like a
+            // permission dialog, so the fingerprint alone cannot tell them apart.
+            // It goes to the phone as "Open on desk": the same prompt with no
+            // options, and the gate refuses anything an answer names.
+            var deskOnly = FirstRunDialogs.Is(screen);
+            var options = deskOnly ? [] : fp.Prompt.Options.Select(o =>
             {
-                var c = OptionKinds.Classify(kind, o.Label);
+                var c = OptionKinds.Classify(kind, o.Label, o.Mode);
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
             }).ToList();
             var preview = string.Join("\n", fp.Preview);
@@ -154,10 +159,10 @@ namespace Orbweaver
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var push = PromptFrames.FitPush(requestId, sid, label, tool, SummaryOf(tool), preview, expires, options, fp.Hash);
 
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires), Status = status, Prompt = prompt, Push = push?.Plaintext };
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly), Status = status, Prompt = prompt, Push = push?.Plaintext };
             _live[sid] = live;
             live.Delivered = _send.Prompt(requestId, sid, prompt, push?.Plaintext);
-            _seams.Log($"prompt {requestId} {fp.Hash}{(push is null ? " no-e" : "")}");
+            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")}");
         }
 
         // "Bash command" → Bash (Claude Code); Codex's "Would you like to run

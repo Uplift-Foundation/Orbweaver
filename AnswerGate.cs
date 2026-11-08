@@ -12,8 +12,9 @@ namespace Orbweaver
     // the first finds it settled and is refused not_pending.
     internal sealed class PendingPrompt
     {
-        internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt)
+        internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt, bool deskOnly = false)
         {
+            DeskOnly = deskOnly;
             RequestId = requestId;
             SessionId = sessionId;
             Kind = kind;
@@ -27,6 +28,11 @@ namespace Orbweaver
         internal string ScreenHash { get; }
         internal long ExpiresAt { get; }
         internal bool Answered { get; set; }
+
+        // A first-run screen (trust, update, hooks review: FirstRunDialogs) sent
+        // as "Open on desk" with no options. Nothing about it is pressable from
+        // a phone, whatever an answer names.
+        internal bool DeskOnly { get; }
     }
 
     // The fields of a sealed answer frame (frames-v3 sealed_plaintext.answer),
@@ -102,8 +108,7 @@ namespace Orbweaver
         // before this call returns — it is the caller's job to read it fresh,
         // never from a cache (IScreenReader promises that).
         internal static Decision Decide(PendingPrompt? pending, PhoneAnswer answer, string? freshCapture,
-            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces,
-            Func<string, bool>? modeFlag = null)
+            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces)
         {
             // 1. signature
             var body = AnswerSigning.Body(answer.RequestId, answer.SessionId, answer.Action, answer.Scope, answer.Nonce, answer.ExpiresAt);
@@ -131,8 +136,10 @@ namespace Orbweaver
             var fresh = PromptFingerprint.Of(freshCapture);
             if (fresh is null || fresh.Hash != pending.ScreenHash) return Refuse(6, StalePrompt);
 
-            // 7. option, off the fresh parse
-            var key = KeyFor(answer, fresh, pending.Kind, modeFlag);
+            // 7. option, off the fresh parse — never on a first-run screen,
+            // whether the prompt was minted desk-only or the screen became one.
+            if (pending.DeskOnly || FirstRunDialogs.Is(freshCapture)) return Refuse(7, ForbiddenOption);
+            var key = KeyFor(answer, fresh, pending.Kind);
             if (key is null) return Refuse(7, ForbiddenOption);
 
             // 8. press
@@ -142,11 +149,11 @@ namespace Orbweaver
         // The one key the action names on the fresh screen, or null. Mode is
         // never pressable; never is not an action a phone can send; an action
         // that matches two options is ambiguous and refused rather than guessed.
-        internal static string? KeyFor(PhoneAnswer answer, PromptFingerprint fresh, string kind, Func<string, bool>? modeFlag = null)
+        internal static string? KeyFor(PhoneAnswer answer, PromptFingerprint fresh, string kind)
         {
             var options = fresh.Prompt.Options.Select(o =>
             {
-                var c = OptionKinds.Classify(kind, o.Label, modeFlag?.Invoke(o.Key) ?? false);
+                var c = OptionKinds.Classify(kind, o.Label, o.Mode);
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
             }).ToList();
 
