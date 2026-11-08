@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayCrypto.cs)",
-    "orbweaver_sha": "34e66f88",
+    "orbweaver_sha": "5fcf3cfd",
     "spec": "CB-314 architect plan rev 1, sections 2.2 and 2.3",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16); QR k/s, sig fields inside plaintexts, and ck are base64url without padding"
   },
@@ -19,7 +19,25 @@
   },
   "shared_secret": "9366797ec2143168b83eabb44671a94b9bdee4bb0a04267bd1d33b8065b268ea",
   "base": "f87f70a09285424463d5f09225acfd9f8e7d15f490e8bf50007e66f865d891f2",
+  "base_hkdf": {
+    "ikm": "9366797ec2143168b83eabb44671a94b9bdee4bb0a04267bd1d33b8065b268ea",
+    "salt": "",
+    "info": "6f72627765617665722d73657373696f6e2d763164736b5f3566336339613065316237643234363870685f61316232633364346535663630373138",
+    "length": 32
+  },
+  "epoch_hkdf": {
+    "ikm": "base",
+    "salt": "BE16(epoch), e.g. epoch 1 = 0001",
+    "info": "6f72627765617665722d65706f63682d7631",
+    "length": 32
+  },
   "ck_key": "92437d33c0840b762b12fb611f649fa9eb368478d7480db5965c5c69eea3e8cf",
+  "ck_hkdf": {
+    "ikm": "base",
+    "salt": "",
+    "info": "6f72627765617665722d636b2d7631",
+    "length": 32
+  },
   "epoch_keys": [
     {
       "epoch": 0,
@@ -97,6 +115,7 @@
       "nonce": "000000000001000000000000",
       "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
       "plaintext": "{\"t\":\"roster\",\"seq\":1,\"sessions\":[{\"session_id\":\"8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b\",\"cli\":\"claude\",\"title\":\"orbweaver\",\"cwd\":\"/Users/someone/Source/Orbweaver\",\"state\":\"generating\",\"since\":\"2026-11-08T08:00:00Z\"}]}",
+      "aad_text": "dsk_5f3c9a0e1b7d2468|ph_a1b2c3d4e5f60718|state",
       "ct": "AAAAAAABAAAAAAAAUntenV0VrY35+Tbey4FV8fI1B8M6JCKnoxk30f6e74q5Y34UUKH1zX0wOFp9kKrueGsPng/0d3vG3/N8PcmM/+5x0MDn2mpiksy0gFMQU6X8EXIQKc2MVp5a2IKrp59EpPCSkYv3PMffi/DUgEqbg/pqI+X7msJLrTRQtdvLhGO/kFEPMywb5FcsUQxH/fREocEPMC8tAzBquijnNOe86jbJcW+p0UjaWbvLccrwzgHoUzfpTTQ9/ArjbqP1A8eOAraqxV9wMSq3xoggQ9ARnjrEqu7UI+KnypPLc8ESZri8WOzMwr95aA=="
     },
     {
@@ -111,6 +130,7 @@
       "nonce": "000000000001000000000001",
       "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
       "plaintext": "{\"t\":\"delta\",\"seq\":2,\"session_id\":\"8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b\",\"state\":\"idle\",\"since\":\"2026-11-08T08:00:05Z\"}",
+      "aad_text": "dsk_5f3c9a0e1b7d2468|ph_a1b2c3d4e5f60718|state",
       "ct": "AAAAAAABAAAAAAABZAIaVanH9bwh2+Hw+OTgWRbNTCP/Ngi8itdrA+j5/9O+/QjeHd/tXLSONi15JhSe4wTp73Z4Oc8CV3zk8nIuHHV/45MhgpELtXYZH+70ZcT8IB+5VwV1odl3w2+PPuSvD89DLFdVbfZK3C60CewCBjVsZ7mPH2TYku1qjIZnuw/hyGZGO/eX"
     },
     {
@@ -125,6 +145,7 @@
       "nonce": "000000010003000000000007",
       "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c636f6e74726f6c",
       "plaintext": "{\"t\":\"probe\",\"note\":\"milestone 2 sends nothing sealed phone-to-desktop on the socket; this vector pins the direction prefix\"}",
+      "aad_text": "ph_a1b2c3d4e5f60718|dsk_5f3c9a0e1b7d2468|control",
       "ct": "AAAAAQADAAAAAAAHhW36Vssv/fPnHQQ8XdT9s9iy3FSj7NUqpK0FjjAC8R9n3NmSOnd/71rC5t+7hdSLnq1olrULJ/1BBLQP89SdjLFi/AGW4lhVcIHLfJmybIoPCnG7iIbnXGraxeEg1A4DVcppCvHTVZ5Hc3/r8P/MVoSQ1Upez/vmhkuQi1nNKOrEyKes9DFRVtbftFij"
     }
   ],
@@ -156,6 +177,15 @@
       "ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
       "expect": "open_fails"
+    },
+    {
+      "name": "wrong_direction_prefix",
+      "key": "4f935e7de9a191e594b99d5b9cd3dc7c7aa2125a989e7945d25141cfce604a52",
+      "ct": "AAAAAAABAAAAAAAAUntenV0VrY35+Tbey4FV8fI1B8M6JCKnoxk30f6e74q5Y34UUKH1zX0wOFp9kKrueGsPng/0d3vG3/N8PcmM/+5x0MDn2mpiksy0gFMQU6X8EXIQKc2MVp5a2IKrp59EpPCSkYv3PMffi/DUgEqbg/pqI+X7msJLrTRQtdvLhGO/kFEPMywb5FcsUQxH/fREocEPMC8tAzBquijnNOe86jbJcW+p0UjaWbvLccrwzgHoUzfpTTQ9/ArjbqP1A8eOAraqxV9wMSq3xoggQ9ARnjrEqu7UI+KnypPLc8ESZri8WOzMwr95aA==",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+      "expected_direction": 1,
+      "expect": "open_fails",
+      "_note": "a valid desktop-to-phone box opened by a receiver expecting phone-to-desktop: refused on the nonce prefix before decryption"
     }
   ],
   "replay": {

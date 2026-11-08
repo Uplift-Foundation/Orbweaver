@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayCrypto.cs)",
-    "orbweaver_sha": "34e66f88",
+    "orbweaver_sha": "5fcf3cfd",
     "spec": "CB-314 architect plan rev 1, sections 2.2 and 2.3",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16); QR k/s, sig fields inside plaintexts, and ck are base64url without padding"
   },
@@ -32,15 +32,24 @@
   },
   "qr_text": "orbweaver://pair?r=orbweaver-relay.uplifttech.org&d=dsk_5f3c9a0e1b7d2468&o=off_0f1e2d3c4b5a6978&k=BI9WNQXHQU-vVKbtN7769rB6K8QnnLBOB3Dr4o5oQxThiCG1KiXEUPgqPnV_LU2NC6X3lFL1mzx3m4MaT65tmXwEuzno7cmd1sLhipURN47IWM-Icrt7QtIJc8-q-9kayvGOcwdzUT_hMWqLGtzFwkC3y28tcPuOmTjozT45bJCvcg&s=LeuKJRhL50BXmnFQZG-7DEqyvI2AKI_GnDF-0XE8x28",
   "pair_key": "65b2d8eb59c97c9266a29871dd9d2c08fec36609035a94bdd9ee90e97db0d497",
+  "pair_key_hkdf": {
+    "ikm": "2deb8a25184be740579a7150646fbb0c4ab2bc8d80288fc69c317ed1713cc76f",
+    "salt": "6f66665f30663165326433633462356136393738",
+    "info": "6f72627765617665722d706169722d763164736b5f3566336339613065316237643234363870685f61316232633364346535663630373138",
+    "length": 32
+  },
   "check_code": {
+    "sha256_input": "6f72627765617665722d636865636b2d7631048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c04bb39e8edc99dd6c2e18a9511378ec858cf8872bb7b42d20973cfaafbd91acaf18e730773513fe1316a8b1adcc5c240b7cb6f2d70fb8e9938e8cd3e396c90af7204a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40",
     "int": 899803,
     "digits": "899803",
     "display": "899 803"
   },
   "register": {
-    "challenge": "Zm9yLXZlY3RvcnMtb25seQ",
-    "message": "6f72627765617665722d72656769737465722d76315a6d39794c585a6c59335276636e4d74623235736551",
-    "_note": "message = UTF-8(\"orbweaver-register-v1\") || UTF-8(challenge string as received); sig is ECDSA-P256-SHA256 raw r||s by the identity key"
+    "challenge": "EeCpfjuxwMgB2d778hu6I34JNErW9xrxz955Yd1ce2A",
+    "challenge_raw": "11e0a97e3bb1c0c801d9defbf21bba237e09344ad6f71af1cfde7961dd5c7b60",
+    "message": "6f72627765617665722d72656769737465722d763111e0a97e3bb1c0c801d9defbf21bba237e09344ad6f71af1cfde7961dd5c7b60",
+    "sig": "apDku5pqDcI9Y-zNWMpKZmViee6T9Js7B_bJOolkGqVRiNv_ZVkSgPlofQbxkwEg9oxFJiWbeudBwqSGMBsU6Q",
+    "_note": "message = UTF-8(\"orbweaver-register-v1\") || the RAW 32 challenge bytes (base64url-decoded, CB-314 addendum 1); sig is ECDSA-P256-SHA256 raw r||s by the identity key, verifies under inputs.desktop_identity.public"
   },
   "pair_request": {
     "from": "ph_a1b2c3d4e5f60718",
@@ -56,23 +65,25 @@
     "to": "ph_a1b2c3d4e5f60718",
     "class": "pair",
     "sig_message": "6f72627765617665722d706169722d6163636570742d763164736b5f3566336339613065316237643234363870685f61316232633364346535663630373138048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c04bb39e8edc99dd6c2e18a9511378ec858cf8872bb7b42d20973cfaafbd91acaf18e730773513fe1316a8b1adcc5c240b7cb6f2d70fb8e9938e8cd3e396c90af7204a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40",
-    "sig": "9PsyEczxxlHVghWXpnIalME2GEFMdDd5g-HirDo70mqK7PFFlgsP6idwWtDS8uT_56UBRYIkwRZngTr4q5E2aw",
-    "plaintext": "{\"t\":\"pair.accept\",\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"name\":\"MacBook Pro\",\"sig\":\"9PsyEczxxlHVghWXpnIalME2GEFMdDd5g-HirDo70mqK7PFFlgsP6idwWtDS8uT_56UBRYIkwRZngTr4q5E2aw\"}",
+    "sig": "d9V6lP7rJlDrupeSHdWtSEponV87ueICDzCTlXh_C6Xe1jaoPSvbouTskXKSDsP-vmoWafGrwCVHMao_KD5Gkg",
+    "plaintext": "{\"t\":\"pair.accept\",\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"name\":\"MacBook Pro\",\"sig\":\"d9V6lP7rJlDrupeSHdWtSEponV87ueICDzCTlXh_C6Xe1jaoPSvbouTskXKSDsP-vmoWafGrwCVHMao_KD5Gkg\"}",
     "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c70616972",
     "nonce": "000000000000000000000000",
-    "ct": "AAAAAAAAAAAAAAAAeUhjRntN6R0SwrPvH21RtVvGvl6HHONlDBDrgmWStiB3zNGxyapSkQb1GW3pth6uTLCL6bykUyKM2gAjHCpPFefR0EBm2Gr6IQi8FEUukhzEvQd+w7T7oRDzDKA15S6OsnnumipTE228/tCqK99ZVV8BlgHyqnjTvnRM2aaA6kTCfMI07EhMEJofTCA4YOnj56yNB++4LBXnQTHhxaCPxMz4mE47Og+wF+XvRtJIUoQ1UlVKNMTkDIgzrg=="
+    "ct": "AAAAAAAAAAAAAAAAeUhjRntN6R0SwrPvH21RtVvGvl6HHONlDBDrgmWStiB3zNGxyapSkQb1GW3pth6uTLCL6bykUyKM2gAjHCpPFefR0EBm2Gr6IQi8FEUukhzEvQcjqpG0iCO+BpI16QqcqkvloiBNBlK0y42DOKEjRH4s4CKloUXNonMkqv2pxEL4W+sI2E1+SYYvSBwUb+mf4aj/RLSCOSbYTyjh1Kyp7vnl83RKSnq6B+XvQGyWf9cI5QDVRfH/CtQe0A=="
   },
   "pair_revoke": {
     "by_desktop": {
       "by": "dsk_5f3c9a0e1b7d2468",
       "peer_id": "ph_a1b2c3d4e5f60718",
       "sig_message": "6f72627765617665722d706169722d7265766f6b652d763164736b5f3566336339613065316237643234363870685f61316232633364346535663630373138",
-      "sig": "PSc-XPeTgLE9CWrIVkS6OH3Jp1k-rBoVnzVXpCAq57MrvFVBoZQ6QxCqFyorK_vVNPOWn3laE7nHt47hCPKDAw"
+      "sig": "uHeYk2R7Frs_z0p085kM4I8cn-ND6pcs1qhzdBt-S0iF8AeB2OUeA1ARjP_F1_5uJHGWCQHKtCH9Rb2J-V7xuw"
     },
     "by_phone": {
       "by": "ph_a1b2c3d4e5f60718",
       "peer_id": "dsk_5f3c9a0e1b7d2468",
-      "sig_message": "6f72627765617665722d706169722d7265766f6b652d763170685f6131623263336434653566363037313864736b5f35663363396130653162376432343638"
+      "sig_message": "6f72627765617665722d706169722d7265766f6b652d763170685f6131623263336434653566363037313864736b5f35663363396130653162376432343638",
+      "sig": "13fn7hEzMGg1hMJe7VUUQAcT5ya2_WJ6pRl5swewUfEC5MdOHsLLqVOpoHi1-iL3srweKCL6gd_gdbYiANtxIA",
+      "_note": "signed by the fixed SOFTWARE key inputs.phone_identity, standing in for the phone's Secure Enclave approval key (addendum 2), which cannot be put in a vector. A real SE signature is covered by surface C's test that has the .NET verifier check it."
     }
   },
   "negatives": [
@@ -108,27 +119,41 @@
       "name": "accept_sig_tampered",
       "public": "048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c",
       "sig_message": "6f72627765617665722d706169722d6163636570742d763164736b5f3566336339613065316237643234363870685f61316232633364346535663630373138048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c04bb39e8edc99dd6c2e18a9511378ec858cf8872bb7b42d20973cfaafbd91acaf18e730773513fe1316a8b1adcc5c240b7cb6f2d70fb8e9938e8cd3e396c90af7204a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40",
-      "sig": "9PsyEczxxlHVghSXpnIalME2GEFMdDd5g-HirDo70mqK7PFFlgsP6idwWtDS8uT_56UBRYIkwRZngTr4q5E2aw",
+      "sig": "d9V6lP7rJlDrupaSHdWtSEponV87ueICDzCTlXh_C6Xe1jaoPSvbouTskXKSDsP-vmoWafGrwCVHMao_KD5Gkg",
       "expect": "verify_fails"
     },
     {
       "name": "accept_sig_other_phone",
       "public": "048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c",
       "sig_message": "6f72627765617665722d706169722d6163636570742d763164736b5f3566336339613065316237643234363870685f30303030303030303030303030303030048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c04bb39e8edc99dd6c2e18a9511378ec858cf8872bb7b42d20973cfaafbd91acaf18e730773513fe1316a8b1adcc5c240b7cb6f2d70fb8e9938e8cd3e396c90af7204a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40",
-      "sig": "9PsyEczxxlHVghWXpnIalME2GEFMdDd5g-HirDo70mqK7PFFlgsP6idwWtDS8uT_56UBRYIkwRZngTr4q5E2aw",
+      "sig": "d9V6lP7rJlDrupeSHdWtSEponV87ueICDzCTlXh_C6Xe1jaoPSvbouTskXKSDsP-vmoWafGrwCVHMao_KD5Gkg",
       "expect": "verify_fails"
     },
     {
       "name": "accept_sig_wrong_key",
       "public": "04a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c",
       "sig_message": "6f72627765617665722d706169722d6163636570742d763164736b5f3566336339613065316237643234363870685f61316232633364346535663630373138048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c04bb39e8edc99dd6c2e18a9511378ec858cf8872bb7b42d20973cfaafbd91acaf18e730773513fe1316a8b1adcc5c240b7cb6f2d70fb8e9938e8cd3e396c90af7204a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40",
-      "sig": "9PsyEczxxlHVghWXpnIalME2GEFMdDd5g-HirDo70mqK7PFFlgsP6idwWtDS8uT_56UBRYIkwRZngTr4q5E2aw",
+      "sig": "d9V6lP7rJlDrupeSHdWtSEponV87ueICDzCTlXh_C6Xe1jaoPSvbouTskXKSDsP-vmoWafGrwCVHMao_KD5Gkg",
       "expect": "verify_fails"
     },
     {
       "name": "check_code_phone_keys_swapped",
       "check_code_int": 284145,
       "expect": "differs_from_check_code"
+    },
+    {
+      "name": "revoke_by_phone_sig_tampered",
+      "public": "04a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c",
+      "sig_message": "6f72627765617665722d706169722d7265766f6b652d763170685f6131623263336434653566363037313864736b5f35663363396130653162376432343638",
+      "sig": "2gz-IDhs-dqP-8mq4sVQKkEyPaWUt-qp1RjS46DbO1k7UjVZmp74P5p0AXsd4_TQvkP1_1kUyNZ7nk1P066Adg",
+      "expect": "verify_fails"
+    },
+    {
+      "name": "register_sig_over_challenge_text",
+      "public": "048f563505c7414faf54a6ed37befaf6b07a2bc4279cb04e0770ebe28e684314e18821b52a25c450f82a3e757f2d4d8d0ba5f79452f59b3c779b831a4fae6d997c",
+      "sig_message": "6f72627765617665722d72656769737465722d763111e0a97e3bb1c0c801d9defbf21bba237e09344ad6f71af1cfde7961dd5c7b60",
+      "sig": "g5lP0GaWurAFc_umPFILJ5UvO7GO13XKQ8rg9homUzMuM0BhOxQfywpIdjvmngWtCmyB62hJvsUZzlu6Mey_0Q",
+      "expect": "verify_fails"
     }
   ]
 }
