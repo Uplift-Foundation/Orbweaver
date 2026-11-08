@@ -262,23 +262,25 @@ if (args.Contains("--no-pacer"))
     Console.WriteLine("      queued 300 unpaced deltas; removing the phone during the flood");
 }
 client.Remove(phoneId);
-var revoke = await Next(e => Env(e, "pair"));
-var revokeBody = revoke is null ? null : OpenState(revoke.Value.Frame);
-Report(revokeBody is { } rb && rb.GetProperty("t").GetString() == "pair.revoke" && Verify(dIdPub, RevokeMessage(q["d"], phoneId), FromBase64Url(rb.GetProperty("sig").GetString())),
-    "Remove sends a signed pair.revoke the phone can verify");
-// The relay sends both, in either order: presence offline for the desktop and
-// err unlinked naming it. Both are consumed before the stray frame below, so
-// its refusal cannot be confused with them.
+// One pass collects the revoke, the presence and the unlinked, in whatever
+// order they come: under a flood, a step waiting for only one of them would
+// throw the others away.
+JsonElement? revokeBody = null;
 var sawPresence = false;
 string? unlinkedFrom = null;
-while (!(sawPresence && unlinkedFrom is not null))
+var collectUntil = DateTime.UtcNow.AddSeconds(15);
+while (DateTime.UtcNow < collectUntil && !(revokeBody is not null && sawPresence && unlinkedFrom is not null))
 {
-    var f = await Next(e => T(e, "err") || T(e, "presence"), 10);
+    var f = await Next(e => Env(e, "pair") || T(e, "err") || T(e, "presence"), 15);
     if (f is null) break;
-    if (T(f.Value.Frame, "presence") && f.Value.Frame.GetProperty("device_id").GetString() == q["d"] && !f.Value.Frame.GetProperty("online").GetBoolean()) sawPresence = true;
-    if (T(f.Value.Frame, "err") && f.Value.Frame.GetProperty("code").GetString() == "unlinked")
-        unlinkedFrom = f.Value.Frame.TryGetProperty("peer_id", out var pid) ? pid.GetString() : f.Value.Frame.GetProperty("message").GetString();
+    var got = f.Value.Frame;
+    if (Env(got, "pair")) revokeBody = OpenState(got);
+    if (T(got, "presence") && got.GetProperty("device_id").GetString() == q["d"] && !got.GetProperty("online").GetBoolean()) sawPresence = true;
+    if (T(got, "err") && got.GetProperty("code").GetString() == "unlinked")
+        unlinkedFrom = got.TryGetProperty("peer_id", out var pid) ? pid.GetString() : got.GetProperty("message").GetString();
 }
+Report(revokeBody is { } rb && rb.GetProperty("t").GetString() == "pair.revoke" && Verify(dIdPub, RevokeMessage(q["d"], phoneId), FromBase64Url(rb.GetProperty("sig").GetString())),
+    "Remove sends a signed pair.revoke the phone can verify");
 Report(sawPresence && unlinkedFrom == q["d"], "the relay tells the phone the link is gone: presence offline and err unlinked naming the desktop", $"unlinked by {unlinkedFrom}");
 
 var stray = Seal(EpochKey(basis, 1), Nonce(PhoneToDesktop, 1, 0), "{}"u8.ToArray(), Aad(phoneId, q["d"], "action"));

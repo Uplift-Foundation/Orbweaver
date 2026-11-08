@@ -652,6 +652,26 @@ public class RelayLinkTests : IDisposable
         Assert.Empty(link.Retry("env:" + revokeId));                                     // the unlink landed: no more
     }
 
+    // Measured on the live relay: 95 unnamed rate_limited errors in about two
+    // milliseconds gave a revoke up after "5 attempts" with none of them sent.
+    // While a retry is pending, more refusals schedule nothing more.
+    [Fact]
+    public void A_burst_of_refusals_schedules_each_retry_once_until_it_fires()
+    {
+        var (link, _, phone, notes, _) = Paired();
+        link.OnFrame("""{"t":"ok","ref":"link","code":"linked"}""");                    // the pairing's frames are settled
+        var due = Retries(link);
+        var revokeId = J(link.Remove(phone.Id)[0]).GetProperty("id").GetString()!;
+        for (var i = 0; i < 95; i++) link.OnFrame("""{"t":"err","code":"rate_limited"}""");
+        Assert.Equal(2, due.Count);                                                       // the revoke and the unlink, once each
+        Assert.All(due, d => Assert.Equal(1, d.Attempt));
+        Assert.DoesNotContain(notes, n => n.StartsWith("giving up"));
+
+        link.Retry("env:" + revokeId);                                                    // the backoff fired: a real resend
+        link.OnFrame($$"""{"t":"err","ref":"{{revokeId}}","code":"rate_limited"}""");
+        Assert.Equal(("env:" + revokeId, 2), due[^1]);                                     // now attempt 2
+    }
+
     [Fact]
     public void A_refused_state_frame_is_left_for_the_phone_to_resync()
     {

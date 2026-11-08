@@ -91,6 +91,14 @@ namespace Orbweaver
         private readonly Dictionary<string, int> _retryAttempts = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _revokeKeys = new(StringComparer.Ordinal);   // phone → its revoke's retry key
 
+        // Keys with a retry scheduled and not yet fired. A flood beyond the
+        // relay's raw ceiling returns dozens of unnamed rate_limited errors in
+        // a millisecond, and each used to count as an attempt: a revoke was
+        // given up on before one backoff had elapsed (measured on the live
+        // relay). A key already waiting is not scheduled again, so attempts
+        // count resends, not errors.
+        private readonly HashSet<string> _retryPending = new(StringComparer.Ordinal);
+
         internal RelayLink(RelayIdentity identity, RelaySessionBook book, Func<DateTimeOffset> now,
             string platform, string appVersion, string relayHost)
         {
@@ -153,6 +161,7 @@ namespace Orbweaver
             _retryable.Clear();
             _retryAttempts.Clear();
             _revokeKeys.Clear();
+            _retryPending.Clear();
         }
 
         internal IReadOnlyList<string> OnFrame(string text)
@@ -621,10 +630,12 @@ namespace Orbweaver
 
         private void ScheduleRetry(string key)
         {
+            if (!_retryPending.Add(key)) return;
             var attempt = _retryAttempts.GetValueOrDefault(key) + 1;
             if (attempt > MaxRetries)
             {
                 Note($"giving up on {key} after {MaxRetries} rate-limited attempts");
+                _retryPending.Remove(key);
                 _retryAttempts.Remove(key);
                 _retryable.Remove(key);
                 return;
@@ -638,6 +649,7 @@ namespace Orbweaver
         // unlinks anyway) or the frame no longer needs sending.
         internal IReadOnlyList<string> Retry(string key)
         {
+            _retryPending.Remove(key);
             if (!Welcomed) return [];
             if (key.StartsWith("unlink:", StringComparison.Ordinal))
             {
