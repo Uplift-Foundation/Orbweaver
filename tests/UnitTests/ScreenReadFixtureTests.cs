@@ -243,6 +243,82 @@ public class ScreenReadFixtureTests
         Assert.Equal(first, d.Options[1].Label);
     }
 
+    // CB-315: an always-allow option whose scope was cut at the edge must be flagged, so the phone never
+    // presses a scope it cannot show whole. Grok on Windows cuts without wrapping and the screen is wider
+    // than the cut, so it is read off the command shown above; Claude and Codex are read off the rule width.
+    [Theory]
+    [InlineData("wt-grok-prompt")]
+    [InlineData("conhost-grok-prompt")]
+    public void Grok_windows_always_allow_with_a_cut_scope_is_flagged(string fixture)
+    {
+        var o = ChatTranscript.ParseDialog(Screen(fixture))!.Options;
+        Assert.True(o[1].ScopeTruncated);
+        Assert.StartsWith("Always allow:", o[1].Label);
+        Assert.Equal(new[] { false, true, false, false, false }, o.Select(x => x.ScopeTruncated));
+    }
+
+    [Fact]
+    public void Grok_mac_options_are_not_flagged()
+    {
+        Assert.All(ChatTranscript.ParseDialog(Screen("tmux-grok-prompt"))!.Options, o => Assert.False(o.ScopeTruncated));
+    }
+
+    // Negative control over every other real capture: a flag that fired on a prompt nobody cut would
+    // keep a phone from answering good dialogs.
+    [Fact]
+    public void No_other_real_capture_has_a_flagged_option()
+    {
+        var skip = new[] { "wt-grok-prompt", "conhost-grok-prompt" };
+        foreach (var row in AllRows().Where(r => r.Kind == "dialog" && !skip.Contains(r.Fixture)))
+        {
+            var d = ChatTranscript.ParseDialog(Screen(row.Fixture));
+            if (d is null) continue;
+            Assert.All(d.Options, o => Assert.False(o.ScopeTruncated, row.Fixture + " option " + o.Key));
+        }
+    }
+
+    [Theory]
+    [InlineData("Always allow: Remove-Item C:/x -ErrorAction", "Remove-Item C:/x -ErrorAction SilentlyContinue", true)]
+    [InlineData("Always allow: Remove-Item C:/x -ErrorAction SilentlyContinue", "Remove-Item C:/x -ErrorAction SilentlyContinue", false)]
+    [InlineData("Always allow: Remove-Item *", "Remove-Item C:/x -ErrorAction SilentlyContinue", false)]
+    [InlineData("Always allow: git", "git status", true)]
+    [InlineData("Always allow: rm", "touch /tmp/file", false)]
+    [InlineData("Always allow: ls *", "ls * -la", false)]
+    [InlineData("Yes, proceed", "Remove-Item C:/x", false)]
+    [InlineData("Always allow:", "Remove-Item C:/x", false)]
+    [InlineData("Always allow: Remove-Item", null, false)]
+    [InlineData("Always allow: Remove-Item", "  ", false)]
+    public void A_grok_scope_is_cut_only_when_it_is_a_strict_prefix_of_the_command(string label, string? command, bool expected) =>
+        Assert.Equal(expected, OptionModes.IsTruncatedScope(label, command));
+
+    [Fact]
+    public void A_claude_always_allow_line_that_fills_the_rule_width_with_no_wrap_is_flagged()
+    {
+        // 60-wide rule; option 2's line is exactly 60 and nothing follows it, so the terminal cut it.
+        var line = "   2. Yes, and always allow access to /private/tmp/abcdefghi";
+        Assert.Equal(60, line.Length);
+        var screen = string.Join('\n', new[]
+        {
+            new string('─', 60), " Bash command", " Do you want to proceed?",
+            " ❯ 1. Yes", line, "   3. No", "", " Esc to cancel · Tab to amend",
+        });
+        var o = ChatTranscript.ParseDialog(screen)!.Options;
+        Assert.False(o[0].ScopeTruncated);
+        Assert.True(o[1].ScopeTruncated);
+        Assert.False(o[2].ScopeTruncated);
+    }
+
+    [Theory]
+    [InlineData("Yes, and always allow access to /p", false, 60, 60, true)]
+    [InlineData("Yes, and always allow access to /p", true, 60, 60, false)]
+    [InlineData("Yes, and always allow access to /p", false, 59, 60, false)]
+    [InlineData("Yes, and always allow access to /p", false, 60, null, false)]
+    [InlineData("Yes", false, 60, 60, false)]
+    [InlineData("Yes, and switch to auto mode", false, 60, 60, false)]
+    [InlineData("Yes, and don't ask again for commands that start with `x`", false, 80, 80, true)]
+    public void The_edge_rule_needs_an_unwrapped_always_allow_line_as_wide_as_the_rules(string label, bool wrapped, int length, int? rule, bool expected) =>
+        Assert.Equal(expected, OptionModes.IsTruncatedAtEdge(label, wrapped, length, rule));
+
     [Fact]
     public void A_long_label_in_a_narrow_terminal_is_whole_and_its_neighbours_are_not_swallowed()
     {

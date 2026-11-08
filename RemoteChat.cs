@@ -714,7 +714,12 @@ namespace Orbweaver
         // CB-315: the option switches the session's permission mode ("always-approve
         // mode", "switch to auto mode") rather than answering the dialog. Parsed
         // and carried, never offered as a button and never pressed: see OptionModes.
-        bool Mode = false);
+        bool Mode = false,
+        // CB-315: an "always allow" option whose scope reached the edge of what the
+        // terminal could show and was cut there, so the scope on screen is not
+        // necessarily the scope granted. Parsed and carried; a phone must not press
+        // it. Computed in one place, OptionModes.IsTruncatedScope.
+        bool ScopeTruncated = false);
 
     // ArmedActivation marks a prompt whose answer cannot be undone and must not be
     // given by accident: its options ignore presses for a moment after the prompt

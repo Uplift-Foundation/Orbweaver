@@ -535,9 +535,11 @@ namespace Orbweaver
                 // The next option, or the end of the run, bounds how far down
                 // this label may have wrapped.
                 var limit = p + 1 < picked.Count ? picked[p + 1] : Math.Min(cleaned.Length, runEnd + 1 + MaxWrappedLines);
+                var unjoined = label;
                 label = JoinWrapped(lines, cleaned, i, label, limit, width);
 
-                options.Add(new ChatPromptOption(match.Groups[1].Value, label, Mode: OptionModes.IsMode(label)));
+                options.Add(new ChatPromptOption(match.Groups[1].Value, label, Mode: OptionModes.IsMode(label),
+                    ScopeTruncated: OptionModes.IsTruncatedAtEdge(label, label != unjoined, lines[i].TrimEnd().Length, RuleWidth(lines))));
             }
 
             if (options.Count < 2) return null;
@@ -623,10 +625,14 @@ namespace Orbweaver
         // which a wrapped label's first line is within one word of. (The longest line is
         // not used first: a capture can hold one wider line than the terminal, as iTerm2's
         // did, and that made a wrap look like it still had room.)
-        private static int ScreenWidth(string[] lines)
+        private static int ScreenWidth(string[] lines) => RuleWidth(lines) ?? lines.Max(l => l.TrimEnd().Length);
+
+        // The width the full-width rules give, or null when the screen has none (then the longest
+        // line is only a guess, and a line that long proves nothing about being cut).
+        private static int? RuleWidth(string[] lines)
         {
             var rules = lines.Select(l => l.Trim()).Where(l => l.Length >= 40 && l.All(c => "─━═╌╍┄┈-=".Contains(c))).ToList();
-            return rules.Count > 0 ? rules.Max(l => l.Length) : lines.Max(l => l.TrimEnd().Length);
+            return rules.Count > 0 ? rules.Max(l => l.Length) : null;
         }
 
         // The column of a line's first character that is not padding or a frame.
