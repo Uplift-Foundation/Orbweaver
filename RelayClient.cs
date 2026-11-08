@@ -128,7 +128,7 @@ namespace Orbweaver
             _link.PhonePaired += _ => Defer(() => PhonesChanged());
             _link.PhoneRemoved += _ => Defer(() => PhonesChanged());
             _link.PresenceChanged += () => Defer(() => PhonesChanged());
-            _link.Note += note => MirrorLog.Say("relay", note);
+            _link.Note += note => { MirrorLog.Say("relay", note); Raise(() => Logged(note)); };
             _link.RetryDue += (key, attempt) => Defer(() => _ = RetryLaterAsync(key, attempt));
         }
 
@@ -140,6 +140,10 @@ namespace Orbweaver
         internal event Action StateChanged = delegate { };
         internal event Action PhonesChanged = delegate { };
         public event Action<RelayLink.PairRequest> PairRequested = delegate { };
+
+        // Every RelayLink note, on the event queue: what the mirror log gets,
+        // for a tool that wants it on screen (relay-probe --desktop-only).
+        internal event Action<string> Logged = delegate { };
 
         internal IReadOnlyList<RelayIdentity.Phone> Phones => _identity.Phones;
 
@@ -261,6 +265,10 @@ namespace Orbweaver
                     silence.CancelAfter(_options.Silence);
                     var text = await socket.ReceiveAsync(silence.Token).ConfigureAwait(false);
                     if (text is null) break;   // the relay closed the socket
+                    // What arrived, before anything decides what to do with it,
+                    // so a frame lost after the read and one never read can be
+                    // told apart from the log alone. Metadata only.
+                    if (InboundKind(text) is { } kind) MirrorLog.Say("relay-in", kind);
                     Dispatch(() => _link.OnFrame(text));
                     if (State == Status.Connected) welcomed();
                 }
@@ -461,6 +469,34 @@ namespace Orbweaver
             var text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
             var json = JsonDocument.Parse(text).RootElement;
             return json.ValueKind == JsonValueKind.Object ? json : throw new RelayHttpException("the relay's answer was not an object");
+        }
+
+        // A frame's kind for the inbound log: the control frame's t (with its
+        // peer or device id when it has one), or an envelope's class and
+        // sender — never ct, never a payload. Null for the heartbeat, which
+        // would drown everything else, and for anything that is not JSON.
+        internal static string? InboundKind(string text)
+        {
+            try
+            {
+                var e = JsonDocument.Parse(text).RootElement;
+                if (e.ValueKind != JsonValueKind.Object) return null;
+                // Everything echoed is filtered (RelayLink.Known/Safe): a relay
+                // cannot forge a line, flood the log, or smuggle a payload in.
+                if (Str(e, "t") is { } t)
+                {
+                    if (t is "ping" or "pong") return null;
+                    var about = Str(e, "peer_id") ?? Str(e, "device_id");
+                    var code = Str(e, "code");
+                    return $"t={RelayLink.Known(t, RelayLink.ControlKinds)}"
+                           + (about is null ? "" : $" peer={RelayLink.Safe(about)}")
+                           + (code is null ? "" : $" code={RelayLink.Safe(code)}");
+                }
+                return e.TryGetProperty("v", out _)
+                    ? $"envelope class={RelayLink.Known(Str(e, "class"), RelayLink.Classes)} from={RelayLink.Safe(Str(e, "from"))}"
+                    : null;
+            }
+            catch (JsonException) { return null; }
         }
 
         // Unix seconds or ISO-8601: the plan does not say which, so both.

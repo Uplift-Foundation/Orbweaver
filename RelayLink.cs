@@ -206,7 +206,7 @@ namespace Orbweaver
                     if (gone is not null) DropPhone(gone, byPhone: true);
                     return [];
                 case "err":
-                    Note($"relay err ref={Str(f, "ref")} code={Str(f, "code")}");
+                    Note($"relay err ref={Safe(Str(f, "ref"))} code={Safe(Str(f, "code"))}");
                     return [];
                 case "presence":
                     return OnPresence(f);
@@ -233,10 +233,12 @@ namespace Orbweaver
                     }
                     // Said, not silent: a phone stuck waiting on a roster
                     // that never comes is otherwise undiagnosable.
-                    Note($"resync for {Str(f, "peer_id")} ignored: not an online paired phone");
+                    var who = Str(f, "peer_id");
+                    Note($"resync for {Safe(who)} ignored: not an online paired phone ("
+                         + (who is not null && _channels.ContainsKey(who) ? "paired, offline" : "not paired") + ")");
                     return [];
                 default:
-                    Note($"relay frame t={t} ignored");
+                    Note($"relay frame t={Safe(t)} ignored");
                     return [];
             }
         }
@@ -295,7 +297,7 @@ namespace Orbweaver
             if (!_channels.TryGetValue(from, out var channel))
             {
                 if (cls == "pair") OnPairRequest(from, Str(f, "offer"), ct);
-                else Note($"envelope from unpaired {from} class={cls}");
+                else Note($"envelope from unpaired {Safe(from)} class={Known(cls, Classes)}");
                 return [];
             }
 
@@ -305,7 +307,12 @@ namespace Orbweaver
             {
                 var sig = RelayCrypto.FromBase64Url(Str(body, "sig"));
                 if (RelayCrypto.Verify(channel.Phone.IdPublic, RelayCrypto.RevokeMessage(from, _identity.DeviceId!), sig))
+                {
+                    // Said positively, so a gate can confirm the signature check
+                    // ran and passed rather than infer it from a missing refusal.
+                    Note($"pair.revoke from {from} verified; phone removed (its own unlink settles the link at the relay)");
                     DropPhone(from, byPhone: true);
+                }
                 else
                     Note("pair.revoke with a bad signature ignored");
             }
@@ -467,6 +474,7 @@ namespace Orbweaver
             // here and the answer cannot lose it.
             _identity.AddPendingUnlink(phoneId);
             if (Welcomed) frames.Add(SendUnlink(phoneId));
+            Note($"removed {phoneId}: " + (Welcomed ? "signed revoke and unlink sent" : "unlink owed until the next welcome"));
 
             _channels.Remove(phoneId);
             _identity.RemovePhone(phoneId);
@@ -607,7 +615,7 @@ namespace Orbweaver
         // phone resyncs from the gap.
         private void OnRateLimited(string? reference)
         {
-            Note($"relay err code=rate_limited ref={reference}");
+            Note($"relay err code=rate_limited ref={Safe(reference)}");
             switch (reference)
             {
                 case "unlink":
@@ -660,6 +668,34 @@ namespace Orbweaver
         }
 
         // ---- helpers ----------------------------------------------------------
+
+        // Anything the relay sends that ends up in a log line goes through one
+        // of these two (nadia, PR #225). A hostile or buggy relay can put
+        // anything in t, an id, a code or a class — a newline that forges a
+        // second log line, twenty thousand characters, a payload — and "the
+        // log never shows a payload" must not depend on the sender's manners.
+        internal static readonly string[] ControlKinds = ["ok", "err", "presence", "resync", "ping", "pong", "link", "unlink", "hello"];
+        internal static readonly string[] Classes = ["state", "action", "chat", "pair", "control"];
+        internal const int MaxLoggedLength = 64;
+
+        // A value from a fixed vocabulary, or "other".
+        internal static string Known(string? value, string[] allowed) =>
+            value is not null && Array.IndexOf(allowed, value) >= 0 ? value : "other";
+
+        // An id, ref or code: only the characters those ever use (the relay's
+        // own envelope-id rule, letters, digits and _ . : -), at most 64 of
+        // them, with "…" saying something was cut. Empty for none.
+        internal static string Safe(string? value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            var kept = new StringBuilder(Math.Min(value.Length, MaxLoggedLength));
+            foreach (var ch in value)
+            {
+                if (kept.Length == MaxLoggedLength) break;
+                if (char.IsAsciiLetterOrDigit(ch) || ch is '_' or '.' or ':' or '-') kept.Append(ch);
+            }
+            return kept.Length == value.Length ? value : kept.Append('…').ToString();
+        }
 
         private static IReadOnlyList<string> Collect(string? frame) => frame is null ? [] : [frame];
 

@@ -167,6 +167,45 @@ public class RelayLinkTests : IDisposable
     [InlineData("""{"t":"ok","ref":"resync"}""")]
     public void Junk_and_unknown_frames_produce_nothing(string frame) => Assert.Empty(New().Link.OnFrame(frame));
 
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData("ph_a1b2c3d4e5f60718", "ph_a1b2c3d4e5f60718")]
+    [InlineData("01M6X5:unlink.v2-x", "01M6X5:unlink.v2-x")]
+    [InlineData("ph_1\nFAKE line", "ph_1FAKEline…")]
+    [InlineData("a/b+c=d", "abcd…")]
+    public void Safe_keeps_only_id_characters_and_says_when_it_cut(string? value, string expected) =>
+        Assert.Equal(expected, RelayLink.Safe(value));
+
+    [Fact]
+    public void Safe_caps_length_and_known_falls_back_to_unknown()
+    {
+        Assert.Equal(RelayLink.MaxLoggedLength + 1, RelayLink.Safe(new string('a', 500)).Length);
+        var exact = new string('a', RelayLink.MaxLoggedLength);
+        Assert.Same(exact, RelayLink.Safe(exact));                                   // at the cap, kept whole
+        Assert.Equal(exact + "…", RelayLink.Safe(exact + "a"));                      // one past it, cut
+        Assert.Equal("state", RelayLink.Known("state", RelayLink.Classes));
+        Assert.Equal("other", RelayLink.Known("SECRET", RelayLink.Classes));
+        Assert.Equal("other", RelayLink.Known(null, RelayLink.Classes));
+    }
+
+    [Fact]
+    public void Notes_built_from_relay_values_cannot_carry_a_newline_or_a_flood()
+    {
+        var (link, _, notes) = New();
+        link.OnFrame(Welcome());
+        link.OnFrame(JsonSerializer.Serialize(new { t = "x\nFAKE relay line" }));
+        link.OnFrame(JsonSerializer.Serialize(new { t = "err", @ref = "r\nFAKE", code = new string('c', 5_000) }));
+        link.OnFrame(JsonSerializer.Serialize(new { t = "resync", peer_id = "ph_x\nFAKE" }));
+        link.OnFrame(JsonSerializer.Serialize(new { t = "err", @ref = new string('r', 300), code = "rate_limited" }));
+        link.OnFrame(JsonSerializer.Serialize(new { v = 2, from = "ph_x\nFAKE", to = DesktopId, @class = "SECRET", ct = "AAAA" }));
+        Assert.Equal(5, notes.Count);
+        Assert.All(notes, n => Assert.DoesNotContain("\n", n));
+        Assert.All(notes, n => Assert.True(n.Length < 200, n.Length.ToString()));
+        Assert.Contains("relay frame t=xFAKErelayline… ignored", notes);
+        Assert.Contains("resync for ph_xFAKE… ignored: not an online paired phone (not paired)", notes);
+        Assert.Contains("envelope from unpaired ph_xFAKE… class=other", notes);
+    }
+
     [Fact]
     public void Ping_is_answered_with_pong() => Assert.Equal("pong", T(New().Link.OnFrame("""{"t":"ping"}""").Single()));
 
@@ -430,7 +469,10 @@ public class RelayLinkTests : IDisposable
         Assert.Empty(link.OnFrame("""{"t":"resync","peer_id":"ph_stranger"}"""));
         Assert.Empty(link.OnFrame("""{"t":"resync"}"""));
         Assert.Contains($"resync from {phone.Id}: fresh roster", notes);
-        Assert.Contains("resync for ph_stranger ignored: not an online paired phone", notes);
+        Assert.Contains("resync for ph_stranger ignored: not an online paired phone (not paired)", notes);
+        link.OnFrame(Presence(phone.Id, false));
+        link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""");
+        Assert.Contains($"resync for {phone.Id} ignored: not an online paired phone (paired, offline)", notes);
         link.OnFrame(Presence(phone.Id, false));
         Assert.Empty(link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}"""));
     }
@@ -454,6 +496,7 @@ public class RelayLinkTests : IDisposable
         Assert.Contains("envelope refused: wrong direction, replayed or reordered", notes);
 
         link.OnFrame(phone.Revoke());
+        Assert.Contains($"pair.revoke from {phone.Id} verified; phone removed (its own unlink settles the link at the relay)", notes);
         Assert.Equal([phone.Id], removed);
         Assert.Null(identity.PhoneById(phone.Id));
         Assert.Empty(link.OnFrame(phone.Revoke()));                                // now unpaired
@@ -502,8 +545,9 @@ public class RelayLinkTests : IDisposable
     [Fact]
     public void Remove_while_connected_sends_a_signed_revoke_then_unlink()
     {
-        var (link, identity, phone, _, _) = Paired();
+        var (link, identity, phone, notes, _) = Paired();
         var frames = link.Remove(phone.Id);
+        Assert.Contains($"removed {phone.Id}: signed revoke and unlink sent", notes);
         Assert.Equal(2, frames.Count);
         var revoke = phone.OpenFromDesktop(frames[0]);
         Assert.Equal(("pair.revoke", DesktopId), (revoke.GetProperty("t").GetString(), revoke.GetProperty("by").GetString()));
@@ -516,9 +560,10 @@ public class RelayLinkTests : IDisposable
     [Fact]
     public void Remove_while_disconnected_owes_the_unlink_until_the_next_welcome()
     {
-        var (link, identity, phone, _, _) = Paired();
+        var (link, identity, phone, notes, _) = Paired();
         link.Disconnected();
         Assert.Empty(link.Remove(phone.Id));
+        Assert.Contains($"removed {phone.Id}: unlink owed until the next welcome", notes);
         Assert.Empty(link.Remove(phone.Id));                          // twice: owed once
         Assert.Equal([phone.Id], link.PendingUnlinks);
         Assert.Empty(identity.Phones);

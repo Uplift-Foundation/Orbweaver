@@ -67,6 +67,9 @@ if (args.Contains("--phone-only"))
 if (args.Contains("--desktop-only"))
 {
     var every = args.SkipWhile(a => a != "--flip-every").Skip(1).Select(int.Parse).FirstOrDefault(5);
+    // RelayLink's notes on stdout, so a harness sees "resync from … fresh
+    // roster" or "resync … ignored" as it happens (Celeste's request).
+    client.Logged += note => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} note {note}");
     client.Start();
     while (client.State != RelayClient.Status.Connected) await Task.Delay(50);
     Console.WriteLine($"desktop {identity.DeviceId} connected to {baseUrl}");

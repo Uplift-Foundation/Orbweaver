@@ -408,6 +408,19 @@ public class RelayClientTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Notes_reach_the_logged_event()
+    {
+        var client = Client(Identity());
+        var notes = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        client.Logged += notes.Enqueue;
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await _stub.Send("""{"t":"resync","peer_id":"ph_nobody"}""");
+        await Until(() => notes.Contains("resync for ph_nobody ignored: not an online paired phone (not paired)"));
+    }
+
+    [Fact]
     public async Task A_handler_that_throws_does_not_end_later_events()
     {
         var identity = Identity();
@@ -710,6 +723,37 @@ public class RelayClientHelperTests
         Assert.Equal("ws://127.0.0.1:5000/v1/socket", http.SocketUri.ToString());
         Assert.Equal("127.0.0.1:5000", http.RelayHost);
         Assert.Equal((TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(60)), (https.PingInterval, https.Silence));
+    }
+
+    [Theory]
+    [InlineData("""{"t":"ping"}""", null)]
+    [InlineData("""{"t":"pong"}""", null)]
+    [InlineData("""{"t":"resync","peer_id":"ph_1"}""", "t=resync peer=ph_1")]
+    [InlineData("""{"t":"presence","device_id":"ph_1","online":true}""", "t=presence peer=ph_1")]
+    [InlineData("""{"t":"err","ref":"unlink","code":"rate_limited"}""", "t=err code=rate_limited")]
+    [InlineData("""{"t":"ok","ref":"hello","code":"welcome"}""", "t=ok code=welcome")]
+    [InlineData("""{"v":2,"from":"ph_1","to":"dsk_1","class":"pair","ct":"SECRET"}""", "envelope class=pair from=ph_1")]
+    [InlineData("""{"hello":1}""", null)]
+    [InlineData("""[1]""", null)]
+    [InlineData("not json", null)]
+    public void The_inbound_log_names_a_frame_without_its_payload(string frame, string? expected) =>
+        Assert.Equal(expected, RelayClient.InboundKind(frame));
+
+    // nadia's hostile-relay cases (PR #225): nothing a relay sends can forge
+    // a log line, flood the log, or put a payload in it.
+    [Fact]
+    public void A_hostile_relay_cannot_forge_flood_or_smuggle_through_the_inbound_log()
+    {
+        var forged = RelayClient.InboundKind("""{"t":"x\nFAKE relay-in line: t=ok code=welcome"}""")!;
+        Assert.Equal("t=other", forged);
+
+        var flood = RelayClient.InboundKind(JsonSerializer.Serialize(new { t = "resync", peer_id = new string('a', 20_000) }))!;
+        Assert.True(flood.Length < 100, $"{flood.Length} characters");
+        Assert.EndsWith("…", flood);
+
+        var smuggled = RelayClient.InboundKind("""{"v":2,"class":"SECRET-PAYLOAD-IN-CLASS","from":"c2VjcmV0/+==\n","ct":"x"}""")!;
+        Assert.Equal("envelope class=other from=c2VjcmV0…", smuggled);
+        Assert.DoesNotContain("\n", smuggled);
     }
 
     [Fact]
