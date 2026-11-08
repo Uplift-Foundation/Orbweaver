@@ -42,18 +42,21 @@ namespace Orbweaver
         {
             if (_open is not null)
             {
-                (PresentForTests ?? Activate)(_open);
+                Activate(_open);
                 return;
             }
             _open = new PairPhoneWindow(client, () => DateTimeOffset.UtcNow, startTimer: true);
             _open.Closed += OnClosed;
-            (PresentForTests ?? Present)(_open);
+            Present(_open);
             _ = _open.BeginAsync();
         }
 
+        // Both OS halves defer to PresentForTests when a test has set it, so the
+        // open-versus-bring-forward decision above runs in a test unchanged.
         [ExcludeFromCodeCoverage]
         private static void Present(PairPhoneWindow window)
         {
+            if (PresentForTests is { } fake) { fake(window); return; }
             MacOSActivation.SetRegular();
             window.Show();
             window.Activate();
@@ -62,6 +65,7 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         private static void Activate(PairPhoneWindow window)
         {
+            if (PresentForTests is { } fake) { fake(window); return; }
             MacOSActivation.SetRegular();
             window.Activate();
         }
@@ -85,7 +89,7 @@ namespace Orbweaver
         internal TextBlock Detail { get; } = new() { FontSize = 12, Opacity = 0.75, Name = "PairDetail", TextWrapping = TextWrapping.Wrap };
         internal TextBlock Countdown { get; } = new() { FontSize = 12, Opacity = 0.6, Name = "PairCountdown" };
         internal TextBlock Code { get; } = new() { FontSize = 34, FontWeight = FontWeight.Bold, Name = "PairCode", HorizontalAlignment = HorizontalAlignment.Center };
-        internal QrView Qr { get; } = new() { Name = "PairQr", Width = 248, Height = 248, HorizontalAlignment = HorizontalAlignment.Center };
+        internal QrView Qr { get; } = new() { Name = "PairQr", Width = 320, Height = 320, HorizontalAlignment = HorizontalAlignment.Center };
         internal Button AllowButton { get; } = new() { Content = "Allow", Name = "PairAllow", IsDefault = true };
         internal Button DenyButton { get; } = new() { Content = "Deny", Name = "PairDeny" };
         internal Button RetryButton { get; } = new() { Content = "Try again", Name = "PairRetry" };
@@ -96,7 +100,7 @@ namespace Orbweaver
             _client = client;
             _now = now;
             Title = "Pair phone";
-            Width = 360;
+            Width = 380;
             SizeToContent = SizeToContent.Height;
             CanResize = false;
 
@@ -161,7 +165,8 @@ namespace Orbweaver
 
         internal void Ask(RelayLink.PairRequest request)
         {
-            if (Current is not (Stage.Showing or Stage.Asking) || _offer?.OfferId != request.OfferId) return;
+            // Showing and Asking are only ever reached with an offer in hand.
+            if (Current is not (Stage.Showing or Stage.Asking) || _offer!.OfferId != request.OfferId) return;
             _request = request;
             Show(Stage.Asking);
         }
@@ -224,7 +229,7 @@ namespace Orbweaver
                 Stage.Paired => ($"Paired with {_request!.Name}",
                     "Its orbs appear on the phone while both are online. Remove it any time in Settings › Paired phones."),
                 Stage.Expired => ("The code expired", "Codes last five minutes. Try again for a new one."),
-                _ => ("Couldn't start pairing", error ?? "Something went wrong."),
+                _ => ("Couldn't start pairing", error!),   // Failed always carries its reason
             };
             Code.Text = stage == Stage.Asking ? _request!.CheckCodeDisplay : "";
             if (stage == Stage.Showing && _request is null) Tick();
@@ -257,9 +262,15 @@ namespace Orbweaver
         {
             context.FillRectangle(Brushes.White, new Rect(Bounds.Size));
             if (Modules is not { } m) return;
+            // Whole pixels per module, aligned to whole pixels: a fractional
+            // module size antialiases a hairline seam between neighbouring
+            // squares, and a decoder reads the seams as light modules. Measured
+            // in CB-314: at 3.2 px per module OpenCV decoded nothing from this
+            // view, while QRCoder's own PNG of the same text decoded in full.
             var count = m.GetLength(0);
-            var module = Math.Min(Bounds.Width, Bounds.Height) / count;
-            var origin = (Math.Min(Bounds.Width, Bounds.Height) - module * count) / 2;
+            var side = Math.Min(Bounds.Width, Bounds.Height);
+            var module = Math.Max(1, Math.Floor(side / count));
+            var origin = Math.Floor((side - module * count) / 2);
             for (var y = 0; y < count; y++)
                 for (var x = 0; x < count; x++)
                     if (m[y, x])

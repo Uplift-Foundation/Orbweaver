@@ -13,12 +13,27 @@ namespace Orbweaver
         private static RelayClient? _client;
 
         // Replaced by tests, which hand in a client over a fake transport.
-        internal static Func<RelayClient> Factory { get; set; } = () =>
-            new RelayClient(RelayIdentity.Shared, DefaultOptions(), new WebSocketRelayTransport());
+        internal static Func<RelayClient> Factory { get; set; } = RealClient;
 
-        // Persona lookups for the roster. Through the off-thread cache the LAN
-        // roster already uses, so a scan never waits on a persona file.
-        internal static Func<IReadOnlyList<string>> UserConfigDirs { get; set; } = () => LocalPersona.UserConfigDirs();
+        // The production client: the real identity (Keychain or DPAPI) and a
+        // real socket. Excluded because a test must never build it.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static RelayClient RealClient() =>
+            new(RelayIdentity.Shared, DefaultOptions(), new WebSocketRelayTransport());
+
+        // Persona names for the roster, through the off-thread cache the LAN
+        // roster already uses, so a scan never waits on a persona file. A seam
+        // so a test can hand in names; the default is one line of glue into
+        // PeerPersonaCache and LocalPersona, which have suites of their own.
+        internal static Func<SessionStatus, IReadOnlyList<string>, string?> PersonaName { get; set; } = CachedPersonaName;
+        internal static Func<IReadOnlyList<string>> UserConfigDirs { get; set; } = DefaultUserConfigDirs;
+
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static string? CachedPersonaName(SessionStatus status, IReadOnlyList<string> dirs) =>
+            PeerPersonaCache.Shared.Peek(status, dirs, picturesById: true)?.Name;
+
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static IReadOnlyList<string> DefaultUserConfigDirs() => LocalPersona.UserConfigDirs();
 
         internal static RelayClient? Client { get { lock (Gate) return _client; } }
 
@@ -26,12 +41,15 @@ namespace Orbweaver
 
         internal static RelayClient.Options DefaultOptions() => new(
             RelayClient.BaseFrom(BrandEnv.Get(BrandEnv.RelayUrl)),
-            OperatingSystem.IsWindows() ? "win" : "mac",
+            PlatformName(OperatingSystem.IsWindows()),
             AppVersion(),
             MachineNames.Mine());
 
+        internal static string PlatformName(bool isWindows) => isWindows ? "win" : "mac";
+
+        // The SDK always stamps an informational version from <Version>.
         internal static string AppVersion() =>
-            (typeof(RelayService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0")
+            typeof(RelayService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion
                 .Split('+')[0];
 
         // At launch: listen to the scan, and connect if the user has paired
@@ -48,7 +66,7 @@ namespace Orbweaver
             if (client is null) return;
             var dirs = UserConfigDirs();
             client.OnScanned(RelayRoster.Project(snapshot, status =>
-                RelayRoster.PersonaFrom(PeerPersonaCache.Shared.Peek(status, dirs, picturesById: true)?.Name, status)));
+                RelayRoster.PersonaFrom(PersonaName(status, dirs), status)));
         }
 
         // "Pair phone…" calls this. Idempotent.

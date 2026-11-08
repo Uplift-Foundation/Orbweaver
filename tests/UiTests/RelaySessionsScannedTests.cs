@@ -59,6 +59,8 @@ public class RelaySessionsScannedTests
         scratch.Write("relay-a", "generating", "First chat");
         var manager = Manager(scratch);
 
+        manager.ScanAndUpdate();                                    // nobody listening yet: nothing to raise, nothing thrown
+
         var raised = new List<IReadOnlyList<(string SessionId, SessionStatus Status)>>();
         manager.SessionsScanned += snapshot => raised.Add(snapshot);
 
