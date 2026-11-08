@@ -92,4 +92,10 @@ public class TerminalPressTests
         Assert.False(await TerminalFocuser.TypeQuietly(S(), ""));
         Assert.False(await TerminalFocuser.TypeQuietly(S(), "note"));
     }
+
+    [Fact]
+    public void Tmux_captures_and_presses_in_one_command_list()
+    {
+        Assert.Equal(["capture-pane", "-p", "-t", "%3", ";", "send-keys", "-t", "%3", "1"], TerminalPress.TmuxCaptureThenKey("%3", "1"));
+    }
 }

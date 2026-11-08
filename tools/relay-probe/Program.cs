@@ -95,7 +95,7 @@ if (args.Contains("--prompt-desktop"))
     var seams = new PromptPipeline.Seams(
         s => ScreenReaders.For(s)?.ReadAsync(s) ?? Task.FromResult<string?>(null), TerminalFocuser.PressKey, TerminalFocuser.TypeQuietly,
         () => DateTimeOffset.UtcNow, Task.Delay, l => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"),
-        TerminalFocuser.CanPressSilently);
+        TerminalFocuser.CanPressSilently, TerminalFocuser.CaptureAndPress);
     var pd = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport(), promptSeams: seams);
     pd.Start();
     while (pd.State != RelayClient.Status.Connected) await Task.Delay(50);

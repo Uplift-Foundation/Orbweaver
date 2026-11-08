@@ -48,7 +48,20 @@ namespace Orbweaver
             // Whether PressKey can reach this session. A screen the app can
             // read but not press goes out "Open on desk" rather than as a prompt
             // whose every answer would end in press-no-effect. Null: always.
-            Func<SessionStatus, bool>? CanPress = null);
+            Func<SessionStatus, bool>? CanPress = null,
+            // The press together with the screen it landed on. Null: capture,
+            // then press, as two steps (tests mostly; production passes
+            // TerminalFocuser.CaptureAndPress, a single invocation on tmux).
+            Func<SessionStatus, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>>? CaptureAndPress = null);
+
+        // What one press did. Took: the key went into the approved dialog and
+        // the dialog went away. NoEffect: the key failed or the dialog is still
+        // up. LandedElsewhere: the screen the key went into was NOT the
+        // approved dialog — the residual check-to-press window was hit — so
+        // nobody may claim the phone answered it.
+        // Changed: the last look before the key showed another screen, so the
+        // key was never sent — rule 6 again, one step later.
+        internal enum PressOutcome { Took, NoEffect, LandedElsewhere, Changed }
 
         // How long after a press the recapture waits, and how long a tell waits
         // for the dialog to clear before typing (plan §4: ≤ 4 s).
@@ -112,9 +125,11 @@ namespace Orbweaver
                     {
                         live.Status = status;
                         if (fp?.Hash == live.Pending.ScreenHash) continue;
-                        // Answered at the desk and the next dialog is up, or
-                        // the dialog is gone while the hook still says waiting.
-                        Settle(sid, live, "desk");
+                        // Another dialog in its place: the old request is gone
+                        // (plan's wording) — nobody here can say who answered
+                        // it, or whether anyone did. No dialog while the hook
+                        // still says waiting: answered at the desk.
+                        Settle(sid, live, fp is null ? "desk" : "gone");
                     }
                     if (fp is null || screen is null) continue;
                     // AskUserQuestion forms are answered through FormAnswer's
@@ -239,11 +254,34 @@ namespace Orbweaver
                 var pending = live!.Pending;
                 pending.Answered = true;
                 _seams.Log($"press {answer.RequestId} {d.Key}");
-                var tookEffect = answer.Action == "tell"
+                var outcome = answer.Action == "tell"
                     ? await PressTellAsync(live.Status, pending, d.Key!, answer.Note).ConfigureAwait(false)
                     : await PressOnceAsync(live.Status, pending, d.Key!).ConfigureAwait(false);
 
-                if (!tookEffect)
+                if (outcome == PressOutcome.LandedElsewhere)
+                {
+                    // Never "phone": the transition the gate approved is not
+                    // the one that happened. The dialog it approved is gone
+                    // (another was on screen when the key landed), so it is
+                    // settled for everyone, by an actor nobody can name.
+                    _seams.Log($"warning press-landed-elsewhere {answer.RequestId} {d.Key}");
+                    _live.Remove(answer.SessionId);
+                    _send.Resolved(answer.RequestId, answer.SessionId, "unknown");
+                    _seams.Log($"resolved {answer.RequestId} unknown");
+                    return;
+                }
+
+                if (outcome == PressOutcome.Changed)
+                {
+                    // Nothing was pressed, so the prompt is not answered: the
+                    // watcher settles it as gone for every phone on its next
+                    // look, and this phone hears why now.
+                    pending.Answered = false;
+                    Refuse(phoneId, answer, AnswerGate.StalePrompt);
+                    return;
+                }
+
+                if (outcome == PressOutcome.NoEffect)
                 {
                     _seams.Log($"press-no-effect {answer.RequestId}");
                     _send.Refusal(phoneId, answer.RequestId, answer.SessionId, AnswerGate.StalePrompt);
@@ -266,33 +304,54 @@ namespace Orbweaver
             _send.Refusal(phoneId, answer.RequestId, answer.SessionId, code);
         }
 
-        private async Task<bool> PressOnceAsync(SessionStatus status, PendingPrompt pending, string key)
+        // The key and the screen it landed on, then: elsewhere, no effect, or
+        // took (after the settle, the dialog is gone).
+        private async Task<PressOutcome?> PressAsync(SessionStatus status, PendingPrompt pending, string key)
         {
-            if (!await _seams.PressKey(status, key).ConfigureAwait(false)) return false;
+            bool Approved(string? screen) => PromptFingerprint.Of(screen)?.Hash == pending.ScreenHash;
+            var (pressed, before) = _seams.CaptureAndPress is { } both
+                ? await both(status, key, Approved).ConfigureAwait(false)
+                : await CaptureThenPress(status, key, Approved).ConfigureAwait(false);
+            if (!pressed) return Approved(before) || before is null ? PressOutcome.NoEffect : PressOutcome.Changed;
+            if (!Approved(before)) return PressOutcome.LandedElsewhere;
+            return null;   // went into the approved dialog; the caller checks it went away
+        }
+
+        private async Task<(bool, string?)> CaptureThenPress(SessionStatus status, string key, Func<string?, bool> approved)
+        {
+            var before = await _seams.Capture(status).ConfigureAwait(false);
+            if (!approved(before)) return (false, before);
+            return (await _seams.PressKey(status, key).ConfigureAwait(false), before);
+        }
+
+        private async Task<PressOutcome> PressOnceAsync(SessionStatus status, PendingPrompt pending, string key)
+        {
+            if (await PressAsync(status, pending, key).ConfigureAwait(false) is { } early) return early;
             await _seams.Delay(SettleDelay).ConfigureAwait(false);
-            return AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false));
+            return AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false))
+                ? PressOutcome.Took : PressOutcome.NoEffect;
         }
 
         // tell: press the option, wait for the dialog to clear (the CLI then
         // shows its own input), and only then type the note and Enter. If the
         // dialog never clears the note is not typed anywhere.
-        private async Task<bool> PressTellAsync(SessionStatus status, PendingPrompt pending, string key, string note)
+        private async Task<PressOutcome> PressTellAsync(SessionStatus status, PendingPrompt pending, string key, string note)
         {
-            if (!await _seams.PressKey(status, key).ConfigureAwait(false)) return false;
+            if (await PressAsync(status, pending, key).ConfigureAwait(false) is { } early) return early;
             var waited = TimeSpan.Zero;
             while (true)
             {
                 await _seams.Delay(TellPoll).ConfigureAwait(false);
                 waited += TellPoll;
                 if (AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false))) break;
-                if (waited >= TellClearLimit) return false;
+                if (waited >= TellClearLimit) return PressOutcome.NoEffect;
             }
             if (note.Length > 0)
             {
                 await _seams.TypeLiteral(status, note).ConfigureAwait(false);
                 await _seams.PressKey(status, "Enter").ConfigureAwait(false);
             }
-            return true;
+            return PressOutcome.Took;
         }
     }
 }

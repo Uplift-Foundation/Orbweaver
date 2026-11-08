@@ -17,13 +17,15 @@ using static Orbweaver.RelayCrypto;
 // ECDSA P-256 over UTF-8("orbweaver-answer-v1") || the canonical body, by this
 // phone's identity key. Every field can be forged, one per control:
 //
-//   answer <action> [scope=…] [note=…]       a correctly signed answer
+//   answer <action> [scope=…] [note=…]       a correctly signed answer to the
+//          [prompt:N]                        latest prompt, or to the Nth seen
 //          [set:<field>=<value>]...          change a field AFTER signing
 //                                            (request_id session_id action scope
 //                                            note nonce expires_at screen_hash sig)
 //          [signbody:<field>=<value>]...     sign a body with this field changed,
 //                                            send the real one (a bad signature)
 //          [sign:other]                      sign with a different key
+//   hold / answer … held                     snapshot the latest prompt now, answer it later
 //   replay                                   resend the last answer, same nonce
 //   wait <seconds>                           sleep before the next command
 //   unlink                                   unlink from the phone side and exit
@@ -101,6 +103,8 @@ internal static class AnswerPhone
         var basis = SessionBase(SharedSecret(phKa, dKaPub), desktopId, phoneId);
         ulong sent = 0;
         JsonElement? lastPrompt = null;
+        var prompts = new List<JsonElement>();   // every prompt, in arrival order, for prompt:N
+        JsonElement? held = null;                 // `hold` snapshots the latest prompt; `answer … held` answers it
         object? lastAnswer = null;
 
         Task SendSealed(string plaintext) =>
@@ -136,7 +140,12 @@ internal static class AnswerPhone
                     var pt = PushSeal.Open(phKa, ee.GetString());
                     Console.WriteLine($"{Now()}   e ({ee.GetString()!.Length} chars) {(pt is null ? "DID NOT OPEN" : Encoding.UTF8.GetString(pt))}");
                 }
-                if (msg.GetProperty("t").GetString() == "prompt") lastPrompt = msg;
+                if (msg.GetProperty("t").GetString() == "prompt")
+                {
+                    lock (prompts) prompts.Add(msg);
+                    lastPrompt = msg;
+                    Console.WriteLine($"{Now()}   (prompt #{prompts.Count})");
+                }
             }
         });
 
@@ -158,13 +167,26 @@ internal static class AnswerPhone
                 case "wait":
                     await Task.Delay(TimeSpan.FromSeconds(double.Parse(words[1], System.Globalization.CultureInfo.InvariantCulture)));
                     break;
+                case "hold":
+                    held = lastPrompt;
+                    Console.WriteLine($"{Now()} held {(held is { } h ? h.GetProperty("request_id").GetString() : "nothing")}");
+                    break;
                 case "replay":
                     if (lastAnswer is null) { Console.WriteLine("no answer to replay"); break; }
                     await SendSealed(JsonSerializer.Serialize(lastAnswer));
                     Console.WriteLine($"{Now()} sent replay");
                     break;
                 case "answer":
-                    if (lastPrompt is not { } pr) { Console.WriteLine("no prompt yet"); break; }
+                    // prompt:N answers the Nth prompt seen (1-based) instead of the
+                    // latest — what a rule-6 control needs, since the desktop
+                    // retires a redrawn dialog's prompt and sends a new one.
+                    var pick = words.FirstOrDefault(w => w.StartsWith("prompt:"));
+                    JsonElement? chosen;
+                    lock (prompts) chosen = words.Contains("held") ? held
+                        : pick is null ? lastPrompt : int.TryParse(pick[7..], out var nth) && nth >= 1 && nth <= prompts.Count ? prompts[nth - 1] : null;
+                    words = words.Where(w => w != "held").ToList();
+                    if (chosen is not { } pr) { Console.WriteLine("no such prompt"); break; }
+                    words = words.Where(w => !w.StartsWith("prompt:")).ToList();
                     var f = new Dictionary<string, object>
                     {
                         ["t"] = "answer",

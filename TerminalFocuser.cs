@@ -594,6 +594,34 @@ namespace Orbweaver
             };
         }
 
+        // The press with the screen it landed on (CB-315 rule 8). On tmux the
+        // capture and the key are ONE invocation — `capture-pane -p ; send-keys`
+        // — so they run back to back inside tmux's command queue with nothing of
+        // ours between them, and the capture is the screen the key went into.
+        // tmux cannot make the key conditional on what it captured, so this
+        // cannot stop a press; it makes the pipeline KNOW, every time, whether
+        // the key landed on the dialog the gate approved. Elsewhere there is no
+        // single command for both, so it is the screen reader, then `approved`
+        // asked of what it read (not approved: no press at all), then the press
+        // — two processes apart, the residual window PR #227 names.
+        public static async Task<(bool Pressed, string? Before)> CaptureAndPress(SessionStatus? status, string key, Func<string?, bool> approved)
+        {
+            if (status is null || TerminalPress.Bytes(key) is null || !CanPressSilently(status)) return (false, null);
+            if (RouteFor(status) == TerminalTyping.Route.Tmux)
+            {
+                return await Task.Run(() =>
+                {
+                    var tmux = ResolveTmuxBinary(status.TmuxBin);
+                    if (tmux is null) return (false, (string?)null);
+                    var ok = TryRun(tmux, out var screen, TmuxArgs(status, TerminalPress.TmuxCaptureThenKey(status.TmuxPane, key)));
+                    return (ok, ok ? screen : null);
+                });
+            }
+            var before = ScreenReaders.For(status) is { } reader ? await reader.ReadAsync(status) : null;
+            if (!approved(before)) return (false, before);
+            return (await PressKey(status, key), before);
+        }
+
         // A tell's note, typed without Enter (the caller presses Enter after):
         // bracketed exactly as the composer types it, through the same routes.
         public static Task<bool> TypeQuietly(SessionStatus? status, string text)

@@ -162,7 +162,8 @@ namespace Orbweaver
             now, Task.Delay, line => MirrorLog.Say("relay", line),
             // Only the routes that write without focus; Terminal.app and
             // anything else get "Open on desk".
-            TerminalFocuser.CanPressSilently);
+            TerminalFocuser.CanPressSilently,
+            TerminalFocuser.CaptureAndPress);
 
         // The whole scan, for the prompt watcher; the roster gets its
         // projection through OnScanned.

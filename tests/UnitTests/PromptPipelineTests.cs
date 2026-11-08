@@ -143,14 +143,14 @@ public class PromptPipelineTests
     }
 
     [Fact]
-    public async Task A_new_dialog_while_still_waiting_resolves_the_old_and_prompts_the_new()
+    public async Task A_new_dialog_while_still_waiting_resolves_the_old_as_gone_and_prompts_the_new()
     {
         await _p.OnScannedAsync(Snap());
         _pane.Screen = Dialog.Replace("tests/UnitTests", "tests/IntegrationTests");
         _now = _now.AddSeconds(2);
         await _p.OnScannedAsync(Snap());
         Assert.Equal(2, _sent.Prompts.Count);
-        Assert.Equal((_sent.Prompts[0].Rid, "desk"), (_sent.Resolved.Single().Rid, _sent.Resolved.Single().By));
+        Assert.Equal((_sent.Prompts[0].Rid, "gone"), (_sent.Resolved.Single().Rid, _sent.Resolved.Single().By));
         Assert.NotEqual(_sent.Prompts[0].Rid, _sent.Prompts[1].Rid);
     }
 
@@ -412,5 +412,84 @@ public class PromptPipelineTests
         Assert.Equal(0, sent.GetProperty("options").GetArrayLength());
         await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
         Assert.Empty(_pane.Keys);
+    }
+
+    // ---- rule 6 interleavings (Nadia's acceptance-4 try 1) ---------------------
+
+    private static readonly string DialogB = Dialog.Replace("tests/UnitTests", "tests/IntegrationTests");
+
+    // The screen is redrawn to another dialog AFTER the gate's fresh capture
+    // (rule 6 passed against A) and BEFORE the key. On a route without a
+    // single capture-and-press command, the last look before the key sees B,
+    // so no key is sent at all: stale_prompt, and the watcher settles A as
+    // gone for every phone on its next look.
+    [Fact]
+    public async Task A_redraw_between_the_gate_and_the_key_sends_no_key()
+    {
+        var captures = 0;
+        var keys = new List<string>();
+        // 1: the watcher's look; 2: the gate's fresh capture (rule 6 passes
+        // against A); 3: the last look before the key, after the redraw.
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(++captures <= 2 ? Dialog : DialogB),
+            (_, k) => { keys.Add(k); return Task.FromResult(true); }, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(3, captures);
+        Assert.Empty(keys);
+        Assert.Equal((a.RequestId, AnswerGate.StalePrompt), (Assert.Single(_sent.Refusals).Rid, _sent.Refusals[0].Code));
+        Assert.False(p.PendingFor("s1")!.Answered);
+        Assert.Empty(_sent.Resolved);
+
+        await p.OnScannedAsync(Snap());          // the watcher sees B: A is gone for every phone
+        Assert.Equal((a.RequestId, "gone"), (Assert.Single(_sent.Resolved).Rid, _sent.Resolved[0].By));
+    }
+
+    // On tmux the capture and the key are one invocation, and tmux cannot make
+    // the key conditional, so a redraw that lands after the gate but before
+    // that invocation IS pressed. The in-invocation capture says so, and the
+    // answer is then never reported as the phone's: resolved by unknown, with
+    // a warning.
+    [Fact]
+    public async Task A_key_that_landed_on_another_dialog_is_never_reported_as_the_phones()
+    {
+        var keys = new List<string>();
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add,
+            CaptureAndPress: (_, k, _) => { keys.Add(k); return Task.FromResult<(bool, string?)>((true, DialogB)); }), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(["1"], keys);
+        Assert.Equal((a.RequestId, "s1", "unknown"), Assert.Single(_sent.Resolved));
+        Assert.Contains($"warning press-landed-elsewhere {a.RequestId} 1", _log);
+        Assert.DoesNotContain(_log, l => l.Contains("phone:"));
+        Assert.Equal(0, p.PendingCount);
+    }
+
+    // The same seam when the in-invocation capture IS the approved dialog: a
+    // normal press, resolved by the phone.
+    [Fact]
+    public async Task A_key_that_landed_on_the_approved_dialog_is_the_phones()
+    {
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add,
+            CaptureAndPress: async (s, k, approved) => { var before = await _pane.Capture(s); return approved(before) ? (await _pane.Press(s, k), before) : (false, before); }),
+            _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Equal(["1"], _pane.Keys);
+        Assert.Equal("phone:" + PhoneId, Assert.Single(_sent.Resolved).By);
+    }
+
+    [Fact]
+    public async Task A_failed_last_look_presses_nothing_and_is_no_effect()
+    {
+        var captures = 0;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(++captures <= 2 ? Dialog : null), _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());                     // capture 1
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());   // capture 2: the gate; 3: the last look fails
+        Assert.Empty(_pane.Keys);
+        Assert.Contains(_log, l => l.StartsWith("press-no-effect "));
     }
 }

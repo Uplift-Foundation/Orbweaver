@@ -16,6 +16,11 @@ namespace Orbweaver
             TerminalTyping.Route.Tmux or TerminalTyping.Route.Kitty or TerminalTyping.Route.WezTerm
             or TerminalTyping.Route.ITerm2 or TerminalTyping.Route.WindowsConsole;
 
+        // tmux: the capture and the key as one command list. ";" as its own
+        // argument is tmux's separator, so no shell is involved.
+        internal static string[] TmuxCaptureThenKey(string pane, string key) =>
+            ["capture-pane", "-p", "-t", pane, ";", "send-keys", "-t", pane, key];
+
         // The bytes a key is: a single ASCII digit as itself, Enter as CR (not
         // LF, which Claude Code and Codex read as "insert a newline"; see
         // TerminalFocuser.KittySend). Anything else is not a key this presses.
