@@ -85,6 +85,7 @@ internal static class PromptVectors
             return j;
         }
         j["dialog"] = true;
+        j["desk_only"] = FirstRunDialogs.Is(screen);
         j["canonical_text"] = fp.Canonical;
         j["canonical_text_utf8"] = Hex(Encoding.UTF8.GetBytes(fp.Canonical));
         j["screen_hash"] = fp.Hash;
@@ -135,6 +136,17 @@ internal static class PromptVectors
             Fingerprint("wezterm-codex-prompt-120", Fixture("wezterm-codex-prompt-120.txt"), "CB-313 fixture at 120 columns"),
             Fingerprint("wt-codex-prompt", Fixture("wt-codex-prompt.txt"), "CB-313 fixture, Windows Terminal; the dialog starts under the ◦/• Running line, which flips glyph while it waits and so is not hashed"),
             Fingerprint("tmux-claude-none", Fixture("tmux-claude-none.txt"), "no dialog on screen: no prompt is sent"),
+            Fingerprint("conhost-claude-none", Fixture("conhost-claude-none.txt"), "Windows console at conhost's > idle prompt: no prompt is sent"),
+            Fingerprint("tmux-claude-prompt-wrapped", Fixture("tmux-claude-prompt-wrapped.txt"), "option 2's label wraps at a hyphen; the parser rejoins it with no space"),
+            Fingerprint("iterm2-claude-prompt", Fixture("iterm2-claude-prompt.txt"), "80 columns: option 2's label wraps and is rejoined with one space"),
+            Fingerprint("wezterm-claude-prompt", Fixture("wezterm-claude-prompt.txt"), "80 columns: option 2's label wraps and is rejoined with one space"),
+            Fingerprint("tmux-grok-prompt", Fixture("tmux-grok-prompt.txt"), "Grok on the Mac: N (○) label radio rows, the marks not part of the label; the always-approve option is kind mode; the live '22s' line above the frame is not hashed"),
+            Fingerprint("iterm2-grok-prompt", Fixture("iterm2-grok-prompt.txt"), "Grok on the Mac, iTerm2"),
+            Fingerprint("conhost-grok-prompt", Fixture("conhost-grok-prompt.txt"), "Grok on Windows: five options, Always allow: <cmd> (kind always, scope the command, wrapped) and Never allow"),
+            Fingerprint("wt-grok-prompt", Fixture("wt-grok-prompt.txt"), "Grok on Windows Terminal"),
+            Fingerprint("conhost-codex-updatedialog", Fixture("conhost-codex-updatedialog.txt"), "a first-run screen: it parses as a numbered dialog, so it is sent desk_only (options []) and nothing is pressable"),
+            Fingerprint("wt-codex-hooksdialog", Fixture("wt-codex-hooksdialog.txt"), "a first-run screen, desk_only"),
+            Fingerprint("wt-codex-trustdialog", Fixture("wt-codex-trustdialog.txt"), "a first-run screen, desk_only"),
         };
 
         var fp = PromptFingerprint.Of(FramesV3Screen)!;

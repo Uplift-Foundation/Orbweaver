@@ -301,5 +301,5 @@ File.WriteAllText(Path.Combine(outDir, "roster-fixtures.json"), rosters.ToJsonSt
 File.WriteAllText(Path.Combine(outDir, "persona-colors.json"),
     new JsonArray(RelayRoster.PersonaColors.Select(c => (JsonNode)JsonValue.Create(c)!).ToArray()).ToJsonString(options) + "\n");
 // CB-315: prompt-, answer- and push-vectors.json (tools/relay-vectors/PromptVectors.cs).
-PromptVectors.Write(outDir, sha, args.Length > 2 ? args[2] : Path.Combine("tools", "screen-read-probe", "fixtures"));
+PromptVectors.Write(outDir, sha, args.Length > 2 ? args[2] : Path.Combine("tests", "UnitTests", "Fixtures", "screens"));
 Console.WriteLine($"wrote prompt-vectors.json, answer-vectors.json, push-vectors.json and pairing-vectors.json, session-vectors.json, roster-fixtures.json and persona-colors.json to {Path.GetFullPath(outDir)} (check code {CheckCodeDisplay(code)})");
