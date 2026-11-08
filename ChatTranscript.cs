@@ -456,7 +456,7 @@ namespace Orbweaver
         // ParseDialog, also handing back the cleaned lines and the index of
         // option 1, so ParseAskForm reads the same option run rather than a
         // second one of its own.
-        private static ChatPrompt? ParseDialogCore(string screen, out string[] cleanedLines, out int firstOption)
+        internal static ChatPrompt? ParseDialogCore(string screen, out string[] cleanedLines, out int firstOption)
         {
             cleanedLines = Array.Empty<string>();
             firstOption = -1;
