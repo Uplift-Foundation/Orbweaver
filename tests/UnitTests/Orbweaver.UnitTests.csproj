@@ -32,7 +32,7 @@
     <!-- CB-314: the phone relay's contract vectors, copied from Orbweaver-Mobile contracts/ (see Fixtures/relay/SOURCE.md). -->
     <Content Include="Fixtures\relay\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-313: real terminal captures, shared with tools/screen-read-probe. -->
-    <Content Include="..\..\tools\screen-read-probe\fixtures\*" Link="ScreenReadFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\screens\*" Link="ScreenReadFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

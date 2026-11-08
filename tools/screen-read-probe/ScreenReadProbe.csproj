@@ -18,6 +18,8 @@
     <Compile Include="Program.cs" />
     <Compile Include="Readers/*.cs" />
     <Compile Include="../../ChatTranscript.cs" />
+    <Compile Include="../../GrokDialog.cs" />
+    <Compile Include="../../FirstRunDialogs.cs" />
     <Compile Include="../../PaneScreen.cs" />
     <Compile Include="../../CodexTranscript.cs" />
     <Compile Include="../../GrokTranscript.cs" />

@@ -10,4 +10,4 @@ tools/*.py text eol=lf
 tests/TranscriptTests/*.cs text eol=lf
 
 # CB-313: raw terminal captures, LF as the readers wrote them.
-tools/screen-read-probe/fixtures/* text eol=lf
+tests/UnitTests/Fixtures/screens/* text eol=lf
