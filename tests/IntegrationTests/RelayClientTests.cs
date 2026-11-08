@@ -739,6 +739,23 @@ public class RelayClientHelperTests
     public void The_inbound_log_names_a_frame_without_its_payload(string frame, string? expected) =>
         Assert.Equal(expected, RelayClient.InboundKind(frame));
 
+    // nadia's hostile-relay cases (PR #225): nothing a relay sends can forge
+    // a log line, flood the log, or put a payload in it.
+    [Fact]
+    public void A_hostile_relay_cannot_forge_flood_or_smuggle_through_the_inbound_log()
+    {
+        var forged = RelayClient.InboundKind("""{"t":"x\nFAKE relay-in line: t=ok code=welcome"}""")!;
+        Assert.Equal("t=unknown", forged);
+
+        var flood = RelayClient.InboundKind(JsonSerializer.Serialize(new { t = "resync", peer_id = new string('a', 20_000) }))!;
+        Assert.True(flood.Length < 100, $"{flood.Length} characters");
+        Assert.EndsWith("…", flood);
+
+        var smuggled = RelayClient.InboundKind("""{"v":2,"class":"SECRET-PAYLOAD-IN-CLASS","from":"c2VjcmV0/+==\n","ct":"x"}""")!;
+        Assert.Equal("envelope class=unknown from=c2VjcmV0…", smuggled);
+        Assert.DoesNotContain("\n", smuggled);
+    }
+
     [Fact]
     public void Rate_limit_retries_back_off_from_a_quarter_second_with_jitter()
     {

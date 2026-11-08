@@ -481,14 +481,20 @@ namespace Orbweaver
             {
                 var e = JsonDocument.Parse(text).RootElement;
                 if (e.ValueKind != JsonValueKind.Object) return null;
+                // Everything echoed is filtered (RelayLink.Known/Safe): a relay
+                // cannot forge a line, flood the log, or smuggle a payload in.
                 if (Str(e, "t") is { } t)
                 {
                     if (t is "ping" or "pong") return null;
                     var about = Str(e, "peer_id") ?? Str(e, "device_id");
                     var code = Str(e, "code");
-                    return $"t={t}" + (about is null ? "" : $" peer={about}") + (code is null ? "" : $" code={code}");
+                    return $"t={RelayLink.Known(t, RelayLink.ControlKinds)}"
+                           + (about is null ? "" : $" peer={RelayLink.Safe(about)}")
+                           + (code is null ? "" : $" code={RelayLink.Safe(code)}");
                 }
-                return e.TryGetProperty("v", out _) ? $"envelope class={Str(e, "class")} from={Str(e, "from")}" : null;
+                return e.TryGetProperty("v", out _)
+                    ? $"envelope class={RelayLink.Known(Str(e, "class"), RelayLink.Classes)} from={RelayLink.Safe(Str(e, "from"))}"
+                    : null;
             }
             catch (JsonException) { return null; }
         }
