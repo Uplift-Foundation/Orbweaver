@@ -228,6 +228,22 @@ public class ScreenReadFixtureTests
     }
 
     [Fact]
+    public void A_line_at_the_margin_after_a_full_option_line_is_not_joined_into_it()
+    {
+        // The label is as wide as the terminal, so the width test alone would join the next line; it sits at
+        // the margin, left of the label's column, so it is not a wrap of that label.
+        var first = "Yes, and always allow access to /private/tmp/abcdefghij";
+        var screen = string.Join('\n', new[]
+        {
+            new string('─', 60), " Bash command", " Do you want to proceed?",
+            " ❯ 1. Yes", "   2. " + first, " Remaining output is hidden",
+            "   3. No", "", " Esc to cancel · Tab to amend",
+        });
+        var d = ChatTranscript.ParseDialog(screen)!;
+        Assert.Equal(first, d.Options[1].Label);
+    }
+
+    [Fact]
     public void A_long_label_in_a_narrow_terminal_is_whole_and_its_neighbours_are_not_swallowed()
     {
         var d = ChatTranscript.ParseDialog(Screen("tmux-claude-prompt-wrapped"))!;
