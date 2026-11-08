@@ -127,6 +127,10 @@ namespace Orbweaver
                 : !string.IsNullOrWhiteSpace(description) ? description
                 : "Waiting for input";
 
+            for (var n = 0; n < options.Count; n++)
+                if (OptionModes.IsTruncatedScope(options[n].Label, command))
+                    options[n] = options[n] with { ScopeTruncated = true };
+
             return new ChatPrompt(title!, options);
         }
 
@@ -155,5 +159,37 @@ namespace Orbweaver
         internal static bool IsMode(string label) =>
             label.Contains("always-approve mode", StringComparison.OrdinalIgnoreCase)
             || label.Contains("switch to auto mode", StringComparison.OrdinalIgnoreCase);
+
+        // An option that grants a standing permission with a scope: Claude's "Yes, and always
+        // allow access to …", Codex's "Yes, and don't ask again for commands that start with …",
+        // Grok's "Always allow: …". A mode switch is not one (it grants no scope to show).
+        internal static bool IsAlwaysAllow(string label) =>
+            !IsMode(label)
+            && (label.Contains("always allow", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("don't ask again", StringComparison.OrdinalIgnoreCase));
+
+        // Claude Code and Codex draw full-width rules, so the width is known; an always-allow label
+        // that is not wrapped and whose line fills it was cut at the edge (the terminal wraps them
+        // when it can, so a line that ends exactly at the edge with no continuation is suspect).
+        internal static bool IsTruncatedAtEdge(string label, bool wrapped, int lineLength, int? ruleWidth) =>
+            IsAlwaysAllow(label) && !wrapped && ruleWidth is int w && lineLength >= w;
+
+        // Grok on Windows cuts the "Always allow: <command>" label at the end of its box without
+        // wrapping (CB-313: `… -ErrorAction`, where the command above ends `-ErrorAction
+        // SilentlyContinue`), and the screen is wider than the cut, so the edge test cannot see it.
+        // The command is on screen in full, so a scope that is a strict prefix of it was cut. A
+        // scope that ends in a wildcard is a pattern the person narrowed on purpose, not a cut.
+        internal static bool IsTruncatedScope(string label, string? command)
+        {
+            const string Marker = "Always allow:";
+            if (string.IsNullOrWhiteSpace(command) || !label.StartsWith(Marker, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var scope = label[Marker.Length..].Trim();
+            return scope.Length > 0
+                && scope.Length < command.Length
+                && !scope.EndsWith('*')
+                && command.StartsWith(scope, StringComparison.Ordinal);
+        }
     }
 }
