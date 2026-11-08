@@ -188,6 +188,45 @@ public class ScreenReadFixtureTests
         Assert.Equal(expected, ChatTranscript.ParseDialog(Screen(fixture))!.Options[index].Label);
     }
 
+    // The guard in the join that says "the line above was full". A line under an option is a wrap of that
+    // label only if the terminal had no room to keep its first word on the line above; otherwise it is a
+    // description. Fixtures hit this by accident, so it is pinned directly on a synthetic 60-column screen.
+    private static string NarrowDialog(string optionTwoFirstLine, string underOptionOne)
+    {
+        var rule = new string('─', 60);
+        return string.Join('\n', new[]
+        {
+            rule, " Bash command", " Do you want to proceed?",
+            " ❯ 1. Yes", underOptionOne,
+            " " + "  2. " + optionTwoFirstLine, "          from this project",
+            "   3. No", "", " Esc to cancel · Tab to amend",
+        });
+    }
+
+    [Fact]
+    public void A_description_under_a_short_label_is_not_joined_into_it()
+    {
+        var d = ChatTranscript.ParseDialog(NarrowDialog("Yes, and always allow", "       Runs it once, then asks again"))!;
+        Assert.Equal("Yes", d.Options[0].Label);
+    }
+
+    [Fact]
+    public void A_continuation_under_a_label_that_ran_out_of_room_is_joined()
+    {
+        // Option 2's first line is 58 wide: "from" (4) would need 63 > 60, so the terminal wrapped it.
+        var first = "Yes, and always allow access to /private/tmp/abcdefghij";
+        var d = ChatTranscript.ParseDialog(NarrowDialog(first, "       Runs it once, then asks again"))!;
+        Assert.Equal(first + " from this project", d.Options[1].Label);
+    }
+
+    [Fact]
+    public void The_same_continuation_is_left_alone_when_the_label_above_had_room()
+    {
+        // 30 wide: "from" fits on the line above, so it is a description, not a wrap.
+        var d = ChatTranscript.ParseDialog(NarrowDialog("Yes, and always allow", "       Runs it once, then asks again"))!;
+        Assert.Equal("Yes, and always allow", d.Options[1].Label);
+    }
+
     [Fact]
     public void A_long_label_in_a_narrow_terminal_is_whole_and_its_neighbours_are_not_swallowed()
     {
