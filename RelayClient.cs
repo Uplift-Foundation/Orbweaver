@@ -68,6 +68,7 @@ namespace Orbweaver
         private readonly IRelayTransport _transport;
         private readonly HttpClient _http;
         private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+        private readonly Func<DateTimeOffset> _now;
         private readonly RelayLink _link;
         private readonly object _gate = new();
         private readonly List<Action> _deferred = new();
@@ -87,7 +88,8 @@ namespace Orbweaver
             _transport = transport;
             _http = new HttpClient(http ?? new SocketsHttpHandler(), disposeHandler: true) { Timeout = TimeSpan.FromSeconds(20) };
             _delay = delay ?? Task.Delay;
-            _link = new RelayLink(identity, new RelaySessionBook(), now ?? (() => DateTimeOffset.UtcNow),
+            _now = now ?? (() => DateTimeOffset.UtcNow);
+            _link = new RelayLink(identity, new RelaySessionBook(), _now,
                 options.Platform, options.AppVersion, options.RelayHost);
 
             // Raised inside RelayLink, under the lock: anything that reaches
@@ -213,7 +215,7 @@ namespace Orbweaver
                 outbox.Writer.TryWrite(_link.Hello());
             }
 
-            var writer = WriteLoopAsync(socket, outbox.Reader, token);
+            var writer = WriteLoopAsync(socket, outbox.Reader, new RelayPacer(_now()), token);
             var pinger = PingLoopAsync(outbox.Writer, token);
             try
             {
@@ -249,10 +251,16 @@ namespace Orbweaver
             catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or IOException or ChannelClosedException) { }
         }
 
-        private static async Task WriteLoopAsync(IRelaySocket socket, ChannelReader<string> outbox, CancellationToken token)
+        // One writer per connection, in order, paced under the relay's frame
+        // rate (RelayPacer says why). A frame over budget waits; none is dropped.
+        private async Task WriteLoopAsync(IRelaySocket socket, ChannelReader<string> outbox, RelayPacer pacer, CancellationToken token)
         {
             await foreach (var frame in outbox.ReadAllAsync(token).ConfigureAwait(false))
+            {
+                var wait = pacer.Reserve(_now());
+                if (wait > TimeSpan.Zero) await _delay(wait, token).ConfigureAwait(false);
                 await socket.SendAsync(frame, token).ConfigureAwait(false);
+            }
         }
 
         private async Task PingLoopAsync(ChannelWriter<string> outbox, CancellationToken token)

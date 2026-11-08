@@ -169,6 +169,38 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Single(client.Phones);
     }
 
+    // Found against the live relay: a hundred back-to-back flips drew
+    // err rate_limited and a dropped frame. Thirty deltas queued at once must
+    // all arrive, in order, and spread out under the pacer rather than in one
+    // burst the relay would drop.
+    [Fact]
+    public async Task A_burst_of_frames_is_paced_and_none_is_dropped()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var client = Client(identity);
+        client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", "idle", null, null)]);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true }));
+        await _stub.Next(IsEnvelope);                              // the roster
+
+        for (var i = 0; i < 30; i++)
+            client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", i % 2 == 0 ? "generating" : "idle", null, null)]);
+
+        var started = DateTime.UtcNow;
+        var seqs = new List<long>();
+        for (var i = 0; i < 30; i++)
+            seqs.Add(OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("seq").GetInt64());
+        var took = DateTime.UtcNow - started;
+
+        Assert.Equal(Enumerable.Range(2, 30).Select(i => (long)i), seqs);
+        // 10 go at once, the other 20 at 35/s: at least ~0.5 s, never one burst.
+        Assert.True(took >= TimeSpan.FromMilliseconds(400), $"30 frames arrived in {took.TotalMilliseconds} ms");
+    }
+
     [Fact]
     public async Task Remove_sends_revoke_and_unlink_to_the_relay()
     {

@@ -170,6 +170,9 @@ namespace Orbweaver
                     return [];
                 case "presence":
                     return OnPresence(f);
+                case "ok":
+                    // link and unlink acknowledgements: nothing to do.
+                    return [];
                 case "ping":
                     return [Frame(w => w.WriteString("t", "pong"))];
                 case "pong":

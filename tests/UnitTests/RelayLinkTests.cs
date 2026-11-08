@@ -162,6 +162,7 @@ public class RelayLinkTests : IDisposable
     [InlineData("""{"t":"err","ref":"x","code":"rate_limited"}""")]
     [InlineData("""{"t":"pong"}""")]
     [InlineData("""{"t":5}""")]
+    [InlineData("""{"t":"ok","ref":"link","code":"linked"}""")]
     public void Junk_and_unknown_frames_produce_nothing(string frame) => Assert.Empty(New().Link.OnFrame(frame));
 
     [Fact]
