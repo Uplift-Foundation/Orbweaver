@@ -754,6 +754,10 @@ namespace Orbweaver
             // and the recommendation went with it.
             root.Children.Add(Group("peer-link", "Other machines", Card(PeerLinkRows())));
 
+            // CB-314: beside the LAN link because it answers the same question —
+            // where else can these sessions be seen — for a phone instead.
+            root.Children.Add(Group("paired-phones", "Paired phones", Card(PairedPhonesRows())));
+
             // Last, before the Desktop app: it is about this app rather than any of
             // the agent CLIs above it, and it is a short group that should not
             // sit between two sections about the same sessions (CB-308).
@@ -2167,6 +2171,18 @@ namespace Orbweaver
                 if (_claudeCloudStatus.Text != cloud) _claudeCloudStatus.Text = cloud;
             }
 
+            // CB-314: the relay line and each phone's online / last-seen.
+            if (_relayStatus is not null && RelayService.Client is { } relay)
+            {
+                var text = PairedPhonesText.Relay(relay.State, relay.LastError);
+                if (_relayStatus.Text != text) _relayStatus.Text = text;
+                foreach (var (phoneId, label) in _phoneStatus)
+                {
+                    var line = PairedPhonesText.Phone(relay.IsOnline(phoneId), relay.LastSeen(phoneId), DateTimeOffset.UtcNow);
+                    if (label.Text != line) label.Text = line;
+                }
+            }
+
             if (_peerLinkStatus is not null)
             {
                 // Changes under you more than either of the others: a machine
@@ -2567,6 +2583,96 @@ namespace Orbweaver
 
             return rows.ToArray();
         }
+
+        // CB-314: Settings › Paired phones. Pair one (the same window the tray
+        // opens), see whether each is online, and Remove — which revokes the
+        // link at the relay, not just here (acceptance 4).
+        //
+        // Reads phones only through a client that exists: a user who never
+        // paired has no client, and opening Settings must not be what first
+        // touches the Keychain for the relay's keys.
+        private TextBlock? _relayStatus;
+        private readonly List<(string PhoneId, TextBlock Label)> _phoneStatus = new();
+
+        internal TextBlock? RelayStatusLabel => _relayStatus;
+
+        internal Control[] PairedPhonesRows()
+        {
+            _relayStatus = null;
+            _phoneStatus.Clear();
+
+            var pair = new Button { Content = "Pair phone…", Name = "PairPhoneButton" };
+            pair.Click += (_, _) => OnPairPhoneClicked();
+            var rows = new List<Control>
+            {
+                Row("Pair a phone", pair,
+                    $"Shows a QR code for {Brand.DisplayName} on your iPhone. Its orbs then appear on the phone "
+                    + "from anywhere, read-only. You confirm a six-digit code on both screens first.")
+            };
+
+            var client = RelayService.Client;
+            var phones = client?.Phones ?? [];
+            if (client is not null)
+            {
+                _relayStatus = new TextBlock
+                {
+                    Text = PairedPhonesText.Relay(client.State, client.LastError),
+                    FontSize = 12,
+                    Opacity = 0.75,
+                    TextWrapping = TextWrapping.Wrap
+                };
+                rows.Add(NoteRow(_relayStatus));
+            }
+
+            foreach (var phone in phones) rows.Add(PairedPhoneRow(client!, phone));
+
+            if (phones.Count == 0)
+            {
+                rows.Add(NoteRow(new TextBlock
+                {
+                    Text = "No phones paired.",
+                    FontSize = 11,
+                    Opacity = 0.55,
+                    TextWrapping = TextWrapping.Wrap
+                }));
+            }
+            return rows.ToArray();
+        }
+
+        internal Control PairedPhoneRow(RelayClient client, RelayIdentity.Phone phone)
+        {
+            var right = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                Spacing = 8,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var status = new TextBlock
+            {
+                Text = PairedPhonesText.Phone(client.IsOnline(phone.PhoneId), client.LastSeen(phone.PhoneId), DateTimeOffset.UtcNow),
+                FontSize = 11,
+                Opacity = 0.55,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            _phoneStatus.Add((phone.PhoneId, status));
+            right.Children.Add(status);
+
+            var remove = new Button { Content = "Remove", Name = "RemovePhone:" + phone.PhoneId };
+            remove.Click += (_, _) => OnRemovePhoneClicked(client, phone.PhoneId);
+            right.Children.Add(remove);
+            return Row(phone.Name, right);
+        }
+
+        internal void OnRemovePhoneClicked(RelayClient client, string phoneId)
+        {
+            client.Remove(phoneId);
+            Rebuild();
+        }
+
+        // The tray's own action. Excluded: it opens a real window and turns the
+        // relay on; PairPhoneWindowTests covers the window, TrayMenuTests the item.
+        [ExcludeFromCodeCoverage]
+        private static void OnPairPhoneClicked() => TrayController.OpenPairPhone();
 
         // One machine, and whatever it is that machine currently needs.
         //

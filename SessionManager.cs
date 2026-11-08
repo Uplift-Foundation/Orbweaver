@@ -3253,7 +3253,18 @@ namespace Orbweaver
             UpdateTeamLinks();
 
             UpdateTray();
+
+            // CB-314: the phone relay's one hook into the scan, last so it sees
+            // exactly what the screen now shows. A snapshot list rather than
+            // _statuses itself, but the SessionStatus objects are the scan's own
+            // and are mutated by the next pass — a subscriber projects what it
+            // needs before returning (RelayRoster.Project) and keeps nothing.
+            SessionsScanned?.Invoke(_statuses.Select(kv => (kv.Key, kv.Value)).ToList());
         }
+
+        // Raised on the scan's thread at the end of every pass. See the call
+        // site for the one rule a subscriber must follow.
+        internal event Action<IReadOnlyList<(string SessionId, SessionStatus Status)>>? SessionsScanned;
 
         // Delete the status files of sessions that are demonstrably over.
         //

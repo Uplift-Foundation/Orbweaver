@@ -282,6 +282,21 @@ public class TrayMenuTests
         Assert.True(labels.IndexOf(NewChat) < labels.IndexOf(Settings));
     }
 
+    // CB-314: "Pair phone…" is always in the menu, with or without sessions
+    // and whether or not the relay has ever been used — it is how the feature
+    // is found. Its handler is covered in RelaySettingsAndServiceTests.
+    [AvaloniaFact]
+    public void PairPhoneIsAlwaysOffered()
+    {
+        var tray = NewController();
+        if (tray is null) return;
+
+        Assert.Contains("Pair phone…", Labels(MenuOf(tray)));
+        tray.Update(new[] { Entry("id-1", title: "first") });
+        var labels = Labels(MenuOf(tray));
+        Assert.True(labels.IndexOf("Pair phone…") < labels.IndexOf(NewChat));
+    }
+
     // --- the two actions that ARE safe to perform ---
 
     // The header above says this suite deliberately never invokes a Click

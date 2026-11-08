@@ -1,0 +1,121 @@
+{
+  "_source": {
+    "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayCrypto.cs)",
+    "orbweaver_sha": "d920815a",
+    "spec": "CB-314 architect plan rev 1, sections 2.2 and 2.3",
+    "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16); QR k/s, sig fields inside plaintexts, and ck are base64url without padding"
+  },
+  "_rules": "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true drops the row from the roster immediately — there is no 'ended shown once' state in the data, though the UI may animate the exit; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is an INTEGER of Unix seconds, the same type and unit as ts and last_seen (addendum 4). parent_session_id and persona are omitted when absent; persona.color is optional and, when present, one of the lowercase names in persona-colors.json (never hex) — render absent or unknown names neutral.",
+  "macbook_roster": {
+    "t": "roster",
+    "seq": 1,
+    "sessions": [
+      {
+        "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
+        "cli": "claude",
+        "title": "CB-314 relay milestone",
+        "cwd": "/Users/someone/Source/Orbweaver",
+        "state": "generating",
+        "since": 1794124800,
+        "persona": {
+          "name": "Jennifer Voss",
+          "initials": "JV",
+          "color": "purple"
+        }
+      },
+      {
+        "session_id": "b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9",
+        "cli": "claude",
+        "title": "tamsin-oyelaran",
+        "cwd": "/Users/someone/Source/Orbweaver-wt/tamsin-oyelaran",
+        "state": "waiting",
+        "since": 1794124812,
+        "parent_session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
+        "persona": {
+          "name": "Tamsin Oyelaran",
+          "initials": "TO",
+          "color": "pink"
+        }
+      },
+      {
+        "session_id": "c3d5e7f9-1b2c-4d3e-9f4a-b5c6d7e8f9a0",
+        "cli": "codex",
+        "title": "Orbweaver-Mobile",
+        "cwd": "/Users/someone/Source/Orbweaver-Mobile",
+        "state": "idle",
+        "since": 1794125100
+      }
+    ]
+  },
+  "windows_roster": {
+    "t": "roster",
+    "seq": 1,
+    "sessions": [
+      {
+        "session_id": "0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
+        "cli": "claude",
+        "title": "orbweaver",
+        "cwd": "C:\\Users\\someone\\Source\\Orbweaver",
+        "state": "idle",
+        "since": 1794124840
+      },
+      {
+        "session_id": "1e2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5b",
+        "cli": "grok",
+        "title": "scratch",
+        "cwd": "C:\\Users\\someone\\scratch",
+        "state": "generating",
+        "since": 1794124855,
+        "persona": {
+          "name": "Pixel",
+          "initials": "PI"
+        }
+      }
+    ]
+  },
+  "empty_roster": {
+    "t": "roster",
+    "seq": 1,
+    "sessions": []
+  },
+  "macbook_deltas_after_roster": [
+    {
+      "t": "delta",
+      "seq": 2,
+      "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
+      "state": "idle",
+      "since": 1794124890
+    },
+    {
+      "t": "delta",
+      "seq": 3,
+      "session_id": "b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9",
+      "state": "generating",
+      "since": 1794124895
+    },
+    {
+      "t": "delta",
+      "seq": 4,
+      "session_id": "c3d5e7f9-1b2c-4d3e-9f4a-b5c6d7e8f9a0",
+      "title": "Orbweaver-Mobile app shell"
+    },
+    {
+      "t": "delta",
+      "seq": 5,
+      "session_id": "b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9",
+      "state": "ended",
+      "since": 1794124920,
+      "removed": true
+    }
+  ],
+  "gap_example": {
+    "_note": "after macbook_roster (seq 1), receiving this seq 3 delta with no seq 2 is a gap: send resync {t,peer_id} and expect a fresh roster",
+    "delta": {
+      "t": "delta",
+      "seq": 3,
+      "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
+      "state": "waiting",
+      "since": 1794125000
+    }
+  }
+}

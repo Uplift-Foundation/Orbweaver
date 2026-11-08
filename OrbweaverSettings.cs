@@ -111,6 +111,11 @@ namespace Orbweaver
             "remoteControlEnabled", "remoteControlProfileDir", "remoteControlProfileDirs",
             "remoteControlIdleMinutes", "remoteControlServeOnLaunch",
             "peerLinkEnabled", "peerLinkPort",
+            // CB-314: the phone relay. Read, written and listed here, all three:
+            // a model property alone is never persisted (measured on the
+            // installed app: pairing set it, a restart lost it, and the relay
+            // stayed off).
+            "relayEnabled",
             // CB-308, the auto-updater. All five must be here: a key written by
             // Save() that is not in this list is also carried in _unknownKeys,
             // and Save() would then throw adding it twice.
@@ -528,6 +533,11 @@ namespace Orbweaver
             // is no model in the path and no quota to spend, which is the whole
             // point of it.
             public bool PeerLinkEnabled { get; set; }
+
+            // CB-314: whether this desktop keeps its connection to the phone
+            // relay. Off until the user first chooses "Pair phone…", so an
+            // install that never pairs a phone never opens the socket.
+            public bool RelayEnabled { get; set; }
 
             // CB-308. On by default: a user who never opens Settings still gets
             // told a fix exists, which is the whole reason for the feature. The
@@ -1552,6 +1562,12 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.PeerLinkEnabled = value; Save(); }
         }
 
+        public static bool RelayEnabled
+        {
+            get { Load(); lock (Gate) return _model.RelayEnabled; }
+            set { Load(); lock (Gate) _model.RelayEnabled = value; Save(); }
+        }
+
         public static bool AutoCheckForUpdates
         {
             get { Load(); lock (Gate) return _model.AutoCheckForUpdates; }
@@ -2459,6 +2475,7 @@ namespace Orbweaver
                         RemoteControlServeOnLaunch =
                             root["remoteControlServeOnLaunch"]?.GetValue<bool>() ?? false,
                         PeerLinkEnabled = root["peerLinkEnabled"]?.GetValue<bool>() ?? false,
+                        RelayEnabled = root["relayEnabled"]?.GetValue<bool>() ?? false,
                         PeerLinkPort = root["peerLinkPort"]?.GetValue<int>() ?? 0,
                         AutoCheckForUpdates = Bool(root["autoCheckForUpdates"], true),
                         IncludePrereleaseUpdates = Bool(root["includePrereleaseUpdates"], false),
@@ -3129,6 +3146,7 @@ namespace Orbweaver
                         ["openclawNativeShape"] = _model.OpenClawNativeShape,
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
+                        ["relayEnabled"] = _model.RelayEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,
                         ["autoCheckForUpdates"] = _model.AutoCheckForUpdates,
                         ["includePrereleaseUpdates"] = _model.IncludePrereleaseUpdates,
