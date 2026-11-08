@@ -21,6 +21,12 @@ using static Orbweaver.RelayCrypto;
 // It registers two throwaway devices on the relay each run; on the shared dev
 // relay, tell surface A when a clean slate is wanted.
 
+// Never the real settings directory: anything this probe logs or saves goes to
+// a scratch one unless the caller chose a directory. (An earlier version wrote
+// its start line into the installed app's own mirror log.)
+if (string.IsNullOrEmpty(BrandEnv.Get(BrandEnv.SettingsDir)))
+    Environment.SetEnvironmentVariable(BrandEnv.Name(BrandEnv.SettingsDir), Path.Combine(Path.GetTempPath(), "relay-probe-settings"));
+
 var baseUrl = new Uri(args.FirstOrDefault(a => a.StartsWith("http")) ?? "https://orbweaver-relay.uplifttech.org");
 var flips = args.SkipWhile(a => a != "--flips").Skip(1).Select(int.Parse).FirstOrDefault(20);
 var failures = 0;

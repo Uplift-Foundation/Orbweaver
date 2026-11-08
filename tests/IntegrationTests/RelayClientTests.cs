@@ -128,6 +128,53 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Contains("POST /v1/offers", _stub.Requests);
     }
 
+    // Found on the installed app: the connection loop and the first "Pair
+    // phone…" both found no token and both registered; the relay killed the
+    // first token when the second registration landed, so the first offer
+    // failed 401 and the socket was refused. Registration is serialised now.
+    [Fact]
+    public async Task Starting_and_pairing_at_once_registers_once_and_both_work()
+    {
+        _stub.RegisterDelay = TimeSpan.FromMilliseconds(300);
+        var identity = Identity();
+        var client = Client(identity);
+        client.Start();
+        var offer = await client.BeginPairingAsync();
+        Assert.Equal("off_stub", offer.OfferId);
+        await Until(() => client.State == RelayClient.Status.Connected);
+        Assert.Equal(1, _stub.Registrations);
+    }
+
+    [Fact]
+    public async Task A_connect_that_hangs_times_out_and_is_retried()
+    {
+        var identity = Identity();
+        identity.Keys();
+        identity.SetRegistration("dsk_stub000000000001", "tok");
+        var attempts = 0;
+        var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
+        {
+            ConnectTimeout = TimeSpan.FromMilliseconds(150),
+            MinBackoff = TimeSpan.FromMilliseconds(10),
+            MaxBackoff = TimeSpan.FromMilliseconds(20),
+        };
+        _client = new RelayClient(identity, options, new Hangs(() => Interlocked.Increment(ref attempts)));
+        _client.Start();
+        await Until(() => attempts >= 3);
+        Assert.NotNull(_client.LastError);
+        Assert.Equal(RelayClient.Status.Connecting, _client.State);
+    }
+
+    private sealed class Hangs(Action counted) : IRelayTransport
+    {
+        public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token)
+        {
+            counted();
+            await Task.Delay(Timeout.Infinite, token);
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
     [Fact]
     public async Task An_offer_refused_for_a_stale_token_forgets_the_token()
     {

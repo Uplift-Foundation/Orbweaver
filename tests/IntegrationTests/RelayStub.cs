@@ -32,7 +32,9 @@ internal sealed class RelayStub : IAsyncDisposable
     public string HelloCode { get; set; } = "welcome";   // or "unauthorized" / "version"
     public bool AcceptSockets { get; set; } = true;
     public bool AckUnlinks { get; set; } = true;
-    public int RefuseUnlinks;   // this many unlinks are answered err rate_limited ref unlink, unprocessed
+    public int RefuseUnlinks;
+    public TimeSpan RegisterDelay { get; set; }   // makes concurrent registrations overlap
+    private readonly Dictionary<string, string> _tokenByIdPub = new();   // this many unlinks are answered err rate_limited ref unlink, unprocessed
     public readonly Channel<string> Received = Channel.CreateUnbounded<string>();
     public readonly ConcurrentQueue<string> Requests = new();
 
@@ -96,8 +98,17 @@ internal sealed class RelayStub : IAsyncDisposable
             await Json(ctx, 401, new { code = "bad_signature" });
             return;
         }
+        await Task.Delay(RegisterDelay);
         var token = "token-" + Interlocked.Increment(ref Registrations);
-        lock (ValidTokens) ValidTokens.Add(token);
+        lock (ValidTokens)
+        {
+            // As the relay does (addendum 1): the same identity key
+            // registering again kills its previous token at that moment.
+            var key = json.GetProperty("id_pub").GetString()!;
+            if (_tokenByIdPub.TryGetValue(key, out var old)) ValidTokens.Remove(old);
+            _tokenByIdPub[key] = token;
+            ValidTokens.Add(token);
+        }
         await Json(ctx, 200, new { device_id = DeviceId, token });
     }
 

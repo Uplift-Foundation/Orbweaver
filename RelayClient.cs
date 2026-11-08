@@ -36,6 +36,9 @@ namespace Orbweaver
             internal TimeSpan PingInterval { get; init; } = TimeSpan.FromSeconds(25);
             internal TimeSpan Silence { get; init; } = TimeSpan.FromSeconds(60);
             internal TimeSpan MinBackoff { get; init; } = TimeSpan.FromSeconds(1);
+            // A WebSocket connect has no timeout of its own, so one that hangs
+            // (a SYN into the void) would stall the loop with nothing logged.
+            internal TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(20);
             internal TimeSpan MaxBackoff { get; init; } = TimeSpan.FromSeconds(60);
 
             internal Uri SocketUri => new UriBuilder(Base)
@@ -77,6 +80,14 @@ namespace Orbweaver
         private CancellationTokenSource? _connection;
         private Task? _loop;
         private bool _unauthorized;
+
+        // One registration at a time. The relay invalidates a device's old
+        // token the moment the same identity key registers again, so two
+        // concurrent registrations — the connection loop and the first
+        // "Pair phone…" both finding no token — leave one of them holding a
+        // dead token. Measured on the installed app: the first offer failed
+        // 401 and the socket was refused, until a retry.
+        private readonly SemaphoreSlim _registering = new(1, 1);
         private string? _refusedCode;
 
         internal RelayClient(RelayIdentity identity, Options options, IRelayTransport transport,
@@ -153,6 +164,7 @@ namespace Orbweaver
         {
             StopAsync().GetAwaiter().GetResult();
             _http.Dispose();
+            _registering.Dispose();
         }
 
         private async Task RunAsync(CancellationToken stop)
@@ -165,7 +177,7 @@ namespace Orbweaver
                     if (_identity.Token is null)
                     {
                         SetStatus(Status.Registering);
-                        await RegisterAsync(stop).ConfigureAwait(false);
+                        await EnsureRegisteredAsync(stop).ConfigureAwait(false);
                     }
                     SetStatus(Status.Connecting);
                     await ConnectOnceAsync(stop, () => attempt = 0).ConfigureAwait(false);
@@ -206,7 +218,13 @@ namespace Orbweaver
         {
             using var connection = CancellationTokenSource.CreateLinkedTokenSource(stop);
             var token = connection.Token;
-            await using var socket = await _transport.ConnectAsync(_options.SocketUri, token).ConfigureAwait(false);
+            IRelaySocket socket;
+            using (var connecting = CancellationTokenSource.CreateLinkedTokenSource(token))
+            {
+                connecting.CancelAfter(_options.ConnectTimeout);
+                socket = await _transport.ConnectAsync(_options.SocketUri, connecting.Token).ConfigureAwait(false);
+            }
+            await using var _ = socket;
 
             var outbox = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
             lock (_gate)
@@ -296,7 +314,7 @@ namespace Orbweaver
 
         public async Task<RelayLink.PairOffer> BeginPairingAsync(CancellationToken token = default)
         {
-            if (_identity.Token is null) await RegisterAsync(token).ConfigureAwait(false);
+            await EnsureRegisteredAsync(token).ConfigureAwait(false);
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_options.Base, "/v1/offers"))
             {
                 Content = new StringContent("{}", Encoding.UTF8, "application/json"),
@@ -364,6 +382,20 @@ namespace Orbweaver
         }
 
         // ---- registration (§2.1) -------------------------------------------------
+
+        // Registers unless someone else already did while this waited.
+        private async Task EnsureRegisteredAsync(CancellationToken token)
+        {
+            await _registering.WaitAsync(token).ConfigureAwait(false);
+            try
+            {
+                if (_identity.Token is null) await RegisterAsync(token).ConfigureAwait(false);
+            }
+            finally
+            {
+                _registering.Release();
+            }
+        }
 
         private async Task RegisterAsync(CancellationToken token)
         {
