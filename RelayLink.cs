@@ -233,7 +233,9 @@ namespace Orbweaver
                     }
                     // Said, not silent: a phone stuck waiting on a roster
                     // that never comes is otherwise undiagnosable.
-                    Note($"resync for {Str(f, "peer_id")} ignored: not an online paired phone");
+                    var who = Str(f, "peer_id");
+                    Note($"resync for {who} ignored: not an online paired phone ("
+                         + (who is not null && _channels.ContainsKey(who) ? "paired, offline" : "not paired") + ")");
                     return [];
                 default:
                     Note($"relay frame t={t} ignored");
@@ -305,7 +307,12 @@ namespace Orbweaver
             {
                 var sig = RelayCrypto.FromBase64Url(Str(body, "sig"));
                 if (RelayCrypto.Verify(channel.Phone.IdPublic, RelayCrypto.RevokeMessage(from, _identity.DeviceId!), sig))
+                {
+                    // Said positively, so a gate can confirm the signature check
+                    // ran and passed rather than infer it from a missing refusal.
+                    Note($"pair.revoke from {from} verified; phone removed (its own unlink settles the link at the relay)");
                     DropPhone(from, byPhone: true);
+                }
                 else
                     Note("pair.revoke with a bad signature ignored");
             }
@@ -467,6 +474,7 @@ namespace Orbweaver
             // here and the answer cannot lose it.
             _identity.AddPendingUnlink(phoneId);
             if (Welcomed) frames.Add(SendUnlink(phoneId));
+            Note($"removed {phoneId}: " + (Welcomed ? "signed revoke and unlink sent" : "unlink owed until the next welcome"));
 
             _channels.Remove(phoneId);
             _identity.RemovePhone(phoneId);

@@ -430,7 +430,10 @@ public class RelayLinkTests : IDisposable
         Assert.Empty(link.OnFrame("""{"t":"resync","peer_id":"ph_stranger"}"""));
         Assert.Empty(link.OnFrame("""{"t":"resync"}"""));
         Assert.Contains($"resync from {phone.Id}: fresh roster", notes);
-        Assert.Contains("resync for ph_stranger ignored: not an online paired phone", notes);
+        Assert.Contains("resync for ph_stranger ignored: not an online paired phone (not paired)", notes);
+        link.OnFrame(Presence(phone.Id, false));
+        link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""");
+        Assert.Contains($"resync for {phone.Id} ignored: not an online paired phone (paired, offline)", notes);
         link.OnFrame(Presence(phone.Id, false));
         Assert.Empty(link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}"""));
     }
@@ -454,6 +457,7 @@ public class RelayLinkTests : IDisposable
         Assert.Contains("envelope refused: wrong direction, replayed or reordered", notes);
 
         link.OnFrame(phone.Revoke());
+        Assert.Contains($"pair.revoke from {phone.Id} verified; phone removed (its own unlink settles the link at the relay)", notes);
         Assert.Equal([phone.Id], removed);
         Assert.Null(identity.PhoneById(phone.Id));
         Assert.Empty(link.OnFrame(phone.Revoke()));                                // now unpaired
@@ -502,8 +506,9 @@ public class RelayLinkTests : IDisposable
     [Fact]
     public void Remove_while_connected_sends_a_signed_revoke_then_unlink()
     {
-        var (link, identity, phone, _, _) = Paired();
+        var (link, identity, phone, notes, _) = Paired();
         var frames = link.Remove(phone.Id);
+        Assert.Contains($"removed {phone.Id}: signed revoke and unlink sent", notes);
         Assert.Equal(2, frames.Count);
         var revoke = phone.OpenFromDesktop(frames[0]);
         Assert.Equal(("pair.revoke", DesktopId), (revoke.GetProperty("t").GetString(), revoke.GetProperty("by").GetString()));
@@ -516,9 +521,10 @@ public class RelayLinkTests : IDisposable
     [Fact]
     public void Remove_while_disconnected_owes_the_unlink_until_the_next_welcome()
     {
-        var (link, identity, phone, _, _) = Paired();
+        var (link, identity, phone, notes, _) = Paired();
         link.Disconnected();
         Assert.Empty(link.Remove(phone.Id));
+        Assert.Contains($"removed {phone.Id}: unlink owed until the next welcome", notes);
         Assert.Empty(link.Remove(phone.Id));                          // twice: owed once
         Assert.Equal([phone.Id], link.PendingUnlinks);
         Assert.Empty(identity.Phones);
