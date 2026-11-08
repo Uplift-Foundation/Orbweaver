@@ -566,6 +566,109 @@ namespace Orbweaver
             };
         }
 
+        // ---- CB-315: one key, from a phone, with nothing brought forward ----------
+        //
+        // The amber loop presses exactly one key into a dialog: a digit, or Enter
+        // after a tell's note. SendTextAndSubmit cannot stand in, because its
+        // trailing Enter would land on whatever the first key opened. So these
+        // are the same route typers without the submit, and only on the routes
+        // that write without focus: tmux send-keys, kitty and WezTerm
+        // send-text, iTerm2 `write text … newline NO`, and the Windows console
+        // under ConsoleGate. Terminal.app is not among them — a keystroke there
+        // needs Accessibility consent and focus, and stealing focus on a
+        // machine someone is sitting at is not an acceptable way to answer
+        // remotely — so its prompts go to the phone "Open on desk". Every
+        // argument travels through argv or stdin, never into script source.
+        internal static bool CanPressSilently(SessionStatus? status) => TerminalPress.Silent(RouteFor(status));
+
+        public static Task<bool> PressKey(SessionStatus? status, string key)
+        {
+            if (status is null || TerminalPress.Bytes(key) is not { } bytes || !CanPressSilently(status)) return Task.FromResult(false);
+            return RouteFor(status) switch
+            {
+                TerminalTyping.Route.Tmux => SendPaneKey(status, key),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), TerminalPress.Kitty(status, bytes))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), TerminalPress.WezTerm(status, bytes))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, TerminalPress.ITerm2Args(status, key == "Enter" ? "" : bytes))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, TerminalPress.ConsoleRecords(bytes))),
+            };
+        }
+
+        // The press with the screen it landed on (CB-315 rule 8). On tmux the
+        // capture and the key are ONE invocation — `capture-pane -p ; send-keys`
+        // — so they run back to back inside tmux's command queue with nothing of
+        // ours between them, and the capture is the screen the key went into.
+        // tmux cannot make the key conditional on what it captured, so this
+        // cannot stop a press; it makes the pipeline KNOW, every time, whether
+        // the key landed on the dialog the gate approved. Elsewhere there is no
+        // single command for both, so it is the screen reader, then `approved`
+        // asked of what it read (not approved: no press at all), then the press
+        // — two processes apart, the residual window PR #227 names.
+        public static async Task<(bool Pressed, string? Before)> CaptureAndPress(SessionStatus? status, string key, Func<string?, bool> approved)
+        {
+            if (status is null || TerminalPress.Bytes(key) is null || !CanPressSilently(status)) return (false, null);
+            if (RouteFor(status) == TerminalTyping.Route.Tmux)
+            {
+                return await Task.Run(() =>
+                {
+                    var tmux = ResolveTmuxBinary(status.TmuxBin);
+                    if (tmux is null) return (false, (string?)null);
+                    // The settle check's second look, then — no await, no log —
+                    // the key, with a capture of the screen it landed on.
+                    var look = TryRun(tmux, out var second, TmuxArgs(status, "capture-pane", "-p", "-t", status.TmuxPane)) ? second : null;
+                    if (!approved(look)) return (false, look);
+                    var ok = TryRun(tmux, out var landed, TmuxArgs(status, TerminalPress.TmuxCaptureThenKey(status.TmuxPane, key)));
+                    return (ok, ok ? landed : null);
+                });
+            }
+            var before = ScreenReaders.For(status) is { } reader ? await reader.ReadAsync(status) : null;
+            if (!approved(before)) return (false, before);
+            return (await PressKey(status, key), before);
+        }
+
+        // A tell's note, typed without Enter (the caller presses Enter after):
+        // bracketed exactly as the composer types it, through the same routes.
+        public static Task<bool> TypeQuietly(SessionStatus? status, string text)
+        {
+            if (status is null || string.IsNullOrEmpty(text) || !CanPressSilently(status)) return Task.FromResult(false);
+            var body = TerminalTyping.ForTyping(text);
+            return RouteFor(status) switch
+            {
+                TerminalTyping.Route.Tmux => SendPaneText(status, text),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), TerminalPress.Kitty(status, body))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), TerminalPress.WezTerm(status, body))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, TerminalPress.ITerm2Args(status, body))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, TerminalPress.ConsoleRecords(body))),
+            };
+        }
+
+        [ExcludeFromCodeCoverage]
+        private static bool FeedPress(string? exe, (string Stdin, string[] Args) call) => Feed(exe, call.Stdin, call.Args);
+
+        // AttachConsole, write, FreeConsole, under the gate the console typer and
+        // the screen reader share.
+        [SupportedOSPlatform("windows")]
+        [ExcludeFromCodeCoverage]
+        private static bool WriteConsoleKeys(SessionStatus status, List<NativeMethods.InputRecord> records)
+        {
+            lock (ConsoleGate)
+            {
+                NativeMethods.FreeConsole();
+                if (!NativeMethods.AttachConsole((uint)status.SessionPid)) return false;
+                try
+                {
+                    using var input = NativeMethods.OpenConsoleInput();
+                    if (input.IsInvalid) return false;
+                    var all = records.ToArray();
+                    return NativeMethods.WriteConsoleInput(input, all, (uint)all.Length, out var written) && written == all.Length;
+                }
+                finally
+                {
+                    NativeMethods.FreeConsole();
+                }
+            }
+        }
+
         // kitty, addressed by the window id it exports as KITTY_WINDOW_ID.
         //
         // Text goes over stdin rather than as an argument, which is what

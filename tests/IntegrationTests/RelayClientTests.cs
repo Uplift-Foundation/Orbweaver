@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Xunit;
@@ -45,7 +46,7 @@ public class RelayClientTests : IAsyncLifetime
 
     private RelayIdentity Identity() => new(_dir, _store);
 
-    private RelayClient Client(RelayIdentity identity, TimeSpan? ping = null, TimeSpan? silence = null)
+    private RelayClient Client(RelayIdentity identity, TimeSpan? ping = null, TimeSpan? silence = null, PromptPipeline.Seams? prompts = null)
     {
         var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
         {
@@ -54,7 +55,7 @@ public class RelayClientTests : IAsyncLifetime
             MinBackoff = TimeSpan.FromMilliseconds(20),
             MaxBackoff = TimeSpan.FromMilliseconds(100),
         };
-        _client = new RelayClient(identity, options, new WebSocketRelayTransport());
+        _client = new RelayClient(identity, options, new WebSocketRelayTransport(), promptSeams: prompts);
         return _client;
     }
 
@@ -165,6 +166,66 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Equal(RelayClient.Status.Connecting, _client.State);
     }
 
+    // The connection loop must outlive any exception, not only the ones it
+    // expects: one it did not list used to escape RunAsync and end the loop
+    // silently — no reconnect, nothing logged, answers queued at the relay for
+    // a desktop that never came back (seen as "logged nothing after the
+    // socket closed" in QA's run). First a connect that throws something
+    // unexpected, then a socket that does mid-session; the client must come
+    // back both times.
+    [Fact]
+    public async Task An_unexpected_exception_does_not_end_the_connection_loop()
+    {
+        var identity = Identity();
+        identity.Keys();
+        identity.SetRegistration("dsk_stub000000000001", "tok");
+        var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
+        {
+            MinBackoff = TimeSpan.FromMilliseconds(10),
+            MaxBackoff = TimeSpan.FromMilliseconds(20),
+        };
+        var flaky = new Flaky(new WebSocketRelayTransport());
+        _client = new RelayClient(identity, options, flaky);
+        _client.Start();
+        await _stub.NextT("hello");                              // came back after the throwing connect
+        await Until(() => _client.State == RelayClient.Status.Connected);
+        flaky.ThrowOnNextReceive = true;
+        await _stub.Send("""{"t":"ping"}""");                    // the receive that throws
+        await _stub.NextT("hello");                              // and came back again
+        Assert.True(flaky.Connects >= 2);
+        Assert.Equal(RelayClient.Status.Connected, await WaitState(_client, RelayClient.Status.Connected));
+    }
+
+    private static async Task<RelayClient.Status> WaitState(RelayClient c, RelayClient.Status want)
+    {
+        await Until(() => c.State == want);
+        return c.State;
+    }
+
+    private sealed class Flaky(IRelayTransport inner) : IRelayTransport
+    {
+        public int Connects;
+        public volatile bool ThrowOnNextReceive;
+
+        public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token)
+        {
+            if (Interlocked.Increment(ref Connects) == 1) throw new InvalidOperationException("not a connection error the loop lists");
+            return new Socket(this, await inner.ConnectAsync(uri, token));
+        }
+
+        private sealed class Socket(Flaky owner, IRelaySocket inner) : IRelaySocket
+        {
+            public Task SendAsync(string frame, CancellationToken token) => inner.SendAsync(frame, token);
+            public async Task<string?> ReceiveAsync(CancellationToken token)
+            {
+                var text = await inner.ReceiveAsync(token);
+                if (owner.ThrowOnNextReceive) { owner.ThrowOnNextReceive = false; throw new ObjectDisposedException("socket"); }
+                return text;
+            }
+            public ValueTask DisposeAsync() => inner.DisposeAsync();
+        }
+    }
+
     private sealed class Hangs(Action counted) : IRelayTransport
     {
         public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token)
@@ -208,6 +269,156 @@ public class RelayClientTests : IAsyncLifetime
         var client = Client(identity);
         await Assert.ThrowsAsync<RelayHttpException>(() => client.BeginPairingAsync());
         Assert.Null(identity.Token);
+    }
+
+    // CB-315: the amber loop over a real socket. A waiting session's dialog
+    // goes out as push amber with an e the phone can open; the phone's signed
+    // answer comes back sealed, the fake pane gets exactly one key, and resolved
+    // goes out as push resolve under the same id.
+    [Fact]
+    public async Task A_prompt_goes_out_amber_and_a_signed_answer_presses_once_and_resolves()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var keys = new List<string>();
+        var seams = new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) => { lock (keys) keys.Add(k); screen = "> \n"; return Task.FromResult(true); },
+            (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { });
+        var client = Client(identity, prompts: seams);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(IsEnvelope);
+        Assert.Equal(("action", "amber"), (amber.GetProperty("class").GetString(), amber.GetProperty("push").GetString()));
+        var prompt = OpenAsPhone(amber, phone, identity);
+        var rid = prompt.GetProperty("request_id").GetString()!;
+        Assert.Equal(rid, amber.GetProperty("id").GetString());
+        var push = JsonDocument.Parse(PushSeal.Open(phone.KaKey, amber.GetProperty("e").GetString())!).RootElement;
+        Assert.Equal(rid, push.GetProperty("request_id").GetString());
+
+        await _stub.Send($$"""{"t":"ok","ref":"{{rid}}","code":"pushed","apns_ms":9}""");
+        await _stub.Send($$"""{"t":"ok","ref":"{{rid}}","code":"push_throttled"}""");
+
+        var exp = prompt.GetProperty("expires_at").GetInt64();
+        var desktopId = amber.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        ulong counter = 0;
+        Task SendAnswer(KeyPair signer)
+        {
+            var nonce = Base64Url(RandomNumberGenerator.GetBytes(16));
+            var sig = Base64Url(Sign(signer, AnswerSigning.Message(AnswerSigning.Body(rid, "s1", "approve", "", nonce, exp))));
+            var answer = JsonSerializer.Serialize(new
+            {
+                t = "answer", request_id = rid, session_id = "s1", action = "approve", scope = "", note = "", nonce,
+                expires_at = exp, screen_hash = prompt.GetProperty("screen_hash").GetString(), sig,
+            });
+            var ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, counter++), Encoding.UTF8.GetBytes(answer), Aad(phone.Id, desktopId, "action"));
+            return _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "a" + counter, from = phone.Id, to = desktopId, ts = 0, @class = "action", push = "none", ck = "", ct }));
+        }
+
+        // Signed by some other key: refused, sealed, to this phone, nothing pressed.
+        await SendAnswer(GenerateKeyPair());
+        var refusal = await _stub.Next(IsEnvelope);
+        Assert.Equal("none", refusal.GetProperty("push").GetString());
+        Assert.Equal(("err", "bad_signature"), (OpenAsPhone(refusal, phone, identity).GetProperty("t").GetString(), OpenAsPhone(refusal, phone, identity).GetProperty("code").GetString()));
+        lock (keys) Assert.Empty(keys);
+
+        await SendAnswer(phone.IdKey);
+
+        var resolve = await _stub.Next(IsEnvelope);
+        Assert.Equal(("resolve", rid), (resolve.GetProperty("push").GetString(), resolve.GetProperty("id").GetString()));
+        // The resolve's ck is the amber's, so the passive alert replaces the
+        // amber in its thread; its e is the sealed resolve, to this phone.
+        Assert.Equal(amber.GetProperty("ck").GetString(), resolve.GetProperty("ck").GetString());
+        var sealedResolve = JsonDocument.Parse(PushSeal.Open(phone.KaKey, resolve.GetProperty("e").GetString())!).RootElement;
+        Assert.Equal(("resolved", "phone:" + phone.Id, "proj on Test Mac"),
+            (sealedResolve.GetProperty("t").GetString(), sealedResolve.GetProperty("by").GetString(), sealedResolve.GetProperty("label").GetString()));
+        var resolved = OpenAsPhone(resolve, phone, identity);
+        Assert.Equal(("resolved", "phone:" + phone.Id), (resolved.GetProperty("t").GetString(), resolved.GetProperty("by").GetString()));
+        lock (keys) Assert.Equal(["1"], keys);
+    }
+
+    // Lead's decision: every pending prompt goes out again on every welcome.
+    // The relay's 30-second alert throttle (frames-v3 rate_limits.amber) is
+    // what keeps that from being a second alert: this stub plays the relay's
+    // half — pushed for the first amber of an id, push_throttled for a repeat
+    // inside 30 s — and the client must see exactly one pushed.
+    [Fact]
+    public async Task A_repeat_on_reconnect_goes_out_with_the_same_id_and_comes_back_throttled()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        var replies = new List<(string Id, string Code)>();
+        client.PushReplied += (id, code, _) => { lock (replies) replies.Add((id, code)); };
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+
+        var pushedAt = new Dictionary<string, DateTime>();
+        async Task<string> RelayAnswers()
+        {
+            var amber = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber");
+            var id = amber.GetProperty("id").GetString()!;
+            var code = pushedAt.TryGetValue(id, out var at) && DateTime.UtcNow - at < TimeSpan.FromSeconds(30) ? "push_throttled" : "pushed";
+            if (code == "pushed") pushedAt[id] = DateTime.UtcNow;
+            await _stub.Send(JsonSerializer.Serialize(new { t = "ok", @ref = id, code }));
+            return id;
+        }
+
+        var first = await RelayAnswers();
+        await _stub.DropConnection();
+        await _stub.NextT("hello");
+        var second = await RelayAnswers();
+        Assert.Equal(first, second);
+        await Until(() => { lock (replies) return replies.Count == 2; });
+        lock (replies) Assert.Equal([(first, "pushed"), (first, "push_throttled")], replies);
+    }
+
+    // A prompt minted before the socket is up produces no frame; the welcome
+    // sends it.
+    [Fact]
+    public async Task A_prompt_minted_before_the_relay_welcomes_goes_out_on_the_welcome()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        Assert.Equal(1, client.Prompts.PendingCount);
+
+        client.Start();
+        await _stub.NextT("hello");
+        var amber = await _stub.Next(IsEnvelope);
+        Assert.Equal("amber", amber.GetProperty("push").GetString());
+        Assert.Equal("prompt", OpenAsPhone(amber, phone, identity).GetProperty("t").GetString());
+    }
+
+    [Fact]
+    public async Task With_no_phone_paired_no_pane_is_read()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var captures = 0;
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => { captures++; return Task.FromResult<string?>(null); }, (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode })]);
+        Assert.Equal(0, captures);
     }
 
     [Fact]

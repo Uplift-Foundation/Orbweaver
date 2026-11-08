@@ -131,6 +131,15 @@ namespace Orbweaver
         internal event Action PresenceChanged = delegate { };
         internal event Action<string> Note = delegate { };                       // one log line, metadata only
         internal event Action<string, int> RetryDue = delegate { };              // (key, attempt): call Retry(key) after a backoff
+        // CB-315: a sealed answer from a paired phone, with that phone's
+        // pairing id_pub for the gate's rule 1. Only ever raised for an action
+        // envelope that opened under the pair's session key and carried
+        // t:"answer" — a /v1/ack push-ack (class control, plaintext ct) cannot
+        // open, and nothing else is dispatched here.
+        internal event Action<string, byte[], PhoneAnswer> AnswerReceived = delegate { };
+        // CB-315 gate (a): the relay's ok pushed / push_throttled /
+        // push_no_token for an amber, with APNs's round trip when it gave one.
+        internal event Action<string, string, int?> PushReplied = delegate { };
 
         // ---- connection -------------------------------------------------------
 
@@ -218,6 +227,9 @@ namespace Orbweaver
                     // (the relay answers a socket's frames in order).
                     _retryable.Clear();
                     _retryAttempts.Remove("link");
+                    return [];
+                case "ok" when Str(f, "code") is "pushed" or "push_throttled" or "push_no_token" && Str(f, "ref") is { } pushed:
+                    PushReplied(pushed, Str(f, "code")!, f.TryGetProperty("apns_ms", out var ms) && ms.ValueKind == JsonValueKind.Number && ms.TryGetInt32(out var n) ? n : null);
                     return [];
                 case "ok":
                     return [];
@@ -316,8 +328,14 @@ namespace Orbweaver
                 else
                     Note("pair.revoke with a bad signature ignored");
             }
-            // Milestone 2 has nothing else a phone sends sealed; later
-            // milestones' prompts and answers dispatch here.
+            // CB-315: the phone's answer to an amber prompt. Class action only,
+            // so nothing that arrived on another class — and nothing that did
+            // not open under this pair's key — can reach the gate.
+            else if (cls == "action" && Json(plain) is { } act && Str(act, "t") == "answer")
+            {
+                if (ParseAnswer(act) is { } answer) AnswerReceived(from, channel.Phone.IdPublic, answer);
+                else Note($"answer from {from} malformed; ignored");
+            }
             return [];
         }
 
@@ -518,6 +536,66 @@ namespace Orbweaver
         private string? RosterFor(Channel c) =>
             SealTo(c, "state", "", c.Stream.Roster(_book.Snapshot()));
 
+        // ---- CB-315 prompts ------------------------------------------------------
+
+        // The answer frame's fields, or null when any is missing or the wrong
+        // type: a frame the gate could not even read is not an answer.
+        internal static PhoneAnswer? ParseAnswer(JsonElement f)
+        {
+            string? S(string name) => f.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            if (S("request_id") is not { } rid || S("session_id") is not { } sid || S("action") is not { } action
+                || S("scope") is not { } scope || S("note") is not { } note || S("nonce") is not { } nonce
+                || S("screen_hash") is not { } hash || S("sig") is not { } sig
+                || !f.TryGetProperty("expires_at", out var e) || e.ValueKind != JsonValueKind.Number || !e.TryGetInt64(out var exp))
+                return null;
+            return new PhoneAnswer(rid, sid, action, scope, note, nonce, exp, hash, sig);
+        }
+
+        // One amber to every paired phone, online or not — action frames are
+        // queued by the relay, and the push is what reaches a locked phone.
+        // The envelope id is the request_id (frames-v3), and each phone gets
+        // its own e, sealed to its own agreement key; the e is left off when
+        // the plaintext cannot fit the relay's 3600-character cap.
+        internal IReadOnlyList<string> SendPrompt(string requestId, string sessionId, string prompt, string? pushPlaintext)
+        {
+            if (!Welcomed) return [];
+            var frames = new List<string>();
+            foreach (var c in _channels.Values)
+            {
+                var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
+                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, "amber", e) is { } frame)
+                    frames.Add(frame);
+            }
+            return frames;
+        }
+
+        // resolved to every paired phone, so a sheet open on any of them closes:
+        // push resolve, envelope id = the request_id it resolves, and ck the
+        // amber's own (the same session's Ck) so the passive "Answered at the
+        // desk" alert replaces the amber in its thread. e, when the pipeline
+        // gives a plaintext, is the sealed resolve, per phone, for that alert.
+        internal IReadOnlyList<string> SendResolved(string requestId, string sessionId, string by, string? pushPlaintext = null)
+        {
+            if (!Welcomed) return [];
+            var plain = System.Text.Encoding.UTF8.GetBytes(PromptFrames.Resolved(requestId, sessionId, by));
+            var frames = new List<string>();
+            foreach (var c in _channels.Values)
+            {
+                var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
+                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, "resolve", e) is { } frame)
+                    frames.Add(frame);
+            }
+            return frames;
+        }
+
+        // A refusal goes only to the phone that answered.
+        internal IReadOnlyList<string> SendRefusal(string phoneId, string requestId, string sessionId, string code)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
+            return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
+                System.Text.Encoding.UTF8.GetBytes(PromptFrames.Refusal(requestId, sessionId, code))));
+        }
+
         // ---- sealing out ------------------------------------------------------
 
         private Channel OpenChannel(RelayIdentity.Phone phone, bool fresh)
@@ -548,7 +626,7 @@ namespace Orbweaver
         // Null — and nothing sent — when the epoch cannot be persisted or the
         // pairing has used its last epoch. Either way sending would risk a
         // reused nonce, which is the one failure this design exists to rule out.
-        private string? SealTo(Channel c, string cls, string ck, byte[] plaintext, string? id = null)
+        private string? SealTo(Channel c, string cls, string ck, byte[] plaintext, string? id = null, string push = "none", string? e = null)
         {
             if (!c.EpochPersisted)
             {
@@ -572,10 +650,11 @@ namespace Orbweaver
             var desktopId = _identity.DeviceId!;
             var ct = RelayCrypto.Seal(c.KeyFor(epoch), RelayCrypto.Nonce(RelayCrypto.DesktopToPhone, epoch, counter),
                 plaintext, RelayCrypto.Aad(desktopId, c.Phone.PhoneId, cls));
-            return Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null, id);
+            return Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null, id, push, e);
         }
 
-        private string Envelope(string from, string to, string cls, string ck, string ct, string? offer, string? id = null) => Frame(w =>
+        private string Envelope(string from, string to, string cls, string ck, string ct, string? offer, string? id = null,
+            string push = "none", string? e = null) => Frame(w =>
         {
             w.WriteNumber("v", Proto);
             w.WriteString("id", id ?? Ulid(_now()));
@@ -583,9 +662,10 @@ namespace Orbweaver
             w.WriteString("to", to);
             w.WriteNumber("ts", _now().ToUnixTimeSeconds());
             w.WriteString("class", cls);
-            w.WriteString("push", "none");
+            w.WriteString("push", push);
             w.WriteString("ck", ck);
             w.WriteString("ct", ct);
+            if (e is not null) w.WriteString("e", e);
             if (offer is not null) w.WriteString("offer", offer);
         });
 

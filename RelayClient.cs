@@ -21,7 +21,7 @@ namespace Orbweaver
     // one writer per connection sends them in order, so a socket never sees
     // two concurrent sends. Events this raises are raised outside that lock,
     // on whatever thread produced them — the UI marshals.
-    internal sealed class RelayClient : IDisposable, IPairingClient
+    internal sealed class RelayClient : IDisposable, IPairingClient, IPromptSender
     {
         internal const string DefaultHost = "orbweaver-relay.uplifttech.org";
 
@@ -105,7 +105,7 @@ namespace Orbweaver
 
         internal RelayClient(RelayIdentity identity, Options options, IRelayTransport transport,
             HttpMessageHandler? http = null, Func<DateTimeOffset>? now = null,
-            Func<TimeSpan, CancellationToken, Task>? delay = null)
+            Func<TimeSpan, CancellationToken, Task>? delay = null, PromptPipeline.Seams? promptSeams = null)
         {
             _identity = identity;
             _options = options;
@@ -130,7 +130,55 @@ namespace Orbweaver
             _link.PresenceChanged += () => Defer(() => PhonesChanged());
             _link.Note += note => { MirrorLog.Say("relay", note); Raise(() => Logged(note)); };
             _link.RetryDue += (key, attempt) => Defer(() => _ = RetryLaterAsync(key, attempt));
+
+            // CB-315: the amber loop. The pipeline awaits captures and presses,
+            // so it runs off the event pump (fire and forget, serialized inside
+            // the pipeline) and never under the lock.
+            Prompts = new PromptPipeline(promptSeams ?? DefaultPromptSeams(_now), this, options.DesktopName);
+            // Every pending prompt goes out again on each welcome (see
+            // ResendPendingAsync for why every one, not only the unsent).
+            _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
+            _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
+            _link.PushReplied += (id, code, ms) =>
+            {
+                MirrorLog.Say("relay", $"push {id} {code}{(ms is { } n ? $" apns_ms={n}" : "")}");
+                Defer(() => PushReplied(id, code, ms));
+            };
         }
+
+        internal PromptPipeline Prompts { get; }
+
+        // The relay's answer to each amber (request id, pushed / push_throttled /
+        // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on
+        // reconnect was throttled rather than alerted twice.
+        internal event Action<string, string, int?> PushReplied = delegate { };
+
+        // The real panes. Excluded: each is one line into TerminalFocuser,
+        // whose tmux calls a headless runner must not make.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static PromptPipeline.Seams DefaultPromptSeams(Func<DateTimeOffset> now) => new(
+            status => ScreenReaders.For(status)?.ReadAsync(status) ?? Task.FromResult<string?>(null),
+            TerminalFocuser.PressKey, TerminalFocuser.TypeQuietly,
+            now, Task.Delay, line => MirrorLog.Say("relay", line),
+            // Only the routes that write without focus; Terminal.app and
+            // anything else get "Open on desk".
+            TerminalFocuser.CanPressSilently,
+            TerminalFocuser.CaptureAndPress);
+
+        // The whole scan, for the prompt watcher; the roster gets its
+        // projection through OnScanned.
+        // Nothing is captured for a desktop with no phone to send a prompt to.
+        internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot) =>
+            _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
+
+        bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
+            Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
+
+        void IPromptSender.Resolved(string requestId, string sessionId, string by, string? pushPlaintext) =>
+            Dispatch(() => _link.SendResolved(requestId, sessionId, by, pushPlaintext));
+
+        void IPromptSender.Refusal(string phoneId, string requestId, string sessionId, string code) =>
+            Dispatch(() => _link.SendRefusal(phoneId, requestId, sessionId, code));
 
         // ---- what the UI sees ------------------------------------------------
 
@@ -212,6 +260,16 @@ namespace Orbweaver
                 {
                     LastError = ex.Message;
                     MirrorLog.Say("relay", $"connection ended: {ex.GetType().Name}: {ex.Message}");
+                }
+                // Anything else as well. An exception this loop did not list
+                // used to escape it and end the client for good — no reconnect
+                // and nothing logged, with the relay queueing answers for a
+                // desktop that never came back. A bug thrown from a socket or a
+                // frame handler costs one connection, not the client.
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    MirrorLog.Say("relay", $"connection ended unexpectedly: {ex.GetType().Name}: {RelayLink.Safe(ex.Message)}");
                 }
 
                 if (_refusedCode is { } code)
