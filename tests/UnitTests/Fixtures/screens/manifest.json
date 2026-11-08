@@ -10,11 +10,12 @@
     "reader": "AttachConsole + ReadConsoleOutputCharacterW",
     "capturedAt": "2026-11-07",
     "kind": "none",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
+    "expected": "prompt",
+    "expectedCheck": "prompt",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "conhost-claude-prompt.txt",
@@ -31,7 +32,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "conhost-codex-none.txt",
@@ -48,7 +52,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "conhost-codex-prompt.txt",
@@ -64,8 +69,9 @@
     "expected": "dialog",
     "expectedCheck": "dialog",
     "expectedOptions": 3,
-    "expectedTitle": "$ New-Item C:/Users/warre/cb313-probe -ItemType File",
-    "labelsComplete": true
+    "expectedTitle": "$ New-Item C:/Users/xxxxx/cb313-probe -ItemType File",
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "conhost-codex-updatedialog.txt",
@@ -82,7 +88,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 3,
     "expectedTitle": "Release notes: https://github.com/openai/codex/releases/latest",
-    "labelsComplete": false
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "conhost-grok-none.txt",
@@ -99,7 +106,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "conhost-grok-prompt.txt",
@@ -112,11 +120,14 @@
     "reader": "AttachConsole + ReadConsoleOutputCharacterW",
     "capturedAt": "2026-11-07",
     "kind": "prompt",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
+    "expected": "dialog",
+    "expectedCheck": "dialog",
+    "expectedOptions": 5,
+    "expectedTitle": "Remove-Item C:/Users/xxxxx/cb313-does-not-exist -ErrorAction SilentlyContinue",
+    "labelsComplete": true,
+    "modeKeys": [
+      "1"
+    ]
   },
   {
     "fixture": "conhost-grok-signin.txt",
@@ -133,7 +144,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "conhost-grok-trustdialog.txt",
@@ -150,7 +162,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-claude-none-120.txt",
@@ -168,7 +181,8 @@
     "expectedOptions": 0,
     "expectedTitle": null,
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-claude-none.txt",
@@ -185,7 +199,8 @@
     "expectedCheck": "prompt",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-claude-prompt-120.txt",
@@ -203,7 +218,10 @@
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "iterm2-claude-prompt.txt",
@@ -220,7 +238,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": false
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "iterm2-codex-none-120.txt",
@@ -238,7 +259,8 @@
     "expectedOptions": 0,
     "expectedTitle": null,
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-codex-none.txt",
@@ -255,7 +277,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-codex-prompt-120.txt",
@@ -273,7 +296,8 @@
     "expectedOptions": 3,
     "expectedTitle": "$ touch $HOME/cb313-probe",
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-codex-prompt.txt",
@@ -290,7 +314,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 3,
     "expectedTitle": "$ touch $HOME/cb313-probe",
-    "labelsComplete": false
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-grok-none.txt",
@@ -307,7 +332,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "iterm2-grok-prompt.txt",
@@ -320,11 +346,14 @@
     "reader": "osascript contents by session id",
     "capturedAt": "2026-11-07",
     "kind": "prompt",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
+    "expected": "dialog",
+    "expectedCheck": "dialog",
+    "expectedOptions": 3,
+    "expectedTitle": "touch $HOME/cb313-probe",
+    "labelsComplete": true,
+    "modeKeys": [
+      "1"
+    ]
   },
   {
     "fixture": "kitty-claude-none.txt",
@@ -341,7 +370,8 @@
     "expectedCheck": "prompt",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "kitty-claude-prompt.txt",
@@ -358,7 +388,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "kitty-codex-none.txt",
@@ -375,7 +408,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "kitty-codex-prompt.txt",
@@ -392,7 +426,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 3,
     "expectedTitle": "$ touch $HOME/cb313-probe",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "kitty-grok-none.txt",
@@ -409,7 +444,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "kitty-grok-prompt.txt",
@@ -422,11 +458,14 @@
     "reader": "kitten @ get-text --extent screen",
     "capturedAt": "2026-11-07",
     "kind": "prompt",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
+    "expected": "dialog",
+    "expectedCheck": "dialog",
+    "expectedOptions": 3,
+    "expectedTitle": "touch $HOME/cb313-probe",
+    "labelsComplete": true,
+    "modeKeys": [
+      "1"
+    ]
   },
   {
     "fixture": "terminal-claude-none.txt",
@@ -443,7 +482,8 @@
     "expectedCheck": "prompt",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "terminal-claude-prompt.txt",
@@ -460,7 +500,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "terminal-codex-none.txt",
@@ -477,7 +520,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "terminal-codex-prompt.txt",
@@ -494,7 +538,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 3,
     "expectedTitle": "$ touch $HOME/cb313-probe",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "terminal-grok-none.txt",
@@ -511,7 +556,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "terminal-grok-prompt.txt",
@@ -524,11 +570,14 @@
     "reader": "osascript pcnt (visible contents) by tty",
     "capturedAt": "2026-11-07",
     "kind": "prompt",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
+    "expected": "dialog",
+    "expectedCheck": "dialog",
+    "expectedOptions": 3,
+    "expectedTitle": "touch $HOME/cb313-probe",
+    "labelsComplete": true,
+    "modeKeys": [
+      "1"
+    ]
   },
   {
     "fixture": "tmux-claude-importdialog.txt",
@@ -545,7 +594,8 @@
     "expectedCheck": "no-box-top",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "tmux-claude-none.txt",
@@ -562,7 +612,8 @@
     "expectedCheck": "prompt",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "tmux-claude-prompt-wrapped.txt",
@@ -579,7 +630,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": false
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "tmux-claude-prompt.txt",
@@ -596,7 +650,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "tmux-codex-none.txt",
@@ -613,7 +670,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "tmux-codex-prompt.txt",
@@ -630,7 +688,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 3,
     "expectedTitle": "$ touch $HOME/cb313-probe",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "tmux-grok-none.txt",
@@ -647,7 +706,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "tmux-grok-prompt.txt",
@@ -660,11 +720,14 @@
     "reader": "tmux capture-pane -p",
     "capturedAt": "2026-11-07",
     "kind": "prompt",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
+    "expected": "dialog",
+    "expectedCheck": "dialog",
+    "expectedOptions": 3,
+    "expectedTitle": "touch $HOME/cb313-probe",
+    "labelsComplete": true,
+    "modeKeys": [
+      "1"
+    ]
   },
   {
     "fixture": "tmux-grok-trustdialog.txt",
@@ -681,7 +744,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-claude-none-120.txt",
@@ -699,7 +763,8 @@
     "expectedOptions": 0,
     "expectedTitle": null,
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-claude-none.txt",
@@ -716,7 +781,8 @@
     "expectedCheck": "prompt",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-claude-prompt-120.txt",
@@ -734,7 +800,10 @@
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "wezterm-claude-prompt.txt",
@@ -751,7 +820,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": false
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "wezterm-codex-none-120.txt",
@@ -769,7 +841,8 @@
     "expectedOptions": 0,
     "expectedTitle": null,
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-codex-none.txt",
@@ -786,7 +859,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-codex-prompt-120.txt",
@@ -804,7 +878,8 @@
     "expectedOptions": 3,
     "expectedTitle": "$ touch $HOME/cb313-probe",
     "labelsComplete": true,
-    "columns": 120
+    "columns": 120,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-codex-prompt.txt",
@@ -821,7 +896,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 3,
     "expectedTitle": "$ touch $HOME/cb313-probe",
-    "labelsComplete": false
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-grok-none.txt",
@@ -838,7 +914,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wezterm-grok-prompt.txt",
@@ -851,11 +928,14 @@
     "reader": "wezterm cli get-text",
     "capturedAt": "2026-11-07",
     "kind": "prompt",
-    "expected": "unknown",
-    "expectedCheck": "no-prompt-mark",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
+    "expected": "dialog",
+    "expectedCheck": "dialog",
+    "expectedOptions": 3,
+    "expectedTitle": "touch $HOME/cb313-probe",
+    "labelsComplete": true,
+    "modeKeys": [
+      "1"
+    ]
   },
   {
     "fixture": "wt-claude-importdialog.txt",
@@ -872,7 +952,8 @@
     "expectedCheck": "no-box-top",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-claude-none.txt",
@@ -889,7 +970,8 @@
     "expectedCheck": "prompt",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-claude-prompt.txt",
@@ -906,7 +988,10 @@
     "expectedCheck": "dialog",
     "expectedOptions": 4,
     "expectedTitle": "Do you want to proceed?",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": [
+      "3"
+    ]
   },
   {
     "fixture": "wt-codex-hooksdialog.txt",
@@ -923,7 +1008,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 3,
     "expectedTitle": "Hooks can run outside the sandbox after you trust them.",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-codex-none.txt",
@@ -940,7 +1026,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-codex-prompt.txt",
@@ -956,8 +1043,9 @@
     "expected": "dialog",
     "expectedCheck": "dialog",
     "expectedOptions": 3,
-    "expectedTitle": "$ New-Item C:/Users/warre/cb313-probe -ItemType File",
-    "labelsComplete": true
+    "expectedTitle": "$ New-Item C:/Users/xxxxx/cb313-probe -ItemType File",
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-codex-trustdialog.txt",
@@ -974,7 +1062,8 @@
     "expectedCheck": "dialog",
     "expectedOptions": 2,
     "expectedTitle": "injection. Trusting the directory allows project-local config, hooks, and exec policies to load.",
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-grok-none.txt",
@@ -991,7 +1080,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-grok-prompt.txt",
@@ -1004,11 +1094,14 @@
     "reader": "AttachConsole + ReadConsoleOutputCharacterW",
     "capturedAt": "2026-11-07",
     "kind": "prompt",
-    "expected": "unknown",
-    "expectedCheck": "no-box-top",
-    "expectedOptions": 0,
-    "expectedTitle": null,
-    "labelsComplete": true
+    "expected": "dialog",
+    "expectedCheck": "dialog",
+    "expectedOptions": 5,
+    "expectedTitle": "Remove-Item C:/Users/xxxxx/cb313-does-not-exist -ErrorAction SilentlyContinue",
+    "labelsComplete": true,
+    "modeKeys": [
+      "1"
+    ]
   },
   {
     "fixture": "wt-grok-ranwithoutprompt.txt",
@@ -1025,7 +1118,8 @@
     "expectedCheck": "no-box-top",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-grok-signin.txt",
@@ -1042,7 +1136,8 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   },
   {
     "fixture": "wt-grok-trustdialog.txt",
@@ -1059,6 +1154,7 @@
     "expectedCheck": "no-prompt-mark",
     "expectedOptions": 0,
     "expectedTitle": null,
-    "labelsComplete": true
+    "labelsComplete": true,
+    "modeKeys": []
   }
 ]

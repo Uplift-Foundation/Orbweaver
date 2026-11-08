@@ -1,30 +1,30 @@
 
- ▐▛███▛█   Claude Code v2.1.316
+ ▐▛███▛█   Claude Code v2.1.319
 ▝▜██████▀  Sonnet 5.5 · Claude Team
- ▝▝   ▝▝   ~\cb313\wt-claude · /rc
+ ▝▝   ▝▝   ~\cb313\conhost-claude · /rc
 
-  Sonnet 5.5 is here, and it's faster and excels at well-scoped tasks. Opus 5.5 is still your default. Switch with
-  /model.
+  Updated to latest. Got 20 features, 109 bugfixes, and 42 other changes.
+  code.claude.com/docs/en/changelog for details
 
-❯ run: touch cb313-probe-file
 
-● Creating probe file in working directory
-  ⎿  $ touch cb313-probe-file && ls -l cb313-probe-file
+> run: touch cb313-probe-file
+
+  Creating empty probe file
+  ⎿  $ touch cb313-probe-file
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Bash command
  Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
- Create probe file in working directory
+ Create empty probe file
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
- touch cb313-probe-file && ls -l cb313-probe-file
+ touch cb313-probe-file
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
  Do you want to proceed?
- ❯ 1. Yes
-   2. Yes, and always allow access to C:\Users\warre\cb313\wt-claude from this project
+ > 1. Yes
+   2. Yes, and always allow access to C:\Users\xxxxx\cb313\conhost-claude from this project
    3. Yes, and switch to auto mode · auto mode handles these prompts for you
    4. No
 
  Esc to cancel · Tab to amend
-
 
 

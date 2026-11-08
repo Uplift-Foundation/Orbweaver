@@ -4,7 +4,7 @@ The question: for each supported terminal, can Orbweaver read a live permission 
 
 **Answer: yes for every terminal, for Claude Code and Codex. Windows Terminal through ConPTY included.** Grok's prompt is read off the screen fine and then not understood: Grok draws a shape the parser has no arm for (below), on all five Mac terminals. Grok's prompt is also not parsed on Windows Terminal or conhost (captured once Warren had signed Grok in there).
 
-Everything below is from real captures taken 7 Nov 2026, saved in `tools/screen-read-probe/fixtures/`, and replayed by `tests/UnitTests/ScreenReadFixtureTests.cs`. Re-derive any cell by hand with `dotnet run --project tests/TranscriptTests -- tools/screen-read-probe/fixtures/<fixture>.txt`.
+Everything below is from real captures taken 7 Nov 2026, saved in `tests/UnitTests/Fixtures/screens/`, and replayed by `tests/UnitTests/ScreenReadFixtureTests.cs`. Re-derive any cell by hand with `dotnet run --project tests/TranscriptTests -- tests/UnitTests/Fixtures/screens/<fixture>.txt`.
 
 ## What "yes" means here
 
@@ -36,7 +36,7 @@ Windows Terminal hosts the console in `OpenConsole.exe` (ConPTY); `tasklist` con
 
 What it took, because none of it was obvious:
 
-- The read has to run in the interactive session. Run over `ssh`, the process is not on the desktop; the probe ran as a one-off `schtasks /Create ... /SC ONCE /ST 23:59 /IT` task and `schtasks /Run`. `query user` showed the `warre` session as `Disc` (disconnected, 5 days idle) and `/IT` still worked and `wt` still created windows.
+- The read has to run in the interactive session. Run over `ssh`, the process is not on the desktop; the probe ran as a one-off `schtasks /Create ... /SC ONCE /ST 23:59 /IT` task and `schtasks /Run`. `query user` showed the Windows account's session as `Disc` (disconnected, 5 days idle) and `/IT` still worked and `wt` still created windows.
 - The pid to attach to is the CLI's own console-attached process. For Grok on Windows that is the **parent** `grok.exe`; the child it spawns has its own hidden `conhost` and `AttachConsole` on it fails with error 87.
 - Typing into those consoles used `WriteConsoleInput` with the bracketed-paste records the app uses (`TerminalFocuser.ConsoleRecords`); it worked in both hosts.
 
@@ -85,7 +85,7 @@ The seven fixtures added with Grok signed in (`wt-grok-none`, `wt-grok-trustdial
 
 ## Unplanned change on the Windows box
 
-Codex 0.148.0 showed an "Update available" dialog in the conhost session, and I pressed Enter on it without reading it first; the default option was "Update now", which ran OpenAI's install script. The Windows box's Codex went from 0.148.0 to **0.167.0**. It is the same version as the Mac now. The Windows Terminal Codex captures were taken before this, at 0.148.0; the conhost ones after, at 0.167.0. Which captures were at which version: `wt-claude-*`, `wt-codex-*` and `wt-grok-*` were taken at Claude Code 2.1.316 / Codex 0.148.0 / Grok 1.0.34; `conhost-codex-none` and `conhost-codex-prompt` at Codex 0.167.0; `conhost-codex-updatedialog` is the 0.148.0 session that showed the update prompt. Nothing else on the box was changed: the probe and its fixtures live in `C:\Users\warre\cb313\`.
+Codex 0.148.0 showed an "Update available" dialog in the conhost session, and I pressed Enter on it without reading it first; the default option was "Update now", which ran OpenAI's install script. The Windows box's Codex went from 0.148.0 to **0.167.0**. It is the same version as the Mac now. The Windows Terminal Codex captures were taken before this, at 0.148.0; the conhost ones after, at 0.167.0. Which captures were at which version: `wt-claude-*`, `wt-codex-*` and `wt-grok-*` were taken at Claude Code 2.1.316 / Codex 0.148.0 / Grok 1.0.34; `conhost-codex-none` and `conhost-codex-prompt` at Codex 0.167.0; `conhost-codex-updatedialog` is the 0.148.0 session that showed the update prompt. Nothing else on the box was changed: the probe and its fixtures live in a scratch folder under the account's profile.
 
 ## What was not verified
 

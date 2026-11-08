@@ -1713,6 +1713,14 @@ namespace Orbweaver
 
         public async Task AnswerAsync(ChatPromptOption option)
         {
+            // The last line of defence for a mode option (CB-315): the panel does not
+            // draw one and does not press one, and this refuses it for any other caller.
+            if (option.Mode)
+            {
+                Note("That option changes the session's permission mode, so it can only be chosen in the terminal.");
+                return;
+            }
+
             if (!_format.ReplyEnabled())
             {
                 Note("Replying is off, so this can only be answered in the terminal.");

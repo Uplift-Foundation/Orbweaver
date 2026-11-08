@@ -710,7 +710,11 @@ namespace Orbweaver
         // CB-307 item 3: the option that opens a text entry ("Type something.")
         // rather than answering by itself. The panel shows a text box for it and
         // sends through IRemoteChatFreeText, never through AnswerAsync.
-        bool FreeText = false);
+        bool FreeText = false,
+        // CB-315: the option switches the session's permission mode ("always-approve
+        // mode", "switch to auto mode") rather than answering the dialog. Parsed
+        // and carried, never offered as a button and never pressed: see OptionModes.
+        bool Mode = false);
 
     // ArmedActivation marks a prompt whose answer cannot be undone and must not be
     // given by accident: its options ignore presses for a moment after the prompt

@@ -6,25 +6,25 @@
   /review - review any changes and find issues
 
 
-› [200~run this exact shell command outside the sandbox: New-Item C:/Users/warre/cb313-probe -ItemType File[201~
+› [200~run this exact shell command outside the sandbox: New-Item C:/Users/xxxxx/cb313-probe -ItemType File[201~
 
 
 • I’ll run the exact command outside the sandbox.
 
-• Running New-Item C:/Users/warre/cb313-probe -ItemType File
+• Running New-Item C:/Users/xxxxx/cb313-probe -ItemType File
 
 
   Would you like to run the following command?
 
   Environment: local
 
-  Reason: Allow creating C:/Users/warre/cb313-probe outside the sandbox?
+  Reason: Allow creating C:/Users/xxxxx/cb313-probe outside the sandbox?
 
-  $ New-Item C:/Users/warre/cb313-probe -ItemType File
+  $ New-Item C:/Users/xxxxx/cb313-probe -ItemType File
 
 
 › 1. Yes, proceed (y)
-  2. Yes, and don't ask again for commands that start with `New-Item C:/Users/warre/cb313-probe -ItemType File` (p)
+  2. Yes, and don't ask again for commands that start with `New-Item C:/Users/xxxxx/cb313-probe -ItemType File` (p)
   3. No, and tell Codex what to do differently (esc)
 
   Press enter to confirm or esc to cancel

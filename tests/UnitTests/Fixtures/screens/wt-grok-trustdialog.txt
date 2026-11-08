@@ -11,7 +11,7 @@
 
 
                                       Do you trust the contents of this directory?
-                                              C:\Users\warre\cb313\wt-grok
+                                              C:\Users\xxxxx\cb313\wt-grok
 
                                 Grok Build may run or modify contents in this directory,
                                                  posing security risks.

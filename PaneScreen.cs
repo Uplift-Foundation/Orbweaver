@@ -67,7 +67,7 @@ namespace Orbweaver
 
             var mark = -1;
             for (var i = lines.Length - 1; i >= from && mark < 0; i--)
-                if (lines[i].StartsWith('❯') && !ChatTranscript.OptionLine.IsMatch(lines[i])) mark = i;
+                if (IsPromptMark(lines[i]) && !ChatTranscript.OptionLine.IsMatch(lines[i])) mark = i;
 
             if (mark < 0) return (PaneReading.Unknown, "no-prompt-mark");
 
@@ -90,6 +90,17 @@ namespace Orbweaver
 
             return (PaneReading.Prompt, "prompt");
         }
+
+        // The idle input line's mark: ❯, or > where the console cannot draw it.
+        // The character after the > is a NO-BREAK SPACE in the real capture, not
+        // a space, so any whitespace counts.
+        // Windows' classic console host (conhost) draws Claude Code's mark as a
+        // plain > (CB-313), and that is the only difference between its idle
+        // screen and every other terminal's. The box around it (a rule above
+        // and one below, checked after this) is what keeps a > that is a quote
+        // or a shell prompt from reading as the input box.
+        private static bool IsPromptMark(string line) =>
+            line.StartsWith('❯') || line == ">" || (line.Length > 1 && line[0] == '>' && char.IsWhiteSpace(line[1]));
 
         // A box's top edge: a long run of rule characters at its start, with
         // anything (a session name) allowed after it.

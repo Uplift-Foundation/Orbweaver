@@ -2,7 +2,7 @@
   ~/cb313\wt-grok                                                                             20K / 256K │ [Dashboard]
 
 
-     ❯ [200~run this exact shell command: New-Item C:/Users/warre/cb313-probe -ItemType File[201~           10:22 PM
+     ❯ [200~run this exact shell command: New-Item C:/Users/xxxxx/cb313-probe -ItemType File[201~           10:22 PM
                                                                                                                        █
                                                                                                                        █
      ◆ Thought for 3.7s                                                                                                █
@@ -11,7 +11,7 @@
                                                                                                                        █
      ◆ Ran create the empty probe file                                                                                 █
                                                                                                                        █
-     Created C:\Users\warre\cb313-probe. It is an empty file.                                               10:22 PM   █
+     Created C:\Users\xxxxx\cb313-probe. It is an empty file.                                               10:22 PM   █
                                                                                                                        █
      Worked for 25s                                                                                                    █
                                                                                                                        █

@@ -3200,8 +3200,14 @@ namespace Orbweaver
             // No options means the screen couldn't be read. The box still
             // appears — something is waiting and the transcript won't say so —
             // but the only thing offered is the terminal.
-            PromptOptions.ItemsSource = prompt.Options.Count > 0 ? prompt.Options : null;
-            PromptOptions.IsVisible = prompt.Options.Count > 0;
+            //
+            // An option that changes the session's permission mode ("always-approve
+            // mode", "switch to auto mode") is parsed and then left off: it is not
+            // an answer to this question, and one click must never be able to turn
+            // approval off for the whole session (CB-315, OptionModes).
+            var offered = prompt.Options.Where(o => !o.Mode).ToList();
+            PromptOptions.ItemsSource = offered.Count > 0 ? offered : null;
+            PromptOptions.IsVisible = offered.Count > 0;
 
             PromptBox.IsVisible = true;
         }
@@ -3250,6 +3256,7 @@ namespace Orbweaver
         private void ChoosePromptOption(Control? control)
         {
             if (control?.DataContext is not ChatPromptOption option) return;
+            if (option.Mode) return;   // never pressable, whatever put it in front of us
             if (_session is not IRemoteChatPrompts prompts) return;
 
             // The option that asks for typed text opens a text box and answers

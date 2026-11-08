@@ -6,7 +6,7 @@
 
 
                                       Do you trust the contents of this directory?
-                                            C:\Users\warre\cb313\conhost-grok
+                                            C:\Users\xxxxx\cb313\conhost-grok
 
                                 Grok Build may run or modify contents in this directory,
                                                  posing security risks.
