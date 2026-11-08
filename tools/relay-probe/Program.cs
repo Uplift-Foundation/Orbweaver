@@ -80,11 +80,22 @@ if (args.Contains("--prompt-desktop"))
 {
     string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
     var pane = Arg("--pane", "");
-    if (pane.Length == 0) { Console.WriteLine("--pane %N is required"); return 2; }
+    if (pane.Length == 0) { Console.WriteLine("--pane %N (or --pane - with --term-program/--term-id) is required"); return 2; }
     var source = Arg("--cli", "claude") switch { "codex" => SessionSource.Codex, "grok" => SessionSource.Grok, _ => SessionSource.ClaudeCode };
-    var status = new SessionStatus { State = "waiting", Source = source, Title = "relay probe", TmuxPane = pane, TmuxSocket = Arg("--socket", "") };
-    var seams = new PromptPipeline.Seams(TerminalFocuser.CapturePane, TerminalFocuser.SendPaneKey, TerminalFocuser.SendPaneText,
-        () => DateTimeOffset.UtcNow, Task.Delay, l => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"));
+    // Or a non-tmux terminal: --term-program iTerm.app|WezTerm|kitty|Apple_Terminal
+    // --term-id <session GUID / pane id / window id> [--tty /dev/ttysNNN]
+    // [--pid N] (Windows console: the CLI's own pid).
+    var status = new SessionStatus
+    {
+        State = "waiting", Source = source, Title = "relay probe", TmuxPane = pane == "-" ? "" : pane, TmuxSocket = Arg("--socket", ""),
+        TermProgram = Arg("--term-program", ""), TermId = Arg("--term-id", ""), Tty = Arg("--tty", ""),
+        SessionPid = int.Parse(Arg("--pid", "0")),
+    };
+    Console.WriteLine($"route {TerminalFocuser.RouteFor(status)}; presses silently: {TerminalFocuser.CanPressSilently(status)}");
+    var seams = new PromptPipeline.Seams(
+        s => ScreenReaders.For(s)?.ReadAsync(s) ?? Task.FromResult<string?>(null), TerminalFocuser.PressKey, TerminalFocuser.TypeQuietly,
+        () => DateTimeOffset.UtcNow, Task.Delay, l => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"),
+        TerminalFocuser.CanPressSilently);
     var pd = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport(), promptSeams: seams);
     pd.Start();
     while (pd.State != RelayClient.Status.Connected) await Task.Delay(50);

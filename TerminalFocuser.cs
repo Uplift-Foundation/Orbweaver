@@ -566,6 +566,134 @@ namespace Orbweaver
             };
         }
 
+        // ---- CB-315: one key, from a phone, with nothing brought forward ----------
+        //
+        // The amber loop presses exactly one key into a dialog: a digit, or Enter
+        // after a tell's note. SendTextAndSubmit cannot stand in, because its
+        // trailing Enter would land on whatever the first key opened. So these
+        // are the same route typers without the submit, and only on the routes
+        // that write without focus: tmux send-keys, kitty and WezTerm
+        // send-text, iTerm2 `write text … newline NO`, and the Windows console
+        // under ConsoleGate. Terminal.app is not among them — a keystroke there
+        // needs Accessibility consent and focus, and stealing focus on a
+        // machine someone is sitting at is not an acceptable way to answer
+        // remotely — so its prompts go to the phone "Open on desk". Every
+        // argument travels through argv or stdin, never into script source.
+        internal static bool CanPressSilently(SessionStatus? status) => PressesSilently(RouteFor(status));
+
+        internal static bool PressesSilently(TerminalTyping.Route route) => route is
+            TerminalTyping.Route.Tmux or TerminalTyping.Route.Kitty or TerminalTyping.Route.WezTerm
+            or TerminalTyping.Route.ITerm2 or TerminalTyping.Route.WindowsConsole;
+
+        // The bytes a key is: a single ASCII digit as itself, Enter as CR (not
+        // LF, which Claude Code and Codex read as "insert a newline"; see
+        // KittySend). Anything else is not a key this path presses: null.
+        internal static string? PressBytes(string key) =>
+            key == "Enter" ? "\r" : key.Length == 1 && char.IsAsciiDigit(key[0]) ? key : null;
+
+        internal static (string Stdin, string[] Args) KittyPress(SessionStatus status, string bytes) =>
+            (bytes, new[] { "@", "send-text", "--match", "id:" + status.TermId, "--stdin" });
+
+        internal static (string Stdin, string[] Args) WezTermPress(SessionStatus status, string bytes) =>
+            (bytes, new[] { "cli", "send-text", "--pane-id", status.TermId, "--no-paste" });
+
+        // `write text` with `newline NO` puts exactly the body in; an empty body
+        // with the default newline is Enter.
+        internal static readonly string[] ITerm2PressScript =
+        {
+            "on run argv",
+            "set wanted to item 1 of argv",
+            "set body to item 2 of argv",
+            "tell application \"iTerm2\"",
+            "repeat with w in windows",
+            "repeat with t in tabs of w",
+            "repeat with s in sessions of t",
+            "if ((id of s) as string) is wanted then",
+            "if body is \"\" then",
+            "tell s to write text \"\"",
+            "else",
+            "tell s to write text body newline NO",
+            "end if",
+            "return \"ok\"",
+            "end if",
+            "end repeat",
+            "end repeat",
+            "end repeat",
+            "end tell",
+            "return \"no\"",
+            "end run",
+        };
+
+        // For a key, the iTerm2 body: the digit, or "" for Enter. For typed
+        // text (a tell's note), the bracketed text, no newline.
+        internal static string[] ITerm2PressArgs(SessionStatus status, string body) =>
+            OsascriptArgs(ITerm2PressScript, status.TermId, body);
+
+        // The console records for one key: the digit as a down/up pair, or
+        // VK_RETURN with '\r'. Nothing after it.
+        internal static List<NativeMethods.InputRecord> ConsoleKeyRecords(string bytes)
+        {
+            var records = new List<NativeMethods.InputRecord>(bytes.Length * 2);
+            foreach (var c in bytes) AddKeystroke(records, c, virtualKey: c == '\r' ? (ushort)0x0D : (ushort)0);
+            return records;
+        }
+
+        public static Task<bool> PressKey(SessionStatus? status, string key)
+        {
+            if (status is null || PressBytes(key) is not { } bytes || !CanPressSilently(status)) return Task.FromResult(false);
+            return RouteFor(status) switch
+            {
+                TerminalTyping.Route.Tmux => SendPaneKey(status, key),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), KittyPress(status, bytes))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), WezTermPress(status, bytes))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, ITerm2PressArgs(status, key == "Enter" ? "" : bytes))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, ConsoleKeyRecords(bytes))),
+            };
+        }
+
+        // A tell's note, typed without Enter (the caller presses Enter after):
+        // bracketed exactly as the composer types it, through the same routes.
+        public static Task<bool> TypeQuietly(SessionStatus? status, string text)
+        {
+            if (status is null || string.IsNullOrEmpty(text) || !CanPressSilently(status)) return Task.FromResult(false);
+            var body = TerminalTyping.ForTyping(text);
+            return RouteFor(status) switch
+            {
+                TerminalTyping.Route.Tmux => SendPaneText(status, text),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), KittyPress(status, body))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), WezTermPress(status, body))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, ITerm2PressArgs(status, body))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, ConsoleKeyRecords(body))),
+            };
+        }
+
+        [ExcludeFromCodeCoverage]
+        private static bool FeedPress(string? exe, (string Stdin, string[] Args) call) => Feed(exe, call.Stdin, call.Args);
+
+        // AttachConsole, write, FreeConsole, under the gate the console typer and
+        // the screen reader share.
+        [SupportedOSPlatform("windows")]
+        [ExcludeFromCodeCoverage]
+        private static bool WriteConsoleKeys(SessionStatus status, List<NativeMethods.InputRecord> records)
+        {
+            lock (ConsoleGate)
+            {
+                NativeMethods.FreeConsole();
+                if (!NativeMethods.AttachConsole((uint)status.SessionPid)) return false;
+                try
+                {
+                    using var input = NativeMethods.OpenConsoleInput();
+                    if (input.IsInvalid) return false;
+                    var all = records.ToArray();
+                    return NativeMethods.WriteConsoleInput(input, all, (uint)all.Length, out var written) && written == all.Length;
+                }
+                finally
+                {
+                    NativeMethods.FreeConsole();
+                }
+            }
+        }
+
         // kitty, addressed by the window id it exports as KITTY_WINDOW_ID.
         //
         // Text goes over stdin rather than as an argument, which is what
