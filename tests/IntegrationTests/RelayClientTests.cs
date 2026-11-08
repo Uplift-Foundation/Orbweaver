@@ -278,6 +278,48 @@ public class RelayClientTests : IAsyncLifetime
         lock (keys) Assert.Equal(["1"], keys);
     }
 
+    // Lead's decision: every pending prompt goes out again on every welcome.
+    // The relay's 30-second alert throttle (frames-v3 rate_limits.amber) is
+    // what keeps that from being a second alert: this stub plays the relay's
+    // half — pushed for the first amber of an id, push_throttled for a repeat
+    // inside 30 s — and the client must see exactly one pushed.
+    [Fact]
+    public async Task A_repeat_on_reconnect_goes_out_with_the_same_id_and_comes_back_throttled()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        var replies = new List<(string Id, string Code)>();
+        client.PushReplied += (id, code, _) => { lock (replies) replies.Add((id, code)); };
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+
+        var pushedAt = new Dictionary<string, DateTime>();
+        async Task<string> RelayAnswers()
+        {
+            var amber = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber");
+            var id = amber.GetProperty("id").GetString()!;
+            var code = pushedAt.TryGetValue(id, out var at) && DateTime.UtcNow - at < TimeSpan.FromSeconds(30) ? "push_throttled" : "pushed";
+            if (code == "pushed") pushedAt[id] = DateTime.UtcNow;
+            await _stub.Send(JsonSerializer.Serialize(new { t = "ok", @ref = id, code }));
+            return id;
+        }
+
+        var first = await RelayAnswers();
+        await _stub.DropConnection();
+        await _stub.NextT("hello");
+        var second = await RelayAnswers();
+        Assert.Equal(first, second);
+        await Until(() => { lock (replies) return replies.Count == 2; });
+        lock (replies) Assert.Equal([(first, "pushed"), (first, "push_throttled")], replies);
+    }
+
     // A prompt minted before the socket is up produces no frame; the welcome
     // sends it.
     [Fact]

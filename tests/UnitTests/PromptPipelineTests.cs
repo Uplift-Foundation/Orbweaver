@@ -318,32 +318,33 @@ public class PromptPipelineTests
     // ---- reconnect -----------------------------------------------------------
 
     [Fact]
-    public async Task A_prompt_minted_while_the_relay_was_down_is_sent_on_the_welcome_once()
+    public async Task A_prompt_minted_while_the_relay_was_down_is_sent_on_the_welcome()
     {
         _sent.Online = false;
         await _p.OnScannedAsync(Snap());
         var minted = Assert.Single(_sent.Prompts);
 
-        await _p.ResendUndeliveredAsync();            // still down
+        await _p.ResendPendingAsync();            // still down
         Assert.Equal(2, _sent.Prompts.Count);
         Assert.Contains($"prompt-resent {minted.Rid} (still not sent)", _log);
 
         _sent.Online = true;
-        await _p.ResendUndeliveredAsync();            // the welcome
+        await _p.ResendPendingAsync();            // the welcome
         Assert.Equal(3, _sent.Prompts.Count);
-        Assert.Equal(minted, _sent.Prompts[2]);       // same request id, same bytes
+        Assert.Equal(minted, _sent.Prompts[2]);   // same request id, same bytes
         Assert.Contains($"prompt-resent {minted.Rid}", _log);
-
-        await _p.ResendUndeliveredAsync();            // a later welcome: already out
-        Assert.Equal(3, _sent.Prompts.Count);
     }
 
+    // Lead's decision: a frame lost as the socket dropped looks delivered, so
+    // every pending prompt goes out again on every welcome.
     [Fact]
-    public async Task A_prompt_that_went_out_is_not_repeated_on_reconnect()
+    public async Task A_prompt_that_went_out_is_sent_again_on_every_welcome()
     {
         await _p.OnScannedAsync(Snap());
-        await _p.ResendUndeliveredAsync();
-        Assert.Single(_sent.Prompts);
+        await _p.ResendPendingAsync();
+        await _p.ResendPendingAsync();
+        Assert.Equal(3, _sent.Prompts.Count);
+        Assert.Single(_sent.Prompts.Distinct());   // the same frame each time
     }
 
     [Fact]
@@ -353,14 +354,14 @@ public class PromptPipelineTests
         await _p.OnScannedAsync(Snap());
         _now = _now.AddSeconds(1800);
         _sent.Online = true;
-        await _p.ResendUndeliveredAsync();
+        await _p.ResendPendingAsync();
         Assert.Single(_sent.Prompts);
 
         _now = _now.AddSeconds(-1800);
         _pane.Stuck = true;
         await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());   // answered (no effect), still pending
         Assert.True(_p.PendingFor("s1")!.Answered);
-        await _p.ResendUndeliveredAsync();
+        await _p.ResendPendingAsync();
         Assert.Single(_sent.Prompts);
     }
 

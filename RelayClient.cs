@@ -135,23 +135,34 @@ namespace Orbweaver
             // so it runs off the event pump (fire and forget, serialized inside
             // the pipeline) and never under the lock.
             Prompts = new PromptPipeline(promptSeams ?? DefaultPromptSeams(_now), this, options.DesktopName);
-            // A prompt minted while the socket was down goes out on the welcome.
-            _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendUndeliveredAsync());
+            // Every pending prompt goes out again on each welcome (see
+            // ResendPendingAsync for why every one, not only the unsent).
+            _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
             _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
-            _link.PushReplied += (id, code, ms) => MirrorLog.Say("relay", $"push {id} {code}{(ms is { } n ? $" apns_ms={n}" : "")}");
+            _link.PushReplied += (id, code, ms) =>
+            {
+                MirrorLog.Say("relay", $"push {id} {code}{(ms is { } n ? $" apns_ms={n}" : "")}");
+                Defer(() => PushReplied(id, code, ms));
+            };
         }
 
         internal PromptPipeline Prompts { get; }
+
+        // The relay's answer to each amber (request id, pushed / push_throttled /
+        // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on
+        // reconnect was throttled rather than alerted twice.
+        internal event Action<string, string, int?> PushReplied = delegate { };
 
         // The real panes. Excluded: each is one line into TerminalFocuser,
         // whose tmux calls a headless runner must not make.
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static PromptPipeline.Seams DefaultPromptSeams(Func<DateTimeOffset> now) => new(
             status => ScreenReaders.For(status)?.ReadAsync(status) ?? Task.FromResult<string?>(null),
-            TerminalFocuser.SendPaneKey, TerminalFocuser.SendPaneText,
+            TerminalFocuser.PressKey, TerminalFocuser.TypeQuietly,
             now, Task.Delay, line => MirrorLog.Say("relay", line),
-            // SendPaneKey presses into tmux alone, so far.
-            TerminalFocuser.CanReadPane);
+            // Only the routes that write without focus; Terminal.app and
+            // anything else get "Open on desk".
+            TerminalFocuser.CanPressSilently);
 
         // The whole scan, for the prompt watcher; the roster gets its
         // projection through OnScanned.

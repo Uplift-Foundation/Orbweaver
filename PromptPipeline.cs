@@ -13,7 +13,8 @@ namespace Orbweaver
     {
         // True when a frame was produced for at least one phone; false while
         // the relay is down (RelayLink sends nothing unwelcomed), which is
-        // what ResendUndeliveredAsync later makes good.
+        // which the pipeline only logs: ResendPendingAsync sends every pending
+        // prompt again on each welcome regardless.
         bool Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext);
         void Resolved(string requestId, string sessionId, string by);
         void Refusal(string phoneId, string requestId, string sessionId, string code);
@@ -61,7 +62,6 @@ namespace Orbweaver
             internal required SessionStatus Status;
             internal required string Prompt;
             internal required string? Push;
-            internal bool Delivered;
         }
 
         private readonly Seams _seams;
@@ -165,7 +165,7 @@ namespace Orbweaver
 
             var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly), Status = status, Prompt = prompt, Push = push?.Plaintext };
             _live[sid] = live;
-            live.Delivered = _send.Prompt(requestId, sid, prompt, push?.Plaintext);
+            _send.Prompt(requestId, sid, prompt, push?.Plaintext);
             _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")}");
         }
 
@@ -192,13 +192,17 @@ namespace Orbweaver
             _ => "Needs an answer",
         };
 
-        // A prompt minted while the relay was down produced no frame, and the
-        // phone would never hear of it: on every welcome, each pending prompt
-        // that never went out is sent now — same request_id, same bytes —
-        // unless it was answered (it cannot have been, by a phone) or has
-        // expired, which no phone could answer anyway. One that did go out is
-        // not repeated: the relay queues action frames for an offline phone.
-        internal async Task ResendUndeliveredAsync()
+        // On every welcome, every pending prompt goes out again — same
+        // request_id, same bytes — unless it was answered or has expired, which
+        // no phone could act on. Every one, not only those minted while the
+        // relay was down: a frame written in the instant a socket drops is lost
+        // with it and looks delivered, and a session blocked on someone who was
+        // never told is worse than a repeated alert. The repeat is absorbed
+        // three times over: the relay throttles alerts to one per (desktop,
+        // session, phone) per 30 s (answering push_throttled), APNs's
+        // collapse-id replaces rather than stacks, and the phone's PromptBook
+        // dedupes on request_id. (Lead's decision on CB-315.)
+        internal async Task ResendPendingAsync()
         {
             await _gate.WaitAsync().ConfigureAwait(false);
             try
@@ -206,9 +210,9 @@ namespace Orbweaver
                 var now = _seams.Now().ToUnixTimeSeconds();
                 foreach (var live in _live.Values)
                 {
-                    if (live.Delivered || live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
-                    live.Delivered = _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
-                    _seams.Log($"prompt-resent {live.Pending.RequestId}{(live.Delivered ? "" : " (still not sent)")}");
+                    if (live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
+                    var sent = _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
+                    _seams.Log($"prompt-resent {live.Pending.RequestId}{(sent ? "" : " (still not sent)")}");
                 }
             }
             finally { _gate.Release(); }
