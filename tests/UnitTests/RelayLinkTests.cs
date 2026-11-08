@@ -164,6 +164,7 @@ public class RelayLinkTests : IDisposable
     [InlineData("""{"t":"pong"}""")]
     [InlineData("""{"t":5}""")]
     [InlineData("""{"t":"ok","ref":"link","code":"linked"}""")]
+    [InlineData("""{"t":"ok","ref":"resync"}""")]
     public void Junk_and_unknown_frames_produce_nothing(string frame) => Assert.Empty(New().Link.OnFrame(frame));
 
     [Fact]
@@ -545,21 +546,112 @@ public class RelayLinkTests : IDisposable
         Assert.Equal(["unlink"], link.OnFrame(Welcome()).Select(T));
     }
 
-    // The relay drops a rate-limited frame and today names none of them. An
-    // unlink is the one frame nothing resends, so every unanswered one goes
-    // again; the duplicate's answer, if the first did land, is not_linked.
+    // Hana's PR #9: a frame refused for rate comes back as err rate_limited
+    // with a ref naming it, and was not processed — so it is resent, after a
+    // backoff RelayClient schedules from RetryDue, at most MaxRetries times.
+    private static List<(string Key, int Attempt)> Retries(RelayLink link)
+    {
+        var due = new List<(string, int)>();
+        link.RetryDue += (k, a) => due.Add((k, a));
+        return due;
+    }
+
     [Fact]
-    public void Rate_limited_resends_every_unanswered_unlink_once()
+    public void A_refused_unlink_is_retried_with_a_bounded_number_of_attempts()
     {
         var (link, identity, phone, notes, _) = Paired();
+        var due = Retries(link);
         link.Remove(phone.Id);
-        var again = link.OnFrame("""{"t":"err","code":"rate_limited"}""");
-        Assert.Equal([$$"""{"t":"unlink","peer_id":"{{phone.Id}}"}"""], again);
-        Assert.Contains("relay err code=rate_limited", notes);
-        link.OnFrame("""{"t":"ok","ref":"unlink","code":"unlinked"}""");     // the first landed after all
-        link.OnFrame("""{"t":"err","ref":"unlink","code":"not_linked"}""");  // and the repeat finds it gone
+        for (var attempt = 1; attempt <= RelayLink.MaxRetries; attempt++)
+        {
+            link.OnFrame("""{"t":"err","ref":"unlink","code":"rate_limited"}""");
+            Assert.Equal(("unlink:" + phone.Id, attempt), due[^1]);
+            Assert.Equal([$$"""{"t":"unlink","peer_id":"{{phone.Id}}"}"""], link.Retry("unlink:" + phone.Id));
+        }
+        link.OnFrame("""{"t":"err","ref":"unlink","code":"rate_limited"}""");          // the sixth refusal
+        Assert.Equal(RelayLink.MaxRetries, due.Count);
+        Assert.Contains(notes, n => n.StartsWith("giving up on unlink:"));
+        Assert.Equal([phone.Id], identity.PendingUnlinks);                               // still owed for the next welcome
+        link.OnFrame("""{"t":"err","ref":"unlink","code":"rate_limited"}""");          // nothing in flight: nothing scheduled
+        Assert.Equal(RelayLink.MaxRetries, due.Count);
+    }
+
+    [Fact]
+    public void An_unlink_that_lands_resets_its_attempts_and_is_not_retried()
+    {
+        var (link, identity, phone, _, _) = Paired();
+        var due = Retries(link);
+        link.Remove(phone.Id);
+        link.OnFrame("""{"t":"err","ref":"unlink","code":"rate_limited"}""");
+        link.Retry("unlink:" + phone.Id);
+        link.OnFrame("""{"t":"ok","ref":"unlink","code":"unlinked"}""");
         Assert.Empty(identity.PendingUnlinks);
-        Assert.Empty(link.OnFrame("""{"t":"err","code":"rate_limited"}""")); // nothing owed: nothing resent
+        Assert.Empty(link.Retry("unlink:" + phone.Id));                                  // nothing owed any more
+        Assert.Single(due);
+    }
+
+    [Fact]
+    public void A_refused_link_or_accept_is_retried_until_the_link_lands()
+    {
+        var (link, _, _) = New();
+        var phone = new FakePhone();
+        link.OnFrame(Welcome());
+        var due = Retries(link);
+        link.OnFrame(phone.Request(link.BeginPairing("off_1", _now.AddMinutes(5)).QrText));
+        var frames = link.Allow(link.Pending!, "Mac");
+        var acceptId = J(frames[0]).GetProperty("id").GetString()!;
+
+        link.OnFrame($$"""{"t":"err","ref":"{{acceptId}}","code":"rate_limited"}""");
+        link.OnFrame("""{"t":"err","ref":"link","code":"rate_limited"}""");
+        Assert.Equal([("env:" + acceptId, 1), ("link", 1)], due);
+        Assert.Equal([frames[0]], link.Retry("env:" + acceptId));
+        Assert.Equal([frames[1]], link.Retry("link"));
+
+        link.OnFrame("""{"t":"ok","ref":"link","code":"linked"}""");
+        Assert.Empty(link.Retry("link"));
+        Assert.Empty(link.Retry("env:" + acceptId));
+        link.OnFrame("""{"t":"err","ref":"link","code":"rate_limited"}""");              // no link pending: nothing
+        Assert.Equal(2, due.Count);
+    }
+
+    [Fact]
+    public void A_refused_state_frame_is_left_for_the_phone_to_resync()
+    {
+        var (link, _, _, notes, _) = Paired();
+        var due = Retries(link);
+        link.OnFrame("""{"t":"err","ref":"01M6X5STATEFRAME00000000","code":"rate_limited"}""");
+        Assert.Empty(due);
+        Assert.Contains(notes, n => n.Contains("rate_limited ref=01M6X5STATEFRAME"));
+    }
+
+    [Fact]
+    public void A_refusal_with_no_ref_retries_everything_unanswered()
+    {
+        var (link, _, _) = New();
+        var phone = new FakePhone();
+        link.OnFrame(Welcome());
+        link.OnFrame(phone.Request(link.BeginPairing("off_1", _now.AddMinutes(5)).QrText));
+        var frames = link.Allow(link.Pending!, "Mac");
+        var acceptId = J(frames[0]).GetProperty("id").GetString()!;
+        link.Remove(phone.Id);
+        var due = Retries(link);
+        link.OnFrame("""{"t":"err","code":"rate_limited"}""");                           // the raw ceiling: no ref
+        Assert.Equal(["env:" + acceptId, "link", "unlink:" + phone.Id], due.Select(d => d.Key).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void Retries_are_dropped_with_the_connection()
+    {
+        var (link, _, _) = New();
+        var phone = new FakePhone();
+        link.OnFrame(Welcome());
+        link.OnFrame(phone.Request(link.BeginPairing("off_1", _now.AddMinutes(5)).QrText));
+        link.Allow(link.Pending!, "Mac");
+        link.Disconnected();
+        Assert.Empty(link.Retry("link"));                                                // not welcomed
+        link.OnFrame(Welcome());
+        Assert.Empty(link.Retry("link"));                                                // forgotten with the connection
+        Assert.Empty(link.Retry("unlink:ph_never_removed"));
     }
 
     // ---- nonces across reconnects and restarts -----------------------------------------

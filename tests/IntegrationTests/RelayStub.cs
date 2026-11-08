@@ -32,6 +32,7 @@ internal sealed class RelayStub : IAsyncDisposable
     public string HelloCode { get; set; } = "welcome";   // or "unauthorized" / "version"
     public bool AcceptSockets { get; set; } = true;
     public bool AckUnlinks { get; set; } = true;
+    public int RefuseUnlinks;   // this many unlinks are answered err rate_limited ref unlink, unprocessed
     public readonly Channel<string> Received = Channel.CreateUnbounded<string>();
     public readonly ConcurrentQueue<string> Requests = new();
 
@@ -132,6 +133,12 @@ internal sealed class RelayStub : IAsyncDisposable
             await Received.Writer.WriteAsync(text);
 
             var tName = JsonDocument.Parse(text).RootElement.TryGetProperty("t", out var tt) ? tt.GetString() : null;
+            if (tName == "unlink" && RefuseUnlinks > 0)
+            {
+                RefuseUnlinks--;
+                await Send(JsonSerializer.Serialize(new { t = "err", @ref = "unlink", code = "rate_limited" }));
+                continue;
+            }
             if (tName == "unlink" && AckUnlinks)
                 await Send(JsonSerializer.Serialize(new { t = "ok", @ref = "unlink", code = "unlinked" }));
             if (tName == "link")
@@ -205,7 +212,8 @@ internal sealed class RelayStub : IAsyncDisposable
     {
         _stop.Cancel();
         _socket?.Abort();
-        _listener.Stop();
+        // Close alone: QA's stack traces were on the Close() after a Stop(),
+        // and Close already stops and releases the prefix.
         _listener.Close();
         try { await _accept; } catch { }
     }

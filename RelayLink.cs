@@ -32,6 +32,11 @@ namespace Orbweaver
         internal const int Proto = 2;
         internal const int OfferAttempts = 5;
 
+        // How many times a frame the relay refused with rate_limited is sent
+        // again before giving up on this connection. An unlink given up on is
+        // still owed, and goes again on the next welcome.
+        internal const int MaxRetries = 5;
+
         internal sealed record PairOffer(string OfferId, DateTimeOffset ExpiresAt, byte[] PairSecret, string QrText)
         {
             internal int AttemptsLeft { get; set; } = OfferAttempts;
@@ -79,6 +84,12 @@ namespace Orbweaver
         // unlinks arrive in this order too.
         private readonly Queue<string> _unlinksInFlight = new();
 
+        // Frames worth sending again if the relay refuses them for rate: the
+        // pending link ("link") and the pair.accept envelope ("env:<id>").
+        // State frames are not here — a phone that misses one resyncs.
+        private readonly Dictionary<string, string> _retryable = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _retryAttempts = new(StringComparer.Ordinal);
+
         internal RelayLink(RelayIdentity identity, RelaySessionBook book, Func<DateTimeOffset> now,
             string platform, string appVersion, string relayHost)
         {
@@ -110,6 +121,7 @@ namespace Orbweaver
         internal event Action<string> PhoneRemoved = delegate { };               // by the phone, or the relay said unlinked
         internal event Action PresenceChanged = delegate { };
         internal event Action<string> Note = delegate { };                       // one log line, metadata only
+        internal event Action<string, int> RetryDue = delegate { };              // (key, attempt): call Retry(key) after a backoff
 
         // ---- connection -------------------------------------------------------
 
@@ -137,6 +149,8 @@ namespace Orbweaver
             Welcomed = false;
             foreach (var c in _channels.Values) c.Online = false;
             _unlinksInFlight.Clear();
+            _retryable.Clear();
+            _retryAttempts.Clear();
         }
 
         internal IReadOnlyList<string> OnFrame(string text)
@@ -163,19 +177,17 @@ namespace Orbweaver
                     if (Str(f, "code") == "unauthorized") Unauthorized();
                     else Refused(Str(f, "code") ?? "unknown");
                     return [];
+                // Before the ref-based cases: a rate-limited unlink or link is a
+                // frame to resend, not a refusal to settle.
+                case "err" when Str(f, "code") == "rate_limited":
+                    OnRateLimited(Str(f, "ref"));
+                    return [];
                 case "err" when Str(f, "ref") == "unlink":
                     // not_linked: already gone, which is what was wanted. Any
                     // other refusal leaves it owed, retried on the next welcome.
                     if (Str(f, "code") == "not_linked") SettleUnlink();
                     else if (_unlinksInFlight.Count > 0) _unlinksInFlight.Dequeue();
                     return [];
-                case "err" when Str(f, "code") == "rate_limited":
-                    // The relay drops the frame and today names none of them
-                    // (no ref). An unlink is the one frame nothing else
-                    // resends, so every unanswered one goes again; a repeat
-                    // for a link already gone just earns not_linked.
-                    Note("relay err code=rate_limited");
-                    return ResendUnlinksInFlight();
                 case "err" when Str(f, "code") == "unlinked":
                     // peer_id on current relays; the older image carried the
                     // id only in `message` (hana, 8 Nov), so both are read.
@@ -190,8 +202,13 @@ namespace Orbweaver
                 case "ok" when Str(f, "ref") == "unlink":
                     SettleUnlink();
                     return [];
+                case "ok" when Str(f, "ref") == "link":
+                    // The link landed, so the accept that preceded it did too
+                    // (the relay answers a socket's frames in order).
+                    _retryable.Clear();
+                    _retryAttempts.Remove("link");
+                    return [];
                 case "ok":
-                    // link acknowledgements: nothing to do.
                     return [];
                 case "ping":
                     return [Frame(w => w.WriteString("t", "pong"))];
@@ -380,11 +397,12 @@ namespace Orbweaver
                 Encoding.UTF8.GetBytes(accept), RelayCrypto.Aad(desktopId, request.PhoneId, "pair"));
 
             var phone = _identity.AddPhone(request.PhoneId, request.Name, request.IdPublic, request.KaPublic);
-            var frames = new List<string>
-            {
-                Envelope(desktopId, request.PhoneId, "pair", "", ct, offer.OfferId),
-                Frame(w => { w.WriteString("t", "link"); w.WriteString("offer_id", offer.OfferId); w.WriteString("phone_id", request.PhoneId); }),
-            };
+            var acceptId = Ulid(_now());
+            var acceptFrame = Envelope(desktopId, request.PhoneId, "pair", "", ct, offer.OfferId, acceptId);
+            var linkFrame = Frame(w => { w.WriteString("t", "link"); w.WriteString("offer_id", offer.OfferId); w.WriteString("phone_id", request.PhoneId); });
+            _retryable["env:" + acceptId] = acceptFrame;
+            _retryable["link"] = linkFrame;
+            var frames = new List<string> { acceptFrame, linkFrame };
             Offer = null;
             Pending = null;
 
@@ -523,10 +541,10 @@ namespace Orbweaver
             return Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null);
         }
 
-        private string Envelope(string from, string to, string cls, string ck, string ct, string? offer) => Frame(w =>
+        private string Envelope(string from, string to, string cls, string ck, string ct, string? offer, string? id = null) => Frame(w =>
         {
             w.WriteNumber("v", Proto);
-            w.WriteString("id", Ulid(_now()));
+            w.WriteString("id", id ?? Ulid(_now()));
             w.WriteString("from", from);
             w.WriteString("to", to);
             w.WriteNumber("ts", _now().ToUnixTimeSeconds());
@@ -549,14 +567,66 @@ namespace Orbweaver
         private void SettleUnlink()
         {
             if (_unlinksInFlight.Count == 0) return;
-            _identity.RemovePendingUnlink(_unlinksInFlight.Dequeue());
+            var peer = _unlinksInFlight.Dequeue();
+            _retryAttempts.Remove("unlink:" + peer);
+            _identity.RemovePendingUnlink(peer);
         }
 
-        private IReadOnlyList<string> ResendUnlinksInFlight()
+        // The relay refused a frame for rate and did not process it (frames-v2,
+        // hana's PR #9): resend it, after a backoff the client schedules. ref
+        // names the envelope id or the control frame; with no ref (the raw
+        // ceiling, refused before parsing) every unanswered frame worth
+        // resending goes again. A refused state frame is left alone — the
+        // phone resyncs from the gap.
+        private void OnRateLimited(string? reference)
         {
-            var again = _unlinksInFlight.Distinct().ToList();
-            _unlinksInFlight.Clear();
-            return again.Select(SendUnlink).ToList();
+            Note($"relay err code=rate_limited ref={reference}");
+            switch (reference)
+            {
+                case "unlink":
+                    if (_unlinksInFlight.Count > 0) ScheduleRetry("unlink:" + _unlinksInFlight.Dequeue());
+                    break;
+                case "link":
+                    if (_retryable.ContainsKey("link")) ScheduleRetry("link");
+                    break;
+                case null or "":
+                    var unlinks = _unlinksInFlight.Distinct().ToList();
+                    _unlinksInFlight.Clear();
+                    foreach (var peer in unlinks) ScheduleRetry("unlink:" + peer);
+                    foreach (var key in _retryable.Keys.ToList()) ScheduleRetry(key);
+                    break;
+                default:
+                    if (_retryable.ContainsKey("env:" + reference)) ScheduleRetry("env:" + reference);
+                    break;
+            }
+        }
+
+        private void ScheduleRetry(string key)
+        {
+            var attempt = _retryAttempts.GetValueOrDefault(key) + 1;
+            if (attempt > MaxRetries)
+            {
+                Note($"giving up on {key} after {MaxRetries} rate-limited attempts");
+                _retryAttempts.Remove(key);
+                _retryable.Remove(key);
+                return;
+            }
+            _retryAttempts[key] = attempt;
+            RetryDue(key, attempt);
+        }
+
+        // The frame for a retry the client's backoff has now waited out —
+        // nothing if the socket went down meanwhile (a welcome resends owed
+        // unlinks anyway) or the frame no longer needs sending.
+        internal IReadOnlyList<string> Retry(string key)
+        {
+            if (!Welcomed) return [];
+            if (key.StartsWith("unlink:", StringComparison.Ordinal))
+            {
+                var peer = key["unlink:".Length..];
+                return _identity.PendingUnlinks.Contains(peer) ? [SendUnlink(peer)] : [];
+            }
+            return _retryable.TryGetValue(key, out var frame) ? [frame] : [];
         }
 
         // ---- helpers ----------------------------------------------------------

@@ -104,6 +104,7 @@ namespace Orbweaver
             _link.PhoneRemoved += _ => Defer(() => PhonesChanged());
             _link.PresenceChanged += () => Defer(() => PhonesChanged());
             _link.Note += note => MirrorLog.Say("relay", note);
+            _link.RetryDue += (key, attempt) => Defer(() => _ = RetryLaterAsync(key, attempt));
         }
 
         // ---- what the UI sees ------------------------------------------------
@@ -271,6 +272,22 @@ namespace Orbweaver
                 await _delay(_options.PingInterval, token).ConfigureAwait(false);
                 outbox.TryWrite(RelayLink.Ping());
             }
+        }
+
+        // A frame the relay refused for rate goes again after a backoff that
+        // doubles from a quarter second, plus up to a quarter second of
+        // jitter so a crowd of refused frames does not return in step.
+        internal static TimeSpan RetryDelay(int attempt, double jitter01) =>
+            Backoff(attempt - 1, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(4)) + TimeSpan.FromMilliseconds(250 * jitter01);
+
+        private async Task RetryLaterAsync(string key, int attempt)
+        {
+            // A retry only comes out of a frame a running client read, so the
+            // run's token exists; StopAsync cancels it and the wait ends.
+            var stop = _run!.Token;
+            try { await _delay(RetryDelay(attempt, Random.Shared.NextDouble()), stop).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+            Dispatch(() => _link.Retry(key));
         }
 
         // ---- the scan and the UI -------------------------------------------------

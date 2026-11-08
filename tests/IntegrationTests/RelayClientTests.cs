@@ -232,6 +232,49 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => new RelayIdentity(_dir, _store).PendingUnlinks.Count == 0);   // the stub's ok settled it
     }
 
+    // Hana's PR #9: an unlink refused for rate was not processed, so the
+    // client must send it again — after a backoff — until it lands.
+    [Fact]
+    public async Task An_unlink_refused_for_rate_is_sent_again_until_it_lands()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var client = Client(identity);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        _stub.RefuseUnlinks = 2;
+
+        client.Remove(phone.Id);
+        for (var i = 0; i < 3; i++)
+            Assert.Equal(phone.Id, (await _stub.NextT("unlink")).GetProperty("peer_id").GetString());
+        await Until(() => identity.PendingUnlinks.Count == 0);                          // the third was acked
+    }
+
+    [Fact]
+    public async Task Stopping_while_a_retry_waits_cancels_it()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var waiting = new TaskCompletionSource();
+        var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac") { PingInterval = TimeSpan.FromMinutes(5), Silence = TimeSpan.FromMinutes(5) };
+        _client = new RelayClient(identity, options, new WebSocketRelayTransport(), delay: async (t, ct) =>
+        {
+            if (t < TimeSpan.FromMinutes(1)) waiting.TrySetResult();           // the retry's short wait, not the ping's
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        _stub.RefuseUnlinks = 1;
+        _client.Start();
+        await _stub.NextT("hello");
+        await Until(() => _client.State == RelayClient.Status.Connected);
+        _client.Remove(phone.Id);
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await _client.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal([phone.Id], identity.PendingUnlinks);                               // still owed, for the next run
+    }
+
     [Fact]
     public async Task Remove_sends_revoke_and_unlink_to_the_relay()
     {
@@ -503,6 +546,14 @@ public class RelayClientHelperTests
         Assert.Equal("ws://127.0.0.1:5000/v1/socket", http.SocketUri.ToString());
         Assert.Equal("127.0.0.1:5000", http.RelayHost);
         Assert.Equal((TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(60)), (https.PingInterval, https.Silence));
+    }
+
+    [Fact]
+    public void Rate_limit_retries_back_off_from_a_quarter_second_with_jitter()
+    {
+        Assert.Equal(TimeSpan.FromMilliseconds(250), RelayClient.RetryDelay(1, 0));
+        Assert.Equal(TimeSpan.FromMilliseconds(500 + 125), RelayClient.RetryDelay(2, 0.5));
+        Assert.Equal(TimeSpan.FromMilliseconds(4000 + 250), RelayClient.RetryDelay(9, 1));
     }
 
     [Fact]
