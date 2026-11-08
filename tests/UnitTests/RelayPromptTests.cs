@@ -275,6 +275,13 @@ public class RelayPromptRuleTests
     }
 
     [Fact]
+    public void An_empty_row_above_a_framed_dialog_ends_the_frame()
+    {
+        var fp = PromptFingerprint.Of("unframed text\n\n│ Pick one\n│ 1. Yes\n│ 2. No\n")!;
+        Assert.Equal("Pick one\n1. Yes\n2. No", fp.Canonical);
+    }
+
+    [Fact]
     public void A_conversation_glyph_bounds_the_span_and_blank_lines_do_not()
     {
         string Screen(char spinner) =>

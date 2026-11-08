@@ -24,7 +24,7 @@ public class AnswerGateTests
     private static readonly PromptFingerprint Fp = PromptFingerprint.Of(Screen)!;
 
     private static PendingPrompt Pending() =>
-        new(RequestId, SessionId, "permission", Fp.Hash, Expires, PromptVectorsShim.OptionsOf(Fp));
+        new(RequestId, SessionId, "permission", Fp.Hash, Expires);
 
     private static string NewNonce() => Base64Url(RandomNumberGenerator.GetBytes(16));
 
@@ -85,9 +85,11 @@ public class AnswerGateTests
     public void Rule1_a_note_on_anything_but_tell_is_refused_because_it_is_unsigned() =>
         Refused(Decide(Answer("approve", note: "smuggled")), 1, AnswerGate.BadSignature);
 
-    [Fact]
-    public void Rule1_a_nonce_that_is_not_16_bytes_is_refused() =>
-        Refused(Decide(Answer(nonce: Base64Url(new byte[8]))), 1, AnswerGate.BadSignature);
+    [Theory]
+    [InlineData("AAAAAAAAAAA")]          // 8 bytes
+    [InlineData("not base64url!")]       // not a nonce at all
+    public void Rule1_a_nonce_that_is_not_16_bytes_is_refused(string nonce) =>
+        Refused(Decide(Answer(nonce: nonce)), 1, AnswerGate.BadSignature);
 
     // ---- rule 2: pending -----------------------------------------------------
 
@@ -157,8 +159,10 @@ public class AnswerGateTests
         w.Add(PhoneId, "n", Now);
         Assert.True(w.Seen(PhoneId, "n", Now.AddMinutes(59)));
         Assert.False(w.Seen("ph_other", "n", Now));
+        w.Add(PhoneId, "later", Now.AddMinutes(30));
         Assert.False(w.Seen(PhoneId, "n", Now.AddHours(1)));
-        Assert.Equal(0, w.Count);
+        Assert.Equal(1, w.Count);   // only the expired one was pruned
+        Assert.True(w.Seen(PhoneId, "later", Now.AddHours(1)));
     }
 
     // ---- rule 5: echoed hash -------------------------------------------------
@@ -199,8 +203,7 @@ public class AnswerGateTests
     private static PendingPrompt PendingFor(string screen, string kind = "permission")
     {
         var fp = PromptFingerprint.Of(screen)!;
-        return new PendingPrompt(RequestId, SessionId, kind, fp.Hash, Expires,
-            fp.Prompt.Options.Select(o => { var c = OptionKinds.Classify(kind, o.Label); return new PromptOption(o.Key, o.Label, c.Kind, c.Scope); }).ToList());
+        return new PendingPrompt(RequestId, SessionId, kind, fp.Hash, Expires);
     }
 
     private static PhoneAnswer AnswerFor(string screen, string action, string scope = "") =>

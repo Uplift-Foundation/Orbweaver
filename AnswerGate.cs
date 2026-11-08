@@ -5,21 +5,20 @@ using System.Linq;
 namespace Orbweaver
 {
     // A prompt the desktop sent to the phones and has not yet seen settled.
-    // Options are what the screen offered when the prompt was minted; the gate
-    // never presses from them, only from a fresh parse (rule 7). Answered is set
+    // It deliberately does not keep the options it was minted with: the gate
+    // presses only from a fresh parse (rule 7), and a list that is not here
+    // cannot be pressed from by mistake. Answered is set
     // by the caller *before* the keypress (rule 8), so a second answer racing
     // the first finds it settled and is refused not_pending.
     internal sealed class PendingPrompt
     {
-        internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt,
-            IReadOnlyList<PromptOption> options)
+        internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt)
         {
             RequestId = requestId;
             SessionId = sessionId;
             Kind = kind;
             ScreenHash = screenHash;
             ExpiresAt = expiresAt;
-            Options = options;
         }
 
         internal string RequestId { get; }
@@ -27,7 +26,6 @@ namespace Orbweaver
         internal string Kind { get; }
         internal string ScreenHash { get; }
         internal long ExpiresAt { get; }
-        internal IReadOnlyList<PromptOption> Options { get; }
         internal bool Answered { get; set; }
     }
 
@@ -56,8 +54,9 @@ namespace Orbweaver
 
         private void Prune(DateTimeOffset now)
         {
-            foreach (var key in _seen.Where(kv => now - kv.Value >= Lifetime).Select(kv => kv.Key).ToList())
-                _seen.Remove(key);
+            // Dictionary allows Remove during enumeration (since .NET Core 3.0).
+            foreach (var kv in _seen)
+                if (now - kv.Value >= Lifetime) _seen.Remove(kv.Key);
         }
     }
 
