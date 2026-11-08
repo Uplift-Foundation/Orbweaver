@@ -104,6 +104,9 @@
          a 400, so there must be exactly one copy of them, and it is the one the
          app sends. ClaudeCliCredentials and CloudRequest are both internal. -->
     <InternalsVisibleTo Include="ClaudeCloudProbe" />
+    <!-- CB-314: tools/relay-vectors generates the phone relay's contract
+         vectors from the shipped RelayCrypto, which is internal. -->
+    <InternalsVisibleTo Include="RelayVectors" />
   </ItemGroup>
 
   <ItemGroup>
