@@ -151,6 +151,10 @@
          purpose: 5.2.x moves to SkiaSharp 4.x under Avalonia 12.1.1's 3.119. -->
     <PackageReference Include="Svg.Skia" Version="5.1.1" />
     <PackageReference Include="System.Management" Version="8.0.0" />
+    <!-- CB-314: DPAPI for the phone relay's private keys and token on Windows
+         (RelaySecretStore.cs). Microsoft's own package; every call is behind
+         OperatingSystem.IsWindows(). -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
     <!-- AppKit-shaped control styles (MIT, Devolutions). Loaded only on macOS —
          see App.Initialize — with Fluent kept for Windows. Hand-rolling this was
          a losing game: the shapes, metrics and states of AppKit's controls are
