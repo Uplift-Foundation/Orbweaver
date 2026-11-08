@@ -400,13 +400,15 @@ public class RelayLinkTests : IDisposable
     [Fact]
     public void Resync_sends_a_roster_only_to_a_known_online_phone()
     {
-        var (link, _, phone, _, _) = Paired();
+        var (link, _, phone, notes, _) = Paired();
         link.OnScan([Row("s1")]);
         link.OnScan([Row("s1", "waiting")]);
         var again = phone.OpenFromDesktop(link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""").Single());
         Assert.Equal(("roster", 1L), (again.GetProperty("t").GetString(), again.GetProperty("seq").GetInt64()));
         Assert.Empty(link.OnFrame("""{"t":"resync","peer_id":"ph_stranger"}"""));
         Assert.Empty(link.OnFrame("""{"t":"resync"}"""));
+        Assert.Contains($"resync from {phone.Id}: fresh roster", notes);
+        Assert.Contains("resync for ph_stranger ignored: not an online paired phone", notes);
         link.OnFrame(Presence(phone.Id, false));
         Assert.Empty(link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}"""));
     }

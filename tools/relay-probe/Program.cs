@@ -35,6 +35,21 @@ var identity = new RelayIdentity(dir, PlainSecretStore.Instance);
 var client = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport());
 MirrorLog.Say("relay-probe", "start");
 
+// ---- phone-only mode ---------------------------------------------------------
+// The other half: a scripted phone pairing with whatever desktop made the QR —
+// the installed app under ORBWEAVER_RELAY_TEST_HOOKS=1, for one. Pass the QR
+// text, or @path to read it from a file. It prints the check code, waits for
+// the accept, then reports every roster and delta with its arrival time
+// (UTC), forces one gap and a resync after --deltas N deltas, and finally
+// unlinks from the phone side so the desktop forgets the pairing.
+if (args.Contains("--phone-only"))
+{
+    var qrArg = args.SkipWhile(a => a != "--qr").Skip(1).First();
+    var qrText = qrArg.StartsWith('@') ? File.ReadAllText(qrArg[1..]).Trim() : qrArg;
+    var wantDeltas = args.SkipWhile(a => a != "--deltas").Skip(1).Select(int.Parse).FirstOrDefault(4);
+    return await PhoneOnly(baseUrl, qrText, wantDeltas);
+}
+
 // ---- desktop-only mode -----------------------------------------------------
 // For pairing a real phone client (surface C's LiveClient in a test harness)
 // against the shipped desktop client: print the QR text, Allow the first
@@ -259,3 +274,111 @@ try { Directory.Delete(dir, true); } catch { }
 Console.WriteLine(failures == 0 ? "ALL PASS" : $"{failures} FAILED");
 Console.WriteLine($"devices registered: desktop {identity.DeviceId ?? "(cleared)"}, phone {phoneId}");
 return failures == 0 ? 0 : 1;
+
+static async Task<int> PhoneOnly(Uri baseUrl, string qrText, int wantDeltas)
+{
+    string Now() => DateTimeOffset.UtcNow.ToString("HH:mm:ss.fff");
+    var q = qrText[(qrText.IndexOf('?') + 1)..].Split('&').Select(kv => kv.Split('=', 2)).ToDictionary(kv => kv[0], kv => kv[1]);
+    var k = FromBase64Url(q["k"])!;
+    var (dIdPub, dKaPub, desktopId) = (k[..65], k[65..], q["d"]);
+    var phId = GenerateKeyPair();
+    var phKa = GenerateKeyPair();
+    using var http = new HttpClient { BaseAddress = baseUrl };
+    var body = new Dictionary<string, string> { ["platform"] = "ios", ["app_version"] = "probe", ["name"] = "Probe iPhone", ["id_pub"] = Hex(phId.Public), ["ka_pub"] = Hex(phKa.Public) };
+    var first = await (await http.PostAsJsonAsync("/v1/register", body)).Content.ReadFromJsonAsync<JsonElement>();
+    body["challenge"] = first.GetProperty("challenge").GetString()!;
+    body["sig"] = Base64Url(Sign(phId, RegisterMessage(FromBase64Url(body["challenge"])!)));
+    var reg = await (await http.PostAsJsonAsync("/v1/register", body)).Content.ReadFromJsonAsync<JsonElement>();
+    var phoneId = reg.GetProperty("device_id").GetString()!;
+
+    using var ws = new ClientWebSocket();
+    await ws.ConnectAsync(new UriBuilder(baseUrl) { Scheme = baseUrl.Scheme == "http" ? "ws" : "wss", Path = "/v1/socket" }.Uri, default);
+    var buf = new byte[256 * 1024];
+    async Task Send(object f) => await ws.SendAsync(JsonSerializer.SerializeToUtf8Bytes(f), WebSocketMessageType.Text, true, default);
+    async Task<JsonElement?> Receive(Func<JsonElement, bool> match, int seconds)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
+        try
+        {
+            while (true)
+            {
+                var len = 0;
+                ValueWebSocketReceiveResult r;
+                do { r = await ws.ReceiveAsync(buf.AsMemory(len), cts.Token); len += r.Count; } while (!r.EndOfMessage);
+                var e = JsonDocument.Parse(Encoding.UTF8.GetString(buf, 0, len)).RootElement.Clone();
+                if (e.TryGetProperty("t", out var t) && t.GetString() == "ping") { await Send(new { t = "pong" }); continue; }
+                if (match(e)) return e;
+                if (!e.TryGetProperty("v", out _)) Console.WriteLine($"{Now()} (relay: {e.GetRawText()})");
+            }
+        }
+        catch (OperationCanceledException) { return null; }
+    }
+    bool IsEnv(JsonElement e, string cls) => e.TryGetProperty("v", out _) && e.GetProperty("class").GetString() == cls;
+
+    await Send(new { t = "hello", device_id = phoneId, token = reg.GetProperty("token").GetString(), platform = "ios", app_version = "probe", proto = 2 });
+    await Receive(e => e.TryGetProperty("t", out var t) && t.GetString() == "ok", 10);
+    var pairKey = PairKey(FromBase64Url(q["s"])!, q["o"], desktopId, phoneId);
+    var req = $"{{\"t\":\"pair.request\",\"phone_id\":\"{phoneId}\",\"name\":\"Probe iPhone\",\"id_pub\":\"{Hex(phId.Public)}\",\"ka_pub\":\"{Hex(phKa.Public)}\"}}";
+    await Send(new { v = 2, id = RelayLink.Ulid(DateTimeOffset.UtcNow), from = phoneId, to = desktopId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), @class = "pair", push = "none", ck = "",
+        ct = Seal(pairKey, Nonce(PhoneToDesktop, 0, 0), Encoding.UTF8.GetBytes(req), Aad(phoneId, desktopId, "pair")), offer = q["o"] });
+    Console.WriteLine($"{Now()} phone {phoneId} sent pair.request; phone check code {CheckCodeDisplay(CheckCode(dIdPub, dKaPub, phId.Public, phKa.Public))}");
+
+    var accept = await Receive(e => IsEnv(e, "pair"), 120);
+    var acc = accept is null ? null : Open(pairKey, accept.Value.GetProperty("ct").GetString(), Aad(desktopId, phoneId, "pair"), DesktopToPhone);
+    var accJson = acc is null ? default : JsonDocument.Parse(acc).RootElement;
+    var ok = acc is not null && Verify(dIdPub, AcceptMessage(desktopId, phoneId, dIdPub, dKaPub, phId.Public, phKa.Public), FromBase64Url(accJson.GetProperty("sig").GetString()));
+    Console.WriteLine($"{Now()} {(ok ? "PASS" : "FAIL")}  pair.accept from \"{(acc is null ? "?" : accJson.GetProperty("name").GetString())}\" verifies under the scanned key");
+    if (!ok) return 1;
+
+    var basis = SessionBase(SharedSecret(phKa, dKaPub), desktopId, phoneId);
+    JsonElement? OpenState(JsonElement env)
+    {
+        var ct = env.GetProperty("ct").GetString()!;
+        var plain = Open(EpochKey(basis, PeekNonce(ct)!.Value.Epoch), ct, Aad(desktopId, phoneId, "state"), DesktopToPhone);
+        return plain is null ? null : JsonDocument.Parse(plain).RootElement;
+    }
+    var failures = 0;
+    var deltas = 0;
+    long expect = 0;
+    var gapDone = false;
+    while (true)
+    {
+        var env = await Receive(e => IsEnv(e, "state"), 120);
+        if (env is null) { Console.WriteLine($"{Now()} FAIL  no state frame within 120 s"); failures++; break; }
+        var m = OpenState(env.Value);
+        if (m is not { } msg) { Console.WriteLine($"{Now()} FAIL  a state frame did not open"); failures++; break; }
+        var t = msg.GetProperty("t").GetString();
+        var seq = msg.GetProperty("seq").GetInt64();
+        if (t == "roster")
+        {
+            Console.WriteLine($"{Now()} roster seq {seq}, {msg.GetProperty("sessions").GetArrayLength()} sessions: " +
+                string.Join(", ", msg.GetProperty("sessions").EnumerateArray().Select(x => $"{x.GetProperty("title").GetString()}={x.GetProperty("state").GetString()} since {x.GetProperty("since").GetInt64()}")));
+            if (gapDone) { Console.WriteLine($"{Now()} PASS  resync brought a fresh roster from seq 1"); break; }
+            expect = seq + 1;
+            continue;
+        }
+        Console.WriteLine($"{Now()} delta seq {seq} {msg.GetProperty("session_id").GetString()} " +
+            (msg.TryGetProperty("state", out var st) ? $"state={st.GetString()} " : "") + (msg.TryGetProperty("removed", out _) ? "removed" : ""));
+        if (seq != expect) { Console.WriteLine($"{Now()} FAIL  expected seq {expect}"); failures++; }
+        expect = seq + 1;
+        if (++deltas == wantDeltas)
+        {
+            // Pretend the next delta is lost: wait for it, drop it, and on the
+            // one after, see the gap and ask for a resync.
+            var lost = await Receive(e => IsEnv(e, "state"), 120);
+            var after = await Receive(e => IsEnv(e, "state"), 120);
+            var afterSeq = after is null ? -1 : OpenState(after.Value)?.GetProperty("seq").GetInt64() ?? -1;
+            Console.WriteLine($"{Now()} dropped seq {expect}, saw seq {afterSeq}: gap, sending resync");
+            await Send(new { t = "resync", peer_id = desktopId });
+            Console.WriteLine($"{Now()} sent resync peer_id={desktopId} from {phoneId}");
+            gapDone = lost is not null && afterSeq == expect + 1;
+            if (!gapDone) { failures++; break; }
+        }
+    }
+
+    await Send(new { t = "unlink", peer_id = desktopId });
+    var unl = await Receive(e => e.TryGetProperty("t", out var t) && t.GetString() == "ok" && e.TryGetProperty("ref", out var r) && r.GetString() == "unlink", 10);
+    Console.WriteLine($"{Now()} {(unl is not null ? "PASS" : "FAIL")}  phone-side unlink acknowledged; the desktop is told err unlinked");
+    try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", default); } catch { }
+    return failures == 0 && unl is not null ? 0 : 1;
+}

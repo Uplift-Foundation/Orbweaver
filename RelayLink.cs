@@ -215,9 +215,15 @@ namespace Orbweaver
                 case "pong":
                     return [];
                 case "resync":
-                    return Str(f, "peer_id") is { } peer && _channels.TryGetValue(peer, out var c) && c.Online
-                        ? Collect(RosterFor(c))
-                        : [];
+                    if (Str(f, "peer_id") is { } peer && _channels.TryGetValue(peer, out var c) && c.Online)
+                    {
+                        Note($"resync from {peer}: fresh roster");
+                        return Collect(RosterFor(c));
+                    }
+                    // Said, not silent: a phone stuck waiting on a roster
+                    // that never comes is otherwise undiagnosable.
+                    Note($"resync for {Str(f, "peer_id")} ignored: not an online paired phone");
+                    return [];
                 default:
                     Note($"relay frame t={t} ignored");
                     return [];
