@@ -355,7 +355,12 @@ public class RelayClientTests : IAsyncLifetime
         identity.Keys();
         var phone = PairInto(identity);
         var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac") { PaceFrames = false, PingInterval = TimeSpan.FromMinutes(5), Silence = TimeSpan.FromMinutes(5) };
-        _client = new RelayClient(identity, options, new WebSocketRelayTransport());
+        // Asserted on the cause, not the clock: a wall-clock bound fails on a
+        // loaded runner. Every wait the client asks for is recorded; with
+        // pacing off, none may be a pacing wait (the ping's five minutes is the
+        // only one expected).
+        var waits = new System.Collections.Concurrent.ConcurrentBag<TimeSpan>();
+        _client = new RelayClient(identity, options, new WebSocketRelayTransport(), delay: (t, ct) => { waits.Add(t); return Task.Delay(t, ct); });
         _client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", "idle", null, null)]);
         _client.Start();
         await _stub.NextT("hello");
@@ -365,12 +370,11 @@ public class RelayClientTests : IAsyncLifetime
 
         for (var i = 0; i < 30; i++)
             _client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", i % 2 == 0 ? "generating" : "idle", null, null)]);
-        var started = DateTime.UtcNow;
         var seqs = new List<long>();
         for (var i = 0; i < 30; i++)
             seqs.Add(OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("seq").GetInt64());
         Assert.Equal(Enumerable.Range(2, 30).Select(i => (long)i), seqs);
-        Assert.True(DateTime.UtcNow - started < TimeSpan.FromMilliseconds(400), "unpaced frames were held back");
+        Assert.DoesNotContain(waits, w => w < TimeSpan.FromMinutes(1));
     }
 
     // CB-314 #11244: in the two-process end to end, the probe's PairRequested
@@ -501,19 +505,31 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => client.State == RelayClient.Status.Connected);
     }
 
+    // Two tests, not one: they used to share a 600 ms silence window, and on a
+    // loaded CI runner the window closed before the stub's ping went out, so
+    // the client had already (correctly) dropped the socket. Each now checks
+    // one thing with nothing racing it.
     [Fact]
-    public async Task Silence_longer_than_the_limit_reconnects_and_pings_keep_the_relay_hearing_us()
+    public async Task We_ping_on_our_interval_and_answer_the_relays_ping()
     {
-        var client = Client(Identity(), ping: TimeSpan.FromMilliseconds(150), silence: TimeSpan.FromMilliseconds(600));
+        var client = Client(Identity(), ping: TimeSpan.FromMilliseconds(150), silence: TimeSpan.FromMinutes(5));
         client.Start();
         await _stub.NextT("hello");
         await _stub.NextT("ping");                                 // our heartbeat
-
         await _stub.Send("""{"t":"ping"}""");
         await _stub.NextT("pong");                                 // and an answer to theirs
+        Assert.Equal(1, _stub.Connections);
+    }
 
-        // The stub never speaks unprompted, so 600 ms of silence ends the socket.
-        await _stub.NextT("hello", seconds: 5);
+    [Fact]
+    public async Task Silence_longer_than_the_limit_ends_the_socket_and_reconnects()
+    {
+        // The stub never speaks unprompted and we send no pings in the window,
+        // so the silence limit is the only thing that can end the socket.
+        var client = Client(Identity(), ping: TimeSpan.FromMinutes(5), silence: TimeSpan.FromMilliseconds(300));
+        client.Start();
+        await _stub.NextT("hello");
+        await _stub.NextT("hello", seconds: 10);
         Assert.True(_stub.Connections >= 2);
     }
 
