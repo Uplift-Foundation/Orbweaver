@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayPrompt.cs, RelayCrypto.cs)",
-    "orbweaver_sha": "7549632c",
+    "orbweaver_sha": "6a47150f",
     "spec": "CB-315 architect plan #11248 rev 2 §2; Orbweaver-Mobile contracts/frames-v3.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; screen_hash, nonce, sig and e are base64url without padding"
   },
@@ -15,7 +15,7 @@
   "fingerprints": [
     {
       "name": "frames-v3-example",
-      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
+      "screen": "────────────────────────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
       "_note": "the frames-v3.json prompt example, drawn as Claude Code draws it",
       "dialog": true,
       "desk_only": false,
@@ -43,7 +43,7 @@
     },
     {
       "name": "cursor-moved",
-      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n   1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n ❯ 3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
+      "screen": "────────────────────────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n   1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n ❯ 3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
       "_note": "control: the ❯ cursor on option 3 instead of 1 — the same question, so the SAME screen_hash as frames-v3-example",
       "dialog": true,
       "desk_only": false,
@@ -71,7 +71,7 @@
     },
     {
       "name": "blank-rows-below",
-      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "screen": "────────────────────────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
       "_note": "control: twenty blank rows under the dialog — the SAME screen_hash as frames-v3-example",
       "dialog": true,
       "desk_only": false,
@@ -99,7 +99,7 @@
     },
     {
       "name": "command-changed",
-      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/IntegrationTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
+      "screen": "────────────────────────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/IntegrationTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
       "_note": "negative: one word of the command changed — a DIFFERENT screen_hash; the gate refuses an answer to frames-v3-example against this screen (stale_prompt)",
       "dialog": true,
       "desk_only": false,
@@ -410,7 +410,7 @@
     {
       "name": "conhost-grok-prompt",
       "screen": "\n  ~/cb313\\conhost-grok                                                                        20K / 256K │ [Dashboard]\n\n\n     > [200~run this exact shell command: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction      10:25 PM\n       SilentlyContinue[201~\n                                                                                                                       █\n                                                                                                                       █\n\n   ♦ Remove non-existent path silently… 34s                                                       42s ↓20.2k [↓][stop]\n\n\n\n\n  │\n  │  >  Remove non-existent path silently\n  │  │ Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction SilentlyContinue\n  │  ← → narrow scope  ·  e edit pattern\n  │\n  │  Auto-review blocked this action.  Ctrl-F to view explanation\n  │\n  │  1 (○) Yes, and don't ask again for anything (always-approve mode)\n  │  2 (○) Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n  │  3 (•) Yes, proceed\n  │  4 (○) No, reject (type to add feedback)\n  │  5 (○) Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n  │\n\n  1/5:select  │  Tab:next option  │  ←/→:scope  │  e:edit pattern  │  Ctrl+f:expand  │  Ctrl+o:always-approve\n\n",
-      "_note": "Grok on Windows: five options, Always allow: <cmd> (kind always, scope the command, wrapped) and Never allow",
+      "_note": "Grok on Windows: five options; Grok cut 'Always allow: <cmd>' short of the command above it, so it is kind always with scope_truncated (greyed, never pressed), and Never allow",
       "dialog": true,
       "desk_only": false,
       "canonical_text": ">  Remove non-existent path silently\n│ Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction SilentlyContinue\n← → narrow scope  ·  e edit pattern\nAuto-review blocked this action.  Ctrl-F to view explanation\n1. Yes, and don't ask again for anything (always-approve mode)\n2. Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction\n3. Yes, proceed\n4. No, reject (type to add feedback)\n5. Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
@@ -426,7 +426,8 @@
           "key": "2",
           "label": "Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
           "kind": "always",
-          "scope": "Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction"
+          "scope": "Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+          "scope_truncated": true
         },
         {
           "key": "3",
@@ -464,7 +465,8 @@
           "key": "2",
           "label": "Always allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
           "kind": "always",
-          "scope": "Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction"
+          "scope": "Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
+          "scope_truncated": true
         },
         {
           "key": "3",
@@ -480,6 +482,35 @@
           "key": "5",
           "label": "Never allow: Remove-Item C:/Users/someone/cb313-does-not-exist -ErrorAction",
           "kind": "never"
+        }
+      ]
+    },
+    {
+      "name": "claude-scope-cut-at-edge",
+      "screen": "────────────────────────────────────────────────────────────\n Bash command\n   touch /tmp/probe\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and always allow access to /private/tmp/ddddddddd\n   3. No\n",
+      "_note": "synthetic: option 2's always line fills the rule's width with no continuation, so the terminal cut its scope: scope_truncated, shown greyed (Choose at desk), never pressed",
+      "dialog": true,
+      "desk_only": false,
+      "canonical_text": "Bash command\ntouch /tmp/probe\nDo you want to proceed?\n1. Yes\n2. Yes, and always allow access to /private/tmp/ddddddddd\n3. No",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a746f756368202f746d702f70726f62650a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420616c7761797320616c6c6f772061636365737320746f202f707269766174652f746d702f6464646464646464640a332e204e6f",
+      "screen_hash": "HlDo02prY5qEjz2FFM43u3HgizXKWxcyDn2FMbuGKQw",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and always allow access to /private/tmp/ddddddddd",
+          "kind": "always",
+          "scope": "/private/tmp/ddddddddd",
+          "scope_truncated": true
+        },
+        {
+          "key": "3",
+          "label": "No",
+          "kind": "deny"
         }
       ]
     },
