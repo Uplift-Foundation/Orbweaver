@@ -1,0 +1,40 @@
+
+ /p/t/c3/tmux-grok
+
+
+                                      Do you trust the contents of this directory?
+                                                /private/tmp/c3/tmux-grok
+
+                                Grok Build may run or modify contents in this directory,
+                                                 posing security risks.
+
+                                             Yes, proceed                 y
+                                             No, quit                     n
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                            Grok Build  1.0.77 [stable]
+

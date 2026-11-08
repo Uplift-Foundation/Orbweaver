@@ -25,6 +25,8 @@
     <Content Include="Fixtures\pages\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-308: the real GitHub releases API responses and SHA256SUMS.txt, captured 2026-11-06. -->
     <Content Include="Fixtures\update\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CB-313: real terminal captures, shared with tools/screen-read-probe. -->
+    <Content Include="..\..\tools\screen-read-probe\fixtures\*" Link="ScreenReadFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
