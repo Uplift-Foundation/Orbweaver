@@ -8,3 +8,6 @@ tools/*.py text eol=lf
 # "\n" boundaries then stop matching. The parsers are separately pinned to
 # read CRLF screens the same (TranscriptSuite, "CRLF").
 tests/TranscriptTests/*.cs text eol=lf
+
+# CB-313: raw terminal captures, LF as the readers wrote them.
+tools/screen-read-probe/fixtures/* text eol=lf

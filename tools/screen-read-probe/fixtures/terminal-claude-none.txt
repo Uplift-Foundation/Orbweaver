@@ -1,0 +1,31 @@
+
+▗ ▗   ▖ ▖  Claude Code v2.1.319
+           Opus 5.5 with medium effort · Claude Team
+ ▘▘   ▝▝   /private/tmp/c3/term-claude · /rc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ tmux;fix lint errors"
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PE…
+  Opus 5.5 | ~/term-claude | [.claude]
+  ⏸ manual mode on
+

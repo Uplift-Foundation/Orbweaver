@@ -1,0 +1,24 @@
+                                                                                
+ /p/t/c3/wez-grok                                                               
+                                                                                
+                                                                                
+                                                                                
+               Resume session                               ctrl+r              
+               New worktree                                 ctrl+w              
+               Changelog                                                        
+               Quit                                         ctrl+q              
+                                                                                
+               Grok 4.7 is here!                                                
+               Select 'Grok 4.7' under /model.                                  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tip: Use Ctrl+Enter to interject messages. Or just Enter to queue messages.    
+                                                                                
+ ╭────────────────────────────────────────────────────────────────────────────╮ 
+ │ ❯                                                                          │ 
+ ╰────────────────────────────────────────────────────────── Grok 4.7 (high) ─╯ 
+                                                                                
+                                                    Grok Build  1.0.77 [stable] 
+                                                                                
