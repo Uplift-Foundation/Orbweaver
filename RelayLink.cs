@@ -325,12 +325,16 @@ namespace Orbweaver
         // The owner clicked Allow on the request now pending. Sends the signed
         // pair.accept (sealed under the pair key, so only the phone that knew
         // the QR's secret opens it), then the relay-visible link, then the
-        // phone's first roster. Nothing if the request is no longer current.
+        // phone's first roster. Nothing if the request is no longer current —
+        // and nothing, with the request left pending, while the socket is
+        // down: the accept and the link would have nowhere to go, and a phone
+        // recorded as paired whose link the relay never heard of is worse than
+        // a second click once the connection is back.
         internal IReadOnlyList<string> Allow(PairRequest request, string desktopName)
         {
             // Pending is cleared whenever the offer changes, so a request that
             // is still the pending one is always for the current offer.
-            if (!ReferenceEquals(request, Pending) || _now() >= Offer!.ExpiresAt) return [];
+            if (!ReferenceEquals(request, Pending) || _now() >= Offer!.ExpiresAt || !Welcomed) return [];
             var offer = Offer;
 
             var desktopId = _identity.DeviceId!;
@@ -356,12 +360,9 @@ namespace Orbweaver
             Offer = null;
             Pending = null;
 
-            if (Welcomed)
-            {
-                var c = OpenChannel(phone, fresh: true);
-                c.Online = true;   // it is talking to us right now
-                frames.AddRange(Collect(RosterFor(c)));
-            }
+            var c = OpenChannel(phone, fresh: true);
+            c.Online = true;   // it is talking to us right now
+            frames.AddRange(Collect(RosterFor(c)));
             PhonePaired(phone);
             return frames;
         }

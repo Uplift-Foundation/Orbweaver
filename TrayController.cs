@@ -292,6 +292,12 @@ namespace Orbweaver
                 menu.Add(remoteItem);
             }
 
+            // CB-314: always shown, unlike the item above — pairing a phone is
+            // how the feature is discovered, and nothing connects until it is used.
+            var pairPhoneItem = new NativeMenuItem("Pair phone…");
+            pairPhoneItem.Click += (_, _) => OpenPairPhone();
+            menu.Add(pairPhoneItem);
+
             menu.Add(new NativeMenuItemSeparator());
 
             var newChatItem = new NativeMenuItem("New chat…");
@@ -392,6 +398,9 @@ namespace Orbweaver
         // NewChatWindow.Toggle's OS-facing halves have test seams now, so
         // HotkeyActionsTests calls this for real with nothing shown.
         internal static void OpenNewChat() => NewChatWindow.Toggle();
+
+        // Turns the relay on (the first time) and opens the pairing window.
+        internal static void OpenPairPhone() => PairPhoneWindow.Toggle(RelayService.Enable());
 
         // Excluded from coverage: starts a relay, which is a live Claude Code
         // session in a tmux pane on another machine — and that costs the person

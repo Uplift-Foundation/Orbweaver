@@ -91,6 +91,20 @@ namespace Orbweaver
                     persona?.Invoke(s.Status)))
                 .ToList();
 
+        // The persona a phone draws for a session: the name the persona files
+        // give it, the orb's own two-letter glyph for that name, and the team
+        // colour if Claude Code assigned one, else the session's /color. No
+        // picture — milestone 2's roster carries none — and nothing at all
+        // without a name, since initials of nothing are not a persona.
+        internal static RelayPersona? PersonaFrom(string? name, SessionStatus status)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var color = !string.IsNullOrWhiteSpace(status.AgentColor) ? status.AgentColor
+                : !string.IsNullOrWhiteSpace(status.Color) ? status.Color
+                : null;
+            return new RelayPersona(name, OrbGlyph.Initials(name), color);
+        }
+
         internal static string Timestamp(DateTimeOffset t) =>
             t.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 

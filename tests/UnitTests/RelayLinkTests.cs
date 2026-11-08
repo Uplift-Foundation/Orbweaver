@@ -310,21 +310,25 @@ public class RelayLinkTests : IDisposable
     }
 
     [Fact]
-    public void Allow_before_welcome_pairs_but_sends_no_roster_until_presence()
+    public void Allow_while_disconnected_sends_nothing_and_keeps_the_request_for_another_try()
     {
         var (link, identity, _) = New();
         var phone = new FakePhone();
         link.OnFrame(phone.Request(link.BeginPairing("off_1", _now.AddMinutes(5)).QrText));
-        RelayIdentity.Phone? paired = null;
-        link.PhonePaired += p => paired = p;
-        var frames = link.Allow(link.Pending!, "Mac");
-        Assert.Equal(["link"], frames.Skip(1).Select(T));
-        Assert.Equal(phone.Id, paired!.PhoneId);
-        Assert.False(link.IsOnline(phone.Id));
+        var pending = link.Pending!;
+        var paired = 0;
+        link.PhonePaired += _ => paired++;
 
-        link.OnFrame(Welcome(phone.Id));
-        var roster = link.OnFrame(Presence(phone.Id, true)).Single();
-        Assert.Equal("roster", phone.OpenFromDesktop(roster).GetProperty("t").GetString());
+        Assert.Empty(link.Allow(pending, "Mac"));                   // no socket: nowhere to send the accept
+        Assert.Same(pending, link.Pending);
+        Assert.Empty(identity.Phones);
+        Assert.Equal(0, paired);
+
+        link.OnFrame(Welcome());
+        var frames = link.Allow(pending, "Mac");                    // the second click, once connected
+        Assert.Equal([null, "link", null], frames.Select(T));
+        Assert.Equal("roster", phone.OpenFromDesktop(frames[2]).GetProperty("t").GetString());
+        Assert.Equal(1, paired);
         Assert.Single(identity.Phones);
     }
 
@@ -354,6 +358,7 @@ public class RelayLinkTests : IDisposable
         Assert.Equal("s1", roster.GetProperty("sessions")[0].GetProperty("session_id").GetString());
         Assert.Equal(5, changed);
         Assert.Null(link.LastSeen("ph_stranger"));
+        Assert.False(link.IsOnline("ph_stranger"));
     }
 
     [Fact]

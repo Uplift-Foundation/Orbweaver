@@ -106,6 +106,19 @@ public class RelayRosterTests
         Assert.Equal("2026-11-08T08:00:00Z", RelayRoster.Timestamp(local));
     }
 
+    [Fact]
+    public void Persona_takes_the_name_its_glyph_and_the_team_colour_first()
+    {
+        Assert.Null(RelayRoster.PersonaFrom(null, new SessionStatus()));
+        Assert.Null(RelayRoster.PersonaFrom("  ", new SessionStatus()));
+        Assert.Equal(new RelayPersona("Jennifer Voss", "JV", "purple"),
+            RelayRoster.PersonaFrom("Jennifer Voss", new SessionStatus { AgentColor = "purple", Color = "green" }));
+        Assert.Equal(new RelayPersona("Pixel", "PI", "green"),
+            RelayRoster.PersonaFrom("Pixel", new SessionStatus { AgentColor = " ", Color = "green" }));
+        Assert.Equal(new RelayPersona("Pixel", "PI", null),
+            RelayRoster.PersonaFrom("Pixel", new SessionStatus { Color = "" }));
+    }
+
     // ---- the book ---------------------------------------------------------
 
     [Fact]

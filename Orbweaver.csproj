@@ -155,6 +155,9 @@
          (RelaySecretStore.cs). Microsoft's own package; every call is behind
          OperatingSystem.IsWindows(). -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
+    <!-- CB-314: the pairing QR code. Pure managed and MIT; PairPhoneWindow
+         draws its module matrix directly, so none of its renderers are used. -->
+    <PackageReference Include="QRCoder" Version="1.7.0" />
     <!-- AppKit-shaped control styles (MIT, Devolutions). Loaded only on macOS —
          see App.Initialize — with Fluent kept for Windows. Hand-rolling this was
          a losing game: the shapes, metrics and states of AppKit's controls are

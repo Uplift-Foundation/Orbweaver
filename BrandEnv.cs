@@ -86,6 +86,10 @@ namespace Orbweaver
         // login Keychain (RelaySecretStorePlatformTests). CI must never set it.
         internal const string KeychainTests = "KEYCHAIN_TESTS";
 
+        // CB-314: where the phone relay is, for a test or QA's stub relay —
+        // the same shape as UPDATE_FEED_URL. Unset means the real relay.
+        internal const string RelayUrl = "RELAY_URL";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -94,7 +98,7 @@ namespace Orbweaver
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
-            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests,
+            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test
