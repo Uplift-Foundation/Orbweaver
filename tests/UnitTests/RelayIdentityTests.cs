@@ -26,6 +26,7 @@ public class RelayIdentityTests : IDisposable
         public readonly Dictionary<string, byte[]> Items = new();
         public readonly List<string> Forgotten = new();
         public bool RefuseWrites;
+        public bool RefuseReads;     // the item is there but the store will not hand it over
 
         public string? Protect(string name, byte[] secret)
         {
@@ -34,8 +35,11 @@ public class RelayIdentityTests : IDisposable
             return "fake:" + name;
         }
 
-        public byte[]? Unprotect(string reference) =>
-            reference.StartsWith("fake:") && Items.TryGetValue(reference[5..], out var v) ? v : null;
+        public byte[]? Unprotect(string reference)
+        {
+            if (RefuseReads) throw new RelaySecretUnavailableException("the Keychain refused the relay keys (test)");
+            return reference.StartsWith("fake:") && Items.TryGetValue(reference[5..], out var v) ? v : null;
+        }
 
         public void Forget(string reference) => Forgotten.Add(reference);
     }
@@ -90,6 +94,35 @@ public class RelayIdentityTests : IDisposable
         Assert.Empty(after.Phones);
         Assert.Contains("fake:identity", store.Forgotten);
         Assert.Contains("fake:token", store.Forgotten);
+    }
+
+    // An unsigned dev build shares this settings directory with the signed
+    // app, and the Keychain refuses it the signed app's items. Refused is not
+    // lost: nothing is regenerated, nothing forgotten, the file is untouched,
+    // and the original keys come back once the store hands them over.
+    [Fact]
+    public void Refused_secrets_leave_keys_pairings_and_file_untouched()
+    {
+        var store = new FakeStore();
+        var a = New(store);
+        var (id, _) = a.Keys();
+        a.SetRegistration("dsk_signed", "tok");
+        a.AddPhone("ph_1", "Phone", RelayCrypto.GenerateKeyPair().Public, RelayCrypto.GenerateKeyPair().Public);
+        var before = File.ReadAllText(Path.Combine(_dir, RelayIdentity.FileName));
+
+        store.RefuseReads = true;
+        var dev = New(store);
+        Assert.Throws<RelaySecretUnavailableException>(() => dev.Keys());
+        Assert.Throws<RelaySecretUnavailableException>(() => dev.Keys());   // and again: still nothing destroyed
+        Assert.Null(dev.Token);
+        Assert.Equal("dsk_signed", dev.DeviceId);
+        Assert.Single(dev.Phones);
+        Assert.Empty(store.Forgotten);
+        Assert.Equal(before, File.ReadAllText(Path.Combine(_dir, RelayIdentity.FileName)));
+
+        store.RefuseReads = false;                                          // a prompt answered, or the signed app again
+        Assert.Equal(id.Public, dev.Keys().Identity.Public);
+        Assert.Equal("tok", New(store).Token);
     }
 
     [Fact]

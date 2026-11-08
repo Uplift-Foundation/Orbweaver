@@ -73,7 +73,9 @@ if (args.Contains("--desktop-only"))
     var o = await client.BeginPairingAsync();
     Console.WriteLine($"QR {o.QrText}");
     Console.WriteLine($"offer {o.OfferId} expires {o.ExpiresAt:O}");
-    var paired = new TaskCompletionSource<RelayLink.PairRequest>();
+    // Continuations off the raising thread. (RelayClient no longer raises on
+    // its read loop either, but a probe should not depend on that.)
+    var paired = new TaskCompletionSource<RelayLink.PairRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
     client.PairRequested += r => paired.TrySetResult(r);
     RelayLink.PairRequest request;
     try { request = await paired.Task.WaitAsync(o.ExpiresAt - DateTimeOffset.UtcNow); }

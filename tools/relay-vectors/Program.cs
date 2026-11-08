@@ -284,7 +284,7 @@ var deltas = new JsonArray
 var rosters = new JsonObject
 {
     ["_source"] = source.DeepClone(),
-    ["_rules"] = "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true shows ended once then drops the row; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is an INTEGER of Unix seconds, the same type and unit as ts and last_seen (addendum 4). parent_session_id and persona are omitted when absent; persona.color is optional and, when present, one of the lowercase names in persona-colors.json (never hex) — render absent or unknown names neutral.",
+    ["_rules"] = "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true drops the row from the roster immediately — there is no 'ended shown once' state in the data, though the UI may animate the exit; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is an INTEGER of Unix seconds, the same type and unit as ts and last_seen (addendum 4). parent_session_id and persona are omitted when absent; persona.color is optional and, when present, one of the lowercase names in persona-colors.json (never hex) — render absent or unknown names neutral.",
     ["macbook_roster"] = Parse(RelayRoster.RosterJson(1, macbook)),
     ["windows_roster"] = Parse(RelayRoster.RosterJson(1, windows)),
     ["empty_roster"] = Parse(RelayRoster.RosterJson(1, [])),

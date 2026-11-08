@@ -151,6 +151,7 @@ public class PairPhoneWindowTests
     [InlineData("http")]
     [InlineData("relay")]
     [InlineData("timeout")]
+    [InlineData("keychain")]
     public async Task A_failed_offer_is_a_stage_with_the_reason(string kind)
     {
         var client = new FakePairingClient();
@@ -159,12 +160,19 @@ public class PairPhoneWindowTests
         {
             "http" => Task.FromException<RelayLink.PairOffer>(new HttpRequestException("no route to host")),
             "relay" => Task.FromException<RelayLink.PairOffer>(new RelayHttpException("the relay answered 503")),
+            "keychain" => Task.FromException<RelayLink.PairOffer>(new RelaySecretUnavailableException("the Keychain refused the relay keys (OSStatus -25293)")),
             _ => Task.FromException<RelayLink.PairOffer>(new TaskCanceledException()),
         };
         await w.BeginAsync();
         Assert.Equal(PairPhoneWindow.Stage.Failed, w.Current);
         Assert.Equal("Couldn't start pairing", w.Heading.Text);
-        Assert.Equal(kind switch { "http" => "no route to host", "relay" => "the relay answered 503", _ => "The relay did not answer." }, w.Detail.Text);
+        Assert.Equal(kind switch
+        {
+            "http" => "no route to host",
+            "relay" => "the relay answered 503",
+            "keychain" => "the Keychain refused the relay keys (OSStatus -25293)",
+            _ => "The relay did not answer.",
+        }, w.Detail.Text);
     }
 
     [AvaloniaFact]

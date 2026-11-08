@@ -397,6 +397,28 @@ public class RelayLinkTests : IDisposable
         Assert.Equal(1, roster.GetProperty("sessions").GetArrayLength());     // the book kept the scan
     }
 
+    // Addendum 6's regression case, with the exact frame the relay forwards
+    // (frames-v2.json "resync (forwarded to a desktop)"): a paired phone, the
+    // snapshot unchanged since the last frame, and an inbound resync. The
+    // next frame to the phone is the whole roster at seq 1 with ck "", and
+    // the delta after it is seq 2.
+    [Fact]
+    public void A_forwarded_resync_with_nothing_changed_still_gets_the_whole_roster_then_seq_2()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnScan([Row("s1")]);
+        link.OnScan([Row("s1", "waiting")]);                                  // phone now at seq 2
+        Assert.Empty(link.OnScan([Row("s1", "waiting")]));                    // nothing changed: nothing sent
+
+        var frame = link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""").Single();
+        Assert.Equal("", J(frame).GetProperty("ck").GetString());
+        var roster = phone.OpenFromDesktop(frame);
+        Assert.Equal(("roster", 1L, "waiting"), (roster.GetProperty("t").GetString(), roster.GetProperty("seq").GetInt64(),
+            roster.GetProperty("sessions")[0].GetProperty("state").GetString()));
+        var next = phone.OpenFromDesktop(link.OnScan([Row("s1", "idle")]).Single());
+        Assert.Equal(("delta", 2L), (next.GetProperty("t").GetString(), next.GetProperty("seq").GetInt64()));
+    }
+
     [Fact]
     public void Resync_sends_a_roster_only_to_a_known_online_phone()
     {
@@ -617,6 +639,20 @@ public class RelayLinkTests : IDisposable
     }
 
     [Fact]
+    public void A_refused_revoke_is_retried_until_its_unlink_settles()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var due = Retries(link);
+        var frames = link.Remove(phone.Id);
+        var revokeId = J(frames[0]).GetProperty("id").GetString()!;
+        link.OnFrame($$"""{"t":"err","ref":"{{revokeId}}","code":"rate_limited"}""");
+        Assert.Equal(("env:" + revokeId, 1), due.Single());
+        Assert.Equal([frames[0]], link.Retry("env:" + revokeId));
+        link.OnFrame("""{"t":"ok","ref":"unlink","code":"unlinked"}""");
+        Assert.Empty(link.Retry("env:" + revokeId));                                     // the unlink landed: no more
+    }
+
+    [Fact]
     public void A_refused_state_frame_is_left_for_the_phone_to_resync()
     {
         var (link, _, _, notes, _) = Paired();
@@ -635,10 +671,11 @@ public class RelayLinkTests : IDisposable
         link.OnFrame(phone.Request(link.BeginPairing("off_1", _now.AddMinutes(5)).QrText));
         var frames = link.Allow(link.Pending!, "Mac");
         var acceptId = J(frames[0]).GetProperty("id").GetString()!;
-        link.Remove(phone.Id);
+        var revokeId = J(link.Remove(phone.Id)[0]).GetProperty("id").GetString()!;
         var due = Retries(link);
         link.OnFrame("""{"t":"err","code":"rate_limited"}""");                           // the raw ceiling: no ref
-        Assert.Equal(["env:" + acceptId, "link", "unlink:" + phone.Id], due.Select(d => d.Key).Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "env:" + acceptId, "env:" + revokeId, "link", "unlink:" + phone.Id }.Order(StringComparer.Ordinal),
+            due.Select(d => d.Key).Order(StringComparer.Ordinal));
     }
 
     [Fact]

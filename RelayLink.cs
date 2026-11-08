@@ -89,6 +89,7 @@ namespace Orbweaver
         // State frames are not here — a phone that misses one resyncs.
         private readonly Dictionary<string, string> _retryable = new(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _retryAttempts = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _revokeKeys = new(StringComparer.Ordinal);   // phone → its revoke's retry key
 
         internal RelayLink(RelayIdentity identity, RelaySessionBook book, Func<DateTimeOffset> now,
             string platform, string appVersion, string relayHost)
@@ -151,6 +152,7 @@ namespace Orbweaver
             _unlinksInFlight.Clear();
             _retryable.Clear();
             _retryAttempts.Clear();
+            _revokeKeys.Clear();
         }
 
         internal IReadOnlyList<string> OnFrame(string text)
@@ -440,7 +442,16 @@ namespace Orbweaver
                     w.WriteString("by", desktopId);
                     w.WriteString("sig", RelayCrypto.Base64Url(sig));
                 });
-                if (SealTo(c, "pair", "", Encoding.UTF8.GetBytes(revoke)) is { } frame) frames.Add(frame);
+                // Retryable by its id if the relay refuses it for rate: the
+                // phone's own record of the removal. Dropped once the unlink
+                // settles, after which the relay would refuse it anyway.
+                var revokeId = Ulid(_now());
+                if (SealTo(c, "pair", "", Encoding.UTF8.GetBytes(revoke), revokeId) is { } frame)
+                {
+                    frames.Add(frame);
+                    _retryable["env:" + revokeId] = frame;
+                    _revokeKeys[phoneId] = "env:" + revokeId;
+                }
             }
 
             // Owed until the relay says ok, persisted first so a quit between
@@ -483,12 +494,12 @@ namespace Orbweaver
             return frames;
         }
 
+        // A roster's ck is the empty string (CB-314 addendum 6): ck names a
+        // session for coalescing, and a roster is every session at once.
+        // Always the whole book, unconditionally — a resync asks for the book,
+        // not the diff — and it restarts the phone's numbering at 1.
         private string? RosterFor(Channel c) =>
-            SealTo(c, "state", RelayCrypto.Ck(c.CkKey, RosterCkSubject), c.Stream.Roster(_book.Snapshot()));
-
-        // The ck a roster is coalesced under: not a session id, so it never
-        // collides with one, and opaque to the relay like every other ck.
-        internal const string RosterCkSubject = "\u0000roster";
+            SealTo(c, "state", "", c.Stream.Roster(_book.Snapshot()));
 
         // ---- sealing out ------------------------------------------------------
 
@@ -520,7 +531,7 @@ namespace Orbweaver
         // Null — and nothing sent — when the epoch cannot be persisted or the
         // pairing has used its last epoch. Either way sending would risk a
         // reused nonce, which is the one failure this design exists to rule out.
-        private string? SealTo(Channel c, string cls, string ck, byte[] plaintext)
+        private string? SealTo(Channel c, string cls, string ck, byte[] plaintext, string? id = null)
         {
             if (!c.EpochPersisted)
             {
@@ -544,7 +555,7 @@ namespace Orbweaver
             var desktopId = _identity.DeviceId!;
             var ct = RelayCrypto.Seal(c.KeyFor(epoch), RelayCrypto.Nonce(RelayCrypto.DesktopToPhone, epoch, counter),
                 plaintext, RelayCrypto.Aad(desktopId, c.Phone.PhoneId, cls));
-            return Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null);
+            return Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null, id);
         }
 
         private string Envelope(string from, string to, string cls, string ck, string ct, string? offer, string? id = null) => Frame(w =>
@@ -575,6 +586,7 @@ namespace Orbweaver
             if (_unlinksInFlight.Count == 0) return;
             var peer = _unlinksInFlight.Dequeue();
             _retryAttempts.Remove("unlink:" + peer);
+            if (_revokeKeys.Remove(peer, out var revokeKey)) _retryable.Remove(revokeKey);
             _identity.RemovePendingUnlink(peer);
         }
 

@@ -175,6 +175,30 @@ public class RelayClientTests : IAsyncLifetime
         }
     }
 
+    private sealed class RefusingStore : IRelaySecretStore
+    {
+        public string? Protect(string name, byte[] secret) => "mem:" + name;
+        public byte[]? Unprotect(string reference) => throw new RelaySecretUnavailableException("the Keychain refused the relay keys (test)");
+        public void Forget(string reference) => throw new InvalidOperationException("nothing may be forgotten");
+    }
+
+    // An unsigned build against the signed app's Keychain items: the client
+    // says why it cannot connect and keeps trying, and destroys nothing.
+    [Fact]
+    public async Task Refused_keys_are_reported_and_nothing_is_regenerated()
+    {
+        Directory.CreateDirectory(_dir);
+        var file = Path.Combine(_dir, RelayIdentity.FileName);
+        File.WriteAllText(file, """{"device_id":"dsk_signed","id_pub":"04aa","id_priv":"mem:identity","ka_pub":"04bb","ka_priv":"mem:agreement","phones":[]}""");
+        var before = File.ReadAllText(file);
+        var client = Client(new RelayIdentity(_dir, new RefusingStore()));
+        client.Start();
+        await Until(() => client.LastError?.Contains("Keychain refused") == true);
+        Assert.NotEqual(RelayClient.Status.Connected, client.State);
+        Assert.Equal(before, File.ReadAllText(file));
+        Assert.Equal(0, _stub.Registrations);
+    }
+
     [Fact]
     public async Task An_offer_refused_for_a_stale_token_forgets_the_token()
     {
@@ -347,6 +371,56 @@ public class RelayClientTests : IAsyncLifetime
             seqs.Add(OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("seq").GetInt64());
         Assert.Equal(Enumerable.Range(2, 30).Select(i => (long)i), seqs);
         Assert.True(DateTime.UtcNow - started < TimeSpan.FromMilliseconds(400), "unpaced frames were held back");
+    }
+
+    // CB-314 #11244: in the two-process end to end, the probe's PairRequested
+    // continuation ran inline on the client's read loop and blocked there,
+    // so a forwarded resync was never read while deltas kept flowing. Events
+    // now come off a serial queue; a handler that never returns must not
+    // stop the client reading.
+    [Fact]
+    public async Task A_handler_that_never_returns_does_not_stop_the_client_reading()
+    {
+        var identity = Identity();
+        var client = Client(identity);
+        using var release = new ManualResetEventSlim();
+        var stuck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.PairRequested += _ => { stuck.TrySetResult(); release.Wait(); };  // never returns until the end of the test
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        var offer = await client.BeginPairingAsync();
+
+        var phone = new Phone("ph_00000000000000c3", GenerateKeyPair(), GenerateKeyPair());
+        var q = offer.QrText[(offer.QrText.IndexOf('?') + 1)..].Split('&').Select(kv => kv.Split('=', 2)).ToDictionary(kv => kv[0], kv => kv[1]);
+        var body = $"{{\"t\":\"pair.request\",\"phone_id\":\"{phone.Id}\",\"name\":\"P\",\"id_pub\":\"{Hex(phone.IdKey.Public)}\",\"ka_pub\":\"{Hex(phone.KaKey.Public)}\"}}";
+        var ct = Seal(PairKey(FromBase64Url(q["s"])!, q["o"], q["d"], phone.Id), Nonce(PhoneToDesktop, 0, 0), Encoding.UTF8.GetBytes(body), Aad(phone.Id, q["d"], "pair"));
+        await _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "x", from = phone.Id, to = q["d"], ts = 0, @class = "pair", push = "none", ck = "", ct, offer = q["o"] }));
+        await stuck.Task.WaitAsync(TimeSpan.FromSeconds(10));                 // the handler is now stuck
+
+        await _stub.Send("""{"t":"ping"}""");
+        await _stub.NextT("pong");                                            // still reading
+        release.Set();
+    }
+
+    [Fact]
+    public async Task A_handler_that_throws_does_not_end_later_events()
+    {
+        var identity = Identity();
+        var client = Client(identity);
+        // One handler that throws on its first call and counts after that:
+        // the pump has to survive the throw for the later calls to happen.
+        var calls = 0;
+        client.StateChanged += () =>
+        {
+            if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("a handler bug");
+        };
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await Until(() => Volatile.Read(ref calls) >= 3);                     // Registering (threw), Connecting, Connected
+        await client.StopAsync();
+        await Until(() => client.State == RelayClient.Status.Off);
     }
 
     [Fact]

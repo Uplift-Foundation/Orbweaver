@@ -31,7 +31,7 @@ namespace Orbweaver
                 File.AppendAllText(Path.Combine(dir, EventsFile),
                     $"{now().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture)} {line}\n");
 
-            var allowed = new TaskCompletionSource();
+            var allowed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void OnRequest(RelayLink.PairRequest r)
             {
                 Log($"request {r.PhoneId} \"{r.Name}\" check code {r.CheckCodeDisplay}");
@@ -52,7 +52,7 @@ namespace Orbweaver
                         offer = await client.BeginPairingAsync(token).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is HttpRequestException or RelayHttpException or IOException
-                                               or System.Text.Json.JsonException)
+                                               or System.Text.Json.JsonException or RelaySecretUnavailableException)
                     {
                         Log($"offer failed: {ex.Message}");
                         await delay(TimeSpan.FromSeconds(5), token).ConfigureAwait(false);

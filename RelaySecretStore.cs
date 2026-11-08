@@ -19,12 +19,21 @@ namespace Orbweaver
     // method that wrote it whichever platform store is current, so a Keychain
     // write that failed once and fell back to plain still loads after the
     // Keychain starts working again.
+    // The store holds the secret but would not hand it over — a Keychain
+    // item whose access list names a different code identity (an ad-hoc or
+    // unsigned build), a denied or impossible prompt. Distinct from "not
+    // found" on purpose: a missing key may be replaced, a refused one must not
+    // be, or one unsigned dev run would wipe the signed app's pairings.
+    internal sealed class RelaySecretUnavailableException(string message) : Exception(message);
+
     internal interface IRelaySecretStore
     {
         // A reference to store, or null if this store could not keep it.
         string? Protect(string name, byte[] secret);
 
-        // The bytes back, or null if this store cannot open the reference.
+        // The bytes back, or null if the secret is not there (or not this
+        // store's). Throws RelaySecretUnavailableException if it is there and
+        // was refused.
         byte[]? Unprotect(string reference);
 
         // Forgets a reference. Best effort.
@@ -114,8 +123,12 @@ namespace Orbweaver
         {
             if (!reference.StartsWith(RelaySecrets.KeychainPrefix, StringComparison.Ordinal)) return null;
             var (secret, status) = MacOSKeychainItems.Read(Service, reference[RelaySecrets.KeychainPrefix.Length..]);
-            if (secret is null) MirrorLog.Say("relay-keychain", $"read failed: {MacOSKeychainItems.Describe(status)}");
-            return secret;
+            if (secret is not null) return secret;
+            MirrorLog.Say("relay-keychain", $"read failed: {MacOSKeychainItems.Describe(status)}");
+            // Gone is gone (-25300); anything else — refused, no UI possible,
+            // a different code identity — is the item still being there.
+            if (status == -25300) return null;
+            throw new RelaySecretUnavailableException($"the Keychain refused the relay keys ({MacOSKeychainItems.Describe(status)})");
         }
 
         public void Forget(string reference)

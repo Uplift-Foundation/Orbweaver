@@ -79,6 +79,15 @@ namespace Orbweaver
         private readonly RelayLink _link;
         private readonly object _gate = new();
         private readonly List<Action> _deferred = new();
+
+        // Every event this client raises goes through one serial queue, in
+        // order, on its own task — never on the read loop's thread. A handler
+        // that blocks (or awaits something whose continuation runs inline)
+        // used to run on the read loop and stall it: inbound frames stopped
+        // being processed while outbound deltas kept flowing. That is exactly
+        // how a resync went unanswered in CB-314's two-process end to end.
+        private readonly Channel<Action> _events = Channel.CreateUnbounded<Action>(new UnboundedChannelOptions { SingleReader = true });
+        private readonly Task _eventPump;
         private Channel<string>? _outbox;
         private CancellationTokenSource? _run;
         private CancellationTokenSource? _connection;
@@ -104,6 +113,7 @@ namespace Orbweaver
             _http = new HttpClient(http ?? new SocketsHttpHandler(), disposeHandler: true) { Timeout = TimeSpan.FromSeconds(20) };
             _delay = delay ?? Task.Delay;
             _now = now ?? (() => DateTimeOffset.UtcNow);
+            _eventPump = Task.Run(PumpEventsAsync);
             _link = new RelayLink(identity, new RelaySessionBook(), _now,
                 options.Platform, options.AppVersion, options.RelayHost);
 
@@ -169,6 +179,8 @@ namespace Orbweaver
             StopAsync().GetAwaiter().GetResult();
             _http.Dispose();
             _registering.Dispose();
+            _events.Writer.TryComplete();
+            _eventPump.Wait(TimeSpan.FromSeconds(5));
         }
 
         private async Task RunAsync(CancellationToken stop)
@@ -191,7 +203,8 @@ namespace Orbweaver
                     return;
                 }
                 catch (Exception ex) when (ex is IOException or WebSocketException or HttpRequestException
-                                           or RelayHttpException or OperationCanceledException or JsonException)
+                                           or RelayHttpException or OperationCanceledException or JsonException
+                                           or RelaySecretUnavailableException)
                 {
                     LastError = ex.Message;
                     MirrorLog.Say("relay", $"connection ended: {ex.GetType().Name}: {ex.Message}");
@@ -264,7 +277,7 @@ namespace Orbweaver
                 connection.Cancel();
                 await Task.WhenAll(Quietly(writer), Quietly(pinger)).ConfigureAwait(false);
                 RunDeferred();
-                PhonesChanged();
+                Raise(() => PhonesChanged());
             }
         }
 
@@ -343,7 +356,7 @@ namespace Orbweaver
         internal void Remove(string phoneId)
         {
             Dispatch(() => _link.Remove(phoneId));
-            PhonesChanged();
+            Raise(() => PhonesChanged());
         }
 
         // Runs one RelayLink call under the lock, queues what it produced on
@@ -368,21 +381,31 @@ namespace Orbweaver
 
         private void RunDeferred()
         {
-            List<Action> now;
             lock (_gate)
             {
-                if (_deferred.Count == 0) return;
-                now = new List<Action>(_deferred);
+                foreach (var action in _deferred) _events.Writer.TryWrite(action);
                 _deferred.Clear();
             }
-            foreach (var action in now) action();
+        }
+
+        private void Raise(Action action) => _events.Writer.TryWrite(action);
+
+        private async Task PumpEventsAsync()
+        {
+            await foreach (var action in _events.Reader.ReadAllAsync().ConfigureAwait(false))
+            {
+                // A handler's exception is the handler's bug; it must not end
+                // the pump and with it every later event.
+                try { action(); }
+                catch (Exception ex) { MirrorLog.Say("relay", $"event handler threw {ex.GetType().Name}"); }
+            }
         }
 
         private void SetStatus(Status status)
         {
             if (State == status) return;
             State = status;
-            StateChanged();
+            Raise(() => StateChanged());
         }
 
         // ---- registration (§2.1) -------------------------------------------------

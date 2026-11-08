@@ -148,6 +148,23 @@ public class RelayCryptoVectorTests
         Assert.Equal(10, seen);
     }
 
+    // A real Secure Enclave signature, made by surface C on an iOS simulator
+    // SE key over the vector's phone revoke message: the desktop's own
+    // RelayCrypto.Verify must accept it under the SE key's public half, and
+    // refuse it under the vector's software phone key. The vector stands in
+    // for an SE key; this closes the gap it leaves.
+    [Fact]
+    public void A_real_secure_enclave_revoke_signature_verifies()
+    {
+        var se = Load("sim-se-revoke.json");
+        Assert.True(se.GetProperty("secureEnclave").GetBoolean());
+        var payload = Convert.FromBase64String(Str(se, "payload"));
+        var sig = Convert.FromBase64String(Str(se, "sig"));
+        Assert.Equal(RevokeMessage(PhoneId, DesktopId), payload);           // exactly the vector's by_phone message
+        Assert.True(Verify(Bytes(se, "pub"), payload, sig));
+        Assert.False(Verify(PhId.Public, payload, sig));
+    }
+
     // ---- session ---------------------------------------------------------
 
     private static byte[] Base() => Bytes(S, "base");

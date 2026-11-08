@@ -86,12 +86,16 @@ public class RelayTestHooksTests : IDisposable
         Assert.Contains("paired; test hooks done", Events());
     }
 
-    [Fact]
-    public async Task A_failed_offer_is_logged_and_retried()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_failed_offer_is_logged_and_retried(bool keychain)
     {
         var fake = new Fake();
         fake.Begin = n => n == 1
-            ? Task.FromException<RelayLink.PairOffer>(new RelayHttpException("the relay answered 503"))
+            ? Task.FromException<RelayLink.PairOffer>(keychain
+                ? new RelaySecretUnavailableException("the relay answered 503")
+                : new RelayHttpException("the relay answered 503"))
             : Task.FromResult(new RelayLink.PairOffer("off_2", T0.AddMinutes(5), new byte[32], "qr-2"));
         var gate = new TaskCompletionSource();
         var waits = new List<TimeSpan>();

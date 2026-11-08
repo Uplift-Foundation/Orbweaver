@@ -81,6 +81,7 @@ namespace Orbweaver
         private RelayCrypto.KeyPair? _agreement;
         private string? _token;
         private bool _loaded;
+        private string? _unavailable;
 
         internal RelayIdentity(string directory, IRelaySecretStore store, Func<DateTimeOffset>? now = null)
         {
@@ -106,6 +107,17 @@ namespace Orbweaver
             {
                 EnsureLoaded();
                 if (_identity is not null && _agreement is not null) return (_identity, _agreement);
+
+                // Refused, not lost: try once more (a prompt may have been
+                // answered), and otherwise touch nothing — no new keys, no
+                // forgotten pairings — and say why.
+                if (_unavailable is not null)
+                {
+                    _loaded = false;
+                    EnsureLoaded();
+                    if (_identity is not null && _agreement is not null) return (_identity, _agreement);
+                    throw new RelaySecretUnavailableException(_unavailable!);
+                }
 
                 var hadKeys = _stored.IdPrivate is not null || _stored.KaPrivate is not null;
                 if (hadKeys)
@@ -317,11 +329,23 @@ namespace Orbweaver
             _stored.Phones.RemoveAll(p => !RelayCrypto.IsValidPublicKey(RelayCrypto.FromHex(p.IdPublic))
                                           || !RelayCrypto.IsValidPublicKey(RelayCrypto.FromHex(p.KaPublic)));
 
-            _identity = OpenPair(_stored.IdPrivate, _stored.IdPublic);
-            _agreement = OpenPair(_stored.KaPrivate, _stored.KaPublic);
-            if (_identity is not null && _agreement is not null && _stored.Token is { } token
-                && Unprotect(token) is { } bytes)
-                _token = System.Text.Encoding.UTF8.GetString(bytes);
+            _unavailable = null;
+            try
+            {
+                _identity = OpenPair(_stored.IdPrivate, _stored.IdPublic);
+                _agreement = OpenPair(_stored.KaPrivate, _stored.KaPublic);
+                if (_identity is not null && _agreement is not null && _stored.Token is { } token
+                    && Unprotect(token) is { } bytes)
+                    _token = System.Text.Encoding.UTF8.GetString(bytes);
+            }
+            catch (RelaySecretUnavailableException ex)
+            {
+                _identity = null;
+                _agreement = null;
+                _token = null;
+                _unavailable = ex.Message;
+                MirrorLog.Say("relay-identity", ex.Message + "; leaving keys and pairings untouched");
+            }
         }
 
         private RelayCrypto.KeyPair? OpenPair(string? privateRef, string? publicHex)

@@ -111,6 +111,11 @@ namespace Orbweaver
             "remoteControlEnabled", "remoteControlProfileDir", "remoteControlProfileDirs",
             "remoteControlIdleMinutes", "remoteControlServeOnLaunch",
             "peerLinkEnabled", "peerLinkPort",
+            // CB-314: the phone relay. Read, written and listed here, all three:
+            // a model property alone is never persisted (measured on the
+            // installed app: pairing set it, a restart lost it, and the relay
+            // stayed off).
+            "relayEnabled",
             // CB-308, the auto-updater. All five must be here: a key written by
             // Save() that is not in this list is also carried in _unknownKeys,
             // and Save() would then throw adding it twice.
@@ -2470,6 +2475,7 @@ namespace Orbweaver
                         RemoteControlServeOnLaunch =
                             root["remoteControlServeOnLaunch"]?.GetValue<bool>() ?? false,
                         PeerLinkEnabled = root["peerLinkEnabled"]?.GetValue<bool>() ?? false,
+                        RelayEnabled = root["relayEnabled"]?.GetValue<bool>() ?? false,
                         PeerLinkPort = root["peerLinkPort"]?.GetValue<int>() ?? 0,
                         AutoCheckForUpdates = Bool(root["autoCheckForUpdates"], true),
                         IncludePrereleaseUpdates = Bool(root["includePrereleaseUpdates"], false),
@@ -3140,6 +3146,7 @@ namespace Orbweaver
                         ["openclawNativeShape"] = _model.OpenClawNativeShape,
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
+                        ["relayEnabled"] = _model.RelayEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,
                         ["autoCheckForUpdates"] = _model.AutoCheckForUpdates,
                         ["includePrereleaseUpdates"] = _model.IncludePrereleaseUpdates,

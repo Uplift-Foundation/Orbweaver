@@ -152,7 +152,8 @@ namespace Orbweaver
                 Show(Stage.Showing);
             }
             catch (Exception ex) when (ex is HttpRequestException or RelayHttpException or IOException
-                                       or TaskCanceledException or System.Text.Json.JsonException)
+                                       or TaskCanceledException or System.Text.Json.JsonException
+                                       or RelaySecretUnavailableException)
             {
                 if (token.IsCancellationRequested) return;
                 Show(Stage.Failed, ex is TaskCanceledException ? "The relay did not answer." : ex.Message);
