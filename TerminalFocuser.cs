@@ -613,8 +613,12 @@ namespace Orbweaver
                 {
                     var tmux = ResolveTmuxBinary(status.TmuxBin);
                     if (tmux is null) return (false, (string?)null);
-                    var ok = TryRun(tmux, out var screen, TmuxArgs(status, TerminalPress.TmuxCaptureThenKey(status.TmuxPane, key)));
-                    return (ok, ok ? screen : null);
+                    // The settle check's second look, then — no await, no log —
+                    // the key, with a capture of the screen it landed on.
+                    var look = TryRun(tmux, out var second, TmuxArgs(status, "capture-pane", "-p", "-t", status.TmuxPane)) ? second : null;
+                    if (!approved(look)) return (false, look);
+                    var ok = TryRun(tmux, out var landed, TmuxArgs(status, TerminalPress.TmuxCaptureThenKey(status.TmuxPane, key)));
+                    return (ok, ok ? landed : null);
                 });
             }
             var before = ScreenReaders.For(status) is { } reader ? await reader.ReadAsync(status) : null;

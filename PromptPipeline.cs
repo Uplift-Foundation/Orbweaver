@@ -69,6 +69,12 @@ namespace Orbweaver
         // How long after a press the recapture waits, and how long a tell waits
         // for the dialog to clear before typing (plan §4: ≤ 4 s).
         internal static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(500);
+
+        // The settle check (lead's fix for QA's blank-gap rule-6 press): the
+        // gate's fresh capture, then this long, then a second capture, and the
+        // key only if both still are the approved dialog. A dialog being torn
+        // down, respawned or redrawn rarely reads as itself twice 150 ms apart.
+        internal static readonly TimeSpan SettleCheck = TimeSpan.FromMilliseconds(150);
         internal static readonly TimeSpan TellClearLimit = TimeSpan.FromSeconds(4);
         internal static readonly TimeSpan TellPoll = TimeSpan.FromMilliseconds(250);
 
@@ -310,9 +316,17 @@ namespace Orbweaver
 
         // The key and the screen it landed on, then: elsewhere, no effect, or
         // took (after the settle, the dialog is gone).
+        // The gate's capture (rule 6) was the first look. After SettleCheck the
+        // second look and the key follow with nothing of ours between them:
+        // CaptureAndPress reads, asks Approved, and presses at once (on tmux the
+        // key and a capture of the screen it landed on are one invocation).
+        // "Approved" is the canonical hash, not the raw text: a live timer or
+        // spinner outside the dialog (Grok's "22s", Codex's ◦/•) changes the raw
+        // screen every read, and would never settle.
         private async Task<PressOutcome?> PressAsync(SessionStatus status, PendingPrompt pending, string key)
         {
             bool Approved(string? screen) => PromptFingerprint.Of(screen)?.Hash == pending.ScreenHash;
+            await _seams.Delay(SettleCheck).ConfigureAwait(false);
             var (pressed, before) = _seams.CaptureAndPress is { } both
                 ? await both(status, key, Approved).ConfigureAwait(false)
                 : await CaptureThenPress(status, key, Approved).ConfigureAwait(false);

@@ -537,4 +537,42 @@ public class PromptPipelineTests
             Assert.All(opts.Where(o => o.GetProperty("kind").GetString() != "always"), o => Assert.False(o.TryGetProperty("scope_truncated", out _)));
         }
     }
+
+    // ---- the settle check (lead's fix for QA's blank-gap rule-6 press) --------
+
+    // The order that matters: the gate's capture, 150 ms, the second capture,
+    // then the key with nothing in between.
+    [Fact]
+    public async Task The_key_follows_two_captures_150_ms_apart_with_nothing_between_the_second_and_it()
+    {
+        var events = new List<string>();
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            s => { events.Add("capture"); return _pane.Capture(s); },
+            (s, k) => { events.Add("press " + k); return _pane.Press(s, k); },
+            _pane.Type, () => _now, d => { events.Add($"delay {d.TotalMilliseconds}"); return Task.CompletedTask; }, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        events.Clear();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Equal(["capture", "delay 150", "capture", "press 1", "delay 500", "capture"], events);
+    }
+
+    // QA's blank-gap case: the gate saw A, and 150 ms later the pane is being
+    // respawned (blank) or already shows B. No key, stale_prompt.
+    [Theory]
+    [InlineData("blank")]
+    [InlineData("other")]
+    public async Task A_screen_that_did_not_settle_on_the_approved_dialog_gets_no_key(string second)
+    {
+        var captures = 0;
+        var keys = new List<string>();
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(++captures <= 2 ? Dialog : second == "blank" ? "" : DialogB),
+            (_, k) => { keys.Add(k); return Task.FromResult(true); }, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Empty(keys);
+        Assert.Equal((a.RequestId, AnswerGate.StalePrompt), (Assert.Single(_sent.Refusals).Rid, _sent.Refusals[0].Code));
+        Assert.DoesNotContain(_sent.Resolved, r => r.By.StartsWith("phone:"));
+    }
 }
