@@ -20,7 +20,7 @@ dotnet run --project tools/screen-read-probe -- <reader> <target> [--out <file>]
 
 Output is `lines=N`, `screen=<PaneScreen reading>/<check>`, then the same `title:` and `[k] label` lines `tests/TranscriptTests` prints.
 
-`fixtures/` holds every capture, raw, UTF-8, LF; `manifest.json` says which terminal, version and reader took each and what the parser is expected to say. `tests/UnitTests/ScreenReadFixtureTests.cs` runs the parser over all of them. The findings and the table are in `docs/screen-read-probe-findings.md`.
+`fixtures/` holds every capture, raw, UTF-8, LF; `manifest.json` says which terminal, version and reader took each and what the parser is expected to say. `tests/UnitTests/ScreenReadFixtureTests.cs` runs the parser over all of them. The findings and the table are in `docs/screen-read-spike-findings.md`.
 
 The Windows reader needs the interactive session: over plain `ssh` the process is not on the desktop. The findings doc has the `schtasks /IT` recipe.
 

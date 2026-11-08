@@ -3,7 +3,7 @@ using Xunit;
 
 namespace Orbweaver.UnitTests;
 
-// CB-313: the terminal x CLI table from docs/screen-read-probe-findings.md, in
+// CB-313: the terminal x CLI table from docs/screen-read-spike-findings.md, in
 // executable form. Every fixture under tools/screen-read-probe/fixtures is a
 // real capture of a live terminal (the reader that took it is in manifest.json),
 // and this runs the shipped parser over each one and pins what it says.
@@ -71,8 +71,8 @@ public class ScreenReadFixtureTests
     public void Every_idle_capture_is_not_a_dialog()
     {
         var rows = JsonSerializer.Deserialize<List<Row>>(File.ReadAllText(Path.Combine(Dir, "manifest.json")), Json)!;
-        var idle = rows.Where(r => r.Kind == "none").ToList();
-        Assert.True(idle.Count >= 20, "expected an idle capture per cell");
+        var idle = rows.Where(r => r.Kind.StartsWith("none", StringComparison.Ordinal)).ToList();
+        Assert.True(idle.Count >= 24, "expected an idle capture per cell");
         foreach (var r in idle)
             Assert.Null(ChatTranscript.ParseDialog(File.ReadAllText(Path.Combine(Dir, r.Fixture))));
     }
