@@ -53,7 +53,8 @@ public class PromptPipelineTests
         public readonly List<(string Rid, string Sid, string Prompt, string? Push)> Prompts = new();
         public readonly List<(string Rid, string Sid, string By)> Resolved = new();
         public readonly List<(string Phone, string Rid, string Code)> Refusals = new();
-        void IPromptSender.Prompt(string r, string s, string p, string? push) => Prompts.Add((r, s, p, push));
+        public bool Online = true;   // false: the relay is down and no frame is produced
+        bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, s, p, push)); return Online; }
         void IPromptSender.Resolved(string r, string s, string by) => Resolved.Add((r, s, by));
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
     }
@@ -312,5 +313,54 @@ public class PromptPipelineTests
     {
         await _p.OnScannedAsync([("s1", Status(title: ""))]);
         Assert.Equal("Test Mac", JsonDocument.Parse(_sent.Prompts[0].Push!).RootElement.GetProperty("label").GetString());
+    }
+
+    // ---- reconnect -----------------------------------------------------------
+
+    [Fact]
+    public async Task A_prompt_minted_while_the_relay_was_down_is_sent_on_the_welcome_once()
+    {
+        _sent.Online = false;
+        await _p.OnScannedAsync(Snap());
+        var minted = Assert.Single(_sent.Prompts);
+
+        await _p.ResendUndeliveredAsync();            // still down
+        Assert.Equal(2, _sent.Prompts.Count);
+        Assert.Contains($"prompt-resent {minted.Rid} (still not sent)", _log);
+
+        _sent.Online = true;
+        await _p.ResendUndeliveredAsync();            // the welcome
+        Assert.Equal(3, _sent.Prompts.Count);
+        Assert.Equal(minted, _sent.Prompts[2]);       // same request id, same bytes
+        Assert.Contains($"prompt-resent {minted.Rid}", _log);
+
+        await _p.ResendUndeliveredAsync();            // a later welcome: already out
+        Assert.Equal(3, _sent.Prompts.Count);
+    }
+
+    [Fact]
+    public async Task A_prompt_that_went_out_is_not_repeated_on_reconnect()
+    {
+        await _p.OnScannedAsync(Snap());
+        await _p.ResendUndeliveredAsync();
+        Assert.Single(_sent.Prompts);
+    }
+
+    [Fact]
+    public async Task An_expired_or_answered_prompt_is_not_resent()
+    {
+        _sent.Online = false;
+        await _p.OnScannedAsync(Snap());
+        _now = _now.AddSeconds(1800);
+        _sent.Online = true;
+        await _p.ResendUndeliveredAsync();
+        Assert.Single(_sent.Prompts);
+
+        _now = _now.AddSeconds(-1800);
+        _pane.Stuck = true;
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());   // answered (no effect), still pending
+        Assert.True(_p.PendingFor("s1")!.Answered);
+        await _p.ResendUndeliveredAsync();
+        Assert.Single(_sent.Prompts);
     }
 }

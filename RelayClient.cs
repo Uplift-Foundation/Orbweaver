@@ -135,6 +135,8 @@ namespace Orbweaver
             // so it runs off the event pump (fire and forget, serialized inside
             // the pipeline) and never under the lock.
             Prompts = new PromptPipeline(promptSeams ?? DefaultPromptSeams(_now), this, options.DesktopName);
+            // A prompt minted while the socket was down goes out on the welcome.
+            _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendUndeliveredAsync());
             _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
             _link.PushReplied += (id, code, ms) => MirrorLog.Say("relay", $"push {id} {code}{(ms is { } n ? $" apns_ms={n}" : "")}");
         }
@@ -154,7 +156,7 @@ namespace Orbweaver
         internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot) =>
             _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
 
-        void IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
+        bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
 
         void IPromptSender.Resolved(string requestId, string sessionId, string by) =>

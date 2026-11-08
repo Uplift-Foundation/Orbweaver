@@ -11,7 +11,10 @@ namespace Orbweaver
     // dispatching into RelayLink; a test implements it with a list.
     internal interface IPromptSender
     {
-        void Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext);
+        // True when a frame was produced for at least one phone; false while
+        // the relay is down (RelayLink sends nothing unwelcomed), which is
+        // what ResendUndeliveredAsync later makes good.
+        bool Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext);
         void Resolved(string requestId, string sessionId, string by);
         void Refusal(string phoneId, string requestId, string sessionId, string code);
     }
@@ -52,6 +55,9 @@ namespace Orbweaver
         {
             internal required PendingPrompt Pending;
             internal required SessionStatus Status;
+            internal required string Prompt;
+            internal required string? Push;
+            internal bool Delivered;
         }
 
         private readonly Seams _seams;
@@ -148,8 +154,9 @@ namespace Orbweaver
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var push = PromptFrames.FitPush(requestId, sid, label, tool, SummaryOf(tool), preview, expires, options, fp.Hash);
 
-            _live[sid] = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires), Status = status };
-            _send.Prompt(requestId, sid, prompt, push?.Plaintext);
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires), Status = status, Prompt = prompt, Push = push?.Plaintext };
+            _live[sid] = live;
+            live.Delivered = _send.Prompt(requestId, sid, prompt, push?.Plaintext);
             _seams.Log($"prompt {requestId} {fp.Hash}{(push is null ? " no-e" : "")}");
         }
 
@@ -175,6 +182,28 @@ namespace Orbweaver
             "Edit" or "Write" or "Update" or "Create" => "Wants to edit a file",
             _ => "Needs an answer",
         };
+
+        // A prompt minted while the relay was down produced no frame, and the
+        // phone would never hear of it: on every welcome, each pending prompt
+        // that never went out is sent now — same request_id, same bytes —
+        // unless it was answered (it cannot have been, by a phone) or has
+        // expired, which no phone could answer anyway. One that did go out is
+        // not repeated: the relay queues action frames for an offline phone.
+        internal async Task ResendUndeliveredAsync()
+        {
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var now = _seams.Now().ToUnixTimeSeconds();
+                foreach (var live in _live.Values)
+                {
+                    if (live.Delivered || live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
+                    live.Delivered = _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
+                    _seams.Log($"prompt-resent {live.Pending.RequestId}{(live.Delivered ? "" : " (still not sent)")}");
+                }
+            }
+            finally { _gate.Release(); }
+        }
 
         // ---- answers ----------------------------------------------------------
 

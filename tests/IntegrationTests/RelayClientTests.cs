@@ -278,6 +278,28 @@ public class RelayClientTests : IAsyncLifetime
         lock (keys) Assert.Equal(["1"], keys);
     }
 
+    // A prompt minted before the socket is up produces no frame; the welcome
+    // sends it.
+    [Fact]
+    public async Task A_prompt_minted_before_the_relay_welcomes_goes_out_on_the_welcome()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        Assert.Equal(1, client.Prompts.PendingCount);
+
+        client.Start();
+        await _stub.NextT("hello");
+        var amber = await _stub.Next(IsEnvelope);
+        Assert.Equal("amber", amber.GetProperty("push").GetString());
+        Assert.Equal("prompt", OpenAsPhone(amber, phone, identity).GetProperty("t").GetString());
+    }
+
     [Fact]
     public async Task With_no_phone_paired_no_pane_is_read()
     {
