@@ -650,6 +650,686 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Empty(harness.Typed);
     }
 
+
+    // --- CB-307 addendum: never type into a screen that isn't the prompt --------
+
+    // The bug, end to end: the far pane is on /permissions (the real Allow tab
+    // capture). The line is refused before anything is typed, with its own
+    // code, and the reason reaches the near side.
+    [Fact]
+    public async Task TypingIsRefusedWhenThePaneIsNotAtItsPrompt()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.PermissionsAllow };
+        var log = new List<string>();
+        harness.Server.InputLog = (_, detail) => log.Add(detail);
+        harness.AddSession("openclaw", WriteTranscript("perm.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "please carry on");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.False(string.IsNullOrEmpty(outcome.Why));
+        Assert.Empty(harness.Typed);
+        Assert.Equal(1, harness.Captures);
+
+        // Logged with the reason and never the text.
+        var line = Assert.Single(log, l => l.Contains(MirrorProtocol.ErrNotAtPrompt));
+        Assert.Contains("why=" + outcome.Why, line);
+        Assert.Contains(" lines=", line);
+        Assert.EndsWith(" check=no-prompt-mark", line);
+        Assert.DoesNotContain("please carry on", string.Join("\n", log));
+
+        // And the near panel's sentence quotes it.
+        Assert.Contains(outcome.Why!, RemoteControlChatSession.TypingRefusal(outcome.Error, "openclaw", outcome.Why));
+    }
+
+    // A real dialog is named in the reason.
+    [Fact]
+    public async Task ADialogIsNamedInTheRefusal()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("exit-sess01", WriteTranscript("exit.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("exit-sess01");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("exit-sess01", "hello");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Equal(TypingGate.DialogWhy(ChatTranscript.ParseDialog(PaneFixtures.MiniExitDialog)!.Title), outcome.Why);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The record says waiting: refused without reading the screen at all,
+    // even though the screen (the harness default) is a perfectly good prompt.
+    [Fact]
+    public async Task TypingIsRefusedWhenTheRecordSaysWaiting()
+    {
+        var harness = new Harness(_dir) { Record = "waiting" };
+        harness.AddSession("openclaw", WriteTranscript("rec.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Equal(TypingGate.WaitingWhy, outcome.Why);
+        Assert.Equal(0, harness.Captures);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The control for both: a normal prompt, an idle record, and the line is
+    // typed, having been through both reads.
+    [Fact]
+    public async Task TypingProceedsAtANormalPrompt()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("openclaw", WriteTranscript("ok.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(new[] { ("openclaw", "hello") }, harness.Typed);
+        Assert.Equal(1, harness.RecordReads);
+        Assert.Equal(1, harness.Captures);
+    }
+
+    // The back-compat contract: neither read wired, and a screen that would
+    // refuse if anyone looked at it — the line is typed exactly as before.
+    [Fact]
+    public async Task AnUngatedHarnessStillTypes()
+    {
+        var harness = new Harness(_dir, ungated: true) { Screen = PaneFixtures.PermissionsAllow, Record = "waiting" };
+        harness.AddSession("openclaw", WriteTranscript("ungated.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Null(await harness.Client.SendInputAsync("openclaw", "hello"));
+        Assert.Single(harness.Typed);
+        Assert.Equal(0, harness.Captures);
+        Assert.Equal(0, harness.RecordReads);
+    }
+
+    // An ERR's msg rides along as Why, and an ERR with no msg gives no reason
+    // rather than echoing its code back as one — which would read as
+    // "isn't at its prompt — not-at-prompt".
+    [Fact]
+    public async Task AnErrsMessageRidesAlongAndACodeAloneIsNoReason()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("openclaw", WriteTranscript("nomsg.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        harness.CodeOnlyInputRefusal = MirrorProtocol.ErrNotAtPrompt;
+        var bare = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, bare.Error);
+        Assert.Null(bare.Why);
+
+        harness.CodeOnlyInputRefusal = null;
+        harness.ForgetSessionKeepingAgent("openclaw");
+        var named = await harness.Client.SendInputDetailedAsync("openclaw", "hello");
+        Assert.Equal(MirrorProtocol.ErrNoSession, named.Error);
+        Assert.Equal("openclaw", named.Why);
+    }
+
+    // Both slash paths: the server's own default runner and the real slash
+    // host's Typed arm. A slash line is still keystrokes when it is typed.
+    [Fact]
+    public async Task ASlashLineIsRefusedOnADialogWithAReasonByTheDefaultRunner()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("exit-sess01", WriteTranscript("slash-default.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("exit-sess01");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("exit-sess01", "/color green", slash: true);
+        await harness.Server.SlashInFlight;
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(TypingGate.NotAtPromptReason(
+            TypingGate.DialogWhy(ChatTranscript.ParseDialog(PaneFixtures.MiniExitDialog)!.Title)), outcome.Why);
+        Assert.Empty(harness.Typed);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsTypedAtAPromptByTheDefaultRunner()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("openclaw", WriteTranscript("slash-default-ok.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "/color green", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaTyped, outcome.Via);
+        Assert.Single(harness.Typed);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheSlashHostsTypedArmGoesThroughTheGate(bool atPrompt)
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            Screen = atPrompt ? PaneFixtures.MacPromptAfterEsc : PaneFixtures.PermissionsAllow
+        };
+        var typed = new List<string>();
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            _ => new[] { new SlashCommand("/ship-it", "") },
+            (_, line) => { typed.Add(line); return Task.FromResult(true); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            RecordStatus: harness.ReadRecord,
+            CapturePane: harness.CaptureScreen,
+            CanReadPane: _ => true));
+        harness.AddSession("openclaw", WriteTranscript("slash-host-" + atPrompt + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "/ship-it", slash: true);
+
+        if (atPrompt)
+        {
+            Assert.Equal(MirrorProtocol.ViaTyped, outcome.Via);
+            Assert.Equal(new[] { "/ship-it" }, typed);
+        }
+        else
+        {
+            Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+            Assert.StartsWith("the terminal there isn't at its prompt (", outcome.Why);
+            Assert.Empty(typed);
+        }
+    }
+
+    // --- CB-306: slash lines over the link ---------------------------------------
+
+    [Fact]
+    public async Task TheRosterCarriesARouteKindForEachCommandWhenNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("s1.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.NotNull(entry.CommandRoutes);
+        Assert.Equal(entry.Commands!.Count, entry.CommandRoutes!.Count);
+        // A pane to type into: today's catalogue, offered as keystrokes.
+        Assert.All(entry.CommandRoutes, r => Assert.Equal("typed", r));
+    }
+
+    [Fact]
+    public async Task ACommandOnAPanelessSessionIsOfferedAsUnavailableWhenNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir) { CanType = false };
+        harness.AddSession("job-hunter", WriteTranscript("s2.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.All(entry.CommandRoutes!, r => Assert.Equal("unavailable", r));
+        Assert.Empty(ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFrom(entry)));
+    }
+
+    [Fact]
+    public async Task TheRosterCarriesTheRunnersRouteKinds()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[]
+            {
+                new SlashCommand("/color", "", SlashRouteKind.Control),
+                new SlashCommand("/compact", "", SlashRouteKind.Unavailable),
+            }
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s3.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.Equal(new[] { "/color", "/compact" }, entry.Commands);
+        Assert.Equal(new[] { "control", "unavailable" }, entry.CommandRoutes);
+        var all = RemoteControlSessions.CommandsFrom(entry);
+        Assert.Equal(2, all.Count);
+        var offered = Assert.Single(ChatPanel.OfferedCommands(all));
+        Assert.Equal(SlashRouteKind.Control, offered.Route);
+    }
+
+    [Fact]
+    public async Task AControlSlashLineRunsOnTheFarMachineAndSaysHow()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s4.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaControl, outcome.Via);
+        Assert.Equal("/color pink", Assert.Single(harness.SlashRan));
+        Assert.Empty(harness.Typed);
+    }
+
+    [Fact]
+    public async Task ARefusedSlashLineCarriesItsReasonAcrossTheLink()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/compact", "", SlashRouteKind.Unavailable) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(
+                MirrorProtocol.ViaRefused, "a message from here arrives as a teammate's request, with \"quotes\" and ünicode"),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s5.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/compact", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal("a message from here arrives as a teammate's request, with \"quotes\" and ünicode", outcome.Why);
+    }
+
+    [Fact]
+    public async Task ARefusalWithNoReasonStillSaysSomething()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/x", "", SlashRouteKind.Unavailable) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaRefused, null),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s6.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/x", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.False(string.IsNullOrWhiteSpace(outcome.Why));
+    }
+
+    [Fact]
+    public async Task ACatalogueSeamThatThrowsLeavesTheEntryWithNoCommandsRatherThanNoRoster()
+    {
+        var harness = new Harness(_dir, wireSlash: true) { SlashCatalogueThrows = true };
+        harness.AddSession("job-hunter", WriteTranscript("boom.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.True(entry.HasTranscript);
+        Assert.Empty(entry.Commands!);
+        Assert.Empty(entry.CommandRoutes!);
+    }
+
+    // CB-306's second reopen: on the mini a session whose cwd was under
+    // ~/Documents made the catalogue scan's opendir never return, on the pump
+    // thread, and no HELLO was answered again. Here the scan blocks for ever
+    // through the real SlashCatalogueCache and the real resolver, and the
+    // roster still arrives, carrying the built-ins in its place; once the scan
+    // lets go, the next ask carries what it read.
+    [Fact]
+    public async Task AFolderWhoseScanNeverReturnsStillLetsTheRosterArrive()
+    {
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var cache = new SlashCatalogueCache(new SlashCatalogueCache.Seams(
+            (_, _) =>
+            {
+                release.Wait();
+                return new[] { new SlashCommand("/compact", ""), new SlashCommand("/ship-it", "") };
+            },
+            SlashCommandCatalog.BuiltinsFor,
+            () => DateTime.UtcNow,
+            work => new System.Threading.Thread(() => work()) { IsBackground = true }.Start()));
+
+        var harness = new Harness(_dir, wireSlash: true);
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            status => cache.Peek(status.Source, status.Cwd),
+            (_, _) => Task.FromResult(true),
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done)));
+        harness.AddSession("lawyer-search", WriteTranscript("hung.jsonl", Conversation(2)));
+
+        try
+        {
+            var hello = harness.HandshakeAsync("lawyer-search");
+            Assert.Same(hello, await Task.WhenAny(hello, Task.Delay(TimeSpan.FromSeconds(20))));
+            await hello;
+
+            var entry = harness.Client.StateFor("lawyer-search").Entry!;
+            Assert.True(entry.HasTranscript);
+            Assert.Contains("/color", entry.Commands!);
+            Assert.DoesNotContain("/ship-it", entry.Commands!);
+
+            // A second ask while the scan is still stuck neither waits nor
+            // starts another scan.
+            var again = harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Same(again, await Task.WhenAny(again, Task.Delay(TimeSpan.FromSeconds(20))));
+            Assert.Equal(1, cache.InFlight);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (cache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Contains("/ship-it", harness.Client.StateFor("lawyer-search").Entry!.Commands!);
+        }
+        finally { release.Set(); }
+    }
+
+    [Fact]
+    public async Task ARunnerThatThrowsIsAnsweredAsARefusalNotATornDownLink()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) },
+            SlashRunnerThrows = true,
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s7.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsTypedWhenThereIsAPaneAndNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("s8.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaTyped, outcome.Via);
+        Assert.Equal("/color pink", Assert.Single(harness.Typed).Text);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsRefusedWhenThereIsNoPaneAndNoRunnerIsWired()
+    {
+        var harness = new Harness(_dir) { CanType = false };
+        harness.AddSession("job-hunter", WriteTranscript("s9.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(SlashRouting.PeerSocketReason, outcome.Why);
+        Assert.Empty(harness.Typed);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsRefusedWhenThePaneRefusesTheKeystrokes()
+    {
+        var harness = new Harness(_dir) { TypeFails = true };
+        harness.AddSession("job-hunter", WriteTranscript("s10.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+    }
+
+    [Fact]
+    public async Task ASlashLineIsStillRefusedWhenReplyingIsOffOnTheFarMachine()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = new[] { new SlashCommand("/color", "", SlashRouteKind.Control) },
+            SlashRunner = (_, _) => new RemoteMirrorServer.SlashOutcome(MirrorProtocol.ViaControl, null),
+            ReplyEnabled = false,
+        };
+        harness.AddSession("job-hunter", WriteTranscript("s11.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ErrReplyOff, outcome.Error);
+        Assert.Empty(harness.SlashRan);
+    }
+
+    // A headless job with a Remote Control bridge and no pane, through the real
+    // far resolver rather than a canned runner: /color is a control request,
+    // /compact is a command that cannot run there, and both are said so across
+    // the link. The only fakes are at the machine's edges.
+    [Fact]
+    public async Task APanelessBridgedJobRunsControlCommandsAndRefusesTheRestThroughTheRealResolver()
+    {
+        var posted = new List<(string Subtype, string Color)>();
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => "session_01ABCDEFGHJKMNPQRSTVWXYZ12",
+            _ => new[] { new SlashCommand("/compact", ""), new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            (_, subtype, request) =>
+            {
+                posted.Add((subtype, (string?)request["color"] ?? ""));
+                return Task.FromResult(MirrorSlashHost.ControlVerdict.Done);
+            }));
+        harness.AddSession("job-hunter", WriteTranscript("real.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+        Assert.Contains("/compact", entry.Commands!);
+        Assert.Equal("unavailable", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/compact")]);
+        Assert.Equal("control", entry.CommandRoutes![entry.Commands!.ToList().IndexOf("/color")]);
+        // The panel offers only what runs.
+        var offeredNames = ChatPanel.OfferedCommands(RemoteControlSessions.CommandsFrom(entry)).Select(c => c.Name);
+        Assert.Contains("/color", offeredNames);
+        Assert.DoesNotContain("/compact", offeredNames);
+        // ...but it is still a known command, so typing it is refused, not sent.
+        Assert.Contains(RemoteControlSessions.CommandsFrom(entry), c => c.Name == "/compact");
+
+        var ran = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+        Assert.Equal(MirrorProtocol.ViaControl, ran.Via);
+        Assert.Equal(("set_color", "pink"), Assert.Single(posted));
+
+        var refused = await harness.Client.SendInputDetailedAsync("job-hunter", "/compact", slash: true);
+        Assert.Equal(MirrorProtocol.ViaRefused, refused.Via);
+        Assert.Equal(SlashRouting.PeerMessageReason, refused.Why);
+        Assert.Single(posted);
+        Assert.Empty(harness.Typed);
+    }
+
+    // CB-306's product-readiness round: the far side's gate is its own
+    // bridge-commands setting, through the real GatedPost the live server
+    // wires. On, the command is posted to the job's bridge; off, it is refused
+    // across the link with the sentence naming the toggle, and nothing is
+    // posted. Only the post itself is a fake.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheFarSideGatesControlCommandsOnItsOwnBridgeCommandsSetting(bool enabled)
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var posted = new List<(string Bridge, string Subtype)>();
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(
+                () => enabled,
+                _ => bridge,
+                _ => "2.1.318",
+                (_, id, request) =>
+                {
+                    posted.Add((id, (string?)request["subtype"] ?? ""));
+                    return Task.FromResult(new CloudTurnSender.ControlAttempt(null, null));
+                })));
+        harness.AddSession("job-hunter", WriteTranscript("gate-" + enabled + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        if (enabled)
+        {
+            Assert.Equal(MirrorProtocol.ViaControl, outcome.Via);
+            Assert.Equal((bridge, "set_color"), Assert.Single(posted));
+        }
+        else
+        {
+            Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+            Assert.Equal(LocalCliChatSession.BridgeCommandsOffHint, outcome.Why);
+            Assert.Empty(posted);
+        }
+        Assert.Empty(harness.Typed);
+    }
+
+    // CB-306's product-readiness round: a control request now waits up to
+    // five seconds for the far CLI's answer, and the production pump
+    // (PeerMirrorHost) awaits HandleAsync one frame at a time, so a slash
+    // INPUT must not hold HandleAsync for that long. Driven the way the pump
+    // drives it: HandleAsync returns while the post is still waiting, and the
+    // OK reply with the verdict arrives once it is released. Negative control,
+    // run once while writing it: with the slash awaited inline, HandleAsync
+    // did not return within the window and this failed.
+    [Fact]
+    public async Task ASlashInputDoesNotHoldTheFrameLoopWhileItsAnswerIsAwaited()
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var release = new TaskCompletionSource<CloudTurnSender.ControlAttempt>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(() => true, _ => bridge, _ => null, (_, _, _) => release.Task)));
+        harness.AddSession("job-hunter", WriteTranscript("stall.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+        harness.ToClient.Clear();
+
+        var input = MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Input, "slash001",
+            new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode("job-hunter"),
+                [MirrorProtocol.SlashField] = "1",
+            },
+            System.Text.Encoding.UTF8.GetBytes("/color pink")))!;
+
+        try
+        {
+            var handled = harness.Server.HandleAsync(Harness.NearRelay, input);
+            Assert.Same(handled, await Task.WhenAny(handled, Task.Delay(TimeSpan.FromSeconds(5))));
+            await handled;
+            Assert.Empty(harness.ToClient);
+
+            release.SetResult(new CloudTurnSender.ControlAttempt(null, null, true));
+            await harness.Server.SlashInFlight;
+
+            var reply = MirrorProtocol.TryParseFrame(Assert.Single(harness.ToClient))!;
+            Assert.Equal(MirrorProtocol.Ok, reply.Type);
+            Assert.Equal("slash001", reply.Id);
+            Assert.Contains(";" + MirrorProtocol.VerdictField + "=" + MirrorProtocol.VerdictDone, Assert.Single(harness.ToClient));
+        }
+        finally
+        {
+            release.TrySetResult(new CloudTurnSender.ControlAttempt(null, null));
+        }
+    }
+
+    // CB-306's product-readiness round: the far side's verdict on a control
+    // request crosses the real link in the reply's `verdict` field, through
+    // the real GatedPost and resolver, with only the HTTP post faked.
+    [Theory]
+    [InlineData(true, MirrorProtocol.VerdictDone)]
+    [InlineData(false, MirrorProtocol.VerdictUnconfirmed)]
+    public async Task TheFarCliVerdictCrossesTheLink(bool confirmed, string expected)
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(() => true, _ => bridge, _ => "2.1.318",
+                (_, _, _) => Task.FromResult(new CloudTurnSender.ControlAttempt(null, null, confirmed)))));
+        harness.AddSession("job-hunter", WriteTranscript("verdict-" + confirmed + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaControl, outcome.Via);
+        Assert.Equal(expected, outcome.Verdict);
+    }
+
+    // CB-306's product-readiness round: the far CLI refusing a control
+    // request reaches the near panel as a refusal that carries the far
+    // session's Claude Code version and the one the requests were measured on.
+    [Fact]
+    public async Task AFarCliRejectionCrossesTheLinkWithBothVersions()
+    {
+        const string bridge = "session_01ABCDEFGHJKMNPQRSTVWXYZ12";
+        var harness = new Harness(_dir, wireSlash: true) { CanType = false };
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => false, _ => false, _ => bridge,
+            _ => new[] { new SlashCommand("/color", "") },
+            (_, _) => Task.FromResult(false),
+            MirrorSlashHost.GatedPost(() => true, _ => bridge, _ => "2.1.318",
+                (_, _, _) => Task.FromResult(new CloudTurnSender.ControlAttempt(null,
+                    "Unknown color \"teal\". Available: red, blue, green, yellow, purple, orange, pink, cyan, default")))));
+        harness.AddSession("job-hunter", WriteTranscript("reject.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color teal", slash: true);
+
+        Assert.Equal(MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.StartsWith("Claude Code refused it: Unknown color \"teal\"", outcome.Why);
+        Assert.EndsWith("This session runs Claude Code 2.1.318; Orbweaver's commands were measured on 2.1.317", outcome.Why);
+    }
+
+    // The roster carries the whole catalogue: a catalogue past the old 120-name
+    // cut still lists its last name, so the near side knows it as a command.
+    [Fact]
+    public async Task ARosterCarriesACatalogueLongerThanOneHundredAndTwentyNames()
+    {
+        var harness = new Harness(_dir, wireSlash: true)
+        {
+            SlashCatalogue = Enumerable.Range(0, 400).Select(i => new SlashCommand($"/cmd{i}", "", SlashRouteKind.Unavailable)).ToList(),
+        };
+        harness.AddSession("job-hunter", WriteTranscript("long.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var entry = harness.Client.StateFor("job-hunter").Entry!;
+
+        Assert.Equal(400, entry.Commands!.Count);
+        Assert.Equal("/cmd399", entry.Commands![399]);
+        Assert.Equal(400, entry.CommandRoutes!.Count);
+    }
+
+    // The old-far-Buddy fallback. Such a Buddy never sees the flag, so it
+    // types the line as ordinary text — which is why the near side only sets
+    // the flag after the roster carried route kinds.
+    [Fact]
+    public async Task AFarBuddyThatPredatesTheFlagTypesTheLineAsText()
+    {
+        var harness = new Harness(_dir) { FarPredatesSlash = true };
+        harness.AddSession("job-hunter", WriteTranscript("s12.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "/color pink", slash: true);
+
+        Assert.Null(outcome.Error);
+        Assert.Null(outcome.Via);
+        Assert.Equal("/color pink", Assert.Single(harness.Typed).Text);
+    }
+
+    [Fact]
+    public async Task AnOrdinaryInputFrameCarriesNoSlashFlag()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("s13.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        await harness.Client.SendInputDetailedAsync("job-hunter", "hello");
+
+        var input = harness.ToServer.Select(MirrorProtocol.TryParseFrame)
+            .Single(f => f is { Type: MirrorProtocol.Input })!;
+        Assert.False(input.Fields.ContainsKey(MirrorProtocol.SlashField));
+    }
+
     // --- CB-105: delivering to a session with no pane at all --------------------
 
     [Fact]
@@ -783,6 +1463,56 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(1.2, persona.Rate);
     }
 
+    // CB-306's second reopen: the persona files live in the same folders the
+    // slash catalogue walk froze on, and were read on the pump right after it.
+    // Here the persona read blocks for ever through the real PeerPersonaCache;
+    // the roster still arrives, with no persona on the entry, and once the read
+    // lets go the next ask carries the persona from the real resolver.
+    [Fact]
+    public async Task APersonaFolderWhoseReadNeverReturnsStillLetsTheRosterArrive()
+    {
+        File.WriteAllText(Path.Combine(_dir, "CLAUDE.md"), """
+            ## Persona
+            **Name:** Faraday
+            - Voice: Samantha (Kokoro TTS, rate 1.2)
+            """);
+
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var harness = new Harness(_dir);
+        harness.PersonaCache = new PeerPersonaCache(
+            (source, cwd, agent, dirs) =>
+            {
+                release.Wait();
+                return RemoteMirrorServer.ReadPeerPersona(source, cwd, agent, dirs);
+            },
+            () => DateTime.UtcNow,
+            OffThread.OnOwnThread,
+            PeerAvatarStore.Shared.ById);
+        harness.AddSession("lawyer-search", WriteTranscript("hung-persona.jsonl", Conversation(2)));
+
+        try
+        {
+            var hello = harness.HandshakeAsync("lawyer-search");
+            Assert.Same(hello, await Task.WhenAny(hello, Task.Delay(TimeSpan.FromSeconds(20))));
+            await hello;
+
+            var entry = harness.Client.StateFor("lawyer-search").Entry!;
+            Assert.True(entry.HasTranscript);
+            Assert.Null(entry.Persona);
+            Assert.Equal(1, harness.PersonaCache.InFlight);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (harness.PersonaCache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            var persona = harness.Client.StateFor("lawyer-search").Entry!.Persona;
+            Assert.NotNull(persona);
+            Assert.Equal("Faraday", persona!.Name);
+        }
+        finally { release.Set(); }
+    }
+
     [Fact]
     public async Task TypingIntoASessionTheFarBuddyHasNeverHeardOfIsRefused()
     {
@@ -904,27 +1634,31 @@ public class MirrorRoundTripTests : IDisposable
 
     // --- a conversation, not just a process ---------------------------------------
 
-    // A session nobody has spoken to since yesterday does not get an orb.
+    // A session nobody has spoken to since yesterday is offered parked.
     //
     // **Measured on real machines and not reproducible any other way.** The Mac
     // mini had two sessions both called `job-hunter-mac-mini`, both with a live
     // process, both listed by `claude agents` — and one of them had last been
-    // spoken to 23 hours earlier. Drawn side by side they were
-    // indistinguishable, so the live one read as missing and both read as fake.
+    // spoken to 23 hours earlier. The trap this pins is the one that makes it
+    // hard to see: the quiet session's transcript had been *written six
+    // minutes earlier*. Remote Control's bridge keeps poking the file of a
+    // session it is attached to, with rows carrying no timestamp at all — so
+    // file mtime, process liveness and registry presence all agreed it was in
+    // use. Only the newest turn did not. The fixture below is that exact shape.
     //
-    // The trap this pins is the one that makes it hard to see: the abandoned
-    // session's transcript had been *written six minutes earlier*. Remote
-    // Control's bridge keeps poking the file of a session it is attached to,
-    // with rows carrying no timestamp at all — so file mtime, process liveness
-    // and registry presence all agreed it was alive. Only the newest turn did
-    // not. The fixture below is that exact shape.
+    // CB-307: such a session used to be left out of the roster entirely, which
+    // gave a long-lived quiet session no orb at all on a peer. It is now
+    // offered, and flagged parked so the near side draws it dimmed; the server
+    // logs it under hello-parked, and the hello-abandoned key is gone.
     [Fact]
-    public async Task ASessionNobodyHasSpokenToSinceYesterdayIsNotOffered()
+    public async Task ASessionNobodyHasSpokenToSinceYesterdayIsOfferedParked()
     {
         var stale = WriteTranscript("abandoned.jsonl",
             Conversation(2).Concat(Enumerable.Range(0, 40).Select(BridgeRow)));
 
         var harness = new Harness(_dir);
+        var said = new List<string>();
+        harness.Server.QuietLog = (what, _) => said.Add(what);
         harness.AddSession("job-hunter", stale);
 
         // A day after the rows, rather than a minute. Nothing else changes.
@@ -932,18 +1666,20 @@ public class MirrorRoundTripTests : IDisposable
 
         await harness.Client.DiscoverAsync(new[] { Harness.FarRelay }, new[] { "job-hunter" });
 
-        Assert.Equal(
-            RemoteMirrorClient.MirrorAvailability.Unavailable,
-            harness.Client.StateFor("job-hunter").Availability);
+        var state = harness.Client.StateFor("job-hunter");
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Available, state.Availability);
+        Assert.True(state.Entry!.Parked);
+        Assert.Contains("hello-parked:job-hunter", said);
+        Assert.DoesNotContain(said, w => w.StartsWith("hello-abandoned", StringComparison.Ordinal));
     }
 
-    // ...and the same session, an hour later rather than a day, still does.
+    // ...and the same session, an hour later rather than a day, is not parked.
     //
     // The other half of the boundary, and the mistake this must not repeat:
     // CB-74 removed a filter that keyed off the status file's heartbeat, which
     // stops for a session that is merely idle — so it hid sessions that were
-    // alive and waiting. Walking away for an hour is not abandoning a
-    // conversation.
+    // alive and waiting. Walking away for an hour is not leaving a
+    // conversation, and the field is absent rather than false.
     [Fact]
     public async Task ASessionSpokenToWithinTheHourStillIs()
     {
@@ -951,16 +1687,972 @@ public class MirrorRoundTripTests : IDisposable
             Conversation(2).Concat(Enumerable.Range(0, 40).Select(BridgeRow)));
 
         var harness = new Harness(_dir);
+        var said = new List<string>();
+        harness.Server.QuietLog = (what, _) => said.Add(what);
         harness.AddSession("job-hunter", recent);
 
         harness.Server.Now = () => LiveAt.AddHours(1);
 
         await harness.Client.DiscoverAsync(new[] { Harness.FarRelay }, new[] { "job-hunter" });
 
-        Assert.Equal(
-            RemoteMirrorClient.MirrorAvailability.Available,
-            harness.Client.StateFor("job-hunter").Availability);
+        var state = harness.Client.StateFor("job-hunter");
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Available, state.Availability);
+        Assert.Null(state.Entry!.Parked);
+        Assert.Empty(said);
     }
+
+    // CB-307's one remaining hide: a quiet copy beside a live copy of the same
+    // name. Two registry rows answer to `job-hunter` (Offer qualifies their
+    // names); the live one is offered and the quiet one is not, and the server
+    // says so once under hello-duplicate.
+    [Fact]
+    public async Task AQuietCopyBesideALiveCopyOfTheSameNameIsSuppressed()
+    {
+        var harness = new Harness(_dir);
+        var said = new List<string>();
+        harness.Server.QuietLog = (what, _) => said.Add(what);
+        harness.AddSession("job-hunter", WriteTranscript("dup-live.jsonl", Conversation(2)));
+        var live = harness.SessionIdOf("job-hunter");
+        harness.AddSession("job-hunter", WriteTranscript("dup-quiet.jsonl", new[] { DayOldTurn }));
+        var quiet = harness.SessionIdsOf("job-hunter").Single(id => id != live);
+
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("dup1"));
+        var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "dup1"))!.ToList();
+
+        var entry = Assert.Single(known);
+        Assert.Equal(RemoteMirrorServer.RouteFor(live), entry.Route);
+        Assert.Null(entry.Parked);
+        Assert.DoesNotContain(known, e => e.Route == RemoteMirrorServer.RouteFor(quiet));
+        Assert.Contains("hello-duplicate:job-hunter", said);
+        Assert.DoesNotContain(said, w => w.StartsWith("hello-abandoned", StringComparison.Ordinal));
+    }
+
+    // ...and two quiet copies are both offered, both parked: there is nothing
+    // to prefer one over the other.
+    [Fact]
+    public async Task TwoQuietCopiesAreBothOfferedParked()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("dup-quiet-a.jsonl", new[] { DayOldTurn }));
+        harness.AddSession("job-hunter", WriteTranscript("dup-quiet-b.jsonl", new[] { DayOldTurn }));
+
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("dup2"));
+        var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "dup2"))!.ToList();
+
+        Assert.Equal(2, known.Count);
+        Assert.All(known, e => Assert.True(e.Parked));
+    }
+
+    // The wire, both directions, on bytes the server really served. Stripping
+    // the one field from a parked roster gives back exactly the bytes of the
+    // same roster unparked — which is both what an older Buddy reads (it
+    // ignores the member, and decodes the same entries) and why the hash moves
+    // when, and only when, a session flips: that is how a peer learns a parked
+    // session has cleared.
+    [Fact]
+    public async Task ParkedIsOneOptionalFieldOnTheWireAndMovesTheHash()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("wire.jsonl", Conversation(2)));
+
+        harness.Server.Now = () => LiveAt.AddHours(23);
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("wire1"));
+        var parkedRaw = MirrorProtocol.Gunzip(ReassembledPayload(harness.ToClient, "wire1"));
+
+        harness.Server.Now = () => LiveAt;
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("wire2"));
+        var liveRaw = MirrorProtocol.Gunzip(ReassembledPayload(harness.ToClient, "wire2"));
+
+        var parkedText = Encoding.UTF8.GetString(parkedRaw);
+        Assert.Contains(",\"parked\":true", parkedText);
+        Assert.DoesNotContain("parked", Encoding.UTF8.GetString(liveRaw));
+        Assert.Equal(Encoding.UTF8.GetString(liveRaw), parkedText.Replace(",\"parked\":true", ""));
+
+        Assert.NotEqual(MirrorProtocol.Hash(parkedRaw), MirrorProtocol.Hash(liveRaw));
+
+        // And an older roster (no field) read by this Buddy is not parked.
+        var older = MirrorProtocol.DecodeRoster(MirrorProtocol.Gzip(liveRaw))!;
+        Assert.Null(Assert.Single(older).Parked);
+    }
+
+    // The cost claim behind LastTurnCache: a peer asks every ten seconds, and
+    // an unchanged transcript is read once, not once per ask. The cache is
+    // the server's seam, with the real disk arms and the read counted.
+    [Fact]
+    public async Task RepeatedHellosReadAnUnchangedTranscriptOnce()
+    {
+        var reads = 0;
+        var cache = new LastTurnCache(LastTurnCache.RealLengthOf, path =>
+        {
+            reads++;
+            return TranscriptReader.TailLines(path, LastTurnCache.TailBytes);
+        });
+
+        var harness = new Harness(_dir, lastTurns: cache);
+        var path = WriteTranscript("read-once.jsonl", Conversation(2));
+        harness.AddSession("job-hunter", path);
+
+        for (var i = 0; i < 3; i++)
+            await harness.Server.HandleAsync(Harness.NearRelay, OldHello("once" + i));
+        Assert.Equal(1, reads);
+
+        File.AppendAllText(path, Row("user", "u9", "back again") + "\n");
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("once9"));
+        Assert.Equal(2, reads);
+    }
+
+    // CB-307: Codex and Grok sessions are never offered parked. Their real
+    // transcripts hold no Claude-shaped turn rows (the first rows below are
+    // the shapes measured on real files), and the host's scan only reads
+    // last turns for Claude Code — so the server says "not parked" outright.
+    // The Claude-shaped day-old row is there to make that a decision rather
+    // than an accident of the fixture: it would park a Claude Code session,
+    // and the Claude Code control beside them, on the same clock with the
+    // same row, is parked.
+    [Fact]
+    public async Task CodexAndGrokSessionsAreNeverOfferedParked()
+    {
+        var dayOld = new[]
+        {
+            "{\"timestamp\":\"2026-08-15T10:00:00Z\",\"type\":\"response_item\",\"payload\":{}}",
+            "{\"timestamp\":\"2026-08-15T10:00:01Z\",\"update\":{}}",
+            DayOldTurn,
+        };
+
+        var harness = new Harness(_dir);
+        harness.AddCodexSession("codex quiet", WriteTranscript("codex-quiet.jsonl", dayOld));
+        harness.AddCodexSession("grok quiet", WriteTranscript("grok-quiet.jsonl", dayOld), SessionSource.Grok);
+        harness.AddSession("claude quiet", WriteTranscript("claude-quiet.jsonl", dayOld));
+
+        await harness.Server.HandleAsync(Harness.NearRelay, OldHello("cg1"));
+        var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "cg1"))!.ToList();
+
+        Assert.Equal(3, known.Count);
+        Assert.Null(known.Single(e => e.Name == "codex quiet").Parked);
+        Assert.Null(known.Single(e => e.Name == "grok quiet").Parked);
+        Assert.True(known.Single(e => e.Name == "claude quiet").Parked);
+    }
+
+    // --- CB-307 addendum item 3: answering a dialog over the link -------------
+
+    // The real (redacted) AskUserQuestion form on the far pane: the near side
+    // learns the far Buddy answers prompts, reads the form, and one click
+    // presses exactly that option's key there — and nothing else.
+    [Fact]
+    public async Task AFarFormIsReadAndOneClickPressesExactlyItsKey()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", WriteTranscript("ask.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        Assert.True(harness.Client.SpeaksPrompts("evidence"));
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("evidence");
+        Assert.Null(error);
+        Assert.Equal(6, prompt!.Options.Count);
+        Assert.Equal(4, prompt.Tabs!.Count);
+        Assert.Equal("5", prompt.FreeTextKey);
+
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint));
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+        Assert.Empty(harness.Typed);
+
+        // Logged by key and fingerprint, never by what an option says.
+        Assert.Contains(log, l => l.EndsWith("key=2 -> ok"));
+        Assert.DoesNotContain(log, l => prompt.Options.Any(o => l.Contains(o.Label)));
+    }
+
+    // An answer chosen from a screen that has since moved on presses nothing.
+    [Fact]
+    public async Task AnAnswerToAScreenThatChangedIsRefusedAndPressesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("moved.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        // The first question was answered in the terminal: the next tab shows.
+        harness.Screen = PaneFixtures.MiniAskForm.Replace("☐ xxx xxxx", "☒ xxx xxxx");
+
+        Assert.Equal(MirrorProtocol.ErrPromptChanged,
+            await harness.Client.AnswerPromptAsync("evidence", "1", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+
+        // And a dialog that went away altogether.
+        harness.Screen = PaneFixtures.MacPromptAfterEsc;
+        Assert.Equal(MirrorProtocol.ErrNoPrompt,
+            await harness.Client.AnswerPromptAsync("evidence", "1", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    [Fact]
+    public async Task AKeyThatIsNotOnTheScreenIsRefused()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("ll", WriteTranscript("badkey.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+        var prompt = (await harness.Client.FetchPromptAsync("ll")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerPromptAsync("ll", "9", prompt.Fingerprint));
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerPromptAsync("ll", "Escape", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    [Fact]
+    public async Task AScreenThatIsNotADialogHasNoPrompt()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job", WriteTranscript("noprompt.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job");
+
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoPrompt),
+            await harness.Client.FetchPromptAsync("job"));
+    }
+
+    [Fact]
+    public async Task TheFarMachinesReplySettingAndItsPaneDecide()
+    {
+        var off = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog, ReplyEnabled = false };
+        off.AddSession("ll", WriteTranscript("off.jsonl", Conversation(2)));
+        await off.HandshakeAsync("ll");
+        Assert.Equal(MirrorProtocol.ErrReplyOff, (await off.Client.FetchPromptAsync("ll")).Error);
+        Assert.Equal(MirrorProtocol.ErrReplyOff, await off.Client.AnswerPromptAsync("ll", "1", "x"));
+
+        var unreadable = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog, PaneReadable = false };
+        unreadable.AddSession("ll", WriteTranscript("unreadable.jsonl", Conversation(2)));
+        await unreadable.HandshakeAsync("ll");
+        Assert.Equal(MirrorProtocol.ErrNoPane, (await unreadable.Client.FetchPromptAsync("ll")).Error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AKeyThePaneRefusedIsATypeFailure(bool throws)
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog, PressFails = !throws, PressThrows = throws };
+        harness.AddSession("ll", WriteTranscript("pressfail-" + throws + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+        var prompt = (await harness.Client.FetchPromptAsync("ll")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed, await harness.Client.AnswerPromptAsync("ll", "3", prompt.Fingerprint));
+    }
+
+    // A server that cannot answer dialogs does not say it can, and refuses an
+    // ANSWER outright; one that cannot type literally refuses free text.
+    [Fact]
+    public async Task WhatCannotBeAnsweredHereIsRefusedAsUnsupported()
+    {
+        var ungated = new Harness(_dir, ungated: true) { Screen = PaneFixtures.MiniExitDialog };
+        ungated.AddSession("ll", WriteTranscript("unsupported.jsonl", Conversation(2)));
+        await ungated.HandshakeAsync("ll");
+        Assert.False(ungated.Client.SpeaksPrompts("ll"));
+        Assert.Equal(MirrorProtocol.ErrNoPane, (await ungated.Client.FetchPromptAsync("ll")).Error);
+
+        var harness = new Harness(_dir, noTypeLiteral: true) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("freetext.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        await harness.Server.HandleAsync(Harness.NearRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Answer, "free1",
+            new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode("evidence"),
+                [MirrorProtocol.KeyField] = "5",
+                [MirrorProtocol.FingerprintField] = prompt.Fingerprint,
+            },
+            Encoding.UTF8.GetBytes("my own answer")))!);
+
+        Assert.Contains(harness.ToClient, l => l.Contains(";t=" + MirrorProtocol.Err + ";")
+                                               && l.Contains(MirrorProtocol.ErrUnsupported));
+        Assert.Empty(harness.Pressed);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The frame-level gates: a session nobody has, a payload that failed its
+    // hash, a frame with no name, and a near side that asks about a session
+    // it was never offered.
+    [Fact]
+    public async Task AnAnswerThatNamesNothingOrFailedItsHashIsRefused()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("ll", WriteTranscript("gates.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+
+        MirrorProtocol.MirrorFrame Frame(string id, Dictionary<string, string> fields, byte[]? payload = null) =>
+            MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Prompt, id, fields, payload))!;
+
+        await harness.Server.HandleAsync(Harness.NearRelay,
+            Frame("g1", new() { ["n"] = MirrorProtocol.Encode("nobody-here") }));
+        await harness.Server.HandleAsync(Harness.NearRelay, Frame("g2", new()));
+        await harness.Server.HandleAsync(Harness.NearRelay,
+            Frame("g3", new() { ["n"] = MirrorProtocol.Encode("ll") }, new byte[] { 1 }) with { PayloadVerified = false });
+
+        string ErrOf(string id) => harness.ToClient.Single(l => l.Contains(";id=" + id + ";") || l.Contains("id=" + id));
+        Assert.Contains(MirrorProtocol.ErrNoSession, ErrOf("g1"));
+        Assert.Contains(MirrorProtocol.ErrNoSession, ErrOf("g2"));
+        Assert.Contains(MirrorProtocol.ErrBadHash, ErrOf("g3"));
+
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoSession),
+            await harness.Client.FetchPromptAsync("never-offered"));
+        Assert.Equal(MirrorProtocol.ErrNoSession, await harness.Client.AnswerPromptAsync("never-offered", "1", "x"));
+        Assert.False(harness.Client.SpeaksPrompts("never-offered"));
+    }
+
+    // --- CB-307 item 3, the arms QA's captures unblocked ----------------------
+
+    // --- the near panel's own transport, over the real link --------------------
+
+    // RemoteControlChatSession's default transport (the one the app runs) driven
+    // through this harness's real server and client, in the suite that measures
+    // the async method with branch points the UI suite's engine counts
+    // differently: every way an answer can leave the panel, and every way the
+    // far side can answer it. The client is handed over rather than installed
+    // process-wide: other classes run in parallel and own that state.
+    private async Task<(RemoteControlChatSession Session, Harness Harness)> PanelOver(
+        string name, string screen, Action<Harness>? setup = null)
+    {
+        var harness = new Harness(_dir) { Screen = screen };
+        setup?.Invoke(harness);
+        harness.AddSession(name, WriteTranscript(name + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync(name);
+
+        var session = new RemoteControlChatSession("rc:.claude:" + name, ".claude", name)
+        {
+            ClientSeam = () => harness.Client,
+        };
+
+        var wire = (await harness.Client.FetchPromptAsync(name)).Prompt!;
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt, AskFormView.FromWire(wire), wire.Fingerprint));
+
+        return (session, harness);
+    }
+
+    [Fact]
+    public async Task APanelAnswersADigitThroughTheDefaultTransport()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        await session.AnswerAsync(session.Prompt!.Options[1]);
+
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
+    [Fact]
+    public async Task APanelCommitsAMultiSelectWithRightThroughTheDefaultTransport()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.QaMultiSelect);
+
+        await session.AnswerAsync(session.Prompt!.Options[^1]);
+
+        Assert.Equal(new[] { "Right" }, harness.Pressed);
+    }
+
+    [Fact]
+    public async Task APanelTypesFreeTextThroughTheDefaultTransport()
+    {
+        var (session, harness) = await PanelOver("qa", PaneFixtures.QaFormQ1, h =>
+        {
+            var downs = 0;
+            h.AfterPress = key => key switch
+            {
+                "Down" when ++downs == 2 => PaneFixtures.QaCursorOnFreeText,
+                "Enter" => PaneFixtures.QaMultiSelect,
+                _ => null,
+            };
+            h.AfterType = text => text == "my own answer" ? PaneFixtures.QaFreeTextTyped : null;
+        });
+
+        await session.AnswerFreeTextAsync(session.Prompt!.Options.Single(o => o.FreeText), "my own answer");
+
+        Assert.Equal(new[] { "Down", "Down", "Enter" }, harness.Pressed);
+        Assert.Equal(new[] { "my own answer" }, harness.Literal);
+    }
+
+    // The screen moved on to ANOTHER form: nothing is pressed, and that form is
+    // what the user is shown, with the note.
+    [Fact]
+    public async Task APanelShownAFormThatMovedOnGetsTheNewFormAndPressesNothing()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        harness.Screen = PaneFixtures.MacModelSwitchDialog;
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(harness.Pressed);
+        Assert.StartsWith("Opus 5.5's safeguards flagged this session.", session.Prompt!.Title);
+        Assert.Contains(session.History, t => t.Text.Contains("nothing was answered", StringComparison.Ordinal));
+    }
+
+    // The screen moved on to NOTHING readable: nothing is pressed, and since there
+    // is no form to show, the answer is reported as not given.
+    [Fact]
+    public async Task APanelShownAFormThatMovedOnToNothingPressesNothingAndSaysSo()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        // A different form first (so the key is refused as changed), then gone
+        // by the time the panel re-reads it.
+        harness.Screen = PaneFixtures.MiniAskForm.Replace("☐ xxx xxxx", "☒ xxx xxxx");
+        harness.SwitchAfterCaptures = (harness.Captures + 1, PaneFixtures.MacPromptAfterEsc);
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(harness.Pressed);
+        Assert.Contains(session.History, t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal));
+    }
+
+    // Nothing is waiting any more: the form was already answered, which is said
+    // quietly and is not an error.
+    [Fact]
+    public async Task APanelAnsweringAFormThatIsAlreadyGoneIsToldSoQuietly()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+
+        harness.Screen = PaneFixtures.MacPromptAfterEsc;
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(harness.Pressed);
+        Assert.Contains(session.History, t => t.Text == "That question was already answered.");
+        Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't answer", StringComparison.Ordinal));
+    }
+
+    // A form shown with no fingerprint, or no link at all, cannot be answered.
+    [Fact]
+    public async Task APanelWithNoFingerprintOrNoLinkReportsAFailure()
+    {
+        var (session, harness) = await PanelOver("evidence", PaneFixtures.MiniAskForm);
+        var shown = session.Prompt!;
+
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt, shown with { Title = "no fingerprint" }, null));
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+        Assert.Empty(harness.Pressed);
+
+        // No link at all.
+        session.ClientSeam = () => null;
+        session.ApplyReply(new RemoteControlChatSession.PromptReply(
+            RemoteControlChatSession.PromptReplyKind.Prompt, shown, "fp"));
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Equal(2, session.History.Count(t => t.Text.Contains("Couldn't answer that", StringComparison.Ordinal)));
+    }
+
+    // The ask half of the same transport, polled the way the panel polls it: a
+    // form on the far screen reaches the panel; no link is a one-off failure; a
+    // far side that does not advertise prompts is "not yet", never final.
+    private static async Task<RemoteControlChatSession> PollingPanel(
+        string name, RemoteMirrorClient? client)
+    {
+        var session = new RemoteControlChatSession("rc:.claude:" + name, ".claude", name)
+        {
+            ClientSeam = () => client,
+            WaitingNow = () => true,
+            PromptLog = (_, _) => { },
+        };
+        session.AssumeMirroringForTests();
+        session.PanelOpened();
+
+        for (var i = 0; i < 100 && session.Prompt is null; i++) await Task.Delay(5);
+        return session;
+    }
+
+    [Fact]
+    public async Task APollingPanelReadsTheFormOffTheFarScreen()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("poll.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        var session = await PollingPanel("evidence", harness.Client);
+
+        Assert.NotNull(session.Prompt);
+        Assert.StartsWith("xxxxx xx xxx xxxxx", session.Prompt!.Title);
+        session.PanelClosed();
+    }
+
+    [Fact]
+    public async Task APollingPanelWithNoLinkAsksNothingAndShowsNothing()
+    {
+        var session = await PollingPanel("evidence", null);
+
+        Assert.Null(session.Prompt);
+        session.PanelClosed();
+    }
+
+    [Fact]
+    public async Task APollingPanelOverAFarSideThatDoesNotAdvertisePromptsShowsNothingAndAsksNothing()
+    {
+        var harness = new Harness(_dir, ungated: true) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("old.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        Assert.False(harness.Client.SpeaksPrompts("evidence"));
+
+        var session = await PollingPanel("evidence", harness.Client);
+
+        Assert.Null(session.Prompt);
+        Assert.Equal(0, harness.Captures);
+        session.PanelClosed();
+    }
+
+    // QA's two-question form, its free-text row filled from the near side the
+    // only safe way: cursor onto the row and seen there, text typed and seen
+    // in the row, and only then Enter. Each step's screen is QA's real one.
+    [Fact]
+    public async Task FreeTextIsTypedIntoTheRowAndEnteredOnlyOnceItShows()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        var downs = 0;
+        harness.AfterPress = key => key switch
+        {
+            "Down" when ++downs == 2 => PaneFixtures.QaCursorOnFreeText,
+            "Enter" => PaneFixtures.QaMultiSelect,
+            _ => null,
+        };
+        harness.AfterType = text => text == "my own answer" ? PaneFixtures.QaFreeTextTyped : null;
+        harness.AddSession("qa", WriteTranscript("free-ok.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Null(await harness.Client.AnswerFreeTextAsync("qa", prompt.FreeTextKey!, prompt.Fingerprint, "my own answer"));
+        Assert.Equal(new[] { "Down", "Down", "Enter" }, harness.Pressed);
+        Assert.Equal(new[] { "my own answer" }, harness.Literal);
+        Assert.Empty(harness.Typed);
+    }
+
+    // The cursor below the row moves up to it.
+    [Fact]
+    public async Task FreeTextFromBelowTheRowMovesUp()
+    {
+        var below = PaneFixtures.QaFormQ1.Replace("❯ 1. Red", "  1. Red").Replace("  4. Chat about this", "❯ 4. Chat about this");
+        var harness = new Harness(_dir) { Screen = below };
+        harness.AfterPress = key => key == "Up" ? PaneFixtures.QaCursorOnFreeText : null;
+        harness.AfterType = _ => PaneFixtures.QaFreeTextTyped;
+        harness.AddSession("qa", WriteTranscript("free-up.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Null(await harness.Client.AnswerFreeTextAsync("qa", "3", prompt.Fingerprint, "my own answer"));
+        Assert.Equal(new[] { "Up", "Enter" }, harness.Pressed);
+    }
+
+    // **Enter on an empty "Type something" declines the whole form**
+    // (QA capture 03). So empty, blank and multi-line text is refused by the
+    // near side before anything is sent, and by the far side if it arrives
+    // anyway; and the option's digit on its own is refused — on a
+    // single-select question it would select the field empty.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("line one\nline two")]
+    [InlineData("ends with enter\r")]
+    public async Task EmptyOrMultiLineFreeTextIsRefusedOnBothSidesAndPressesNothing(string text)
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("free-empty-" + text.Length + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+        harness.ToServer.Clear();
+
+        // Near side: refused, and no ANSWER leaves this machine.
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerFreeTextAsync("qa", "3", prompt.Fingerprint, text));
+        Assert.DoesNotContain(harness.ToServer, l => l.Contains(";t=" + MirrorProtocol.Answer + ";"));
+
+        // Far side: the same text arriving anyway is refused too.
+        await harness.Server.HandleAsync(Harness.NearRelay, AnswerFrame("raw-" + text.Length, "qa", "3", prompt.Fingerprint,
+            text.Length == 0 ? null : Encoding.UTF8.GetBytes(text)));
+        Assert.Contains(harness.ToClient, l => l.Contains(MirrorProtocol.ErrBadKey));
+
+        Assert.Empty(harness.Pressed);
+        Assert.Empty(harness.Literal);
+    }
+
+    [Fact]
+    public async Task TheFreeTextOptionsDigitAloneIsNeverPressed()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("free-digit.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerPromptAsync("qa", "3", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+
+        // Nor is text sent with any other option.
+        await harness.Server.HandleAsync(Harness.NearRelay,
+            AnswerFrame("text-on-1", "qa", "1", prompt.Fingerprint, Encoding.UTF8.GetBytes("hello")));
+        Assert.Contains(harness.ToClient, l => l.Contains(MirrorProtocol.ErrBadKey));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // Every step that is not seen on the far screen stops the sequence before
+    // Enter: a cursor that did not reach the row, text that did not show,
+    // typing that failed, a cursor nobody can see, a multi-select row nobody
+    // captured.
+    [Theory]
+    [InlineData("cursor-stuck")]
+    [InlineData("text-not-shown")]
+    [InlineData("type-fails")]
+    [InlineData("no-cursor")]
+    public async Task FreeTextStopsBeforeEnterWhenAStepIsNotSeen(string fault)
+    {
+        var start = fault == "no-cursor" ? PaneFixtures.QaFormQ1.Replace("❯ 1. Red", "  1. Red") : PaneFixtures.QaFormQ1;
+        var harness = new Harness(_dir) { Screen = start, TypeLiteralFails = fault == "type-fails" };
+        var downs = 0;
+        harness.AfterPress = key => key == "Down" && ++downs == 2 && fault != "cursor-stuck" ? PaneFixtures.QaCursorOnFreeText : null;
+        harness.AfterType = _ => fault == "text-not-shown" ? null : PaneFixtures.QaFreeTextTyped;
+        harness.AddSession("qa", WriteTranscript("free-" + fault + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await harness.Client.AnswerFreeTextAsync("qa", "3", prompt.Fingerprint, "my own answer"));
+        Assert.DoesNotContain("Enter", harness.Pressed);
+    }
+
+    [Fact]
+    public async Task FreeTextOnAMultiSelectQuestionOrWithoutLiteralTypingIsUnsupported()
+    {
+        var multi = new Harness(_dir) { Screen = PaneFixtures.QaMultiSelect };
+        multi.AddSession("qa", WriteTranscript("free-multi.jsonl", Conversation(2)));
+        await multi.HandshakeAsync("qa");
+        var prompt = (await multi.Client.FetchPromptAsync("qa")).Prompt!;
+        Assert.Equal(MirrorProtocol.ErrUnsupported, await multi.Client.AnswerFreeTextAsync("qa", "4", prompt.Fingerprint, "anchovies"));
+        Assert.Empty(multi.Pressed);
+
+        var noTyping = new Harness(_dir, noTypeLiteral: true) { Screen = PaneFixtures.QaFormQ1 };
+        noTyping.AddSession("qa", WriteTranscript("free-notype.jsonl", Conversation(2)));
+        await noTyping.HandshakeAsync("qa");
+        var q1 = (await noTyping.Client.FetchPromptAsync("qa")).Prompt!;
+        Assert.Equal(MirrorProtocol.ErrUnsupported, await noTyping.Client.AnswerFreeTextAsync("qa", "3", q1.Fingerprint, "green"));
+        Assert.Empty(noTyping.Pressed);
+    }
+
+    // Multi-select: a digit toggles (QA capture 09), "commit" is Right and
+    // only on a multi-select question, and the ticks travel in the form.
+    [Fact]
+    public async Task AMultiSelectQuestionTogglesByDigitAndCommitsWithRight()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaMultiSelectOneTicked };
+        harness.AddSession("qa", WriteTranscript("multi.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.True(prompt.MultiSelect);
+        Assert.True(prompt.HasSubmitRow);
+        Assert.Equal(new[] { "1" }, prompt.Checked);
+
+        Assert.Null(await harness.Client.AnswerPromptAsync("qa", "2", prompt.Fingerprint));
+        Assert.Null(await harness.Client.CommitPromptAsync("qa", prompt.Fingerprint));
+        Assert.Equal(new[] { "2", "Right" }, harness.Pressed);
+    }
+
+    [Fact]
+    public async Task CommitIsOnlyForAMultiSelectQuestionAndAnUnknownActionIsRefused()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("commit-single.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.CommitPromptAsync("qa", prompt.Fingerprint));
+
+        await harness.Server.HandleAsync(Harness.NearRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Answer, "act-x", new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode("qa"),
+                [MirrorProtocol.ActionField] = "escape",
+                [MirrorProtocol.FingerprintField] = prompt.Fingerprint,
+            }))!);
+        Assert.Contains(harness.ToClient, l => l.Contains(MirrorProtocol.ErrBadKey));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // The Submit tab: its two options travel by label, and only the one asked
+    // for is pressed — never Cancel by implication.
+    [Fact]
+    public async Task TheReviewScreenOffersSubmitAndCancelByLabelAndPressesOnlyTheOneChosen()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaReview };
+        harness.AddSession("qa", WriteTranscript("review.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal("1", prompt.SubmitAnswersKey);
+        Assert.Equal("2", prompt.CancelKey);
+        Assert.Equal(2, prompt.Review!.Count);
+
+        Assert.Null(await harness.Client.AnswerPromptAsync("qa", prompt.SubmitAnswersKey!, prompt.Fingerprint));
+        Assert.Equal(new[] { "1" }, harness.Pressed);
+    }
+
+    // QA's first real run: PROMPT answered no-prompt for a live form near the
+    // top of a tall pane, because the empty rows below it pushed it out of
+    // the reader's window. The same capture, byte-exact with those rows.
+    [Fact]
+    public async Task AFormNearTheTopOfATallPaneIsOfferedToAPeer()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MacLiveFormTallPane };
+        harness.AddSession("qa", WriteTranscript("tall.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("qa");
+
+        Assert.Null(error);
+        Assert.Equal(4, prompt!.Options.Count);
+        Assert.Equal("3", prompt.FreeTextKey);
+    }
+
+    // Capture 02 as the starting screen: the cursor is already on the free-text
+    // row, so nothing is moved — the text is typed, read back, then Enter.
+    [Fact]
+    public async Task FreeTextWithTheCursorAlreadyOnTheRowMovesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaCursorOnFreeText };
+        harness.AfterType = _ => PaneFixtures.QaFreeTextTyped;
+        harness.AddSession("qa", WriteTranscript("free-02.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal("3", prompt.CursorKey);
+        Assert.Null(await harness.Client.AnswerFreeTextAsync("qa", "3", prompt.Fingerprint, "my own answer"));
+        Assert.Equal(new[] { "Enter" }, harness.Pressed);
+        Assert.Equal(new[] { "my own answer" }, harness.Literal);
+    }
+
+    // --- CB-307: shadow mode on every remote typing path ----------------------
+    //
+    // With shadow on, the far machine still works out the gate's verdict and
+    // logs it — in the local gate's format, never with the screen or the text
+    // — and then types anyway. Off, it refuses exactly as before. The same
+    // for INPUT, the server's default slash runner and the slash host.
+
+    [Theory]
+    [InlineData("dialog")]
+    [InlineData("record-waiting")]
+    [InlineData("prompt")]
+    public async Task ShadowModeLogsTheRemoteVerdictAndTypesAnyway(string shape)
+    {
+        var harness = new Harness(_dir)
+        {
+            ShadowOn = true,
+            Screen = shape == "dialog" ? PaneFixtures.PermissionsAllow : PaneFixtures.MacPromptAfterEsc,
+            Record = shape == "record-waiting" ? "waiting" : "idle",
+        };
+        var log = new List<(string What, string Detail)>();
+        harness.Server.InputLog = (what, detail) => log.Add((what, detail));
+        harness.AddSession("openclaw", WriteTranscript("shadow-" + shape + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Null(await harness.Client.SendInputAsync("openclaw", "please carry on"));
+        Assert.Equal(new[] { ("openclaw", "please carry on") }, harness.Typed);
+
+        var line = Assert.Single(log, l => l.What.StartsWith("remote-typing-", StringComparison.Ordinal));
+        Assert.Equal(shape == "prompt" ? "remote-typing-allowed" : "remote-typing-refused", line.What);
+        Assert.Contains("shadow=1", line.Detail);
+        Assert.Contains(shape switch
+        {
+            "dialog" => "kind=unreadable",
+            "record-waiting" => "kind=record-waiting",
+            _ => "kind=allowed",
+        }, line.Detail);
+        Assert.DoesNotContain(log, l => l.Detail.Contains("please carry on") || l.Detail.Contains("Add a new rule"));
+    }
+
+    [Fact]
+    public async Task WithShadowOffARemoteTypedLineIntoADialogIsStillRefused()
+    {
+        var harness = new Harness(_dir) { ShadowOn = false, Screen = PaneFixtures.PermissionsAllow };
+        var log = new List<string>();
+        harness.Server.InputLog = (what, _) => log.Add(what);
+        harness.AddSession("openclaw", WriteTranscript("shadow-off.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, await harness.Client.SendInputAsync("openclaw", "hello"));
+        Assert.Empty(harness.Typed);
+        Assert.DoesNotContain(log, w => w.StartsWith("remote-typing-", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheDefaultSlashRunnerHonoursShadow(bool shadow)
+    {
+        var harness = new Harness(_dir) { ShadowOn = shadow, Screen = PaneFixtures.MiniExitDialog };
+        var log = new List<string>();
+        harness.Server.InputLog = (what, _) => log.Add(what);
+        harness.AddSession("ll", WriteTranscript("shadow-slash-" + shadow + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("ll", "/color green", slash: true);
+        await harness.Server.SlashInFlight;
+
+        Assert.Equal(shadow ? MirrorProtocol.ViaTyped : MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(shadow ? 1 : 0, harness.Typed.Count);
+        Assert.Equal(shadow, log.Contains("remote-typing-refused"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheSlashHostsTypedArmHonoursShadow(bool shadow)
+    {
+        var harness = new Harness(_dir, wireSlash: true) { Screen = PaneFixtures.PermissionsAllow };
+        var typed = new List<string>();
+        var log = new List<(string What, string Detail)>();
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            _ => new[] { new SlashCommand("/ship-it", "") },
+            (_, line) => { typed.Add(line); return Task.FromResult(true); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            RecordStatus: harness.ReadRecord,
+            CapturePane: harness.CaptureScreen,
+            CanReadPane: _ => true,
+            Shadow: () => shadow,
+            Log: (what, detail) => log.Add((what, detail))));
+        harness.AddSession("openclaw", WriteTranscript("shadow-host-" + shadow + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "/ship-it", slash: true);
+
+        Assert.Equal(shadow ? MirrorProtocol.ViaTyped : MirrorProtocol.ViaRefused, outcome.Via);
+        Assert.Equal(shadow ? new[] { "/ship-it" } : Array.Empty<string>(), typed);
+        if (shadow)
+        {
+            var line = Assert.Single(log);
+            Assert.Equal("remote-typing-refused", line.What);
+            Assert.Contains("session=slash-host", line.Detail);
+            Assert.Contains("shadow=1", line.Detail);
+        }
+        else Assert.Empty(log);
+    }
+
+    // --- the remaining server arms (coverage QA asked for) ---------------------
+
+    [Fact]
+    public async Task AServerThatCannotPressKeysRefusesAnAnswerAndDoesNotOfferPrompts()
+    {
+        var harness = new Harness(_dir, noPressKey: true) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("nopress.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.False(harness.Client.SpeaksPrompts("qa"));
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+        Assert.Equal(MirrorProtocol.ErrUnsupported, await harness.Client.AnswerPromptAsync("qa", "1", prompt.Fingerprint));
+    }
+
+    // No route check wired is "readable": the capture itself decides.
+    [Fact]
+    public async Task WithNoRouteCheckTheCaptureDecides()
+    {
+        var harness = new Harness(_dir, noCanReadPane: true) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("noroute.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.Equal(4, (await harness.Client.FetchPromptAsync("qa")).Prompt!.Options.Count);
+    }
+
+    [Fact]
+    public async Task ACaptureThatThrowsIsNoPrompt()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("capthrows.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+        harness.CaptureThrows = true;
+
+        Assert.Equal(MirrorProtocol.ErrNoPrompt, (await harness.Client.FetchPromptAsync("qa")).Error);
+    }
+
+    // An ANSWER that names no fingerprint matches no dialog.
+    [Fact]
+    public async Task AnAnswerWithNoFingerprintIsAChangedScreen()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("nofp.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        await harness.Server.HandleAsync(Harness.NearRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+            MirrorProtocol.Answer, "nofp", new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode("qa"),
+                [MirrorProtocol.KeyField] = "1",
+            }))!);
+
+        Assert.Contains(harness.ToClient, l => l.Contains(MirrorProtocol.ErrPromptChanged));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // The slash host with shadow on and no log sink of its own logs through
+    // the app's mirror log (off in a test, so nothing is written), and types.
+    [Fact]
+    public async Task TheSlashHostsShadowLogsToTheMirrorLogWhenGivenNoSink()
+    {
+        var harness = new Harness(_dir, wireSlash: true) { Screen = PaneFixtures.PermissionsAllow };
+        var typed = new List<string>();
+        harness.SlashHost = new MirrorSlashHost(new MirrorSlashHost.Seams(
+            _ => true, _ => false, _ => null,
+            _ => new[] { new SlashCommand("/ship-it", "") },
+            (_, line) => { typed.Add(line); return Task.FromResult(true); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            RecordStatus: harness.ReadRecord,
+            CapturePane: harness.CaptureScreen,
+            CanReadPane: _ => true,
+            Shadow: () => true));
+        harness.AddSession("openclaw", WriteTranscript("shadow-host-nolog.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Equal(MirrorProtocol.ViaTyped,
+            (await harness.Client.SendInputDetailedAsync("openclaw", "/ship-it", slash: true)).Via);
+        Assert.Equal(new[] { "/ship-it" }, typed);
+    }
+
+    // The regression Warren hit on 2f8a228f: a peer asked for the form on a
+    // screen shaped like this and was told no-prompt.
+    [Fact]
+    public async Task AFormAboveBlankRowsAndABottomTitledRuleIsOfferedToAPeer()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniFormTitledRuleAtBottom };
+        harness.AddSession("qa-mini-d", WriteTranscript("bottom-rule.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa-mini-d");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("qa-mini-d");
+
+        Assert.Null(error);
+        Assert.Equal("Which fruit? (qa-mini-d)", prompt!.Title);
+        Assert.Equal(4, prompt.Options.Count);
+    }
+
+    // Every named session draws its name into the bottom border; a peer asking
+    // for one's form gets it (QA's real MacBook capture).
+    [Fact]
+    public async Task ANamedSessionsFormIsOfferedToAPeer()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MacNamedForm };
+        harness.AddSession("qa-mac-d", WriteTranscript("named.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa-mac-d");
+
+        var prompt = (await harness.Client.FetchPromptAsync("qa-mac-d")).Prompt;
+
+        Assert.Equal("Which fruit? (qa-mac-d)", prompt!.Title);
+        Assert.Equal(4, prompt.Options.Count);
+    }
+
+    private static MirrorProtocol.MirrorFrame AnswerFrame(string id, string name, string key, string fp, byte[]? text) =>
+        MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(MirrorProtocol.Answer, id,
+            new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode(name),
+                [MirrorProtocol.KeyField] = key,
+                [MirrorProtocol.FingerprintField] = fp,
+            }, text))!;
+
+    // A single turn a day before the fixture's own rows: the shape of a quiet
+    // session at the fixture's clock, written by hand because Conversation
+    // stamps every row at RowAt.
+    private const string DayOldTurn =
+        "{\"type\":\"user\",\"uuid\":\"old\",\"timestamp\":\"2026-08-15T10:00:00Z\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}";
 
     // What the bridge appends to a session it is attached to: no timestamp, and
     // enough of them to bury the last real turn under bookkeeping.
@@ -1143,7 +2835,7 @@ public class MirrorRoundTripTests : IDisposable
     private const string RowAt = "2026-08-16T10:00:00Z";
 
     // A minute after the rows above, which is what the far side's clock is set
-    // to. Far enough inside SessionLiveness.StaysInterestingFor that a change
+    // to. Far enough inside SessionLiveness.ParkedAfter that a change
     // to that window does not silently empty every roster in this file.
     internal static readonly DateTime LiveAt =
         new(2026, 8, 16, 10, 1, 0, DateTimeKind.Utc);
@@ -1427,6 +3119,61 @@ public class MirrorRoundTripTests : IDisposable
             harness.Client.StateFor("job-hunter").Availability);
     }
 
+    // CB-306: a Claude Code session OpenClaw spawned to run an agent's
+    // heartbeat crosses the link marked as one, and the near machine's own
+    // settings decide whether it is drawn. The ordinary session beside it is
+    // the negative control: it is unmarked and passes every setting.
+    [Fact]
+    public async Task AnOpenClawHeartbeatSpawnCrossesMarkedAndTheViewersSettingsDecide()
+    {
+        var harness = new Harness(_dir);
+        var workspace = Path.Combine(_dir, ".openclaw", "workspace-sample-zara");
+        harness.AddSession("sid:0000aaaa", WriteTranscript("heartbeat.jsonl", new[]
+        {
+            "{\"type\":\"queue-operation\",\"operation\":\"enqueue\"}",
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":"
+                + "\"A scheduled reminder has been triggered. The reminder content is:\\n\\nHEARTBEAT: run the routine.\"}}",
+            "{\"type\":\"assistant\",\"uuid\":\"a1\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"HEARTBEAT_OK\"}]}}"
+        }), s =>
+        {
+            s.Entrypoint = OpenClawCliSession.SdkEntrypoint;
+            s.Cwd = workspace;
+            s.TmuxPane = "";
+        });
+        harness.AddSession("job-hunter", WriteTranscript("ordinary.jsonl", Conversation(2)));
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        var known = harness.Client.Known();
+        var spawn = Assert.Single(known, k => k.Entry.Name == "sid:0000aaaa").Entry;
+        Assert.Equal("heartbeats", spawn.OpenClawCluster);
+        Assert.Equal(workspace, spawn.OpenClawWorkspace);
+        var ordinary = Assert.Single(known, k => k.Entry.Name == "job-hunter").Entry;
+        Assert.Null(ordinary.OpenClawCluster);
+        Assert.Null(ordinary.OpenClawWorkspace);
+
+        string[] Shown(bool enabled, string[] gateway, ClusterMode heartbeats) =>
+            RemoteControlSessions.ShownByOpenClawSettings(known, enabled, gateway,
+                    heartbeats, ClusterMode.Hidden, ClusterMode.WithChats)
+                .Select(k => k.Entry.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+
+        // Heartbeats hidden, as the reporting viewer had them: only the ordinary session.
+        Assert.Equal(new[] { "job-hunter" }, Shown(false, Array.Empty<string>(), ClusterMode.Hidden));
+
+        // Heartbeats shown with the chats: both.
+        Assert.Equal(new[] { "job-hunter", "sid:0000aaaa" },
+            Shown(false, Array.Empty<string>(), ClusterMode.WithChats));
+
+        // Shown, but this machine's gateway already draws that agent: the
+        // spawn is a duplicate and goes; the ordinary session stays.
+        Assert.Equal(new[] { "job-hunter" }, Shown(true, new[] { workspace }, ClusterMode.WithChats));
+
+        // The same gateway list with the integration switched off draws no
+        // gateway orb, so the spawn is not a duplicate.
+        Assert.Equal(new[] { "job-hunter", "sid:0000aaaa" },
+            Shown(false, new[] { workspace }, ClusterMode.WithChats));
+    }
+
     // An open-ended roster is a complete snapshot of one machine, not an
     // append-only notification. The second answer deliberately has no entries:
     // this is the unplugged Mini case that used to leave its last orb on screen
@@ -1694,6 +3441,46 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(1, harness.PictureAsks);
         Assert.Equal(0, harness.ChunkFrames);
         Assert.Equal(Face, Assert.Single(harness.Client.Known()).Entry.Persona!.Avatar);
+    }
+
+    // CB-306 regression on 6e1c2183: the persona, picture included, must still
+    // reach the peer once a read that was pending at the first HELLO has
+    // answered, and its id must be one the AVATAR request answers.
+    [Fact]
+    public async Task APersonaReadThatFinishesAfterTheFirstHelloReachesThePeerWithAFetchablePicture()
+    {
+        WritePersona(Face);
+        using var release = new System.Threading.ManualResetEventSlim(false);
+        var harness = new Harness(_dir);
+        harness.PersonaCache = new PeerPersonaCache(
+            (source, cwd, agent, dirs) =>
+            {
+                release.Wait();
+                return RemoteMirrorServer.ReadPeerPersona(source, cwd, agent, dirs);
+            },
+            () => DateTime.UtcNow,
+            OffThread.OnOwnThread,
+            PeerAvatarStore.Shared.ById);
+        harness.AddSession("first", WriteTranscript("first.jsonl", Conversation(2)));
+
+        try
+        {
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+            Assert.Null(Assert.Single(harness.Client.Known()).Entry.Persona);
+            Assert.Equal(0, harness.PictureAsks);
+
+            release.Set();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (harness.PersonaCache.InFlight > 0 && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
+
+            await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+            Assert.Equal(1, harness.PictureAsks);
+            var persona = Assert.Single(harness.Client.Known()).Entry.Persona!;
+            Assert.Equal(MirrorProtocol.AvatarIdOf(Face), persona.AvatarId);
+            Assert.Equal(Face, persona.Avatar);
+        }
+        finally { release.Set(); }
     }
 
     // The case the ticket's decision named: a picture that changes on the
@@ -1991,14 +3778,15 @@ public class MirrorRoundTripTests : IDisposable
     }
 
     // The real liveness rule on members, not an injected one: a member nobody
-    // has spoken to since yesterday is not offered, exactly as a registered
-    // session in that state is not. Its lead's transcript path names no file,
+    // has spoken to since yesterday is offered parked (CB-307), exactly as a
+    // registered session in that state is — and it is not taken for a
+    // duplicate of its lead, whose title every member inherits. Its lead's transcript path names no file,
     // which is what keeps the lead itself out of the liveness question, and
     // the members that do get offered cover the other two transcript shapes —
     // a path to nothing, and no path at all — both offered without a
     // transcript to show.
     [Fact]
-    public async Task AMemberNobodyHasSpokenToSinceYesterdayIsNotOffered()
+    public async Task AMemberNobodyHasSpokenToSinceYesterdayIsOfferedParked()
     {
         var harness = new Harness(_dir);
         harness.AddSession("backlog status check", Path.Combine(_dir, "no-such-lead.jsonl"));
@@ -2016,7 +3804,9 @@ public class MirrorRoundTripTests : IDisposable
         // deliberately have none.
         await harness.Server.HandleAsync(Harness.NearRelay, OldHello("stale1"));
         var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "stale1"))!.ToList();
-        Assert.DoesNotContain(known, e => e.Route == RemoteMirrorServer.RouteFor(stale));
+        var staleEntry = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(stale));
+        Assert.True(staleEntry.Parked);
+        Assert.Equal(RemoteMirrorServer.RouteFor(lead), staleEntry.Lead);
 
         var ghost = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(pathToNothing));
         Assert.False(ghost.HasTranscript);
@@ -2024,7 +3814,9 @@ public class MirrorRoundTripTests : IDisposable
 
         var fresh = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(noPath));
         Assert.False(fresh.HasTranscript);
-        Assert.Equal(3, known.Count);
+        Assert.Null(fresh.Parked);
+        Assert.Null(ghost.Parked);
+        Assert.Equal(4, known.Count);
     }
 
     // A member's display name when it has no title: its folder, and with no
@@ -2143,8 +3935,32 @@ public class MirrorRoundTripTests : IDisposable
         // roster and the fetch looks like.
         public bool RefusePictures { get; set; }
 
+        // A far side that refuses every INPUT with this code and no msg.
+        public string? CodeOnlyInputRefusal { get; set; }
+
         // How many pictures the client has asked for.
         public int PictureAsks => ToServer.Count(line => line.Contains(";t=" + MirrorProtocol.Avatar + ";"));
+
+        // CB-306: the far runner, wired only when a test sets it, so every
+        // other test keeps the null seams an older harness has. SlashRan
+        // records what reached it.
+        public Func<SessionStatus, string, RemoteMirrorServer.SlashOutcome>? SlashRunner { get; set; }
+        public IReadOnlyList<SlashCommand>? SlashCatalogue { get; set; }
+        public bool SlashRunnerThrows { get; set; }
+        public bool SlashCatalogueThrows { get; set; }
+
+        // CB-306: the real far resolver, in place of the canned runner.
+        public MirrorSlashHost? SlashHost { get; set; }
+
+        // CB-306's second reopen: the persona cache the server reads through,
+        // as LiveSeams wires PeerPersonaCache.Shared. Null resolves directly,
+        // which is what every test written before it expects.
+        public PeerPersonaCache? PersonaCache { get; set; }
+        public List<string> SlashRan { get; } = new();
+
+        // A far Buddy that predates the slash flag: it never sees `slash`, so
+        // it types the line as ordinary text, which is what such a Buddy did.
+        public bool FarPredatesSlash { get; set; }
 
         public int ChunkFrames { get; private set; }
 
@@ -2153,8 +3969,40 @@ public class MirrorRoundTripTests : IDisposable
         public void ForgetFramesSoFar() => ChunkFrames = 0;
         public int Resends { get; private set; }
 
+        // CB-307 addendum: the far pane's screen and Claude Code's own record,
+        // as the typing gate reads them. Gated by default, on the real
+        // MacBook prompt capture, so every typed test in this file goes
+        // through the gate and still types; Ungated nulls both reads, which is
+        // what a harness built before the gate looked like.
+        public string? Screen { get; set; } = PaneFixtures.MacPromptAfterEsc;
+        public string? Record { get; set; } = "idle";
+        public int Captures { get; private set; }
+        public (int After, string Then)? SwitchAfterCaptures { get; set; }
+
+        // CB-307 item 3: the keys the far side pressed to answer a dialog, and
+        // the ways that can go wrong. Wired unless the harness is ungated.
+        public List<string> Pressed { get; } = new();
+        public bool PressFails { get; set; }
+        public bool PressThrows { get; set; }
+        public bool PaneReadable { get; set; } = true;
+
+        // The far screen moving after a key or typed text, as a real one
+        // does: return the next screen, or null to leave it as it is.
+        public Func<string, string?>? AfterPress { get; set; }
+        public Func<string, string?>? AfterType { get; set; }
+        public List<string> Literal { get; } = new();
+        public bool TypeLiteralFails { get; set; }
+
+        // CB-307: the typing gate's shadow mode on the far machine.
+        public bool ShadowOn { get; set; }
+
+        // A capture that throws rather than answering.
+        public bool CaptureThrows { get; set; }
+        public int RecordReads { get; private set; }
+
         public bool ReplyEnabled { get; init; } = true;
         public bool CanType { get; init; } = true;
+        public bool TypeFails { get; init; }
 
         // CB-105's messaging fallback. Only wired at all when the constructor
         // is told to (see wireDelivery below) — every test written before
@@ -2204,7 +4052,9 @@ public class MirrorRoundTripTests : IDisposable
         // Harness never reads the developer's real persona (CB-252).
         public IReadOnlyList<string> UserConfigDirs { get; set; } = Array.Empty<string>();
 
-        public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false)
+        public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
+            LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
+            bool noPressKey = false, bool noCanReadPane = false)
         {
             _dir = dir;
 
@@ -2219,7 +4069,7 @@ public class MirrorRoundTripTests : IDisposable
                 (status, text) =>
                 {
                     Typed.Add((NameOf(status), text));
-                    return Task.FromResult(true);
+                    return Task.FromResult(!TypeFails);
                 },
                 // Left null unless a test asks for CB-105's messaging path —
                 // see wireDelivery's own comment on CanDeliverAnswer above.
@@ -2240,7 +4090,44 @@ public class MirrorRoundTripTests : IDisposable
                 // because a peer has completed a TLS handshake with a certificate
                 // somebody pinned by typing a code. A harness says yes explicitly.
                 PeerAllowed: _ => true,
-                UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs));
+                UserConfigDirs: machineUserConfigDirs ? null : () => UserConfigDirs,
+                PersonaFor: (status, dirs, byId) => PersonaCache is { } personas
+                    ? personas.Peek(status, dirs, byId)
+                    : RemoteMirrorServer.ResolvePeerPersona(status, dirs, byId),
+                SlashCommandsFor: wireSlash
+                    ? status => SlashCatalogueThrows
+                        ? throw new InvalidOperationException("catalogue scan failed")
+                        : SlashHost?.CommandsFor(status) ?? SlashCatalogue!
+                    : null,
+                RunSlash: wireSlash
+                    ? (status, line) =>
+                    {
+                        if (SlashHost is { } host) return host.RunAsync(status, line);
+                        if (SlashRunnerThrows) throw new InvalidOperationException("bridge went away");
+                        SlashRan.Add(line);
+                        return Task.FromResult(SlashRunner!(status, line));
+                    }
+                    : null,
+                LastTurns: lastTurns,
+                RecordStatus: ungated ? null : ReadRecord,
+                CapturePane: ungated ? null : CaptureScreen,
+                CanReadPane: ungated || noCanReadPane ? null : _ => PaneReadable,
+                PressKey: ungated || noPressKey ? null : (_, key) =>
+                {
+                    if (PressThrows) throw new InvalidOperationException("tmux went away");
+                    if (PressFails) return Task.FromResult(false);
+                    Pressed.Add(key);
+                    if (AfterPress?.Invoke(key) is { } next) Screen = next;
+                    return Task.FromResult(true);
+                },
+                Shadow: () => ShadowOn,
+                TypeLiteral: ungated || noTypeLiteral ? null : (_, text) =>
+                {
+                    if (TypeLiteralFails) return Task.FromResult(false);
+                    Literal.Add(text);
+                    if (AfterType?.Invoke(text) is { } next) Screen = next;
+                    return Task.FromResult(true);
+                }));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -2267,6 +4154,25 @@ public class MirrorRoundTripTests : IDisposable
             Client.Failed += (name, why) => Failures.Add((name, why));
         }
 
+        // The gate's two reads, counted.
+        public string? ReadRecord(SessionStatus _)
+        {
+            RecordReads++;
+            return Record;
+        }
+
+        public Task<string?> CaptureScreen(SessionStatus _)
+        {
+            Captures++;
+            if (CaptureThrows) throw new InvalidOperationException("tmux went away");
+            var shown = Screen;
+
+            // The screen moves on after this many reads: what the next read sees.
+            if (SwitchAfterCaptures is { } later && Captures >= later.After) Screen = later.Then;
+
+            return Task.FromResult(shown);
+        }
+
         // The machines to ask, by name. A direct link knows the machines it is
         // connected to; the relay-shaped list this replaced had to be filtered
         // down to that same answer.
@@ -2278,12 +4184,13 @@ public class MirrorRoundTripTests : IDisposable
 
         // A Codex session: a status file with no agent-registry row, which the
         // full roster offers from the status files directly.
-        public void AddCodexSession(string title, string transcriptPath) =>
+        public void AddCodexSession(string title, string transcriptPath,
+            SessionSource source = SessionSource.Codex) =>
             _sessions.Add((Guid.NewGuid().ToString(), new SessionStatus
             {
                 Title = title,
                 Cwd = _dir,
-                Source = SessionSource.Codex,
+                Source = source,
                 TranscriptPath = transcriptPath,
                 TmuxPane = "%2",
                 SessionPid = 2000 + _sessions.Count,
@@ -2333,7 +4240,14 @@ public class MirrorRoundTripTests : IDisposable
 
         public string SessionIdOf(string title) => _sessions.First(s => s.Status.Title == title).SessionId;
 
-        public void AddSession(string name, string transcriptPath)
+        public IEnumerable<string> SessionIdsOf(string title) =>
+            _sessions.Where(s => s.Status.Title == title).Select(s => s.SessionId);
+
+        public void AddSession(string name, string transcriptPath) => AddSession(name, transcriptPath, null);
+
+        // CB-306: the same, with the status shaped by the test (an OpenClaw
+        // spawn's entrypoint and workspace cwd).
+        public void AddSession(string name, string transcriptPath, Action<SessionStatus>? shape)
         {
             var sessionId = Guid.NewGuid().ToString();
 
@@ -2349,6 +4263,8 @@ public class MirrorRoundTripTests : IDisposable
                 SessionPid = 1000 + _sessions.Count,
                 Color = "green"
             }));
+
+            shape?.Invoke(_sessions[^1].Item2);
         }
 
         // Leaves the registry entry and takes the session away, which is what a
@@ -2397,6 +4313,23 @@ public class MirrorRoundTripTests : IDisposable
             if (frame is null) return false;
 
             if (frame.Type == MirrorProtocol.Resend) Resends++;
+
+            if (FarPredatesSlash && frame.Fields.ContainsKey(MirrorProtocol.SlashField))
+            {
+                frame = frame with
+                {
+                    Fields = frame.Fields
+                        .Where(field => field.Key != MirrorProtocol.SlashField)
+                        .ToDictionary(field => field.Key, field => field.Value, StringComparer.Ordinal)
+                };
+            }
+
+            if (CodeOnlyInputRefusal is { } code && frame.Type == MirrorProtocol.Input)
+            {
+                await Client.OnFrameAsync(FarRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+                    MirrorProtocol.Err, frame.Id, new Dictionary<string, string> { ["code"] = code }))!);
+                return true;
+            }
 
             if (RefusePictures && frame.Type == MirrorProtocol.Avatar)
             {

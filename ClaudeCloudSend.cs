@@ -28,26 +28,46 @@ namespace Orbweaver
         // the same `sequence_num`, so a send whose answer was lost can be sent
         // again without typing the message into the session twice. The caller
         // mints it once per message and reuses it on the retry.
-        internal static string UserMessageBody(string sessionId, string text, string uuid) =>
-            Envelope(new JsonObject
+        internal static string UserMessageBody(string sessionId, string text, string uuid,
+            string? clientPlatform = null)
+        {
+            var payload = new JsonObject
             {
                 ["uuid"] = uuid,
                 ["session_id"] = sessionId,
                 ["type"] = "user",
                 ["parent_tool_use_id"] = null,
                 ["message"] = new JsonObject { ["role"] = "user", ["content"] = text },
-            });
+            };
+
+            // CB-306: the one field the CLI's own remote send carries that this
+            // body did not, measured 2026-11-03 — see docs/claude-cloud-findings.md.
+            if (clientPlatform is not null) payload["client_platform"] = clientPlatform;
+
+            return Envelope(payload);
+        }
 
         // An interrupt: a control_request with the `interrupt` subtype.
         // `cancel_queued` is the CLI's own value and is what the gate sent.
         // Measured harmless against an idle session, which is what lets a Stop
         // press that races the end of a turn go out without a check first.
         internal static string InterruptBody(string requestId, string uuid) =>
+            ControlRequestBody(requestId, uuid,
+                new JsonObject { ["subtype"] = "interrupt", ["cancel_queued"] = true });
+
+        // Any control request: the interrupt's envelope with the `request`
+        // object supplied by the caller. CB-306 adds the other subtypes the CLI's
+        // bridge handler accepts (`set_color`, `rename_session`, `set_model`,
+        // `set_permission_mode`, `set_max_thinking_tokens`, read out of the
+        // 2.1.317 binary's `[bridge:repl]` switch); which of those a slash
+        // command maps to, and with what fields, is SlashRoute's table, so this
+        // stays a plain envelope and knows no subtype by name.
+        internal static string ControlRequestBody(string requestId, string uuid, JsonObject request) =>
             Envelope(new JsonObject
             {
                 ["type"] = "control_request",
                 ["request_id"] = requestId,
-                ["request"] = new JsonObject { ["subtype"] = "interrupt", ["cancel_queued"] = true },
+                ["request"] = request,
                 ["uuid"] = uuid,
             });
 

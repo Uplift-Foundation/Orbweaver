@@ -19,7 +19,14 @@ using Orbweaver;
 // **It uses this machine's identity**, so it only reaches machines this Buddy
 // has already paired with — it cannot pair, and it is not a way around the
 // pairing code. Running it beside a live Buddy is fine: both present the same
-// certificate, and the far side is happy to hold two connections.
+// certificate, and the far side keeps ONE connection per machine name:
+// PeerLink.Adopt replaces whatever it already holds under that name. So a probe
+// run *evicts the live app from the link*, and anything the app pushes in that
+// window is lost (CB-306: four replacements on the mini, then five
+// peer-send-no-link). The probe therefore refuses to run while the app holds
+// its single-instance claim, unless given --evict.
+//
+// It logs to mirror-log-probe.txt, never to the app's mirror-log.txt.
 //
 // **On macOS it is subject to Local Network consent**, and a terminal usually
 // has none where the signed app does. A probe that cannot connect while the app
@@ -28,16 +35,22 @@ using Orbweaver;
 // useless as evidence here.
 internal static class Program
 {
-    private static async Task<int> Main(string[] args)
+    private static async Task<int> Main(string[] rawArgs)
     {
+        MirrorLog.UseFile(MirrorLog.ProbeFileName);
+
+        var (evict, args) = PeerProbeGuard.SplitEvict(rawArgs);
+
         if (args.Length < 2)
         {
             Console.Error.WriteLine(
-                "usage: peer-probe <host[:port]> <machine-name> [session-name]\n" +
+                "usage: peer-probe [--evict] <host[:port]> <machine-name> [session-name]\n" +
                 "\n" +
                 "  host          where to dial, e.g. 198.51.100.10 or mini:7677\n" +
                 "  machine-name  what that machine calls itself, as paired\n" +
                 "  session-name  optional; fetch this session's transcript\n" +
+                "  --evict       run even though Orbweaver is running. This DISCONNECTS the\n" +
+                "                running app from that peer until it reconnects.\n" +
                 "\n" +
                 "With no session name it prints the roster and stops.");
             return 2;
@@ -49,6 +62,10 @@ internal static class Program
             Console.Error.WriteLine($"not an address: {args[0]}");
             return 2;
         }
+
+        var verdict = PeerProbeGuard.Decide(PeerProbeGuard.AppIsRunning(), evict);
+        if (verdict.Message is not null) Console.Error.WriteLine(verdict.Message);
+        if (!verdict.Run) return 3;
 
         var machine = args[1];
         var session = args.Length > 2 ? args[2] : null;

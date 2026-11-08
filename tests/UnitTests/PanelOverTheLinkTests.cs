@@ -42,6 +42,123 @@ public class PanelOverTheLinkTests
     public void NoEntryAtAllOffersNothing() =>
         Assert.Empty(RemoteControlSessions.CommandsFrom(null));
 
+    // --- CB-306: route kinds in the roster ------------------------------------------
+
+    private static MirrorProtocol.MirrorRosterEntry Routed(
+        IReadOnlyList<string> commands, IReadOnlyList<string>? routes, bool hasPane = false) =>
+        new("job-hunter", "claude", HasTranscript: true, HasPane: hasPane, Commands: commands, CommandRoutes: routes);
+
+    [Fact]
+    public void UnavailableCommandsAreKeptWithTheirKindsForThePanelToFilter()
+    {
+        var offered = RemoteControlSessions.CommandsFrom(Routed(
+            new[] { "/color", "/compact", "/model", "/mystery" },
+            new[] { "control", "unavailable", "control", "from-the-future" }));
+
+        // Kept, not dropped: the panel hides them from autocomplete but needs
+        // the names, so "/compact" typed in full is recognised as a command and
+        // refused instead of being sent to the far model as prose. An unknown
+        // word from a newer far Buddy reads as unavailable.
+        Assert.Equal(new[] { "/color", "/compact", "/model", "/mystery" }, offered.Select(c => c.Name));
+        Assert.Equal(
+            new[] { SlashRouteKind.Control, SlashRouteKind.Unavailable, SlashRouteKind.Control, SlashRouteKind.Unavailable },
+            offered.Select(c => c.Route));
+        Assert.Equal(new[] { "/color", "/model" },
+            ChatPanel.OfferedCommands(offered).Select(c => c.Name));
+    }
+
+    [Fact]
+    public void EveryRouteWordRoundTrips()
+    {
+        foreach (var kind in new[] { SlashRouteKind.Typed, SlashRouteKind.PassThrough, SlashRouteKind.Control,
+                     SlashRouteKind.Native, SlashRouteKind.Unavailable })
+            Assert.Equal(kind, MirrorProtocol.RouteFromWord(MirrorProtocol.RouteWord(kind)));
+
+        Assert.Equal(SlashRouteKind.Unavailable, MirrorProtocol.RouteFromWord(null));
+    }
+
+    [Fact]
+    public void RoutesThatDoNotLineUpWithTheCommandsAreTreatedAsAbsentEverywhere()
+    {
+        var noPane = Routed(new[] { "/color", "/model" }, new[] { "control" }, hasPane: false);
+        var pane = Routed(new[] { "/color", "/model" }, new[] { "control" }, hasPane: true);
+
+        // One definition, so the panel cannot offer typed commands while the
+        // session sends the slash flag.
+        Assert.False(RemoteControlSessions.ValidRoutes(pane));
+        Assert.False(RemoteControlSessions.SpeaksSlash(pane));
+        Assert.False(RemoteControlSessions.SpeaksSlash(noPane));
+
+        var typed = RemoteControlSessions.CommandsFrom(pane);
+        Assert.Equal(new[] { "/color", "/model" }, typed.Select(c => c.Name));
+        Assert.All(typed, c => Assert.Equal(SlashRouteKind.Typed, c.Route));
+
+        // Known, not offered: nothing here would run.
+        var known = RemoteControlSessions.CommandsFrom(noPane);
+        Assert.Equal(new[] { "/color", "/model" }, known.Select(c => c.Name));
+        Assert.All(known, c => Assert.Equal(SlashRouteKind.Unavailable, c.Route));
+        Assert.Empty(ChatPanel.OfferedCommands(known));
+    }
+
+    [Fact]
+    public void AnOlderFarBuddyKnowsItsCommandsAndOffersThemOnlyWhereThereIsAPane()
+    {
+        var noPane = RemoteControlSessions.CommandsFrom(Routed(new[] { "/color" }, null, hasPane: false));
+        Assert.Equal(SlashRouteKind.Unavailable, Assert.Single(noPane).Route);
+        Assert.Empty(ChatPanel.OfferedCommands(noPane));
+
+        var pane = RemoteControlSessions.CommandsFrom(Routed(new[] { "/color" }, null, hasPane: true));
+        Assert.Single(ChatPanel.OfferedCommands(pane));
+    }
+
+    [Fact]
+    public void ValidRoutesHandlesAMissingEntryAndAMissingCommandList()
+    {
+        Assert.False(RemoteControlSessions.ValidRoutes(null));
+
+        var noCommands = new MirrorProtocol.MirrorRosterEntry(
+            "job-hunter", "claude", true, true, Commands: null, CommandRoutes: Array.Empty<string>());
+        Assert.True(RemoteControlSessions.ValidRoutes(noCommands));
+        Assert.False(RemoteControlSessions.ValidRoutes(noCommands with { CommandRoutes = new[] { "typed" } }));
+    }
+
+    [Fact]
+    public void ANewerFarBuddyIsRecognisedByItsRoutesEvenWhenThereAreNone()
+    {
+        Assert.False(RemoteControlSessions.SpeaksSlash(null));
+        Assert.False(RemoteControlSessions.SpeaksSlash(Routed(new[] { "/color" }, null)));
+        Assert.True(RemoteControlSessions.SpeaksSlash(Routed(Array.Empty<string>(), Array.Empty<string>())));
+        Assert.False(RemoteControlSessions.SpeaksSlash(Routed(new[] { "/a", "/b" }, new[] { "typed" })));
+        Assert.False(RemoteControlSessions.SpeaksSlash(Routed(Array.Empty<string>(), new[] { "typed" })));
+        Assert.True(RemoteControlSessions.SpeaksSlash(Routed(new[] { "/color" }, new[] { "control" })));
+    }
+
+    [Fact]
+    public void RoutesSurviveTheRosterEncoding_AndAbsenceSurvivesToo()
+    {
+        var withRoutes = Routed(new[] { "/color" }, new[] { "control" });
+        var without = Routed(new[] { "/color" }, null);
+        var empty = Routed(Array.Empty<string>(), Array.Empty<string>());
+
+        var back = MirrorProtocol.DecodeRoster(MirrorProtocol.EncodeRoster(new[] { withRoutes, without, empty }))!;
+
+        Assert.Equal(new[] { "control" }, back[0].CommandRoutes);
+        Assert.Null(back[1].CommandRoutes);
+        Assert.NotNull(back[2].CommandRoutes);
+        Assert.Empty(back[2].CommandRoutes!);
+    }
+
+    [Fact]
+    public void TheSlashFlagIsOnTheFrameOnlyWhenAsked()
+    {
+        var plain = RemoteMirrorClient.SlashFields("job-hunter", slash: false);
+        var slash = RemoteMirrorClient.SlashFields("job-hunter", slash: true);
+
+        Assert.False(plain.ContainsKey(MirrorProtocol.SlashField));
+        Assert.Equal("1", slash[MirrorProtocol.SlashField]);
+        Assert.Equal(plain["n"], slash["n"]);
+    }
+
     // --- whether remote orbs are drawn at all --------------------------------
 
     private static readonly IReadOnlyList<RemoteControlSessions.Remote> OneRow =
@@ -130,6 +247,37 @@ public class PanelOverTheLinkTests
     }
 
     [Fact]
+    public void AParkedEntryArrivesParkedAndAnUnmarkedOneDoesNot()
+    {
+        // CB-307: absent is what an older host and an unparked session both
+        // send, and both mean "draw it normally".
+        var parked = new MirrorProtocol.MirrorRosterEntry("lawyer-search", MirrorProtocol.CliClaudeCode,
+            true, true, Parked: true);
+        var plain = new MirrorProtocol.MirrorRosterEntry("job-hunter", MirrorProtocol.CliClaudeCode,
+            true, true);
+
+        var rows = RemoteControlSessions.RemotesFromRoster(
+            "acct", new[] { ("mini", parked), ("mini", plain) }, DateTime.UnixEpoch);
+
+        Assert.True(rows.Single(r => r.Name == "lawyer-search").Parked);
+        Assert.False(rows.Single(r => r.Name == "job-hunter").Parked);
+    }
+
+    [Fact]
+    public void AnExplicitFalseIsNotParked()
+    {
+        // No Buddy writes it, but the decoder accepts it, and false must not be
+        // read as "the field is present, so parked".
+        var json = "[{\"name\":\"jh\",\"cli\":\"claude\",\"transcript\":true,\"pane\":true,\"parked\":false}]";
+        var entry = Assert.Single(MirrorProtocol.DecodeRoster(
+            MirrorProtocol.Gzip(System.Text.Encoding.UTF8.GetBytes(json)))!);
+
+        Assert.False(entry.Parked);
+        Assert.False(Assert.Single(RemoteControlSessions.RemotesFromRoster(
+            "acct", new[] { ("mini", entry) }, DateTime.UnixEpoch)).Parked);
+    }
+
+    [Fact]
     public void AWorkingSessionDrawsAsWorking()
     {
         var rows = RemoteControlSessions.RemotesFromRoster(
@@ -196,5 +344,29 @@ public class PanelOverTheLinkTests
             "acct",
             Array.Empty<(string, MirrorProtocol.MirrorRosterEntry)>(),
             DateTime.UnixEpoch));
+    }
+
+    // CB-307 addendum: the far machine's session is on a dialog and says so on
+    // the roster. Working never knew the word, so it arrived as idle.
+    [Fact]
+    public void AWaitingSessionIsWaitingAndNotWorking()
+    {
+        var row = Assert.Single(RemoteControlSessions.RemotesFromRoster(
+            "acct", new[] { ("mini", Entry("jh", status: "waiting")) }, DateTime.UnixEpoch));
+
+        Assert.True(row.Waiting);
+        Assert.False(row.Working);
+    }
+
+    [Theory]
+    [InlineData("idle")]
+    [InlineData("busy")]
+    [InlineData("running")]
+    public void OnlyTheWordWaitingIsWaiting(string status)
+    {
+        var row = Assert.Single(RemoteControlSessions.RemotesFromRoster(
+            "acct", new[] { ("mini", Entry("jh", status: status)) }, DateTime.UnixEpoch));
+
+        Assert.False(row.Waiting);
     }
 }

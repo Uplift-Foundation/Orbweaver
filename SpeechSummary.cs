@@ -587,7 +587,7 @@ namespace Orbweaver
                     }
                     catch (OperationCanceledException)
                     {
-                        try { proc.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                        try { ProcessTreeKill.Kill(proc); } catch (InvalidOperationException) { }
                         return null;
                     }
 

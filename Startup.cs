@@ -146,23 +146,59 @@ namespace Orbweaver
         // folder. Before `serveOnLaunch`, like the other retirement steps:
         // nothing it does needs the network or a screen.
         //
+        // `refreshHooks` (CB-306) is the installed-hook refresh CB-265 added,
+        // and it used to run from App.OnFrameworkInitializationCompleted —
+        // which is to say behind `waitForUnlock`. On the mini that wait never
+        // ends: the console session is locked (`CGSSessionScreenIsLocked
+        // true`, read off ioreg), the app parks before the UI and serves peers
+        // from `serveOnLaunch` for days, and a hook fix shipped in the bundle
+        // never reached ~/.claude/orbweaver — the installed copy stayed the
+        // one install-macos-hooks.sh wrote on 26 Oct while the bundle beside
+        // it carried the fix, with nothing in hook-installer.log to say so.
+        // That is the one machine the status-directory fix was for. The
+        // refresh is files only — read the bundled script, compare, overwrite
+        // on a pool thread — so it belongs with the other display-free steps,
+        // ahead of the wait. After `retireLegacy`, so it never refreshes a
+        // folder that step is about to retire; after the single-instance
+        // claim, so two instances never overwrite one script at once; before
+        // `serveOnLaunch`, so a session hooked from here on writes where the
+        // app reads as early as possible.
+        //
         // Passed as delegates rather than called directly because every one of
         // them is unrunnable in a test — a real relay, a real screen-lock query,
         // a real named mutex, and a lifetime that owns the process until it
         // exits — while the order (and, now, the short-circuit) is the part
         // that broke and the part a test can hold on to.
+        //
+        // `installHangupGuard` (CB-306) follows `installCrashLog` directly: it
+        // writes its one line through the crash log, and it has to be in place
+        // before anything is spawned that could be killed (and so before
+        // `claimSingleInstance`, whose loser exits and needs none of it — a
+        // registration costs nothing there).
         internal static void Run(
             Action installCrashLog,
+            Action installHangupGuard,
             Func<bool> claimSingleInstance,
             Action migrateUserData,
             Action claimUiThread,
             Action retireLegacy,
             Action repairKeepAlive,
+            Action refreshHooks,
             Action serveOnLaunch,
             Action waitForUnlock,
-            Action startUi)
+            Action startUi,
+            Func<bool>? finishUpdate = null)
         {
             installCrashLog();
+            installHangupGuard();
+            // CB-308: the updater's finisher is the staged *new* bundle
+            // launched with --finish-update. It is deliberately not a Buddy:
+            // it must run while the old one is still alive and holding the
+            // single-instance claim, so it answers before that claim and
+            // Run returns once it has handled the launch. Optional and last
+            // so every existing caller keeps compiling; the order is what is
+            // pinned (StartupOrderTests).
+            if (finishUpdate is not null && finishUpdate()) return;
             if (!claimSingleInstance())
             {
                 // Another live Buddy holds the single-instance claim. Exit
@@ -175,6 +211,7 @@ namespace Orbweaver
             claimUiThread();
             retireLegacy();
             repairKeepAlive();
+            refreshHooks();
             serveOnLaunch();
             waitForUnlock();
             startUi();

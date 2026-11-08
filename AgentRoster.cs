@@ -215,7 +215,7 @@ namespace Orbweaver
 
                 if (!process.WaitForExit(timeoutMs))
                 {
-                    try { process.Kill(true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     return new RunOutcome(true, true, true, 0, null, null);
                 }
 

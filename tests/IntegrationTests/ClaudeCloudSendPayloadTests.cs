@@ -163,4 +163,39 @@ public class ClaudeCloudSendPayloadTests
             Assert.DoesNotContain(Token, result.Outcome.Detail ?? "", StringComparison.Ordinal);
         }
     }
+
+    // CB-306: the control requests a cloud panel's slash commands post, captured
+    // as they would go on the wire (FixtureApi builds the HttpRequestMessage
+    // exactly as HttpCloudApi does) and run through the shared poster.
+    [Theory]
+    [InlineData("/rename my session", "rename_session", "title", "my session")]
+    [InlineData("/model opus", "set_model", "model", "opus")]
+    [InlineData("/permissions plan", "set_permission_mode", "mode", "plan")]
+    public async Task ASlashCommandGoesOutAsAControlRequestOnTheEventsPath(
+        string line, string subtype, string field, string value)
+    {
+        var api = new FixtureApi(200, SentBody);
+        var (name, args) = SlashRouting.Split(line)!.Value;
+        var route = SlashRouting.Resolve(SlashChannel.Cloud, name, args);
+        var request = SlashRouting.ControlRequest(route.ControlSubtype!, args, out _)!;
+
+        var failure = await CloudTurnSender.PostControlAsync(api, new Credentials(),
+            new CredentialBudget(TimeSpan.FromSeconds(5), (_, ct) => Task.Delay(Timeout.Infinite, ct)),
+            SessionId, request, CancellationToken.None);
+
+        Assert.Null(failure);
+        Assert.Equal("/v1/code/sessions/session_01FixtureOnly/events", api.Last!.Value.Path);
+        Assert.DoesNotContain(Token, api.Last!.Value.Body, StringComparison.Ordinal);
+        using var doc = System.Text.Json.JsonDocument.Parse(api.Last!.Value.Body!);
+        var payload = doc.RootElement.GetProperty("events")[0].GetProperty("payload");
+        Assert.Equal("control_request", payload.GetProperty("type").GetString());
+        Assert.Equal(subtype, payload.GetProperty("request").GetProperty("subtype").GetString());
+        Assert.Equal(value, payload.GetProperty("request").GetProperty(field).GetString());
+    }
+
+    private sealed class Credentials : ICloudCredentialSource
+    {
+        public string? Stamp() => "stamp-1";
+        public CredentialRead Read() => new(CredentialOutcome.Found, Token, null, "a credential is present");
+    }
 }

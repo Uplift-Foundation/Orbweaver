@@ -92,7 +92,70 @@ namespace Orbweaver
             // exactly the dirs that hello's roster used even when another
             // peer's hello re-reads in between. Null means no gap analysis
             // (every seam built before this existed), and Agents is used.
-            Func<(IReadOnlyList<AgentRoster.Entry> Agents, IReadOnlyList<string> Dirs)>? RosterSnapshot = null);
+            Func<(IReadOnlyList<AgentRoster.Entry> Agents, IReadOnlyList<string> Dirs)>? RosterSnapshot = null,
+
+            // CB-306: the slash commands this session offers and how each would
+            // run on THIS machine, and the act of running one. Both answer from
+            // the session's own channel routing (the LocalCliChatSession
+            // bridge/peer-socket runner), which is the only code that knows
+            // whether the session has a pane, a bridge or neither.
+            //
+            // Null on both is what a build that predates the runner looks like,
+            // and it has to stay honest rather than optimistic: the catalogue
+            // is then offered as Typed where the session has a pane and
+            // Unavailable where it does not, and a slash INPUT is typed or
+            // refused on the same test. The seam is where the runner plugs in
+            // without this file changing.
+            Func<SessionStatus, IReadOnlyList<SlashCommand>>? SlashCommandsFor = null,
+            Func<SessionStatus, string, Task<SlashOutcome>>? RunSlash = null,
+
+            // CB-306's second reopen: the persona each entry carries, given the
+            // config dirs this roster resolves against and whether the asker
+            // fetches pictures by id. Null resolves on the calling thread, as
+            // every server built before this did; LiveSeams wires
+            // PeerPersonaCache.Shared, because the calling thread is the peer
+            // pump and the persona files live under the session's cwd and its
+            // parents — the same walk the slash catalogue froze the link on.
+            Func<SessionStatus, IReadOnlyList<string>, bool, MirrorProtocol.PeerPersona?>? PersonaFor = null,
+
+            // CB-307: where a session's last turn is read from, for the parked
+            // flag. Null means a cache of this server's own over the real
+            // disk, which is what the app uses; a test passes one with
+            // injected arms to count reads or to fail them.
+            LastTurnCache? LastTurns = null,
+
+            // CB-307 addendum: what TypingGate reads before anything is typed —
+            // Claude Code's own session record, the pane's screen, and whether
+            // that screen can be read at all on this session's route. Null on
+            // both reads means ungated (TypingGate.GuardedTypeAsync), so every
+            // harness built before this types exactly as it did; LiveSeams
+            // wires all three.
+            Func<SessionStatus, string?>? RecordStatus = null,
+            Func<SessionStatus, Task<string?>>? CapturePane = null,
+            Func<SessionStatus, bool>? CanReadPane = null,
+
+            // CB-307 addendum item 3: press one key in the session's pane — a
+            // dialog option's digit, never anything a person typed. Null means
+            // this server cannot answer a dialog, and ANSWER is refused as
+            // unsupported; LiveSeams wires TerminalFocuser.SendPaneKey.
+            Func<SessionStatus, string, Task<bool>>? PressKey = null,
+
+            // CB-307 item 3: type text into the pane literally, with no Enter —
+            // the free-text row of a form, after the server has put the cursor
+            // on it and seen it there. Null refuses free text as unsupported;
+            // LiveSeams wires TerminalFocuser.SendPaneText.
+            Func<SessionStatus, string, Task<bool>>? TypeLiteral = null,
+
+            // CB-307: the typing gate's shadow mode on this machine — verdicts
+            // logged, typing let through (TypingGate.GuardedTypeAsync). Null is
+            // off; LiveSeams reads the same marker file and environment
+            // variable as the local panel's gate.
+            Func<bool>? Shadow = null);
+
+        // What running a slash line on the far machine came to: one of
+        // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
+        // sentence that says why.
+        internal readonly record struct SlashOutcome(string Via, string? Reason, string? Verdict = null);
 
         private readonly string _account;
         private readonly Seams _seams;
@@ -347,7 +410,7 @@ namespace Orbweaver
             // inside CanDeliver/Deliver keeps this the same shape as every
             // other seam above: LiveSeams runs once, at startup, and what it
             // wires up is what runs on every tick after.
-            var messenger = new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.All()));
+            var messenger = new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.AllWithDiscovered()));
 
             // MachineNames.Tag(), not .Mine(): the other CB-105 slice
             // (LocalCliChatSession.DeliverViaMessengerAsync) already settled
@@ -355,6 +418,37 @@ namespace Orbweaver
             // for the two delivery paths to attribute a message differently
             // depending on which machine's Buddy happened to make the call.
             var fromName = SessionMessenger.FromName(MachineNames.Tag());
+
+            // CB-306: the same resolver a local panel uses, over this machine's
+            // own pane, registry and cloud login.
+            var cloudApi = new HttpCloudApi();
+            var slash = new MirrorSlashHost(new MirrorSlashHost.Seams(
+                status => TerminalFocuser.CanSendQuietly(status),
+                status => RegistryEntryFor(status) is { } e && SessionRegistry.Speaks(e),
+                status => LocalSlashChannel.BridgeIdFor(
+                    status.IsDesktopHosted ? status.BridgeSessionId : null,
+                    status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
+                // Never the scan itself: this runs on the peer pump while a
+                // HELLO is answered, and one folder whose opendir never returns
+                // froze the whole link (CB-306's second reopen). The cache
+                // scans off-thread and answers with what it already has.
+                status => SlashCatalogueCache.Shared.Peek(status.Source, status.Cwd),
+                (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
+                MirrorSlashHost.GatedPost(
+                    () => OrbweaverSettings.BridgeCommandsEnabled,
+                    status => LocalSlashChannel.BridgeIdFor(
+                        status.IsDesktopHosted ? status.BridgeSessionId : null,
+                        status.IsDesktopHosted ? null : RegistryEntryFor(status)?.BridgeSessionId),
+                    status => RegistryEntryFor(status)?.Version,
+                    (status, bridgeId, request) => CloudTurnSender.PostControlAndReadAnswerAsync(
+                        cloudApi,
+                        CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
+                        CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
+                        System.Threading.CancellationToken.None)),
+                RecordStatus: status => RecordStatusFor(status, localSessions),
+                CapturePane: TerminalFocuser.CapturePane,
+                CanReadPane: TerminalFocuser.CanReadPane,
+                Shadow: RealShadowOn));
 
             return new(
                 sendFrame,
@@ -371,7 +465,42 @@ namespace Orbweaver
 
                     return await messenger.DeliverAsync(entry.SessionId, fromName, text, CancellationToken.None)
                         .ConfigureAwait(false);
-                });
+                },
+                SlashCommandsFor: slash.CommandsFor,
+                RunSlash: slash.RunAsync,
+                PersonaFor: PeerPersonaCache.Shared.Peek,
+                RecordStatus: status => RecordStatusFor(status, localSessions),
+                CapturePane: TerminalFocuser.CapturePane,
+                CanReadPane: TerminalFocuser.CanReadPane,
+                PressKey: TerminalFocuser.SendPaneKey,
+                TypeLiteral: TerminalFocuser.SendPaneText,
+                Shadow: RealShadowOn);
+        }
+
+        // CB-307: shadow mode, read the way the local panel's gate reads it —
+        // the marker file in this machine's settings folder, or the env var.
+        [ExcludeFromCodeCoverage]
+        private static bool RealShadowOn() =>
+            ShadowSwitch.IsOn(OrbweaverSettings.Directory, BrandEnv.Get(BrandEnv.LocalGateShadow), File.Exists);
+
+        // CB-307 addendum: Claude Code's own record status for a session, for
+        // the typing gate. SessionStatus carries the pid but not the session
+        // id SessionPark needs to refuse a reused pid's record, so the id is
+        // looked up in this server's own session list by reference — the same
+        // list the status came out of. Excluded with the rest of LiveSeams:
+        // it reads real files under the real config roots.
+        [ExcludeFromCodeCoverage]
+        private static string? RecordStatusFor(
+            SessionStatus status,
+            Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> localSessions)
+        {
+            if (status.SessionPid <= 0) return null;
+
+            foreach (var (sessionId, candidate) in localSessions())
+                if (ReferenceEquals(candidate, status))
+                    return SessionPark.RecordStatus(status.SessionPid, sessionId);
+
+            return null;
         }
 
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
@@ -396,7 +525,7 @@ namespace Orbweaver
         {
             if (status.SessionPid <= 0) return null;
 
-            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.All()))
+            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()))
             {
                 if (entry.Pid == status.SessionPid && ProcessLiveness.IsRunning(entry.Pid)) return entry;
             }
@@ -448,6 +577,14 @@ namespace Orbweaver
 
                 case MirrorProtocol.Avatar:
                     await AvatarAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.Prompt:
+                    await PromptAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.Answer:
+                    await AnswerAsync(fromPeer, frame).ConfigureAwait(false);
                     break;
             }
         }
@@ -558,34 +695,33 @@ namespace Orbweaver
                 var hasTranscript = !string.IsNullOrEmpty(status.TranscriptPath)
                                     && File.Exists(status.TranscriptPath);
 
-                // A conversation, not just a process.
-                //
-                // The registry lists every session whose window is still open,
-                // including ones abandoned at a prompt days ago — and drawing
-                // those puts an orb beside a live session with the same name
-                // and no way to tell them apart. SessionLiveness has the full
-                // account of why the obvious checks all say "alive" for a
-                // session nobody has spoken to since Saturday.
+                // CB-307: a session nobody has spoken to for a while is
+                // offered parked, not left out. It used to be left out, on the
+                // reasoning that a quiet session was an abandoned one; a quiet
+                // long-lived session is how these are ordinarily used, and the
+                // peer drew no orb for it at all. SessionLiveness has the full
+                // account, and WithoutQuietDuplicates below keeps the one case
+                // where leaving it out was right.
                 //
                 // Said once per name: a peer asks every ten seconds, and a
-                // session that has been abandoned stays abandoned.
-                if (hasTranscript && !LivelyEnough(status))
-                {
-                    MirrorLog.SayOnce($"hello-abandoned:{name}", $"name={name}");
-                    continue;
-                }
+                // parked session usually stays parked.
+                var parked = hasTranscript && ParkedNow(status);
+                if (parked) QuietLog($"hello-parked:{name}", $"name={name}");
 
+                var offered = Offered(status);
                 entries.Add(new MirrorProtocol.MirrorRosterEntry(
                     name,
                     MirrorProtocol.CliFor(status.Source),
                     hasTranscript,
                     _seams.CanType(status),
                     string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
-                    Commands(status),
+                    offered.Names,
                     status.State,
                     _seams.CanDeliver?.Invoke(status),
                     RouteFor(resolved.Value.SessionId),
-                    ResolvePeerPersona(status, userConfigDirs, picturesById)));
+                    PersonaFor(status, userConfigDirs, picturesById),
+                    CommandRoutes: offered.Routes,
+                    Parked: parked ? true : null));
             }
 
             // AgentRoster is Claude Code's authority, not a universal session
@@ -604,13 +740,33 @@ namespace Orbweaver
                         ? (string.IsNullOrWhiteSpace(status.Cwd) ? MirrorProtocol.CliFor(status.Source) : Path.GetFileName(status.Cwd))
                         : status.Title;
                     var hasTranscript = !string.IsNullOrEmpty(status.TranscriptPath) && File.Exists(status.TranscriptPath);
-                    if (hasTranscript && !LivelyEnough(status)) continue;
+                    // CB-307: never parked. SessionLiveness reads Claude Code's
+                    // turn rows (`user`/`assistant`), and neither a Codex rollout
+                    // (response_item, event_msg, ...) nor Grok's updates.jsonl
+                    // (untyped rows) has one — measured on real files on this
+                    // machine — so their last turn is always "unknown", which
+                    // is not parked. The host's scan reads last turns for Claude
+                    // Code only, for the same reason, so saying so here rather
+                    // than computing an answer that is always no keeps the two
+                    // sides agreeing by construction, not by coincidence.
+                    var offered = Offered(status);
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
-                        Commands(status), status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById)));
+                        offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
+                        PersonaFor(status, userConfigDirs, picturesById),
+                    CommandRoutes: offered.Routes));
                 }
             }
+
+            // CB-307: the one case where a quiet session is still left out — a
+            // parked copy beside a live copy of the same name, which is two
+            // identical labels with the dim one meaning nothing. Before the
+            // member block on purpose, so a suppressed lead cannot sponsor
+            // members (the same ordering the old abandoned rule had).
+            var (kept, suppressed) = WithoutQuietDuplicates(entries, sessions);
+            entries = kept;
+            foreach (var gone in suppressed)
+                QuietLog($"hello-duplicate:{gone.Name}", $"name={gone.Name}");
 
             // CB-223: agent-team members. Claude Code's agent registry does not
             // list a team's members — measured: fifteen live member processes,
@@ -625,22 +781,32 @@ namespace Orbweaver
             if (everything)
             {
                 var offeredRoutes = entries.Where(e => e.Route is not null).Select(e => e.Route!).ToList();
-                foreach (var (sessionId, status) in TeamMembersToOffer(offeredRoutes, sessions,
-                             s => !(HasTranscript(s) && !LivelyEnough(s))))
+                // CB-307: every member of an offered lead is offered; a quiet
+                // one is offered parked. The duplicate rule never reaches a
+                // member, because every member wears its lead's title.
+                foreach (var (sessionId, status) in TeamMembersToOffer(offeredRoutes, sessions, _ => true))
                 {
                     var name = string.IsNullOrWhiteSpace(status.Title)
                         ? (string.IsNullOrWhiteSpace(status.Cwd) ? MirrorProtocol.CliFor(status.Source) : Path.GetFileName(status.Cwd))
                         : status.Title;
+                    var offered = Offered(status);
                     entries.Add(new MirrorProtocol.MirrorRosterEntry(name, MirrorProtocol.CliFor(status.Source),
                         HasTranscript(status), _seams.CanType(status),
                         string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
-                        Commands(status), status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
-                        ResolvePeerPersona(status, userConfigDirs, picturesById)));
+                        offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
+                        PersonaFor(status, userConfigDirs, picturesById),
+                    CommandRoutes: offered.Routes,
+                    Parked: HasTranscript(status) && ParkedNow(status) ? true : null));
                 }
             }
 
             // Every entry, offered by either path, says whose team it is in.
             entries = WithTeamFields(entries, sessions);
+
+            // CB-306: and whether OpenClaw spawned it, for the near side's own
+            // cluster settings to judge.
+            entries = WithOpenClawFields(entries, sessions,
+                OpenClawSessions.OwnerIndexSnapshot().AgentWorkspaces.Values.ToList());
 
             // CB-300: a live session the roster never named leaves no trace in
             // the loops above — it is not in `wanted`, so it is never looked up,
@@ -657,6 +823,7 @@ namespace Orbweaver
             var raw = MirrorProtocol.RosterBytes(entries);
             var hash = MirrorProtocol.Hash(raw);
             var reply = new Dictionary<string, string> { [MirrorProtocol.RosterHashField] = hash };
+            if (_seams.CapturePane is not null && _seams.PressKey is not null) reply[MirrorProtocol.PromptsField] = "1";
 
             if (MirrorProtocol.RosterUnchanged(frame.Get(MirrorProtocol.RosterHashField), hash))
             {
@@ -686,20 +853,52 @@ namespace Orbweaver
         // CB-216: the picture comes from PeerAvatarStore, which reads it again
         // only when the file changes, and is sent as its id to an asker that can
         // fetch by id (picturesById) and as bytes to one that cannot.
-        internal static MirrorProtocol.PeerPersona? ResolvePeerPersona(
-            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById = false)
-        {
-            if (!status.IsLocalCli || string.IsNullOrWhiteSpace(status.Cwd)) return null;
+        // Through the seam when one is wired (LiveSeams wires PeerPersonaCache,
+        // so the pump never reads a persona file itself), and directly when not,
+        // which is what every server built before CB-306's second reopen did.
+        private MirrorProtocol.PeerPersona? PersonaFor(
+            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById) =>
+            _seams.PersonaFor is { } cached
+                ? cached(status, userConfigDirs, picturesById)
+                : ResolvePeerPersona(status, userConfigDirs, picturesById);
 
-            var candidates = LocalPersona.Candidates(
-                status.Cwd, userConfigDirs, status.Source, status.Agent);
-            var local = LocalPersona.ResolveFrom(candidates, status.Cwd);
+        internal static MirrorProtocol.PeerPersona? ResolvePeerPersona(
+            SessionStatus status, IReadOnlyList<string> userConfigDirs, bool picturesById = false) =>
+            ToPeerPersona(ReadPeerPersona(status.Source, status.Cwd, status.Agent, userConfigDirs),
+                picturesById, PeerAvatarStore.Shared.ById);
+
+        // The half of resolving a persona that touches the disk: the persona
+        // files under the cwd and its parents, and the picture they name. Split
+        // from ToPeerPersona so PeerPersonaCache can run this on a worker and
+        // the pump only ever does the other half (CB-306's second reopen).
+        internal readonly record struct PersonaRead(
+            string? Name, string? Voice, double? Rate, PeerAvatarStore.Picture? Picture);
+
+        internal static PersonaRead? ReadPeerPersona(
+            SessionSource source, string? cwd, string agent, IReadOnlyList<string> userConfigDirs)
+        {
+            if (source is not (SessionSource.ClaudeCode or SessionSource.Codex or SessionSource.Grok)
+                || string.IsNullOrWhiteSpace(cwd)) return null;
+
+            var candidates = LocalPersona.Candidates(cwd, userConfigDirs, source, agent);
+            var local = LocalPersona.ResolveFrom(candidates, cwd);
             var picture = local.AvatarPath is null ? null : PeerAvatarStore.Shared.At(local.AvatarPath);
-            var peer = picture is not { } found
-                ? new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate)
-                : picturesById
-                    ? new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate, AvatarId: found.Id)
-                    : new MirrorProtocol.PeerPersona(local.Name, local.Voice, local.Rate, found.Bytes);
+            return new PersonaRead(local.Name, local.Voice, local.Rate, picture);
+        }
+
+        // The wire half, with no IO. An id is sent only while the store still
+        // answers for it: a cached read can outlive the picture's place in
+        // PeerAvatarStore's bounded memory, and an id the AVATAR request would
+        // refuse is worse than the bytes.
+        internal static MirrorProtocol.PeerPersona? ToPeerPersona(
+            PersonaRead? read, bool picturesById, Func<string, byte[]?> knownById)
+        {
+            if (read is not { } r) return null;
+            var peer = r.Picture is not { } found
+                ? new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate)
+                : picturesById && knownById(found.Id) is not null
+                    ? new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate, AvatarId: found.Id)
+                    : new MirrorProtocol.PeerPersona(r.Name, r.Voice, r.Rate, found.Bytes);
             return peer.IsEmpty ? null : peer;
         }
 
@@ -723,6 +922,127 @@ namespace Orbweaver
                 .ConfigureAwait(false);
         }
 
+        // --- answering a dialog (CB-307 addendum item 3) -----------------------
+
+        // What that session is waiting on, read off its own pane on this
+        // machine and sent as parsed options, never as the screen.
+        //
+        // A peer panel used to show a session waiting on an AskUserQuestion
+        // form as a bare "· AskUserQuestion" and nothing else, and the typing
+        // gate then (rightly) refused a typed reply, so it could not be
+        // answered from anywhere but the terminal. This, with ANSWER below, is
+        // the way through: the far side reads its own screen, and presses only
+        // a key it has just read there.
+        private async Task PromptAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
+            if (status is null) { AnswerLog("prompt", $"n={name} -> err code={refused}"); return; }
+
+            var prompt = await ReadPromptAsync(status).ConfigureAwait(false);
+            if (prompt is null)
+            {
+                AnswerLog("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoPrompt}");
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoPrompt, name).ConfigureAwait(false);
+                return;
+            }
+
+            AnswerLog("prompt", $"n={name} -> ok options={prompt.Options.Count} fp={prompt.Fingerprint}");
+            await SendTransferAsync(fromPeer, frame.Id, MirrorProtocol.EncodePrompt(prompt),
+                new Dictionary<string, string> { [MirrorProtocol.FingerprintField] = prompt.Fingerprint }, sub: null)
+                .ConfigureAwait(false);
+        }
+
+        // Take one option. The screen is read again first, and the key is
+        // pressed only if the dialog there is still the one the answer was
+        // chosen from (same fingerprint) and the key is one of its options.
+        // Anything else is refused with nothing pressed: a panel a few seconds
+        // stale must not answer the next question with the last one's choice.
+        //
+        // The answer itself is FormAnswer's, shared with the local panel so the
+        // two can never drift; this adds the link's gates around it. Three
+        // kinds of answer, each pinned to QA's real captures (item3/):
+        //
+        //  - an option's digit. On a single-select question it selects and
+        //    moves on; on a multi-select one it toggles a box and stays.
+        //  - "commit" (MirrorProtocol.ActionCommit), a multi-select question
+        //    only: Right, which moves on with the ticks kept.
+        //  - free text, the "Type something" option with text. That row is the
+        //    field itself: the server moves the cursor onto it, sees it there,
+        //    types the text, sees it in the row, and only then presses Enter.
+        //
+        // **Enter on an empty "Type something" declines the whole form**
+        // (capture 03), and a digit on it on a single-select question selects
+        // it empty, which is the same thing. So that option is never pressed by
+        // its digit, never with empty, whitespace-only or multi-line text, and
+        // Enter goes only after the typed text has been read back off the row.
+        // Free text on a multi-select question is refused: QA did not capture
+        // typing into its "[ ] Type something" row.
+        private async Task AnswerAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
+            if (status is null) { AnswerLog("answer", $"n={name} -> err code={refused}"); return; }
+
+            var key = frame.Get(MirrorProtocol.KeyField) ?? "";
+            var action = frame.Get(MirrorProtocol.ActionField);
+            var wanted = frame.Get(MirrorProtocol.FingerprintField) ?? "";
+            var text = frame.Payload is { Length: > 0 } bytes ? Encoding.UTF8.GetString(bytes) : null;
+
+            var code = _seams.PressKey is not { } press
+                ? MirrorProtocol.ErrUnsupported
+                : await FormAnswer.AnswerAsync(status, _seams.CapturePane!, press, _seams.TypeLiteral,
+                    wanted, key, action, text).ConfigureAwait(false);
+
+            var what = action is null ? $"key={key}" : $"act={action}";
+            if (code is not null)
+            {
+                AnswerLog("answer", $"n={name} {what} -> err code={code}");
+                await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+                return;
+            }
+
+            AnswerLog("answer", $"n={name} {what} -> ok");
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id)).ConfigureAwait(false);
+        }
+
+        // The session a PROMPT or ANSWER names, with the same gates INPUT has:
+        // a verified frame, a session that resolves, this machine's own reply
+        // setting (answering a dialog is input), and a pane this machine can
+        // read. On a refusal the ERR has been sent and Status is null.
+        private async Task<(SessionStatus? Status, string Name, string? Refused)> DialogSessionAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            var name = frame.Text("n") ?? "?";
+
+            string? code = null;
+            SessionStatus? status = null;
+
+            if (frame.Payload is not null && !frame.PayloadVerified) code = MirrorProtocol.ErrBadHash;
+            else if (frame.Text("n") is null
+                     || Resolve(name, _seams.Agents(), _seams.LocalSessions()) is not { } resolved)
+                code = MirrorProtocol.ErrNoSession;
+            else if (!_seams.ReplyEnabled(resolved.Status.Source)) code = MirrorProtocol.ErrReplyOff;
+            else if (_seams.CapturePane is null || !(_seams.CanReadPane?.Invoke(resolved.Status) ?? true))
+                code = MirrorProtocol.ErrNoPane;
+            else status = resolved.Status;
+
+            if (code is not null) await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+            return (status, name, code);
+        }
+
+        private async Task<MirrorProtocol.WirePrompt?> ReadPromptAsync(SessionStatus status)
+        {
+            string? screen;
+            try { screen = await _seams.CapturePane!(status).ConfigureAwait(false); }
+            catch { screen = null; }
+
+            return MirrorProtocol.PromptFromScreen(screen);
+        }
+
+        // The sink for prompt and answer outcomes: the route, the key and the
+        // fingerprint, never a label or the screen. Same arrangement as
+        // InputLog.
+        internal Action<string, string> AnswerLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
+
         // The commands that session can actually run, read off this machine's
         // disk rather than asked of a model.
         //
@@ -734,81 +1054,65 @@ namespace Orbweaver
         // the input is typed into the session's own input line, so every
         // built-in works exactly as it does locally; and the catalogue reads the
         // real ~/.claude on the machine the commands live on.
-        private static IReadOnlyList<string> Commands(SessionStatus status)
-        {
-            return SafeCommandNames(status);
-        }
+        // The catalogue and, parallel to it, how each command would run here
+        // (CB-306). One call so the names and the kinds can never disagree.
+        internal const int MaxCatalogue = 1000;
 
-        // Excluded from coverage: exists to be the try/catch. SlashCommandCatalog
-        // already swallows the IO it does — a directory that vanished mid-scan is
-        // its ordinary case rather than an exception — so nothing here has been
-        // observed to throw.
-        //
-        // Kept because this runs while answering another machine, on a background
-        // task, from a cwd belonging to a session this process does not own: an
-        // exception would take the roster answer down and leave the far panel
-        // with no live view and no explanation, which is a much worse outcome
-        // than a session offering no commands.
-        [ExcludeFromCodeCoverage]
-        private static IReadOnlyList<string> SafeCommandNames(SessionStatus status)
+        private (IReadOnlyList<string> Names, IReadOnlyList<string> Routes) Offered(SessionStatus status)
         {
-            try
+            IReadOnlyList<SlashCommand> list;
+            if (_seams.SlashCommandsFor is { } routed)
             {
-                return SlashCommandCatalog.For(status.Source, status.Cwd)
-                    .Select(c => c.Name)
-                    .Take(120)
+                try { list = routed(status); }
+                catch { list = Array.Empty<SlashCommand>(); }
+            }
+            else
+            {
+                var channel = _seams.CanType(status) ? SlashChannel.Terminal : SlashChannel.PeerSocket;
+                list = SafeCommandNames(status)
+                    .Select(n => new SlashCommand(n, "", SlashRouting.Resolve(channel, n, "").Kind))
                     .ToList();
             }
-            catch
-            {
-                return Array.Empty<string>();
-            }
+
+            // A safety bound, not a trim. The near side treats a name as a
+            // command only if the roster lists it, so a name cut off here would
+            // be sent to the far model as prose; the bound is far above any
+            // real catalogue (names are short, so 1000 is about 20 KB at worst).
+            list = list.Take(MaxCatalogue).ToList();
+
+            return (list.Select(c => c.Name).ToList(),
+                    list.Select(c => MirrorProtocol.RouteWord(c.Route)).ToList());
         }
 
-        // How much of a transcript to read looking for the last turn.
-        //
-        // Larger than the window used to *render* a conversation, because this
-        // is asking a different question: a session that has been sitting at a
-        // prompt accumulates bookkeeping rows — `bridge-session`,
-        // `queue-operation`, `mode` — after its final turn, and the answer is
-        // wrong if the last turn has been pushed out of the window by them.
-        // A megabyte reaches past several hundred such rows, and the cost is a
-        // bounded read on a path that already scans a commands directory per
-        // entry.
-        internal const int LivelinessTailBytes = 1024 * 1024;
+        // The CLI's built-ins and nothing read off disk. This arm serves only a
+        // server built without SlashCommandsFor — LiveSeams always wires it, so
+        // in the app that is tests and nothing else — and it runs on the peer
+        // pump while a HELLO is answered, where a scan of the session's cwd is
+        // exactly what froze the mini's link (CB-306's second reopen). It used
+        // to scan, behind a try/catch; a fixed list needs neither.
+        private static IReadOnlyList<string> SafeCommandNames(SessionStatus status) =>
+            SlashCommandCatalog.BuiltinsFor(status.Source)
+                .Select(c => c.Name)
+                .Take(MaxCatalogue)
+                .ToList();
 
-        // Excluded from coverage: this is the disk. What it decides is
-        // SessionLiveness, which is pure and covered from both sides of the
-        // boundary; this reads a tail and asks.
+        // CB-307: whether this session is parked right now.
         //
         // Through `Now()` rather than `DateTime.UtcNow` for the reason that
         // property already exists: a rule about how long ago something happened
         // is untestable against a wall clock. It also keeps the fixtures
         // honest — MirrorRoundTripTests pins every row at a fixed instant
         // deliberately (its own comment says why), and a roster that read the
-        // real clock would quietly drop every one of those sessions and take
-        // the whole suite with it.
-        [ExcludeFromCodeCoverage]
-        private bool LivelyEnough(SessionStatus status)
-        {
-            try
-            {
-                var lines = TranscriptReader.TailLines(
-                    status.TranscriptPath!, LivelinessTailBytes);
+        // real clock would quietly park every one of those sessions.
+        //
+        // No try/catch, unlike the read this replaced: LastTurnCache already
+        // turns a stat or read that throws into "no turn", which IsParked reads
+        // as not parked — the same fail-open, decided in one place.
+        private bool ParkedNow(SessionStatus status) =>
+            SessionLiveness.IsParked(status.State, LastTurns.LastTurnFor(status.TranscriptPath), Now());
 
-                return SessionLiveness.WorthShowing(
-                    status.State,
-                    SessionLiveness.LastTurnAt(lines),
-                    Now());
-            }
-            catch
-            {
-                // A transcript that cannot be read is shown rather than
-                // hidden — see WorthShowing on why an unreadable file must not
-                // look like an abandoned session.
-                return true;
-            }
-        }
+        private LastTurnCache LastTurns => _seams.LastTurns ?? _ownLastTurns;
+        private readonly LastTurnCache _ownLastTurns = new();
 
         // A peer name, resolved to a session on this machine — or nothing.
         //
@@ -993,13 +1297,24 @@ namespace Orbweaver
         // test, since the real log is opt-in and decided once per process.
         internal Action<string, string> GapLog { get; set; } = (what, detail) => MirrorLog.SayOnce(what, detail);
 
+        // CB-307: the sink for hello-parked and hello-duplicate, for the same
+        // reason GapLog is one — the real log is opt-in and decided once per
+        // process, so a test could not otherwise see what was said.
+        internal Action<string, string> QuietLog { get; set; } = (what, detail) => MirrorLog.SayOnce(what, detail);
+
         private void RecordRosterGaps(
             IReadOnlyList<AgentRoster.Entry> agents,
             IReadOnlyList<(string SessionId, SessionStatus Status)> sessions,
             IReadOnlyList<string> askedDirs)
         {
-            var gaps = RosterGaps(agents, sessions, askedDirs, Home,
-                s => !(HasTranscript(s) && !LivelyEnough(s)));
+            // CB-307: every session is eligible now. A parked session is offered,
+            // so it is a gap only if the registry missed it, like any other. A
+            // session the duplicate rule suppressed never needs excluding here:
+            // the rule only sees entries the registry loop offered, and such a
+            // session matches a registry row, which RosterGaps already skips.
+            // The plan's "not suppressed" predicate would therefore have been a
+            // second, unreachable spelling of that same skip.
+            var gaps = RosterGaps(agents, sessions, askedDirs, Home, _ => true);
 
             lock (_gate) _rosterGaps = gaps;
 
@@ -1019,12 +1334,80 @@ namespace Orbweaver
                 ? root
                 : "(outside home)";
 
+        // CB-307: the roster with every parked copy that a live copy of the
+        // same name makes redundant taken out, and what was taken out (for the
+        // log). Pure, like WithTeamFields: entries are matched to their
+        // sessions by route, and only a session SessionLiveness lets the
+        // duplicate rule see takes part — the host's scan uses the same
+        // predicate and the same rule, which is what makes host and peer
+        // agree. The name is the session's title, which is what the host
+        // labels its orb with, and the entry's name only when it has none.
+        // An entry with no route, or whose session is not in the list, is
+        // kept untouched.
+        internal static (List<MirrorProtocol.MirrorRosterEntry> Kept, List<(MirrorProtocol.MirrorRosterEntry Entry, string Name)> Suppressed)
+            WithoutQuietDuplicates(
+                List<MirrorProtocol.MirrorRosterEntry> entries,
+                IReadOnlyList<(string SessionId, SessionStatus Status)> sessions)
+        {
+            var byRoute = new Dictionary<string, SessionStatus>(StringComparer.Ordinal);
+            foreach (var (sessionId, status) in sessions) byRoute[RouteFor(sessionId)] = status;
+
+            var rows = new List<(string Key, string Name, bool Parked)>();
+            var nameOf = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+            {
+                if (entry.Route is null || !byRoute.TryGetValue(entry.Route, out var status)) continue;
+                if (!SessionLiveness.EligibleForDuplicateRule(status)) continue;
+
+                var name = string.IsNullOrWhiteSpace(status.Title) ? entry.Name : status.Title;
+                nameOf[entry.Route] = name;
+                rows.Add((entry.Route, name, entry.Parked == true));
+            }
+
+            var drop = SessionLiveness.SuppressedDuplicates(rows);
+            var kept = new List<MirrorProtocol.MirrorRosterEntry>();
+            var gone = new List<(MirrorProtocol.MirrorRosterEntry, string)>();
+            foreach (var entry in entries)
+            {
+                if (entry.Route is not null && drop.Contains(entry.Route)) gone.Add((entry, nameOf[entry.Route]));
+                else kept.Add(entry);
+            }
+
+            return (kept, gone);
+        }
+
         // CB-223: each entry with its team fields, from the session it was
         // built from. Lead is the lead's route, and only when that route is in
         // this same roster — a near machine must never be pointed at an orb it
         // was not offered. An entry with no team, or whose lead is not here,
         // is returned unchanged, so a roster with no teams serialises (and
         // hashes) exactly as it did before.
+        // CB-306: stamps OpenClawCluster and OpenClawWorkspace on every entry
+        // whose session OpenClaw spawned, by route, as WithTeamFields stamps the
+        // team. knownWorkspaces is this machine's own gateway's agents.list, and
+        // cluster is the transcript read, a seam so a test needs no file.
+        internal static List<MirrorProtocol.MirrorRosterEntry> WithOpenClawFields(
+            List<MirrorProtocol.MirrorRosterEntry> entries,
+            IReadOnlyList<(string SessionId, SessionStatus Status)> sessions,
+            IReadOnlyCollection<string> knownWorkspaces,
+            Func<SessionStatus, IEnumerable<string>, OrbCluster?>? cluster = null)
+        {
+            var byRoute = new Dictionary<string, SessionStatus>(StringComparer.Ordinal);
+            foreach (var (sessionId, status) in sessions) byRoute[RouteFor(sessionId)] = status;
+
+            return entries.Select(entry =>
+            {
+                if (entry.Route is null || !byRoute.TryGetValue(entry.Route, out var status)) return entry;
+                if ((cluster ?? OpenClawCliSession.ClusterOf)(status, knownWorkspaces) is not { } c) return entry;
+
+                return entry with
+                {
+                    OpenClawCluster = OpenClawCliSession.Name(c),
+                    OpenClawWorkspace = status.Cwd.TrimEnd('/', '\\')
+                };
+            }).ToList();
+        }
+
         internal static List<MirrorProtocol.MirrorRosterEntry> WithTeamFields(
             List<MirrorProtocol.MirrorRosterEntry> entries,
             IReadOnlyList<(string SessionId, SessionStatus Status)> sessions)
@@ -1672,7 +2055,7 @@ namespace Orbweaver
             // into somebody's terminal is the worst thing in this file.
             if (!frame.PayloadVerified || frame.Payload is null)
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrBadHash, "input failed its hash")
+                await InputErrAsync(fromPeer, frame, "?", MirrorProtocol.ErrBadHash, "input failed its hash")
                     .ConfigureAwait(false);
                 return;
             }
@@ -1685,14 +2068,14 @@ namespace Orbweaver
             var name = frame.Text("n");
             if (name is null)
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoSession, "no name").ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, "?", MirrorProtocol.ErrNoSession, "no name").ConfigureAwait(false);
                 return;
             }
 
             var resolved = Resolve(name, _seams.Agents(), _seams.LocalSessions());
             if (resolved is null)
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoSession, name).ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, name, MirrorProtocol.ErrNoSession, name).ConfigureAwait(false);
                 return;
             }
 
@@ -1701,7 +2084,21 @@ namespace Orbweaver
             // This machine's own setting, not the asker's. See the class note.
             if (!_seams.ReplyEnabled(status.Source))
             {
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrReplyOff, name).ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, name, MirrorProtocol.ErrReplyOff, name).ConfigureAwait(false);
+                return;
+            }
+
+            // CB-306: a slash line is resolved HERE, on the machine that owns
+            // the session, because only this machine knows its channel.
+            //
+            // Not awaited (CB-306's product-readiness round): a control request
+            // now waits up to five seconds for the far CLI's answer, and this
+            // runs on the frame loop, which must not stall a HELLO or a watch
+            // for that long. The reply carries the frame's id, so it can go
+            // whenever it is ready; SlashAsync catches its own failures.
+            if (frame.Num(MirrorProtocol.SlashField) == 1)
+            {
+                SlashInFlight = Task.Run(() => SlashAsync(fromPeer, frame, status, text));
                 return;
             }
 
@@ -1740,6 +2137,8 @@ namespace Orbweaver
                         var okFields = new Dictionary<string, string> { ["via"] = MirrorProtocol.ViaMessage };
                         if (!string.IsNullOrEmpty(receipt.AgentStatus)) okFields["agent"] = receipt.AgentStatus;
 
+                        InputLog("input", $"n={name} -> ok via={MirrorProtocol.ViaMessage}");
+
                         await SendAsync(fromPeer, MirrorProtocol.BuildFrame(
                             MirrorProtocol.Ok, frame.Id, okFields)).ConfigureAwait(false);
                         return;
@@ -1749,17 +2148,34 @@ namespace Orbweaver
                         ? MirrorProtocol.ErrNotRegistered
                         : MirrorProtocol.ErrDeliverFailed;
 
-                    await ErrAsync(fromPeer, frame.Id, code, name).ConfigureAwait(false);
+                    await InputErrAsync(fromPeer, frame, name, code, name).ConfigureAwait(false);
                     return;
                 }
 
-                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoPane, name).ConfigureAwait(false);
+                await InputErrAsync(fromPeer, frame, name, MirrorProtocol.ErrNoPane, name).ConfigureAwait(false);
                 return;
             }
 
-            bool typed;
-            try { typed = await _seams.TypeInto(status, text).ConfigureAwait(false); }
-            catch { typed = false; }
+            // CB-307 addendum: past the gate, or not at all. A refusal is its
+            // own code with the reason as msg, logged with the reason and
+            // never the text.
+            (bool Typed, string? Refusal, string? Diagnostic) attempt;
+            try { attempt = await GuardedTypeAsync(status, text, name).ConfigureAwait(false); }
+            catch { attempt = (false, null, null); }
+
+            if (attempt.Refusal is { } why)
+            {
+                InputLog("input", $"n={name} -> err code={MirrorProtocol.ErrNotAtPrompt} why={why}"
+                    + (attempt.Diagnostic is { } diag ? " " + diag : ""));
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNotAtPrompt, why).ConfigureAwait(false);
+                return;
+            }
+
+            var typed = attempt.Typed;
+
+            InputLog("input", typed
+                ? $"n={name} -> ok via={MirrorProtocol.ViaTyped}"
+                : $"n={name} -> err code={MirrorProtocol.ErrTypeFailed}");
 
             await SendAsync(fromPeer, typed
                 ? MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id)
@@ -1773,6 +2189,82 @@ namespace Orbweaver
                     ["msg"] = MirrorProtocol.Encode("the terminal refused the text")
                 })).ConfigureAwait(false);
         }
+
+        // CB-306: what happened to a chat send, by session name and never by
+        // its text. The text is somebody's message; the outcome is the part a
+        // log can safely say, and it is what was missing when a send vanished.
+        private Task InputErrAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame, string name, string code, string detail)
+        {
+            InputLog("input", $"n={name} -> err code={code}");
+            return ErrAsync(fromPeer, frame.Id, code, detail);
+        }
+
+        // The sink for outcome lines; MirrorLog.Say in the app, a capture in a
+        // test. Same arrangement as GapLog above.
+        internal Action<string, string> InputLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
+
+        // A slash INPUT. Answered with OK and a `via` saying how it ran, or
+        // `refused` with a `why` — refusal is a normal answer to a slash line,
+        // not an error, so it is not an ERR frame (those are for a request that
+        // could not be served at all).
+        private async Task SlashAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame, SessionStatus status, string line)
+        {
+            SlashOutcome outcome;
+            try
+            {
+                outcome = _seams.RunSlash is { } run
+                    ? await run(status, line).ConfigureAwait(false)
+                    : await RunSlashByDefaultAsync(status, line).ConfigureAwait(false);
+            }
+            catch
+            {
+                outcome = new SlashOutcome(MirrorProtocol.ViaRefused, "that machine failed while running it");
+            }
+
+            InputLog("input", $"n={frame.Text("n")} -> ok via={outcome.Via}");
+
+            var fields = new Dictionary<string, string> { ["via"] = outcome.Via };
+            if (outcome.Via == MirrorProtocol.ViaRefused)
+                fields["why"] = MirrorProtocol.Encode(outcome.Reason ?? "it can't run there");
+            if (outcome.Via == MirrorProtocol.ViaControl && outcome.Verdict is { } verdict)
+                fields[MirrorProtocol.VerdictField] = verdict;
+
+            // Detached from the frame loop now, so a throw here would surface
+            // nowhere — but SendAsync already catches everything the transport
+            // throws and answers false, and the near side times out and says so.
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields))
+                .ConfigureAwait(false);
+        }
+
+        // The last detached slash run, so a test can wait on it instead of
+        // sleeping. Nothing in production reads it.
+        internal Task SlashInFlight { get; private set; } = Task.CompletedTask;
+
+        // No runner wired: type it where there is a pane, refuse where there is
+        // not. The same split Offered makes for the roster, so what was offered
+        // is what runs.
+        private async Task<SlashOutcome> RunSlashByDefaultAsync(SessionStatus status, string line)
+        {
+            if (!_seams.CanType(status))
+                return new SlashOutcome(MirrorProtocol.ViaRefused, SlashRouting.PeerSocketReason);
+
+            var (typed, refusal, _) = await GuardedTypeAsync(status, line, "slash").ConfigureAwait(false);
+            if (refusal is not null)
+                return new SlashOutcome(MirrorProtocol.ViaRefused, TypingGate.NotAtPromptReason(refusal));
+
+            return typed
+                ? new SlashOutcome(MirrorProtocol.ViaTyped, null)
+                : new SlashOutcome(MirrorProtocol.ViaRefused, "the terminal refused the text");
+        }
+
+        // The only way this server types: TypingGate first, with this
+        // server's seams as its reads.
+        private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
+            SessionStatus status, string text, string who) =>
+            TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
+                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who);
 
         // --- sending ------------------------------------------------------------
 

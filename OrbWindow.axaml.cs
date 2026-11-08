@@ -570,9 +570,14 @@ namespace Orbweaver
         // Neither is a *kind*: the gear says what the session is and does not
         // change while it runs. These are presence, they change under it, and
         // they live in their own corner for exactly that reason.
-        private static (string Glyph, string Label)? PresenceMarkFor(OrbPresence presence) =>
+        //
+        // Parked has a word and no glyph (CB-307): the tooltip should say why
+        // the orb is dim, but the badge channel keeps meaning "there is
+        // something here for you", which a quiet session is not.
+        internal static (string? Glyph, string Label)? PresenceMarkFor(OrbPresence presence) =>
             presence switch
             {
+                OrbPresence.Parked => (null, "parked"),
                 OrbPresence.NeedsInput => ("?", "needs input"),
                 OrbPresence.Finished => ("\u2713", "finished"),
                 _ => null
@@ -673,7 +678,7 @@ namespace Orbweaver
             _presence = presence;
 
             var mark = PresenceMarkFor(presence);
-            if (mark is null)
+            if (mark?.Glyph is null)
             {
                 PresenceBadge.IsVisible = false;
             }

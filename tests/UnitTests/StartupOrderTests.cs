@@ -33,16 +33,18 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => order.Add("hup"),
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => order.Add("serve"),
             waitForUnlock: () => order.Add("wait"),
             startUi: () => order.Add("ui"));
 
-        Assert.Equal(new[] { "log", "single", "claim", "serve", "wait", "ui" }, order);
+        Assert.Equal(new[] { "log", "hup", "single", "claim", "serve", "wait", "ui" }, order);
     }
 
     [Fact]
@@ -55,11 +57,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => order.Add("serve"),
             waitForUnlock: () => { },
             startUi: () => { });
@@ -78,11 +82,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => { },
             claimUiThread: () => { },
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => { },
             waitForUnlock: () => order.Add("wait"),
             startUi: () => order.Add("ui"));
@@ -101,11 +107,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => { },
             waitForUnlock: () => { },
             startUi: () => order.Add("ui"));
@@ -126,11 +134,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => order.Add("claim"),
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => { },
             waitForUnlock: () => { },
             startUi: () => { });
@@ -145,16 +155,18 @@ public class StartupOrderTests
         var counts = new Dictionary<string, int>
         {
             ["log"] = 0, ["single"] = 0, ["migrate"] = 0, ["claim"] = 0, ["retire"] = 0, ["repair"] = 0,
-            ["serve"] = 0, ["wait"] = 0, ["ui"] = 0
+            ["refresh"] = 0, ["serve"] = 0, ["wait"] = 0, ["ui"] = 0
         };
 
         Startup.Run(
             installCrashLog: () => counts["log"]++,
+            installHangupGuard: () => { },
             claimSingleInstance: () => { counts["single"]++; return true; },
             migrateUserData: () => counts["migrate"]++,
             claimUiThread: () => counts["claim"]++,
             retireLegacy: () => counts["retire"]++,
             repairKeepAlive: () => counts["repair"]++,
+            refreshHooks: () => counts["refresh"]++,
             serveOnLaunch: () => counts["serve"]++,
             waitForUnlock: () => counts["wait"]++,
             startUi: () => counts["ui"]++);
@@ -174,11 +186,13 @@ public class StartupOrderTests
 
         Assert.Throws<InvalidOperationException>(() => Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => { },
             claimUiThread: () => { },
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => throw new InvalidOperationException("relay"),
             waitForUnlock: () => reached = true,
             startUi: () => reached = true));
@@ -198,11 +212,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => false,
             migrateUserData: () => reached.Add("migrate"),
             claimUiThread: () => reached.Add("claim"),
             retireLegacy: () => reached.Add("retire"),
             repairKeepAlive: () => reached.Add("repair"),
+            refreshHooks: () => reached.Add("refresh"),
             serveOnLaunch: () => reached.Add("serve"),
             waitForUnlock: () => reached.Add("wait"),
             startUi: () => reached.Add("ui"));
@@ -221,11 +237,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => logged = true,
+            installHangupGuard: () => { },
             claimSingleInstance: () => false,
             migrateUserData: () => { },
             claimUiThread: () => { },
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => { },
             waitForUnlock: () => { },
             startUi: () => { });
@@ -242,17 +260,19 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => order.Add("migrate"),
             claimUiThread: () => order.Add("claim"),
             retireLegacy: () => order.Add("retire"),
             repairKeepAlive: () => order.Add("repair"),
+            refreshHooks: () => order.Add("refresh"),
             serveOnLaunch: () => order.Add("serve"),
             waitForUnlock: () => order.Add("wait"),
             startUi: () => order.Add("ui"));
 
         Assert.Equal(
-            new[] { "log", "single", "migrate", "claim", "retire", "repair", "serve", "wait", "ui" }, order);
+            new[] { "log", "single", "migrate", "claim", "retire", "repair", "refresh", "serve", "wait", "ui" }, order);
     }
 
     // CB-255: the data-folder move sits between the two claims. After the
@@ -267,11 +287,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => order.Add("migrate"),
             claimUiThread: () => order.Add("claim"),
             retireLegacy: () => { },
             repairKeepAlive: () => { },
+            refreshHooks: () => { },
             serveOnLaunch: () => order.Add("serve"),
             waitForUnlock: () => { },
             startUi: () => { });
@@ -290,11 +312,13 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => true,
             migrateUserData: () => order.Add("migrate"),
             claimUiThread: () => order.Add("claim"),
             retireLegacy: () => order.Add("retire"),
             repairKeepAlive: () => order.Add("repair"),
+            refreshHooks: () => { },
             serveOnLaunch: () => order.Add("serve"),
             waitForUnlock: () => { },
             startUi: () => order.Add("ui"));
@@ -314,16 +338,72 @@ public class StartupOrderTests
 
         Startup.Run(
             installCrashLog: () => { },
+            installHangupGuard: () => { },
             claimSingleInstance: () => { order.Add("single"); return true; },
             migrateUserData: () => { },
             claimUiThread: () => { },
             retireLegacy: () => order.Add("retire"),
             repairKeepAlive: () => order.Add("repair"),
+            refreshHooks: () => { },
             serveOnLaunch: () => order.Add("serve"),
             waitForUnlock: () => { },
             startUi: () => { });
 
         Assert.Equal(new[] { "single", "retire", "repair", "serve" }, order);
+    }
+
+    // CB-306: the installed-hook refresh (CB-265) ran from App, which is
+    // behind the screen-lock wait, and on a Mac whose screen never unlocks
+    // the UI never starts. The mini sat like that for a day with the fixed
+    // hook in its bundle and the 26 Oct copy in ~/.claude/orbweaver, and
+    // nothing in hook-installer.log — the one machine the fix was for. The
+    // refresh is files only, so it runs with the other display-free steps,
+    // ahead of the wait. This is the pairing that matters, on its own.
+    [Fact]
+    public void Refreshes_the_installed_hooks_before_the_screen_lock_wait()
+    {
+        var order = new List<string>();
+
+        Startup.Run(
+            installCrashLog: () => { },
+            installHangupGuard: () => { },
+            claimSingleInstance: () => true,
+            migrateUserData: () => { },
+            claimUiThread: () => { },
+            retireLegacy: () => { },
+            repairKeepAlive: () => { },
+            refreshHooks: () => order.Add("refresh"),
+            serveOnLaunch: () => { },
+            waitForUnlock: () => order.Add("wait"),
+            startUi: () => order.Add("ui"));
+
+        Assert.Equal(new[] { "refresh", "wait", "ui" }, order);
+    }
+
+    // And where among the display-free steps: after the single-instance
+    // claim (two instances must never overwrite one script at once), after
+    // the legacy retirement (never refresh a folder that step is retiring),
+    // and before serving, so a session hooked from here on writes where the
+    // app reads as early as possible.
+    [Fact]
+    public void Refreshes_hooks_after_the_claim_and_retirement_and_before_serving()
+    {
+        var order = new List<string>();
+
+        Startup.Run(
+            installCrashLog: () => { },
+            installHangupGuard: () => { },
+            claimSingleInstance: () => { order.Add("single"); return true; },
+            migrateUserData: () => { },
+            claimUiThread: () => { },
+            retireLegacy: () => order.Add("retire"),
+            repairKeepAlive: () => order.Add("repair"),
+            refreshHooks: () => order.Add("refresh"),
+            serveOnLaunch: () => order.Add("serve"),
+            waitForUnlock: () => { },
+            startUi: () => { });
+
+        Assert.Equal(new[] { "single", "retire", "repair", "refresh", "serve" }, order);
     }
 
     // The interface units B, C and F build against (CB-255 §7): each step's
@@ -339,5 +419,53 @@ public class StartupOrderTests
         LegacyHookCleanup.Run();
         MacOSLegacyBundle.Run();
         KeepAliveRepair.Run();
+    }
+
+    [Fact]
+    public void A_handled_finish_update_stops_the_sequence_before_the_single_instance_claim()
+    {
+        // CB-308: the updater's finisher must run while the old Buddy still
+        // holds the claim, so it answers ahead of it and nothing after runs.
+        var order = new List<string>();
+
+        Startup.Run(
+            installCrashLog: () => order.Add("log"),
+            installHangupGuard: () => order.Add("hup"),
+            claimSingleInstance: () => { order.Add("single"); return true; },
+            migrateUserData: () => order.Add("migrate"),
+            claimUiThread: () => order.Add("claim"),
+            retireLegacy: () => order.Add("retire"),
+            repairKeepAlive: () => order.Add("repair"),
+            refreshHooks: () => order.Add("refresh"),
+            serveOnLaunch: () => order.Add("serve"),
+            waitForUnlock: () => order.Add("wait"),
+            startUi: () => order.Add("ui"),
+            finishUpdate: () => { order.Add("finish"); return true; });
+
+        Assert.Equal(new[] { "log", "hup", "finish" }, order);
+    }
+
+    [Fact]
+    public void An_unhandled_finish_update_lets_startup_carry_on_as_normal()
+    {
+        // The negative control: the step that says "not mine" must not stop
+        // anything, or every ordinary launch would exit.
+        var order = new List<string>();
+
+        Startup.Run(
+            installCrashLog: () => { },
+            installHangupGuard: () => { },
+            claimSingleInstance: () => { order.Add("single"); return true; },
+            migrateUserData: () => { },
+            claimUiThread: () => { },
+            retireLegacy: () => { },
+            repairKeepAlive: () => { },
+            refreshHooks: () => { },
+            serveOnLaunch: () => { },
+            waitForUnlock: () => { },
+            startUi: () => order.Add("ui"),
+            finishUpdate: () => { order.Add("finish"); return false; });
+
+        Assert.Equal(new[] { "finish", "single", "ui" }, order);
     }
 }

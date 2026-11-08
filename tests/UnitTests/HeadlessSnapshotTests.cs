@@ -876,4 +876,114 @@ public class HeadlessSnapshotTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // --- CB-307 addendum: a session on a dialog is waiting ---------------------
+
+    // The roster a peer is served before the UI starts says `waiting` for a
+    // session whose Claude Code record says so, though its status file still
+    // says idle — and says nothing of the kind for a record that merely reads
+    // `busy`, the word measured two days wrong on a session at its prompt.
+    [Theory]
+    [InlineData("waiting", "waiting", true)]
+    [InlineData("busy", "idle", false)]
+    [InlineData("idle", "idle", false)]
+    [InlineData(null, "idle", false)]
+    public void ARecordThatSaysWaitingPromotesTheServedState(
+        string? record, string expectedState, bool expectedFlag)
+    {
+        var dir = NewStatusDir();
+        try
+        {
+            WriteStatus(dir, "abc123", new SessionStatus
+            {
+                State = "idle", Title = "openclaw", Cwd = "/tmp/somewhere", SessionPid = 4242
+            });
+
+            var asked = new List<(int Pid, string Id)>();
+            var kept = SessionManager.HeadlessSnapshot(
+                dir, NoJobs, isRunning: _ => true, nowUtc: DateTime.UtcNow,
+                recordStatus: (pid, id) => { asked.Add((pid, id)); return record; });
+
+            var one = Assert.Single(kept);
+            Assert.Equal(expectedState, one.Status.State);
+            Assert.Equal(expectedFlag, one.Status.RecordWaiting);
+            Assert.Equal((4242, "abc123"), Assert.Single(asked));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    // Promoted before liveness is judged, so a session on a dialog that the
+    // lifetime would otherwise expire is still served.
+    [Fact]
+    public void AWaitingSessionIsKeptByTheLifetimeRuleToo()
+    {
+        var dir = NewStatusDir();
+        try
+        {
+            WriteStatus(dir, "abc123", new SessionStatus
+            {
+                State = "idle", Title = "openclaw", Cwd = "/tmp/somewhere", SessionPid = 4242
+            });
+            var old = DateTime.UtcNow.AddDays(-3);
+            File.SetLastWriteTimeUtc(Path.Combine(dir, "abc123.txt"), old);
+
+            var kept = SessionManager.HeadlessSnapshot(
+                dir, NoJobs, isRunning: _ => true, nowUtc: DateTime.UtcNow,
+                recordStatus: (_, _) => "waiting");
+
+            Assert.Single(kept);
+
+            // Control: the same stale file with no waiting record is expired,
+            // so the lifetime rule was live and the promotion is what saved it.
+            Assert.Empty(SessionManager.HeadlessSnapshot(
+                dir, NoJobs, isRunning: _ => true, nowUtc: DateTime.UtcNow,
+                recordStatus: (_, _) => "idle"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    // A session with no pid has no record to ask about, and nothing is asked.
+    [Fact]
+    public void ASessionWithNoPidIsNeverAskedForARecord()
+    {
+        var status = new SessionStatus { State = "idle", Source = SessionSource.ClaudeCode, SessionPid = 0 };
+        SessionManager.ApplyRecordWaiting(status, "id", (_, _) => throw new InvalidOperationException("asked"));
+
+        Assert.Equal("idle", status.State);
+        Assert.False(status.RecordWaiting);
+    }
+
+    // Codex and Grok have no such record; their rows are not promoted.
+    [Fact]
+    public void OnlyClaudeCodeSessionsAreAskedForARecord()
+    {
+        var status = new SessionStatus { State = "idle", Source = SessionSource.Codex, SessionPid = 99 };
+        SessionManager.ApplyRecordWaiting(status, "id", (_, _) => throw new InvalidOperationException("asked"));
+
+        Assert.Equal("idle", status.State);
+    }
+
+    // QA's survivor: with a record that DOES say waiting and a live pid, a Codex
+    // or Grok status is still not promoted and RecordWaiting stays false. The
+    // control is the same status as Claude Code, which is promoted.
+    [Theory]
+    [InlineData(SessionSource.Codex, "idle", false)]
+    [InlineData(SessionSource.Grok, "idle", false)]
+    [InlineData(SessionSource.ClaudeCode, "waiting", true)]
+    public void AWaitingRecordPromotesOnlyAClaudeCodeSession(
+        SessionSource source, string expectedState, bool expectedFlag)
+    {
+        var status = new SessionStatus { State = "idle", Source = source, SessionPid = 99 };
+
+        SessionManager.ApplyRecordWaiting(status, "id", (_, _) => "waiting");
+
+        Assert.Equal(expectedState, status.State);
+        Assert.Equal(expectedFlag, status.RecordWaiting);
+    }
 }

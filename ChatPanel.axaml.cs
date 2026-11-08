@@ -180,7 +180,39 @@ namespace Orbweaver
         // one kind of session that most needed it — the panel had to be closed
         // and reopened to see anything, which nobody would guess.
         private IReadOnlyList<SlashCommand> SlashCommands =>
-            (_session as IRemoteChatSlashCommands)?.SlashCommands ?? Array.Empty<SlashCommand>();
+            OfferedCommands((_session as IRemoteChatSlashCommands)?.SlashCommands);
+
+        // CB-306: a command the session says cannot run over its channel is not
+        // offered — typing it in full still reaches the runner, which refuses
+        // it with a reason, but autocomplete must not advertise a command the
+        // panel knows will be refused.
+        internal static IReadOnlyList<SlashCommand> OfferedCommands(IReadOnlyList<SlashCommand>? commands) =>
+            commands is null || commands.Count == 0
+                ? Array.Empty<SlashCommand>()
+                : commands.Where(c => c.Route != SlashRouteKind.Unavailable).ToList();
+
+        // Whether a typed line is a command THIS session would run — its first
+        // token matches a name in the session's full catalogue (CB-306, the
+        // lead's ruling on Nadia's finding). A path like "/tmp/build.log", a
+        // bare "/", or an unknown "/word" is not a command and falls through to
+        // an ordinary send, exactly as before this feature. The full list is
+        // used, not the offered one, so a known-but-Unavailable command is still
+        // recognised as a command and refused by the runner rather than sent to
+        // the model as prose.
+        internal bool IsKnownSlashCommand(string text)
+        {
+            var all = (_session as IRemoteChatSlashCommands)?.SlashCommands;
+            // The alias-aware overload, so "/t" is known as "/think".
+            return all is { Count: > 0 } && SlashRouting.NamesKnownCommand(text, all);
+        }
+
+        // CB-306: a control request cannot carry a picture, so a known command
+        // typed with an attachment is neither run nor sent — the ticket's rule
+        // is that a command never reaches the model as prose. The panel refuses
+        // it here with a note and keeps the text (an unknown "/word" or a path
+        // with a picture is not a command and still sends as a message).
+        internal const string SlashCommandAndPictureNote =
+            "A slash command can't carry a picture — send the picture on its own.";
 
         // The suggestions currently shown, and which one Up/Down has landed
         // on. Kept as a plain list rather than something observable: the
@@ -2551,14 +2583,14 @@ namespace Orbweaver
             }
 
             _slashMatches = commands
-                .Where(c => c.Name.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+                .Where(c => c.Matches(token))
                 .ToList();
 
             // Also closes once the only match is exactly what's already
             // typed — otherwise finishing a command by hand and pressing
             // Enter would "accept" it into itself instead of sending.
             if (_slashMatches.Count == 0
-                || (_slashMatches.Count == 1 && string.Equals(_slashMatches[0].Name, token, StringComparison.OrdinalIgnoreCase)))
+                || (_slashMatches.Count == 1 && _slashMatches[0].IsTyped(token)))
             {
                 HideSlashSuggestions();
                 return;
@@ -2674,6 +2706,8 @@ namespace Orbweaver
             // id sits, on a display without sub-pixel layout.
             PromptTitle.LineHeight = Math.Ceiling(PromptTitle.FontSize * 1.25);
             PromptOptions.FontSize = 11 * scale;
+            PromptProgress.FontSize = 10 * scale;
+            PromptFreeTextBox.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 
             // CB-267's box sits right over the composer and is read before
@@ -2778,9 +2812,26 @@ namespace Orbweaver
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            var outcome = images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
-                ? await withImages.SendWithImagesAsync(text, images)
-                : await session.SendAsync(text);
+            // CB-306: a known command typed with a picture attached is refused,
+            // not run and not sent — a control request carries no image, and a
+            // command must never reach the model as prose. The note says why and
+            // the text stays for a retry without the picture. An unknown "/word"
+            // or a path with a picture is not a command and still sends below.
+            if (images.Count > 0 && session is IRemoteChatSlashRunner && IsKnownSlashCommand(text))
+            {
+                OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = SlashCommandAndPictureNote });
+                return;
+            }
+
+            // A line that names a command this session knows goes to the runner,
+            // which routes it — control request, pass-through, or a refusal note
+            // with nothing sent. Anything else (a path, an unknown word, ordinary
+            // prose) sends as before.
+            var outcome = images.Count == 0 && session is IRemoteChatSlashRunner runner && IsKnownSlashCommand(text)
+                ? await runner.RunSlashAsync(text)
+                : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
+                    ? await withImages.SendWithImagesAsync(text, images)
+                    : await session.SendAsync(text);
 
             if (outcome == ChatSendOutcome.Sent) Input.Text = "";
         }
@@ -3117,6 +3168,8 @@ namespace Orbweaver
                 _promptSignature = null;
                 _promptArmed = false;
                 _pressedPromptOption = null;
+                HideFreeText();
+                PromptProgress.IsVisible = false;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
                 return;
@@ -3131,7 +3184,13 @@ namespace Orbweaver
             {
                 _promptSignature = signature;
                 _promptShownAt = PromptClock();
+
+                // A different question than the one a text box was opened for.
+                HideFreeText();
             }
+
+            PromptProgress.Text = prompt.Progress;
+            PromptProgress.IsVisible = !string.IsNullOrEmpty(prompt.Progress);
 
             _promptArmed = prompt.ArmedActivation;
 
@@ -3193,7 +3252,72 @@ namespace Orbweaver
             if (control?.DataContext is not ChatPromptOption option) return;
             if (_session is not IRemoteChatPrompts prompts) return;
 
+            // The option that asks for typed text opens a text box and answers
+            // nothing yet. Only when the session can carry text: otherwise it is
+            // an ordinary option, and pressing its key is what AnswerAsync does.
+            if (option.FreeText && _session is IRemoteChatFreeText freeText)
+            {
+                _freeTextOption = option;
+                _freeTextSession = freeText;
+                PromptFreeTextBox.Text = "";
+                UpdateFreeTextSend();
+                PromptFreeText.IsVisible = true;
+                PromptFreeTextBox.Focus();
+                return;
+            }
+
             _ = prompts.AnswerAsync(option);
+        }
+
+        // The free-text option a text box is open for, or null.
+        private ChatPromptOption? _freeTextOption;
+
+        // The session the box was opened for, kept with the option so sending
+        // never has to ask the panel's current session whether it takes text.
+        private IRemoteChatFreeText? _freeTextSession;
+
+        private void HideFreeText()
+        {
+            _freeTextOption = null;
+            _freeTextSession = null;
+            PromptFreeText.IsVisible = false;
+            PromptFreeTextBox.Text = "";
+            UpdateFreeTextSend();
+        }
+
+        // Send is live only for text that says something. On the far screen an
+        // empty "Type something." row declines the whole form when Enter lands on
+        // it, so a blank or whitespace-only answer must never be sendable.
+        private void PromptFreeTextBox_TextChanged(object? sender, TextChangedEventArgs e) => UpdateFreeTextSend();
+
+        private void UpdateFreeTextSend() =>
+            PromptFreeTextSend.IsEnabled = !string.IsNullOrWhiteSpace(PromptFreeTextBox.Text);
+
+        private void PromptFreeTextBox_KeyDown(object? sender, KeyEventArgs e)
+        {
+            // Enter sends. Nothing handles Escape: see the markup's note.
+            if (e.Key != Key.Enter) return;
+
+            e.Handled = true;
+            SubmitFreeText();
+        }
+
+        private void PromptFreeTextSend_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+            SubmitFreeText();
+        }
+
+        // Internal: driven by the UI suite.
+        internal void SubmitFreeText()
+        {
+            var option = _freeTextOption;
+            var free = _freeTextSession;
+            var text = (PromptFreeTextBox.Text ?? "").Trim();
+            if (option is null || free is null || text.Length == 0) return;
+
+            HideFreeText();
+            _ = free.AnswerFreeTextAsync(option, text);
         }
 
         private void PromptElsewhere_PointerPressed(object? sender, PointerPressedEventArgs e)

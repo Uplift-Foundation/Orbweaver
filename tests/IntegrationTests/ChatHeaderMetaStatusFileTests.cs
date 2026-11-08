@@ -56,6 +56,7 @@ public class ChatHeaderMetaStatusFileTests
         psi.ArgumentList.Add("claude");
         psi.ArgumentList.Add(state);
         psi.Environment["TMPDIR"] = tmpDir;
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tmpDir;
         psi.Environment.Remove("GROK_SESSION_ID");
         psi.Environment.Remove("GROK_HOOK_EVENT");
         psi.Environment.Remove("GROK_WORKSPACE_ROOT");
@@ -279,6 +280,13 @@ public class ChatHeaderMetaStatusFileTests
         psi.ArgumentList.Add("claude");
         psi.ArgumentList.Add("-TempDir");
         psi.ArgumentList.Add(tmp.FullName);
+        // CB-306: the script honours ORBWEAVER_STATUS_ROOT ahead of -TempDir,
+        // and TestBootstrap exports that variable for the whole process. Left
+        // unpinned, the hook inherits the bootstrap's root and writes there —
+        // which is exactly what CI's Windows leg reported ("the hook wrote no
+        // status file at …\orbweaver\header-meta-win.txt") while the Mac leg,
+        // which skips this case, stayed green.
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tmp.FullName;
         psi.Environment.Remove("GROK_SESSION_ID");
         psi.Environment.Remove("GROK_HOOK_EVENT");
         psi.Environment.Remove("GROK_WORKSPACE_ROOT");

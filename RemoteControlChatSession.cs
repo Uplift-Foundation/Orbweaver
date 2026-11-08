@@ -33,8 +33,8 @@ namespace Orbweaver
     // half a minute, and nobody should have to close a panel and reopen it to
     // find out it could have been a live view all along. HistoryReplaced is what
     // makes that free — the panel already redraws from History when it fires.
-    internal sealed class RemoteControlChatSession :
-        IRemoteChatSession, IRemoteChatComposer, IRemoteChatSlashCommands, IRemoteChatBacklog,
+    internal sealed partial class RemoteControlChatSession :
+        IRemoteChatSession, IRemoteChatComposer, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatBacklog,
         IRemoteChatFetchWait, IRemoteChatMachine, IDisposable
     {
         private readonly List<ChatTurn> _history = new();
@@ -98,7 +98,7 @@ namespace Orbweaver
             // Deliberately does not promise a live view yet. Saying "mirroring…"
             // and then falling back would be worse than saying "checking" and
             // then succeeding.
-            Note($"Messages you send {remoteName} appear here, with its replies. "
+            Note($"Messages you send {FarTitle} appear here, with its replies. "
                 + "Checking whether a live view of its conversation is available…");
 
             RemoteControlSessions.MirrorChanged += OnMirrorChanged;
@@ -110,7 +110,16 @@ namespace Orbweaver
 
         public string SessionId { get; }
 
-        public string DisplayName { get; set; }
+        // The title the roster gives, never the route the link addresses it by:
+        // set to the route at construction (the only name known then) and read
+        // back as the far session's title once the roster has said it.
+        public string DisplayName
+        {
+            get => IsRoute(_displayName) ? FarTitle : _displayName;
+            set => _displayName = value;
+        }
+
+        private string _displayName = "";
 
         public RemoteChatState State { get; private set; } = RemoteChatState.Connected;
 
@@ -132,7 +141,7 @@ namespace Orbweaver
         // Said in the input box itself. "Message…" would be a lie by omission
         // here: this one leaves the machine, and in live view it is typed into
         // somebody else's terminal, which is worth being even plainer about.
-        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, _remoteName);
+        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, FarTitle);
 
         // Pure and static so the three-way choice is a unit test rather than
         // a screenshot — the same arrangement WaitLabel and FetchingNote are
@@ -199,7 +208,13 @@ namespace Orbweaver
 
         private void OnMirrorChanged(string account)
         {
-            if (!account.Equals(_account, StringComparison.Ordinal)) return;
+            // Every roster landing counts, whatever account it names. The link
+            // raises this with the DEFAULT account only, because a socket is not
+            // account-scoped — and a panel for a session under any other config
+            // dir (~/.claude-board) filtered that out, so it never upgraded when
+            // the roster landed and never noticed its session start waiting.
+            // MirrorClientFor ignores the account too, so there is no other
+            // account's roster to be confused with.
 
             // The roster landing is what makes the far machine knowable, so this
             // is the moment a panel opened before it can be told.
@@ -207,6 +222,10 @@ namespace Orbweaver
             {
                 MachineChanged?.Invoke();
                 TryUpgrade();
+
+                // The roster is what says the far session started or stopped
+                // waiting, which is what decides whether to ask for a form.
+                EnsurePromptPolling();
             });
         }
 
@@ -255,7 +274,7 @@ namespace Orbweaver
             // Not a problem to clean up afterwards: the window that ends this
             // wait clears the history outright and replaces it with the far
             // conversation, so this line goes with it.
-            if (!_painted) Note(FetchingNote(_remoteName));
+            if (!_painted) Note(FetchingNote(FarTitle));
 
             // Started here rather than inside OpenAsync so the indicator covers
             // the whole wait the user experiences, including the part where the
@@ -265,8 +284,26 @@ namespace Orbweaver
             // that most needed explaining.
             BeginWait();
 
-            _ = client.OpenAsync(_remoteName);
+            // Observed rather than dropped: a fire-and-forget task that faults
+            // is invisible, and the panel would sit on "fetching" with nothing
+            // anywhere saying why (CB-306).
+            Observe(client.OpenAsync(_remoteName));
         }
+
+        // Every fire-and-forget call into the client goes through here, so a
+        // fault is logged under the same open-threw line wherever it came from
+        // (open, reopen or close).
+        private void Observe(Task task) => _ = task.ContinueWith(
+            t => Log("open-threw",
+                $"n={_remoteName} {t.Exception?.GetBaseException().GetType().Name}: "
+              + t.Exception?.GetBaseException().Message),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+
+        // The sink for this session's own log lines; MirrorLog.Say in the app,
+        // a capture in a test. Same shape as RemoteMirrorServer.GapLog.
+        internal Action<string, string> Log { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
 
         // --- where this conversation actually is ----------------------------
 
@@ -286,6 +323,34 @@ namespace Orbweaver
 
         public event Action? MachineChanged;
 
+        // How the far session is named to a person: its title, never the route
+        // ("sid:b5e36eef-…") the link addresses it by, and with the machine it is
+        // on when that is known ("lawyer-search on Warrens-Mac-mini"). Every
+        // string this panel shows uses these; the route is for the wire and the
+        // log, and a person reading "sid:b5e36eef…'s terminal" cannot tell which
+        // session it means.
+        internal string FarTitle
+        {
+            get
+            {
+                var title = FarTitleFromRoster();
+                if (string.IsNullOrWhiteSpace(title)) title = _displayName;
+                return IsRoute(title) ? "that session" : title;
+            }
+        }
+
+        private string? FarTitleFromRoster() =>
+            RemoteControlSessions.MirrorFor(_account, _remoteName)?.Name is { Length: > 0 } name && !IsRoute(name)
+                ? name : null;
+
+        internal string FarName => MachineName is { Length: > 0 } machine ? $"{FarTitle} on {machine}" : FarTitle;
+
+        // "the other machine", when the roster has not said which.
+        internal string FarMachine => MachineName is { Length: > 0 } machine ? machine : "the other machine";
+
+        internal static bool IsRoute(string? name) =>
+            string.IsNullOrWhiteSpace(name) || name.StartsWith("sid:", StringComparison.OrdinalIgnoreCase);
+
         // --- the wait, while it is happening --------------------------------
 
         // See IRemoteChatFetchWait. Set immediately before the fetch and cleared
@@ -295,23 +360,31 @@ namespace Orbweaver
 
         public DateTimeOffset? WaitingSince => _waitingSince;
 
-        public string WaitingFor => $"{_remoteName}'s conversation";
+        public string WaitingFor => $"{FarTitle}'s conversation";
 
         public event Action? WaitChanged;
 
-        private void BeginWait()
+        // Both hop to the UI thread (CB-306). WaitChanged drives ChatPanel's
+        // FetchWaitBox, and OnDelivered / OnMirrorFailed arrive on a pool thread
+        // because RemoteMirrorClient awaits with ConfigureAwait(false). Ending
+        // the wait inline there threw InvalidOperationException out of the
+        // client's open, which skipped the window paint and the watch renewal
+        // and left the panel on "fetching" for good. Doing the hop here keeps
+        // _waitingSince confined to the UI thread and honours the
+        // IRemoteChatSession contract that events arrive there.
+        private void BeginWait() => OnUi(() =>
         {
             _waitingSince = DateTimeOffset.Now;
             WaitChanged?.Invoke();
-        }
+        });
 
-        private void EndWait()
+        private void EndWait() => OnUi(() =>
         {
             if (_waitingSince is null) return;
 
             _waitingSince = null;
             WaitChanged?.Invoke();
-        }
+        });
 
         // How long it has been, in words, for the indicator above the turns.
         //
@@ -370,7 +443,7 @@ namespace Orbweaver
             // replies were "written for you". That channel was the relay, which
             // is gone (937de9ec): a session the far Buddy cannot show cannot be
             // written to from here either (see NoWayToSendNote).
-            Note(NoLiveViewNote(_remoteName));
+            Note(NoLiveViewNote(FarTitle));
         }
 
         // Said once, when the far Buddy has answered that it cannot show this
@@ -433,7 +506,7 @@ namespace Orbweaver
                     {
                         Role = ChatRole.System,
                         IsComplete = true,
-                        Text = $"Live view: this panel mirrors {_remoteName}'s own conversation from "
+                        Text = $"Live view: this panel mirrors {FarTitle}'s own conversation from "
                              + "the other machine, a few seconds behind. Messages you type are typed "
                              + "into its terminal."
                     });
@@ -474,7 +547,7 @@ namespace Orbweaver
                 // stuck relay was waiting on. The relay is gone (CB-238), and
                 // the table it read was never filled by anything else, so it
                 // could not be reached.
-                Note($"Couldn't verify {_remoteName}'s transcript — {why}. Showing nothing rather "
+                Note($"Couldn't verify {FarTitle}'s transcript — {why}. Showing nothing rather "
                      + "than something altered; close and reopen the panel to try again.");
             });
         }
@@ -587,9 +660,111 @@ namespace Orbweaver
             // Said plainly rather than left as a dead composer. A message that
             // vanishes with no explanation is the failure this panel has spent
             // six tickets learning not to produce.
-            Note(NoWayToSendNote(_remoteName));
+            Note(NoWayToSendNote(FarTitle));
             return ChatSendOutcome.Failed;
         }
+
+        // CB-306: a slash line typed into this panel.
+        //
+        // A far Buddy that sent route kinds understands the slash flag, so the
+        // line goes to it as one and it decides, on the machine that owns the
+        // session, whether to type it, run it as a control request or refuse.
+        // That works with or without a live view: a job reached by a bridge has
+        // none and can still have its colour set.
+        //
+        // An older far Buddy ignores the flag and would type the line as plain
+        // text. In a live view with a pane that is exactly what a slash line
+        // has always done, so it takes the ordinary typed send. Without one
+        // there is nothing to type into, and the line is refused with a note rather than
+        // sent as a message the far model would read as prose.
+        public async Task<ChatSendOutcome> RunSlashAsync(string line)
+        {
+            // A command is a line whose first token is a name the far session's
+            // CLI knows. `/tmp/x.log`, `/` and an unknown word are ordinary
+            // messages and go exactly as they would without this method — never
+            // refused, because the person was not typing a command. The far
+            // roster lists Unavailable commands too, so "known" means known,
+            // not "runnable".
+            var client = RemoteControlSessions.MirrorClientFor(_account);
+            var entry = client is null ? null : RemoteControlSessions.MirrorFor(_account, _remoteName);
+            if (client is null || entry is null
+                || !SlashRouting.NamesKnownCommand(line, RemoteControlSessions.CommandsFrom(entry).Select(c => c.Name)))
+                return await SendAsync(line).ConfigureAwait(true);
+
+            var mine = new ChatTurn { Role = ChatRole.User, Text = line, IsComplete = true };
+
+            if (!OrbweaverSettings.PeerLinkEnabled)
+            {
+                Add(mine);
+                Note(RemoteControlOffNote);
+                return ChatSendOutcome.Failed;
+            }
+
+            if (!RemoteControlSessions.SpeaksSlash(entry))
+            {
+                // A live view that can type is where a slash line has always
+                // worked. SendAsync adds the turn itself, so this arm must not
+                // first. A transcript-only view cannot type, and falling to the
+                // message path would hand the far model the line as prose.
+                if (_mirroring && _canType) return await SendAsync(line).ConfigureAwait(true);
+
+                Add(mine);
+                Note(OldFarBuddyNote(FarTitle));
+                return ChatSendOutcome.Failed;
+            }
+
+            Add(mine);
+
+            var outcome = await client.SendInputDetailedAsync(_remoteName, line, slash: true).ConfigureAwait(true);
+            return ApplySlashOutcome(mine, line, outcome);
+        }
+
+        // The panel's reaction to what the far machine said, pure enough to be
+        // driven from a test with a hand-built outcome.
+        internal ChatSendOutcome ApplySlashOutcome(ChatTurn mine, string line, RemoteMirrorClient.InputOutcome outcome)
+        {
+            if (outcome.Error is not null)
+            {
+                Note(TypingRefusal(outcome.Error, FarTitle, outcome.Why));
+                return ChatSendOutcome.Failed;
+            }
+
+            switch (outcome.Via)
+            {
+                case MirrorProtocol.ViaRefused:
+                    var name = SlashRouting.Split(line)?.Name ?? line;
+                    Note(SlashRouting.RefusalNote(name, outcome.Why ?? "it can't run on that machine"));
+                    return ChatSendOutcome.Failed;
+
+                case MirrorProtocol.ViaControl:
+                    // The far CLI's verdict (CB-306's product-readiness
+                    // round). Only "done" is a success; anything else,
+                    // including no verdict from an older far Buddy, is
+                    // delivered without an answer and said as that.
+                    Note(outcome.Verdict == MirrorProtocol.VerdictDone
+                        ? SlashRanNote(line, FarTitle)
+                        : SlashUnconfirmedNote(line, FarTitle));
+                    return ChatSendOutcome.Sent;
+
+                default:
+                    // Typed: it went in through the input line, so the far
+                    // transcript will echo it and Echoes reconciles that.
+                    _pending = mine;
+                    _pendingText = line.Trim();
+                    _pendingAt = DateTimeOffset.Now;
+                    return ChatSendOutcome.Sent;
+            }
+        }
+
+        internal static string SlashRanNote(string line, string remoteName) =>
+            $"Done: {line.Trim()} on {remoteName}.";
+
+        internal static string SlashUnconfirmedNote(string line, string remoteName) =>
+            $"Sent {line.Trim()} to {remoteName} over Remote Control — no confirmation yet.";
+
+        internal static string OldFarBuddyNote(string remoteName) =>
+            $"Not sent: {remoteName} is on a version of {Brand.DisplayName} that can't run slash commands "
+          + "without a live view of the session. Update it, or open the session in a terminal there.";
 
         // Said when there is a session on screen and no way to reach it.
         //
@@ -647,7 +822,7 @@ namespace Orbweaver
                 // way it already does for the old relay fallback's
                 // cross-session-message tag.
                 if (string.Equals(outcome.Via, MirrorProtocol.ViaMessage, StringComparison.Ordinal))
-                    Note(DeliveredRemotelyNote(_remoteName, outcome.AgentStatus));
+                    Note(DeliveredRemotelyNote(FarTitle, outcome.AgentStatus));
 
                 return ChatSendOutcome.Sent;
             }
@@ -672,7 +847,7 @@ namespace Orbweaver
             // request arriving over a wire does not change it.
             _pending = null;
 
-            Note(TypingRefusal(outcome.Error, _remoteName));
+            Note(TypingRefusal(outcome.Error, FarTitle, outcome.Why));
             return ChatSendOutcome.Failed;
         }
 
@@ -701,9 +876,18 @@ namespace Orbweaver
         // runs when the far machine is newer than this one. A blank or a code
         // number on screen would be the worst outcome of the four, and it is the
         // only arm nothing else can produce.
-        internal static string TypingRefusal(string? errCode, string remoteName) =>
+        internal static string TypingRefusal(string? errCode, string remoteName, string? detail = null) =>
             errCode switch
             {
+                // CB-307 addendum: the far terminal is on a dialog or some
+                // other screen, so typing would have pressed keys on it. Says
+                // what the far side saw, and what to do, which is the one thing
+                // only the person at that terminal can.
+                MirrorProtocol.ErrNotAtPrompt =>
+                    $"{remoteName}'s terminal isn't at its prompt"
+                    + (string.IsNullOrWhiteSpace(detail) ? "" : $" — {detail}")
+                    + ". Nothing was typed; answer that screen in the terminal and send again.",
+
                 MirrorProtocol.ErrReplyOff =>
                     $"{remoteName}'s machine has replying to sessions switched off, so nothing was typed. "
                     + "That is its own setting, and it has to be turned on over there.",
@@ -879,12 +1063,16 @@ namespace Orbweaver
 
             // The handshake may have finished while nothing was open.
             if (!_mirroring) TryUpgrade();
-            else _ = RemoteControlSessions.MirrorClientFor(_account)?.ReopenAsync(_remoteName);
+            else if (RemoteControlSessions.MirrorClientFor(_account) is { } client) Observe(client.ReopenAsync(_remoteName));
+
+            // A form may be waiting on the far screen (CB-307).
+            EnsurePromptPolling();
         }
 
         public void PanelClosed()
         {
             _panelOpen = false;
+            StopPromptPolling();
 
             // Whatever was in flight is no longer being waited for by anybody.
             // Reopening starts a fresh fetch (CloseAsync drops the feed), so a
@@ -897,13 +1085,14 @@ namespace Orbweaver
             // The history stays exactly as it is. Only the subscription goes:
             // reopening re-reads the tail, which is cheap and is also the right
             // thing, since the conversation will have moved on.
-            _ = RemoteControlSessions.MirrorClientFor(_account)?.CloseAsync(_remoteName);
+            if (RemoteControlSessions.MirrorClientFor(_account) is { } client) Observe(client.CloseAsync(_remoteName));
         }
 
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
+            StopPromptPolling();
 
             RemoteControlSessions.MirrorChanged -= OnMirrorChanged;
 
@@ -913,7 +1102,7 @@ namespace Orbweaver
             client.Delivered -= OnDelivered;
             client.Failed -= OnMirrorFailed;
 
-            if (_mirroring) _ = client.CloseAsync(_remoteName);
+            if (_mirroring) Observe(client.CloseAsync(_remoteName));
         }
 
         // Everything that touches the history has to land on the UI thread,

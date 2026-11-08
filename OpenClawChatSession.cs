@@ -180,7 +180,7 @@ namespace Orbweaver
     // A send is routed by OpenClawSendPolicy: a conversation on a chat surface
     // is delivered back to that surface with the typed message mirrored into
     // it, and a native session, which has no surface, is answered in place.
-    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages, IRemoteChatPrompts
+    internal sealed class OpenClawChatSession : IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatGatewayKey, IRemoteChatRunOptions, IRemoteChatImages, IRemoteChatPrompts, IRemoteChatSlashCommands, IRemoteChatSlashRunner
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -357,6 +357,40 @@ namespace Orbweaver
 
         public Task<ChatSendOutcome> SendAsync(string text) => SendCoreAsync(text, null, null);
 
+        // CB-306: the gateway parses a leading slash in chat.send itself, so a
+        // command that is allowed is sent as the text it was typed as; its reply
+        // (a card for a context-free command) comes back as an ordinary history
+        // row. What this adds is the catalogue to complete from, and a refusal —
+        // nothing sent, the box keeps its text — for a command this device is not
+        // paired to run. A /word the gateway does not list is just a message.
+        public IReadOnlyList<SlashCommand> SlashCommands
+        {
+            get
+            {
+                var catalogue = OpenClawSessions.Commands;
+                return OpenClawCommandCatalog.Offered(catalogue.Commands, catalogue.Scopes);
+            }
+        }
+
+        public Task<ChatSendOutcome> RunSlashAsync(string line)
+        {
+            var name = SlashRouting.Split(line)?.Name ?? line;
+            var catalogue = OpenClawSessions.Commands;
+
+            if (OpenClawCommandCatalog.RefusalFor(name, catalogue.Commands, catalogue.Scopes) is { } reason)
+            {
+                Note(SlashRouting.RefusalNote(name, reason));
+                return Task.FromResult(ChatSendOutcome.Failed);
+            }
+
+            // A line the catalogue recognises is a command: it must not be mirrored
+            // into a channel, where "/status" would be posted publicly. Anything
+            // else — an unlisted /word, or any line with no catalogue — is an
+            // ordinary message and travels exactly as one.
+            var recognised = OpenClawCommandCatalog.Find(name, catalogue.Commands) is not null;
+            return SendCoreAsync(line, null, null, recognised);
+        }
+
         // CB-270 Stage 4: a native conversation takes pictures with its message.
         // The panel hands over files it already saved to disk; only the images
         // among them are sent, by name and content, and the first one is drawn on
@@ -395,7 +429,8 @@ namespace Orbweaver
         }
 
         private async Task<ChatSendOutcome> SendCoreAsync(
-            string text, IReadOnlyList<OpenClawOutgoingImage>? images, byte[]? thumbnail)
+            string text, IReadOnlyList<OpenClawOutgoingImage>? images, byte[]? thumbnail,
+            bool isCommand = false)
         {
             // The user's own turn is added here rather than by the panel, so one
             // thing owns the transcript and a send that fails leaves a message
@@ -438,7 +473,7 @@ namespace Orbweaver
                 return ChatSendOutcome.Failed;
             }
 
-            var failure = await SendOrFailureAsync(text, images);
+            var failure = await SendOrFailureAsync(text, images, isCommand);
             if (failure is not null)
             {
                 Note("Couldn't send: " + failure);
@@ -458,11 +493,11 @@ namespace Orbweaver
         // completes, and the decision that reads it — say so in the transcript —
         // is measured where it belongs.
         [ExcludeFromCodeCoverage]
-        private async Task<string?> SendOrFailureAsync(string text, IReadOnlyList<OpenClawOutgoingImage>? images)
+        private async Task<string?> SendOrFailureAsync(string text, IReadOnlyList<OpenClawOutgoingImage>? images, bool isCommand)
         {
             try
             {
-                await OpenClawSessions.SendAsync(this, text, CancellationToken.None, images);
+                await OpenClawSessions.SendAsync(this, text, CancellationToken.None, images, isCommand);
                 return null;
             }
             catch (Exception ex)

@@ -168,61 +168,71 @@ public class SessionLivenessTests
     [Theory]
     [InlineData("generating")]
     [InlineData("waiting")]
-    public void ASessionBeingUsedRightNowIsShownHoweverOldItsTranscriptIs(string busy)
+    public void ASessionBeingUsedRightNowIsNeverParkedHoweverOldItsTranscriptIs(string busy)
     {
         // A long tool call writes nothing for minutes and a permission prompt
-        // can sit unanswered far longer — neither is abandoned, and both are
-        // exactly when the orb is wanted most.
-        Assert.True(SessionLiveness.WorthShowing(
-            busy, Now - TimeSpan.FromDays(3), Now));
+        // can sit unanswered far longer — neither is parked, and both are
+        // exactly when the orb is wanted at full brightness.
+        Assert.False(SessionLiveness.IsParked(busy, Now - TimeSpan.FromDays(3), Now));
+        Assert.False(SessionLiveness.IsParked(busy, Now - TimeSpan.FromSeconds(1), Now));
     }
 
     [Fact]
-    public void AnIdleSessionThatSpokeSecondsAgoIsShown()
+    public void AnIdleSessionThatSpokeSecondsAgoIsNotParked()
     {
         // **This is the case CB-74's filter got wrong**, and the reason this
         // rule reads turns rather than a heartbeat. The live session on the
         // mini reported `idle` at the very moment it was mid-conversation.
-        Assert.True(SessionLiveness.WorthShowing(
-            "idle", Now - TimeSpan.FromSeconds(8), Now));
+        Assert.False(SessionLiveness.IsParked("idle", Now - TimeSpan.FromSeconds(8), Now));
     }
 
     [Fact]
-    public void AnIdleSessionNobodyHasSpokenToSinceYesterdayIsNot()
+    public void AnIdleSessionNobodyHasSpokenToSinceYesterdayIsParked()
     {
-        // 23 hours, measured — the abandoned `job-hunter-mac-mini`.
-        Assert.False(SessionLiveness.WorthShowing(
-            "idle", Now - TimeSpan.FromHours(23), Now));
+        // 23 hours, measured — `job-hunter-mac-mini`; 20 hours, measured —
+        // `lawyer-search` (CB-307). Both are parked, not hidden.
+        Assert.True(SessionLiveness.IsParked("idle", Now - TimeSpan.FromHours(23), Now));
+        Assert.True(SessionLiveness.IsParked("idle", Now - TimeSpan.FromHours(20), Now));
     }
 
     [Fact]
     public void TheBoundaryIsAssertedFromBothSides()
     {
-        var window = SessionLiveness.StaysInterestingFor;
+        var window = SessionLiveness.ParkedAfter;
 
-        Assert.True(SessionLiveness.WorthShowing(
-            "idle", Now - window + TimeSpan.FromSeconds(1), Now, window));
+        Assert.False(SessionLiveness.IsParked("idle", Now - window + TimeSpan.FromTicks(1), Now, window));
+        Assert.True(SessionLiveness.IsParked("idle", Now - window, Now, window));
+        Assert.True(SessionLiveness.IsParked("idle", Now - window - TimeSpan.FromTicks(1), Now, window));
+    }
 
-        Assert.False(SessionLiveness.WorthShowing("idle", Now - window, Now, window));
+    [Fact]
+    public void TheShortOverloadUsesParkedAfter()
+    {
+        // A window of one minute would park a ten-minute-old turn; the
+        // short overload must not, which is only true if it uses ParkedAfter.
+        var tenMinutes = Now - TimeSpan.FromMinutes(10);
+
+        Assert.True(SessionLiveness.IsParked("idle", tenMinutes, Now, TimeSpan.FromMinutes(1)));
+        Assert.False(SessionLiveness.IsParked("idle", tenMinutes, Now));
+        Assert.True(SessionLiveness.IsParked("idle", Now - SessionLiveness.ParkedAfter, Now));
     }
 
     [Fact]
     public void TheWindowSurvivesLunch()
     {
-        // The stated intent, pinned: walking away for an hour is not
-        // abandoning a session, and an orb that vanishes over lunch is a worse
-        // bug than the one this fixes.
-        Assert.True(SessionLiveness.StaysInterestingFor >= TimeSpan.FromHours(1));
+        // The stated intent, pinned: walking away for an hour is not leaving
+        // a session, and an orb that dims over lunch says something untrue.
+        Assert.True(SessionLiveness.ParkedAfter >= TimeSpan.FromHours(1));
     }
 
     [Fact]
-    public void ASessionWhoseTranscriptSaidNothingIsShownRatherThanHidden()
+    public void ASessionWhoseTranscriptSaidNothingIsNotParked()
     {
-        // Fail open. Hiding on an unreadable or bookkeeping-only file would
-        // make a file this process could not parse look identical to an
-        // abandoned session — which is the confusion the whole class exists to
-        // end.
-        Assert.True(SessionLiveness.WorthShowing("idle", null, Now));
+        // Fail open. Parking on an unreadable or bookkeeping-only file would
+        // make a file this process could not parse look identical to a quiet
+        // session — which is the confusion the whole class exists to end.
+        Assert.False(SessionLiveness.IsParked("idle", null, Now));
+        Assert.False(SessionLiveness.IsParked("idle", null, Now, TimeSpan.Zero));
     }
 
     [Theory]
@@ -234,7 +244,74 @@ public class SessionLivenessTests
     {
         // A state this build does not know is not a claim that the session is
         // busy, so the conversation decides.
-        Assert.True(SessionLiveness.WorthShowing(state, Now - TimeSpan.FromMinutes(1), Now));
-        Assert.False(SessionLiveness.WorthShowing(state, Now - TimeSpan.FromDays(1), Now));
+        Assert.False(SessionLiveness.IsParked(state, Now - TimeSpan.FromMinutes(1), Now));
+        Assert.True(SessionLiveness.IsParked(state, Now - TimeSpan.FromDays(1), Now));
+    }
+
+    // --- the duplicate rule ----------------------------------------------------
+
+    private static HashSet<string> Suppressed(params (string Key, string Name, bool Parked)[] rows) =>
+        SessionLiveness.SuppressedDuplicates(rows);
+
+    [Fact]
+    public void AQuietCopyBesideALiveCopyOfTheSameNameIsSuppressed()
+    {
+        // The `job-hunter-mac-mini` picture: two identical labels, and the dim
+        // one is the one nobody means.
+        Assert.Equal(new[] { "old" },
+            Suppressed(("live", "job-hunter", false), ("old", "job-hunter", true)));
+    }
+
+    [Fact]
+    public void TwoQuietCopiesAreBothKept()
+    {
+        // Nothing to prefer one over the other, so both are drawn dimmed.
+        Assert.Empty(Suppressed(("a", "job-hunter", true), ("b", "job-hunter", true)));
+    }
+
+    [Fact]
+    public void TwoLiveCopiesAreBothKept() =>
+        Assert.Empty(Suppressed(("a", "job-hunter", false), ("b", "job-hunter", false)));
+
+    [Fact]
+    public void OneLiveCopyMakesEveryQuietCopyRedundant()
+    {
+        var suppressed = Suppressed(
+            ("q1", "job-hunter", true), ("live", "job-hunter", false), ("q2", "job-hunter", true));
+
+        Assert.Equal(new[] { "q1", "q2" }, suppressed.OrderBy(k => k));
+    }
+
+    [Fact]
+    public void NamesCompareWithoutCase() =>
+        Assert.Equal(new[] { "old" },
+            Suppressed(("live", "Job-Hunter", false), ("old", "job-hunter", true)));
+
+    [Fact]
+    public void ARowWithNoNameIsNeverADuplicate()
+    {
+        Assert.Empty(Suppressed(("live", "", false), ("old", "", true)));
+        Assert.Empty(Suppressed(("live", null!, false), ("old", null!, true)));
+        Assert.Empty(Suppressed(("live", "  ", false), ("old", "  ", true)));
+    }
+
+    [Fact]
+    public void DifferentNamesNeverInteract() =>
+        Assert.Empty(Suppressed(("live", "job-hunter", false), ("old", "lawyer-search", true)));
+
+    [Fact]
+    public void NoRowsSuppressNothing() => Assert.Empty(Suppressed());
+
+    [Fact]
+    public void OnlyALeadlessClaudeCodeSessionIsEligibleForTheDuplicateRule()
+    {
+        // Members inherit their lead's title, so a quiet member beside a live
+        // one is a team rather than a duplicate and must never vanish.
+        Assert.True(SessionLiveness.EligibleForDuplicateRule(
+            new SessionStatus { Source = SessionSource.ClaudeCode }));
+        Assert.False(SessionLiveness.EligibleForDuplicateRule(
+            new SessionStatus { Source = SessionSource.ClaudeCode, Lead = "lead-session" }));
+        Assert.False(SessionLiveness.EligibleForDuplicateRule(
+            new SessionStatus { Source = SessionSource.Codex }));
     }
 }

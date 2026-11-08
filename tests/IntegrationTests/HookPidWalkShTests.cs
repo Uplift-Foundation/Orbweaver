@@ -120,6 +120,7 @@ public class HookPidWalkShTests
         // run off the developer's real ~/.codex and ~/.grok — same reasoning
         // as HookScriptShTests.
         psi.Environment["TMPDIR"] = tmp.FullName;
+        psi.Environment["ORBWEAVER_STATUS_ROOT"] = tmp.FullName;
         psi.Environment["CODEX_HOME"] = Path.Combine(tmp.FullName, "codex-home");
         Directory.CreateDirectory(psi.Environment["CODEX_HOME"]!);
         psi.Environment["GROK_HOME"] = Path.Combine(tmp.FullName, "grok-home");

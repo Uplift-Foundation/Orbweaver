@@ -1,11 +1,13 @@
 using System;
 using System.Collections;
+using System.Linq;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Headless;
+using Avalonia.LogicalTree;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Xunit;
@@ -78,6 +80,15 @@ public class OrbWindowPresenceTests
         }
 
         return false;
+    }
+
+    // The first line of the hover tooltip, read off the bubble the window
+    // builds — the word a user actually sees, rather than the label behind it.
+    private static string TipTitle(OrbWindow orb)
+    {
+        var tip = ToolTip.GetTip(orb.FindControl<Grid>("Root")!);
+        var bubble = Assert.IsAssignableFrom<Control>(tip);
+        return bubble.GetLogicalDescendants().OfType<TextBlock>().First().Text ?? "";
     }
 
     private static Border Badge(OrbWindow orb, string name) =>
@@ -269,19 +280,83 @@ public class OrbWindowPresenceTests
         Assert.Equal("✓", Glyph(orb, "PresenceGlyph"));
     }
 
-    // An orphaned team member: dimmed, and deliberately unmarked. Nothing is
-    // waiting on the user and nothing has finished, so there is nothing to say
-    // beyond the dimming — and both marks are the daemon's vocabulary, which has
-    // never heard of this session.
+    // A parked session — an orphaned team member, or since CB-307 any live
+    // session nobody has spoken to for a while: dimmed, and deliberately
+    // unbadged. Nothing is waiting on the user and nothing has finished, so the
+    // badge channel ("there is something here for you") stays empty. It does get
+    // the word "parked" in the tooltip, so a dim orb can say why it is dim.
     [AvaloniaFact]
-    public void AnOrphanedTeammateIsDimmedWithNoMark()
+    public void AnOrphanedTeammateIsDimmedWithAWordAndNoBadge()
     {
         var orb = new OrbWindow(Guid.NewGuid().ToString());
         orb.UpdateFrom(Status(OrbPresence.Parked, kind: SessionKind.Unknown));
 
         Assert.True(Opacity(orb) < 1.0);
-        Assert.Null(orb.PresenceLabel);
+        Assert.Equal("parked", orb.PresenceLabel);
         Assert.False(Badge(orb, "PresenceBadge").IsVisible);
+    }
+
+    // CB-307: a quiet Terminal-shaped Claude Code session, the case the ticket
+    // is about. Dimmed, off the pulse roster, wording in the tooltip, no badge —
+    // and the very next UpdateFrom carrying Present (a new turn arrived) puts it
+    // back at full brightness, on the roster, with the word gone. Loaded, so the
+    // un-park arm that restores motion is the one that runs.
+    [AvaloniaFact]
+    public void AQuietTerminalSessionIsParkedAndClearsTheInstantANewTurnArrives()
+    {
+        var orb = new OrbWindow(Guid.NewGuid().ToString());
+        orb.Show();
+        Flush();
+        Assert.True(orb.IsLoaded);
+
+        orb.UpdateFrom(Status(OrbPresence.Parked, kind: SessionKind.Unknown, shape: LocalSessionShape.Terminal));
+
+        Assert.Equal(OrbPresence.Parked, orb.Presence);
+        Assert.Equal(0.45, Opacity(orb));
+        Assert.False(IsOnThePulseRoster(orb));
+        Assert.False(Badge(orb, "PresenceBadge").IsVisible);
+        Assert.Equal("parked", orb.PresenceLabel);
+        Assert.EndsWith(" · parked", TipTitle(orb));
+
+        orb.UpdateFrom(Status(OrbPresence.Present, kind: SessionKind.Unknown,
+            state: "generating", shape: LocalSessionShape.Terminal));
+
+        Assert.Equal(OrbPresence.Present, orb.Presence);
+        Assert.Equal(1.0, Opacity(orb));
+        Assert.True(IsOnThePulseRoster(orb));
+        Assert.Null(orb.PresenceLabel);
+        Assert.DoesNotContain("parked", TipTitle(orb));
+    }
+
+    // The remote path: a peer's roster said "parked", so the orb for it is drawn
+    // dimmed by the same code, whatever the source.
+    [AvaloniaFact]
+    public void AParkedRemoteOrbIsDimmedLikeALocalOne()
+    {
+        var orb = new OrbWindow(Guid.NewGuid().ToString());
+        orb.UpdateFrom(Status(OrbPresence.Parked, kind: SessionKind.Remote,
+            source: SessionSource.RemoteControl));
+
+        Assert.Equal(OrbPresence.Parked, orb.Presence);
+        Assert.Equal(0.45, Opacity(orb));
+        Assert.Equal("parked", orb.PresenceLabel);
+        Assert.False(Badge(orb, "PresenceBadge").IsVisible);
+
+        orb.UpdateFrom(Status(OrbPresence.Present, kind: SessionKind.Remote,
+            source: SessionSource.RemoteControl));
+        Assert.Equal(1.0, Opacity(orb));
+        Assert.Null(orb.PresenceLabel);
+    }
+
+    // The mark table itself, so the glyph-less arm is pinned apart from any
+    // window: parked is a word with no glyph, the other two keep theirs.
+    [Fact]
+    public void ParkedIsAWordWithNoGlyphWhileTheDaemonsTwoKeepTheirs()
+    {
+        Assert.Equal((null, "parked"), OrbWindow.PresenceMarkFor(OrbPresence.Parked));
+        Assert.Equal("?", OrbWindow.PresenceMarkFor(OrbPresence.NeedsInput)!.Value.Glyph);
+        Assert.Equal("\u2713", OrbWindow.PresenceMarkFor(OrbPresence.Finished)!.Value.Glyph);
+        Assert.Null(OrbWindow.PresenceMarkFor(OrbPresence.Present));
     }
 
     // A present session carries no mark at all, which is most orbs most of the

@@ -119,7 +119,15 @@ if ($Agent -eq 'claude' -and $State -ne 'ended' -and $transcript -and (Test-Path
     } catch {}
 }
 
-$resolvedTempDir = if ($TempDir) { $TempDir } else { [System.IO.Path]::GetTempPath() }
+# ORBWEAVER_STATUS_ROOT first, then the baked -TempDir, then GetTempPath():
+# the order the app's StatusDirectory.Root uses, so a test that hands the app
+# a private status directory through that seam hands this script the same one
+# (CB-306). -TempDir stays baked, per the param block: Windows's per-user temp
+# is stable across reboots, which is what lets the installer compute it once.
+# macOS cannot do that -- its per-user directory carries a per-boot token -- so
+# the bash twin asks the C library on every call instead.
+$statusRoot = $env:ORBWEAVER_STATUS_ROOT
+$resolvedTempDir = if ($statusRoot) { $statusRoot } elseif ($TempDir) { $TempDir } else { [System.IO.Path]::GetTempPath() }
 $dir = Join-Path $resolvedTempDir 'orbweaver'
 if (-not (Test-Path $dir)) {
     New-Item -ItemType Directory -Path $dir | Out-Null

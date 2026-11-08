@@ -27,6 +27,14 @@ namespace Orbweaver
             : source == SessionSource.Grok ? ForGrok()
             : ForClaudeCode(cwd);
 
+        // Each CLI's fixed list alone, with no disk read at all: what a caller
+        // that must never touch the filesystem offers until a scan has answered
+        // (SlashCatalogueCache, CB-306).
+        internal static IReadOnlyList<SlashCommand> BuiltinsFor(SessionSource source) =>
+            source == SessionSource.Codex ? CodexBuiltins
+            : source == SessionSource.Grok ? GrokBuiltins
+            : ClaudeCodeBuiltins;
+
 
         // --- Claude Code ---
 
@@ -222,7 +230,7 @@ namespace Orbweaver
             text.Length <= 80 ? text : text[..77] + "...";
 
         // Checked against code.claude.com/docs/en/commands, 22 Aug 2026.
-        private static readonly SlashCommand[] ClaudeCodeBuiltins =
+        internal static readonly SlashCommand[] ClaudeCodeBuiltins =
         {
             new("/add-dir", "Add a working directory for file access"),
             new("/advisor", "Enable or disable the advisor tool for a second opinion"),

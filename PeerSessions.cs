@@ -23,6 +23,7 @@ namespace Orbweaver
         private static PeerDiscovery? _discovery;
         private static Timer? _connecting;
         private static Timer? _pumping;
+        private static CancellationTokenSource? _listenStop;
 
         // How often the two mirror halves are given a chance to notice a
         // deadline lapsing or a watch needing renewal.
@@ -175,22 +176,37 @@ namespace Orbweaver
                 };
             }
 
-            try
-            {
-                host.Link.Listen(OrbweaverSettings.PeerLinkPort);
-                discovery.Start(host.Link.BoundPort);
+            // Retried until it binds. One attempt, logged once, was how an
+            // install left a machine with no peer link for good (CB-306): the old
+            // instance still held the port, and nothing ever asked again.
+            var stop = new CancellationTokenSource();
+            lock (Gate) _listenStop = stop;
 
-                MirrorLog.Say("peer-listening", $"port={host.Link.BoundPort}");
-            }
-            catch (Exception ex)
-            {
-                // On macOS a missing Local Network grant surfaces here or at the
-                // first connect, and looks like an ordinary network error. The
-                // hint is appended rather than substituted, exactly as the
-                // gateway does it.
-                MirrorLog.Say("peer-listen-failed",
-                    OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS()));
-            }
+            _ = PeerListenRetry.RunAsync(
+                () =>
+                {
+                    host.Link.Listen(OrbweaverSettings.PeerLinkPort);
+                    discovery.Start(host.Link.BoundPort);
+                },
+                (attempt, next, ex) =>
+                {
+                    // On macOS a missing Local Network grant surfaces here or at
+                    // the first connect, and looks like an ordinary network
+                    // error. The hint is appended rather than substituted,
+                    // exactly as the gateway does it.
+                    MirrorLog.Say("peer-listen-failed",
+                        $"attempt={attempt} retry-in={next.TotalSeconds:0}s " +
+                        OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS()));
+                },
+                (delay, ct) => Task.Delay(delay, ct),
+                stop.Token).ContinueWith(t =>
+                {
+                    if (t.IsCompletedSuccessfully && !stop.IsCancellationRequested)
+                        MirrorLog.Say("peer-listening",
+                            $"port={host.Link.BoundPort} after-failures={t.Result}");
+                    else if (t.IsFaulted)
+                        MirrorLog.Say("peer-listen-retry-threw", t.Exception!.GetBaseException().Message);
+                }, TaskScheduler.Default);
 
             lock (Gate)
             {
@@ -735,9 +751,12 @@ namespace Orbweaver
             PeerDiscovery? discovery;
             Timer? connecting;
             Timer? pumping;
+            CancellationTokenSource? listenStop;
 
             lock (Gate)
             {
+                listenStop = _listenStop;
+                _listenStop = null;
                 host = _host;
                 discovery = _discovery;
                 connecting = _connecting;
@@ -749,6 +768,7 @@ namespace Orbweaver
                 _pumping = null;
             }
 
+            listenStop?.Cancel();
             connecting?.Dispose();
             pumping?.Dispose();
             discovery?.Dispose();

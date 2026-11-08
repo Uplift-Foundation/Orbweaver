@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/orbweaver-icon.svg" width="112" alt="The Orbweaver logo: a spiderweb with a violet orb at its hub"></p>
+
 # Orbweaver
 
 *Formerly Claude Buddy.* If you are looking for Claude Buddy, this is it: same app, new name.
@@ -795,7 +797,7 @@ Details worth knowing:
   rebuilt on next launch.
 
 It works by watching a small folder in the OS temp directory
-(`%TEMP%\orbweaver\` on Windows, `$TMPDIR/orbweaver/` on macOS) that
+(`%TEMP%\orbweaver\` on Windows, `$(getconf DARWIN_USER_TEMP_DIR)/orbweaver/` on macOS) that
 fills up with one JSON status file per session — `<session_id>.txt`,
 containing `{"state": "...", "cwd": "...", "title": "...", "color": "...", ...}`
 — written by a tiny script that Claude Code hooks invoke:
@@ -1927,6 +1929,8 @@ machines before any of this was built — including what the relay does and does
 not expose, and the two things a stronger test caught that a weaker one had
 passed.
 
+**A few built-ins run even without a live view — the ones with a control-request form (CB-306).** `/rename`, `/model`, `/permissions <mode>` and `/think <budget>` reach a Remote Control-bridged or cloud session as a *control request* on the session's own channel rather than as a message to its model, so they take effect where `/compact` and the rest still cannot; `/color` is among them for a bridged local or Desktop session but not for a cloud one, whose worker has no prompt bar to colour. Everything else — `/compact`, custom commands, skills — stays unavailable over these channels: the panel hides it from autocomplete, and typing it in full is refused with a plain reason rather than sent to the model as prose, because a slash command posted from here arrives as a teammate's message and Claude Code runs its own slash commands only from its keyboard or claude.ai. For a **local Desktop or headless job reached over Remote Control**, that control-request path uses the Claude Code login on this machine and is **on by default**: Settings → **Remote Control commands** → **Run slash commands in background jobs and Desktop sessions**. The first command sent brings the macOS Keychain prompt for that login, and nothing is read before then. Turn it off and the panel names the switch and nothing goes out; a linked machine posting to its own jobs follows its own switch. Ordinary messages to a Desktop chat still need **"Show cloud sessions"**, and cloud sessions themselves stay behind it. A background job with no Remote Control connection is told so, with the two ways out: start it with `--remote-control`, or from a terminal pane. The panel waits up to about five seconds for Claude Code's own answer. It says **Done** when Claude Code confirms, and "no confirmation yet" when nothing comes back in time. When Claude Code itself refuses a command — an unknown colour, a subtype a newer CLI dropped — the note quotes its reason and, where the session's registry row names one, its Claude Code version beside the one these commands were measured on (2.1.317). The claude.ai-client investigation behind all of this — why the fuller path is not reachable and is deliberately not pursued — is in `docs/claude-cloud-findings.md`.
+
 ### Connecting directly instead (both platforms, off by default)
 
 Everything above goes through Anthropic's Remote Control cloud, carried by a
@@ -2057,18 +2061,19 @@ is needed; the .NET runtime is bundled.
 **Install Hooks.command** — that runs step 2 below for you. The
 builds are signed and notarized, so they open without a Gatekeeper override.
 
-**Windows**: run the setup. It installs per-user under
-`%LOCALAPPDATA%\Programs\ClaudeBuddy`, so there is no UAC prompt, and it
-offers to do step 2 and to start the app at sign-in. It is **not** code-signed
-yet, so SmartScreen shows a warning — choose *More info → Run anyway*.
-Uninstall through Apps & Features; that also removes the hook entries from
-`settings.json`.
+**Windows**: run the setup. It installs per-user under `%LOCALAPPDATA%\Programs\Orbweaver` on a fresh install, so there is no UAC prompt, and it offers to do step 2 and to start the app at sign-in. It is **not** code-signed yet, so SmartScreen shows a warning — choose *More info → Run anyway*. Uninstall through Apps & Features; that also removes the hook entries from `settings.json`.
 
-The install folder keeps the name `Programs\ClaudeBuddy` on purpose: setups
-from before the rename installed there, and an upgrade installs over the
-existing folder instead of leaving a second copy behind. The program inside it
-is `Orbweaver.exe`; the setup removes the old `ClaudeBuddy.exe` when it
-upgrades.
+An upgrade over a copy installed before the rename stays in `Programs\ClaudeBuddy` on purpose: the installer reuses the previous install folder, so the upgrade lands over the existing copy instead of leaving a second one behind. Either way the program inside is `Orbweaver.exe`; the setup removes the old `ClaudeBuddy.exe` when it upgrades.
+
+### Updating
+
+Orbweaver checks GitHub for a newer release about once a day, and **Check for updates…** in the menu-bar/tray menu checks on demand. When one is found the menu item becomes **Update to <version> available…** and a small notice shows the release notes with **Install & restart**, **Later** and **Skip this version**. Nothing is downloaded until you choose Install. Settings → **Updates** turns the daily check off (no network call is made at all while it is off), opts in to prerelease versions, and shows the version you skipped with a way to forget it.
+
+What Install does: it downloads the installer for your platform, checks it against the release's `SHA256SUMS.txt`, and refuses on any mismatch. On macOS it also requires the downloaded app to pass `codesign --verify --deep --strict`, to be signed by Uplift Foundation's Team ID, and to pass Gatekeeper's `spctl --assess`, then swaps it into `/Applications` and relaunches it. On Windows it runs the setup silently and the setup relaunches the app. The Windows installer is not code-signed, so the checksum is the only check and it comes from the same GitHub release as the installer — that is the same level of assurance as downloading it by hand, not more.
+
+The updater will not try to escalate privileges. If the app is not in a folder you can write to, was launched from a downloaded disk image (macOS App Translocation), or is a loose `dotnet run` binary, it says so and points you at the release page instead. If an install fails, the notice shows why and offers **Retry** and **Download manually**; the failure is also written to `update.log` (`~/Library/Logs/Orbweaver/` on macOS, `%LOCALAPPDATA%\Orbweaver\Logs\` on Windows).
+
+**macOS asks for permissions again after an update.** Replacing the app gives it a new code identity, and macOS does not carry privacy grants across that. The first launch after an update tells you once, and lists what may need re-allowing in System Settings → Privacy & Security: Local Network (OpenClaw and other machines), Automation (click-to-focus), Accessibility and Microphone. If you use OpenClaw or other machines, the notice has a button that opens the Local Network pane.
 
 **Crash keep-alive.** If **Serve on launch** (Settings → Remote Control) is
 turned on, both installers also register a way for the OS to bring
@@ -2448,9 +2453,13 @@ To undo it by hand, delete the `"crossSessionInbound"` line from that `settings.
 ### Platform notes
 
 **macOS**: the hooks call `bash` with the script's absolute path — nothing
-else needed. The script writes to `$TMPDIR/orbweaver/`, which is the
-same per-user folder .NET's `Path.GetTempPath()` returns, so the app and
-hooks agree automatically. No `jq` dependency; the script extracts
+else needed. The script writes to `orbweaver/` under the per-user temp
+directory the C library reports (`getconf DARWIN_USER_TEMP_DIR`, the same
+`confstr` the app calls), so the app and hooks agree whatever `TMPDIR` the
+session was launched with — OpenClaw, for one, gives every session it spawns
+a private `TMPDIR`, and the hook used to follow it while the app did not.
+`ORBWEAVER_STATUS_ROOT` overrides both halves for a sandbox. No `jq`
+dependency; the script extracts
 `session_id`/`cwd`/`transcript_path` with `sed`, and the chat name and color
 with `grep`.
 

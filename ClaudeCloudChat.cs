@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
@@ -339,7 +340,8 @@ namespace Orbweaver
     // this class raises on a 2xx and the row the history later returns be the
     // same bubble.
     internal sealed class ClaudeCloudChatSession : IRemoteChatSession, IRemoteChatComposer,
-        IRemoteChatReadOnly, IRemoteChatMachine, IRemoteChatInterrupt
+        IRemoteChatReadOnly, IRemoteChatMachine, IRemoteChatInterrupt,
+        IRemoteChatSlashCommands, IRemoteChatSlashRunner
     {
         // How much of a long transcript the panel is given. The interface's own
         // contract is that history arrives already bounded and ordered oldest to
@@ -697,6 +699,69 @@ namespace Orbweaver
             }
         }
 
+        // --- slash commands (CB-306) ----------------------------------------
+
+        private IReadOnlyList<SlashCommand> _slashCommands =
+            CloudSlashCatalog.Catalogue(Array.Empty<string>(), Array.Empty<string>());
+
+        // The full catalogue with routes, Unavailable included — the panel hides
+        // those. The four control commands until an init has been seen; touched on the UI thread.
+        public IReadOnlyList<SlashCommand> SlashCommands => _slashCommands;
+
+        // Run `/cmd args`. A Control route posts the control request and says in
+        // one line what happened; anything else is refused with the routing
+        // table's reason and nothing is sent. Failed keeps the text in the box.
+        public async Task<ChatSendOutcome> RunSlashAsync(string line)
+        {
+            // A line is a command only if its first token is a name the CLI knows
+            // (or one the routing table maps). A path, an unknown word or a bare
+            // slash is an ordinary message.
+            if (SlashRouting.Split(line) is not { } parts
+                || !_slashCommands.Any(c => string.Equals(c.Name, parts.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return await SendAsync(line).ConfigureAwait(false);
+            }
+
+            if (IsReadOnly)
+            {
+                Note("Not sent: " + ComposerHint);
+                return ChatSendOutcome.Failed;
+            }
+
+            if (!Enabled())
+            {
+                Note("Not sent: cloud sessions are switched off in Settings.");
+                return ChatSendOutcome.Failed;
+            }
+
+            var route = SlashRouting.Resolve(SlashChannel.Cloud, parts.Name, parts.Args);
+            if (route.Kind != SlashRouteKind.Control)
+            {
+                Note(SlashRouting.RefusalNote(parts.Name, route.Reason!));
+                return ChatSendOutcome.Failed;
+            }
+
+            var request = SlashRouting.ControlRequest(route.ControlSubtype!, parts.Args, out var problem);
+            if (request is null)
+            {
+                Note($"Not sent: {parts.Name} — {problem}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            var failure = await CloudTurnSender.PostControlAsync(
+                _api, _credentials, ReadBudget, SessionId, request, CancellationToken.None)
+                .ConfigureAwait(false);
+
+            if (failure is not null)
+            {
+                Note($"{parts.Name} did not reach the session: {failure}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            Note($"Sent {parts.Name}{(parts.Args.Length == 0 ? "" : " " + parts.Args)}.");
+            return ChatSendOutcome.Sent;
+        }
+
         // --- stopping --------------------------------------------------------
 
         // Stop the turn in flight.
@@ -722,37 +787,10 @@ namespace Orbweaver
 
         private async Task InterruptAsync()
         {
-            var read = await ClaudeCliCredentials
-                .ReadWithinAsync(_credentials, ReadBudget, CancellationToken.None).ConfigureAwait(false);
-
-            string? failure;
-            if (read.Outcome != CredentialOutcome.Found || read.AccessToken is not { } token)
-            {
-                failure = ClaudeCliCredentials.StatusFor(read);
-            }
-            else
-            {
-                // CodeEventsPath cannot be null here: Cancel is only reachable
-                // through CanInterrupt, and a session with a malformed id never
-                // got a turn running from this panel — but the roster can report
-                // one busy regardless, so the refusal is handled rather than
-                // assumed away.
-                var path = CloudRequest.CodeEventsPath(SessionId);
-                if (path is null)
-                {
-                    failure = $"this session's id is not in a shape {Brand.ShortName} will write to";
-                }
-                else
-                {
-                    var result = await _api.SendAsync(
-                        new CloudRequestContext(token, path, HttpMethod.Post,
-                            ClaudeCloudSend.InterruptBody(Guid.NewGuid().ToString(),
-                                Guid.NewGuid().ToString())),
-                        CancellationToken.None).ConfigureAwait(false);
-
-                    failure = result.Outcome.Kind == CloudOutcomeKind.Ok ? null : result.Outcome.Detail;
-                }
-            }
+            var failure = await CloudTurnSender.PostControlAsync(
+                _api, _credentials, ReadBudget, SessionId,
+                new JsonObject { ["subtype"] = "interrupt", ["cancel_queued"] = true },
+                CancellationToken.None).ConfigureAwait(false);
 
             // Delivered: something has to see the turn end and put the state
             // right, and if a loop is not already watching, that is this one.
@@ -1092,7 +1130,18 @@ namespace Orbweaver
                 // The turn has started — measured: `system init`, then a
                 // `status` of "requesting".
                 case "system" when e.Subtype == "init" || (e.Subtype == "status" && e.StatusValue == "requesting"):
-                    _post(() => SetBusy(true));
+                    // The init also carries the session's command list (CB-306).
+                    // It replays from sequence 0 and is re-published each turn,
+                    // so the latest one wins; one with no list leaves the last.
+                    var init = e.Subtype == "init" ? CloudSlashCatalog.ParseInit(e.RowJson) : null;
+                    _post(() =>
+                    {
+                        if (init is { } lists)
+                        {
+                            _slashCommands = CloudSlashCatalog.Catalogue(lists.Commands, lists.Terminal);
+                        }
+                        SetBusy(true);
+                    });
                     break;
 
                 // The turn is over, whatever the subtype — success, or

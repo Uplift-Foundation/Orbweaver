@@ -430,6 +430,13 @@ namespace Orbweaver
         public static bool CanSendQuietly(SessionStatus? status) =>
             RouteFor(status) != TerminalTyping.Route.None;
 
+        // CB-307 addendum: whether CapturePane can read this session's screen,
+        // which only tmux can. The typing gate asks it to decide whether the
+        // screen is evidence at all; on the other routes only Claude Code's
+        // own session record guards a typed line (TypingGate says why).
+        internal static bool CanReadPane(SessionStatus? status) =>
+            RouteFor(status) == TerminalTyping.Route.Tmux;
+
         // The sibling question for a session CanSendQuietly has already said no
         // to: is there still somewhere a message can reach it, over its own
         // registry socket rather than a pane. sessionId is separate from
@@ -629,7 +636,7 @@ namespace Orbweaver
 
                 if (!p.WaitForExit(5000))
                 {
-                    try { p.Kill(entireProcessTree: true); } catch { }
+                    try { ProcessTreeKill.Kill(p); } catch { }
                     return false;
                 }
 
@@ -904,6 +911,26 @@ namespace Orbweaver
                 if (tmux is null) return false;
 
                 return TryRun(tmux, out _, TmuxArgs(status, "send-keys", "-t", status.TmuxPane, key));
+            });
+        }
+
+        // CB-307 item 3: text into the pane exactly as given, with no Enter —
+        // the free-text row of a question form, which the caller has already
+        // seen the cursor on. `send-keys -l` so nothing in the text is read as
+        // a key name. Excluded from coverage like the rest of the tmux calls;
+        // what decides when it runs is RemoteMirrorServer's, and covered.
+        [ExcludeFromCodeCoverage]
+        public static Task<bool> SendPaneText(SessionStatus? status, string text)
+        {
+            if (status is null || string.IsNullOrEmpty(text)) return Task.FromResult(false);
+            if (!CanSendQuietly(status)) return Task.FromResult(false);
+
+            return Task.Run(() =>
+            {
+                var tmux = ResolveTmuxBinary(status.TmuxBin);
+                if (tmux is null) return false;
+
+                return TryRun(tmux, out _, TmuxArgs(status, "send-keys", "-l", "-t", status.TmuxPane, text));
             });
         }
 
@@ -1381,7 +1408,7 @@ namespace Orbweaver
                 // would otherwise hang this click forever.
                 if (!process.WaitForExit(timeoutMs))
                 {
-                    try { process.Kill(true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     return false;
                 }
 

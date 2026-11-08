@@ -238,7 +238,7 @@ namespace Orbweaver
 
             if (!process.WaitForExit(timeout))
             {
-                process.Kill(entireProcessTree: true);
+                ProcessTreeKill.Kill(process);
                 process.WaitForExit();
                 var seconds = timeout.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
                 return (-1, $"{stdout.Result}{stderr.Result}timed out after {seconds} s");

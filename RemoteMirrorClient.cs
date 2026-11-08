@@ -35,6 +35,11 @@ namespace Orbweaver
 
         public string Account => _account;
 
+        // CB-306: the sink for outcome lines, by session name and never by
+        // message text. MirrorLog.Say in the app, a capture in a test; the
+        // same arrangement as RemoteMirrorServer.GapLog.
+        internal Action<string, string> Log { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
+
         // --- what the far side said it has -----------------------------------
 
         // A session's mirror status, from this side's point of view.
@@ -281,6 +286,10 @@ namespace Orbweaver
                     lock (_gate) _askingAll.Remove(peer);
                 }
 
+                // Read on every answer, the bare "unchanged" OK included, so a
+                // far Buddy upgraded mid-session is noticed on its next poll.
+                NoteSpeaksPrompts(peer, reply);
+
                 if (!reply.Ok || reply.Payload is null) continue;
 
                 var decoded = MirrorProtocol.DecodeRoster(reply.Payload);
@@ -414,6 +423,8 @@ namespace Orbweaver
                     // two failures: the flood was at least still trying.
                     lock (_gate) foreach (var n in ask) _asking.Remove(n);
                 }
+
+                NoteSpeaksPrompts(relay, reply);
 
                 if (!reply.Ok || reply.Payload is null)
                 {
@@ -688,7 +699,9 @@ namespace Orbweaver
 
             if (!reply.Ok || reply.Payload is null)
             {
-                Failed?.Invoke(name, reply.Reason ?? "the other machine didn't answer");
+                var why = reply.Reason ?? "the other machine didn't answer";
+                Log("open", $"n={name} failed why={why}");
+                Failed?.Invoke(name, why);
                 return false;
             }
 
@@ -707,9 +720,14 @@ namespace Orbweaver
                 }
             }
 
-            Delivered?.Invoke(new MirrorRows(name, MirrorDelivery.Window, turns, cli, gen));
+            Deliver(new MirrorRows(name, MirrorDelivery.Window, turns, cli, gen));
 
             await RenewWatchAsync(name).ConfigureAwait(false);
+
+            // After the hand-over and the renewal rather than before: an "ok"
+            // that is written ahead of a Delivered handler which throws would
+            // read as success for exactly the failure this log exists to show.
+            Log("open", $"n={name} ok");
             return true;
         }
 
@@ -840,7 +858,8 @@ namespace Orbweaver
         // messaging socket also carries which channel was used and that
         // session's own agent status, which the composer hint and the
         // delivered-note both need to say something honest.
-        internal readonly record struct InputOutcome(string? Error, string? Via, string? AgentStatus);
+        internal readonly record struct InputOutcome(string? Error, string? Via, string? AgentStatus, string? Why = null,
+            string? Verdict = null);
 
         // Types a line into the far session's own terminal, or — since
         // CB-105 — hands it to that session's own messaging socket when
@@ -853,7 +872,7 @@ namespace Orbweaver
         // exactly as it would locally. A delivered send has no such
         // guarantee — see MirrorProtocol's note on why there is no ack on
         // this wire at all.
-        public async Task<InputOutcome> SendInputDetailedAsync(string name, string text)
+        public async Task<InputOutcome> SendInputDetailedAsync(string name, string text, bool slash = false)
         {
             string relay;
 
@@ -861,23 +880,173 @@ namespace Orbweaver
             {
                 var key = ExistingKey(name);
                 if (key is null || !_servedBy.TryGetValue(key, out var found))
+                {
+                    Log("input", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
                     return new InputOutcome(MirrorProtocol.ErrNoSession, null, null);
+                }
                 relay = found;
             }
 
             var reply = await RequestAsync(
                 relay, MirrorProtocol.Input,
-                new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) },
+                SlashFields(name, slash),
                 System.Text.Encoding.UTF8.GetBytes(text),
                 TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds))
                 .ConfigureAwait(false);
 
-            if (!reply.Ok) return new InputOutcome(reply.ErrCode ?? MirrorProtocol.ErrUnsupported, null, null);
+            if (!reply.Ok)
+            {
+                var code = reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
+                Log("input", $"n={name} -> err code={code}");
+
+                // CB-307 addendum: the far side's reason rides along as Why,
+                // so a refusal that names a dialog reaches the panel. The
+                // reason is msg, or the code itself when the far side sent
+                // none, so it is never the meaningful part only by accident.
+                return new InputOutcome(code, null, null,
+                    reply.Reason is { } reason && reason != code ? reason : null);
+            }
+
+            Log("input", $"n={name} -> ok via="
+                + (reply.Fields is not null && reply.Fields.TryGetValue("via", out var sentVia) ? sentVia : "typed"));
 
             return new InputOutcome(
                 null,
                 reply.Fields is not null && reply.Fields.TryGetValue("via", out var via) ? via : null,
-                reply.Fields is not null && reply.Fields.TryGetValue("agent", out var agent) ? agent : null);
+                reply.Fields is not null && reply.Fields.TryGetValue("agent", out var agent) ? agent : null,
+                reply.Fields is not null && reply.Fields.TryGetValue("why", out var why)
+                    ? MirrorProtocol.Decode(why) : null,
+                reply.Fields is not null && reply.Fields.TryGetValue(MirrorProtocol.VerdictField, out var verdict)
+                    ? verdict : null);
+        }
+
+        // --- answering a dialog (CB-307 addendum item 3) -----------------------
+
+        // What the far session is waiting on: its dialog or AskUserQuestion
+        // form, read off its own pane by the far Buddy. Error is the far side's
+        // code (ErrNoPrompt, ErrReplyOff, ErrNoPane, ErrUnsupported from a
+        // Buddy that predates this) and Prompt is null whenever Error is set.
+        private readonly HashSet<string> _speaksPrompts = new(StringComparer.OrdinalIgnoreCase);
+
+        // Both HELLO paths (the named ask and the complete roster) record it.
+        private void NoteSpeaksPrompts(string peer, Reply reply)
+        {
+            if (!reply.Ok) return;
+
+            lock (_gate)
+            {
+                if (MirrorProtocol.SaysItAnswersPrompts(reply.Fields)) _speaksPrompts.Add(peer);
+                else _speaksPrompts.Remove(peer);
+            }
+        }
+
+        // Whether the machine serving this session said it answers PROMPT and
+        // ANSWER (MirrorProtocol.PromptsField). False before its first reply.
+        public bool SpeaksPrompts(string name)
+        {
+            lock (_gate)
+            {
+                var key = ExistingKey(name);
+                return key is not null && _servedBy.TryGetValue(key, out var relay) && _speaksPrompts.Contains(relay);
+            }
+        }
+
+        internal readonly record struct PromptOutcome(MirrorProtocol.WirePrompt? Prompt, string? Error);
+
+        public async Task<PromptOutcome> FetchPromptAsync(string name)
+        {
+            if (RelayFor(name) is not { } relay)
+            {
+                Log("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
+                return new PromptOutcome(null, MirrorProtocol.ErrNoSession);
+            }
+
+            var reply = await RequestAsync(relay, MirrorProtocol.Prompt,
+                new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) }, payload: null,
+                TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
+
+            var outcome = PromptOutcomeOf(reply.Ok, reply.ErrCode, reply.Payload);
+            Log("prompt", outcome.Prompt is { } p ? $"n={name} -> ok fp={p.Fingerprint}" : $"n={name} -> err code={outcome.Error}");
+            return outcome;
+        }
+
+        // What a PROMPT reply means, pure so each arm is asserted without a
+        // far side that misbehaves on cue: a refusal is its code, a request
+        // that never got an answer (no code at all) reads as unsupported, and
+        // so does an OK whose payload is not a prompt — the panel then offers
+        // the terminal rather than buttons it cannot trust.
+        internal static PromptOutcome PromptOutcomeOf(bool ok, string? errCode, byte[]? payload)
+        {
+            if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrUnsupported);
+
+            return MirrorProtocol.DecodePrompt(payload) is { } prompt
+                ? new PromptOutcome(prompt, null)
+                : new PromptOutcome(null, MirrorProtocol.ErrUnsupported);
+        }
+
+        // And an ANSWER reply: null when it was taken, otherwise the code, with
+        // no code at all (never answered) read as unsupported.
+        internal static string? AnswerErrorOf(bool ok, string? errCode) =>
+            ok ? null : errCode ?? MirrorProtocol.ErrUnsupported;
+
+        // Take one option of the dialog Fingerprint names. Null on success,
+        // otherwise the far side's code — ErrPromptChanged means the screen
+        // moved on and nothing was pressed, so ask FetchPromptAsync again.
+        public Task<string?> AnswerPromptAsync(string name, string key, string fingerprint) =>
+            SendAnswerAsync(name, fingerprint, key, action: null, text: null);
+
+        // The "Type something" option with this text. Refused here, before
+        // anything is sent, when the text is empty, blank or more than one
+        // line: Enter on an empty field declines the whole form, and the far
+        // side refuses the same text for the same reason (ErrBadKey).
+        public Task<string?> AnswerFreeTextAsync(string name, string key, string fingerprint, string text)
+        {
+            if (!FormAnswer.IsUsableFreeText(text))
+            {
+                Log("answer", $"n={name} key={key} -> err code={MirrorProtocol.ErrBadKey} (no text)");
+                return Task.FromResult<string?>(MirrorProtocol.ErrBadKey);
+            }
+
+            return SendAnswerAsync(name, fingerprint, key, action: null, text);
+        }
+
+        // Move a multi-select question on with its ticks kept.
+        public Task<string?> CommitPromptAsync(string name, string fingerprint) =>
+            SendAnswerAsync(name, fingerprint, key: null, MirrorProtocol.ActionCommit, text: null);
+
+        private async Task<string?> SendAnswerAsync(string name, string fingerprint, string? key, string? action, string? text)
+        {
+            var what = action is null ? $"key={key}" : $"act={action}";
+            if (RelayFor(name) is not { } relay)
+            {
+                Log("answer", $"n={name} {what} -> err code={MirrorProtocol.ErrNoSession}");
+                return MirrorProtocol.ErrNoSession;
+            }
+
+            var fields = new Dictionary<string, string>
+            {
+                ["n"] = MirrorProtocol.Encode(name),
+                [MirrorProtocol.FingerprintField] = fingerprint,
+            };
+            if (key is not null) fields[MirrorProtocol.KeyField] = key;
+            if (action is not null) fields[MirrorProtocol.ActionField] = action;
+
+            var reply = await RequestAsync(relay, MirrorProtocol.Answer, fields,
+                text is null ? null : System.Text.Encoding.UTF8.GetBytes(text),
+                TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds)).ConfigureAwait(false);
+
+            var error = AnswerErrorOf(reply.Ok, reply.ErrCode);
+            Log("answer", $"n={name} {what} -> " + (error is null ? "ok" : $"err code={error}"));
+            return error;
+        }
+
+        // CB-306: the INPUT's fields, with the slash flag only when it is set,
+        // so an ordinary send is byte-for-byte the frame it always was.
+        internal static Dictionary<string, string> SlashFields(string name, bool slash)
+        {
+            var fields = new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) };
+            if (slash) fields[MirrorProtocol.SlashField] = "1";
+            return fields;
         }
 
         // Kept for callers that only ever cared whether a send worked.
@@ -897,6 +1066,7 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         private bool SayItArrivedUnreadable(string name)
         {
+            Log("open", $"n={name} failed why=the transcript arrived unreadable");
             Failed?.Invoke(name, "the transcript arrived unreadable");
             return false;
         }
@@ -1258,7 +1428,14 @@ namespace Orbweaver
                 return;
             }
 
-            Delivered?.Invoke(new MirrorRows(name, MirrorDelivery.Delta, turns, cli, gen));
+            Deliver(new MirrorRows(name, MirrorDelivery.Delta, turns, cli, gen));
+        }
+
+        private void Deliver(MirrorRows rows)
+        {
+            Log("delivered",
+                $"n={rows.Name} mode={(rows.Mode == MirrorDelivery.Window ? "window" : "delta")} turns={rows.Turns.Count}");
+            Delivered?.Invoke(rows);
         }
 
         private void Settle(string id, Reply reply)

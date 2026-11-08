@@ -199,6 +199,14 @@ Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: startup
 ; no longer exists) and are cleared once by hand, from an administrator prompt:
 ; netsh advfirewall firewall delete rule name="<the pre-rename name> peer link"
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
+; CB-308: the in-app updater runs this installer silently and needs the app back
+; afterwards. The entry above is skipifsilent (a /VERYSILENT run offers no finish
+; page to tick it on), so a silent upgrade started by the app would otherwise leave
+; nothing running. The updater passes /RELAUNCH=1; a plain /VERYSILENT (a scripted or
+; enterprise install) does not, and relaunches nothing, as before. No postinstall flag:
+; that would put it on the finish page too, beside the entry above, for an interactive
+; run that never passes /RELAUNCH.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: RelaunchRequested
 
 [UninstallRun]
 ; No firewall step here either: the installer never adds a rule (see [Run]).
@@ -227,6 +235,15 @@ Filename: "{sys}\schtasks.exe"; \
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden skipifdoesntexist; RunOnceId: "stopapp"
 
 [Code]
+{ CB-308: true only when setup was started with /RELAUNCH=1, which the in-app updater
+  passes. The param constant below reads the /RELAUNCH=value command-line switch and
+  yields its default, 0, when the switch is absent. No brace pair in this comment:
+  comments do not nest, so it would end the comment early. }
+function RelaunchRequested(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
 function WslIsInstalled(): Boolean;
 begin
   Result := FileExists(ExpandConstant('{sys}\wsl.exe'));

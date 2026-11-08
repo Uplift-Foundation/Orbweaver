@@ -1218,3 +1218,18 @@ Only the throwaway session the probe created was written to, and nothing was sen
 ### Was to measure (done, see above)
 
 The plan's P1 to P7: pair with `operator.approvals` and the cap (the probe's `ORBWEAVER_PROBE_SCOPES` and `ORBWEAVER_PROBE_CAPS`), paired negative controls without the scope, a safe pending approval registered by the probe on a throwaway session and resolved both ways with the duplicate and no-standing-grant controls, an expiry, an agent-raised approval if the agent's policy raises one, a read-only look at real records, and cleanup. The app is quiet while the probe pairs, because the two share one device identity and re-pair each other on every connect with different scope sets.
+
+## CB-306: slash commands over `chat.send`
+
+Measured 2026-11-03 against openclaw **2026.10.10** on the Mac mini. The Mac's probe could not connect (`No route to host` — the Local Network gate on `dotnet`, exactly as CLAUDE.md warns), so the calls were made on the gateway host with its own CLI, `openclaw gateway call <method> --params <json> --json`, under the host's own credential. **That credential is not this app's paired device, so nothing below measures our scopes**; scopes are the declared table in `dist/native-hook-relay/call-*.mjs`:
+
+| method | group | scope |
+| --- | --- | --- |
+| `commands.list` | commands | `operator.read` |
+| `chat.send` | chat-send | `operator.write` |
+| `sessions.create` | sessions-create | dynamic (`operator.write` unless sandbox or permission flags ask for more) |
+| `sessions.reset` | sessions-mutations | **`operator.admin`** |
+
+**The gateway parses slash text itself.** `chat-send-handler-*.mjs`: `commandSource = !request.suppressCommandInterpretation && message.trim().startsWith("/") ? "text" : undefined`. Measured on a throwaway session from `sessions.create {agentId:"main"}`: `chat.send {sessionKey, message:"/status", deliver:false, idempotencyKey}` → `{runId, status:"started"}`, and the history then holds the user row `/status` flagged `contextFreeCommand: true` and an assistant row that is the gateway's own status card ("🦞 OpenClaw 2026.10.10 … Current time …"), not a model reply. `chat.send "/reset"` → started. `sessions.reset {key}` → `ok: true` with a new `sessionStartedAt` (host credential; declared `operator.admin` for ours, which this device does not hold).
+
+**`commands.list {}`** returned 105 commands, each `{name, nativeName, textAliases[], description, category, source: native|skill|plugin, scope: both|text|native, acceptsArgs, args?}`. The native ones with a text alias: help, commands, tools, skill, dashboard, learn, loop, status, goal, diagnostics, login, openclaw, allowlist, approve, context, btw, export-session, export-trajectory, tts, whoami, session, subagents, acp, agents, steer, config, mcp, debug, usage, stop, restart, update, activation, send, reset, new, name, compact, think, verbose, trace, fast, reasoning, elevated, exec, model, models, queue, bash; then every installed skill and plugin as `/name`. So OpenClaw is a PassThrough channel with a live catalogue: `commands.list` is the autocomplete source and `chat.send` runs what the gateway accepts. Not measured: whether a native session's `/model` as text equals `sessions.patch` (it is a gateway command, so presumably yes), and the surface case (`deliver: true`) — a `/` message on a surface session would be interpreted before delivery, which is the behaviour we want, but it was not observed.

@@ -705,7 +705,12 @@ namespace Orbweaver
     // ApprovalId binds an option to the one request it was drawn for (CB-270 Stage
     // 6): a click answers that request or nothing, never whichever one happens to
     // be showing by the time it lands. Null for every other kind of prompt.
-    public sealed record ChatPromptOption(string Key, string Label, string? ApprovalId = null);
+    public sealed record ChatPromptOption(
+        string Key, string Label, string? ApprovalId = null,
+        // CB-307 item 3: the option that opens a text entry ("Type something.")
+        // rather than answering by itself. The panel shows a text box for it and
+        // sends through IRemoteChatFreeText, never through AnswerAsync.
+        bool FreeText = false);
 
     // ArmedActivation marks a prompt whose answer cannot be undone and must not be
     // given by accident: its options ignore presses for a moment after the prompt
@@ -716,23 +721,85 @@ namespace Orbweaver
     // prompt that has no terminal to go to, and a prompt that sets it keeps the
     // panel open when that link is used, since the answer to "where else" is a note
     // in the transcript and not another window.
+    // CB-307 addendum item 3: an AskUserQuestion form read off the screen —
+    // ChatTranscript.ParseAskForm says how. Prompt is the options as buttons,
+    // titled with the whole question; Tabs and CurrentTab say which question of
+    // a multi-question form is showing (-1 when that cannot be told); the two
+    // keys name the "Type something" and "Chat about this" options by label.
+    //
+    // From QA's real captures of every form state (item3/ fixtures):
+    // MultiSelect is a question drawn with [ ]/[✔] boxes, Checked the keys
+    // ticked (and on a single-select question the one chosen earlier, drawn
+    // "Blue ✔"), HasSubmitRow the unnumbered "Submit" row a multi-select
+    // question draws, CursorKey the option the terminal's ❯ is on. IsReview is
+    // the Submit tab's "Review your answers" screen, with what it lists and
+    // the keys of its two options, matched by label: "Submit answers" and
+    // "Cancel".
+    public sealed record AskForm(
+        ChatPrompt Prompt, IReadOnlyList<AskTab> Tabs, int CurrentTab, string? FreeTextKey, string? ChatAboutKey,
+        bool MultiSelect = false, IReadOnlyList<string>? Checked = null, bool HasSubmitRow = false,
+        string? CursorKey = null, bool IsReview = false, IReadOnlyList<AskReviewItem>? Review = null,
+        string? SubmitAnswersKey = null, string? CancelKey = null);
+
+    public sealed record AskReviewItem(string Question, string Answer);
+
+    public sealed record AskTab(string Name, AskTabState State);
+
+    public enum AskTabState { Open, Answered, Submit }
+
     public sealed record ChatPrompt(
         string Title, IReadOnlyList<ChatPromptOption> Options, bool ArmedActivation = false,
-        string? ElsewhereLabel = null);
+        string? ElsewhereLabel = null,
+        // CB-307 item 3: "Question 2 of 4" for a multi-question form, or null
+        // when the form's current question cannot be told from the screen.
+        string? Progress = null);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can
     // compare it against the input box's text directly.
-    public sealed record SlashCommand(string Name, string Description);
+    //
+    // Route says how it would run over this session's channel (CB-306). Typed
+    // is the default so every list built before routes existed still means what
+    // it meant: keystrokes into a pane. An Unavailable command is one the
+    // session knows of and cannot run here; the panel hides it, and a session
+    // that would rather not list it at all simply leaves it out.
+    public sealed record SlashCommand(
+        string Name, string Description, SlashRouteKind Route = SlashRouteKind.Typed,
+        IReadOnlyList<string>? Aliases = null)
+    {
+        // Other names the session accepts for the same command (`/t` for
+        // `/think`). Autocomplete matches on them; Name is what it inserts.
+        public bool Matches(string token) =>
+            Name.StartsWith(token, StringComparison.OrdinalIgnoreCase)
+            || (Aliases?.Any(a => a.StartsWith(token, StringComparison.OrdinalIgnoreCase)) ?? false);
+
+        // The token is the whole of one of this command's names already typed.
+        public bool IsTyped(string token) =>
+            string.Equals(Name, token, StringComparison.OrdinalIgnoreCase)
+            || (Aliases?.Any(a => string.Equals(a, token, StringComparison.OrdinalIgnoreCase)) ?? false);
+    }
 
     // The slash commands a session's underlying CLI understands, so the panel
     // can offer autocomplete for a message that is about to be typed straight
-    // into that CLI's own input line. Only a local CLI session has an answer:
-    // an OpenClaw conversation isn't parsed by a command grammar on the far
-    // end, so there is nothing to suggest.
+    // into that CLI's own input line — or, since CB-306, sent by whichever
+    // route the command's Route names.
     public interface IRemoteChatSlashCommands
     {
         IReadOnlyList<SlashCommand> SlashCommands { get; }
+    }
+
+    // A session that runs a slash command itself rather than having it typed
+    // (CB-306). The panel hands over the whole typed line, `/cmd args`, and the
+    // session resolves the route (SlashRouting.Resolve) and acts on it: a
+    // control request, a pass-through send, or a refusal note with nothing
+    // sent. Failed means the box keeps its text, exactly as for SendAsync.
+    //
+    // The line, not a parsed command, because a command typed in full that is
+    // not in SlashCommands is still a slash command and still the session's
+    // call — the panel must not turn it into prose for the model.
+    public interface IRemoteChatSlashRunner
+    {
+        Task<ChatSendOutcome> RunSlashAsync(string line);
     }
 
     // A session that has stopped and is waiting to be answered.
@@ -757,6 +824,16 @@ namespace Orbweaver
         // The fall back for when the dialog could not be read, which is the only
         // honest answer at that point.
         void AnswerElsewhere();
+    }
+
+    // CB-307 item 3: answering with text. The one place text reaches a dialog,
+    // so it is its own interface rather than a quiet extra on AnswerAsync: a
+    // session that cannot do it simply does not implement this, and the panel
+    // does not offer a text box. Only ever called with the FreeText option of
+    // the prompt currently on show, and nothing here presses Escape.
+    public interface IRemoteChatFreeText
+    {
+        Task AnswerFreeTextAsync(ChatPromptOption option, string text);
     }
 }
 

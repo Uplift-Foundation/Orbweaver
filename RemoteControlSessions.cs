@@ -106,7 +106,10 @@ namespace Orbweaver
         internal sealed record Remote(
             string Name, string Ref, string Status, DateTime Seen, string Account, string? Color = null,
             string? Cli = null, string? Route = null, MirrorProtocol.PeerPersona? Persona = null,
-            string? LeadRoute = null, string? Agent = null, string? AgentColor = null)
+            string? LeadRoute = null, string? Agent = null, string? AgentColor = null,
+            // CB-307: the far machine says nobody has spoken to this session
+            // for a while. Drawn dimmed, never dropped.
+            bool Parked = false)
         {
             // CB-223: the key of this session's lead's own orb, when the far
             // machine said it is a team member and offered the lead too. Built
@@ -143,6 +146,12 @@ namespace Orbweaver
                 Status.Contains("running", StringComparison.OrdinalIgnoreCase)
                 || Status.Contains("busy", StringComparison.OrdinalIgnoreCase)
                 || Status.Contains("working", StringComparison.OrdinalIgnoreCase);
+
+            // CB-307 addendum: the far machine's session is on a dialog and says
+            // so. Before this it arrived as idle, because Working only knows the
+            // three words above, so a remote orb never drew `waiting` at all. An
+            // older near side still reads it as idle, which is what it did.
+            public bool Waiting => Status.Equals("waiting", StringComparison.OrdinalIgnoreCase);
         }
 
         // Empty whenever the feature is off, which is what makes the scan's job
@@ -211,13 +220,44 @@ namespace Orbweaver
             return CommandsFrom(MirrorFor(account, name));
         }
 
-        // The rule, pure: an entry's command list when it has one, nothing
-        // otherwise. An entry with no list is not hypothetical — `commands` is
-        // an optional field, so a far Buddy from before it existed sends none.
-        internal static IReadOnlyList<SlashCommand> CommandsFrom(MirrorProtocol.MirrorRosterEntry? entry) =>
-            entry?.Commands is { Count: > 0 } commands
-                ? commands.Select(c => new SlashCommand(c, "")).ToList()
-                : Array.Empty<SlashCommand>();
+        // The rule, pure (CB-306): every command the far session's CLI knows,
+        // each with how it would run. Unavailable ones are kept — the panel
+        // hides them from autocomplete but still needs the names, because a
+        // line whose first token is a known command that cannot run is refused
+        // with nothing sent, while a path or an unknown word is a message.
+        //
+        //  * Valid routes (ValidRoutes): the far Buddy resolved each command on
+        //    its own machine, so believe it. An unknown word from a newer Buddy
+        //    reads as Unavailable.
+        //  * Otherwise an older far Buddy (or a routes list that does not line
+        //    up, which is not trusted): its commands only ever meant keystrokes
+        //    into a pane, so they are Typed where there is a pane and
+        //    Unavailable where there is none — known either way, offered only
+        //    where they would run.
+        internal static IReadOnlyList<SlashCommand> CommandsFrom(MirrorProtocol.MirrorRosterEntry? entry)
+        {
+            if (entry?.Commands is not { Count: > 0 } commands) return Array.Empty<SlashCommand>();
+
+            if (ValidRoutes(entry))
+                return commands
+                    .Select((c, i) => new SlashCommand(c, "", MirrorProtocol.RouteFromWord(entry!.CommandRoutes![i])))
+                    .ToList();
+
+            var kind = entry.HasPane ? SlashRouteKind.Typed : SlashRouteKind.Unavailable;
+            return commands.Select(c => new SlashCommand(c, "", kind)).ToList();
+        }
+
+        // One definition of "this entry's route kinds can be believed": present,
+        // and exactly one per command. CommandsFrom and SpeaksSlash both ask it,
+        // so the panel can never offer typed commands while sending the slash
+        // flag, or the reverse.
+        internal static bool ValidRoutes(MirrorProtocol.MirrorRosterEntry? entry) =>
+            entry?.CommandRoutes is { } routes && routes.Count == (entry.Commands?.Count ?? 0);
+
+        // Whether the far Buddy understands the slash INPUT flag, which it
+        // announces by sending valid route kinds (an empty list for an empty
+        // catalogue counts).
+        internal static bool SpeaksSlash(MirrorProtocol.MirrorRosterEntry? entry) => ValidRoutes(entry);
 
         // What the far Buddy said about one session, or null if none has.
         internal static MirrorProtocol.MirrorRosterEntry? MirrorFor(string account, string name) =>
@@ -409,7 +449,27 @@ namespace Orbweaver
                     k.Entry.Cli, k.Entry.Route, k.Entry.Persona,
                     string.IsNullOrWhiteSpace(k.Entry.Lead) ? null : k.Entry.Lead,
                     string.IsNullOrWhiteSpace(k.Entry.Agent) ? null : k.Entry.Agent,
-                    string.IsNullOrWhiteSpace(k.Entry.AgentColor) ? null : k.Entry.AgentColor))
+                    string.IsNullOrWhiteSpace(k.Entry.AgentColor) ? null : k.Entry.AgentColor,
+                    k.Entry.Parked == true))
+                .ToList();
+
+        // CB-306: the roster entries this machine's own settings let through.
+        // An entry the far Buddy marked as a session OpenClaw spawned is judged
+        // by OpenClawCliSession.Show with the viewer's three cluster settings,
+        // and dropped when the viewer's gateway names its workspace, because
+        // the agent is already an orb here. An unmarked entry, which is every
+        // ordinary session and everything an older Buddy sends, always passes.
+        // Pure, so the rule is a test rather than a read of the live link.
+        internal static IReadOnlyList<(string Peer, MirrorProtocol.MirrorRosterEntry Entry)> ShownByOpenClawSettings(
+            IReadOnlyList<(string Peer, MirrorProtocol.MirrorRosterEntry Entry)> known,
+            bool openClawEnabled,
+            IReadOnlyCollection<string> gatewayWorkspaces,
+            ClusterMode heartbeats, ClusterMode crons, ClusterMode native) =>
+            known
+                .Where(k => OpenClawCliSession.Show(
+                    OpenClawCliSession.Parse(k.Entry.OpenClawCluster),
+                    OpenClawCliSession.RepresentedByGateway(k.Entry.OpenClawWorkspace, openClawEnabled, gatewayWorkspaces),
+                    heartbeats, crons, native))
                 .ToList();
 
         // Excluded from coverage: reads the live link. What it decides is
@@ -424,7 +484,12 @@ namespace Orbweaver
                 ? Array.Empty<Remote>()
                 : RemotesFromRoster(
                     OrbweaverSettings.DefaultRemoteControlProfileDir,
-                    client.Known(),
+                    ShownByOpenClawSettings(
+                        client.Known(),
+                        OrbweaverSettings.OpenClawEnabled,
+                        OpenClawSessions.OwnerIndexSnapshot().AgentWorkspaces.Values.ToList(),
+                        OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                        OrbweaverSettings.OpenClawNativeMode),
                     Now());
 
             lock (Gate) _peerRows = rows;

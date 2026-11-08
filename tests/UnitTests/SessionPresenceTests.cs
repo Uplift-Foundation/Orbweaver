@@ -1135,4 +1135,135 @@ public class SessionPresenceTests
         // become a way round it.
         Assert.True(SessionPresence.LocalDaemonCanAnswerFor(Wsl(source: source), onWindows: true));
     }
+
+    // --- WithQuiet (CB-307) ----------------------------------------------------
+
+    private static readonly DateTime Now = new(2026, 11, 6, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime Yesterday = Now - TimeSpan.FromHours(23);
+    private static readonly DateTime JustNow = Now - TimeSpan.FromMinutes(5);
+
+    [Theory]
+    [InlineData(LocalSessionShape.Terminal)]
+    [InlineData(LocalSessionShape.Teammate)]
+    public void APresentSessionNobodyHasSpokenToForADayIsParked(LocalSessionShape shape)
+    {
+        // Members park by quiet too: the mirror server parks them, and host and
+        // peer have to agree. The duplicate rule, not this one, protects them.
+        Assert.Equal(
+            OrbPresence.Parked,
+            SessionPresence.WithQuiet(OrbPresence.Present, shape, "idle", Yesterday, Now));
+    }
+
+    [Theory]
+    [InlineData(LocalSessionShape.Terminal)]
+    [InlineData(LocalSessionShape.Teammate)]
+    public void ARecentlySpokenToSessionStaysPresent(LocalSessionShape shape)
+    {
+        Assert.Equal(
+            OrbPresence.Present,
+            SessionPresence.WithQuiet(OrbPresence.Present, shape, "idle", JustNow, Now));
+    }
+
+    [Fact]
+    public void ASessionWithNoKnownLastTurnStaysPresent()
+    {
+        Assert.Equal(
+            OrbPresence.Present,
+            SessionPresence.WithQuiet(OrbPresence.Present, LocalSessionShape.Terminal, "idle", null, Now));
+    }
+
+    [Theory]
+    [InlineData("generating")]
+    [InlineData("waiting")]
+    public void ASessionInUseNowIsNeverParkedWhateverItsAge(string state)
+    {
+        Assert.Equal(
+            OrbPresence.Present,
+            SessionPresence.WithQuiet(OrbPresence.Present, LocalSessionShape.Terminal, state, Yesterday, Now));
+    }
+
+    // A background job's presence is the daemon's, so the clock never touches it.
+    [Theory]
+    [InlineData(OrbPresence.NeedsInput)]
+    [InlineData(OrbPresence.Finished)]
+    [InlineData(OrbPresence.Present)]
+    public void ABackgroundSessionIsLeftAsTheDaemonSaid(OrbPresence presence)
+    {
+        Assert.Equal(
+            presence,
+            SessionPresence.WithQuiet(presence, LocalSessionShape.Background, "idle", Yesterday, Now));
+    }
+
+    [Fact]
+    public void AnOrphanedTeammateStaysParkedWhetherOrNotItIsQuiet()
+    {
+        Assert.Equal(
+            OrbPresence.Parked,
+            SessionPresence.WithQuiet(OrbPresence.Parked, LocalSessionShape.Teammate, "idle", JustNow, Now));
+        Assert.Equal(
+            OrbPresence.Parked,
+            SessionPresence.WithQuiet(OrbPresence.Parked, LocalSessionShape.Teammate, "idle", Yesterday, Now));
+    }
+
+    // --- WantsLastTurn (CB-307) ------------------------------------------------
+
+    private static SessionStatus ForLastTurn(
+        string state = "idle", string transcript = "/t/x.jsonl",
+        SessionSource source = SessionSource.ClaudeCode) =>
+        new() { State = state, TranscriptPath = transcript, Source = source };
+
+    [Fact]
+    public void AnIdleClaudeCodeSessionWithATranscriptWantsItsLastTurn() =>
+        Assert.True(SessionManager.WantsLastTurn(ForLastTurn()));
+
+    [Theory]
+    [InlineData("generating")]
+    [InlineData("waiting")]
+    public void ASessionInUseNowNeverHasItsTranscriptRead(string state) =>
+        Assert.False(SessionManager.WantsLastTurn(ForLastTurn(state: state)));
+
+    [Fact]
+    public void ASessionWithNoTranscriptHasNothingToRead() =>
+        Assert.False(SessionManager.WantsLastTurn(ForLastTurn(transcript: "")));
+
+    [Theory]
+    [InlineData(SessionSource.Codex)]
+    [InlineData(SessionSource.Grok)]
+    public void OnlyClaudeCodeSessionsAreAskedForALastTurn(SessionSource source) =>
+        Assert.False(SessionManager.WantsLastTurn(ForLastTurn(source: source)));
+
+    // --- EffectiveState (CB-307 addendum) --------------------------------------
+
+    // Claude Code's record says the TUI is on a dialog while the hook's file
+    // still says idle, because no hook fires for a modal screen.
+    [Fact]
+    public void AnIdleFileWithAWaitingRecordIsWaiting() =>
+        Assert.Equal("waiting", SessionPresence.EffectiveState("idle", recordWaiting: true));
+
+    [Theory]
+    [InlineData("idle")]
+    [InlineData("generating")]
+    [InlineData("waiting")]
+    public void WithoutAWaitingRecordTheFilesStateStands(string state) =>
+        Assert.Equal(state, SessionPresence.EffectiveState(state, recordWaiting: false));
+
+    // A working session stays working however the record reads: only idle is
+    // ever promoted, because the file already says more than the record would.
+    [Theory]
+    [InlineData("generating")]
+    [InlineData("waiting")]
+    public void AWaitingRecordDoesNotOverrideAStateThatSaysMore(string state) =>
+        Assert.Equal(state, SessionPresence.EffectiveState(state, recordWaiting: true));
+
+    // The point of the whole promotion: a session on a dialog is waiting, and a
+    // waiting session is never parked, however old its last turn is.
+    [Fact]
+    public void AWaitingSessionIsNeverParkedEvenAfterADayOfSilence()
+    {
+        var state = SessionPresence.EffectiveState("idle", recordWaiting: true);
+
+        Assert.Equal(
+            OrbPresence.Present,
+            SessionPresence.WithQuiet(OrbPresence.Present, LocalSessionShape.Terminal, state, Yesterday, Now));
+    }
 }

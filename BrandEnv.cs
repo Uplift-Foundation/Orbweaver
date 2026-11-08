@@ -39,6 +39,7 @@ namespace Orbweaver
         internal const string NoCredentialStore = "NO_CREDENTIAL_STORE";
         internal const string PersonaWalkCeiling = "PERSONA_WALK_CEILING";
         internal const string MirrorLog = "MIRROR_LOG";
+        internal const string LocalGateShadow = "LOCAL_GATE_SHADOW";
         internal const string LiveBridgeTests = "LIVE_BRIDGE_TESTS";
         internal const string LaunchTests = "LAUNCH_TESTS";
         internal const string LiveDaemonTests = "LIVE_DAEMON_TESTS";
@@ -69,14 +70,27 @@ namespace Orbweaver
         internal const string ProbeCaps = "PROBE_CAPS";
         internal const string ProbeAllowResolve = "PROBE_ALLOW_RESOLVE";
 
+        // CB-308, the auto-updater's two test levers. FEED_URL replaces the GitHub
+        // API base the update check talks to (a fixture server in a test), and
+        // CURRENT_VERSION makes the running build claim to be an older one, so a
+        // real current release looks newer without building an old binary. Neither
+        // had an older spelling.
+        internal const string UpdateFeedUrl = "UPDATE_FEED_URL";
+        internal const string UpdateCurrentVersion = "UPDATE_CURRENT_VERSION";
+
+        // Opt-in gate on the one test that talks to the real api.github.com and
+        // downloads a real installer (UpdateRealNetworkTests). CI must never set it.
+        internal const string NetworkTests = "NETWORK_TESTS";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
-            NoCredentialStore, PersonaWalkCeiling, MirrorLog,
+            NoCredentialStore, PersonaWalkCeiling, MirrorLog, LocalGateShadow,
             LiveBridgeTests, LaunchTests, LiveDaemonTests,
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
+            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

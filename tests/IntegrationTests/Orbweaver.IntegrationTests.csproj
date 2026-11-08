@@ -27,7 +27,12 @@
          can be driven through OpenClawGateway here without a second copy of
          it to keep in step. -->
     <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
+    <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
     <!-- CB-270 Stage 3: the captured native runs, as one scrubbed constant. -->
     <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
+    <!-- CB-306: real commands.list and a /status card, as constants. -->
+    <Compile Include="..\UnitTests\OpenClawSlashFixtures.cs" Link="OpenClawSlashFixtures.cs" />
+    <!-- CB-308: the real GitHub /releases/latest response, served back by UpdateDownloadTests. -->
+    <Content Include="..\UnitTests\Fixtures\update\latest.json" Link="Fixtures\update\latest.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

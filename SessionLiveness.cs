@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 
 namespace Orbweaver
@@ -33,20 +34,33 @@ namespace Orbweaver
     // merely idle — so it hid sessions that were alive and waiting, which is
     // exactly the mistake being avoided here. A session reported `idle` this
     // instant is kept, provided the conversation itself is recent.
+    //
+    // **And a quiet session is parked, not hidden (CB-307).** The first
+    // version of this rule dropped such a session from the roster outright,
+    // and that turned out to be its own bug: a long-lived session nobody has
+    // typed into since yesterday is the normal way these sessions are used,
+    // not an abandoned one — `lawyer-search` on the mini had gone twenty hours
+    // without a turn and was very much wanted. So a quiet session now stays on
+    // the board, drawn dimmed, on the host and on every peer, and clears the
+    // moment somebody speaks to it. The case that started all this — a quiet
+    // copy sitting beside a live copy of the same name — is a separate, much
+    // narrower rule (SuppressedDuplicates), because the name collision was
+    // what made it confusing, not the quiet.
     internal static class SessionLiveness
     {
-        // How long a conversation stays interesting after its last turn.
+        // How long after its last turn a conversation is drawn as parked.
         //
         // Long enough to survive a meal, a meeting or a school run — walking
-        // away from a session for an hour is not abandoning it, and an orb
-        // that vanishes over lunch is a worse bug than the one this fixes.
-        // Short enough that yesterday's parked terminal is gone today, which
-        // is the whole complaint.
+        // away from a session for an hour is not leaving it, and an orb that
+        // dims over lunch says something untrue. Short enough that yesterday's
+        // quiet terminal reads as quiet today.
         //
-        // Nothing subtler is warranted: the two cases observed on real
-        // machines were 8 seconds and 23 hours, and no plausible boundary
-        // between them separates those differently.
-        internal static readonly TimeSpan StaysInterestingFor = TimeSpan.FromHours(2);
+        // Nothing subtler is warranted: the cases observed on real machines
+        // were 8 seconds, 20 hours and 23 hours, and no plausible boundary
+        // between them separates those differently. Since CB-307 a wrong
+        // answer costs a dimmed orb that brightens on the next turn rather
+        // than a missing one, so there is no pressure to move it either way.
+        internal static readonly TimeSpan ParkedAfter = TimeSpan.FromHours(2);
 
         // The rows that mean somebody said something.
         //
@@ -57,33 +71,80 @@ namespace Orbweaver
         private static bool IsATurn(string? type) =>
             type is "user" or "assistant";
 
-        // Whether this session earns a roster entry.
+        // Whether this session is parked: alive, but nobody has said anything
+        // to it for at least the window.
         //
         // Pure, and takes `now` rather than reading a clock, so the boundary
-        // can be asserted from both sides without waiting two hours.
-        internal static bool WorthShowing(
+        // can be asserted from both sides without waiting two hours. Exactly
+        // at the window is parked, which is the boundary the hiding rule this
+        // replaced had (it showed only strictly inside the window).
+        internal static bool IsParked(
             string? state, DateTime? lastTurnUtc, DateTime nowUtc, TimeSpan window)
         {
             // A session that is generating or waiting is being used right now,
             // whatever its transcript last recorded. A long tool call writes
             // nothing for minutes, and a permission prompt can sit unanswered
-            // far longer than that — neither is abandoned, and both are the
-            // moments a user most wants the orb.
-            if (state is "generating" or "waiting") return true;
+            // far longer than that — neither is parked, and both are the
+            // moments a user most wants the orb at full brightness.
+            if (state is "generating" or "waiting") return false;
 
             // No turn found at all. That is a transcript this process could
             // not read, or one holding nothing but bookkeeping — and a session
-            // whose liveness cannot be established is shown rather than
-            // hidden. Hiding on a failed read would make an unreadable file
-            // look exactly like an abandoned session, which is the confusion
-            // this whole class exists to end.
-            if (lastTurnUtc is not { } last) return true;
+            // whose quiet cannot be established is drawn as present. Parking on
+            // a failed read would make an unreadable file look exactly like a
+            // quiet session, which is the confusion this class exists to end.
+            if (lastTurnUtc is not { } last) return false;
 
-            return nowUtc - last < window;
+            return nowUtc - last >= window;
         }
 
-        internal static bool WorthShowing(string? state, DateTime? lastTurnUtc, DateTime nowUtc) =>
-            WorthShowing(state, lastTurnUtc, nowUtc, StaysInterestingFor);
+        internal static bool IsParked(string? state, DateTime? lastTurnUtc, DateTime nowUtc) =>
+            IsParked(state, lastTurnUtc, nowUtc, ParkedAfter);
+
+        // Which sessions the duplicate rule is allowed to look at.
+        //
+        // One predicate shared by the host's scan and the mirror server, so the
+        // two cannot drift into suppressing different things. Team members are
+        // out because every member inherits its lead's title (CB-223's
+        // "fourteen identically-titled orbs"): a quiet member beside a live one
+        // is a team, not a duplicate, and must not vanish. Codex, Grok and the
+        // rest are out because the collision this rule exists for — a second
+        // `claude --remote-control <name>` beside a forgotten first — is a
+        // Claude Code shape.
+        internal static bool EligibleForDuplicateRule(SessionStatus s) =>
+            s.Source == SessionSource.ClaudeCode && string.IsNullOrEmpty(s.Lead);
+
+        // The keys of quiet copies that a live copy of the same name makes
+        // redundant.
+        //
+        // The one case where hiding is still right: two sessions answering to
+        // one name, one of them in use and the other parked. Drawing both puts
+        // two identical labels on the board, and the dim one is the one nobody
+        // means — that is the exact `job-hunter-mac-mini` picture this class
+        // was first written for. Everything else is drawn: two live copies are
+        // both real (the roster already qualifies them with a route suffix),
+        // and two parked copies give nothing to prefer one over the other, so
+        // both stay, dimmed.
+        //
+        // Names compare case-insensitively, as the peer list resolves them; a
+        // row with no name (or only whitespace) is never a duplicate of anything.
+        internal static HashSet<string> SuppressedDuplicates(
+            IEnumerable<(string Key, string Name, bool Parked)> rows)
+        {
+            var suppressed = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var group in rows
+                         .Where(r => !string.IsNullOrWhiteSpace(r.Name))
+                         .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!group.Any(r => !r.Parked)) continue;
+
+                foreach (var row in group)
+                    if (row.Parked) suppressed.Add(row.Key);
+            }
+
+            return suppressed;
+        }
 
         // The newest turn in these lines, or nothing.
         //

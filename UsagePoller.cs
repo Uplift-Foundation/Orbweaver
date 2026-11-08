@@ -444,7 +444,7 @@ namespace Orbweaver
 
                 if (!process.WaitForExit(TimeoutMs))
                 {
-                    try { process.Kill(true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     return null;
                 }
 

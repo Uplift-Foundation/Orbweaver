@@ -1,4 +1,6 @@
 using System.Reflection;
+using Avalonia.Controls;
+using Avalonia.LogicalTree;
 using Avalonia.Headless.XUnit;
 using Xunit;
 
@@ -94,6 +96,30 @@ public class SettingsWindowRowTests : IDisposable
     [AvaloniaFact]
     public void TheClaudeCodeReplySwitchWritesItsOwnSetting() => Toggles(
         (w, v) => w.OnClaudeCodeReplyToggled(v), () => OrbweaverSettings.ClaudeCodeReplyEnabled);
+
+    // CB-306's product-readiness round: on by default, and the row is built
+    // whatever "Show cloud sessions" says, carrying the label the refusal
+    // note quotes.
+    [AvaloniaFact]
+    public void TheBridgeCommandsSwitchWritesItsOwnSettingAndCarriesTheQuotedLabel()
+    {
+        var cloudBefore = OrbweaverSettings.ClaudeCloudEnabled;
+        try
+        {
+            OrbweaverSettings.ClaudeCloudEnabled = false;
+            var rows = NewWindow().BridgeCommandsRows();
+            var texts = rows.SelectMany(r => r.GetLogicalDescendants()).OfType<TextBlock>().Select(t => t.Text).ToList();
+            Assert.Contains(LocalCliChatSession.BridgeCommandsToggleLabel, texts);
+            Assert.Contains(texts, t => t?.Contains("Keychain", StringComparison.Ordinal) == true);
+
+            Toggles((w, v) => w.OnBridgeCommandsToggled(v), () => OrbweaverSettings.BridgeCommandsEnabled);
+        }
+        finally
+        {
+            OrbweaverSettings.ClaudeCloudEnabled = cloudBefore;
+            OrbweaverSettings.BridgeCommandsEnabled = true;
+        }
+    }
 
     [AvaloniaFact]
     public void TheCodexSwitchWritesItsOwnSetting() => Toggles(

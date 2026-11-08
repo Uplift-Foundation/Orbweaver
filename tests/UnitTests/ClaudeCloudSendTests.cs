@@ -69,6 +69,36 @@ public class ClaudeCloudSendTests
         Assert.True(request.GetProperty("cancel_queued").GetBoolean());
     }
 
+    // CB-306: any control request rides the interrupt's envelope with the
+    // request object supplied. Measured on a bridge and a cloud session on
+    // 2026-11-03: `set_color` with a colour field answered success on the
+    // bridge and "Unsupported control request subtype" on the cloud worker,
+    // which is the kind of difference SlashRoute's table owns, not this envelope.
+    [Fact]
+    public void AControlRequestCarriesTheGivenRequestObject()
+    {
+        var body = ClaudeCloudSend.ControlRequestBody("req-7", "uuid-8",
+            new System.Text.Json.Nodes.JsonObject { ["subtype"] = "set_color", ["color"] = "pink" });
+        var payload = Payload(body);
+
+        Assert.Equal("control_request", payload.GetProperty("type").GetString());
+        Assert.Equal("req-7", payload.GetProperty("request_id").GetString());
+        Assert.Equal("uuid-8", payload.GetProperty("uuid").GetString());
+        Assert.Equal("set_color", payload.GetProperty("request").GetProperty("subtype").GetString());
+        Assert.Equal("pink", payload.GetProperty("request").GetProperty("color").GetString());
+    }
+
+    // The interrupt is the same bytes it was before it was built through the
+    // general envelope, so the one body CB-199 measured is unchanged.
+    [Fact]
+    public void TheInterruptIsTheGeneralEnvelopeWithItsOwnRequest()
+    {
+        var viaGeneral = ClaudeCloudSend.ControlRequestBody("r", "u",
+            new System.Text.Json.Nodes.JsonObject { ["subtype"] = "interrupt", ["cancel_queued"] = true });
+
+        Assert.Equal(viaGeneral, ClaudeCloudSend.InterruptBody("r", "u"));
+    }
+
     // --- the answer ----------------------------------------------------------
 
     // Measured: `sequence_num` is a JSON *string*.

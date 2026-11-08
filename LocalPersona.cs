@@ -805,7 +805,7 @@ namespace Orbweaver
             var dirs = new List<string>();
             if (!string.IsNullOrWhiteSpace(configDirEnv)) dirs.Add(configDirEnv.Trim());
 
-            foreach (var root in ClaudeConfigRoots.All(home))
+            foreach (var root in ClaudeConfigRoots.AllWithDiscovered(home))
             {
                 if (!dirs.Contains(root, StringComparer.OrdinalIgnoreCase)) dirs.Add(root);
             }

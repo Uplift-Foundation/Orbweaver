@@ -658,4 +658,124 @@ public class RemoteScanTests
         Assert.Equal("fallback-name", chat!.DisplayName);
     }
 
+    // --- CB-307: a parked remote orb is drawn dimmed, and clears -------------
+
+    // The host's roster said nobody has spoken to this session for a while, so
+    // the near side draws the orb dimmed rather than not at all — and the next
+    // roster without the flag brings it back to full brightness. Control: the
+    // very same row, unparked, is Present, so the dimming is the flag's doing.
+    [AvaloniaFact]
+    public void AParkedRemoteSessionIsDrawnDimmedAndClearsWhenTheNextRosterDropsTheFlag()
+    {
+        using var scratch = new Scratch();
+        try
+        {
+            OrbweaverSettings.ClaudeCodeEnabled = true;
+            Publish(new RemoteControlSessions.Remote("lawyer-search", "far-mac", "idle", DateTime.UtcNow,
+                ".claude", Route: "sid:quiet", Parked: true));
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+
+            const string key = "rc:.claude:sid:quiet";
+            Assert.Contains(key, Orbs(manager).Keys);
+            Assert.Equal(OrbPresence.Parked, StatusOf(manager, key).Presence);
+            Assert.Equal(OrbPresence.Parked, Orbs(manager)[key].Presence);
+            Assert.Equal("parked", Orbs(manager)[key].PresenceLabel);
+
+            Publish(new RemoteControlSessions.Remote("lawyer-search", "far-mac", "idle", DateTime.UtcNow,
+                ".claude", Route: "sid:quiet"));
+            manager.ScanAndUpdate();
+
+            Assert.Equal(OrbPresence.Present, StatusOf(manager, key).Presence);
+            Assert.Equal(OrbPresence.Present, Orbs(manager)[key].Presence);
+            Assert.Null(Orbs(manager)[key].PresenceLabel);
+        }
+        finally
+        {
+            PublishNothing();
+        }
+    }
+
+    // --- CB-307 addendum: a remote session on a dialog draws as waiting --------
+
+    // The roster's status word has always carried `waiting`; Working only knew
+    // three other words, so it arrived as idle and a remote orb never drew the
+    // state. Control: the same row saying idle is idle.
+    [AvaloniaFact]
+    public void ARemoteSessionOnADialogDrawsAsWaitingAndIsNeverDimmed()
+    {
+        using var scratch = new Scratch();
+        try
+        {
+            OrbweaverSettings.ClaudeCodeEnabled = true;
+            Publish(
+                new RemoteControlSessions.Remote("openclaw", "far-mac", "waiting", DateTime.UtcNow,
+                    ".claude", Route: "sid:dialog"),
+                new RemoteControlSessions.Remote("job-hunter", "far-mac", "idle", DateTime.UtcNow,
+                    ".claude", Route: "sid:calm"));
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+
+            var waiting = StatusOf(manager, "rc:.claude:sid:dialog");
+            Assert.Equal("waiting", waiting.State);
+            Assert.Equal(OrbPresence.Present, waiting.Presence);
+            Assert.Equal("idle", StatusOf(manager, "rc:.claude:sid:calm").State);
+        }
+        finally
+        {
+            PublishNothing();
+        }
+    }
+
+    // --- CB-307 addendum: the local typing gate runs only where the pane lives ---
+
+    // Warren saw the local panel's refusal ("This terminal isn't at its prompt")
+    // while trying to type to a session on another machine. The gate reads a
+    // tmux pane on THIS machine, so it must be reachable only from the panel of
+    // a session whose pane is here. A peer's orb is answered by
+    // RemoteControlChatSession, which sends INPUT to the far server and lets
+    // the far side judge its own pane (the mirror's INPUT guard), and never by
+    // LocalCliChatSession, the one class that calls the local gate.
+    //
+    // Pinned by type for every state a remote row can be in, with a local
+    // session beside it as the control: that one IS a LocalCliChatSession, and
+    // its gate is covered in LocalCliChatSessionTests.
+    [AvaloniaTheory]
+    [InlineData("idle")]
+    [InlineData("waiting")]
+    [InlineData("running")]
+    public void APeersChatIsNeverALocalSessionSoTheLocalGateNeverRunsOnIt(string peerStatus)
+    {
+        using var scratch = new Scratch();
+        try
+        {
+            OrbweaverSettings.ClaudeCodeEnabled = true;
+            OrbweaverSettings.ClaudeCodeChatEnabled = true;
+            File.WriteAllText(Path.Combine(scratch.Dir, "local-1.txt"),
+                System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+                {
+                    State = "idle", Title = "here", Cwd = "/Users/user/project",
+                    SessionPid = Environment.ProcessId, TermProgram = "iTerm.app", Tty = "/dev/ttys004",
+                }));
+            Publish(new RemoteControlSessions.Remote("there", "far-mac", peerStatus, DateTime.UtcNow,
+                ".claude", Route: "sid:far"));
+
+            var manager = Manager(scratch.Dir);
+            manager.ScanAndUpdate();
+
+            var remote = manager.RemoteChatFor("rc:.claude:sid:far");
+            Assert.IsType<RemoteControlChatSession>(remote);
+            Assert.IsNotType<LocalCliChatSession>(remote);
+
+            // Control: a session whose pane is on this machine is the one that
+            // gets the local gate.
+            Assert.IsType<LocalCliChatSession>(manager.RemoteChatFor("local-1"));
+        }
+        finally
+        {
+            PublishNothing();
+        }
+    }
 }

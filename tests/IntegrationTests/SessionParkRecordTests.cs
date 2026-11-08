@@ -57,15 +57,29 @@ public class SessionParkRecordTests
         }
     }
 
+    // CB-307 reversed what this used to pin. Warren's rule: every Claude Code
+    // config dir behaves like ~/.claude with no setting to keep, so a second
+    // account nobody configured is found by discovery (a ~/.claude-<name>
+    // holding sessions/ or projects/) and its record is read.
     [Fact]
-    public void ASecondAccountThatIsNotConfiguredIsNotSearched()
+    public void ASecondAccountNobodyConfiguredIsFoundByDiscovery()
     {
-        // The same layout as above with the setting left off: the record is
-        // there on disk and the app has no reason to know about it. Stated so
-        // the previous test is proving the setting is what reaches it, rather
-        // than an accidental deep walk.
         var home = NewHome();
         WriteRecord(home, ".claude-board", 70580, Record(Owner, "e4f5c5e4"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.True(SessionPark.IsParked(70580, Owner, home));
+    }
+
+    // ...and the control that it is discovery, not an accidental deep walk:
+    // the same record under a folder that is not named like a config dir is
+    // never searched.
+    [Fact]
+    public void AFolderNotNamedLikeAConfigDirIsNotSearched()
+    {
+        var home = NewHome();
+        WriteRecord(home, "claude-board", 70580, Record(Owner, "e4f5c5e4"));
+        WriteRecord(home, ".claudeboard", 70580, Record(Owner, "e4f5c5e4"));
 
         SessionPark.ClearCacheForTests();
         Assert.False(SessionPark.IsParked(70580, Owner, home));
@@ -114,6 +128,125 @@ public class SessionParkRecordTests
 
         SessionPark.ClearCacheForTests();
         Assert.False(SessionPark.IsParked(70580, Owner, home));
+    }
+
+    // --- RecordStatus (CB-307 addendum) ---------------------------------------
+
+    private static string StatusRecord(string status) =>
+        $$"""{"pid":32273,"sessionId":"{{Owner}}","kind":"interactive","status":"{{status}}"}""";
+
+    [Fact]
+    public void AWaitingRecordIsReadBackFromDisk()
+    {
+        var home = NewHome();
+        WriteRecord(home, ".claude", 32273, StatusRecord("waiting"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+    }
+
+    // Negative control from the measurement that justifies the rule: a record
+    // that is wrong but is not `waiting` (the real `busy`, two days stale, on a
+    // pane sitting at its prompt) reads back as exactly what it says, and the
+    // callers act on nothing but `waiting`.
+    [Fact]
+    public void ABusyRecordIsReadBackAsBusyAndNotAsWaiting()
+    {
+        var home = NewHome();
+        WriteRecord(home, ".claude", 81151, StatusRecord("busy"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Equal("busy", SessionPark.RecordStatus(81151, Owner, home));
+        Assert.NotEqual("waiting", SessionPark.RecordStatus(81151, Owner, home));
+    }
+
+    // Cached on (length, mtime), proved by making the file lie: same length,
+    // same mtime, different text. A re-read would see `waiting`; the cache
+    // still says `idle`. Then a real rewrite is noticed.
+    [Fact]
+    public void ARecordIsReadOnceAndReReadWhenItChanges()
+    {
+        var home = NewHome();
+        var path = WriteRecord(home, ".claude", 32273, StatusRecord("idle"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Equal("idle", SessionPark.RecordStatus(32273, Owner, home));
+
+        var written = File.GetLastWriteTimeUtc(path);
+        File.WriteAllText(path, StatusRecord("idle").Replace("idle", "busy"));
+        File.SetLastWriteTimeUtc(path, written);
+        Assert.Equal("idle", SessionPark.RecordStatus(32273, Owner, home));
+
+        File.WriteAllText(path, StatusRecord("waiting"));
+        Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+
+        File.WriteAllText(path, StatusRecord("idle"));
+        Assert.Equal("idle", SessionPark.RecordStatus(32273, Owner, home));
+    }
+
+    // Every config dir a session can live under: the record is found, and says
+    // waiting, whichever account owns it. ~/.claude-board is the one Warren's
+    // lawyer session lives under; the others are the machine's own accounts.
+    [Fact]
+    public void AWaitingRecordIsReadBackUnderEveryConfiguredAccount()
+    {
+        foreach (var account in new[] { ".claude", ".claude-loginid", ".claude-board" })
+        {
+            var home = NewHome();
+            Directory.CreateDirectory(Path.Combine(home, ".claude", "sessions"));
+            WriteRecord(home, account, 32273, StatusRecord("waiting"));
+
+            if (account != ".claude") OrbweaverSettings.AddClaudeCodeProfileDir(account);
+            try
+            {
+                SessionPark.ClearCacheForTests();
+                Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+            }
+            finally
+            {
+                if (account != ".claude") OrbweaverSettings.RemoveClaudeCodeProfileDir(account);
+            }
+        }
+    }
+
+    // CB-307: an account nobody configured is discovered, so its waiting
+    // record is read like ~/.claude's — no setting needed. The control is a
+    // folder not named like a config dir, whose record says nothing.
+    [Fact]
+    public void AnUnconfiguredAccountsRecordIsReadThroughDiscovery()
+    {
+        var home = NewHome();
+        Directory.CreateDirectory(Path.Combine(home, ".claude", "sessions"));
+        WriteRecord(home, ".claude-sundaysky", 32273, StatusRecord("waiting"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Equal("waiting", SessionPark.RecordStatus(32273, Owner, home));
+
+        var other = NewHome();
+        WriteRecord(other, "claude-sundaysky", 32273, StatusRecord("waiting"));
+        SessionPark.ClearCacheForTests();
+        Assert.Null(SessionPark.RecordStatus(32273, Owner, other));
+    }
+
+    [Fact]
+    public void NoRecordMeansNoStatus()
+    {
+        var home = NewHome();
+        Directory.CreateDirectory(Path.Combine(home, ".claude", "sessions"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Null(SessionPark.RecordStatus(32273, Owner, home));
+    }
+
+    [Fact]
+    public void ARecycledPidsRecordSaysNothingAboutTheAsker()
+    {
+        var home = NewHome();
+        WriteRecord(home, ".claude", 32273,
+            StatusRecord("waiting").Replace(Owner, "some-other-session"));
+
+        SessionPark.ClearCacheForTests();
+        Assert.Null(SessionPark.RecordStatus(32273, Owner, home));
     }
 
     private static string NewHome()

@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Avalonia.Threading;
 
@@ -41,8 +42,8 @@ namespace Orbweaver
     //    produced. The contract's "TurnUpdated carries the whole turn" holds
     //    trivially, since the whole turn is all there ever is.
     internal sealed class LocalCliChatSession :
-        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts,
-        IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatElsewhere, IRemoteChatReadOnly,
+        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
+        IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
         IRemoteChatPeerInbound, IDisposable
     {
         // How much of the tail to read when the panel first opens.
@@ -132,6 +133,7 @@ namespace Orbweaver
                                    ICloudApi? cloudApi = null,
                                    Func<string?, ICloudCredentialSource>? credentialsFor = null,
                                    Func<bool>? cloudEnabled = null,
+                                   Func<bool>? bridgeCommandsEnabled = null,
                                    Func<SessionStatus, bool>? focusDesktop = null,
                                    Action<SessionStatus, string>? focusTerminal = null,
                                    Func<string, string?>? readSettings = null,
@@ -142,13 +144,14 @@ namespace Orbweaver
             _format = CliChatFormat.For(status.Source);
             DisplayName = status.Title ?? "";
             _findTranscript = findTranscript ?? (id => TranscriptReader.FindTranscriptFor(id));
-            _messenger = messenger ?? new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.All()));
+            _messenger = messenger ?? new SessionMessenger(SessionMessenger.Live(ClaudeConfigRoots.AllWithDiscovered()));
             _findRegistry = findRegistry ?? (id => SessionRegistry.Find(
-                SessionRegistry.Scan(ClaudeConfigRoots.All()), id, ProcessLiveness.IsRunning));
+                SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()), id, ProcessLiveness.IsRunning));
             _startWatcher = startWatcher ?? StartRealWatcher;
             _cloudApi = cloudApi;
             _credentialsFor = credentialsFor;
             _cloudEnabled = cloudEnabled ?? (() => OrbweaverSettings.ClaudeCloudEnabled);
+            _bridgeCommandsEnabled = bridgeCommandsEnabled ?? (() => OrbweaverSettings.BridgeCommandsEnabled);
             _focusDesktop = focusDesktop ?? FocusDesktopWindow;
             _focusTerminal = focusTerminal ?? FocusTerminalWindow;
             _readSettings = readSettings ?? PeerInboundSettingsFile.ReadText;
@@ -165,6 +168,7 @@ namespace Orbweaver
         private readonly ICloudApi? _cloudApi;
         private readonly Func<string?, ICloudCredentialSource>? _credentialsFor;
         private readonly Func<bool> _cloudEnabled;
+        private readonly Func<bool> _bridgeCommandsEnabled;
         private readonly Func<SessionStatus, bool> _focusDesktop;
         private readonly Action<SessionStatus, string> _focusTerminal;
 
@@ -633,15 +637,141 @@ namespace Orbweaver
         // would be disk I/O for something that never differs between reads.
         private IReadOnlyList<SlashCommand>? _slashCommands;
 
-        // Empty once the channel is Messaging: a delivered message arrives as a
-        // <cross-session-message>, not as keystrokes, so a built-in slash
-        // command typed into the composer would be sent as plain text to a CLI
-        // that never sees it as a command — see CB-43's messaging-mode note in
-        // RemoteControlChatSession for the same rule over the wire.
+        // What the composer offers depends on the channel (CB-306), decided by
+        // LocalSlashChannel so the mirror's far side can ask the same question:
+        // a pane gets the local catalogue typed as before; a Remote Control
+        // bridge gets the five commands that run as control requests; a peer
+        // socket gets nothing, because a delivered message arrives as a
+        // <cross-session-message> that Claude Code never slash-dispatches
+        // (CB-43, measured again 2026-11-03).
         public IReadOnlyList<SlashCommand> SlashCommands =>
-            ChannelIsMessaging
-                ? Array.Empty<SlashCommand>()
-                : (_slashCommands ??= SlashCommandCatalog.For(_status.Source, _status.Cwd));
+            LocalSlashChannel.CommandsFor(SlashChannelNow, LocalCatalogue);
+
+        // Through the shared cache rather than the scan itself (CB-306's second
+        // reopen): this is read on the UI thread, which every orb shares, and
+        // the scan walks the cwd's parents up to `/` — so the folder that froze
+        // the mini's peer link would have frozen the whole app here the first
+        // time its panel offered "/". It waits for a first scan at most
+        // PanelCatalogueWait, once per folder, then offers the built-ins; only
+        // a real scan's answer is kept, so the next ask picks the scan up when
+        // it lands.
+        internal static readonly TimeSpan PanelCatalogueWait = TimeSpan.FromSeconds(1);
+
+        private IReadOnlyList<SlashCommand> LocalCatalogue() =>
+            SlashCatalogueCache.Shared.Remembered(ref _slashCommands, _status.Source, _status.Cwd, PanelCatalogueWait);
+
+        // The bridge id for this session: the Desktop record's, else the one a
+        // headless job's registry row carries. Null when there is none.
+        internal string? BridgeId =>
+            LocalSlashChannel.BridgeIdFor(
+                _status.IsDesktopHosted ? _status.BridgeSessionId : null,
+                _status.IsDesktopHosted ? null : _findRegistry(SessionId)?.BridgeSessionId);
+
+        internal SlashChannel SlashChannelNow => ChannelWith(BridgeId);
+
+        private SlashChannel ChannelWith(string? bridge)
+        {
+            var canType = TerminalFocuser.CanSendQuietly(_status);
+            // A pane makes the registry irrelevant, so skip its disk scan.
+            if (!_status.IsDesktopHosted && canType) return SlashChannel.Terminal;
+            return LocalSlashChannel.ChannelFor(
+                _status.IsDesktopHosted, canType,
+                !_status.IsDesktopHosted && TerminalFocuser.CanDeliver(_status, SessionId, _findRegistry),
+                bridge);
+        }
+
+        // Runs a typed `/cmd args` by the route its channel gives it (CB-306).
+        // Typed goes through the ordinary send; Control is posted to the bridge
+        // session; Unavailable leaves a note and sends nothing at all.
+        public async Task<ChatSendOutcome> RunSlashAsync(string line)
+        {
+            // Read once: the registry row can change between two reads, and the
+            // channel and the post must agree on which bridge this is.
+            var bridge = BridgeId;
+            var channel = ChannelWith(bridge);
+
+            // The same gate the panel uses, against the same full list.
+            var known = LocalSlashChannel.CommandsFor(channel, LocalCatalogue);
+            if (!SlashRouting.NamesKnownCommand(line, known.Select(c => c.Name)))
+                return await SendAsync(line);
+
+            var cmd = SlashRouting.Split(line)!.Value;
+            var route = SlashRouting.Resolve(channel, cmd.Name, cmd.Args);
+
+            switch (route.Kind)
+            {
+                case SlashRouteKind.Unavailable:
+                    // A Desktop chat with no bridge has a more useful sentence
+                    // already: how to switch Remote Control on.
+                    Note(_status.IsDesktopHosted && channel == SlashChannel.PeerSocket
+                        ? "Not sent: " + ComposerHint
+                        : SlashRouting.RefusalNote(cmd.Name, route.Reason!));
+                    return ChatSendOutcome.Failed;
+
+                case SlashRouteKind.Control:
+                    return await RunControlAsync(cmd.Name, cmd.Args, route.ControlSubtype!, bridge!); // Control resolves only on Bridge, which needs a non-empty id.
+
+                default:
+                    return await SendAsync(line);
+            }
+        }
+
+        private async Task<ChatSendOutcome> RunControlAsync(string name, string args, string subtype, string bridge)
+        {
+            var request = SlashRouting.ControlRequest(subtype, args, out var problem);
+            if (request is null)
+            {
+                Note($"Not sent: {problem}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            if (!BridgeCommandsOn)
+            {
+                Note("Not sent: " + BridgeCommandsOffHint);
+                return ChatSendOutcome.Failed;
+            }
+
+            var source = _credentialsFor!(ClaudeConfigRoots.RootOfTranscript(_status.TranscriptPath));
+            var attempt = await CloudTurnSender.PostControlAndReadAnswerAsync(
+                _cloudApi!, source, ReadBudget, bridge, request, Delay, CancellationToken.None);
+            if (attempt.Failure is not null)
+            {
+                Note($"Not sent: {attempt.Failure}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            // The CLI got it and said no. Its version comes off the registry
+            // row, read only now, so a command that ran costs no disk walk.
+            if (attempt.CliError is { } refused)
+            {
+                Note($"Not run: {CloudTurnSender.RejectionClause(refused, _findRegistry(SessionId)?.Version)}.");
+                return ChatSendOutcome.Failed;
+            }
+
+            // "Done" only on the CLI's own "success"; silence is said as
+            // silence, never as plain "Sent", which reads as success.
+            Note(attempt.Confirmed ? DoneNote(name, args) : UnconfirmedNote(name, args));
+            return ChatSendOutcome.Sent;
+        }
+
+        internal static string DoneNote(string name, string args) =>
+            $"Done: {(args.Length == 0 ? name : name + " " + args)}.";
+
+        internal static string UnconfirmedNote(string name, string args) =>
+            $"Sent {(args.Length == 0 ? name : name + " " + args)} over Remote Control — no confirmation yet.";
+
+        // CB-306's product-readiness round: the control path has its own
+        // setting, on by default, instead of riding on "Show cloud sessions" —
+        // which a fresh install has off, so no background job or Desktop chat
+        // could run a command until somebody found it. The far side of the
+        // mirror refuses with this same sentence, so the toggle it names is the
+        // one on the machine that would have posted.
+        internal const string BridgeCommandsToggleLabel =
+            "Run slash commands in background jobs and Desktop sessions";
+
+        internal const string BridgeCommandsOffHint =
+            "slash commands reach this session over Remote Control, which is switched off — turn on \""
+            + BridgeCommandsToggleLabel + "\" in Orbweaver's Settings";
 
         // --- sending ---
 
@@ -653,7 +783,7 @@ namespace Orbweaver
             && TerminalFocuser.CanDeliver(_status, SessionId, _findRegistry);
 
         public string ComposerHint => _status.IsDesktopHosted
-            ? DesktopComposerHintFor(_status, _refusal, CloudOn, _format.ReplyEnabled(), IsBusy)!
+            ? DesktopComposerHintFor(_status, _refusal, CloudOn, _format.ReplyEnabled(), IsBusy, BridgeCommandsOn)!
             : ComposerHintFor(
                 TerminalFocuser.CanSendQuietly(_status), ChannelIsMessaging, _format.ReplyEnabled(),
                 _status.Shape, _status.Presence);
@@ -671,8 +801,10 @@ namespace Orbweaver
         // prompt — so the composer says so rather than pretending to be the
         // keyboard.
         //
-        // Gated on "Show cloud sessions", the setting that promises no credential
-        // read when off; no setting of its own.
+        // Messages are gated on "Show cloud sessions", the setting that promises
+        // no credential read when off. The five control commands have their
+        // own setting since CB-306's product-readiness round (on by default;
+        // see BridgeCommandsOffHint), so a fresh install can run them.
         internal const string DesktopNoBridgeHint =
             "Typing goes through Claude Desktop — click the orb to open it. To send from here, turn on "
             + "Remote Control for this chat: type /rc in its Code tab, or switch on Settings › Claude Code › "
@@ -681,6 +813,13 @@ namespace Orbweaver
         internal const string DesktopCloudOffHint =
             "This chat is on Remote Control. To send from here, turn on \"Show cloud sessions\" in "
             + "Orbweaver's Settings — sending uses the Claude Code login stored on this machine.";
+
+        // The box is up for commands while "Show cloud sessions" is off, so it
+        // says which ones and what turning that on would add. Short because it
+        // is a watermark: the longer first draft clipped its last line in the
+        // capture (chat-panel-desktop-commands-only.png).
+        internal const string DesktopCommandsOnlyHint =
+            "Slash commands work here. To send messages, turn on \"Show cloud sessions\" in Settings.";
 
         internal const string DesktopBridgedHint =
             "Message… (arrives as a teammate's request, via Remote Control)";
@@ -696,22 +835,30 @@ namespace Orbweaver
         private bool CloudOn =>
             _cloudApi is not null && _credentialsFor is not null && _cloudEnabled();
 
+        private bool BridgeCommandsOn =>
+            _cloudApi is not null && _credentialsFor is not null && _bridgeCommandsEnabled();
+
         private bool IsBusy => string.Equals(_status.State, "generating", StringComparison.OrdinalIgnoreCase);
 
         // Whether the composer is taken away. Pure, so each row of the table is a
-        // case: not bridged, cloud off, or a refusal the API has given.
-        internal static bool DesktopReadOnly(SessionStatus status, CloudSendability? refusal, bool cloudEnabled) =>
-            status.IsDesktopHosted && (!status.IsBridgedDesktop || !cloudEnabled || refusal is not null);
+        // case: not bridged, cloud off with commands off too, or a refusal the
+        // API has given. Cloud off with commands on keeps the box (CB-306):
+        // it takes the five control commands, and a plain message is refused
+        // with the cloud sentence when sent rather than the box disappearing.
+        internal static bool DesktopReadOnly(SessionStatus status, CloudSendability? refusal, bool cloudEnabled,
+                                             bool bridgeCommands = false) =>
+            status.IsDesktopHosted
+            && (!status.IsBridgedDesktop || (!cloudEnabled && !bridgeCommands) || refusal is not null);
 
         // What the composer says. Null for a session that is not Desktop-hosted,
         // so a caller cannot mistake "not my case" for an empty sentence.
         internal static string? DesktopComposerHintFor(
             SessionStatus status, CloudSendability? refusal, bool cloudEnabled, bool replyEnabled,
-            bool busy = false)
+            bool busy = false, bool bridgeCommands = false)
         {
             if (!status.IsDesktopHosted) return null;
             if (!status.IsBridgedDesktop) return DesktopNoBridgeHint;
-            if (!cloudEnabled) return DesktopCloudOffHint;
+            if (!cloudEnabled) return bridgeCommands ? DesktopCommandsOnlyHint : DesktopCloudOffHint;
 
             if (refusal is { } refused)
             {
@@ -722,7 +869,7 @@ namespace Orbweaver
             return busy ? CloudChatSendability.BusyHint : DesktopBridgedHint;
         }
 
-        public bool IsReadOnly => DesktopReadOnly(_status, _refusal, CloudOn);
+        public bool IsReadOnly => DesktopReadOnly(_status, _refusal, CloudOn, BridgeCommandsOn);
 
         // The chat in a browser, once there is a bridge to point at — shown beside
         // the note and above the composer. Null with no bridge: Desktop's own
@@ -911,6 +1058,14 @@ namespace Orbweaver
             if (IsReadOnly)
             {
                 Note("Not sent: " + ComposerHint);
+                return ChatSendOutcome.Failed;
+            }
+
+            // The box can be up for commands alone (CB-306); a message still
+            // needs "Show cloud sessions".
+            if (!CloudOn)
+            {
+                Note("Not sent: " + DesktopCloudOffHint);
                 return ChatSendOutcome.Failed;
             }
 
@@ -1207,6 +1362,12 @@ namespace Orbweaver
         private async Task<ChatSendOutcome> TypeIntoTerminalAsync(
             string typedText, string displayText, byte[]? imageBytes)
         {
+            // CB-307: keystrokes mean whatever the pane is showing, so ask first.
+            // Before Add(mine), so a refused line never appears as a sent
+            // bubble. The decision and the note are RefuseIfNotAtPromptAsync's,
+            // which is covered; only this one call line is not.
+            if (await RefuseIfNotAtPromptAsync() is { } refused) return refused;
+
             var mine = new ChatTurn
             {
                 Role = ChatRole.User,
@@ -1229,6 +1390,104 @@ namespace Orbweaver
             Note("Couldn't send that to the terminal.");
             return ChatSendOutcome.Failed;
         }
+
+        // CB-307: the typing gate, asked once per send and never per frame.
+        // Injectable so a test hands over a verdict instead of a real tmux pane;
+        // the default reads Claude Code's own session record and, where it can
+        // (tmux), the pane itself.
+        internal Func<SessionStatus, Task<TypingVerdict>>? Gate { get; init; }
+
+        [ExcludeFromCodeCoverage]
+        private Task<TypingVerdict> RealGate(SessionStatus status) =>
+            TypingGate.JudgeAsync(
+                status,
+                s => SessionPark.RecordStatus(s.SessionPid, SessionId),
+                TerminalFocuser.CapturePane,
+                TerminalFocuser.CanReadPane(status));
+
+        // Null when typing may go ahead. Otherwise the note has been written
+        // under the composer, nothing is pending, and the send has Failed — so
+        // the composer keeps the user's text, which is the right thing to do
+        // with words that never reached anything.
+        internal async Task<ChatSendOutcome?> RefuseIfNotAtPromptAsync()
+        {
+            var verdict = await (Gate ?? RealGate)(_status);
+            var shadow = (ShadowOn ?? RealShadowOn)();
+
+            // Shadow mode (CB-307): compute the verdict and say what it was,
+            // along with what the gate saw, and then let the send go ahead.
+            // For reading the cause of a refusal that only happens in the
+            // running app without blocking anyone while it is read. Off unless
+            // the marker file or the env var asks for it.
+            if (shadow)
+            {
+                MirrorLog.Say(
+                    verdict.Allowed ? "local-typing-allowed" : "local-typing-refused",
+                    RefusalLogDetail(SessionId, verdict, _status, CanReadPane(_status), shadow: true));
+                return null;
+            }
+
+            if (verdict.Allowed) return null;
+
+            _pending = null;
+            Note(NotAtPromptNote(verdict.Why));
+            MirrorLog.Say(
+                "local-typing-refused",
+                RefusalLogDetail(SessionId, verdict, _status, CanReadPane(_status), shadow: false));
+            return ChatSendOutcome.Failed;
+        }
+
+        // Whether the gate only logs. A seam so a test turns it on without a
+        // file or an environment variable; the default reads the marker file
+        // beside mirror-log, or the env var.
+        internal Func<bool>? ShadowOn { get; init; }
+
+        [ExcludeFromCodeCoverage]
+        private static bool RealShadowOn() =>
+            ShadowSwitch.IsOn(OrbweaverSettings.Directory, BrandEnv.Get(BrandEnv.LocalGateShadow), File.Exists);
+
+        [ExcludeFromCodeCoverage]
+        private static bool CanReadPane(SessionStatus status) => TerminalFocuser.CanReadPane(status);
+
+        // What the log says about a gate decision, so a refusal on a real
+        // machine can be told apart after the fact: the record said waiting,
+        // the screen was a dialog, or the screen could not be read (and then
+        // which check fired, or that the capture came back null or threw).
+        // Also which status fields the gate was handed, because the failure that
+        // prompted this is one that only the running app shows, where the
+        // panel's cached status can differ from the file. Never any screen text
+        // or any path: a dialog's title is reduced to the word "dialog", and
+        // the tmux fields are reported only as set or empty.
+        internal static string RefusalLogDetail(
+            string sessionId, TypingVerdict verdict, SessionStatus? status = null,
+            bool canReadPane = false, bool shadow = false)
+        {
+            var kind = verdict.Why switch
+            {
+                null => "allowed",
+                TypingGate.WaitingWhy => "record-waiting",
+                TypingGate.UnreadableWhy => "unreadable",
+                { } why when why.StartsWith("it is showing a dialog", StringComparison.Ordinal) => "dialog",
+                _ => "other",
+            };
+
+            var line = $"session={sessionId} kind={kind} diag={verdict.Diagnostic ?? "none"}";
+            if (shadow) line += " shadow=1";
+            if (status is not null)
+            {
+                line += $" state={status.State} source={status.Source} pid={(status.SessionPid > 0 ? "set" : "none")}"
+                    + $" tmux_socket={SetOrEmpty(status.TmuxSocket)} tmux_pane={SetOrEmpty(status.TmuxPane)}"
+                    + $" tmux_bin={SetOrEmpty(status.TmuxBin)} can_read_pane={canReadPane.ToString().ToLowerInvariant()}";
+            }
+
+            return line;
+        }
+
+        private static string SetOrEmpty(string? value) => string.IsNullOrEmpty(value) ? "empty" : "set";
+
+        internal static string NotAtPromptNote(string? why) =>
+            "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)
+            + ". Nothing was typed; answer that screen in the terminal and send again.";
 
         // The body of a delivered message, unwrapped from the tag Claude Code's
         // own transcript holds it in.
@@ -1358,7 +1617,12 @@ namespace Orbweaver
 
             try
             {
-                var screen = await TerminalFocuser.CapturePane(_status);
+                var generation = _generation;
+                var screen = await Capture(_status);
+
+                // An answer went out while this capture was running: it saw the
+                // screen before the key, and is stale.
+                if (generation != _generation) return;
 
                 // Still waiting? The capture runs a process and the answer may
                 // have been given in the terminal while it did.
@@ -1367,7 +1631,39 @@ namespace Orbweaver
                 // A prompt with no options is the honest outcome when the dialog
                 // could not be read: something is waiting, we cannot say what,
                 // and the panel offers the terminal instead of a guess.
-                var parsed = screen is null ? null : ChatTranscript.ParseDialog(screen);
+                //
+                // A question form (CB-307) first: it is a dialog with more on it
+                // (the whole question, which tab, a text option), and anything
+                // that is not a form falls through to the ordinary reading.
+                var parsed = screen is null ? null : ReadPrompt(screen);
+
+                // The fingerprint of a form as it was shown, so an answer to it
+                // is refused if the screen has since moved on. Null for an
+                // ordinary dialog, which answers by its key as it always has.
+                _formFingerprint = screen is not null && ChatTranscript.ParseAskForm(screen) is not null
+                    // A screen that parses as a form always has a wire reading
+                    // (PromptFromScreen reads the same form first), so there is no
+                    // null to guard here.
+                    ? MirrorProtocol.PromptFromScreen(screen)!.Fingerprint
+                    : null;
+
+                // The form just answered, read again before the terminal has
+                // moved on, is not shown again: live buttons on an answered
+                // question invite a second click that lands on the next one. Held
+                // back until it changes, or has stayed long enough that the
+                // answer plainly did not take.
+                if (_answeredFingerprint is not null)
+                {
+                    if (_formFingerprint == _answeredFingerprint
+                        && Clock() - _answeredAt < SettleAfterAnswer)
+                    {
+                        _formFingerprint = null;
+                        return;
+                    }
+
+                    _answeredFingerprint = null;
+                }
+
                 SetPrompt(parsed ?? new ChatPrompt("Waiting for input", Array.Empty<ChatPromptOption>()));
             }
             finally
@@ -1375,6 +1671,34 @@ namespace Orbweaver
                 _refreshing = false;
             }
         }
+
+        // The pane seams, so a test can hand over a screen and count what an
+        // answer sends. The defaults are the real tmux/terminal reads and presses.
+        internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } = TerminalFocuser.SendPaneKey;
+        internal Func<SessionStatus, Task<string?>> Capture { get; init; } = TerminalFocuser.CapturePane;
+        internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } = TerminalFocuser.SendPaneText;
+
+        // The fingerprint of the question form on show, or null when the prompt
+        // is an ordinary dialog (or nothing).
+        private string? _formFingerprint;
+
+        // The form just answered, and when, so a re-read of it before the
+        // terminal advances is held back. See RefreshPromptAsync.
+        internal static readonly TimeSpan SettleAfterAnswer = TimeSpan.FromSeconds(4);
+        internal Func<DateTime> Clock { get; init; } = () => DateTime.UtcNow;
+        private string? _answeredFingerprint;
+        private DateTime _answeredAt;
+
+        // Which read of the pane is current: bumped when an answer is sent and
+        // again when it finishes, so a capture already in flight — the screen as
+        // it was before the key landed — is dropped when it returns instead of
+        // being drawn as the current form.
+        private int _generation;
+
+        internal static ChatPrompt? ReadPrompt(string screen) =>
+            ChatTranscript.ParseAskForm(screen) is { } form
+                ? AskFormView.ToPrompt(form)
+                : ChatTranscript.ParseDialog(screen);
 
         // internal: the transitions around a prompt are what decide whether the
         // panel is still offering buttons for a dialog that has been answered,
@@ -1395,13 +1719,38 @@ namespace Orbweaver
                 return;
             }
 
+            // A question form is answered through the one procedure the mirror
+            // runs too (FormAnswer), which re-reads the screen and presses
+            // nothing unless it is still the form that was shown.
+            if (_formFingerprint is not null)
+            {
+                // The free-text option is never pressed by its digit: on a
+                // single-select question that selects it empty, which declines
+                // the whole form. It is answered with text, from the box.
+                if (option.FreeText)
+                {
+                    Note("Type your answer in the box, then send it.");
+                    return;
+                }
+
+                await AnswerFormAsync(option, text: null);
+                return;
+            }
+
             // Cleared first. The hook will report the session generating again
             // within a moment, but the buttons should stop being clickable the
             // instant one is clicked rather than staying live for a second
             // answer to the dialog that is already gone.
             SetPrompt(null);
 
-            if (await TerminalFocuser.SendPaneKey(_status, option.Key)) return;
+            // A capture already in flight saw the screen before this key, and is
+            // dropped when it returns; bumped again once the key is down.
+            _generation++;
+            bool pressed;
+            try { pressed = await PressKey(_status, option.Key); }
+            finally { _generation++; }
+
+            if (pressed) return;
 
             Note("Couldn't answer that in the terminal.");
 
@@ -1410,6 +1759,83 @@ namespace Orbweaver
             // stopped when it doesn't.
             if (_waiting) await RefreshPromptAsync();
         }
+
+        // The typed answer of a form's "Type something." row. Only for a form on
+        // show and only for its free-text option; FormAnswer refuses blank or
+        // multi-line text, and free text on a multi-select, with nothing pressed.
+        public async Task AnswerFreeTextAsync(ChatPromptOption option, string text)
+        {
+            if (!_format.ReplyEnabled())
+            {
+                Note("Replying is off, so this can only be answered in the terminal.");
+                return;
+            }
+
+            if (_formFingerprint is null || !option.FreeText) return;
+
+            await AnswerFormAsync(option, text);
+        }
+
+        private async Task AnswerFormAsync(ChatPromptOption option, string? text)
+        {
+            var fingerprint = _formFingerprint!;
+            var commit = option.Key == AskFormView.CommitKey;
+            _answeredFingerprint = fingerprint;
+            _answeredAt = Clock();
+
+            // Cleared first, for the reason the ordinary path gives.
+            SetPrompt(null);
+            _formFingerprint = null;
+            _generation++;
+
+            string? code;
+            try
+            {
+                code = await FormAnswer.AnswerAsync(
+                    _status,
+                    Capture,
+                    PressKey,
+                    TypeLiteral,
+                    fingerprint,
+                    key: commit ? null : option.Key,
+                    action: commit ? MirrorProtocol.ActionCommit : null,
+                    text: text);
+            }
+            finally
+            {
+                // Again on the way out: a capture that began during the answer is
+                // as stale as one that began before it.
+                _generation++;
+            }
+
+            if (code is null) return;
+
+            // Nothing (more) was pressed, so there is no screen about to move
+            // on: the buttons may come straight back.
+            _answeredFingerprint = null;
+
+            Note(FormRefusalNote(code));
+
+            // Put the buttons back: nothing was answered, or not all of it.
+            if (_waiting) await RefreshPromptAsync();
+        }
+
+        // What a refusal from the shared procedure says, as a function of the
+        // code, because each is a different fact about the screen.
+        internal static string FormRefusalNote(string code) => code switch
+        {
+            MirrorProtocol.ErrPromptChanged =>
+                "That question had changed, so nothing was answered. Here is the current one.",
+
+            // Nothing is waiting any more: the form was answered a moment ago (a
+            // second click on it) or in the terminal. Not an error.
+            MirrorProtocol.ErrNoPrompt => "That question was already answered.",
+            MirrorProtocol.ErrBadKey =>
+                "That can't be answered that way. Nothing was pressed.",
+            MirrorProtocol.ErrUnsupported =>
+                "That can't be answered from here. Answer it in the terminal.",
+            _ => "Couldn't answer that in the terminal.",
+        };
 
         // A Desktop session has no terminal for TerminalFocuser to find, so its
         // Focus returned early and this button did nothing (CB-265's gap). Its

@@ -58,6 +58,10 @@ namespace Orbweaver
                 // rather than a probe (CB-44).
                 installCrashLog: CrashLog.Install,
 
+                // Absorb a SIGHUP on macOS instead of dying of it (CB-306).
+                // See HangupGuard.cs and docs/sighup-findings.md.
+                installHangupGuard: HangupGuard.Install,
+
                 // Whether this is the one Buddy that gets to run. See
                 // SingleInstance.cs for the enum and the reasoning; this is
                 // just the glue that keeps the acquired mutexes alive for the
@@ -102,6 +106,15 @@ namespace Orbweaver
                 // bundle's own install-hooks.sh --keepalive-only; no-throw, and
                 // a no-op whenever the plist's program exists.
                 repairKeepAlive: KeepAliveRepair.Run,
+
+                // Overwrite an installed hook script that differs from the
+                // bundled one (CB-265), here rather than from App because
+                // App is behind the screen-lock wait below and the mini's
+                // screen never unlocks — so the fix in 5343d162 sat in the
+                // bundle on that machine while every session kept running
+                // the 26 Oct script (CB-306). Files only, on a pool thread;
+                // never creates a copy, never touches settings.json.
+                refreshHooks: HookFreshness.StartInBackground,
 
                 // The serve path before the screen-lock wait below, because it
                 // needs nothing that wait exists to protect: a relay is tmux,
@@ -179,7 +192,15 @@ namespace Orbweaver
                 waitForUnlock: () =>
                     MacOSScreenLock.WaitForUnlock(LockWait, LockPoll),
 
-                startUi: () => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args));
+                startUi: () => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args),
+
+                // The updater's finisher (CB-308): the staged new bundle,
+                // launched with --finish-update while the old Buddy is still
+                // alive. It answers ahead of the single-instance claim and
+                // swaps the bundle in; an ordinary launch falls straight
+                // through. macOS only — the Windows installer swaps the app
+                // itself.
+                finishUpdate: () => OperatingSystem.IsMacOS() && UpdateInstallMacOS.TryRunFinisher(args));
         }
 
         public static AppBuilder BuildAvaloniaApp() =>

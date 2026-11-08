@@ -319,7 +319,17 @@ public class CloudSessionScreenshots : IDisposable
         public CredentialRead Read() => new(CredentialOutcome.NotLoggedIn, null, null, "none");
     }
 
-    private static void Capture(bool enabled, string name, bool keepState = false)
+    // CB-306's product-readiness round: the slash-commands group beside the
+    // cloud card, as a fresh install has it — cloud off, this switch on, and
+    // the help text naming the Keychain prompt the first command brings.
+    [AvaloniaFact]
+    public void TheRemoteControlCommandsGroupOnAFreshInstall()
+    {
+        Capture(enabled: false, "settings-remote-control-commands.png", heading: "Remote Control commands");
+    }
+
+    private static void Capture(bool enabled, string name, bool keepState = false,
+        string heading = "Claude Code in the cloud")
     {
         var was = OrbweaverSettings.ClaudeCloudEnabled;
         try
@@ -359,11 +369,11 @@ public class CloudSessionScreenshots : IDisposable
             // on scenario exists to show, cropped out of frame. Caught by
             // looking at the PNG, which is the only thing that could have caught
             // it: the test passed either way.
-            var heading = window.GetLogicalDescendants()
+            var title = window.GetLogicalDescendants()
                 .OfType<TextBlock>()
-                .FirstOrDefault(block => block.Text == "Claude Code in the cloud");
+                .FirstOrDefault(block => block.Text == heading);
 
-            Assert.NotNull(heading);
+            Assert.NotNull(title);
 
             // Climbing to the section type rather than taking the heading's
             // immediate parent. That shortcut held while Group() built a
@@ -377,7 +387,7 @@ public class CloudSessionScreenshots : IDisposable
             // Windows tripped AssertTextIsLegible on it, because a strip that
             // small and that dense renders bi-level there. A structural anchor
             // does not depend on either of those accidents.
-            var group = heading!.GetLogicalAncestors()
+            var group = title!.GetLogicalAncestors()
                 .OfType<SettingsWindow.SettingsSection>()
                 .First();
 
@@ -388,5 +398,37 @@ public class CloudSessionScreenshots : IDisposable
             ClaudeCloudSessions.SetStateForTests("off");
             OrbweaverSettings.ClaudeCloudEnabled = was;
         }
+    }
+
+    // CB-306: the slash box on a cloud panel. The list is what a real cloud
+    // init yields once it has been through the cloud catalogue (the same
+    // CloudSlashCatalog the session uses), so the picture shows the four
+    // commands a cloud session can run and none of the ninety-odd it lists.
+    // The session behind the panel is the fake: this suite renders through real
+    // Skia and has no live stream to feed an init.
+    [AvaloniaFact]
+    public void ACloudPanelsSlashBoxOffersOnlyWhatACloudSessionCanRun()
+    {
+        var offered = CloudSlashCatalog.Catalogue(
+            new[] { "compact", "rename", "model", "color", "permissions", "think", "doctor", "some-skill" },
+            new[] { "doctor", "color" });
+
+        var id = "screenshot-cloud-slash-" + Guid.NewGuid();
+        _panelsToClean.Add(id);
+        ChatPanel.OpenFor(new OrbWindow(Guid.NewGuid().ToString()), new FakeChatSession
+        {
+            SessionId = id,
+            DisplayName = "Refactor the parser",
+            SlashCommands = offered,
+        });
+
+        var panel = ChatPanelTestAccess.Instance!;
+        var input = panel.FindControl<Avalonia.Controls.TextBox>("Input")!;
+        input.Focus();
+        input.Text = "/";
+        input.CaretIndex = 1;
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        ScreenshotHelper.CaptureAlreadyShown(panel, "chat-panel-cloud-slash-box.png");
     }
 }

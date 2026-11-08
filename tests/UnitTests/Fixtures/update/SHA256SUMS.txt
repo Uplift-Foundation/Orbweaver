@@ -1,0 +1,6 @@
+e61c8c2a3f5dedc67c2e67fb01359f90b1a9fb1d198019108239ec385152be52  Orbweaver-1.0.3-osx-arm64.dmg
+27aeccbba8e430a6340b8d41b0879f5f080c8c32d7d36b4c770b86db9b399a41  Orbweaver-1.0.3-osx-x64.dmg
+5c47d7d794fe719b6af8e941898425d9d19f892cbe5debdfcc8cb9fd6841a8e3  Orbweaver-1.0.3-win-x64-setup.exe
+fcc4e1cbfb24ad2ac785c993dc5e22caa4b481596cc29bcb4a3e7e84d82cbb56  OrbweaverSpeech-1.0.3-osx-arm64.zip
+aebb4c1c117977a235cb4557cef9df77e817a9891d86e1a11f0aaf682f088600  OrbweaverSpeech-1.0.3-osx-x64.zip
+38f99f31e2f9f9653cecd9cfd908b85928fe485519dab107eed1bfd068b6c502  OrbweaverSpeech-1.0.3-win-x64.zip

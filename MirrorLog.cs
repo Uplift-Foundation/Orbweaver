@@ -35,12 +35,36 @@ namespace Orbweaver
 
         private static readonly object Gate = new();
 
-        // A ceiling rather than rotation. This is a diagnostic that somebody
-        // turns on, looks at, and turns off; a megabyte is far more than that
-        // needs and rotation is machinery this does not earn.
+        // Rotated at this size: the full file becomes mirror-log.txt.1 (replacing
+        // any older one) and a fresh one starts. This used to be a ceiling that
+        // simply stopped writing, and it stopped on 2 Nov on both Macs — so the
+        // "peer-listen-failed" line of the CB-306 regression was never recorded
+        // and the fault looked like nothing at all. Dropping the oldest history
+        // is the right way for a diagnostic to be full; going deaf is not.
         private const long MaxBytes = 1024 * 1024;
 
         internal static bool On => Path.Value is not null;
+
+        // The file this process writes. The app keeps the default; peer-probe
+        // switches to its own before anything is logged, so a probe's failures
+        // (a terminal without Local Network consent, say) never read as the
+        // app's in the app's own log (CB-306). Must be set before the first
+        // line is written, because the path is resolved once.
+        internal const string DefaultFileName = "mirror-log.txt";
+        internal const string ProbeFileName = "mirror-log-probe.txt";
+        private static string _fileName = DefaultFileName;
+
+        internal static void UseFile(string fileName) => _fileName = fileName;
+
+        internal static string CurrentFileName => _fileName;
+
+        // Pure: where the log goes, or null when nobody asked for one.
+        internal static string? PathFor(string? dir, bool asked, string fileName)
+        {
+            if (string.IsNullOrEmpty(dir) || !asked) return null;
+
+            return System.IO.Path.Combine(dir, fileName);
+        }
 
         [ExcludeFromCodeCoverage]
         private static string? Resolve()
@@ -53,9 +77,7 @@ namespace Orbweaver
                 var asked = !string.IsNullOrWhiteSpace(BrandEnv.Get(BrandEnv.MirrorLog))
                             || File.Exists(System.IO.Path.Combine(dir, "mirror-log"));
 
-                if (!asked) return null;
-
-                return System.IO.Path.Combine(dir, "mirror-log.txt");
+                return PathFor(dir, asked, _fileName);
             }
             catch
             {
@@ -131,6 +153,16 @@ namespace Orbweaver
             Say(what, since >= RepeatEvery ? $"{detail} (still, x{since})" : detail);
         }
 
+        // Keeps exactly one previous generation, so the disk cost is bounded at
+        // twice MaxBytes. Internal with the limit as an argument so a test can
+        // drive it without writing a megabyte.
+        internal static void RotateIfFull(string path, long maxBytes = MaxBytes)
+        {
+            if (new FileInfo(path) is not { Exists: true } info || info.Length <= maxBytes) return;
+
+            File.Move(path, path + ".1", overwrite: true);
+        }
+
         [ExcludeFromCodeCoverage]
         internal static void Say(string what, string detail = "")
         {
@@ -141,7 +173,7 @@ namespace Orbweaver
             {
                 lock (Gate)
                 {
-                    if (new FileInfo(path) is { Exists: true, Length: > MaxBytes }) return;
+                    RotateIfFull(path);
 
                     File.AppendAllText(
                         path, Line(DateTime.UtcNow, what, detail) + "\n", Encoding.UTF8);

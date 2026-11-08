@@ -89,7 +89,7 @@ namespace Orbweaver
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
             "openclawReplyEnabled", "openclawApproveEnabled", "openclawActiveWithinMinutes",
-            "claudeCloudEnabled",
+            "claudeCloudEnabled", "bridgeCommandsEnabled",
             // Still written, though nothing reads it into the model any more —
             // see OpenClawHeartbeatMode. Listed here so it does not also
             // round-trip through _unknownKeys, which Save would reject as a
@@ -111,6 +111,11 @@ namespace Orbweaver
             "remoteControlEnabled", "remoteControlProfileDir", "remoteControlProfileDirs",
             "remoteControlIdleMinutes", "remoteControlServeOnLaunch",
             "peerLinkEnabled", "peerLinkPort",
+            // CB-308, the auto-updater. All five must be here: a key written by
+            // Save() that is not in this list is also carried in _unknownKeys,
+            // and Save() would then throw adding it twice.
+            "autoCheckForUpdates", "includePrereleaseUpdates", "skippedUpdateVersion",
+            "lastUpdateCheckUtc", "lastRunVersion",
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
             // Every hotkey override. toggleOrbsHotkey was missing from this
@@ -321,6 +326,16 @@ namespace Orbweaver
             // Keychain prompt they did not ask for.
             public bool ClaudeCloudEnabled { get; set; }
 
+            // On by default (CB-306's product-readiness round): slash control
+            // commands — /color, /rename, /model, /permissions, /think — reach a
+            // background job or a Claude Desktop chat over its Remote Control
+            // bridge, which a fresh install could not do while they sat behind
+            // "Show cloud sessions". The one-time consent is the macOS Keychain
+            // prompt for the Claude Code login, the first time one is sent; with
+            // nothing typed, nothing is read. Cloud sessions themselves stay
+            // behind ClaudeCloudEnabled.
+            public bool BridgeCommandsEnabled { get; set; } = true;
+
             // Where the gateway lives. An address rather than a name on purpose:
             // the certificate it serves is self-signed with no subjectAltName,
             // so a hostname buys nothing and pinning does the identity work.
@@ -513,6 +528,28 @@ namespace Orbweaver
             // is no model in the path and no quota to spend, which is the whole
             // point of it.
             public bool PeerLinkEnabled { get; set; }
+
+            // CB-308. On by default: a user who never opens Settings still gets
+            // told a fix exists, which is the whole reason for the feature. The
+            // check is one anonymous GET to GitHub a day and installing is always
+            // the user's click, so on-by-default asks nothing of them.
+            public bool AutoCheckForUpdates { get; set; } = true;
+
+            // Off by default so a stable user is never offered a -beta; the
+            // channel is the release's own prerelease flag, not its version text.
+            public bool IncludePrereleaseUpdates { get; set; }
+
+            // The one version the user said "skip this version" to. Exactly that
+            // version stays quiet; the next one is offered again.
+            public string? SkippedUpdateVersion { get; set; }
+
+            // ISO-8601 round-trip text rather than a typed value so a hand-edited
+            // or garbled entry degrades to "never checked" instead of failing Load.
+            public string? LastUpdateCheckUtc { get; set; }
+
+            // The version that was running at the last launch; the post-update
+            // notice compares it to the current one to know an update just landed.
+            public string? LastRunVersion { get; set; }
 
             // Overrides HotkeyRegistry.Default(ToggleOrbsVisible) — e.g.
             // "Ctrl+Shift+H". Null (the default) means "use the built-in
@@ -1257,6 +1294,14 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.ClaudeCloudEnabled = value; Save(); }
         }
 
+        // Read on every send rather than cached, so the toggle takes effect on
+        // the next command, locally and on the mirror's far side alike.
+        public static bool BridgeCommandsEnabled
+        {
+            get { Load(); lock (Gate) return _model.BridgeCommandsEnabled; }
+            set { Load(); lock (Gate) _model.BridgeCommandsEnabled = value; Save(); }
+        }
+
         public static string OpenClawHost
         {
             get { Load(); lock (Gate) return _model.OpenClawHost ?? ""; }
@@ -1505,6 +1550,47 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.PeerLinkEnabled; }
             set { Load(); lock (Gate) _model.PeerLinkEnabled = value; Save(); }
+        }
+
+        public static bool AutoCheckForUpdates
+        {
+            get { Load(); lock (Gate) return _model.AutoCheckForUpdates; }
+            set { Load(); lock (Gate) _model.AutoCheckForUpdates = value; Save(); }
+        }
+
+        public static bool IncludePrereleaseUpdates
+        {
+            get { Load(); lock (Gate) return _model.IncludePrereleaseUpdates; }
+            set { Load(); lock (Gate) _model.IncludePrereleaseUpdates = value; Save(); }
+        }
+
+        public static string? SkippedUpdateVersion
+        {
+            get { Load(); lock (Gate) return _model.SkippedUpdateVersion; }
+            set { Load(); lock (Gate) _model.SkippedUpdateVersion = string.IsNullOrWhiteSpace(value) ? null : value; Save(); }
+        }
+
+        public static DateTimeOffset? LastUpdateCheckUtc
+        {
+            get
+            {
+                Load();
+                lock (Gate)
+                    return DateTimeOffset.TryParse(_model.LastUpdateCheckUtc, null,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var at) ? at : null;
+            }
+            set
+            {
+                Load();
+                lock (Gate) _model.LastUpdateCheckUtc = value?.UtcDateTime.ToString("O");
+                Save();
+            }
+        }
+
+        public static string? LastRunVersion
+        {
+            get { Load(); lock (Gate) return _model.LastRunVersion; }
+            set { Load(); lock (Gate) _model.LastRunVersion = string.IsNullOrWhiteSpace(value) ? null : value; Save(); }
         }
 
         public static string? ToggleOrbsHotkey
@@ -2347,6 +2433,7 @@ namespace Orbweaver
                         VoiceInputEnabled = root["voiceInputEnabled"]?.GetValue<bool>() ?? false,
                         OpenClawEnabled = root["openclawEnabled"]?.GetValue<bool>() ?? false,
                         ClaudeCloudEnabled = root["claudeCloudEnabled"]?.GetValue<bool>() ?? false,
+                        BridgeCommandsEnabled = root["bridgeCommandsEnabled"]?.GetValue<bool>() ?? true,
                         OpenClawHost = Text(root["openclawHost"]),
                         OpenClawPort = root["openclawPort"]?.GetValue<int>() ?? DefaultOpenClawPort,
                         OpenClawFingerprint = Text(root["openclawFingerprint"]),
@@ -2373,6 +2460,11 @@ namespace Orbweaver
                             root["remoteControlServeOnLaunch"]?.GetValue<bool>() ?? false,
                         PeerLinkEnabled = root["peerLinkEnabled"]?.GetValue<bool>() ?? false,
                         PeerLinkPort = root["peerLinkPort"]?.GetValue<int>() ?? 0,
+                        AutoCheckForUpdates = Bool(root["autoCheckForUpdates"], true),
+                        IncludePrereleaseUpdates = Bool(root["includePrereleaseUpdates"], false),
+                        SkippedUpdateVersion = Text(root["skippedUpdateVersion"]),
+                        LastUpdateCheckUtc = Text(root["lastUpdateCheckUtc"]),
+                        LastRunVersion = Text(root["lastRunVersion"]),
                         ToggleOrbsHotkey = Text(root["toggleOrbsHotkey"]),
                         NewChatHotkey = Text(root["newChatHotkey"]),
                         ToggleUsageOrbsHotkey = Text(root["toggleUsageOrbsHotkey"]),
@@ -3012,6 +3104,7 @@ namespace Orbweaver
                         ["voiceInputEnabled"] = _model.VoiceInputEnabled,
                         ["openclawEnabled"] = _model.OpenClawEnabled,
                         ["claudeCloudEnabled"] = _model.ClaudeCloudEnabled,
+                        ["bridgeCommandsEnabled"] = _model.BridgeCommandsEnabled,
                         ["openclawHost"] = _model.OpenClawHost,
                         ["openclawPort"] = _model.OpenClawPort,
                         ["openclawFingerprint"] = _model.OpenClawFingerprint,
@@ -3037,6 +3130,11 @@ namespace Orbweaver
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,
+                        ["autoCheckForUpdates"] = _model.AutoCheckForUpdates,
+                        ["includePrereleaseUpdates"] = _model.IncludePrereleaseUpdates,
+                        ["skippedUpdateVersion"] = _model.SkippedUpdateVersion,
+                        ["lastUpdateCheckUtc"] = _model.LastUpdateCheckUtc,
+                        ["lastRunVersion"] = _model.LastRunVersion,
                         ["toggleOrbsHotkey"] = _model.ToggleOrbsHotkey,
                         ["newChatHotkey"] = _model.NewChatHotkey,
                         ["toggleUsageOrbsHotkey"] = _model.ToggleUsageOrbsHotkey,

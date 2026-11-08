@@ -262,6 +262,26 @@ namespace Orbweaver
         [JsonPropertyName("transcript_path")]
         public string TranscriptPath { get; set; } = "";
 
+        // When the last real user or assistant turn in TranscriptPath happened
+        // (CB-307), read from the transcript and never from the file's mtime,
+        // which a bridge row or a hook write moves without anyone speaking.
+        // Filled in by ReadStatusFiles for an idle Claude Code session only —
+        // see WantsLastTurn — and null everywhere else, which SessionLiveness
+        // reads as "cannot tell, so not parked". In memory only, for the reason
+        // Source and Kind are: it is the scan's conclusion, not the hook's.
+        [JsonIgnore]
+        public DateTime? LastTurnUtc { get; set; }
+
+        // Claude Code's own session record says its TUI is waiting on a dialog
+        // (CB-307 addendum): a permission prompt, /permissions, the exit
+        // dialog. Read from the record, not the status file, whose hook never
+        // fires for a modal screen, so the file keeps saying `idle` while the
+        // pane is blocked. ReadStatusFiles promotes the state to `waiting` on
+        // it (SessionPresence.EffectiveState), which is what keeps such a
+        // session from being parked or expired. In memory only.
+        [JsonIgnore]
+        public bool RecordWaiting { get; set; }
+
         // Where this session lives when it does not live on this machine: a
         // https://claude.ai/code/session_… address for a cloud session, empty
         // for everything else. [JsonIgnore] for the reason Source and Kind are
@@ -450,11 +470,12 @@ namespace Orbweaver
         // The status directory, said out loud.
         //
         // It has always come from the temp path, and CLAUDE.md documents
-        // TMPDIR=<dir> as the way to give a second instance its own fake
-        // sessions — which still works, because that is what Path.GetTempPath
-        // reads. This overload only makes the same seam nameable, so a test can
-        // hand over a scratch directory without reaching for an environment
-        // variable that the rest of the process is also reading.
+        // ORBWEAVER_STATUS_ROOT=<dir> as the way to give a second instance its
+        // own fake sessions (TMPDIR=<dir> until CB-306, when the per-user
+        // directory began outranking it — see StatusDirectory.Root). This
+        // overload only makes the same seam nameable, so a test can hand over
+        // a scratch directory without reaching for an environment variable
+        // that the rest of the process is also reading.
         // jobListing is the second seam, and the reason it is a constructor
         // parameter rather than a call is that the real one shells out to
         // `claude agents --json`. Every rule that consults it is already pure
@@ -972,6 +993,50 @@ namespace Orbweaver
 
         private readonly Dictionary<string, (long Length, TranscriptIdentity Identity)>
             _identityCache = new(StringComparer.Ordinal);
+
+        // The bounded last-turn read the mirror server also uses (CB-307), so
+        // host and peer decide "parked" from the same transcript the same way.
+        // One per manager, because what makes it cheap is its memo of each
+        // file's length. Replaceable so a scan test can count the reads.
+        internal LastTurnCache LastTurns { get; set; } = new();
+
+        // Claude Code's record status for a pid and session, behind a seam so a
+        // scan test can hand over a record instead of reading this machine's
+        // real ones. The default is the cached SessionPark read.
+        internal Func<int, string, string?> RecordStatusOf { get; init; } = (pid, id) => SessionPark.RecordStatus(pid, id);
+
+        // Reads the record and promotes the state, for a Claude Code session
+        // with a pid. Only `waiting` counts — see SessionPark.RecordStatus.
+        // Shared by the live scan and HeadlessSnapshot so the screen and the
+        // roster a peer is served cannot disagree about it.
+        internal static void ApplyRecordWaiting(
+            SessionStatus status, string sessionId, Func<int, string, string?> recordStatus)
+        {
+            if (status.Source != SessionSource.ClaudeCode || status.SessionPid <= 0) return;
+
+            status.RecordWaiting = string.Equals(
+                recordStatus(status.SessionPid, sessionId), "waiting", StringComparison.Ordinal);
+            status.State = SessionPresence.EffectiveState(status.State, status.RecordWaiting);
+        }
+
+        // Which sessions get their transcript's last turn read: Claude Code,
+        // with a transcript to read, and not mid-turn. A generating or waiting
+        // session is never parked whatever its file says, so its transcript is
+        // never opened — which is what keeps this off the sessions that are
+        // writing continuously.
+        internal static bool WantsLastTurn(SessionStatus status) =>
+            status.Source == SessionSource.ClaudeCode
+            && !string.IsNullOrEmpty(status.TranscriptPath)
+            && status.State is not ("generating" or "waiting");
+
+        // The lead the duplicate rule sees for a session: the probe's team read,
+        // with a lead that is the session itself counting as none, the same
+        // reading the scan loop gives status.Lead.
+        private static string DuplicateRuleLead(ScanEntry entry, ScanProbes probes)
+        {
+            var membership = probes.TeamOf(entry.SessionId, entry.Status.SessionPid);
+            return membership.Lead == entry.SessionId ? "" : membership.Lead;
+        }
 
         internal static bool WantsIdentityFromTranscript(SessionStatus status) =>
             status.Source == SessionSource.ClaudeCode
@@ -1530,7 +1595,8 @@ namespace Orbweaver
             bool honourOrbLifetime = true,
             bool? onWindows = null,
             Func<IReadOnlyList<int>, IReadOnlyDictionary<int, AgentTeam.Membership>>? teams = null,
-            string? legacyStatusDir = null)
+            string? legacyStatusDir = null,
+            Func<int, string, string?>? recordStatus = null)
         {
             if (statusDir is null)
             {
@@ -1567,6 +1633,13 @@ namespace Orbweaver
                 status.Source = SourceOf(status);
                 if (!EnabledFor(status.Source)) continue;
                 if (MachineNames.LooksLikeALeftoverRelay(status.Cwd)) continue;
+
+                // CB-307 addendum: the same promotion the live scan applies, so
+                // the roster served to a peer says `waiting` for a session on a
+                // dialog and the host's parked rule leaves it alone.
+                ApplyRecordWaiting(
+                    status, read.SessionId,
+                    recordStatus ?? ((pid, id) => SessionPark.RecordStatus(pid, id)));
 
                 // And here too, so a peer asking this machine what it is running
                 // is told the same thing the screen shows. A summariser
@@ -2280,6 +2353,18 @@ namespace Orbweaver
                 if (WantsIdentityFromTranscript(status))
                     ApplyIdentity(status, IdentityFor(status.TranscriptPath!));
 
+                // CB-307 addendum: a session whose Claude Code record says it is
+                // on a dialog is `waiting` whatever its status file says. Before
+                // the last-turn read, so a waiting session never has its
+                // transcript opened, and before anything judges liveness.
+                ApplyRecordWaiting(status, sessionId, RecordStatusOf);
+
+                // CB-307: when anyone last spoke in it, for the parked rule. After
+                // the repair above, so it reads the path the rest of the scan
+                // believes.
+                if (WantsLastTurn(status))
+                    status.LastTurnUtc = LastTurns.LastTurnFor(status.TranscriptPath);
+
                 // A CLI switched off is ignored, not unwired. Its hooks keep
                 // writing status files — they are the user's own config, and a
                 // display switch that rewrote it would be a surprise, and for
@@ -2529,7 +2614,7 @@ namespace Orbweaver
                         // work counts as idle: an orb that spins forever because
                         // a label changed upstream is worse than one that never
                         // spins.
-                        State = remote.Working ? "generating" : "idle",
+                        State = remote.Waiting ? "waiting" : remote.Working ? "generating" : "idle",
 
                         // Its name on the other machine, which is all the peer
                         // list gives us — no hostname, no path. That is thin for
@@ -2563,6 +2648,12 @@ namespace Orbweaver
                         AgentColor = remote.LeadKey is null ? "" : remote.AgentColor ?? "",
 
                         Kind = SessionKind.Remote,
+
+                        // CB-307: the host's own verdict that nobody has spoken
+                        // to this session for a while, carried on the roster.
+                        // Dimmed like a local quiet session, and cleared the
+                        // moment the next roster no longer says so.
+                        Presence = remote.Parked ? OrbPresence.Parked : OrbPresence.Present,
                     },
                     remote.Seen));
             }
@@ -2725,6 +2816,27 @@ namespace Orbweaver
 
             var superseded = Superseded(found, isLiveJob);
 
+            // CB-307: an exact-duplicate-name quiet copy beside a live copy of
+            // the same name is suppressed, and only that. Every other quiet
+            // session stays, dimmed — see SessionPresence.WithQuiet. Decided
+            // before the loop because the rule needs every session at once, the
+            // way Superseded does.
+            //
+            // Eligibility reads the team from the probes rather than
+            // status.Lead, which the loop below only assigns later: a member
+            // inherits its lead's title, and a quiet member beside a live one
+            // must not vanish. Background jobs sit out too, since their
+            // presence is the daemon's rather than a clock's.
+            var suppressed = SessionLiveness.SuppressedDuplicates(
+                found
+                    .Where(e => !superseded.Contains(e.SessionId)
+                        && e.Status.Source == SessionSource.ClaudeCode
+                        && string.IsNullOrEmpty(DuplicateRuleLead(e, probes))
+                        && (jobs is null
+                            || BackgroundJobs.Phase(jobs, e.SessionId) is JobPhase.NotAJob or JobPhase.Unknown))
+                    .Select(e => (e.SessionId, e.Status.Title, SessionLiveness.IsParked(
+                        e.Status.State, e.Status.LastTurnUtc, now))));
+
             // Sessions that live agents name as their lead. Used for two things
             // below, and for nothing else — in particular *not* to excuse a
             // lead from the lifetime timer, which is the user's setting to make.
@@ -2872,6 +2984,12 @@ namespace Orbweaver
                     continue;   // removed in the pass below
                 }
 
+                // CB-307: the quiet copy of a name a live session also wears.
+                if (suppressed.Contains(sessionId))
+                {
+                    continue;   // removed in the pass below
+                }
+
                 if (WantsAgentViewer(sessionId, status, leadsWithLiveAgents))
                 {
                     probes.AdoptViewer(status);
@@ -2879,6 +2997,15 @@ namespace Orbweaver
 
                 if (JudgeReachability(sessionId, status, leadsWithLiveAgents, phase, File.Exists)
                         != ScanVerdict.Keep)
+                {
+                    continue;   // removed in the pass below
+                }
+
+                // CB-306: a session OpenClaw spawned to run one of its agents
+                // follows the OpenClaw cluster settings, and is not drawn at all
+                // when the connected gateway already draws it. See
+                // OpenClawCliSession.
+                if (!OpenClawCliSession.ShowHere(status))
                 {
                     continue;   // removed in the pass below
                 }
@@ -2924,6 +3051,11 @@ namespace Orbweaver
                         hasLead && presentIds.Contains(status.Lead),
                         hasLead && isLiveJob(status.Lead),
                         SessionPresence.HasAttachClient(attachClients, sessionId));
+
+                    // CB-307: a live session nobody has spoken to for a while is
+                    // parked — dimmed, still on the board — rather than gone.
+                    status.Presence = SessionPresence.WithQuiet(
+                        status.Presence, status.Shape, status.State, status.LastTurnUtc, now);
 
                     // The badge, which says what this session *is*. Assigned
                     // here rather than in OrbWindow because Kind is the one

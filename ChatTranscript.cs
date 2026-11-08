@@ -398,12 +398,16 @@ namespace Orbweaver
 
         // --- the screen ---
 
-        private static readonly Regex OptionLine =
+        internal static readonly Regex OptionLine =
             new(@"^(?:[❯>›»→]\s*)?(\d{1,2})[.)]\s+(\S.*)$", RegexOptions.Compiled);
 
         // How far up the pane to look. The dialog is always at the bottom; this
         // is only enough room for the longest option list plus its trailer.
-        private const int DialogWindow = 30;
+        internal const int DialogWindow = 30;
+
+        // The most non-option lines crossed between two options: a three-line
+        // description, or one separating rule, in the real captures.
+        private const int MaxOptionGap = 3;
 
         // The numbered dialog at the bottom of the pane, or null.
         //
@@ -428,40 +432,90 @@ namespace Orbweaver
         //     but a hint. That is what the rule check at the end is for, and it
         //     is the whole defence against pressing a key to answer a question
         //     nobody asked.
+        //  4. **A list that is navigated is not a dialog that is answered**
+        //     (CB-307's addendum). `/permissions` draws numbered rules with no
+        //     input box below them, which is exactly shape (3), so its Allow
+        //     tab read as a nine-option dialog whose buttons would press keys
+        //     meaning nothing their labels say. The key is the screen's tab
+        //     bar, `Permissions  Recently blocked …`, the one line every tab
+        //     draws, populated or empty — measured on all eight captures. It
+        //     is matched as a prefix because the bar wraps on a narrow pane.
+        //     The footer `←/→ to switch` and the `⌕` search box are second
+        //     signals only: the populated Recently-blocked tab has neither (its
+        //     footer is "Enter to approve · r to retry · Esc to approve 1
+        //     blocked"), and it is the case that matters, since with two
+        //     blocked items it would have parsed as a dialog whose keys toggle
+        //     approvals. Searched over the whole screen, not the dialog window:
+        //     a tall pane puts the bar more than thirty lines up, and a false
+        //     match here only ever sends someone to the terminal.
         //
         // Null on anything unexpected, and every caller treats null as "send the
         // person to the terminal".
-        public static ChatPrompt? ParseDialog(string screen)
+        public static ChatPrompt? ParseDialog(string screen) => ParseDialogCore(screen, out _, out _);
+
+        // ParseDialog, also handing back the cleaned lines and the index of
+        // option 1, so ParseAskForm reads the same option run rather than a
+        // second one of its own.
+        private static ChatPrompt? ParseDialogCore(string screen, out string[] cleanedLines, out int firstOption)
         {
-            var lines = screen.Replace("\r", "").Split('\n');
+            cleanedLines = Array.Empty<string>();
+            firstOption = -1;
+
+            var lines = ScreenLines(screen);
 
             // Box drawing is stripped anyway: it costs nothing, and an
             // elicitation dialog may still be framed even though a permission
             // prompt isn't.
             var cleaned = lines.Select(l => l.Trim().Trim('│', '┃', '|', '║').Trim()).ToArray();
+            cleanedLines = cleaned;
 
-            var from = Math.Max(0, cleaned.Length - DialogWindow);
+            if (IsNavigatedList(cleaned)) return null;
 
-            // The *last* contiguous run of numbered lines in the window. Last,
-            // because anything the assistant wrote earlier in the conversation
-            // is above whatever it is now blocked on.
+            var from = WindowStart(cleaned);
+
+            // The *last* run of numbered lines in the window. Last, because
+            // anything the assistant wrote earlier in the conversation is above
+            // whatever it is now blocked on.
+            //
+            // A run may have short gaps (CB-307's addendum, from a real
+            // AskUserQuestion dialog on the mini): each option there carries
+            // an indented description of up to three lines, and a rule
+            // separates "Type something." from "Chat about this". Walking up,
+            // a gap of at most MaxOptionGap non-option lines is crossed only
+            // when the option above it is numbered exactly one less, so a list
+            // that skips a number still stops where it did. Gaps never weaken
+            // (3): the input-box check below still runs after the last option.
             var runEnd = -1;
-            var runStart = -1;
+            for (var i = cleaned.Length - 1; i >= from && runEnd < 0; i--)
+                if (OptionLine.IsMatch(cleaned[i])) runEnd = i;
 
-            for (var i = cleaned.Length - 1; i >= from; i--)
+            if (runEnd < 0) return null;
+
+            var picked = new List<int> { runEnd };
+            var at = runEnd;
+            while (true)
             {
-                if (!OptionLine.IsMatch(cleaned[i])) continue;
+                var want = int.Parse(OptionLine.Match(cleaned[at]).Groups[1].Value) - 1;
+                if (want < 1) break;
 
-                runEnd = i;
-                runStart = i;
-                while (runStart - 1 >= from && OptionLine.IsMatch(cleaned[runStart - 1])) runStart--;
-                break;
+                var above = -1;
+                for (var j = at - 1; j >= Math.Max(from, at - 1 - MaxOptionGap); j--)
+                {
+                    if (!OptionLine.IsMatch(cleaned[j])) continue;
+                    if (OptionLine.Match(cleaned[j]).Groups[1].Value == want.ToString()) above = j;
+                    break;
+                }
+
+                if (above < 0) break;
+                picked.Add(above);
+                at = above;
             }
 
-            if (runStart < 0) return null;
+            picked.Reverse();
+            var runStart = picked[0];
 
             var options = new List<ChatPromptOption>();
-            for (var i = runStart; i <= runEnd; i++)
+            foreach (var i in picked)
             {
                 var match = OptionLine.Match(cleaned[i]);
                 options.Add(new ChatPromptOption(match.Groups[1].Value, match.Groups[2].Value.Trim()));
@@ -478,7 +532,7 @@ namespace Orbweaver
             // The input box, still drawn below — so the session is not blocked
             // on this and these numbers are prose. See (3) above.
             for (var i = runEnd + 1; i < cleaned.Length; i++)
-                if (IsHorizontalRule(cleaned[i])) return null;
+                if (IsHorizontalRule(cleaned[i]) && !IsBottomBorder(cleaned, runEnd, i)) return null;
 
             var t = runStart - 1;
             while (t >= 0 && IsBlankOrFrame(cleaned[t])) t--;
@@ -488,17 +542,240 @@ namespace Orbweaver
             var title = t >= 0 ? cleaned[t] : "";
             if (title.Length == 0 || !title.Any(char.IsLetterOrDigit)) title = "Waiting for input";
 
+            firstOption = runStart;
             return new ChatPrompt(title, options);
         }
+
+        // --- AskUserQuestion forms (CB-307 addendum item 3) ---
+
+        // A form Claude Code draws for AskUserQuestion: ParseDialog's options,
+        // plus what makes it a form rather than a yes/no dialog. Read off a real
+        // capture of the mini's form (PaneFixtures.MiniAskForm), bottom up: the
+        // footer, "6. Chat about this" under a rule, "5. Type something.",
+        // numbered options with indented descriptions, a │-framed question, and
+        // a tab bar "←  ☒ …  ☐ …  ✔ Submit  →" in which ☒ is a question already
+        // answered, ☐ one still open and ✔ Submit the last tab. A form with one
+        // question draws a "☐ <header>" line instead of the bar.
+        //
+        // Null for anything that is not a form, including every ordinary dialog
+        // — those keep reading through ParseDialog exactly as before.
+        internal static AskForm? ParseAskForm(string screen)
+        {
+            var prompt = ParseDialogCore(screen, out var cleaned, out var first);
+            if (prompt is null || first < 0) return null;
+
+            var from = WindowStart(cleaned);
+            var raw = ScreenLines(screen).Select(l => l.Trim()).ToArray();
+
+            // The bar or the single-question header: the nearest one above the
+            // options, inside the window.
+            var head = -1;
+            for (var i = first - 1; i >= from && head < 0; i--)
+                if (IsTabBar(cleaned[i]) || cleaned[i].StartsWith("☐ ", StringComparison.Ordinal)) head = i;
+
+            // Multi-select options are drawn "[ ] Cheese" / "[✔] Cheese", and a
+            // single-select option chosen earlier "Blue ✔". The box and the
+            // mark are state, not label: they are stripped, and the keys ticked
+            // are kept.
+            var checkedKeys = new List<string>();
+            var multi = false;
+            var options = prompt.Options.Select(o =>
+            {
+                var label = o.Label;
+                if (label.StartsWith("[ ] ", StringComparison.Ordinal)) { multi = true; label = label[4..]; }
+                else if (label.StartsWith("[✔] ", StringComparison.Ordinal))
+                {
+                    multi = true; label = label[4..]; checkedKeys.Add(o.Key);
+                }
+                else if (label.EndsWith(" ✔", StringComparison.Ordinal))
+                {
+                    label = label[..^2].TrimEnd(); checkedKeys.Add(o.Key);
+                }
+                return o with { Label = label };
+            }).ToList();
+
+            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key;
+            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key;
+
+            // The Submit tab's own screen: "Review your answers", the answers as
+            // "● question" / "→ answer" pairs, then Submit answers / Cancel.
+            var isReview = false;
+            var review = new List<AskReviewItem>();
+            for (var i = from; i < first; i++)
+            {
+                if (cleaned[i] == ReviewHeading) isReview = true;
+                if (cleaned[i].StartsWith("● ", StringComparison.Ordinal) && i + 1 < first
+                    && cleaned[i + 1].StartsWith("→ ", StringComparison.Ordinal))
+                    review.Add(new AskReviewItem(cleaned[i][2..].Trim(), cleaned[i + 1][2..].Trim()));
+            }
+
+            if (head < 0 && freeText is null && !isReview) return null;
+
+            var tabs = head < 0 ? new List<AskTab>()
+                : IsTabBar(cleaned[head]) ? TabsOf(cleaned[head])
+                : new List<AskTab> { new(cleaned[head][2..].Trim(), AskTabState.Open) };
+
+            // The question is the │-framed block between the head and option 1,
+            // which wraps; ParseDialog's title is only its last line.
+            var question = new List<string>();
+            for (var i = Math.Max(head + 1, from); i < first; i++)
+                if (raw[i].StartsWith('│')) question.Add(cleaned[i]);
+
+            var title = question.Count > 0 ? string.Join(" ", question) : prompt.Title;
+
+            // Which tab is showing cannot be read off the bar: the terminal
+            // marks it in reverse video, which capture-pane -p does not carry,
+            // and the ☐/☒ marks are no guide — QA's captures show "☒ Toppings"
+            // while still on Toppings (one box ticked) and "☐ Toppings" after
+            // going back to Color. So only what the body proves is claimed: the
+            // review screen is the Submit tab, and a form with one question is
+            // on it. Anything else is -1, and the panel says nothing.
+            var questions = tabs.Count(t => t.State != AskTabState.Submit);
+            var current = isReview ? tabs.FindIndex(t => t.State == AskTabState.Submit)
+                : questions == 1 ? tabs.FindIndex(t => t.State != AskTabState.Submit)
+                : -1;
+
+            // The unnumbered row a multi-select question draws under its
+            // options, and the option the terminal's cursor is on.
+            var submitRow = false;
+            var lastOption = prompt.Options[^1].Key + ".";
+            for (var i = first; i < cleaned.Length; i++)
+            {
+                if (cleaned[i].TrimStart('❯', ' ').StartsWith(lastOption, StringComparison.Ordinal)) break;
+                if (cleaned[i] == SubmitRowLabel) submitRow = true;
+            }
+
+            string? cursor = null;
+            for (var i = first; i < cleaned.Length && cursor is null; i++)
+            {
+                if (!cleaned[i].StartsWith('❯')) continue;
+                var mark = OptionLine.Match(cleaned[i]);
+                if (mark.Success) cursor = mark.Groups[1].Value;
+            }
+
+            string? KeyOf(string label) => isReview ? options.FirstOrDefault(o => o.Label == label)?.Key : null;
+
+            return new AskForm(prompt with { Title = title, Options = options }, tabs, current, freeText, chatAbout,
+                multi, checkedKeys, submitRow, cursor, isReview, review,
+                KeyOf(SubmitAnswersLabel), KeyOf(CancelLabel));
+        }
+
+        internal const string ReviewHeading = "Review your answers";
+        internal const string SubmitAnswersLabel = "Submit answers";
+        internal const string CancelLabel = "Cancel";
+        internal const string SubmitRowLabel = "Submit";
+
+        internal const string FreeTextLabel = "Type something";
+        internal const string ChatAboutLabel = "Chat about this";
+
+        private static bool IsTabBar(string line) =>
+            line.StartsWith('←') && line.EndsWith('→') && line.IndexOfAny(new[] { '☐', '☒', '✔' }) >= 0;
+
+        private static List<AskTab> TabsOf(string bar)
+        {
+            var inner = bar.Trim('←', '→').Trim();
+            var tabs = new List<AskTab>();
+
+            foreach (Match m in TabCell.Matches(inner))
+            {
+                var state = m.Groups[1].Value switch
+                {
+                    "☒" => AskTabState.Answered,
+                    "✔" => AskTabState.Submit,
+                    _ => AskTabState.Open,
+                };
+                tabs.Add(new AskTab(m.Groups[2].Value.Trim(), state));
+            }
+
+            return tabs;
+        }
+
+        private static readonly Regex TabCell = new(@"([☐☒✔])\s+(.*?)(?=\s+[☐☒✔]\s|$)", RegexOptions.Compiled);
+
+        // (4) above: whether these trimmed, frame-stripped lines are a
+        // navigated list such as `/permissions` rather than a question.
+        internal const string PermissionsTabBar = "Permissions  Recently blocked";
+
+        internal static bool IsNavigatedList(IEnumerable<string> cleanedLines) =>
+            cleanedLines.Any(l =>
+                l.StartsWith(PermissionsTabBar, StringComparison.Ordinal)
+                || l.Contains("←/→ to switch", StringComparison.Ordinal)
+                || l.StartsWith('⌕'));
 
         private const string BoxDrawing = "─━═│┃║╭╮╰╯┌┐└┘├┤┬┴┼╔╗╚╝▐▌╌╍┄┅";
 
         private static bool IsBlankOrFrame(string line) =>
             line.Length == 0 || line.All(c => char.IsWhiteSpace(c) || BoxDrawing.Contains(c));
 
+        // The session's own bottom border under a form, not an input box. A
+        // session started with a name (`claude -n <name>`) draws that name into
+        // a rule on the last row, under the form's footer — QA's real captures
+        // of named sessions (item3/named/). The name carries letters, so the
+        // rule is not "pure" and never tripped the input-box check; but on a
+        // narrow pane tmux cuts the line from the right, and cut before the
+        // name it is a pure rule, which read as a live input box and refused
+        // the form. So a pure rule that is the last drawn line, after the
+        // form's own footer hint, is the border. An input box is followed by
+        // its ❯ line and its status line, never by nothing, and never comes
+        // after "Enter to select"/"Esc to cancel".
+        private static bool IsBottomBorder(string[] cleaned, int runEnd, int rule)
+        {
+            // Last drawn line: ScreenLines has already dropped the blank rows
+            // below it, so "last" is simply the end of the array.
+            if (rule != cleaned.Length - 1) return false;
+
+            for (var j = runEnd + 1; j < rule; j++)
+                if (cleaned[j].Contains("Enter to select", StringComparison.Ordinal)
+                    || cleaned[j].Contains("Enter to confirm", StringComparison.Ordinal)
+                    || cleaned[j].Contains("Esc to cancel", StringComparison.Ordinal))
+                    return true;
+
+            return false;
+        }
+
+        // A captured screen as lines, with the blank rows below the last
+        // drawn line dropped. Every reader of a pane goes through this.
+        //
+        // capture-pane -p returns every row of the pane, and a screen that is
+        // not full — a fresh or /clear'ed session, a short conversation, a tall
+        // pane — has its dialog or input box near the top and empty rows
+        // beneath. Every rule here looks at the bottom DialogWindow lines, so
+        // those empty rows pushed the whole dialog out of view: QA's real
+        // capture of a live form in a 45-row pane (content ending on row 23)
+        // parsed as nothing, and the peer panel showed no form. The fixtures
+        // had hidden it, because generating them trimmed exactly those rows.
+        internal static string[] ScreenLines(string screen)
+        {
+            var lines = screen.Replace("\r", "").Split('\n');
+            var end = lines.Length;
+            while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
+            return end == lines.Length ? lines : lines[..end];
+        }
+
+        // Where the bottom DialogWindow *drawn* lines start: counted up from the
+        // bottom over lines that hold something, so blank rows anywhere on the
+        // screen do not use the window up.
+        //
+        // A real form on the mini (regress/mini-d-2f8a228f.txt) is drawn near
+        // the top of a 45-row pane, then ~20 blank rows, then the session's
+        // titled rule on the very last row. Counting raw rows, the window held
+        // only blanks and that rule and the form parsed as nothing — on every
+        // commit back to 6310763e, so it was never a regression, only a screen
+        // shape no fixture had. Trimming trailing blanks (ScreenLines) cannot
+        // help it, because the last row is not blank.
+        internal static int WindowStart(IReadOnlyList<string> lines)
+        {
+            var drawn = 0;
+            for (var i = lines.Count - 1; i >= 0; i--)
+            {
+                if (!string.IsNullOrWhiteSpace(lines[i]) && ++drawn == DialogWindow) return i;
+            }
+            return 0;
+        }
+
         // The full-width line the TUI draws above and below its input box.
         // Length matters: a short run of dashes is punctuation in a sentence.
-        private static bool IsHorizontalRule(string line) =>
+        internal static bool IsHorizontalRule(string line) =>
             line.Length >= 10 && line.All(c => c is '─' or '━' or '═' || char.IsWhiteSpace(c));
 
         // --- json helpers ---

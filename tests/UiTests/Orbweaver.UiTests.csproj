@@ -64,10 +64,15 @@
          single. -->
     <Compile Include="..\ArrangementTests\ArrangementSweep.cs" />
     <Compile Include="..\UnitTests\TestBudgets.cs" Link="TestBudgets.cs" />
+    <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
+    <Compile Include="..\TranscriptTests\AskFormFixtures.cs" Link="AskFormFixtures.cs" />
     <!-- CB-270 Stage 3: the unit suite's in-memory gateway socket and the
          scrubbed capture of two native runs, so a panel can be driven against a
          real OpenClawGateway and the real events without second copies. -->
     <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
     <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
+    <!-- CB-306: real commands.list and a /status card, as constants. -->
+    <Compile Include="..\UnitTests\OpenClawSlashFixtures.cs" Link="OpenClawSlashFixtures.cs" />
+    <Compile Include="..\UnitTests\UpdateReleaseNotesFixture.cs" Link="UpdateReleaseNotesFixture.cs" />
   </ItemGroup>
 </Project>

@@ -32,13 +32,14 @@ public class MakeIconsMutedAssetTests
         var plain = Decode($"tray-{state}.png");
         var muted = Decode($"tray-{state}-muted.png");
 
-        // The bar adds opaque pixels where the ring's centre-hole faint core
-        // was, and the gap removes some from the ring: the two differ.
+        // The bar adds opaque pixels and the gap clears some of the web: the two differ.
         Assert.NotEqual(plain.Alpha, muted.Alpha);
-        // The middle of the bar is fully opaque; the plain icon's middle is
-        // only the faint core.
+        // The middle of the bar is fully opaque, as is the orb it crosses.
         Assert.Equal(255, muted.Alpha[32 * 64 + 32]);
-        Assert.True(plain.Alpha[32 * 64 + 32] < 255);
+        // Four pixels off-centre, inside the orb but in the transparent gap beside
+        // the bar: opaque orb in the plain icon, cleared in the muted one.
+        Assert.Equal(255, plain.Alpha[27 * 64 + 36]);
+        Assert.Equal(0, muted.Alpha[27 * 64 + 36]);
     }
 
     private sealed record Image(int Width, int Height, byte[] Alpha, (byte R, byte G, byte B) Colour);

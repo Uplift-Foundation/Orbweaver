@@ -740,6 +740,12 @@ namespace Orbweaver
             // them living beside the gateway.
             root.Children.Add(Group("claude-cloud", "Claude Code in the cloud", Card(ClaudeCloudRows())));
 
+            // Beside the cloud section and not inside it (CB-306's
+            // product-readiness round): it is on by default and governs
+            // sessions on this machine, so it must not hide behind "Show cloud
+            // sessions" being on, the way that card's other rows do.
+            root.Children.Add(Group("bridge-commands", "Remote Control commands", Card(BridgeCommandsRows())));
+
             // Straight after the CLI sections and before the Desktop app,
             // because that is what it is about: the same Claude Code sessions
             // those two sections govern, just not on this machine.
@@ -747,6 +753,11 @@ namespace Orbweaver
             // relay — with the order as the recommendation; the relay is gone
             // and the recommendation went with it.
             root.Children.Add(Group("peer-link", "Other machines", Card(PeerLinkRows())));
+
+            // Last, before the Desktop app: it is about this app rather than any of
+            // the agent CLIs above it, and it is a short group that should not
+            // sit between two sections about the same sessions (CB-308).
+            root.Children.Add(Group("updates", "Updates", Card(UpdateRows())));
 
             // Not an agent CLI at all — the Electron desktop app — so it sits
             // after them with its own profiles, which is where someone looking
@@ -1847,6 +1858,25 @@ namespace Orbweaver
             Rebuild();
         }
 
+        internal Control[] BridgeCommandsRows() => new Control[]
+        {
+            Row(LocalCliChatSession.BridgeCommandsToggleLabel,
+                Switch(OrbweaverSettings.BridgeCommandsEnabled, OnBridgeCommandsToggled),
+
+                // The Keychain prompt is named for the reason the cloud row
+                // names it: a prompt nobody expected is a prompt people decline.
+                // It comes on the first command sent, not when this is on.
+                "Lets /color, /rename, /model, /permissions and /think reach a background job or a "
+                + "Claude Desktop chat that has Remote Control on, typed into its chat panel here or on "
+                + "another machine linked to this one. Sending one uses the Claude Code login stored on "
+                + "this machine, so the first time, macOS will ask permission to read it from your "
+                + "Keychain. Ordinary messages to a Desktop chat still need \u201CShow cloud sessions\u201D.")
+        };
+
+        // Read on every send, so nothing needs restarting.
+        internal void OnBridgeCommandsToggled(bool enabled) =>
+            OrbweaverSettings.BridgeCommandsEnabled = enabled;
+
         private void OnClaudeCloudRetryClicked()
         {
             ClaudeCloudSessions.Restart();
@@ -2377,6 +2407,93 @@ namespace Orbweaver
 
         // The direct link, and the pairing that makes it possible.
         //
+        // CB-308. Two switches, a manual check with its answer beside it, and the
+        // skipped version with a way to take the skip back. Nothing here checks
+        // by itself: the daily check belongs to UpdateChecker, and turning it off
+        // here is what makes that check make no network call at all.
+        // Never null: UpdateRows replaces it on every build, and the initial one only
+        // exists so nothing has to null-check a field the constructor always fills.
+        private TextBlock _updateStatus = new();
+        internal string? UpdateStatusText => _updateStatus.Text;
+
+        internal Control[] UpdateRows()
+        {
+            _updateStatus = new TextBlock
+            {
+                Text = UpdateSettingsText.LastChecked(OrbweaverSettings.LastUpdateCheckUtc, DateTimeOffset.UtcNow),
+                FontSize = 12,
+                Opacity = 0.75,
+                TextWrapping = TextWrapping.Wrap
+            };
+
+            var checkNow = new Button { Content = "Check now" };
+            checkNow.Click += async (_, _) => await OnCheckNowAsync(checkNow);
+
+            var rows = new List<Control>
+            {
+                Row("Check for updates automatically",
+                    Switch(OrbweaverSettings.AutoCheckForUpdates, OnAutoCheckToggled),
+                    $"Looks for a newer {Brand.DisplayName} on GitHub about once a day. Nothing is "
+                    + "downloaded until you choose Install, and with this off nothing is contacted at all."),
+                Row("Include prerelease versions",
+                    Switch(OrbweaverSettings.IncludePrereleaseUpdates, OnPrereleaseToggled),
+                    "Offers beta builds as well as full releases."),
+                Row("Check now", checkNow),
+                NoteRow(_updateStatus)
+            };
+
+            if (OrbweaverSettings.SkippedUpdateVersion is { Length: > 0 } skipped)
+            {
+                var forget = new Button { Content = "Forget" };
+                forget.Click += (_, _) => OnForgetSkippedUpdate();
+                rows.Add(Row($"Skipped: {skipped}", forget,
+                    "You chose to skip this version, so it is not offered. A newer one still will be."));
+            }
+
+            return rows.ToArray();
+        }
+
+        // Seam for the manual check: a headless run must not reach GitHub.
+        internal static Func<Task<UpdateCheckResult>>? CheckNowForTests;
+
+        internal async Task OnCheckNowAsync(Button button)
+        {
+            button.IsEnabled = false;
+            _updateStatus.Text = "Checking…";
+
+            UpdateCheckResult result;
+            try
+            {
+                result = await (CheckNowForTests?.Invoke() ?? UpdateServices.CheckNowAsync());
+            }
+            catch (Exception ex)
+            {
+                result = new UpdateCheckResult(UpdateCheckOutcome.Failed, null, ex.Message, true);
+            }
+
+            _updateStatus.Text = UpdateSettingsText.Result(result);
+            button.IsEnabled = true;
+        }
+
+        // The switch is the only thing that decides whether the daily check runs
+        // at all, so the checker is told straight away: its timer is re-read here
+        // rather than on the next tick, which is what makes "off" mean no network
+        // call from the moment it is flipped.
+        internal void OnAutoCheckToggled(bool on)
+        {
+            OrbweaverSettings.AutoCheckForUpdates = on;
+            UpdateServices.Reschedule();
+        }
+
+        internal void OnPrereleaseToggled(bool on) => OrbweaverSettings.IncludePrereleaseUpdates = on;
+
+        internal void OnForgetSkippedUpdate()
+        {
+            UpdateServices.ClearSkipped();
+            Rebuild();
+        }
+
+
         // **Deliberately not symmetrical with the relay section above it.** That
         // one is a switch and a warning about cost; this one is a switch and a
         // list of machines, because the thing a person has to *do* here is pair
