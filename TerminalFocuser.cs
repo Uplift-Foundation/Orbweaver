@@ -469,7 +469,7 @@ namespace Orbweaver
         // itself stays pure — and asked in this order because probing for a
         // tmux binary costs a PATH walk that a session with no pane recorded
         // has no reason to pay.
-        private static TerminalTyping.Route RouteFor(SessionStatus? status) =>
+        internal static TerminalTyping.Route RouteFor(SessionStatus? status) =>
             TerminalTyping.RouteFor(
                 status,
                 OperatingSystem.IsMacOS(),
@@ -520,7 +520,7 @@ namespace Orbweaver
 
         // Excluded from coverage: walks the real PATH.
         [ExcludeFromCodeCoverage]
-        private static string? OnPath(string exe)
+        internal static string? OnPath(string exe)
         {
             var name = OperatingSystem.IsWindows() ? exe + ".exe" : exe;
 
@@ -741,20 +741,8 @@ namespace Orbweaver
         // consent prompt, and on a Mac nobody is looking at that prompt is
         // answered slowly or not at all. Failing is correct there; failing in
         // three seconds while the user is still reading the dialog is not.
-        internal static string[] OsascriptArgs(string[] script, string wanted, string body)
-        {
-            var args = new List<string>();
-            foreach (var line in script)
-            {
-                args.Add("-e");
-                args.Add(line);
-            }
-
-            args.Add("--");
-            args.Add(wanted);
-            args.Add(body);
-            return args.ToArray();
-        }
+        internal static string[] OsascriptArgs(string[] script, string wanted, string body) =>
+            ScreenReaderCommands.Osascript(script, wanted, body);
 
         [ExcludeFromCodeCoverage]
         private static bool TellTerminal(string wanted, string[] args)
@@ -782,7 +770,9 @@ namespace Orbweaver
         // Hence the lock, and hence the `FreeConsole` in a finally: leaving
         // this process attached to a user's terminal would redirect anything
         // Buddy later wrote into their session.
-        private static readonly object ConsoleGate = new();
+        // Shared with the screen reader (ScreenReaders/WindowsConsoleScreenReader), which
+        // attaches to the same consoles and must not interleave with a send.
+        internal static readonly object ConsoleGate = new();
 
         internal static string ConsoleBody(string text) => TerminalTyping.ForTyping(text);
 
@@ -945,15 +935,8 @@ namespace Orbweaver
         {
             if (status is null || !CanSendQuietly(status)) return Task.FromResult<string?>(null);
 
-            return Task.Run<string?>(() =>
-            {
-                var tmux = ResolveTmuxBinary(status.TmuxBin);
-                if (tmux is null) return null;
-
-                return TryRun(tmux, out var screen, TmuxArgs(status, "capture-pane", "-p", "-t", status.TmuxPane))
-                    ? screen
-                    : null;
-            });
+            // One implementation of the tmux read (CB-315): the same reader the prompt pipeline uses.
+            return TmuxScreenReader.Instance.ReadAsync(status);
         }
 
         // Whether anything was actually brought forward. False means the click
@@ -1246,7 +1229,7 @@ namespace Orbweaver
         // Kept as a wrapper over TerminalScripts.TmuxArgs so its twelve call
         // sites read the same as before; the socket-pinning rule itself is tested
         // there.
-        private static string[] TmuxArgs(SessionStatus status, params string[] args) =>
+        internal static string[] TmuxArgs(SessionStatus status, params string[] args) =>
             TerminalScripts.TmuxArgs(status.TmuxSocket, args);
 
         // The app can't count on PATH: launched from Finder or Login Items it
@@ -1261,7 +1244,7 @@ namespace Orbweaver
             "/usr/bin/tmux"
         };
 
-        private static string? ResolveTmuxBinary(string recorded)
+        internal static string? ResolveTmuxBinary(string recorded)
         {
             if (!string.IsNullOrEmpty(recorded) && File.Exists(recorded)) return recorded;
             return TmuxCandidates.FirstOrDefault(File.Exists);
@@ -1354,10 +1337,10 @@ namespace Orbweaver
 
         // --- process helpers ---
 
-        private static bool TryRun(string exe, out string stdout, params string[] args) =>
+        internal static bool TryRun(string exe, out string stdout, params string[] args) =>
             TryRun(exe, 3000, out stdout, args);
 
-        private static bool TryRun(string exe, int timeoutMs, out string stdout, params string[] args)
+        internal static bool TryRun(string exe, int timeoutMs, out string stdout, params string[] args)
         {
             stdout = "";
             try
