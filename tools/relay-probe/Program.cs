@@ -58,6 +58,55 @@ if (args.Contains("--phone-only"))
     return await PhoneOnly(baseUrl, qrText, wantDeltas);
 }
 
+// ---- answer-phone mode (CB-315) ---------------------------------------------
+// A stand-in phone that answers amber prompts with any field forged; see
+// AnswerPhone.cs for the stdin commands.
+if (args.Contains("--answer-phone"))
+{
+    var qrArg = args.SkipWhile(a => a != "--qr").Skip(1).First();
+    return await AnswerPhone.RunAsync(baseUrl, qrArg.StartsWith('@') ? File.ReadAllText(qrArg[1..]).Trim() : qrArg);
+}
+
+// ---- prompt-desktop mode (CB-315) -------------------------------------------
+// The shipped RelayClient and PromptPipeline, with the REAL tmux seams, aimed at
+// one pane the caller owns: --pane %N [--socket <tmux socket path>]
+// [--cli claude|codex|grok]. It prints a QR, Allows the first request, then
+// reports that pane as a waiting session every second, so whatever dialog the
+// pane shows goes out as an amber prompt and an answer presses into that pane.
+// The pipeline's own log lines (prompt / refuse / press / press-no-effect /
+// resolved, each with the request id) print to stdout. Scratch identity, no
+// settings touched, no installed app involved.
+if (args.Contains("--prompt-desktop"))
+{
+    string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
+    var pane = Arg("--pane", "");
+    if (pane.Length == 0) { Console.WriteLine("--pane %N is required"); return 2; }
+    var source = Arg("--cli", "claude") switch { "codex" => SessionSource.Codex, "grok" => SessionSource.Grok, _ => SessionSource.ClaudeCode };
+    var status = new SessionStatus { State = "waiting", Source = source, Title = "relay probe", TmuxPane = pane, TmuxSocket = Arg("--socket", "") };
+    var seams = new PromptPipeline.Seams(TerminalFocuser.CapturePane, TerminalFocuser.SendPaneKey, TerminalFocuser.SendPaneText,
+        () => DateTimeOffset.UtcNow, Task.Delay, l => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"));
+    var pd = new RelayClient(identity, new RelayClient.Options(baseUrl, "mac", "probe", "Relay Probe Mac"), new WebSocketRelayTransport(), promptSeams: seams);
+    pd.Start();
+    while (pd.State != RelayClient.Status.Connected) await Task.Delay(50);
+    var pdOffer = await pd.BeginPairingAsync();
+    Console.WriteLine($"desktop {identity.DeviceId} connected to {baseUrl}");
+    Console.WriteLine($"QR {pdOffer.QrText}");
+    var pdAsked = new TaskCompletionSource<RelayLink.PairRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+    pd.PairRequested += r => pdAsked.TrySetResult(r);
+    var pr = await pdAsked.Task.WaitAsync(pdOffer.ExpiresAt - DateTimeOffset.UtcNow);
+    Console.WriteLine($"request from {pr.PhoneId} check code {pr.CheckCodeDisplay}: {(pd.Allow(pr) ? "allowed" : "allow not sent")}");
+    using var quit = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; quit.Cancel(); };
+    while (!quit.IsCancellationRequested)
+    {
+        await pd.OnStatuses([("probe-session", status)]);
+        await Task.Delay(1000, quit.Token).ContinueWith(_ => { });
+    }
+    await pd.StopAsync();
+    pd.Dispose();
+    return 0;
+}
+
 // ---- desktop-only mode -----------------------------------------------------
 // For pairing a real phone client (surface C's LiveClient in a test harness)
 // against the shipped desktop client: print the QR text, Allow the first
