@@ -1,0 +1,338 @@
+{
+  "_source": {
+    "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayPrompt.cs, RelayCrypto.cs)",
+    "orbweaver_sha": "d64ae345",
+    "spec": "CB-315 architect plan #11248 rev 2 §2; Orbweaver-Mobile contracts/frames-v3.json sealed_plaintext",
+    "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; screen_hash, nonce, sig and e are base64url without padding"
+  },
+  "_rules": "screen_hash = base64url(SHA-256(UTF-8(canonical_text))). canonical_text: the screen's lines with trailing blank rows dropped, each trimmed, frame edges │┃|║ stripped, trimmed again; from the dialog block's first line up to option 1 — the line after the nearest, walking up from option 1, of a full-width horizontal rule (─━═, 10+ wide), a line outside the ┃│║| frame option 1 sits in (when it sits in one), or a conversation line starting with one of •◦◆◇⏺●✻✶✳✢✽ (blank lines never bound it), never above the bottom 30 drawn lines — keeping only lines holding a letter or digit; then one line per parsed option \"{key}. {label}\" (wrapped labels joined by the parser, the ❯ cursor not part of it); joined with \\n, no trailing \\n. The phone never computes this: it echoes the prompt's screen_hash in its answer. The fixtures are here so every screen reader (surface C) and the desktop agree. Fixture cases are regenerated when surface C's wrapped-label join lands; the hash rule does not change. Envelope for the prompt: class action, push amber, id = request_id, e from push-vectors.json. Resolved: push resolve, id = request_id, no e. Refusals: class action, push none.",
+  "inputs": {
+    "desktop_id": "dsk_5f3c9a0e1b7d2468",
+    "phone_id": "ph_a1b2c3d4e5f60718",
+    "session_key_epoch0": "fd29e2fccfc9b572152a029f7daa4d30428fe4cd7e04a08aa4a2ad96e5dc2e52",
+    "_note": "session_key_epoch0 is session-vectors.json's epoch 0 key (same inputs)"
+  },
+  "fingerprints": [
+    {
+      "name": "frames-v3-example",
+      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
+      "_note": "the frames-v3.json prompt example, drawn as Claude Code draws it",
+      "dialog": true,
+      "canonical_text": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f556e697454657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
+      "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and don't ask again for commands that start with dotnet test",
+          "kind": "always",
+          "scope": "dotnet test"
+        },
+        {
+          "key": "3",
+          "label": "No, and tell Claude what to do differently",
+          "kind": "tell"
+        }
+      ]
+    },
+    {
+      "name": "cursor-moved",
+      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n   1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n ❯ 3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
+      "_note": "control: the ❯ cursor on option 3 instead of 1 — the same question, so the SAME screen_hash as frames-v3-example",
+      "dialog": true,
+      "canonical_text": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f556e697454657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
+      "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and don't ask again for commands that start with dotnet test",
+          "kind": "always",
+          "scope": "dotnet test"
+        },
+        {
+          "key": "3",
+          "label": "No, and tell Claude what to do differently",
+          "kind": "tell"
+        }
+      ]
+    },
+    {
+      "name": "blank-rows-below",
+      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/UnitTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "_note": "control: twenty blank rows under the dialog — the SAME screen_hash as frames-v3-example",
+      "dialog": true,
+      "canonical_text": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f556e697454657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
+      "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and don't ask again for commands that start with dotnet test",
+          "kind": "always",
+          "scope": "dotnet test"
+        },
+        {
+          "key": "3",
+          "label": "No, and tell Claude what to do differently",
+          "kind": "tell"
+        }
+      ]
+    },
+    {
+      "name": "command-changed",
+      "screen": "────────────────────────────────────────────────────────────\n Bash command\n\n   dotnet test tests/IntegrationTests\n   Run the unit tests\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No, and tell Claude what to do differently\n\n Esc to cancel · Tab to amend\n",
+      "_note": "negative: one word of the command changed — a DIFFERENT screen_hash; the gate refuses an answer to frames-v3-example against this screen (stale_prompt)",
+      "dialog": true,
+      "canonical_text": "Bash command\ndotnet test tests/IntegrationTests\nRun the unit tests\nDo you want to proceed?\n1. Yes\n2. Yes, and don't ask again for commands that start with dotnet test\n3. No, and tell Claude what to do differently",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a646f746e657420746573742074657374732f496e746567726174696f6e54657374730a52756e2074686520756e69742074657374730a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820646f746e657420746573740a332e204e6f2c20616e642074656c6c20436c61756465207768617420746f20646f20646966666572656e746c79",
+      "screen_hash": "ol5SNbRcOsqCHW8dgHljhG2Ew5m1YSobAOBzSFOEg1E",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and don't ask again for commands that start with dotnet test",
+          "kind": "always",
+          "scope": "dotnet test"
+        },
+        {
+          "key": "3",
+          "label": "No, and tell Claude what to do differently",
+          "kind": "tell"
+        }
+      ]
+    },
+    {
+      "name": "tmux-claude-prompt",
+      "screen": "\n ▐▛███▛█   Claude Code v2.1.319\n▝▜██████▀  Opus 5.5 with medium effort · Claude Team\n ▝▝   ▝▝   /private/tmp/c3/tmux-claude · /rc\n\n\n❯ run: touch cb313-probe-file\n\n  Creating empty probe file\n  ⎿  $ touch cb313-probe-file\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Bash command\n Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n Create empty probe file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n touch cb313-probe-file\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and always allow access to /private/tmp/c3/tmux-claude from this project\n   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n   4. No\n\n Esc to cancel · Tab to amend\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "_note": "CB-313 fixture; option 3 is Claude Code's switch-to-auto-mode, kind mode",
+      "dialog": true,
+      "canonical_text": "Bash command\nTip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\nCreate empty probe file\ntouch cb313-probe-file\nDo you want to proceed?\n1. Yes\n2. Yes, and always allow access to /private/tmp/c3/tmux-claude from this project\n3. Yes, and switch to auto mode · auto mode handles these prompts for you\n4. No",
+      "canonical_text_utf8": "4261736820636f6d6d616e640a5469703a206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f7520e280942063686f6f7365202273776974636820746f206175746f206d6f6465222062656c6f770a43726561746520656d7074792070726f62652066696c650a746f7563682063623331332d70726f62652d66696c650a446f20796f752077616e7420746f2070726f636565643f0a312e205965730a322e205965732c20616e6420616c7761797320616c6c6f772061636365737320746f202f707269766174652f746d702f63332f746d75782d636c617564652066726f6d20746869732070726f6a6563740a332e205965732c20616e642073776974636820746f206175746f206d6f646520c2b7206175746f206d6f64652068616e646c65732074686573652070726f6d70747320666f7220796f750a342e204e6f",
+      "screen_hash": "xdm22Yj0bb4sWC7lmnk3jHMoWUOnP2UTQLEDrU-lGiQ",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and always allow access to /private/tmp/c3/tmux-claude from this project",
+          "kind": "always",
+          "scope": "/private/tmp/c3/tmux-claude"
+        },
+        {
+          "key": "3",
+          "label": "Yes, and switch to auto mode · auto mode handles these prompts for you",
+          "kind": "mode"
+        },
+        {
+          "key": "4",
+          "label": "No",
+          "kind": "deny"
+        }
+      ]
+    },
+    {
+      "name": "tmux-codex-prompt",
+      "screen": "\n  >_ OpenAI Codex (v0.167.0)\n     /private/tmp/c3/tmux-codex\n\n  To get started, describe a task or try one of these commands:\n\n  /init - create an AGENTS.md file with instructions for Codex\n  /status - show current session configuration\n  /permissions - choose what Codex is allowed to do\n  /model - choose what model and reasoning effort to use\n  /review - review any changes and find issues\n\n\n› run this exact shell command outside the sandbox: touch $HOME/cb313-probe\n\n\n• I’ll run that exact command with elevated sandbox access.\n\n• Running touch $HOME/cb313-probe\n\n\n\n\n\n\n\n  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you want to allow creation of the requested probe file in your home directory?\n\n  $ touch $HOME/cb313-probe\n\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+      "_note": "CB-313 fixture; option 2's scope is the backticked prefix",
+      "dialog": true,
+      "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creation of the requested probe file in your home directory?\n$ touch $HOME/cb313-probe\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)\n3. No, and tell Codex what to do differently (esc)",
+      "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696f6e206f6620746865207265717565737465642070726f62652066696c6520696e20796f757220686f6d65206469726563746f72793f0a2420746f7563682024484f4d452f63623331332d70726f62650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e6473207468617420737461727420776974682060746f7563682024484f4d452f63623331332d70726f626560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
+      "screen_hash": "qKi3rioclgmkzXB38_vlrFyY4XGMtuh79gp79DzU2Ng",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, proceed (y)",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)",
+          "kind": "always",
+          "scope": "touch $HOME/cb313-probe"
+        },
+        {
+          "key": "3",
+          "label": "No, and tell Codex what to do differently (esc)",
+          "kind": "tell"
+        }
+      ]
+    },
+    {
+      "name": "wezterm-codex-prompt-120",
+      "screen": " \n  >_ OpenAI Codex (v0.167.0)\n     /private/tmp/c3/wez120-codex\n \n  To get started, describe a task or try one of these commands:\n \n  /init - create an AGENTS.md file with instructions for Codex\n  /status - show current session configuration\n  /permissions - choose what Codex is allowed to do\n  /model - choose what model and reasoning effort to use\n  /review - review any changes and find issues\n \n                                                                                                                        \n› run this exact shell command outside the sandbox: touch $HOME/cb313-probe                                             \n                                                                                                                        \n                                                                                                                        \n• I’ll run that exact command with sandbox restrictions lifted.                                                         \n                                                                                                                        \n• Running touch $HOME/cb313-probe                                                                                       \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  Would you like to run the following command?                                                                          \n                                                                                                                        \n  Environment: local                                                                                                    \n                                                                                                                        \n  Reason: Do you want to allow creation of the requested probe file in your home directory outside the workspace?       \n                                                                                                                        \n  $ touch $HOME/cb313-probe                                                                                             \n                                                                                                                        \n                                                                                                                        \n› 1. Yes, proceed (y)                                                                                                   \n  2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)                                \n  3. No, and tell Codex what to do differently (esc)                                                                    \n                                                                                                                        \n  Press enter to confirm or esc to cancel                                                                               \n",
+      "_note": "CB-313 fixture at 120 columns",
+      "dialog": true,
+      "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creation of the requested probe file in your home directory outside the workspace?\n$ touch $HOME/cb313-probe\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)\n3. No, and tell Codex what to do differently (esc)",
+      "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696f6e206f6620746865207265717565737465642070726f62652066696c6520696e20796f757220686f6d65206469726563746f7279206f7574736964652074686520776f726b73706163653f0a2420746f7563682024484f4d452f63623331332d70726f62650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e6473207468617420737461727420776974682060746f7563682024484f4d452f63623331332d70726f626560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
+      "screen_hash": "ssDTzfAvE1-KkbkRs3wCKlOR3UzLmpuM9WCX38z_Whk",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, proceed (y)",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and don't ask again for commands that start with `touch $HOME/cb313-probe` (p)",
+          "kind": "always",
+          "scope": "touch $HOME/cb313-probe"
+        },
+        {
+          "key": "3",
+          "label": "No, and tell Codex what to do differently (esc)",
+          "kind": "tell"
+        }
+      ]
+    },
+    {
+      "name": "wt-codex-prompt",
+      "screen": "│ model:     gpt-5.6-sol   /model to change │\n│ directory: ~\\cb313\\wt-codex               │\n╰───────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true\n\n• You have 2 usage limit resets available. Run /usage to use one.\n\n\n› [200~run this exact shell command outside the sandbox: New-Item C:/Users/warre/cb313-probe -ItemType File[201~\n\n\n• I’ll run that exact PowerShell command with elevated filesystem access.\n\n◦ Running New-Item C:/Users/warre/cb313-probe -ItemType File\n\n\n  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n\n  $ New-Item C:/Users/warre/cb313-probe -ItemType File\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `New-Item C:/Users/warre/cb313-probe -ItemType File` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+      "_note": "CB-313 fixture, Windows Terminal; the dialog starts under the ◦/• Running line, which flips glyph while it waits and so is not hashed",
+      "dialog": true,
+      "canonical_text": "Would you like to run the following command?\nEnvironment: local\nReason: Do you want to allow creating the requested probe file outside the workspace sandbox?\n$ New-Item C:/Users/warre/cb313-probe -ItemType File\n1. Yes, proceed (y)\n2. Yes, and don't ask again for commands that start with `New-Item C:/Users/warre/cb313-probe -ItemType File` (p)\n3. No, and tell Codex what to do differently (esc)",
+      "canonical_text_utf8": "576f756c6420796f75206c696b6520746f2072756e2074686520666f6c6c6f77696e6720636f6d6d616e643f0a456e7669726f6e6d656e743a206c6f63616c0a526561736f6e3a20446f20796f752077616e7420746f20616c6c6f77206372656174696e6720746865207265717565737465642070726f62652066696c65206f7574736964652074686520776f726b73706163652073616e64626f783f0a24204e65772d4974656d20433a2f55736572732f77617272652f63623331332d70726f6265202d4974656d547970652046696c650a312e205965732c2070726f63656564202879290a322e205965732c20616e6420646f6e27742061736b20616761696e20666f7220636f6d6d616e64732074686174207374617274207769746820604e65772d4974656d20433a2f55736572732f77617272652f63623331332d70726f6265202d4974656d547970652046696c6560202870290a332e204e6f2c20616e642074656c6c20436f646578207768617420746f20646f20646966666572656e746c79202865736329",
+      "screen_hash": "axL4GUSaioMHod_amopYA6jJYX4inqUoNA56AuICr5Y",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, proceed (y)",
+          "kind": "approve"
+        },
+        {
+          "key": "2",
+          "label": "Yes, and don't ask again for commands that start with `New-Item C:/Users/warre/cb313-probe -ItemType File` (p)",
+          "kind": "always",
+          "scope": "New-Item C:/Users/warre/cb313-probe -ItemType File"
+        },
+        {
+          "key": "3",
+          "label": "No, and tell Codex what to do differently (esc)",
+          "kind": "tell"
+        }
+      ]
+    },
+    {
+      "name": "tmux-claude-none",
+      "screen": "\n ▐▛███▛█   Claude Code v2.1.319\n▝▜██████▀  Opus 5.5 with medium effort · Claude Team\n ▝▝   ▝▝   /private/tmp/c3/tmux-claude · /rc\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n❯\u00A0Try \"write a test for <filepath>\"\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  Opus 5.5 | ~/tmux-claude | [.claude]\n  ⏸ manual mode on · ← 2 agents\n",
+      "_note": "no dialog on screen: no prompt is sent",
+      "dialog": false
+    }
+  ],
+  "prompt": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "plaintext": "{\"t\":\"prompt\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"kind\":\"permission\",\"cli\":\"claude\",\"tool\":\"Bash\",\"preview\":\"Bash command\\ndotnet test tests/UnitTests\\nRun the unit tests\\nDo you want to proceed?\",\"options\":[{\"key\":\"1\",\"label\":\"Yes\",\"kind\":\"approve\"},{\"key\":\"2\",\"label\":\"Yes, and don't ask again for commands that start with dotnet test\",\"kind\":\"always\",\"scope\":\"dotnet test\"},{\"key\":\"3\",\"label\":\"No, and tell Claude what to do differently\",\"kind\":\"tell\"}],\"screen_hash\":\"4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4\",\"expires_at\":1794113592}",
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000000",
+    "ct": "AAAAAAAAAAAAAAAAFg3JJ/QRiwV62LCCp2PXjuGGOXVdOUidUxVe9OYumyh2EJafQhyEB1B+sw9nnS4xtaN1s5OjizB3NNOgfNduZ5iAqSgwc86VGPBTbXzAINZ5bs0p9SQa/nE/U+dITCQ6bOUqCjG0ROETds4V3PuE76D4HPRxOfWYLAAlXyL9e+cJN4+vrRGlnLj1WhRsiLHG95A2v++OuBfql6QvO12I0cBEnGoNa9J0rY9y/xp2KQ9+PcXN+b0Pjw+oqmX/Asd6FQ1bzJpfAFD8mzpdQ4VGqVtDS/c0zdoO1xSC8O72t36yJCoYTvFqxrQojbEwKxAGZ0Ko9NUkgyqCNv2LYBEfP6YEWrafPsFd0c8p3wqjeQUreDKFm5O7fOCxi7hZgE+RwUVeWlj/2HNvPR/KAlTNYOSlugrFED07C1vRZgAFO6g/IoiDBK1afMuAyLvKGKFdZqGHoKoGZ1Swa1cFrqyISuKiVWa9VDXpsKMjjlgHA/CrBBKWXfeNQ3qjiD7t793XiOF2LtTzVLOvBFfpLvOvh8T8ggKMW8xQ3lTJu4Cu86XiR/vKn5GeaQz1wrzJSdHirs6VOMgCT6iVV20cDPVA3Omr+ZR53QOD947uLvtkLeaAKzvNIxUawxCdBuLtR/ud9UJ28t3r8NTkfXxmsgVcnxXeGWreYDgeyZHyl9nnwCF+YqGpcbHTLrqreRCs2BA/z5dUlF2QZDvGHc/SumXYfjxixPXjn85jq00+JGg0bGnoK1scXy9rbSToy5SMz6d+rFifyE8dtq0t3PUS"
+  },
+  "resolved": [
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"resolved\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"by\":\"desk\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000001",
+      "ct": "AAAAAAAAAAAAAAAB+2tVUFYdaXLFRzaDUDsFikqRPRMzVRVB2Nw1Na5+X10UEwJTDQOuD6xEhLKpPRZqcAh/Llw86sgMvArla99Cv/PYVf+kTdSRXfc1CdhEf7BS+a/plL8SJl0IaEyzwjgqYGX+EMVkU0wamHMofyA="
+    },
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"resolved\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"by\":\"phone:ph_a1b2c3d4e5f60718\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000002",
+      "ct": "AAAAAAAAAAAAAAACJ73tqj3ANL+Ndso+FN8NTIgyhhCJgzMBf13ym2+n+7QS3hDhinooZeO7vvSWovde8nCNBb3KdgNepIWTnAEF2TOnHUFY+mhczj8uehzY1auvbV6Q2jSyhk9b1We1RnmzbxTnwaMjNurc57YDLpah44EUYX53VJh8JpyVWDAYIdcvVyY="
+    },
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"resolved\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"by\":\"gone\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000003",
+      "ct": "AAAAAAAAAAAAAAADTaZa63YEoKDucTAMXCGyUFe7OZrieNMLBRkxYUSOUVTFq1otHVjHMfE2weDGleSadG68a88/zbTRWx4XFT/htRZoyZCvMVWBqtBxYPaYgpeiY8skIM2hG7lt6sv2piG13qjYaHYTV1801E7ExVc="
+    }
+  ],
+  "refusals": [
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"err\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"code\":\"stale_prompt\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000004",
+      "ct": "AAAAAAAAAAAAAAAErhVNi6UF20qpgZwD7xX1xZ92d5Dy/lYHRFWnTVGH/axQ0qalrkV5XfRmLO3XEbBgyh9nHI6glFYsoEREscWki+p/o0dFfFGaXX5aWI/pQ+X8bng3nabAthY9NCXaJ/jYmNJ7GX9qpNSaRrrnYPNRIZk9sQ=="
+    },
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"err\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"code\":\"bad_signature\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000005",
+      "ct": "AAAAAAAAAAAAAAAFI1A5daoXDyKsMMuMPZxcZxG/VeEQiHbXc682C6oOc87Is6m3K5yDSfY37SmeW7HlP0nj2zswqUt/kb2U44XMt7Y8YEmSHbs3kF3QPXnH1ZxhcV+8miK7DwPmMLHSZrWc5/2MUNSYm3kQ3yQ3nNcp9L4vj7k="
+    },
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"err\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"code\":\"forbidden_option\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000006",
+      "ct": "AAAAAAAAAAAAAAAGx2UEhC+BUDrR1Ah29icdv/AQrqtVaVKE+ZBU3vedVcdR7lp1CNbmsvNqNuDPO29q/OgKtHTnXH/cOPuYwEy+PObQCikSeAhC+UW77HoAEZd/+eukOEvOwzykPfRaRI/sXWTxv3yBn+NsaYOlkDwyzL7r8Vm7j1o="
+    },
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"err\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"code\":\"not_pending\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000007",
+      "ct": "AAAAAAAAAAAAAAAHhm2lpxjPFBDXHSEbbXJ1R6WvHqod4eys/v9PwaObNbqAJsvF04UXHgiQxnKRE7Tb0AXjfB02zIRKczYNKqwcSNPfkwWHo/z1YjBUns74WbNRxNqopgYbqz1EmTiD4+x17S11I1kaE9Byu+1Hg4pJp614"
+    },
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"err\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"code\":\"expired\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000008",
+      "ct": "AAAAAAAAAAAAAAAI/9V1ZsrBQ2yGd+DPB9PODDLBYtROBV0yHzH56QqFmMBS8mvgDahVM0e1ifZ6IpwmcWGeWW1zFSv3qUSVBlDZMqt6ssTZfQ6wVqAmyQsn3o1171vXID5CtBdh0XQMxwnT2BVJjjU6ioHOgbmZegs="
+    },
+    {
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "class": "action",
+      "plaintext": "{\"t\":\"err\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"code\":\"replayed\"}",
+      "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+      "nonce": "000000000000000000000009",
+      "ct": "AAAAAAAAAAAAAAAJyFUSnRx161rZoWL0KtacakRZL00gV5ld/NdGvGBLYRILpujpN0qwye1egXXuVtEHuxYKZGjDdGzCLqM5ekSX9zJSTPlIAWB/nXg3Qgmgeso752w+Of2cZiSZOXUt4+eP7DWbSawHWjfw1lQ2rroS"
+    }
+  ]
+}

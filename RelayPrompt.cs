@@ -86,11 +86,12 @@ namespace Orbweaver
         }
 
         private const string ConversationGlyphs = "•◦◆◇⏺●✻✶✳✢✽";
+        private const string FrameEdges = "┃│║|";
 
         private static bool IsFramed(string rawLine)
         {
             var t = rawLine.TrimStart();
-            return t.Length > 0 && t[0] is '┃' or '│' or '║' or '|';
+            return t.Length > 0 && FrameEdges.Contains(t[0]);
         }
 
         internal static string CanonicalText(IEnumerable<string> preview, IEnumerable<ChatPromptOption> options) =>
@@ -129,6 +130,11 @@ namespace Orbweaver
             if (kind != "permission") return new(Option, null);
 
             var l = label.Trim();
+            // Grok's Windows auto-review dialog: "Always allow: <cmd>" and
+            // "Never allow: <cmd>", the command being the scope it remembers.
+            if (l.StartsWith("Always allow:", StringComparison.OrdinalIgnoreCase))
+                return new(Always, l["Always allow:".Length..].Trim());
+            if (l.StartsWith("Never allow:", StringComparison.OrdinalIgnoreCase)) return new(Never, null);
             if (l.StartsWith("No", StringComparison.OrdinalIgnoreCase))
             {
                 if (l.Contains("tell", StringComparison.OrdinalIgnoreCase)) return new(Tell, null);
