@@ -55,6 +55,10 @@ namespace Orbweaver
             [JsonPropertyName("ka_pub")] public string? KaPublic { get; set; }
             [JsonPropertyName("ka_priv")] public string? KaPrivate { get; set; }
             [JsonPropertyName("phones")] public List<StoredPhone> Phones { get; set; } = new();
+
+            // Unlinks the relay has not yet acknowledged (CB-314 acceptance
+            // 4): Remove on the PC must reach the relay even across a quit.
+            [JsonPropertyName("pending_unlinks")] public List<string> PendingUnlinks { get; set; } = new();
         }
 
         private static readonly JsonSerializerOptions Json = new()
@@ -113,8 +117,12 @@ namespace Orbweaver
 
                 _identity = RelayCrypto.GenerateKeyPair();
                 _agreement = RelayCrypto.GenerateKeyPair();
+                // Owed unlinks survive a key reset: the relay still holds those
+                // links under the old device until it hears otherwise.
+                var owed = _stored.PendingUnlinks;
                 _stored = new Stored
                 {
+                    PendingUnlinks = owed,
                     IdPublic = RelayCrypto.Hex(_identity.Public),
                     IdPrivate = Protect("identity", _identity.Private),
                     KaPublic = RelayCrypto.Hex(_agreement.Public),
@@ -245,6 +253,33 @@ namespace Orbweaver
             }
         }
 
+        // ---- unlinks owed to the relay -------------------------------------------
+
+        internal IReadOnlyList<string> PendingUnlinks
+        {
+            get { lock (_gate) { EnsureLoaded(); return _stored.PendingUnlinks.ToList(); } }
+        }
+
+        internal void AddPendingUnlink(string phoneId)
+        {
+            lock (_gate)
+            {
+                EnsureLoaded();
+                if (_stored.PendingUnlinks.Contains(phoneId)) return;
+                _stored.PendingUnlinks.Add(phoneId);
+                Save();
+            }
+        }
+
+        internal void RemovePendingUnlink(string phoneId)
+        {
+            lock (_gate)
+            {
+                EnsureLoaded();
+                if (_stored.PendingUnlinks.Remove(phoneId)) Save();
+            }
+        }
+
         // ---- storage -----------------------------------------------------------
 
         private static Phone ToPhone(StoredPhone p) => new(
@@ -276,6 +311,7 @@ namespace Orbweaver
             }
             _stored = stored ?? new Stored();
             _stored.Phones ??= new();
+            _stored.PendingUnlinks ??= new();
             // A phone whose keys do not parse cannot be talked to; drop it
             // rather than carry a record that fails every frame.
             _stored.Phones.RemoveAll(p => !RelayCrypto.IsValidPublicKey(RelayCrypto.FromHex(p.IdPublic))

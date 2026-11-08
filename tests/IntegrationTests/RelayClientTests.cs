@@ -201,6 +201,37 @@ public class RelayClientTests : IAsyncLifetime
         Assert.True(took >= TimeSpan.FromMilliseconds(400), $"30 frames arrived in {took.TotalMilliseconds} ms");
     }
 
+    // Acceptance 4 across a quit, through the real client: Remove while the
+    // relay is unreachable, stop the client, start a new one over the same
+    // files, and the relay receives the unlink on the first connection.
+    [Fact]
+    public async Task An_unlink_owed_across_a_restart_reaches_the_relay()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var first = Client(identity);
+        first.Start();
+        await _stub.NextT("hello");
+        await Until(() => first.State == RelayClient.Status.Connected);
+
+        _stub.AcceptSockets = false;
+        await _stub.DropConnection();
+        await Until(() => first.State != RelayClient.Status.Connected);
+        first.Remove(phone.Id);
+        await first.StopAsync();
+        first.Dispose();
+        _client = null;
+
+        _stub.AcceptSockets = true;
+        var reopened = new RelayIdentity(_dir, _store);
+        Assert.Equal([phone.Id], reopened.PendingUnlinks);
+        var second = Client(reopened);
+        second.Start();
+        Assert.Equal(phone.Id, (await _stub.NextT("unlink")).GetProperty("peer_id").GetString());
+        await Until(() => new RelayIdentity(_dir, _store).PendingUnlinks.Count == 0);   // the stub's ok settled it
+    }
+
     [Fact]
     public async Task Remove_sends_revoke_and_unlink_to_the_relay()
     {

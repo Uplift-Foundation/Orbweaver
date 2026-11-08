@@ -83,7 +83,7 @@ public class RelayRosterTests
         Assert.Equal("roster", json.GetProperty("t").GetString());
         Assert.Equal(1, json.GetProperty("seq").GetInt64());
         var s = json.GetProperty("sessions");
-        Assert.Equal("""{"session_id":"s1","cli":"claude","title":"proj","cwd":"/c","state":"generating","since":"2026-11-08T08:00:00Z","parent_session_id":"lead","persona":{"name":"Tamsin","initials":"TO","color":"pink"}}""",
+        Assert.Equal("""{"session_id":"s1","cli":"claude","title":"proj","cwd":"/c","state":"generating","since":1794124800,"parent_session_id":"lead","persona":{"name":"Tamsin","initials":"TO","color":"pink"}}""",
             s[0].GetRawText());
         Assert.False(s[1].GetProperty("persona").TryGetProperty("color", out _));
         Assert.False(s[2].TryGetProperty("persona", out _));
@@ -93,17 +93,39 @@ public class RelayRosterTests
     [Fact]
     public void Delta_json_omits_what_did_not_change()
     {
-        Assert.Equal("""{"t":"delta","seq":4,"session_id":"s","state":"waiting","title":"T","since":"2026-11-08T08:00:00Z","removed":true}""",
+        Assert.Equal("""{"t":"delta","seq":4,"session_id":"s","state":"waiting","title":"T","since":1794124800,"removed":true}""",
             Encoding.UTF8.GetString(RelayRoster.DeltaJson(4, new RelayDelta("s", "waiting", "T", T0, true))));
         Assert.Equal("""{"t":"delta","seq":2,"session_id":"s"}""",
             Encoding.UTF8.GetString(RelayRoster.DeltaJson(2, new RelayDelta("s", null, null, null, false))));
     }
 
     [Fact]
-    public void Timestamps_are_utc_whole_seconds()
+    public void Since_is_integer_unix_seconds_whatever_the_offset()
     {
-        var local = new DateTimeOffset(2026, 11, 8, 0, 0, 0, 123, TimeSpan.FromHours(-8));
-        Assert.Equal("2026-11-08T08:00:00Z", RelayRoster.Timestamp(local));
+        // Addendum 4: the same type and unit as ts and last_seen; milliseconds
+        // are truncated, the offset is irrelevant.
+        var local = new DateTimeOffset(2026, 11, 8, 0, 0, 0, 999, TimeSpan.FromHours(-8));
+        Assert.Equal(1794124800L, RelayRoster.Timestamp(local));
+        var json = JsonDocument.Parse(RelayRoster.RosterJson(1, [Row("s") with { Since = local }])).RootElement;
+        Assert.Equal(JsonValueKind.Number, json.GetProperty("sessions")[0].GetProperty("since").ValueKind);
+    }
+
+    [Fact]
+    public void Persona_colour_passes_only_names_in_the_published_set()
+    {
+        Assert.Equal("purple", RelayRoster.PersonaColor("purple"));
+        Assert.Equal("purple", RelayRoster.PersonaColor(" Purple "));        // lowercased, trimmed
+        Assert.Null(RelayRoster.PersonaColor("#875FD7"));                    // never hex
+        Assert.Null(RelayRoster.PersonaColor("chartreuse"));                 // not a /color name
+        Assert.Null(RelayRoster.PersonaColor(null));
+        Assert.Null(RelayRoster.PersonaColor(""));
+        Assert.Equal(14, RelayRoster.PersonaColors.Count);
+        Assert.All(RelayRoster.PersonaColors, c => Assert.Equal(c.ToLowerInvariant(), c));
+        // An agent colour outside the set falls through to the session's own.
+        Assert.Equal(new RelayPersona("P", "P", "green"),
+            RelayRoster.PersonaFrom("P", new SessionStatus { AgentColor = "#123456", Color = "Green" }));
+        Assert.Equal(new RelayPersona("P", "P", null),
+            RelayRoster.PersonaFrom("P", new SessionStatus { AgentColor = "chartreuse", Color = "#fff" }));
     }
 
     [Fact]
@@ -235,7 +257,7 @@ public class RosterFixtureTests
             s.GetProperty("cwd").GetString()!, s.GetProperty("state").GetString()!, Opt(s, "parent_session_id"),
             s.TryGetProperty("persona", out var p) ? new RelayPersona(p.GetProperty("name").GetString()!, p.GetProperty("initials").GetString()!, Opt(p, "color")) : null)
         {
-            Since = DateTimeOffset.Parse(s.GetProperty("since").GetString()!, System.Globalization.CultureInfo.InvariantCulture),
+            Since = DateTimeOffset.FromUnixTimeSeconds(s.GetProperty("since").GetInt64()),
         }).ToList();
         Assert.Equal(Compact(r), Encoding.UTF8.GetString(RelayRoster.RosterJson(r.GetProperty("seq").GetInt64(), sessions)));
     }
@@ -247,7 +269,7 @@ public class RosterFixtureTests
         foreach (var d in all)
         {
             var delta = new RelayDelta(d.GetProperty("session_id").GetString()!, Opt(d, "state"), Opt(d, "title"),
-                Opt(d, "since") is { } since ? DateTimeOffset.Parse(since, System.Globalization.CultureInfo.InvariantCulture) : null,
+                d.TryGetProperty("since", out var since) ? DateTimeOffset.FromUnixTimeSeconds(since.GetInt64()) : null,
                 d.TryGetProperty("removed", out var r) && r.GetBoolean());
             Assert.Equal(Compact(d), Encoding.UTF8.GetString(RelayRoster.DeltaJson(d.GetProperty("seq").GetInt64(), delta)));
         }

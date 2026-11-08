@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using Orbweaver.Tests;
 using Xunit;
 
 namespace Orbweaver.IntegrationTests;
@@ -16,7 +17,7 @@ public sealed class UpdateDownloadTests : IDisposable
     private static readonly byte[] Payload = RandomNumberGenerator.GetBytes(300_000); // several buffer reads
     private static string Hex(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
 
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     private readonly string _root;
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "upd-int-" + Guid.NewGuid().ToString("N"));
     private readonly HttpUpdateHttp _http = new();
@@ -25,14 +26,9 @@ public sealed class UpdateDownloadTests : IDisposable
 
     public UpdateDownloadTests()
     {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-
-        _root = $"http://127.0.0.1:{port}";
-        _listener.Prefixes.Add(_root + "/");
-        _listener.Start();
+        // Bound once, never probed and released (CB-314: the old pattern
+        // collided with parallel tests as "Address already in use").
+        (_listener, _root) = LoopbackHttp.Start();
         _ = Task.Run(async () =>
         {
             while (_listener.IsListening)
@@ -194,10 +190,10 @@ public sealed class UpdateDownloadTests : IDisposable
     [Fact]
     public async Task ARefusedConnectionIsANetworkFailure()
     {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var dead = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
+        // Held but never listened on, so the refusal is guaranteed for the
+        // whole test rather than until a parallel test binds the port.
+        var (holder, dead) = LoopbackHttp.RefusingPort();
+        using var _ = holder;
 
         var ex = await Assert.ThrowsAsync<UpdateException>(() => _http.GetStringAsync($"http://127.0.0.1:{dead}/x", default));
         Assert.Equal(UpdateFailure.Network, ex.Kind);

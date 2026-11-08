@@ -284,7 +284,7 @@ var deltas = new JsonArray
 var rosters = new JsonObject
 {
     ["_source"] = source.DeepClone(),
-    ["_rules"] = "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true shows ended once then drops the row; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is UTC whole seconds. parent_session_id and persona (and persona.color) are omitted when absent.",
+    ["_rules"] = "CB-314 addendum 3: a roster replaces that PC's whole book and resets expected seq to 1; deltas carry only state/title/since and count up by 1; removed:true shows ended once then drops the row; a seq gap means send resync. State is idle|generating|waiting, plus ended only in a removal delta. since is an INTEGER of Unix seconds, the same type and unit as ts and last_seen (addendum 4). parent_session_id and persona are omitted when absent; persona.color is optional and, when present, one of the lowercase names in persona-colors.json (never hex) — render absent or unknown names neutral.",
     ["macbook_roster"] = Parse(RelayRoster.RosterJson(1, macbook)),
     ["windows_roster"] = Parse(RelayRoster.RosterJson(1, windows)),
     ["empty_roster"] = Parse(RelayRoster.RosterJson(1, [])),
@@ -296,4 +296,8 @@ var options = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaSc
 File.WriteAllText(Path.Combine(outDir, "pairing-vectors.json"), pairing.ToJsonString(options) + "\n");
 File.WriteAllText(Path.Combine(outDir, "session-vectors.json"), session.ToJsonString(options) + "\n");
 File.WriteAllText(Path.Combine(outDir, "roster-fixtures.json"), rosters.ToJsonString(options) + "\n");
-Console.WriteLine($"wrote pairing-vectors.json, session-vectors.json and roster-fixtures.json to {Path.GetFullPath(outDir)} (check code {CheckCodeDisplay(code)})");
+// Addendum 4: the colour names a phone may be sent, straight from the list
+// RelayRoster filters with, one JSON array.
+File.WriteAllText(Path.Combine(outDir, "persona-colors.json"),
+    new JsonArray(RelayRoster.PersonaColors.Select(c => (JsonNode)JsonValue.Create(c)!).ToArray()).ToJsonString(options) + "\n");
+Console.WriteLine($"wrote pairing-vectors.json, session-vectors.json, roster-fixtures.json and persona-colors.json to {Path.GetFullPath(outDir)} (check code {CheckCodeDisplay(code)})");

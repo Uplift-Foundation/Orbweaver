@@ -420,6 +420,19 @@ public class RelaySettingsAndServiceTests : IDisposable
         await RelayService.DisableAsync();
     }
 
+    // Addendum 4: the colour names a phone may be sent are exactly the names
+    // an orb itself draws. RelayRoster keeps its own copy (it is pure and
+    // must not touch a window class), so this pins the two together: a name
+    // added to OrbWindow's accent table without the relay list fails here.
+    [AvaloniaFact]
+    public void Persona_colours_are_exactly_the_orb_accent_names()
+    {
+        var table = (System.Collections.IDictionary)typeof(OrbWindow)
+            .GetField("AgentColors", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        var accents = table.Keys.Cast<string>().Select(k => k.ToLowerInvariant()).Order().ToList();
+        Assert.Equal(accents, RelayRoster.PersonaColors.Order().ToList());
+    }
+
     [AvaloniaFact]
     public void Defaults_name_this_platform_and_version()
     {

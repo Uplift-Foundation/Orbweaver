@@ -112,6 +112,10 @@ Report(asked is not null && asked.CheckCode == phoneCode, "pair.request reaches 
     asked is null ? "no request" : $"desktop {asked.CheckCodeDisplay}, phone {CheckCodeDisplay(phoneCode)}");
 if (asked is null) return 1;
 
+// Allow is required: until the owner clicks it, the phone receives nothing —
+// no accept, no roster.
+var early = await Next(e => e.TryGetProperty("v", out _), 2);
+Report(early is null, "nothing reaches the phone before Allow", early is null ? "2 s of silence" : early.Value.Frame.GetRawText());
 Report(client.Allow(asked), "Allow sends");
 var accept = await Next(e => Env(e, "pair"));
 var acceptBody = accept is null ? null : Open(pairKey, accept.Value.Frame.GetProperty("ct").GetString(), Aad(q["d"], phoneId, "pair"), DesktopToPhone);
@@ -156,6 +160,21 @@ for (var i = 0; i < flips; i++)
 latencies.Sort();
 double P(double p) => latencies.Count == 0 ? double.NaN : latencies[Math.Min(latencies.Count - 1, (int)Math.Ceiling(p * latencies.Count) - 1)];
 Report(seqOk && latencies.Count == flips, $"{flips} state flips arrive as numbered deltas", $"OnScanned→phone socket p50 {P(0.5):F0} ms, p95 {P(0.95):F0} ms, max {latencies.LastOrDefault():F0} ms");
+
+// ---- a gap triggers a resync -------------------------------------------------
+// The phone pretends it lost a delta: it sees the next one's seq jump, sends
+// the relay-visible resync, and must get a fresh roster numbered from 1.
+client.OnScanned([rows[0] with { State = "waiting" }]);
+var skipped = await Next(e => Env(e, "state"));                          // "lost"
+client.OnScanned([rows[0] with { State = "generating" }]);
+var afterGap = await Next(e => Env(e, "state"));
+var gapSeq = afterGap is null ? 0 : OpenState(afterGap.Value.Frame)?.GetProperty("seq").GetInt64() ?? 0;
+await Send(new { t = "resync", peer_id = q["d"] });
+var resynced = await Next(e => Env(e, "state"));
+var fresh = resynced is null ? null : OpenState(resynced.Value.Frame);
+Report(skipped is not null && gapSeq == expect + 1 && fresh is { } fr && fr.GetProperty("t").GetString() == "roster" && fr.GetProperty("seq").GetInt64() == 1
+       && fr.GetProperty("sessions")[0].GetProperty("state").GetString() == "generating",
+    "a seq gap and a resync bring a fresh roster from seq 1 with the current state", $"gap seen at seq {gapSeq}, expected {expect} first");
 
 // ---- remove -----------------------------------------------------------------
 client.Remove(phoneId);

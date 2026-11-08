@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 
 namespace Orbweaver
@@ -99,14 +98,31 @@ namespace Orbweaver
         internal static RelayPersona? PersonaFrom(string? name, SessionStatus status)
         {
             if (string.IsNullOrWhiteSpace(name)) return null;
-            var color = !string.IsNullOrWhiteSpace(status.AgentColor) ? status.AgentColor
-                : !string.IsNullOrWhiteSpace(status.Color) ? status.Color
-                : null;
+            var color = PersonaColor(status.AgentColor) ?? PersonaColor(status.Color);
             return new RelayPersona(name, OrbGlyph.Initials(name), color);
         }
 
-        internal static string Timestamp(DateTimeOffset t) =>
-            t.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        // The colour names a phone may be sent (CB-314 addendum 4): exactly the
+        // /color names an orb itself draws (OrbWindow.AgentColors, pinned equal
+        // by RelaySettingsAndServiceTests), lowercase, never hex. Published as
+        // contracts/persona-colors.json. Anything else — a hex value, a name
+        // Claude Code adds later — is omitted and the phone draws neutral.
+        internal static readonly IReadOnlyList<string> PersonaColors =
+        [
+            "red", "orange", "yellow", "green", "teal", "cyan", "blue",
+            "purple", "violet", "magenta", "pink", "gray", "grey", "white",
+        ];
+
+        internal static string? PersonaColor(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var lower = name.Trim().ToLowerInvariant();
+            return PersonaColors.Contains(lower) ? lower : null;
+        }
+
+        // since on the wire: integer Unix seconds, the same type and unit as
+        // the envelope's ts and presence's last_seen (addendum 4).
+        internal static long Timestamp(DateTimeOffset t) => t.ToUnixTimeSeconds();
 
         internal static byte[] RosterJson(long seq, IEnumerable<RelaySession> sessions)
         {
@@ -125,7 +141,7 @@ namespace Orbweaver
                     w.WriteString("title", s.Title);
                     w.WriteString("cwd", s.Cwd);
                     w.WriteString("state", s.State);
-                    w.WriteString("since", Timestamp(s.Since));
+                    w.WriteNumber("since", Timestamp(s.Since));
                     if (s.ParentSessionId is { } parent) w.WriteString("parent_session_id", parent);
                     if (s.Persona is { } p)
                     {
@@ -154,7 +170,7 @@ namespace Orbweaver
                 w.WriteString("session_id", d.SessionId);
                 if (d.State is { } state) w.WriteString("state", state);
                 if (d.Title is { } title) w.WriteString("title", title);
-                if (d.Since is { } since) w.WriteString("since", Timestamp(since));
+                if (d.Since is { } since) w.WriteNumber("since", Timestamp(since));
                 if (d.Removed) w.WriteBoolean("removed", true);
                 w.WriteEndObject();
             }

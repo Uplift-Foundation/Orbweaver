@@ -18,6 +18,10 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
+    <!-- CB-314: race-free loopback listeners, shared rather than copied (tests/Shared/LoopbackHttp.cs). -->
+    <Compile Include="..\Shared\LoopbackHttp.cs" Link="LoopbackHttp.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\Orbweaver.csproj" />
   </ItemGroup>
   <ItemGroup>

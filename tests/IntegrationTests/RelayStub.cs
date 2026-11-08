@@ -17,7 +17,7 @@ namespace Orbweaver.Tests;
 // and lets a test push frames back.
 internal sealed class RelayStub : IAsyncDisposable
 {
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _accept;
     private WebSocket? _socket;
@@ -31,25 +31,16 @@ internal sealed class RelayStub : IAsyncDisposable
     public string? LastIdPub;
     public string HelloCode { get; set; } = "welcome";   // or "unauthorized" / "version"
     public bool AcceptSockets { get; set; } = true;
+    public bool AckUnlinks { get; set; } = true;
     public readonly Channel<string> Received = Channel.CreateUnbounded<string>();
     public readonly ConcurrentQueue<string> Requests = new();
 
     public RelayStub()
     {
-        var port = FreePort();
-        Base = new Uri($"http://127.0.0.1:{port}");
-        _listener.Prefixes.Add(Base.ToString());
-        _listener.Start();
+        // Bound once, never probed and released: see LoopbackHttp.
+        (_listener, var root) = LoopbackHttp.Start();
+        Base = new Uri(root);
         _accept = Task.Run(AcceptLoop);
-    }
-
-    private static int FreePort()
-    {
-        var l = new TcpListener(IPAddress.Loopback, 0);
-        l.Start();
-        var port = ((IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        return port;
     }
 
     private async Task AcceptLoop()
@@ -140,6 +131,11 @@ internal sealed class RelayStub : IAsyncDisposable
             var text = Encoding.UTF8.GetString(buffer, 0, r.Count);
             await Received.Writer.WriteAsync(text);
 
+            var tName = JsonDocument.Parse(text).RootElement.TryGetProperty("t", out var tt) ? tt.GetString() : null;
+            if (tName == "unlink" && AckUnlinks)
+                await Send(JsonSerializer.Serialize(new { t = "ok", @ref = "unlink", code = "unlinked" }));
+            if (tName == "link")
+                await Send(JsonSerializer.Serialize(new { t = "ok", @ref = "link", code = "linked" }));
             if (JsonDocument.Parse(text).RootElement.TryGetProperty("t", out var t) && t.GetString() == "hello")
             {
                 var token = JsonDocument.Parse(text).RootElement.GetProperty("token").GetString() ?? "";

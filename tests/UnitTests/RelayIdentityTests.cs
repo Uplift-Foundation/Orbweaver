@@ -166,6 +166,34 @@ public class RelayIdentityTests : IDisposable
     }
 
     [Fact]
+    public void Owed_unlinks_persist_dedupe_and_survive_a_key_reset()
+    {
+        var store = new FakeStore();
+        var a = New(store);
+        a.Keys();
+        a.AddPendingUnlink("ph_1");
+        a.AddPendingUnlink("ph_1");
+        a.AddPendingUnlink("ph_2");
+        a.RemovePendingUnlink("ph_missing");
+        Assert.Equal(["ph_1", "ph_2"], New(store).PendingUnlinks);
+
+        store.Items.Clear();                                       // keys lost: new identity...
+        var b = New(store);
+        b.Keys();
+        Assert.Equal(["ph_1", "ph_2"], b.PendingUnlinks);           // ...but the relay is still owed these
+        b.RemovePendingUnlink("ph_1");
+        Assert.Equal(["ph_2"], New(store).PendingUnlinks);
+    }
+
+    [Fact]
+    public void A_null_pending_unlink_list_loads_as_empty()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, RelayIdentity.FileName), """{"pending_unlinks":null}""");
+        Assert.Empty(New(new FakeStore()).PendingUnlinks);
+    }
+
+    [Fact]
     public void A_corrupt_file_is_replaced_not_fatal()
     {
         Directory.CreateDirectory(_dir);

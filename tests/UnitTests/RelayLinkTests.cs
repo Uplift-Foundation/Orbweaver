@@ -497,7 +497,68 @@ public class RelayLinkTests : IDisposable
         Assert.Equal([phone.Id], link.PendingUnlinks);
         Assert.Empty(identity.Phones);
         Assert.Equal([$$"""{"t":"unlink","peer_id":"{{phone.Id}}"}"""], link.OnFrame(Welcome()));
+        Assert.Equal([phone.Id], link.PendingUnlinks);                // sent, but owed until the relay says ok
+        link.OnFrame("""{"t":"ok","ref":"unlink","code":"unlinked"}""");
         Assert.Empty(link.PendingUnlinks);
+        Assert.Empty(new RelayIdentity(_dir, _store).PendingUnlinks);  // and that is on disk
+    }
+
+    // Acceptance 4 across a quit: Remove while the socket is down, the
+    // process ends, and the next run's first welcome sends the unlink.
+    [Fact]
+    public void An_owed_unlink_survives_a_restart_and_is_sent_on_the_first_welcome()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.Disconnected();
+        link.Remove(phone.Id);
+        // ...the process quits here.
+
+        var (restarted, identity, _) = New(new RelayIdentity(_dir, _store, () => _now));
+        Assert.Equal([phone.Id], restarted.PendingUnlinks);
+        Assert.Equal(["unlink"], restarted.OnFrame(Welcome()).Select(T));
+        restarted.OnFrame("""{"t":"ok","ref":"unlink","code":"unlinked"}""");
+        Assert.Empty(identity.PendingUnlinks);
+    }
+
+    [Fact]
+    public void A_connected_remove_stays_owed_until_answered_and_not_linked_also_settles_it()
+    {
+        var (link, identity, phone, _, _) = Paired();
+        link.Remove(phone.Id);
+        Assert.Equal([phone.Id], identity.PendingUnlinks);
+        link.OnFrame("""{"t":"err","ref":"unlink","code":"not_linked"}""");   // already gone: what was wanted
+        Assert.Empty(identity.PendingUnlinks);
+    }
+
+    [Fact]
+    public void Another_refusal_keeps_it_owed_for_the_next_welcome()
+    {
+        var (link, identity, phone, notes, _) = Paired();
+        link.Remove(phone.Id);
+        link.OnFrame("""{"t":"err","ref":"unlink","code":"bad_frame"}""");
+        Assert.Equal([phone.Id], identity.PendingUnlinks);
+        link.OnFrame("""{"t":"err","ref":"unlink","code":"bad_frame"}""");   // nothing in flight: harmless
+        link.OnFrame("""{"t":"ok","ref":"unlink","code":"unlinked"}""");     // likewise
+        Assert.Equal([phone.Id], identity.PendingUnlinks);
+        link.Disconnected();
+        Assert.Equal(["unlink"], link.OnFrame(Welcome()).Select(T));
+    }
+
+    // The relay drops a rate-limited frame and today names none of them. An
+    // unlink is the one frame nothing resends, so every unanswered one goes
+    // again; the duplicate's answer, if the first did land, is not_linked.
+    [Fact]
+    public void Rate_limited_resends_every_unanswered_unlink_once()
+    {
+        var (link, identity, phone, notes, _) = Paired();
+        link.Remove(phone.Id);
+        var again = link.OnFrame("""{"t":"err","code":"rate_limited"}""");
+        Assert.Equal([$$"""{"t":"unlink","peer_id":"{{phone.Id}}"}"""], again);
+        Assert.Contains("relay err code=rate_limited", notes);
+        link.OnFrame("""{"t":"ok","ref":"unlink","code":"unlinked"}""");     // the first landed after all
+        link.OnFrame("""{"t":"err","ref":"unlink","code":"not_linked"}""");  // and the repeat finds it gone
+        Assert.Empty(identity.PendingUnlinks);
+        Assert.Empty(link.OnFrame("""{"t":"err","code":"rate_limited"}""")); // nothing owed: nothing resent
     }
 
     // ---- nonces across reconnects and restarts -----------------------------------------

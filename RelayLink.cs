@@ -74,7 +74,10 @@ namespace Orbweaver
         private readonly string _appVersion;
         private readonly string _relayHost;
         private readonly Dictionary<string, Channel> _channels = new(StringComparer.Ordinal);
-        private readonly List<string> _pendingUnlinks = new();
+        // Unlinks sent on this connection and not yet answered, in send order:
+        // the relay handles a socket's frames in order, so its ok/err for
+        // unlinks arrive in this order too.
+        private readonly Queue<string> _unlinksInFlight = new();
 
         internal RelayLink(RelayIdentity identity, RelaySessionBook book, Func<DateTimeOffset> now,
             string platform, string appVersion, string relayHost)
@@ -95,7 +98,7 @@ namespace Orbweaver
 
         internal bool IsOnline(string phoneId) => _channels.TryGetValue(phoneId, out var c) && c.Online;
         internal DateTimeOffset? LastSeen(string phoneId) => _channels.TryGetValue(phoneId, out var c) ? c.LastSeen : null;
-        internal IReadOnlyCollection<string> PendingUnlinks => _pendingUnlinks;
+        internal IReadOnlyList<string> PendingUnlinks => _identity.PendingUnlinks;
 
         // ---- events -----------------------------------------------------------
 
@@ -133,6 +136,7 @@ namespace Orbweaver
         {
             Welcomed = false;
             foreach (var c in _channels.Values) c.Online = false;
+            _unlinksInFlight.Clear();
         }
 
         internal IReadOnlyList<string> OnFrame(string text)
@@ -159,6 +163,19 @@ namespace Orbweaver
                     if (Str(f, "code") == "unauthorized") Unauthorized();
                     else Refused(Str(f, "code") ?? "unknown");
                     return [];
+                case "err" when Str(f, "ref") == "unlink":
+                    // not_linked: already gone, which is what was wanted. Any
+                    // other refusal leaves it owed, retried on the next welcome.
+                    if (Str(f, "code") == "not_linked") SettleUnlink();
+                    else if (_unlinksInFlight.Count > 0) _unlinksInFlight.Dequeue();
+                    return [];
+                case "err" when Str(f, "code") == "rate_limited":
+                    // The relay drops the frame and today names none of them
+                    // (no ref). An unlink is the one frame nothing else
+                    // resends, so every unanswered one goes again; a repeat
+                    // for a link already gone just earns not_linked.
+                    Note("relay err code=rate_limited");
+                    return ResendUnlinksInFlight();
                 case "err" when Str(f, "code") == "unlinked":
                     // peer_id on current relays; the older image carried the
                     // id only in `message` (hana, 8 Nov), so both are read.
@@ -170,8 +187,11 @@ namespace Orbweaver
                     return [];
                 case "presence":
                     return OnPresence(f);
+                case "ok" when Str(f, "ref") == "unlink":
+                    SettleUnlink();
+                    return [];
                 case "ok":
-                    // link and unlink acknowledgements: nothing to do.
+                    // link acknowledgements: nothing to do.
                     return [];
                 case "ping":
                     return [Frame(w => w.WriteString("t", "pong"))];
@@ -199,11 +219,11 @@ namespace Orbweaver
                 if (!_channels.ContainsKey(phone.PhoneId)) OpenChannel(phone, fresh: false);
             WelcomeReceived();
 
-            // Unlinks owed from while the socket was down: Remove on the PC
-            // must reach the relay (acceptance 4), so it is retried here.
-            var frames = _pendingUnlinks.Select(UnlinkFrame).ToList();
-            _pendingUnlinks.Clear();
-            return frames;
+            // Unlinks owed — from while the socket was down, from a previous
+            // run, or sent and never answered: Remove on the PC must reach the
+            // relay (acceptance 4), so every one is sent again here.
+            _unlinksInFlight.Clear();
+            return _identity.PendingUnlinks.Select(SendUnlink).ToList();
         }
 
         private IReadOnlyList<string> OnPresence(JsonElement f)
@@ -399,8 +419,10 @@ namespace Orbweaver
                 if (SealTo(c, "pair", "", Encoding.UTF8.GetBytes(revoke)) is { } frame) frames.Add(frame);
             }
 
-            if (Welcomed) frames.Add(UnlinkFrame(phoneId));
-            else if (!_pendingUnlinks.Contains(phoneId)) _pendingUnlinks.Add(phoneId);
+            // Owed until the relay says ok, persisted first so a quit between
+            // here and the answer cannot lose it.
+            _identity.AddPendingUnlink(phoneId);
+            if (Welcomed) frames.Add(SendUnlink(phoneId));
 
             _channels.Remove(phoneId);
             _identity.RemovePhone(phoneId);
@@ -516,6 +538,26 @@ namespace Orbweaver
         });
 
         private static string UnlinkFrame(string peer) => Frame(w => { w.WriteString("t", "unlink"); w.WriteString("peer_id", peer); });
+
+        private string SendUnlink(string peer)
+        {
+            _unlinksInFlight.Enqueue(peer);
+            return UnlinkFrame(peer);
+        }
+
+        // The oldest unanswered unlink is done.
+        private void SettleUnlink()
+        {
+            if (_unlinksInFlight.Count == 0) return;
+            _identity.RemovePendingUnlink(_unlinksInFlight.Dequeue());
+        }
+
+        private IReadOnlyList<string> ResendUnlinksInFlight()
+        {
+            var again = _unlinksInFlight.Distinct().ToList();
+            _unlinksInFlight.Clear();
+            return again.Select(SendUnlink).ToList();
+        }
 
         // ---- helpers ----------------------------------------------------------
 
