@@ -88,10 +88,10 @@ public class RelayPromptVectorTests
     public void Resolved_and_refusal_frames_match()
     {
         var phone = Str(P.GetProperty("inputs"), "phone_id");
-        var bys = new[] { "desk", "phone:" + phone, "gone" };
+        var bys = new[] { "desk", "phone:" + phone, "gone", "unknown" };
         var r = P.GetProperty("resolved").EnumerateArray().ToArray();
-        Assert.Equal(3, r.Length);
-        for (var i = 0; i < 3; i++)
+        Assert.Equal(bys.Length, r.Length);
+        for (var i = 0; i < bys.Length; i++)
             AssertSealed(r[i], EpochKey0, DesktopToPhone, PromptFrames.Resolved("01JC9R0A5N2Q7W8X3E4T6Y9ZBD", "0f6c4f2a", bys[i]));
         var e = P.GetProperty("refusals").EnumerateArray().ToArray();
         Assert.Equal(AnswerGate.Codes.Length, e.Length);
@@ -174,6 +174,22 @@ public class RelayPromptVectorTests
             Assert.Equal(pt, fit.Plaintext);
             Assert.Equal(c.GetProperty("detail_cut").GetBoolean(), fit.DetailCut);
             Assert.Equal(c.GetProperty("labels_cut").GetBoolean(), fit.LabelsCut);
+        }
+    }
+
+    [Fact]
+    public void Sealed_resolves_seal_open_and_match_their_plaintext()
+    {
+        var bys = new[] { "desk", "phone:ph_a1b2c3d4e5f60718", "gone", "unknown" };
+        var all = U.GetProperty("resolves").EnumerateArray().ToArray();
+        Assert.Equal(bys.Length, all.Length);
+        for (var i = 0; i < bys.Length; i++)
+        {
+            var c = all[i];
+            var pt = Str(c, "plaintext");
+            Assert.Equal(PromptFrames.ResolvedPush("01JC9R0A5N2Q7W8X3E4T6Y9ZBD", "0f6c4f2a", bys[i], "orbweaver on MacBook Pro"), pt);
+            Assert.Equal(Str(c, "e"), PushSeal.SealWith(Keys(c, "eph"), Bytes(c, "nonce"), PhKa.Public, Encoding.UTF8.GetBytes(pt)));
+            Assert.Equal(pt, Encoding.UTF8.GetString(PushSeal.Open(PhKa, Str(c, "e"))!));
         }
     }
 
