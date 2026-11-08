@@ -54,7 +54,7 @@ internal static class PromptVectors
     // ---- prompt-vectors.json ------------------------------------------------
 
     internal const string FramesV3Screen =
-        "────────────────────────────────────────────────────────────\n" +
+        "────────────────────────────────────────────────────────────────────────────────\n" +
         " Bash command\n" +
         "\n" +
         "   dotnet test tests/UnitTests\n" +
@@ -67,11 +67,22 @@ internal static class PromptVectors
         "\n" +
         " Esc to cancel · Tab to amend\n";
 
+    // Claude Code draws a rule exactly the terminal's width; an always line that
+    // fills it and does not wrap was cut by the terminal (surface C's rule).
+    internal static readonly string AlwaysAtEdge =
+        new string('─', 60) + "\n" +
+        " Bash command\n" +
+        "   touch /tmp/probe\n" +
+        " Do you want to proceed?\n" +
+        " ❯ 1. Yes\n" +
+        ("   2. Yes, and always allow access to /private/tmp/" + new string('d', 60))[..60] + "\n" +
+        "   3. No\n";
+
     internal static List<PromptOption> OptionsOf(PromptFingerprint fp, string kind) =>
         fp.Prompt.Options.Select(o =>
         {
             var c = OptionKinds.Classify(kind, o.Label, o.Mode);
-            return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
+            return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
         }).ToList();
 
     private static JsonObject Fingerprint(string name, string screen, string? note = null)
@@ -142,8 +153,9 @@ internal static class PromptVectors
             Fingerprint("wezterm-claude-prompt", Fixture("wezterm-claude-prompt.txt"), "80 columns: option 2's label wraps and is rejoined with one space"),
             Fingerprint("tmux-grok-prompt", Fixture("tmux-grok-prompt.txt"), "Grok on the Mac: N (○) label radio rows, the marks not part of the label; the always-approve option is kind mode; the live '22s' line above the frame is not hashed"),
             Fingerprint("iterm2-grok-prompt", Fixture("iterm2-grok-prompt.txt"), "Grok on the Mac, iTerm2"),
-            Fingerprint("conhost-grok-prompt", Fixture("conhost-grok-prompt.txt"), "Grok on Windows: five options, Always allow: <cmd> (kind always, scope the command, wrapped) and Never allow"),
+            Fingerprint("conhost-grok-prompt", Fixture("conhost-grok-prompt.txt"), "Grok on Windows: five options; Grok cut 'Always allow: <cmd>' short of the command above it, so it is kind always with scope_truncated (greyed, never pressed), and Never allow"),
             Fingerprint("wt-grok-prompt", Fixture("wt-grok-prompt.txt"), "Grok on Windows Terminal"),
+            Fingerprint("claude-scope-cut-at-edge", AlwaysAtEdge, "synthetic: option 2's always line fills the rule's width with no continuation, so the terminal cut its scope: scope_truncated, shown greyed (Choose at desk), never pressed"),
             Fingerprint("conhost-codex-updatedialog", Fixture("conhost-codex-updatedialog.txt"), "a first-run screen: it parses as a numbered dialog, so it is sent desk_only (options []) and nothing is pressable"),
             Fingerprint("wt-codex-hooksdialog", Fixture("wt-codex-hooksdialog.txt"), "a first-run screen, desk_only"),
             Fingerprint("wt-codex-trustdialog", Fixture("wt-codex-trustdialog.txt"), "a first-run screen, desk_only"),

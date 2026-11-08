@@ -174,7 +174,7 @@ namespace Orbweaver
             var options = deskOnly ? [] : fp.Prompt.Options.Select(o =>
             {
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
-                return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
+                return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
             }).ToList();
             var preview = string.Join("\n", fp.Preview);
             var tool = ToolOf(fp.Preview);

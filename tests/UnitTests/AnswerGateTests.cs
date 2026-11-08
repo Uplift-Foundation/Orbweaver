@@ -336,4 +336,44 @@ public class AnswerGateTests
     [Fact]
     public void Refusal_codes_are_the_frames_v3_six() =>
         Assert.Equal(["stale_prompt", "bad_signature", "forbidden_option", "not_pending", "expired", "replayed"], AnswerGate.Codes);
+
+    // ---- a scope cut at the screen's edge (lead's rule; the parser's flag, #228) ----
+
+    [Theory]
+    [InlineData("wt-grok-prompt.txt")]
+    [InlineData("conhost-grok-prompt.txt")]
+    public void Rule7_an_always_whose_scope_grok_cut_short_is_never_pressed(string fixture)
+    {
+        var screen = Screenshot(fixture);
+        var always = PromptFingerprint.Of(screen)!.Prompt.Options.Single(o => o.Label.StartsWith("Always allow:"));
+        Assert.True(always.ScopeTruncated);
+        var scope = OptionKinds.ScopeOf(always.Label.Replace("Always allow:", "Yes, always allow: start with"));   // whatever the phone was shown
+        var shown = OptionKinds.Classify("permission", always.Label).Scope!;
+        Refused(AnswerGate.Decide(PendingFor(screen), AnswerFor(screen, "always", shown), screen, PhoneId, Phone.Public, Now, new NonceWindow()),
+            7, AnswerGate.ForbiddenOption);
+        Assert.True(AnswerGate.Decide(PendingFor(screen), AnswerFor(screen, "approve"), screen, PhoneId, Phone.Public, Now, new NonceWindow()).Press);
+        Assert.NotNull(scope);
+    }
+
+    // Claude Code / Codex: an always line that fills the rule's width with no
+    // continuation was cut by the terminal; the same refusal.
+    internal static readonly string EdgeScreen =
+        new string('─', 60) + "\n" +
+        " Bash command\n" +
+        "   touch /tmp/probe\n" +
+        " Do you want to proceed?\n" +
+        " ❯ 1. Yes\n" +
+        ("   2. Yes, and always allow access to /private/tmp/" + new string('d', 60)).Substring(0, 60) + "\n" +
+        "   3. No\n";
+
+    [Fact]
+    public void Rule7_an_always_cut_at_the_rule_width_is_never_pressed()
+    {
+        var always = PromptFingerprint.Of(EdgeScreen)!.Prompt.Options[1];
+        Assert.True(always.ScopeTruncated);
+        var shown = OptionKinds.Classify("permission", always.Label).Scope!;
+        Refused(AnswerGate.Decide(PendingFor(EdgeScreen), AnswerFor(EdgeScreen, "always", shown), EdgeScreen, PhoneId, Phone.Public, Now, new NonceWindow()),
+            7, AnswerGate.ForbiddenOption);
+        Assert.Equal("1", AnswerGate.Decide(PendingFor(EdgeScreen), AnswerFor(EdgeScreen, "approve"), EdgeScreen, PhoneId, Phone.Public, Now, new NonceWindow()).Key);
+    }
 }

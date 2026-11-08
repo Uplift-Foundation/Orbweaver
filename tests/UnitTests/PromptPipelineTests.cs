@@ -522,4 +522,19 @@ public class PromptPipelineTests
         await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(prompt: 1));
         Assert.Equal("unknown", JsonDocument.Parse(_sent.ResolvedPushes[^1]!).RootElement.GetProperty("by").GetString());
     }
+
+    [Fact]
+    public async Task A_cut_always_scope_goes_out_greyed_and_the_rest_stays_pressable()
+    {
+        _pane.Screen = AnswerGateTests.Screenshot("wt-grok-prompt.txt");
+        await _p.OnScannedAsync([("s1", Status(source: SessionSource.Grok))]);
+        var (_, _, prompt, push) = Assert.Single(_sent.Prompts);
+        foreach (var json in new[] { prompt, push! })
+        {
+            var opts = JsonDocument.Parse(json).RootElement.GetProperty("options").EnumerateArray().ToList();
+            var always = opts.Single(o => o.GetProperty("kind").GetString() == "always");
+            Assert.True(always.GetProperty("scope_truncated").GetBoolean());
+            Assert.All(opts.Where(o => o.GetProperty("kind").GetString() != "always"), o => Assert.False(o.TryGetProperty("scope_truncated", out _)));
+        }
+    }
 }

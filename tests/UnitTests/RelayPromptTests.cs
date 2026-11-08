@@ -240,7 +240,7 @@ public class RelayPromptVectorTests
 internal static class PromptVectorsShim
 {
     internal const string FramesV3Screen =
-        "────────────────────────────────────────────────────────────\n" +
+        "────────────────────────────────────────────────────────────────────────────────\n" +
         " Bash command\n" +
         "\n" +
         "   dotnet test tests/UnitTests\n" +
@@ -257,7 +257,7 @@ internal static class PromptVectorsShim
         fp.Prompt.Options.Select(o =>
         {
             var c = OptionKinds.Classify("permission", o.Label, o.Mode);
-            return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
+            return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
         }).ToList();
 }
 

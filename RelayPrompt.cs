@@ -274,7 +274,11 @@ namespace Orbweaver
     }
 
     // One option as it travels in a prompt frame and in the push plaintext.
-    internal sealed record PromptOption(string Key, string Label, string Kind, string? Scope);
+    // ScopeTruncated (the parser's ChatPromptOption.ScopeTruncated, #228): an
+    // always option whose scope was cut at the screen's edge. The phone cannot
+    // show what it would grant, and always outlives the prompt, so it is sent
+    // greyed ("Choose at desk") and the gate never presses it.
+    internal sealed record PromptOption(string Key, string Label, string Kind, string? Scope, bool ScopeTruncated = false);
 
     // The sealed prompt frame and the push plaintext, as JSON. The phone parses
     // these rather than byte-comparing them, so a library encoder is fine here;
@@ -296,6 +300,7 @@ namespace Orbweaver
             {
                 var j = new JsonObject { ["key"] = o.Key, ["label"] = o.Label, ["kind"] = o.Kind };
                 if (o.Scope is not null) j["scope"] = o.Scope;
+                if (o.ScopeTruncated) j["scope_truncated"] = true;
                 a.Add(j);
             }
             return a;

@@ -154,8 +154,11 @@ namespace Orbweaver
             var options = fresh.Prompt.Options.Select(o =>
             {
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
-                return new PromptOption(o.Key, o.Label, c.Kind, c.Scope);
-            }).ToList();
+                return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
+            }).ToList()
+                // A cut scope is never pressable: the phone could not show what
+                // it would grant (lead's rule; the parser's flag, #228).
+                .Where(o => !o.ScopeTruncated).ToList();
 
             IEnumerable<PromptOption> matches;
             if (answer.Action.StartsWith("option:", StringComparison.Ordinal))
