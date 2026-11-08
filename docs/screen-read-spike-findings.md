@@ -2,7 +2,7 @@
 
 The question: for each supported terminal, can Orbweaver read a live permission prompt off the screen well enough for the existing dialog parser (`ChatTranscript.ParseDialog`, `PaneScreen.Read`) to turn it into buttons? Windows Terminal through ConPTY was the open one.
 
-**Answer: yes for every terminal, for Claude Code and Codex. Windows Terminal through ConPTY included.** Grok's prompt is read off the screen fine and then not understood: Grok draws a shape the parser has no arm for (below), on all five Mac terminals. Grok on the Windows box could not be captured at all, because it is not signed in there.
+**Answer: yes for every terminal, for Claude Code and Codex. Windows Terminal through ConPTY included.** Grok's prompt is read off the screen fine and then not understood: Grok draws a shape the parser has no arm for (below), on all five Mac terminals. Grok's prompt is also not parsed on Windows Terminal or conhost (captured once Warren had signed Grok in there).
 
 Everything below is from real captures taken 7 Nov 2026, saved in `tools/screen-read-probe/fixtures/`, and replayed by `tests/UnitTests/ScreenReadFixtureTests.cs`. Re-derive any cell by hand with `dotnet run --project tests/TranscriptTests -- tools/screen-read-probe/fixtures/<fixture>.txt`.
 
@@ -23,12 +23,12 @@ Prompt captured per cell by asking the CLI to run a harmless `touch` (Windows: `
 | iTerm2 3.7.7 (`osascript contents`) | **yes\*** at 80 columns `iterm2-claude-prompt`; **yes** at 120 `iterm2-claude-prompt-120` | **yes\*** at 80 `iterm2-codex-prompt`; **yes** at 120 `iterm2-codex-prompt-120` | **no** `iterm2-grok-prompt` |
 | WezTerm 20240203 (`cli get-text`) | **yes\*** at 80 columns `wezterm-claude-prompt`; **yes** at 120 `wezterm-claude-prompt-120` | **yes\*** at 80 `wezterm-codex-prompt`; **yes** at 120 `wezterm-codex-prompt-120` | **no** `wezterm-grok-prompt` |
 | kitty 0.49.2 (`kitten @ get-text`) | **yes** `kitty-claude-prompt` | **yes** `kitty-codex-prompt` | **no** `kitty-grok-prompt` |
-| Windows Terminal 1.24 / ConPTY (`AttachConsole` + `ReadConsoleOutputCharacterW`) | **yes** `wt-claude-prompt` | **yes** `wt-codex-prompt` | not captured: Grok 1.0.34 on the Windows box shows a device-code sign-in screen (`wt-grok-signin`) |
-| conhost, the classic host (same reader) | **yes** `conhost-claude-prompt` | **yes** `conhost-codex-prompt` | not captured: same sign-in screen (`conhost-grok-signin`) |
+| Windows Terminal 1.24 / ConPTY (`AttachConsole` + `ReadConsoleOutputCharacterW`) | **yes** `wt-claude-prompt` | **yes** `wt-codex-prompt` | **no** `wt-grok-prompt` (five-option "auto-review" variant, below) |
+| conhost, the classic host (same reader) | **yes** `conhost-claude-prompt` | **yes** `conhost-codex-prompt` | **no** `conhost-grok-prompt` (same variant) |
 
-Versions: Mac Claude Code 2.1.319, Codex 0.167.0, Grok 1.0.77 (it auto-updated from 1.0.70 during the session; every Grok capture is 1.0.77). Windows Claude Code 2.1.316, Grok 1.0.34, Codex 0.148.0 for the Windows Terminal captures and 0.167.0 for conhost (see "Unplanned change" below). The exact version of each capture is in `manifest.json`.
+Versions: Mac Claude Code 2.1.319, Codex 0.167.0, Grok 1.0.77 (it auto-updated from 1.0.70 during the session; every Grok capture is 1.0.77). Windows Claude Code 2.1.316, Grok 1.0.34, Codex 0.148.0 for the Windows Terminal captures and 0.167.0 for conhost (see "Unplanned change" below). The exact version of each capture is in `manifest.json`. Windows Grok 1.0.77 for every Grok capture that shows a prompt or an idle session (`wt-grok-*`, `conhost-grok-*` other than `signin`); the box's Grok updated itself from 1.0.34 to 1.0.77 at about 21:31, and the two `*-grok-signin` screens were captured around then without a version on screen, so their version is not known.
 
-**Negative control, per cell.** Every cell except the two Windows Grok ones has an idle capture (`<terminal>-<cli>-none`, plus `none-120` for the 120-column iTerm2 and WezTerm cells) of the same session before any prompt was raised: 23 in all, and none parses as a dialog (`Every_idle_capture_is_not_a_dialog` covers all 23, `none-120` included). The two Windows Grok cells have no idle capture because there was never a Grok session to be idle: only the sign-in screens (`wt-grok-signin`, `conhost-grok-signin`), which also do not parse as a dialog. The adversarial control from the plan (an assistant message with a numbered 1..3 list and the input box drawn below it) is **not** captured; it is QA's.
+**Negative control, per cell.** Every cell has an idle capture (`<terminal>-<cli>-none`, plus `none-120` for the 120-column iTerm2 and WezTerm cells) of the same session before any prompt was raised: 25 in all, and none parses as a dialog (`Every_idle_capture_is_not_a_dialog` covers all 25, `none-120` included). The earlier `wt-grok-signin` and `conhost-grok-signin` screens (Grok not yet signed in) are kept as captures and also do not parse; they are not idle sessions. The adversarial control from the plan (an assistant message with a numbered 1..3 list and the input box drawn below it) is **not** captured; it is QA's.
 
 ## The ConPTY answer
 
@@ -42,7 +42,7 @@ What it took, because none of it was obvious:
 
 ## Findings that are not in the table
 
-1. **Grok's prompt shape is new and the parser reads none of it.** Identical on all five Mac terminals (and the sign-in aside, presumably on Windows):
+1. **Grok's prompt shape is new and the parser reads none of it.** Identical on all five Mac terminals. On Windows (Windows Terminal and conhost) it is a five-option variant, headed "Auto-review blocked this action.", with `Always allow` and `Never allow` rows and `│` as the frame under conhost (`(•)` for the selected radio there, `(●)` in Windows Terminal); neither parses either:
 
    ```
     ┃  ›  Create the cb313-probe file in home
@@ -65,10 +65,18 @@ What it took, because none of it was obvious:
 8. **First-run dialogs are real dialogs in their own right.** Captured and kept as fixtures (they are not part of the table): Claude Code's "Allow external CLAUDE.md file imports?" (unnumbered `❯` list, parses as null, `tmux-claude-importdialog`, `wt-claude-importdialog`), Grok's "Do you trust the contents of this directory?" (`tmux-grok-trustdialog`, null), Codex's "Do you trust the contents of this directory?" (`wt-codex-trustdialog`, parses as a 2-option dialog with the explanatory sentence as title), Codex's hooks review (`wt-codex-hooksdialog`, 3 options) and Codex's update prompt (`conhost-codex-updatedialog`, 3 options). A user launching one of these in a fresh directory sees a dialog the panel may or may not be meant to answer.
 9. **Not observed:** wide-character (two-cell) padding from `ReadConsoleOutputCharacterW`. Nothing captured contained a wide glyph.
 
+## Grok on Windows (captured after Warren signed in)
+
+- **Default mode did not prompt for the first two commands.** With `--permission-mode default`, `New-Item C:/Users/xxxxx/cb313-probe -ItemType File` ran with no prompt and created the file (removed afterwards; `wt-grok-ranwithoutprompt`), and a read-only `Get-Content C:/Windows/win.ini` also ran unprompted. A `Remove-Item` of a path that does not exist (so the answer could be No or Yes with nothing to lose) did raise the dialog, several seconds in, after Grok's "auto-review" step. So there is no guarantee a Grok session ever shows a dialog for a given command; reading one is only half of the problem.
+- **The prompt is five options, not three** (`wt-grok-prompt`, `conhost-grok-prompt`): `1 Yes, and don't ask again for anything (always-approve mode)`, `2 Always allow: <pattern>`, `3 Yes, proceed`, `4 No, reject`, `5 Never allow: <pattern>`. Answered with key `4`; nothing ran.
+- **Bracketed paste is not honoured by Grok on Windows.** The text typed by `WriteConsoleInput` with the bracketed-paste markers appears in Grok's message literally as `[200~...[201~`. Codex and Claude Code did not show this. It did not stop the model acting on the request.
+- Grok trusts the directory first (`*-grok-trustdialog`, an unnumbered Yes/No list that does not parse); `y` answered it.
+- The Grok idle input line is `❯` in Windows Terminal and `>` in conhost, the same split as Claude Code.
+
 ## Setup notes
 
 - Requests were typed through each terminal's own route; every prompt was answered No and the file checked absent.
-- Grok was run with `--permission-mode default` (see finding 2). Grok on Windows is left as "not captured, sign-in required": its auth was not touched.
+- Grok was run with `--permission-mode default` (see finding 2). Windows Grok was signed in by Warren himself through the device-code flow; its auth was otherwise not touched.
 - Account name in the captures is replaced with same-length `x` characters.
 
 ## Unplanned change on the Windows box
@@ -78,7 +86,6 @@ Codex 0.148.0 showed an "Update available" dialog in the conhost session, and I 
 ## What was not verified
 
 - The adversarial numbered-list-above-the-input-box control (QA).
-- Grok on Windows, either host: needs a browser sign-in on that machine, which is Warren's to do.
 - Wide-character padding, narrow (80-column) Windows consoles, and Codex 0.167.0 under Windows Terminal (only conhost was captured after the update).
 - Typing routes: requests were typed through each terminal's own scripting route (`send-keys`, `do script`, `write text`, `wezterm cli send-text`, `kitten @ send-text`, `WriteConsoleInput`). The point of the spike was reading, and the typing was only to raise prompts; whether those routes also work for answering was not the question.
 - The probe's Windows reader is not covered by the unit suite (it needs a Windows console; `AttachConsole` has no seam). It ran on the Windows box through the `schtasks` recipe above.

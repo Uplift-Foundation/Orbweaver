@@ -1,0 +1,30 @@
+
+  ~/cb313\conhost-grok                                                                        20K / 256K │ [Dashboard]
+
+
+     > [200~run this exact shell command: Remove-Item C:/Users/warre/cb313-does-not-exist -ErrorAction      10:25 PM
+       SilentlyContinue[201~
+                                                                                                                       █
+                                                                                                                       █
+
+   ♦ Remove non-existent path silently… 34s                                                       42s ↓20.2k [↓][stop]
+
+
+
+
+  │
+  │  >  Remove non-existent path silently
+  │  │ Remove-Item C:/Users/warre/cb313-does-not-exist -ErrorAction SilentlyContinue
+  │  ← → narrow scope  ·  e edit pattern
+  │
+  │  Auto-review blocked this action.  Ctrl-F to view explanation
+  │
+  │  1 (○) Yes, and don't ask again for anything (always-approve mode)
+  │  2 (○) Always allow: Remove-Item C:/Users/warre/cb313-does-not-exist -ErrorAction
+  │  3 (•) Yes, proceed
+  │  4 (○) No, reject (type to add feedback)
+  │  5 (○) Never allow: Remove-Item C:/Users/warre/cb313-does-not-exist -ErrorAction
+  │
+
+  1/5:select  │  Tab:next option  │  ←/→:scope  │  e:edit pattern  │  Ctrl+f:expand  │  Ctrl+o:always-approve
+
