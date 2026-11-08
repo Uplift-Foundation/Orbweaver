@@ -10,7 +10,7 @@ namespace Orbweaver.Tests;
 // DPAPI needs no setup and leaves nothing behind.
 //
 // The Keychain case writes a real item into the login Keychain of whoever runs
-// it, so it is opt-in — ORBWEAVER_KEYCHAIN_TESTS=1 — the same way
+// it, so it is opt-in — BrandEnv.KeychainTests set to 1 — the same way
 // OpenArgumentDeliveryTests keeps its Dock-touching launches off a
 // developer's Mac. It deletes its item afterwards.
 public sealed class WindowsOnlyFactAttribute : FactAttribute
@@ -26,8 +26,8 @@ public sealed class KeychainFactAttribute : FactAttribute
     public KeychainFactAttribute()
     {
         if (!OperatingSystem.IsMacOS()) Skip = "the login Keychain exists only on macOS";
-        else if (Environment.GetEnvironmentVariable("ORBWEAVER_KEYCHAIN_TESTS") != "1")
-            Skip = "writes to the real login Keychain; set ORBWEAVER_KEYCHAIN_TESTS=1 to run";
+        else if (BrandEnv.Get(BrandEnv.KeychainTests) != "1")
+            Skip = $"writes to the real login Keychain; set {BrandEnv.Name(BrandEnv.KeychainTests)}=1 to run";
     }
 }
 

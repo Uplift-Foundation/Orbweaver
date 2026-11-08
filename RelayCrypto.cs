@@ -91,7 +91,10 @@ namespace Orbweaver
                 using var key = ECDiffieHellman.Create(new ECParameters { Curve = Curve, Q = DecodePoint(pub) });
                 return true;
             }
-            catch (CryptographicException)
+            // Windows CNG refuses an off-curve point with PlatformNotSupported
+            // ("curve not valid for this platform") where macOS throws
+            // CryptographicException — measured on CI's windows leg.
+            catch (Exception ex) when (ex is CryptographicException or PlatformNotSupportedException)
             {
                 return false;
             }

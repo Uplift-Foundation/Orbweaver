@@ -300,7 +300,9 @@ namespace Orbweaver
                     ? new RelayCrypto.KeyPair(priv, pub)
                     : null;
             }
-            catch (System.Security.Cryptography.CryptographicException)
+            // A scalar that is not a valid key: CryptographicException on
+            // macOS, PlatformNotSupportedException from CNG on Windows.
+            catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or PlatformNotSupportedException)
             {
                 return null;
             }

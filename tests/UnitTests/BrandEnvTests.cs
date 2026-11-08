@@ -29,12 +29,13 @@ namespace Orbweaver.Tests
         // (NO_RELAY, RC_BRIDGE_TAG), which were deleted rather than renamed,
         // plus LIVE_DAEMON_TESTS, the opt-in gate on DaemonStopLiveTests (CB-264),
         // four of CB-291's, the OpenClaw probe's three (CB-270 Stage 6), the
-        // updater's two test levers (CB-308), and LOCAL_GATE_SHADOW, the
-        // log-only switch for the typing gate (CB-307).
+        // updater's two test levers (CB-308), LOCAL_GATE_SHADOW, the
+        // log-only switch for the typing gate (CB-307), and KEYCHAIN_TESTS,
+        // the opt-in gate on the one test that writes the login Keychain (CB-314).
         [Fact]
-        public void TheListHoldsTwentySixDistinctVariables()
+        public void TheListHoldsTwentySevenDistinctVariables()
         {
-            Assert.Equal(26, BrandEnv.All.Count);
+            Assert.Equal(27, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

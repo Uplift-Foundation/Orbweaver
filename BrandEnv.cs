@@ -82,6 +82,10 @@ namespace Orbweaver
         // downloads a real installer (UpdateRealNetworkTests). CI must never set it.
         internal const string NetworkTests = "NETWORK_TESTS";
 
+        // CB-314: opt-in gate on the one test that writes a real item into the
+        // login Keychain (RelaySecretStorePlatformTests). CI must never set it.
+        internal const string KeychainTests = "KEYCHAIN_TESTS";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -90,7 +94,7 @@ namespace Orbweaver
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
-            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests,
+            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

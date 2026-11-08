@@ -97,7 +97,7 @@ namespace Orbweaver
     // MacOSKeychainItems. See that file for why a read-back of our own item is
     // expected not to prompt on a signed build, and why that is an
     // expectation rather than a measurement.
-    [ExcludeFromCodeCoverage] // real Keychain; RelayKeychainManualTests behind ORBWEAVER_KEYCHAIN_TESTS=1
+    [ExcludeFromCodeCoverage] // real Keychain; RelayKeychainManualTests behind BrandEnv.KeychainTests set to 1
     internal sealed class KeychainSecretStore : IRelaySecretStore
     {
         internal static readonly string Service = Brand.MacBundleId + ".relay";

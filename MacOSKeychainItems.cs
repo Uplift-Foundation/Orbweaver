@@ -23,7 +23,7 @@ namespace Orbweaver
     // class excluded from coverage, because a CI runner has no login
     // Keychain and a developer's test run must not write to theirs.
     // tests/UnitTests/RelayKeychainManualTests exercises it for real behind
-    // ORBWEAVER_KEYCHAIN_TESTS=1.
+    // BrandEnv.KeychainTests set to 1.
     [ExcludeFromCodeCoverage]
     internal static class MacOSKeychainItems
     {
