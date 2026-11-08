@@ -208,3 +208,51 @@ public class RelayRosterTests
         Assert.Equal(1, again.GetProperty("seq").GetInt64());
     }
 }
+
+/// <summary>
+/// CB-314: roster-fixtures.json in Orbweaver-Mobile contracts/ is what the
+/// phone's reducer and screens are built against. Each roster and delta in it
+/// is read back into RelaySession/RelayDelta and re-serialised by RelayRoster;
+/// the bytes must come out identical, so the fixtures can never describe a
+/// field name, an omission or a timestamp format the desktop does not send.
+/// </summary>
+public class RosterFixtureTests
+{
+    private static readonly JsonElement F = JsonDocument.Parse(
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "relay", "roster-fixtures.json"))).RootElement;
+
+    private static string? Opt(JsonElement e, string name) => e.TryGetProperty(name, out var v) ? v.GetString() : null;
+
+    [Theory]
+    [InlineData("macbook_roster")]
+    [InlineData("windows_roster")]
+    [InlineData("empty_roster")]
+    public void Each_roster_is_exactly_what_RelayRoster_writes(string name)
+    {
+        var r = F.GetProperty(name);
+        var sessions = r.GetProperty("sessions").EnumerateArray().Select(s => new RelaySession(
+            s.GetProperty("session_id").GetString()!, s.GetProperty("cli").GetString()!, s.GetProperty("title").GetString()!,
+            s.GetProperty("cwd").GetString()!, s.GetProperty("state").GetString()!, Opt(s, "parent_session_id"),
+            s.TryGetProperty("persona", out var p) ? new RelayPersona(p.GetProperty("name").GetString()!, p.GetProperty("initials").GetString()!, Opt(p, "color")) : null)
+        {
+            Since = DateTimeOffset.Parse(s.GetProperty("since").GetString()!, System.Globalization.CultureInfo.InvariantCulture),
+        }).ToList();
+        Assert.Equal(Compact(r), Encoding.UTF8.GetString(RelayRoster.RosterJson(r.GetProperty("seq").GetInt64(), sessions)));
+    }
+
+    [Fact]
+    public void Each_delta_is_exactly_what_RelayRoster_writes()
+    {
+        var all = F.GetProperty("macbook_deltas_after_roster").EnumerateArray().Append(F.GetProperty("gap_example").GetProperty("delta"));
+        foreach (var d in all)
+        {
+            var delta = new RelayDelta(d.GetProperty("session_id").GetString()!, Opt(d, "state"), Opt(d, "title"),
+                Opt(d, "since") is { } since ? DateTimeOffset.Parse(since, System.Globalization.CultureInfo.InvariantCulture) : null,
+                d.TryGetProperty("removed", out var r) && r.GetBoolean());
+            Assert.Equal(Compact(d), Encoding.UTF8.GetString(RelayRoster.DeltaJson(d.GetProperty("seq").GetInt64(), delta)));
+        }
+    }
+
+    private static string Compact(JsonElement e) =>
+        JsonSerializer.Serialize(e, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default });
+}

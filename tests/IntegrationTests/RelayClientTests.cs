@@ -85,7 +85,7 @@ public class RelayClientTests : IAsyncLifetime
         var nonce = PeekNonce(ct)!.Value;
         var desktopId = envelope.GetProperty("from").GetString()!;
         var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
-        var plain = Open(EpochKey(basis, nonce.Epoch), ct, Aad(desktopId, phone.Id, envelope.GetProperty("class").GetString()!));
+        var plain = Open(EpochKey(basis, nonce.Epoch), ct, Aad(desktopId, phone.Id, envelope.GetProperty("class").GetString()!), DesktopToPhone);
         Assert.NotNull(plain);
         return JsonDocument.Parse(Encoding.UTF8.GetString(plain!)).RootElement;
     }
@@ -365,6 +365,7 @@ public class RelayClientHttpTests : IDisposable
     [InlineData(200, "[1]", "not an object")]
     [InlineData(200, "{}", "no challenge")]
     [InlineData(200, """{"challenge":7}""", "no challenge")]
+    [InlineData(200, """{"challenge":"A"}""", "not base64url")]
     public async Task A_bad_first_registration_answer_is_a_relay_error(int status, string body, string message)
     {
         var (client, identity) = New((_, _) => (status, body));
@@ -379,7 +380,7 @@ public class RelayClientHttpTests : IDisposable
     [InlineData("""{"device_id":"dsk_1"}""", "no token")]
     public async Task A_bad_second_registration_answer_registers_nothing(string second, string message)
     {
-        var (client, identity) = New((_, call) => call == 0 ? (200, """{"challenge":"c"}""") : (200, second));
+        var (client, identity) = New((_, call) => call == 0 ? (200, """{"challenge":"AAAA"}""") : (200, second));
         var ex = await Assert.ThrowsAsync<RelayHttpException>(() => client.BeginPairingAsync());
         Assert.Contains(message, ex.Message);
         Assert.Null(identity.Token);

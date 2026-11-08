@@ -74,7 +74,11 @@ public class RelayCryptoVectorTests
     public void Register_message_matches()
     {
         var r = P.GetProperty("register");
-        Assert.Equal(Str(r, "message"), Hex(RegisterMessage(Str(r, "challenge"))));
+        var raw = FromBase64Url(Str(r, "challenge"))!;
+        Assert.Equal(32, raw.Length);
+        Assert.Equal(Str(r, "challenge_raw"), Hex(raw));
+        Assert.Equal(Str(r, "message"), Hex(RegisterMessage(raw)));
+        Assert.True(Verify(DskId.Public, RegisterMessage(raw), FromBase64Url(Str(r, "sig"))));
     }
 
     [Fact]
@@ -86,7 +90,8 @@ public class RelayCryptoVectorTests
         Assert.Equal(Str(r, "aad"), Hex(aad));
         Assert.Equal(Str(r, "nonce"), Hex(Nonce(PhoneToDesktop, 0, 0)));
         Assert.Equal(Str(r, "ct"), Seal(key, Nonce(PhoneToDesktop, 0, 0), Encoding.UTF8.GetBytes(Str(r, "plaintext")), aad));
-        Assert.Equal(Str(r, "plaintext"), Encoding.UTF8.GetString(Open(key, Str(r, "ct"), aad)!));
+        Assert.Equal(Str(r, "plaintext"), Encoding.UTF8.GetString(Open(key, Str(r, "ct"), aad, PhoneToDesktop)!));
+        Assert.Null(Open(key, Str(r, "ct"), aad, DesktopToPhone));   // the right box, the wrong expected direction
     }
 
     [Fact]
@@ -99,7 +104,7 @@ public class RelayCryptoVectorTests
         var aad = Aad(DesktopId, PhoneId, "pair");
         Assert.Equal(Str(a, "aad"), Hex(aad));
         Assert.Equal(Str(a, "nonce"), Hex(Nonce(DesktopToPhone, 0, 0)));
-        Assert.Equal(Str(a, "plaintext"), Encoding.UTF8.GetString(Open(Bytes(P, "pair_key"), Str(a, "ct"), aad)!));
+        Assert.Equal(Str(a, "plaintext"), Encoding.UTF8.GetString(Open(Bytes(P, "pair_key"), Str(a, "ct"), aad, DesktopToPhone)!));
     }
 
     [Fact]
@@ -110,6 +115,8 @@ public class RelayCryptoVectorTests
         Assert.Equal(Str(bd, "sig_message"), Hex(RevokeMessage(DesktopId, PhoneId)));
         Assert.True(Verify(DskId.Public, RevokeMessage(DesktopId, PhoneId), FromBase64Url(Str(bd, "sig"))));
         Assert.Equal(Str(bp, "sig_message"), Hex(RevokeMessage(PhoneId, DesktopId)));
+        Assert.Equal((PhoneId, DesktopId), (Str(bp, "by"), Str(bp, "peer_id")));
+        Assert.True(Verify(PhId.Public, RevokeMessage(PhoneId, DesktopId), FromBase64Url(Str(bp, "sig"))));
     }
 
     [Fact]
@@ -123,7 +130,7 @@ public class RelayCryptoVectorTests
             switch (Str(n, "expect"))
             {
                 case "open_fails":
-                    Assert.Null(Open(Bytes(n, "key"), Str(n, "ct"), Bytes(n, "aad")));
+                    Assert.Null(Open(Bytes(n, "key"), Str(n, "ct"), Bytes(n, "aad"), PeekNonce(Str(n, "ct"))!.Value.Direction));
                     break;
                 case "verify_fails":
                     Assert.False(Verify(Bytes(n, "public"), Bytes(n, "sig_message"), FromBase64Url(Str(n, "sig"))));
@@ -138,7 +145,7 @@ public class RelayCryptoVectorTests
                     break;
             }
         }
-        Assert.Equal(8, seen);
+        Assert.Equal(10, seen);
     }
 
     // ---- session ---------------------------------------------------------
@@ -196,7 +203,8 @@ public class RelayCryptoVectorTests
             var aad = Aad(Str(s, "from"), Str(s, "to"), Str(s, "class"));
             Assert.Equal(Str(s, "aad"), Hex(aad));
             Assert.Equal(Str(s, "ct"), Seal(key, nonce, Encoding.UTF8.GetBytes(Str(s, "plaintext")), aad));
-            Assert.Equal(Str(s, "plaintext"), Encoding.UTF8.GetString(Open(key, Str(s, "ct"), aad)!));
+            Assert.Equal(Str(s, "plaintext"), Encoding.UTF8.GetString(Open(key, Str(s, "ct"), aad, s.GetProperty("direction").GetUInt32())!));
+            Assert.Equal(Str(s, "aad_text"), Encoding.UTF8.GetString(aad));
             Assert.Equal(ParseNonce(nonce), PeekNonce(Str(s, "ct")));
         }
     }
@@ -208,9 +216,12 @@ public class RelayCryptoVectorTests
         foreach (var n in S.GetProperty("negatives").EnumerateArray())
         {
             count++;
-            Assert.Null(Open(Bytes(n, "key"), Str(n, "ct"), Bytes(n, "aad")));
+            var expected = n.TryGetProperty("expected_direction", out var d)
+                ? d.GetUInt32()
+                : PeekNonce(Str(n, "ct"))?.Direction ?? DesktopToPhone;
+            Assert.Null(Open(Bytes(n, "key"), Str(n, "ct"), Bytes(n, "aad"), expected));
         }
-        Assert.Equal(4, count);
+        Assert.Equal(5, count);
     }
 
     [Fact]
@@ -308,9 +319,9 @@ public class RelayCryptoEdgeTests
     public void Open_and_peek_refuse_malformed_boxes_without_throwing()
     {
         var key = new byte[KeyLength];
-        Assert.Null(Open(key, null, []));
-        Assert.Null(Open(key, "not base64 !", []));
-        Assert.Null(Open(key, Convert.ToBase64String(new byte[27]), []));
+        Assert.Null(Open(key, null, [], DesktopToPhone));
+        Assert.Null(Open(key, "not base64 !", [], DesktopToPhone));
+        Assert.Null(Open(key, Convert.ToBase64String(new byte[27]), [], DesktopToPhone));
         Assert.Null(PeekNonce(null));
         Assert.Null(PeekNonce(Convert.ToBase64String(new byte[27])));
     }
@@ -321,8 +332,16 @@ public class RelayCryptoEdgeTests
         var key = RandomNumberGenerator.GetBytes(KeyLength);
         var ct = Seal(key, Nonce(DesktopToPhone, 4, 2), [], "a|b|c"u8.ToArray());
         Assert.Equal(NonceLength + TagLength, Convert.FromBase64String(ct).Length);
-        Assert.Empty(Open(key, ct, "a|b|c"u8.ToArray())!);
+        Assert.Empty(Open(key, ct, "a|b|c"u8.ToArray(), DesktopToPhone)!);
+        Assert.Null(Open(key, ct, "a|b|c"u8.ToArray(), PhoneToDesktop));
     }
+
+    [Theory]
+    [InlineData("a|b", "c", "state")]
+    [InlineData("a", "b|c", "state")]
+    [InlineData("a", "b", "st|ate")]
+    public void Aad_refuses_a_component_that_could_be_confused_with_another_routing(string from, string to, string cls) =>
+        Assert.Throws<ArgumentException>(() => Aad(from, to, cls));
 }
 
 public class RelaySendCounterTests

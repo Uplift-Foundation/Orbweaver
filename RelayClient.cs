@@ -354,8 +354,9 @@ namespace Orbweaver
             var first = await PostAsync("/v1/register", fields, token).ConfigureAwait(false);
             var challenge = Str(first, "challenge") ?? throw new RelayHttpException("the relay sent no challenge");
 
+            var raw = RelayCrypto.FromBase64Url(challenge) ?? throw new RelayHttpException("the relay's challenge was not base64url");
             fields["challenge"] = challenge;
-            fields["sig"] = RelayCrypto.Base64Url(RelayCrypto.Sign(id, RelayCrypto.RegisterMessage(challenge)));
+            fields["sig"] = RelayCrypto.Base64Url(RelayCrypto.Sign(id, RelayCrypto.RegisterMessage(raw)));
             var second = await PostAsync("/v1/register", fields, token).ConfigureAwait(false);
             var deviceId = Str(second, "device_id") ?? throw new RelayHttpException("the relay sent no device id");
             var issued = Str(second, "token") ?? throw new RelayHttpException("the relay sent no token");

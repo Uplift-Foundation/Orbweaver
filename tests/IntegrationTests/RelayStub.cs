@@ -94,11 +94,12 @@ internal sealed class RelayStub : IAsyncDisposable
         LastIdPub = json.GetProperty("id_pub").GetString();
         if (!json.TryGetProperty("sig", out var sig))
         {
-            await Json(ctx, 200, new { challenge = "challenge-" + Registrations });
+            // As the relay does (addendum 1): 32 random bytes, base64url.
+            await Json(ctx, 200, new { challenge = RelayCrypto.Base64Url(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)) });
             return;
         }
         var challenge = json.GetProperty("challenge").GetString()!;
-        if (!RelayCrypto.Verify(idPub, RelayCrypto.RegisterMessage(challenge), RelayCrypto.FromBase64Url(sig.GetString())))
+        if (!RelayCrypto.Verify(idPub, RelayCrypto.RegisterMessage(RelayCrypto.FromBase64Url(challenge)!), RelayCrypto.FromBase64Url(sig.GetString())))
         {
             await Json(ctx, 401, new { code = "bad_signature" });
             return;

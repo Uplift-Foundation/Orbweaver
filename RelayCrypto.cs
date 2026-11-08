@@ -162,10 +162,11 @@ namespace Orbweaver
 
         // ---- registration (§2.1) ---------------------------------------
 
-        // What the identity key signs to prove to the relay it holds it. The
-        // challenge is the relay's string exactly as received, UTF-8.
-        internal static byte[] RegisterMessage(string challenge) =>
-            Concat(Utf8("orbweaver-register-v1"), Utf8(challenge));
+        // What the identity key signs to prove to the relay it holds it:
+        // the prefix then the RAW 32 challenge bytes — the relay's base64url
+        // string decoded, not its text (CB-314 addendum 1).
+        internal static byte[] RegisterMessage(byte[] challenge) =>
+            Concat(Utf8("orbweaver-register-v1"), challenge);
 
         // ---- pairing (§2.2) ---------------------------------------------
 
@@ -254,8 +255,17 @@ namespace Orbweaver
         }
 
         // Binds the ciphertext to its routing: a frame re-addressed by a
-        // hostile relay no longer opens.
-        internal static byte[] Aad(string from, string to, string cls) => Utf8($"{from}|{to}|{cls}");
+        // hostile relay no longer opens. The separator is unescaped, so
+        // ("a|b","c") and ("a","b|c") would give the same bytes; no device id
+        // or class ever contains '|', so one that does is refused outright
+        // rather than letting two different routings share an AAD. The bytes
+        // for every legal input are unchanged, so the vectors stand.
+        internal static byte[] Aad(string from, string to, string cls)
+        {
+            if (from.Contains('|') || to.Contains('|') || cls.Contains('|'))
+                throw new ArgumentException("an AAD component contains '|'");
+            return Utf8($"{from}|{to}|{cls}");
+        }
 
         // base64(nonce ‖ ciphertext ‖ tag) — CryptoKit's SealedBox.combined.
         internal static string Seal(byte[] key, byte[] nonce, byte[] plaintext, byte[] aad)
@@ -277,13 +287,17 @@ namespace Orbweaver
             return box is null ? null : ParseNonce(box.AsSpan(0, NonceLength));
         }
 
-        // Null when `ct` is malformed, truncated, or fails authentication —
-        // never an exception, because every one of those arrives off the
-        // network and none is the desktop's fault.
-        internal static byte[]? Open(byte[] key, string? ct, byte[] aad)
+        // Null when `ct` is malformed, truncated, carries the other
+        // direction's nonce prefix, or fails authentication — never an
+        // exception, because every one of those arrives off the network and
+        // none is the desktop's fault. The direction check is defence in
+        // depth: a box sealed for the other direction under the same key could
+        // otherwise be reflected back at its sender.
+        internal static byte[]? Open(byte[] key, string? ct, byte[] aad, uint expectedDirection)
         {
             var box = DecodeBox(ct);
             if (box is null) return null;
+            if (ParseNonce(box.AsSpan(0, NonceLength)).Direction != expectedDirection) return null;
             var length = box.Length - NonceLength - TagLength;
             var plaintext = new byte[length];
             try

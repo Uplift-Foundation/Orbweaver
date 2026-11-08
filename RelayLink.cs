@@ -160,7 +160,9 @@ namespace Orbweaver
                     else Refused(Str(f, "code") ?? "unknown");
                     return [];
                 case "err" when Str(f, "code") == "unlinked":
-                    var gone = Str(f, "peer_id") ?? Str(f, "device_id");
+                    // peer_id on current relays; the older image carried the
+                    // id only in `message` (hana, 8 Nov), so both are read.
+                    var gone = Str(f, "peer_id") ?? Str(f, "message");
                     if (gone is not null) DropPhone(gone, byPhone: true);
                     return [];
                 case "err":
@@ -224,7 +226,10 @@ namespace Orbweaver
             var to = Str(f, "to");
             var cls = Str(f, "class");
             var ct = Str(f, "ct");
-            if (from is null || cls is null || ct is null || to != _identity.DeviceId)
+            // A '|' in from or class could never name a real device or class,
+            // and Aad refuses it — so it is dropped here, before anything
+            // tries to open the box, rather than thrown out of the read loop.
+            if (from is null || cls is null || ct is null || to != _identity.DeviceId || from.Contains('|') || cls.Contains('|'))
             {
                 Note("envelope: misaddressed or incomplete");
                 return [];
@@ -260,7 +265,7 @@ namespace Orbweaver
                 Note("envelope refused: wrong direction, replayed or reordered");
                 return null;
             }
-            var plain = RelayCrypto.Open(c.KeyFor(n.Epoch), ct, RelayCrypto.Aad(c.Phone.PhoneId, _identity.DeviceId!, cls));
+            var plain = RelayCrypto.Open(c.KeyFor(n.Epoch), ct, RelayCrypto.Aad(c.Phone.PhoneId, _identity.DeviceId!, cls), RelayCrypto.PhoneToDesktop);
             if (plain is null) { Note("envelope refused: did not open"); return null; }
             c.Window.Accept(n.Epoch, n.Counter);
             _identity.SaveReceive(c.Phone.PhoneId, n.Epoch, n.Counter);
@@ -299,7 +304,7 @@ namespace Orbweaver
 
             var pairKey = RelayCrypto.PairKey(offer.PairSecret, offer.OfferId, _identity.DeviceId!, from);
             if (RelayCrypto.PeekNonce(ct) is not { Direction: RelayCrypto.PhoneToDesktop }
-                || RelayCrypto.Open(pairKey, ct, RelayCrypto.Aad(from, _identity.DeviceId!, "pair")) is not { } plain
+                || RelayCrypto.Open(pairKey, ct, RelayCrypto.Aad(from, _identity.DeviceId!, "pair"), RelayCrypto.PhoneToDesktop) is not { } plain
                 || Json(plain) is not { } body
                 || Str(body, "t") != "pair.request" || Str(body, "phone_id") != from)
             {

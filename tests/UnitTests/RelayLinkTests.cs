@@ -92,7 +92,7 @@ public class RelayLinkTests : IDisposable
             var ct = e.GetProperty("ct").GetString()!;
             var n = PeekNonce(ct)!.Value;
             Assert.Equal(DesktopToPhone, n.Direction);
-            var plain = Open(EpochKey(Base(), n.Epoch), ct, Aad(e.GetProperty("from").GetString()!, Id, e.GetProperty("class").GetString()!));
+            var plain = Open(EpochKey(Base(), n.Epoch), ct, Aad(e.GetProperty("from").GetString()!, Id, e.GetProperty("class").GetString()!), DesktopToPhone);
             Assert.NotNull(plain);
             return J(Encoding.UTF8.GetString(plain!));
         }
@@ -179,7 +179,7 @@ public class RelayLinkTests : IDisposable
         // 1. pair.accept, under the pair key, carrying the offer for the relay's routing.
         var accept = J(frames[0]);
         Assert.Equal(("pair", "off_1", phone.Id), (accept.GetProperty("class").GetString(), accept.GetProperty("offer").GetString(), accept.GetProperty("to").GetString()));
-        var acceptBody = J(Encoding.UTF8.GetString(Open(phone.PairKey!, accept.GetProperty("ct").GetString()!, Aad(DesktopId, phone.Id, "pair"))!));
+        var acceptBody = J(Encoding.UTF8.GetString(Open(phone.PairKey!, accept.GetProperty("ct").GetString()!, Aad(DesktopId, phone.Id, "pair"), DesktopToPhone)!));
         Assert.Equal("pair.accept", acceptBody.GetProperty("t").GetString());
         Assert.Equal("MacBook Pro", acceptBody.GetProperty("name").GetString());
         Assert.True(Verify(phone.DesktopIdPub!, AcceptMessage(DesktopId, phone.Id, phone.DesktopIdPub!, phone.DesktopKaPub!, phone.IdKey.Public, phone.KaKey.Public),
@@ -453,7 +453,9 @@ public class RelayLinkTests : IDisposable
         link.OnFrame(phone.Sealed("state", "{}", to: "dsk_someone_else"));
         link.OnFrame("""{"v":2,"from":"ph_x","to":"dsk_00000000000000aa","class":"state"}""");
         link.OnFrame("""{"v":2,"from":"ph_x","to":"dsk_00000000000000aa","class":"state","ct":"AAAA"}""");
-        Assert.Equal(2, notes.Count(n => n == "envelope: misaddressed or incomplete"));
+        link.OnFrame("""{"v":2,"from":"ph_x|dsk_00000000000000aa","to":"dsk_00000000000000aa","class":"pair","ct":"AAAA","offer":"off_1"}""");
+        link.OnFrame("""{"v":2,"from":"ph_x","to":"dsk_00000000000000aa","class":"pa|ir","ct":"AAAA"}""");
+        Assert.Equal(4, notes.Count(n => n == "envelope: misaddressed or incomplete"));   // a '|' never reaches Aad
         Assert.Contains("envelope from unpaired ph_x class=state", notes);
     }
 
@@ -464,7 +466,7 @@ public class RelayLinkTests : IDisposable
         var removed = new List<string>();
         link.PhoneRemoved += removed.Add;
         link.OnFrame($$"""{"t":"err","code":"unlinked","peer_id":"{{phone.Id}}"}""");
-        link.OnFrame($$"""{"t":"err","code":"unlinked","device_id":"{{phone.Id}}"}""");
+        link.OnFrame($$"""{"t":"err","code":"unlinked","message":"{{phone.Id}}"}""");   // the older relay image's shape
         link.OnFrame("""{"t":"err","code":"unlinked"}""");
         Assert.Equal([phone.Id], removed);
         Assert.Empty(identity.Phones);
@@ -639,6 +641,36 @@ public class RelayLinkTests : IDisposable
         Assert.Contains("envelope refused: wrong direction, replayed or reordered", notes);
         restarted.OnFrame(phone.Sealed("action", "{}", epoch: 3, counter: 10));
         Assert.Single(notes);
+    }
+
+    // nadia's case: the process rotates to a new epoch, the write fails, the
+    // frame is held — and then the process dies before the write ever
+    // succeeds. The restart reads the old epoch from disk and moves one past
+    // it, which is the very epoch the dead process held in memory but never
+    // sent under. Every (epoch, counter) that actually left either process
+    // must be distinct.
+    [Fact]
+    public void A_crash_after_rotation_but_before_the_persist_reuses_no_nonce()
+    {
+        var (link, _, phone, _, allowFrames) = Paired();
+        var sent = allowFrames.Skip(2).Select(NonceOf).ToList();          // the roster after Allow
+        sent.AddRange(link.OnScan([Row("s1")]).Select(NonceOf));
+        sent.AddRange(link.OnScan([Row("s1", "waiting")]).Select(NonceOf));
+
+        _now = _now.AddHours(24);                                         // rotation due
+        var moved = Block();
+        Assert.Empty(link.OnScan([Row("s1", "idle")]));                   // rotated in memory, not persisted, held
+        Unblock(moved);
+        // ...and the process dies here: `link` is never used again.
+
+        var (restarted, _, _) = New(new RelayIdentity(_dir, _store, () => _now));
+        restarted.OnFrame(Welcome(phone.Id));
+        sent.AddRange(restarted.OnFrame(Presence(phone.Id, true)).Select(NonceOf));
+        sent.AddRange(restarted.OnScan([Row("s1", "generating")]).Select(NonceOf));
+
+        Assert.Equal(sent.Count, sent.Distinct().Count());
+        Assert.Equal(1, sent[^1].Epoch);                                  // the restart's epoch
+        Assert.All(sent.Take(3), n => Assert.Equal(0, n.Epoch));
     }
 
     [Fact]
