@@ -68,10 +68,14 @@ What it took, because none of it was obvious:
 ## Grok on Windows (captured after Warren signed in)
 
 - **Default mode did not prompt for the first two commands.** With `--permission-mode default`, `New-Item C:/Users/xxxxx/cb313-probe -ItemType File` ran with no prompt and created the file (removed afterwards; `wt-grok-ranwithoutprompt`), and a read-only `Get-Content C:/Windows/win.ini` also ran unprompted. A `Remove-Item` of a path that does not exist (so the answer could be No or Yes with nothing to lose) did raise the dialog, several seconds in, after Grok's "auto-review" step. So there is no guarantee a Grok session ever shows a dialog for a given command; reading one is only half of the problem.
-- **The prompt is five options, not three** (`wt-grok-prompt`, `conhost-grok-prompt`): `1 Yes, and don't ask again for anything (always-approve mode)`, `2 Always allow: <pattern>`, `3 Yes, proceed`, `4 No, reject`, `5 Never allow: <pattern>`. Answered with key `4`, after which the screen returned to the idle input. That the No took effect is not shown: the command was a `Remove-Item` of a path that never existed, so its absence afterwards proves nothing about the denial (the parse result does not depend on it).
+- **The prompt is five options, not three** (`wt-grok-prompt`, `conhost-grok-prompt`): `1 Yes, and don't ask again for anything (always-approve mode)`, `2 Always allow: <pattern>`, `3 Yes, proceed`, `4 No, reject`, `5 Never allow: <pattern>`. No was selected with key `4`, after which the screen returned to the idle input, and nothing ran that we could observe. The denial control is weak: the command was a `Remove-Item` of a path that never existed, so its absence afterwards does not show the No took effect (the parse result does not depend on it).
 - **Bracketed paste is not honoured by Grok on Windows.** The text typed by `WriteConsoleInput` with the bracketed-paste markers appears in Grok's message literally as `[200~...[201~`. Codex and Claude Code did not show this. It did not stop the model acting on the request.
 - Grok trusts the directory first (`*-grok-trustdialog`, an unnumbered Yes/No list that does not parse); `y` answered it.
 - The Grok idle input line is `❯` in Windows Terminal and `>` in conhost, the same split as Claude Code.
+
+## Provenance of the seven Windows Grok fixtures
+
+The seven fixtures added with Grok signed in (`wt-grok-none`, `wt-grok-trustdialog`, `wt-grok-prompt`, `wt-grok-ranwithoutprompt`, `conhost-grok-none`, `conhost-grok-prompt`, `conhost-grok-trustdialog`) cannot be hash-checked against originals on the box, because its scratch directory was removed after capture. Their provenance rests on the capture log of the engineer who took them.
 
 ## Setup notes
 
