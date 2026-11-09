@@ -137,6 +137,14 @@ namespace Orbweaver
         // t:"answer" — a /v1/ack push-ack (class control, plaintext ct) cannot
         // open, and nothing else is dispatched here.
         internal event Action<string, byte[], PhoneAnswer> AnswerReceived = delegate { };
+        // CB-316: a phone's live-screen request (watch, unwatch, input, launch):
+        // (phone id, envelope id, id_pub for a launch's signature, the opened
+        // plaintext). Only for an action envelope that opened under the pair's
+        // session key and named one of those types.
+        internal event Action<string, string, byte[], JsonElement> RequestReceived = delegate { };
+        // A phone went offline: its watches end, so the relay's queue is never
+        // filled with windows for a phone that is not reading them.
+        internal event Action<string> PhoneWentOffline = delegate { };
         // CB-315 gate (a): the relay's ok pushed / push_throttled /
         // push_no_token for an amber, with APNs's round trip when it gave one.
         internal event Action<string, string, int?> PushReplied = delegate { };
@@ -290,7 +298,9 @@ namespace Orbweaver
             if (f.TryGetProperty("last_seen", out var ls) && ls.ValueKind == JsonValueKind.Number && ls.TryGetInt64(out var secs))
                 c.LastSeen = DateTimeOffset.FromUnixTimeSeconds(secs);
             var cameOnline = online && !c.Online;
+            var wentOffline = !online && c.Online;
             c.Online = online;
+            if (wentOffline) PhoneWentOffline(id);
             PresenceChanged();
             return cameOnline ? Collect(RosterFor(c)) : [];
         }
@@ -348,6 +358,11 @@ namespace Orbweaver
             {
                 if (ParseAnswer(act) is { } answer) AnswerReceived(from, channel.Phone.IdPublic, answer);
                 else Note($"answer from {from} malformed; ignored");
+            }
+            else if (cls == "action" && Json(plain) is { } req && Str(req, "t") is "watch" or "unwatch" or "input" or "launch")
+            {
+                // The element must outlive the JsonDocument it came from.
+                RequestReceived(from, Str(f, "id") ?? "", channel.Phone.IdPublic, req.Clone());
             }
             return [];
         }
@@ -617,6 +632,21 @@ namespace Orbweaver
             }
             return frames;
         }
+
+        // CB-316: one sealed frame to one phone. class chat for window, action
+        // for ok/err replies and state for usage; ck names a session (or is
+        // empty). Only an online phone gets live-screen frames: they are not
+        // worth queueing for a phone that is not looking.
+        internal IReadOnlyList<string> SendToPhone(string phoneId, string cls, string? ckName, string plaintext,
+            string push = "none", string? pushPlaintext = null, string? id = null)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c) || !c.Online) return [];
+            var ck = ckName is null ? "" : RelayCrypto.Ck(c.CkKey, ckName);
+            var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, Encoding.UTF8.GetBytes(pushPlaintext));
+            return Collect(SealTo(c, cls, ck, Encoding.UTF8.GetBytes(plaintext), id, push, e));
+        }
+
+        internal IReadOnlyList<string> OnlinePhoneIds() => _channels.Values.Where(c => c.Online).Select(c => c.Phone.PhoneId).ToList();
 
         // A refusal goes only to the phone that answered.
         internal IReadOnlyList<string> SendRefusal(string phoneId, string requestId, string sessionId, string code)

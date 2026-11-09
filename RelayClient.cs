@@ -105,7 +105,8 @@ namespace Orbweaver
 
         internal RelayClient(RelayIdentity identity, Options options, IRelayTransport transport,
             HttpMessageHandler? http = null, Func<DateTimeOffset>? now = null,
-            Func<TimeSpan, CancellationToken, Task>? delay = null, PromptPipeline.Seams? promptSeams = null)
+            Func<TimeSpan, CancellationToken, Task>? delay = null, PromptPipeline.Seams? promptSeams = null,
+            PhoneService.Seams? phoneSeams = null)
         {
             _identity = identity;
             _options = options;
@@ -139,6 +140,7 @@ namespace Orbweaver
             // ResendPendingAsync for why every one, not only the unsent).
             _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
             _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
+            StartPhone(phoneSeams);
             _link.PushAcked += (phone, id, atMs) =>
             {
                 MirrorLog.Say("relay", $"push-ack {id} from {phone} at_ms={atMs}");
@@ -152,6 +154,44 @@ namespace Orbweaver
         }
 
         internal PromptPipeline Prompts { get; }
+
+        // CB-316: the phone's live screens (watch, unwatch, input; launch and
+        // usage follow). Frames are produced on the tail's debounce and on a
+        // request, and sealed to the one phone that asked.
+        internal PhoneService Phone { get; private set; } = null!;
+        private readonly PhoneSeams _phoneSeams = new();
+        private System.Threading.Timer? _tail;
+
+        private void StartPhone(PhoneService.Seams? seams)
+        {
+            Phone = new PhoneService(seams ?? new PhoneService.Seams(
+                _phoneSeams.Find, _phoneSeams.Load, PhoneSeams.CanType, PhoneSeams.TypeAsync,
+                SendToPhone, line => MirrorLog.Say("relay", line)));
+            _link.RequestReceived += (phone, id, idPub, frame) => Defer(() => _ = HandleRequestAsync(phone, id, frame));
+            _link.PhoneWentOffline += phone => Defer(() => PhoneOffline(phone));
+            // 250 ms is the spec's debounce: rows appended within it become one window.
+            _tail = new System.Threading.Timer(_ => TailTick(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+        }
+
+        private bool SendToPhone(string phoneId, string cls, string? ckSession, string plaintext) =>
+            Dispatch(() => _link.SendToPhone(phoneId, cls, ckSession, plaintext));
+
+        private async Task HandleRequestAsync(string phone, string id, System.Text.Json.JsonElement frame)
+        {
+            try { await Phone.OnRequestAsync(phone, id, frame).ConfigureAwait(false); }
+            catch (Exception e) { MirrorLog.Say("relay", $"phone request failed: {e.GetType().Name}"); }
+        }
+
+        private readonly object _tailGate = new();
+        private void TailTick()
+        {
+            if (!Monitor.TryEnter(_tailGate)) return;
+            try { if (Phone.WatchCount > 0) Phone.Tick(); }
+            catch (Exception e) { MirrorLog.Say("relay", $"phone tail failed: {e.GetType().Name}"); }
+            finally { Monitor.Exit(_tailGate); }
+        }
+
+        private void PhoneOffline(string phone) { lock (_tailGate) Phone.PhoneOffline(phone); }
 
         // The relay's answer to each amber (request id, pushed / push_throttled /
         // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on
@@ -176,8 +216,11 @@ namespace Orbweaver
         // The whole scan, for the prompt watcher; the roster gets its
         // projection through OnScanned.
         // Nothing is captured for a desktop with no phone to send a prompt to.
-        internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot) =>
-            _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
+        internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
+        {
+            _phoneSeams.OnScan(snapshot);
+            return _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
+        }
 
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
@@ -236,6 +279,7 @@ namespace Orbweaver
 
         public void Dispose()
         {
+            _tail?.Dispose();
             StopAsync().GetAwaiter().GetResult();
             _http.Dispose();
             _registering.Dispose();
