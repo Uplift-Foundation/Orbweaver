@@ -643,4 +643,15 @@ public class PromptPipelineTests
         Assert.True(at >= 0);
         Assert.True(at < _log.FindIndex(l => l.StartsWith("press ")));
     }
+
+    // Two sessions waiting on the same dialog text are two prompts: a device
+    // run rotates sessions to stay under the relay's per-session throttle.
+    [Fact]
+    public async Task Two_sessions_on_identical_dialogs_mint_two_prompts()
+    {
+        await _p.OnScannedAsync([("s1", Status()), ("s2", Status())]);
+        Assert.Equal(2, _sent.Prompts.Count);
+        Assert.Equal(["s1", "s2"], _sent.Prompts.Select(p => p.Sid));
+        Assert.NotEqual(_sent.Prompts[0].Rid, _sent.Prompts[1].Rid);
+    }
 }
