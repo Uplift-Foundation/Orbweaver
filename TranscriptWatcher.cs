@@ -80,6 +80,7 @@ namespace Orbweaver
             return TranscriptWatch.Diff(_held, _first, lines, _last) switch
             {
                 TranscriptWatch.Change.Tail => Hold(lines, TranscriptWatch.Tail(SessionId, lines, _held)),
+                TranscriptWatch.Change.Restate => Hold(lines, TranscriptWatch.Tail(SessionId, lines, _held - 1)),
                 TranscriptWatch.Change.Reset => Hold(lines, TranscriptWatch.Backfill(SessionId, lines, reset: true)),
                 _ => [],
             };

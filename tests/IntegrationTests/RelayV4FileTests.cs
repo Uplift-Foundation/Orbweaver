@@ -143,9 +143,10 @@ public class RelayV4FileTests : IDisposable
     }
 
     // Grok coalesces streamed chunks into one turn, so a turn grows with no
-    // new row: the phone gets a reset carrying the whole text.
+    // new row: the phone gets a live window restating just that row at its
+    // own index, never a reset backfill.
     [Fact]
-    public void A_grok_turn_that_grows_in_place_reaches_the_phone_as_a_reset()
+    public void A_grok_turn_that_grows_in_place_is_restated_live_at_its_index()
     {
         var path = Transcript("grok", 2);
         var w = Watcher(path, "grok");
@@ -153,10 +154,11 @@ public class RelayV4FileTests : IDisposable
         File.AppendAllLines(path, ["{\"timestamp\":1788198399,\"method\":\"session/update\",\"params\":{\"sessionId\":\"s1\",\"update\":"
             + "{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\" and more\"}}}}"]);
         w.Poll(T0);
-        var reset = J(w.Poll(T0.AddMilliseconds(300)).Single());
-        Assert.True(reset.GetProperty("reset").GetBoolean());
-        Assert.Equal(2, reset.GetProperty("total").GetInt32());
-        Assert.Equal("agent 1 and more", reset.GetProperty("lines")[1].GetProperty("text").GetString());
+        var restated = J(w.Poll(T0.AddMilliseconds(300)).Single());
+        Assert.False(restated.TryGetProperty("reset", out _));
+        Assert.Equal((true, 1, 2, 1), (restated.GetProperty("live").GetBoolean(), restated.GetProperty("from_line").GetInt32(),
+            restated.GetProperty("total").GetInt32(), restated.GetProperty("lines").GetArrayLength()));
+        Assert.Equal("agent 1 and more", restated.GetProperty("lines")[0].GetProperty("text").GetString());
     }
 
     [Fact]

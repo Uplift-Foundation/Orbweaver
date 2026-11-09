@@ -120,26 +120,31 @@ namespace Orbweaver
             return list;
         }
 
-        internal enum Change { None, Tail, Reset }
+        // Restate: the last row sent changed in place (with or without rows
+        // after it), so the tail starts at that row's own index.
+        internal enum Change { None, Tail, Restate, Reset }
 
         // Rows are append-only (frames-v4 window.rules): a count that did not
         // grow sends nothing, one that grew sends the new rows, and one that
         // shrank — or a first row that is no longer the one sent — means the
         // file was truncated or replaced, which is a reset backfill.
         //
-        // Two refinements QA found (CB-316). Rows are compared by what the
+        // Two refinements from CB-316's QA round. Rows are compared by what the
         // phone draws, never by `at`: every parser falls back to "now" for a
         // row with no timestamp, so the same row parsed twice differs in time
         // and an Equals compare reset on every change. And the last row sent
         // is compared too: Grok's parser coalesces streamed chunks into one
-        // turn, so that row grows in place without the count moving. The
-        // phone drops a repeated index, so a re-sent line could never update
-        // it; a reset is the one window the contract lets replace it.
+        // turn, so that row grows in place without the count moving. That is
+        // a Restate — a live tail from the row's own index, which the phone
+        // replaces by index — not a reset: a reset is a 200-line backfill
+        // every 250 ms while a turn streams, and drops everything the phone
+        // holds (PM decision, final). Reset stays for a shrink or a changed
+        // first row.
         internal static Change Diff(int heldCount, WireLine? heldFirst, IReadOnlyList<WireLine> now, WireLine? heldLast = null)
         {
             if (now.Count < heldCount) return Change.Reset;
             if (heldCount > 0 && heldFirst is { } first && !Same(first, now[0])) return Change.Reset;
-            if (heldCount > 0 && heldLast is { } last && !Same(last, now[heldCount - 1])) return Change.Reset;
+            if (heldCount > 0 && heldLast is { } last && !Same(last, now[heldCount - 1])) return Change.Restate;
             return now.Count > heldCount ? Change.Tail : Change.None;
         }
 

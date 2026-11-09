@@ -142,15 +142,43 @@ public class RelayV4RuleTests
         Assert.False(TranscriptWatch.Same(L("a"), L(new string('a', 9000))));
     }
 
-    // A last row that grew in place (Grok coalescing streamed chunks) is a
-    // reset, with or without new rows after it: the phone keeps lines by
-    // index, so a re-sent line would be dropped as a duplicate.
+    // A last row that grew in place (Grok coalescing streamed chunks) is
+    // restated from its own index, with or without new rows after it — never
+    // a reset, which stays for a shrink or a changed first row.
     [Fact]
-    public void A_last_row_that_grew_in_place_is_a_reset()
+    public void A_last_row_that_grew_in_place_is_restated_not_reset()
     {
-        Assert.Equal(TranscriptWatch.Change.Reset, TranscriptWatch.Diff(2, L("a"), [L("a"), L("bc")], L("b")));
-        Assert.Equal(TranscriptWatch.Change.Reset, TranscriptWatch.Diff(2, L("a"), [L("a"), L("bc"), L("d")], L("b")));
+        Assert.Equal(TranscriptWatch.Change.Restate, TranscriptWatch.Diff(2, L("a"), [L("a"), L("bc")], L("b")));
+        Assert.Equal(TranscriptWatch.Change.Restate, TranscriptWatch.Diff(2, L("a"), [L("a"), L("bc"), L("d")], L("b")));
         Assert.Equal(TranscriptWatch.Change.Tail, TranscriptWatch.Diff(2, L("a"), [L("a"), L("b"), L("d")], L("b")));
+        Assert.Equal(TranscriptWatch.Change.Reset, TranscriptWatch.Diff(2, L("a"), [L("z"), L("bc")], L("b")));
+    }
+
+    [Fact]
+    public void The_watcher_restates_a_grown_last_row_at_its_own_index()
+    {
+        var file = new File();
+        file.Append("a", "b");
+        var w = new TranscriptWatcher("ph", "s", file.Seams);
+        w.Start();
+
+        file.Lines![1] = L("b grew");
+        file.Length++;
+        w.Poll(Ms(0));
+        var restated = J(w.Poll(Ms(300)).Single());
+        Assert.Equal((true, 1, 2, 1, "b grew"), (restated.GetProperty("live").GetBoolean(), restated.GetProperty("from_line").GetInt32(),
+            restated.GetProperty("total").GetInt32(), restated.GetProperty("lines").GetArrayLength(),
+            restated.GetProperty("lines")[0].GetProperty("text").GetString()));
+        Assert.False(restated.TryGetProperty("reset", out _));
+
+        // It grows again and a new row lands in the same quiet period: one
+        // window from the grown row's index carrying both.
+        file.Lines[1] = L("b grew more");
+        file.Append("c");
+        w.Poll(Ms(400));
+        var both = J(w.Poll(Ms(700)).Single());
+        Assert.Equal((1, 3, 2), (both.GetProperty("from_line").GetInt32(), both.GetProperty("total").GetInt32(),
+            both.GetProperty("lines").GetArrayLength()));
     }
 
     [Fact]
