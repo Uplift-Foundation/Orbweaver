@@ -34,22 +34,37 @@ public class PeerLinkLivenessTests
     // on the stream has been consumed, which on the old loop never happened —
     // it read one message and then waited on the handler that was waiting on
     // this test.
+    //
+    // Gated on two signals, never on elapsed time: the handler for "a" has
+    // started, and the loop has read to the end of the stream. Both have to
+    // be awaited. The reader and the handler run on separate tasks, so on a
+    // fast runner the reader can reach the end before the handler has even
+    // been entered; CI on 49119e2bd caught a version that polled only the
+    // stream position and asserted in that gap.
     [Fact]
     public async Task TheLoopKeepsReadingWhileAHandlerIsStillBusy()
     {
         var got = new List<PeerProtocol.PeerMessage>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var link = Link(got, message => message.Id == "a" ? release.Task : Task.CompletedTask);
+        var link = Link(got, message =>
+        {
+            if (message.Id != "a") return Task.CompletedTask;
 
-        using var stream = await StreamOf(
+            entered.TrySetResult();
+            return release.Task;
+        });
+
+        using var stream = new SignalsItsEnd(await Bytes(
             PeerProtocol.Message(PeerProtocol.Window, "a"),
             PeerProtocol.Message(PeerProtocol.Window, "b"),
-            PeerProtocol.Message(PeerProtocol.Window, "c"));
+            PeerProtocol.Message(PeerProtocol.Window, "c")));
 
         var pump = link.PumpAsync("mini", stream, CancellationToken.None);
 
-        await WaitUntil(() => stream.Position == stream.Length);
-        Assert.Equal(stream.Length, stream.Position);
+        // The end of the stream is reached while "a" is still held. On the
+        // old loop this never happened: it waited on "a" before reading "b".
+        await Task.WhenAll(entered.Task, stream.ReachedEnd).WaitAsync(TimeSpan.FromSeconds(30));
 
         // Read, but not yet handled: order is kept, so b and c wait behind a.
         lock (got) Assert.Equal(new[] { "a" }, got.Select(m => m.Id));
@@ -95,7 +110,7 @@ public class PeerLinkLivenessTests
 
         now = T0 + PeerLink.KeepaliveEvery;
         link.CheckLiveness();
-        await WaitUntil(() => wire.BytesWritten > 0);
+        await wire.FirstWrite.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Same instant again: the one just sent is recent, so nothing more.
         link.CheckLiveness();
@@ -139,14 +154,23 @@ public class PeerLinkLivenessTests
     public async Task BytesArrivingPushTheDeadlineOut()
     {
         var now = T0;
-        using var link = Link(new List<PeerProtocol.PeerMessage>());
+        var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var link = Link(new List<PeerProtocol.PeerMessage>(), _ =>
+        {
+            delivered.TrySetResult();
+            return Task.CompletedTask;
+        });
         link.Now = () => now;
 
         using var wire = new Parked();
         link.Adopt("mini", wire, "pin", CancellationToken.None);
 
+        // A delivered message has been read in full, so its bytes are
+        // stamped at 50 s before the clock moves on. Waiting on the delivery
+        // is the signal; a ping would never be delivered, so it can't be one.
         now = T0 + TimeSpan.FromSeconds(50);
-        await wire.FeedAsync(PeerProtocol.Encode(PeerProtocol.Message(PeerProtocol.Ping, "alive")));
+        wire.Feed(PeerProtocol.Encode(PeerProtocol.Message(PeerProtocol.Window, "alive")));
+        await delivered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         now = T0 + PeerLink.StalledAfter + TimeSpan.FromSeconds(10);
         link.CheckLiveness();
@@ -165,10 +189,26 @@ public class PeerLinkLivenessTests
         return stream;
     }
 
-    private static async Task WaitUntil(Func<bool> settled)
+    private static async Task<byte[]> Bytes(params PeerProtocol.PeerMessage[] messages)
     {
-        for (var i = 0; i < 500 && !settled(); i++)
-            await Task.Delay(10);
+        using var stream = await StreamOf(messages);
+        return stream.ToArray();
+    }
+
+    // A MemoryStream that says when a read has found nothing left, which is
+    // the moment the pump has consumed every message on it.
+    private sealed class SignalsItsEnd(byte[] bytes) : MemoryStream(bytes)
+    {
+        private readonly TaskCompletionSource _end = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task ReachedEnd => _end.Task;
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            var read = await base.ReadAsync(buffer, ct);
+            if (read == 0) _end.TrySetResult();
+            return read;
+        }
     }
 
     // A live connection that delivers only what the test feeds it, records
@@ -182,26 +222,20 @@ public class PeerLinkLivenessTests
         private TaskCompletionSource _more = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool _disposed;
 
-        public int BytesWritten
-        {
-            get { lock (_gate) return (int)_written.Length; }
-        }
-
-        // Hands the pump some bytes and waits until it has taken them.
-        public async Task FeedAsync(byte[] bytes)
+        // Hands the pump some bytes.
+        public void Feed(byte[] bytes)
         {
             lock (_gate)
             {
                 foreach (var b in bytes) _pending.Enqueue(b);
                 _more.TrySetResult();
             }
-
-            for (var i = 0; i < 500; i++)
-            {
-                lock (_gate) if (_pending.Count == 0) return;
-                await Task.Delay(10);
-            }
         }
+
+        private readonly TaskCompletionSource _firstWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Completes when anything at all has been written.
+        public Task FirstWrite => _firstWrite.Task;
 
         public async Task<List<PeerProtocol.PeerMessage>> WrittenAsync()
         {
@@ -242,6 +276,7 @@ public class PeerLinkLivenessTests
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
         {
             lock (_gate) _written.Write(buffer.Span);
+            _firstWrite.TrySetResult();
             return ValueTask.CompletedTask;
         }
 

@@ -79,4 +79,24 @@ public class WatchedStreamTests
 
         Assert.False(inner.CanRead);
     }
+
+    // The finalizer path: Dispose(false) must leave the inner stream alone,
+    // because on that path another object may already have finalized it.
+    // Called through reflection since it is protected on a sealed class, and
+    // a test seam in the product just for this would be the larger change.
+    [Fact]
+    public void DisposingFromAFinalizerLeavesTheStreamUnderneathOpen()
+    {
+        var inner = new MemoryStream();
+        var watched = new WatchedStream(inner, () => T0);
+
+        var dispose = typeof(WatchedStream).GetMethod(
+            "Dispose",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+            new[] { typeof(bool) })!;
+        dispose.Invoke(watched, new object[] { false });
+
+        Assert.True(inner.CanRead);
+        GC.SuppressFinalize(watched);
+    }
 }
