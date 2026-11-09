@@ -176,7 +176,7 @@ internal static class V4Vectors
             ("claude-minimal", new LaunchFields("/Users/warren/Source/Orbweaver", "claude", "", "", "", "Add a Watch complication target to the update feed fixture and run the tests.", "", 0)),
             ("claude-full", new LaunchFields("/Users/warren/Source/Résumé-Builder", "claude", "", "opus", SessionId, "Résumé the failing tests \u2014 paths like C:\\Users\\w and \"quotes\" stay literal.", "", 0)),
             ("codex-model", new LaunchFields("/Users/warren/Source/loginid-sdk-web", "codex", "", "gpt-5.5-codex", "", "Run the unit tests.", "", 0)),
-            ("grok-no-message", new LaunchFields("C:\\Users\\warre\\Source\\Claude-Buddy", "grok", "", "", "", "", "", 0)),
+            ("grok-no-message", new LaunchFields("C:\\Users\\dev\\Source\\Orbweaver", "grok", "", "", "", "", "", 0)),
         };
         string SigFor(Func<JsonElement, string?> pick, byte[] message, KeyPair signer, byte[]? verifyKey = null)
         {

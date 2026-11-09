@@ -85,7 +85,7 @@ tests/UnitTests/ChatHeaderMetaTests.cs	4	sample data: a repository path or sessi
 tests/UnitTests/DataDirMigrationPlanTests.cs	5	legacy fixtures for the phase 2/3 migrations: the old names each migration must recognise
 tests/UnitTests/Fixtures/update/releases.json	1	real GitHub API response captured 2026-11-06: the v0.5.11-beta release body names Claude Buddy because that release announced the rename
 tests/UnitTests/HookInstallerWiredTextTests.cs	3	legacy fixtures for the phase 2/3 migrations: the old names each migration must recognise
-tests/UnitTests/HookFreshnessDecideTests.cs	2	legacy fixtures: the pre-rename hook script paths HookFreshness must still recognise as an installed copy
+tests/UnitTests/HookFreshnessDecideTests.cs	4	legacy fixtures: the pre-rename hook script paths HookFreshness must still recognise as an installed copy, for Claude Code and (CB-316) Codex on each platform
 tests/UnitTests/JobPhaseTests.cs	3	sample data: a repository path or session name; the GitHub repository keeps its name
 tests/UnitTests/KeepAliveRepairRuleTests.cs	2	legacy fixtures for the phase 2/3 migrations: the old names each migration must recognise
 tests/UnitTests/LastReachableArmsTests.cs	1	fixture: the label an older peer sent; the framing code treats it as opaque text
