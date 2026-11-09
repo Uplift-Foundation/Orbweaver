@@ -23,8 +23,6 @@ namespace Orbweaver
 
         internal CanonicalJson Num(string key, long value) => Raw(key, value.ToString(CultureInfo.InvariantCulture));
 
-        internal CanonicalJson Bool(string key, bool value) => Raw(key, value ? "true" : "false");
-
         // A key that is present only when true (window's reset, a line's
         // error and cut): absent rather than false, per the contract.
         internal CanonicalJson Flag(string key, bool value) => value ? Raw(key, "true") : this;

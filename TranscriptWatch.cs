@@ -44,7 +44,10 @@ namespace Orbweaver
             var bytes = Encoding.UTF8.GetBytes(text);
             if (bytes.Length <= MaxLineBytes) return (text, false);
             var keep = MaxLineBytes - Encoding.UTF8.GetByteCount(Ellipsis);
-            while (keep > 0 && (bytes[keep] & 0xC0) == 0x80) keep--;   // back to a scalar boundary
+            // Back to a scalar boundary. A .NET string encodes to valid UTF-8,
+            // so at most three continuation bytes precede a lead byte; no floor
+            // is needed below 7,997.
+            while ((bytes[keep] & 0xC0) == 0x80) keep--;
             return (Encoding.UTF8.GetString(bytes, 0, keep) + Ellipsis, true);
         }
 

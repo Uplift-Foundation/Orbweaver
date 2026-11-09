@@ -200,6 +200,28 @@ public class RelayRemoteTests
         Assert.Equal(2, w.Sent.Windows.Count);              // nothing after unwatch
     }
 
+    // A scan landing mid-watch that drops the session: the watcher then has no
+    // status to ask for a path, which reads as "no transcript", not a throw.
+    [Fact]
+    public async Task A_session_leaving_the_roster_mid_watch_reads_as_no_transcript()
+    {
+        RelayRemote? remote = null;
+        var w = new World();
+        var asked = 0;
+        remote = new RelayRemote(new RelayRemote.Seams(() => w.Now, _ => Task.CompletedTask,
+            s =>
+            {
+                if (++asked == 1) remote!.OnStatuses([]);   // the scan lands between the lookup and the read
+                return new TranscriptWatcher.Seams(() => "/t", p => new TranscriptWatcher.Stamp(p, 1, DateTime.UnixEpoch), _ => Lines(1));
+            },
+            w.Desk.Input(), new RelayRemote.LaunchSeams(false, _ => null, _ => true, () => "", (_, _) => (null, null), _ => null),
+            w.Log.Add), w.Sent, w.Nonces);
+        remote.OnStatuses([("s1", Watched("/t"))]);
+        await remote.HandleAsync("ph", [], new WatchRequest("r", "s1", null));
+        Assert.Equal(0, w.Sent.Replies.Single().Body.GetProperty("total").GetInt32());
+        Assert.Empty(w.Sent.Windows);
+    }
+
     [Fact]
     public async Task A_page_sends_windows_and_changes_no_subscription()
     {

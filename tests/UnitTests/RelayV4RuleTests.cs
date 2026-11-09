@@ -19,11 +19,11 @@ public class RelayV4RuleTests
     [Fact]
     public void Canonical_writes_flags_only_when_true_and_escapes_like_the_answer_gate()
     {
-        var json = new CanonicalJson().Str("a", "q\"\\\n\u0001/é🙂").Bool("b", false).Flag("c", false).Flag("d", true)
+        var json = new CanonicalJson().Str("a", "q\"\\\n\u0001/é🙂").Flag("c", false).Flag("d", true)
             .Num("e", -3).Array("f", ["1", "\"x\""]).ToString();
-        Assert.Equal("{\"a\":\"q\\\"\\\\\\u000a\\u0001/é🙂\",\"b\":false,\"d\":true,\"e\":-3,\"f\":[1,\"x\"]}", json);
+        Assert.Equal("{\"a\":\"q\\\"\\\\\\u000a\\u0001/é🙂\",\"d\":true,\"e\":-3,\"f\":[1,\"x\"]}", json);
         Assert.Equal("{}", new CanonicalJson().ToString());
-        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(json), new CanonicalJson().Str("a", "q\"\\\n\u0001/é🙂").Bool("b", false)
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(json), new CanonicalJson().Str("a", "q\"\\\n\u0001/é🙂")
             .Flag("c", false).Flag("d", true).Num("e", -3).Array("f", ["1", "\"x\""]).Utf8());
     }
 
@@ -50,6 +50,7 @@ public class RelayV4RuleTests
         { """{"t":"watch","session_id":"s","before":"30"}""", "s" },
         { """{"t":"watch","session_id":"s","before":1.5}""", "s" },
         { """{"t":"unwatch"}""", null },
+        { """{"t":"watch","session_id":5}""", null },
         { """{"t":"input","session_id":"s"}""", "s" },
         { """{"t":"input","text":"hi"}""", null },
         { """{"t":"launch","cwd":"/a","cli":"claude","persona":"","model":"","first_message":"","nonce":"n","sig":"s"}""", null },
@@ -346,6 +347,30 @@ public class RelayV4RuleTests
         Assert.Equal(("codex", "grok"), (RelayUsage.CliOf(AccountUsageSource.Codex), RelayUsage.CliOf(AccountUsageSource.Grok)));
     }
 
+    // A percent with no reset time (or the reverse) is half a pair: omitted,
+    // and to the limit rule it is no reading.
+    [Fact]
+    public void Half_a_window_pair_is_omitted_and_is_no_reading()
+    {
+        var half = new RelayUsage.Account("a", "claude", "", 90, null, 40, null, 1, true);
+        Assert.Equal("""{"name":"a","cli":"claude","plan":"","as_of":1}""", RelayUsage.AccountJson(half));
+        var t = new RelayUsageTracker();
+        Assert.Null(t.Next([half]).Single().Crossing);
+        Assert.NotNull(t.Next([half with { ResetsAt = 100 }]).Single().Crossing);   // the first real reading at 90 fires
+    }
+
+    // An account that drops out of the readings is forgotten, so its next
+    // reading over 80 is a crossing again.
+    [Fact]
+    public void An_account_that_disappears_is_forgotten_and_re_arms()
+    {
+        var t = new RelayUsageTracker();
+        Assert.NotNull(t.Next([A("a", 85)]).Single().Crossing);
+        Assert.Null(t.Next([A("a", 85)]).SingleOrDefault()?.Crossing);
+        t.Next([A("b", 10)]);
+        Assert.NotNull(t.Next([A("a", 85), A("b", 10)]).Single().Crossing);
+    }
+
     private static RelayUsage.Account A(string name, int? pct, long resets = 100, bool available = true) =>
         new(name, "claude", "", pct, pct is null ? null : resets, null, null, 1, available);
 
@@ -401,6 +426,7 @@ public class RelayV4RuleTests
         Assert.Null(Decide(Signed(F())));
         Assert.Equal(RelayReplies.BadSignature, Decide(Signed(F(), RelayCrypto.GenerateKeyPair())));
         Assert.Equal(RelayReplies.BadSignature, Decide(Signed(F(nonce: RelayCrypto.Base64Url(new byte[15])))));
+        Assert.Equal(RelayReplies.BadSignature, Decide(Signed(F(nonce: "not base64url!"))));   // signed, but no nonce at all
         Assert.Equal(RelayReplies.UnknownCli, Decide(Signed(F()), Env(installed: false)));
         Assert.Equal(RelayReplies.UnknownCwd, Decide(Signed(F()), Env(exists: false)));
         Assert.Equal(RelayReplies.UnknownCwd, Decide(Signed(F()), Env(windows: true)));

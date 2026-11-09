@@ -1321,4 +1321,23 @@ public class RelayLinkTests : IDisposable
         // The next frame is unaffected.
         Assert.Single(link.SendWindow(phone.Id, "s1", "{}"));
     }
+
+    // An action envelope with no id still dispatches: ref is then "", so the
+    // phone's reply cannot be correlated, but nothing is dropped silently.
+    [Fact]
+    public void An_action_with_no_envelope_id_dispatches_with_an_empty_ref()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var got = new List<RelayRequest>();
+        link.RequestReceived += (_, _, r) => got.Add(r);
+        string NoId(string body)
+        {
+            var e = System.Text.Json.Nodes.JsonNode.Parse(phone.Sealed("action", body))!.AsObject();
+            e.Remove("id");
+            return e.ToJsonString();
+        }
+        link.OnFrame(NoId("""{"t":"unwatch","session_id":"s1"}"""));
+        link.OnFrame(NoId("""{"session_id":"s1"}"""));
+        Assert.Equal([new UnwatchRequest("", "s1"), new BadFrameRequest("", null)], got);
+    }
 }
