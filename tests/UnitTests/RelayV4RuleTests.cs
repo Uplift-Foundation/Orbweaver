@@ -587,3 +587,43 @@ public class RelayV4RuleTests
         Assert.True(start.UseShellExecute);
     }
 }
+
+/// <summary>
+/// CB-316: Grok Build never turns bracketed paste on, so the markers were typed
+/// into its message (QA, Windows: "[200~Reply with exactly…[201~"). Every
+/// route that brackets leaves them off for Grok and only for Grok; Claude and
+/// Codex keep CB-304's bracketing, which their Return depends on.
+/// </summary>
+public class GrokPasteMarkerTests
+{
+    private static SessionStatus S(SessionSource source) =>
+        new() { Source = source, TermId = "7", Tty = "/dev/ttys001" };
+
+    [Fact]
+    public void Only_grok_is_typed_without_paste_markers()
+    {
+        Assert.False(TerminalTyping.Brackets(S(SessionSource.Grok)));
+        Assert.True(TerminalTyping.Brackets(S(SessionSource.ClaudeCode)));
+        Assert.True(TerminalTyping.Brackets(S(SessionSource.Codex)));
+        Assert.True(TerminalTyping.Brackets(null));
+
+        Assert.Equal("hi\r", TerminalFocuser.KittySend(S(SessionSource.Grok), "hi").Stdin);
+        Assert.Equal("hi\r", TerminalFocuser.WezTermSend(S(SessionSource.Grok), "hi").Stdin);
+        Assert.Equal(TerminalTyping.PasteStart + "hi" + TerminalTyping.PasteEnd + "\r", TerminalFocuser.KittySend(S(SessionSource.Codex), "hi").Stdin);
+        Assert.DoesNotContain(TerminalFocuser.ITerm2Args(S(SessionSource.Grok), "hi"), a => a.Contains(TerminalTyping.PasteStart));
+        Assert.Contains(TerminalFocuser.ITerm2Args(S(SessionSource.ClaudeCode), "hi"), a => a.Contains(TerminalTyping.PasteStart));
+        Assert.DoesNotContain(TerminalFocuser.TerminalAppArgs(S(SessionSource.Grok), "hi"), a => a.Contains(TerminalTyping.PasteStart));
+    }
+
+    [Fact]
+    public void The_windows_console_types_grok_bare_with_its_newline_as_lf_and_one_return()
+    {
+        var grok = TerminalFocuser.ConsoleRecords("a\nb", bracketed: false);
+        Assert.Equal("a\nb\r", new string(grok.Where(r => r.KeyDown == 1).Select(r => r.Char).ToArray()));
+        Assert.DoesNotContain(grok, r => r.Char == '\u001b');
+
+        var claude = TerminalFocuser.ConsoleRecords("a");
+        Assert.Equal(TerminalTyping.PasteStart + "a" + TerminalTyping.PasteEnd + "\r",
+            new string(claude.Where(r => r.KeyDown == 1).Select(r => r.Char).ToArray()));
+    }
+}
