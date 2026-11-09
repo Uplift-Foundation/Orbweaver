@@ -6,7 +6,7 @@ using Orbweaver;
 // with no terminal and no installed app involved.
 //
 //   dotnet run --project tools/phone-desk -- --relay http://127.0.0.1:18080 \
-//       --qr-host 10.0.0.165:18080 --transcript <a Claude Code .jsonl> [--dir <state dir>] [--name "PHONE DESK"]
+//       --qr-host <host:port the phone reaches the relay on> --transcript <a Claude Code .jsonl> [--dir <state dir>] [--name "PHONE DESK"]
 //
 // Prints the pairing text; allows the first request; keeps a roster of three sessions (one
 // working, one waiting on a dialog, one idle), a usage reading that climbs, and a done push
