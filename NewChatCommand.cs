@@ -97,6 +97,87 @@ namespace Orbweaver
         // Pure: it only builds a ProcessStartInfo and starts nothing, so a
         // test can assert on FileName/ArgumentList/WorkingDirectory directly,
         // the way WindowsAttachLaunchTests already does for the attach case.
+        // CB-316: the arguments a phone's launch adds after the binary — the
+        // model, and for Claude Code the lead it joins. Each CLI's own spelling
+        // (claude --model, codex -m, grok -m, all verified against their
+        // --help), and nothing for an empty value, so a launch with neither is
+        // exactly the desk's New Chat. --parent-session-id is the flag
+        // AgentTeam reads off the process to link the new orb to its lead
+        // (measured on a hand launch, CB-316); the gate refuses it for the
+        // other two CLIs before this is reached.
+        // Codex and Grok take the phone's first message as their positional
+        // [PROMPT] instead of having it typed (CB-316, PM decision): Codex fires
+        // no hook until a turn is submitted, so a launch waiting to type could
+        // never see it check in, and Grok opens on its home menu, where the
+        // typing gate rightly refuses. Behind `--`, so a message starting with
+        // "-" (or naming a subcommand, like "exec ...") is a prompt and never a
+        // flag. Measured in tmux on the MacBook: `codex -- '-n reply…'` and
+        // `grok -- '-n reply…'` each ran it as the first turn, Grok straight
+        // into the chat (after a new folder's trust prompt).
+        internal static bool PromptAsArgument(NewChatCli cli) => cli is NewChatCli.Codex or NewChatCli.Grok;
+
+        internal static List<string> LaunchArgs(NewChatCli cli, string model, string parentSessionId, string firstMessage = "")
+        {
+            var args = new List<string>();
+            if (model.Length > 0)
+            {
+                args.Add(cli == NewChatCli.ClaudeCode ? "--model" : "-m");
+                args.Add(model);
+            }
+            if (parentSessionId.Length > 0 && cli == NewChatCli.ClaudeCode)
+            {
+                args.Add("--parent-session-id");
+                args.Add(parentSessionId);
+            }
+            if (firstMessage.Length > 0 && PromptAsArgument(cli))
+            {
+                args.Add("--");
+                args.Add(firstMessage);
+            }
+            return args;
+        }
+
+        // The Mac command line for a phone's launch: the binary and its
+        // arguments, each shell-quoted, run by the user's login shell so a
+        // tmux server this app started (with launchd's bare PATH) still finds
+        // node for Codex and whatever else the user's profile puts on PATH.
+        internal static string LaunchLine(string shell, string binaryPath, IReadOnlyList<string> args)
+        {
+            var inner = "exec " + string.Join(" ", new[] { binaryPath }.Concat(args).Select(TerminalScripts.ShellQuote));
+            return TerminalScripts.ShellQuote(shell) + " -lc " + TerminalScripts.ShellQuote(inner);
+        }
+
+        // CB-316: a phone's launch on Windows, in a console window conhost
+        // itself owns: `conhost.exe cmd.exe /k <cli> <args>`. Not a bare
+        // `cmd.exe /k`: where Windows' default terminal is set to Windows
+        // Terminal, that hands the console to WT through a pseudo console, so
+        // cmd owns no window, WT is not an ancestor and WT_SESSION is not in
+        // the CLI's environment. The hook's walk then finds no terminal,
+        // records term_pid 0, and the scan drops the session as NoTerminal —
+        // a launch that always ends `no_session` (QA, CB-316). Measured in
+        // session 2 on the Windows box: cmd's window handle was 0 under a bare
+        // cmd.exe and non-zero under conhost.exe. Naming conhost.exe is also
+        // what the contract's "conhost, not wt.exe" means in practice.
+        //
+        // viaCmd false (Codex and Grok, whose argv carries the user's message)
+        // drops the `cmd.exe /k`: cmd re-parses its command line, so & | > %
+        // in a message would be commands. conhost hands the rest of its command
+        // line to CreateProcess untouched, and ArgumentList quotes each word the
+        // way the CLI's own argv parser reads it back. The window then closes
+        // when the CLI exits (accepted, PM).
+        internal static ProcessStartInfo ConsoleStartInfo(string exe, string cwd, IReadOnlyList<string> args, bool viaCmd = true)
+        {
+            var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = true, WorkingDirectory = cwd };
+            if (viaCmd)
+            {
+                start.ArgumentList.Add("cmd.exe");
+                start.ArgumentList.Add("/k");
+            }
+            start.ArgumentList.Add(exe);
+            foreach (var arg in args) start.ArgumentList.Add(arg);
+            return start;
+        }
+
         internal static ProcessStartInfo? GeneralWindowsStartInfo(
             string? exe, string cwd, IReadOnlyList<string>? extraArgs, bool useWindowsTerminal)
         {

@@ -176,7 +176,15 @@ if (-not $Uninstall) {
     # comment gives: a hook invoked through an interop shell cannot be trusted
     # to have TEMP set, and without it the script writes its status file
     # somewhere the app never looks -- with no visible error.
-    $temp = [System.IO.Path]::GetTempPath()
+    #
+    # TrimEnd('\') as install-windows-hooks.ps1 already does (CB-316):
+    # GetTempPath() ends in a backslash, so the wired argument ended `\"`, which
+    # PowerShell's -File parsing reads as an escaped quote. The hook then got a
+    # TempDir with a stray quote and wrote no status file at all -- measured on
+    # the Windows box: the untrimmed form exits 0 and writes nothing, the
+    # trimmed form writes the file. It also keeps the wired command identical
+    # across installs, which is what Codex's trust review hashes.
+    $temp = ([System.IO.Path]::GetTempPath()).TrimEnd('\')
 
     foreach ($entry in $wanted) {
         $command = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$installed`" " +

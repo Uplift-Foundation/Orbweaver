@@ -172,7 +172,8 @@ public class RelayRosterTests
         var flip = book.Update([Row("a", "generating")], T0.AddSeconds(3));
         Assert.False(flip.NeedsRoster);
         Assert.False(flip.IsEmpty);                              // deltas alone are not empty
-        Assert.Equal(new RelayDelta("a", "generating", null, T0.AddSeconds(3), false), flip.Deltas.Single());
+        Assert.Equal(new RelayDelta("a", "generating", null, T0.AddSeconds(3), false, From: "idle"), flip.Deltas.Single());
+        Assert.False(flip.Deltas.Single().Finished);
 
         var rename = book.Update([Row("a", "generating", title: "renamed")], T0.AddSeconds(9));
         Assert.Equal(new RelayDelta("a", null, "renamed", null, false), rename.Deltas.Single());

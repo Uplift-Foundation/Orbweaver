@@ -57,6 +57,7 @@ namespace Orbweaver
         internal static void Attach(SessionManager sessions)
         {
             sessions.SessionsScanned += OnScanned;
+            AccountOrbs.UsageApplied += OnUsage;
             if (OrbweaverSettings.RelayEnabled) Enable();
             // CB-314's scripted pairing, only with the explicit env opt-in.
             if (HooksEnabled()) _ = HooksRunner(Enable());
@@ -82,6 +83,9 @@ namespace Orbweaver
         }
 
         // "Pair phone…" calls this. Idempotent.
+        // CB-316: the usage orbs' readings, to the relay's usage frame.
+        internal static void OnUsage(IReadOnlyList<RelayUsage.Account> accounts) => Client?.OnUsage(accounts);
+
         internal static RelayClient Enable()
         {
             RelayClient client;

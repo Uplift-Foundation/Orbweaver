@@ -103,6 +103,10 @@ namespace Orbweaver
         private readonly Dictionary<string, Live> _live = new(StringComparer.Ordinal);   // by session id
         private readonly NonceWindow _nonces = new();
 
+        // CB-316: one nonce table per phone across answers and launches
+        // (frames-v4 launch.fields), so RelayRemote checks launches against it.
+        internal NonceWindow Nonces => _nonces;
+
         internal PromptPipeline(Seams seams, IPromptSender send, string machine)
         {
             _seams = seams;

@@ -65,6 +65,13 @@ namespace Orbweaver
             var lines = ChatTranscript.ScreenLines(screen).Select(l => l.Trim()).ToArray();
             var from = ChatTranscript.WindowStart(lines);
 
+            // CB-316: Grok's and Codex's prompts are not Claude's ruled box, so a
+            // phone's input to either was always refused. Their own shapes, read
+            // off real captures, are tried first; each answers only when its own
+            // prompt is on screen (text above it can look like Claude's mark).
+            if (GrokPrompt(lines, from) is { } grok) return grok;
+            if (CodexPrompt(lines, from) is { } codex) return codex;
+
             var mark = -1;
             for (var i = lines.Length - 1; i >= from && mark < 0; i--)
                 if (IsPromptMark(lines[i]) && !ChatTranscript.OptionLine.IsMatch(lines[i])) mark = i;
@@ -99,6 +106,84 @@ namespace Orbweaver
         // screen and every other terminal's. The box around it (a rule above
         // and one below, checked after this) is what keeps a > that is a quote
         // or a shell prompt from reading as the input box.
+        // Grok Build: a rounded box, `╭─…╮` / `│ ❯ … │` / `╰─… Grok … ─╯`, with
+        // `>` for `❯` in the Windows console (real captures, CB-313/CB-316). Its
+        // home screen draws the same box under a menu (Resume session, New
+        // worktree, …) where typing starts nothing a phone asked for, and while
+        // it works there is a spinner line above the box — braille on the Mac
+        // (`⠋ Responding… 2.0s`), ASCII `| / - \` in the Windows console
+        // (`/ Thinking… 1.3s`), with a banner between it and the box there — and
+        // on Windows the footer offers `Ctrl+c:cancel`: all read as not at the
+        // prompt. Null when the box is not there at all.
+        private static (PaneReading, string)? GrokPrompt(string[] lines, int from)
+        {
+            for (var i = lines.Length - 1; i >= from; i--)
+            {
+                if (!IsGrokMark(lines[i])) continue;
+                var top = Previous(lines, i, from, TopWithin);
+                if (top < 0 || !lines[top].StartsWith("╭─", StringComparison.Ordinal)) return null;
+                var bottom = -1;
+                for (var j = i + 1; j <= i + RuleWithin && j < lines.Length && bottom < 0; j++)
+                    if (lines[j].StartsWith("╰─", StringComparison.Ordinal)) bottom = j;
+                if (bottom < 0) return null;
+                for (var k = from; k < lines.Length; k++)
+                    if (GrokHome.Any(h => lines[k].Contains(h, StringComparison.Ordinal))) return (PaneReading.Unknown, "grok-home");
+                for (var k = from; k < top; k++)
+                    if (IsSpinner(lines[k])) return (PaneReading.Unknown, "working");
+                for (var k = bottom + 1; k < lines.Length; k++)
+                    if (lines[k].Contains("Ctrl+c:cancel", StringComparison.Ordinal)) return (PaneReading.Unknown, "working");
+                return (PaneReading.Prompt, "grok-prompt");
+            }
+            return null;
+        }
+
+        // Not "Help improve Grok": that banner sits over ordinary chat screens
+        // too (measured in the Windows console).
+        private static readonly string[] GrokHome = ["Resume session", "New worktree"];
+
+        private static readonly System.Text.RegularExpressions.Regex GrokMark =
+            new(@"^│\s*[❯>]\s.*│$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static bool IsGrokMark(string line) => GrokMark.IsMatch(line);
+
+        // A spinner glyph, a space, then an activity with an ellipsis: Grok's
+        // "working" line (`⠋ Responding… 2.0s`, `/ Thinking… 1.3s`). The ellipsis
+        // keeps an ordinary line that happens to start "- " from counting.
+        private static readonly System.Text.RegularExpressions.Regex Spinner =
+            new(@"^[\u2801-\u28FF|/\\-] .*\u2026", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static bool IsSpinner(string line) => Spinner.IsMatch(line);
+
+        // Codex: `› <draft or placeholder>` over its footer (`? for shortcuts`),
+        // no box. A numbered `› 1.` is an approval's option, not the prompt, and
+        // `esc to interrupt` anywhere in view means a turn is running; the
+        // session record's `generating` (RelayInput) covers the stretches where
+        // Codex streams text with no such line on screen.
+        private static (PaneReading, string)? CodexPrompt(string[] lines, int from)
+        {
+            for (var i = lines.Length - 1; i >= from; i--)
+            {
+                if (!lines[i].StartsWith("› ", StringComparison.Ordinal) && lines[i] != "›") continue;
+                if (ChatTranscript.OptionLine.IsMatch(lines[i])) return null;
+                var footer = false;
+                for (var j = i + 1; j <= i + 4 && j < lines.Length; j++)
+                    if (lines[j].Contains("for shortcuts", StringComparison.Ordinal)) footer = true;
+                if (!footer) return null;
+                for (var k = from; k < lines.Length; k++)
+                    if (lines[k].Contains("esc to interrupt", StringComparison.Ordinal)) return (PaneReading.Unknown, "working");
+                return (PaneReading.Prompt, "codex-prompt");
+            }
+            return null;
+        }
+
+        // The nearest non-blank line above `index`, at most `within` lines up, or -1.
+        private static int Previous(string[] lines, int index, int from, int within)
+        {
+            for (var j = index - 1; j >= Math.Max(from, index - within); j--)
+                if (lines[j].Length > 0) return j;
+            return -1;
+        }
+
         private static bool IsPromptMark(string line) =>
             line.StartsWith('❯') || line == ">" || (line.Length > 1 && line[0] == '>' && char.IsWhiteSpace(line[1]));
 

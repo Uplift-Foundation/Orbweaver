@@ -631,7 +631,7 @@ namespace Orbweaver
         public static Task<bool> TypeQuietly(SessionStatus? status, string text)
         {
             if (status is null || string.IsNullOrEmpty(text) || !CanPressSilently(status)) return Task.FromResult(false);
-            var body = TerminalTyping.ForTyping(text);
+            var body = TerminalTyping.ForTyping(text, TerminalTyping.Brackets(status));
             return RouteFor(status) switch
             {
                 TerminalTyping.Route.Tmux => SendPaneText(status, text),
@@ -682,7 +682,7 @@ namespace Orbweaver
         // Ctrl+J, which Claude Code and Codex read as "insert a newline", so
         // this route never submitted at any length.
         internal static (string Stdin, string[] Args) KittySend(SessionStatus status, string text) =>
-            (TerminalTyping.ForTypingAndSubmit(text),
+            (TerminalTyping.ForTypingAndSubmit(text, TerminalTyping.Brackets(status)),
                 new[] { "@", "send-text", "--match", "id:" + status.TermId, "--stdin" });
 
         [ExcludeFromCodeCoverage]
@@ -698,7 +698,7 @@ namespace Orbweaver
         // and letting wezterm add its own markers as well would deliver them
         // twice. The submit is "\r", not "\n", for the reason given at kitty.
         internal static (string Stdin, string[] Args) WezTermSend(SessionStatus status, string text) =>
-            (TerminalTyping.ForTypingAndSubmit(text),
+            (TerminalTyping.ForTypingAndSubmit(text, TerminalTyping.Brackets(status)),
                 new[] { "cli", "send-text", "--pane-id", status.TermId, "--no-paste" });
 
         [ExcludeFromCodeCoverage]
@@ -785,7 +785,7 @@ namespace Orbweaver
         };
 
         internal static string[] ITerm2Args(SessionStatus status, string text) =>
-            OsascriptArgs(ITerm2SendScript, status.TermId, TerminalTyping.ForTyping(text));
+            OsascriptArgs(ITerm2SendScript, status.TermId, TerminalTyping.ForTyping(text, TerminalTyping.Brackets(status)));
 
         [ExcludeFromCodeCoverage]
         private static bool SendViaITerm2(SessionStatus status, string text) =>
@@ -824,7 +824,7 @@ namespace Orbweaver
             OsascriptArgs(
                 TerminalAppSendScript,
                 TerminalTyping.DevicePath(status.Tty),
-                TerminalTyping.ForTyping(text));
+                TerminalTyping.ForTyping(text, TerminalTyping.Brackets(status)));
 
         [ExcludeFromCodeCoverage]
         private static bool SendViaTerminalApp(SessionStatus status, string text) =>
@@ -877,15 +877,15 @@ namespace Orbweaver
         // attaches to the same consoles and must not interleave with a send.
         internal static readonly object ConsoleGate = new();
 
-        internal static string ConsoleBody(string text) => TerminalTyping.ForTyping(text);
+        internal static string ConsoleBody(string text, bool bracketed = true) => TerminalTyping.ForTyping(text, bracketed);
 
         // The records SendViaConsole writes: the bracketed body one keystroke
         // at a time, then VK_RETURN with '\r' as its character — a TUI reading
         // characters sees the carriage return and one reading key events sees
         // Enter, and both are correct. Pure, so the sequence is pinned in tests.
-        internal static List<NativeMethods.InputRecord> ConsoleRecords(string text)
+        internal static List<NativeMethods.InputRecord> ConsoleRecords(string text, bool bracketed = true)
         {
-            var body = ConsoleBody(text);
+            var body = ConsoleBody(text, bracketed);
             var records = new List<NativeMethods.InputRecord>(body.Length * 2 + 2);
 
             foreach (var c in body) AddKeystroke(records, c);
@@ -916,7 +916,7 @@ namespace Orbweaver
                     // Bracketed for the reason given at ForTyping: measured on the
                     // Windows box (Claude Code 2.1.316), a bare 300-character line
                     // plus VK_RETURN submitted 0/3 and the bracketed one 3/3 (CB-304).
-                    var all = ConsoleRecords(text).ToArray();
+                    var all = ConsoleRecords(text, TerminalTyping.Brackets(status)).ToArray();
                     return NativeMethods.WriteConsoleInput(
                         input, all, (uint)all.Length, out var written)
                         && written == all.Length;
@@ -1171,6 +1171,23 @@ namespace Orbweaver
 
             return TmuxPaneOwnershipRules.SessionIdIn(
                 TmuxPaneOwnershipRules.ParseProcessListing(listing), panePid);
+        }
+
+        // CB-316: whether this session's recorded pane really holds its pid,
+        // asked now, for a phone's input. Null when tmux or ps cannot answer.
+        // Excluded: two real subprocesses; the rule is TmuxPaneOwnershipRules.Holds.
+        [ExcludeFromCodeCoverage]
+        internal static bool? TmuxPaneHolds(SessionStatus status)
+        {
+            if (string.IsNullOrEmpty(status.TmuxPane)) return null;
+            var tmux = ResolveTmuxBinary(status.TmuxBin);
+            if (tmux is null
+                || !TryRun(tmux, out var panePidText,
+                    TmuxArgs(status, "display-message", "-p", "-t", status.TmuxPane, "#{pane_pid}"))
+                || !int.TryParse(panePidText.Trim(), out var panePid)
+                || !TryRun("/bin/ps", out var listing, "-eo", "pid=,ppid=,args="))
+                return null;
+            return TmuxPaneOwnershipRules.Holds(TmuxPaneOwnershipRules.ParseProcessListing(listing), panePid, status.SessionPid);
         }
 
         // Every pane claim a scan pass holds, answered at once — see

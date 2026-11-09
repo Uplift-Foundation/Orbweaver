@@ -244,15 +244,23 @@ namespace Orbweaver
         // (measured 0/25 on iTerm2 at 70+ chars); Codex does the same at 40.
         // The paste-end marker is what makes the Return after it a keystroke
         // again. Do not "optimise" this back to leaving short lines bare.
-        internal static string ForTyping(string text) =>
-            string.IsNullOrEmpty(text) ? text : PasteStart + text + PasteEnd;
+        internal static string ForTyping(string text, bool bracketed = true) =>
+            string.IsNullOrEmpty(text) || !bracketed ? text : PasteStart + text + PasteEnd;
+
+        // CB-316: except Grok. Grok Build never turns bracketed paste on, so the
+        // markers are not swallowed but typed: QA on the Windows box found user
+        // lines reading `[200~Reply with exactly…[201~`. Unbracketed, a "\n"
+        // still reaches it as LF (Ctrl+J, a newline in the box) and only the
+        // final "\r" submits. tmux needs no rule here: paste-buffer -p brackets
+        // only for an application that asked for it.
+        internal static bool Brackets(SessionStatus? status) => status?.Source != SessionSource.Grok;
 
         // For the routes that send their own Enter as a byte (kitty, WezTerm).
         // "\r", not "\n": LF is Ctrl+J, which both TUIs read as "insert a newline".
         internal const string Return = "\r";
 
-        internal static string ForTypingAndSubmit(string text) =>
-            string.IsNullOrEmpty(text) ? text : ForTyping(text) + Return;
+        internal static string ForTypingAndSubmit(string text, bool bracketed = true) =>
+            string.IsNullOrEmpty(text) ? text : ForTyping(text, bracketed) + Return;
 
         // Why a session cannot be typed into, in words a person can act on.
         //

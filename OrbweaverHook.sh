@@ -525,6 +525,7 @@ fi
 # AgentTeamViewer already knows how to find the window you watch it in.
 TTY=""
 SESSION_PID=""
+CODEX_DAEMON=""
 PID=$$
 for _ in 1 2 3 4 5; do
     PID=$(ps -o ppid= -p "$PID" 2>/dev/null | tr -d ' ')
@@ -542,8 +543,17 @@ for _ in 1 2 3 4 5; do
 
     if [ "$AGENT" = "codex" ]; then
         if [ "$COMM_NAME" = "codex" ]; then
-            SESSION_PID="$PID"
-            [ -n "$T" ] && [ "$T" != "??" ] && TTY="$T"
+            # Codex 0.167+ runs turns in a shared app-server daemon, and its
+            # hooks are the daemon's children: the first codex ancestor is the
+            # daemon, not the TUI the user is looking at (CB-316, measured).
+            # Resolved below rather than recorded here.
+            case "$(ps -o args= -p "$PID" 2>/dev/null)" in
+                *" app-server"*) CODEX_DAEMON=1 ;;
+                *)
+                    SESSION_PID="$PID"
+                    [ -n "$T" ] && [ "$T" != "??" ] && TTY="$T"
+                    ;;
+            esac
             break
         fi
     elif [ "$AGENT" = "grok" ]; then
@@ -593,6 +603,53 @@ for _ in 1 2 3 4 5; do
         break
     fi
 done
+
+# The Codex daemon's own environment is not the session's. Its TMUX and
+# TMUX_PANE (and any terminal id) are whatever was set where the daemon first
+# started — measured as a pane that no longer existed on another socket — so a
+# phone typing into "this session's pane" would have typed into someone else's.
+# Everything terminal-shaped is dropped, and the session is found the other way
+# round: the one codex TUI (not an app-server) whose working directory is this
+# payload's cwd. Its pane, if any, is the default tmux server's pane whose pid
+# is one of the TUI's ancestors. Two TUIs in one folder, or none, records no
+# pid and no pane: the app then refuses to type into it, which is the safe
+# direction (the orb still appears, from the file).
+if [ -n "$CODEX_DAEMON" ]; then
+    TMUX_SOCKET=""; TMUX_PANE_ID=""; TMUX_BIN=""; TERM_ID=""; TTY=""; TERM_PROGRAM=""
+    WANT=$(cd "$CWD" 2>/dev/null && pwd -P)
+    FOUND=""; COUNT=0
+    if [ -n "$WANT" ]; then
+        for CAND in $(ps -axo pid=,comm= 2>/dev/null | awk '{ n=$2; sub(/.*\//, "", n); if (n == "codex") print $1 }'); do
+            case "$(ps -o args= -p "$CAND" 2>/dev/null)" in *" app-server"*) continue ;; esac
+            CANDCWD=$(lsof -a -p "$CAND" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+            [ -n "$CANDCWD" ] || continue
+            CANDCWD=$(cd "$CANDCWD" 2>/dev/null && pwd -P)
+            if [ "$CANDCWD" = "$WANT" ]; then FOUND="$CAND"; COUNT=$((COUNT + 1)); fi
+        done
+    fi
+    if [ "$COUNT" = "1" ]; then
+        SESSION_PID="$FOUND"
+        T=$(ps -o tty= -p "$FOUND" 2>/dev/null | tr -d ' ')
+        [ -n "$T" ] && [ "$T" != "??" ] && TTY="$T"
+        TMUX_CMD=$(command -v tmux 2>/dev/null)
+        if [ -n "$TMUX_CMD" ]; then
+            PANES=$("$TMUX_CMD" list-panes -a -F '#{pane_pid} #{pane_id} #{socket_path}' 2>/dev/null)
+            A="$FOUND"
+            for _ in 1 2 3 4 5 6 7 8; do
+                LINE=$(printf '%s\n' "$PANES" | awk -v p="$A" '$1 == p { print; exit }')
+                if [ -n "$LINE" ]; then
+                    TMUX_PANE_ID=$(printf '%s' "$LINE" | awk '{ print $2 }')
+                    TMUX_SOCKET=$(printf '%s' "$LINE" | cut -d' ' -f3-)
+                    TMUX_BIN="$TMUX_CMD"
+                    TERM_PROGRAM="tmux"
+                    break
+                fi
+                A=$(ps -o ppid= -p "$A" 2>/dev/null | tr -d ' ')
+                { [ -z "$A" ] || [ "$A" = "0" ] || [ "$A" = "1" ]; } && break
+            done
+        fi
+    fi
+fi
 
 mkdir -p "$DIR"
 

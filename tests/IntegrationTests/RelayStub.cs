@@ -28,6 +28,8 @@ internal sealed class RelayStub : IAsyncDisposable
     public HashSet<string> ValidTokens { get; } = new();
     public int Registrations;
     public int Connections;
+    public const int MaxFrameBytes = 64 * 1024;   // relay Limits.MaxFrameBytes
+    public int TooBigCloses;
     public string? LastIdPub;
     public string HelloCode { get; set; } = "welcome";   // or "unauthorized" / "version"
     public bool AcceptSockets { get; set; } = true;
@@ -133,14 +135,35 @@ internal sealed class RelayStub : IAsyncDisposable
     private async Task SocketSession(WebSocket ws)
     {
         _socket = ws;
-        var buffer = new byte[256 * 1024];
+        var buffer = new byte[8192];
         while (ws.State == WebSocketState.Open)
         {
+            // The real relay's read (Router.ReadTextAsync): fragments assembled
+            // to the end of the message, and anything over its 64 KB frame cap
+            // closes the socket with MessageTooBig (CB-316 — the cap a large
+            // backfill once ran into, which this stub used not to have).
+            using var message = new MemoryStream();
             WebSocketReceiveResult r;
-            try { r = await ws.ReceiveAsync(buffer, _stop.Token); }
+            var tooBig = false;
+            try
+            {
+                do
+                {
+                    r = await ws.ReceiveAsync(buffer, _stop.Token);
+                    if (r.MessageType == WebSocketMessageType.Close) break;
+                    message.Write(buffer, 0, r.Count);
+                    if (message.Length > MaxFrameBytes) { tooBig = true; break; }
+                } while (!r.EndOfMessage);
+            }
             catch (Exception) { break; }
             if (r.MessageType == WebSocketMessageType.Close) break;
-            var text = Encoding.UTF8.GetString(buffer, 0, r.Count);
+            if (tooBig)
+            {
+                Interlocked.Increment(ref TooBigCloses);
+                try { await ws.CloseAsync(WebSocketCloseStatus.MessageTooBig, "frame too large", CancellationToken.None); } catch { }
+                break;
+            }
+            var text = Encoding.UTF8.GetString(message.ToArray());
             await Received.Writer.WriteAsync(text);
 
             var tName = JsonDocument.Parse(text).RootElement.TryGetProperty("t", out var tt) ? tt.GetString() : null;

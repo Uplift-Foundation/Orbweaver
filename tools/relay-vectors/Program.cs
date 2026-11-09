@@ -10,7 +10,8 @@ using static Orbweaver.RelayCrypto;
 //
 //   dotnet run --project tools/relay-vectors -- <out-dir> [<orbweaver-sha>]
 //
-// produces <out-dir>/pairing-vectors.json, session-vectors.json and
+// produces <out-dir>/pairing-vectors.json, session-vectors.json,
+// frames-v4-vectors.json (CB-316, see V4Vectors.cs) and
 // roster-fixtures.json.
 // They go to Orbweaver-Mobile `contracts/`, where the iPhone's CryptoKit tests
 // consume them, and a copy goes to tests/UnitTests/Fixtures/relay/, where
@@ -302,4 +303,11 @@ File.WriteAllText(Path.Combine(outDir, "persona-colors.json"),
     new JsonArray(RelayRoster.PersonaColors.Select(c => (JsonNode)JsonValue.Create(c)!).ToArray()).ToJsonString(options) + "\n");
 // CB-315: prompt-, answer- and push-vectors.json (tools/relay-vectors/PromptVectors.cs).
 PromptVectors.Write(outDir, sha, args.Length > 2 ? args[2] : Path.Combine("tests", "UnitTests", "Fixtures", "screens"));
+
+// CB-316: frames-v4-vectors.json from the shipped v4 code, built on the
+// session/answer/push vectors just written. ECDSA is randomized, so the
+// committed file's signatures (args[3], default the unit-test fixture) are
+// verified and reused: the result is then byte-equal to it but for _source.
+File.WriteAllText(Path.Combine(outDir, "frames-v4-vectors.json"),
+    V4Vectors.Build(outDir, sha, args.Length > 3 ? args[3] : Path.Combine("tests", "UnitTests", "Fixtures", "relay", "frames-v4-vectors.json")));
 Console.WriteLine($"wrote prompt-vectors.json, answer-vectors.json, push-vectors.json and pairing-vectors.json, session-vectors.json, roster-fixtures.json and persona-colors.json to {Path.GetFullPath(outDir)} (check code {CheckCodeDisplay(code)})");

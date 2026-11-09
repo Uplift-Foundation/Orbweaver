@@ -146,6 +146,23 @@ namespace Orbweaver
         // here, only on class control, only in its exact shape, and it reaches
         // nothing but this timing event — never the answer gate.
         internal event Action<string, string, long> PushAcked = delegate { };
+        // CB-316: a phone's watch / unwatch / input / launch, from an action
+        // envelope that opened under the pair's key (phone id, its pairing
+        // id_pub for the launch signature, the request). A v4 type with the
+        // wrong shape arrives as BadFrameRequest, to be answered bad_frame.
+        internal event Action<string, byte[], RelayRequest> RequestReceived = delegate { };
+        // CB-316: a phone's presence went from online to offline. Its watches
+        // die with it, so the relay's queue never fills with windows for a
+        // phone that is not reading them.
+        internal event Action<string> PhoneWentOffline = delegate { };
+
+        // This desktop's name, for the done push's label (the amber's rule:
+        // "<title> on <machine>"). Set by RelayClient from its options.
+        internal string Machine { get; init; } = "";
+
+        // The usage frame a phone coming online is sent after its roster:
+        // whatever SendUsage last sent, or nothing before the first reading.
+        private string? _latestUsage;
 
         // ---- connection -------------------------------------------------------
 
@@ -290,9 +307,11 @@ namespace Orbweaver
             if (f.TryGetProperty("last_seen", out var ls) && ls.ValueKind == JsonValueKind.Number && ls.TryGetInt64(out var secs))
                 c.LastSeen = DateTimeOffset.FromUnixTimeSeconds(secs);
             var cameOnline = online && !c.Online;
+            var wentOffline = !online && c.Online;
             c.Online = online;
             PresenceChanged();
-            return cameOnline ? Collect(RosterFor(c)) : [];
+            if (wentOffline) PhoneWentOffline(id);
+            return cameOnline ? RosterAndUsage(c) : [];
         }
 
         // ---- envelopes in -----------------------------------------------------
@@ -348,6 +367,23 @@ namespace Orbweaver
             {
                 if (ParseAnswer(act) is { } answer) AnswerReceived(from, channel.Phone.IdPublic, answer);
                 else Note($"answer from {from} malformed; ignored");
+            }
+            // CB-316: watch / unwatch / input / launch. Class action only, and
+            // only out of a box that opened under this pair's key, exactly as
+            // the answer above. The envelope id is the ref every reply echoes.
+            else if (cls == "action" && Json(plain) is { } req
+                     && RelayRequests.Parse(req, Str(f, "id") ?? "") is { } request)
+            {
+                Note($"{Str(req, "t")} from {from} ref={Safe(request.Ref)}");
+                RequestReceived(from, channel.Phone.IdPublic, request);
+            }
+            // A sealed action that opened but is neither: a frame that does not
+            // parse or has no t is answered bad_frame (frames-v4 canonical rule);
+            // an unknown t from a newer phone is left alone.
+            else if (cls == "action" && (Json(plain) is not { } other || Str(other, "t") is null))
+            {
+                Note($"action from {from} with no t; bad_frame");
+                RequestReceived(from, channel.Phone.IdPublic, new BadFrameRequest(Str(f, "id") ?? "", null));
             }
             return [];
         }
@@ -463,7 +499,7 @@ namespace Orbweaver
 
             var c = OpenChannel(phone, fresh: true);
             c.Online = true;   // it is talking to us right now
-            frames.AddRange(Collect(RosterFor(c)));
+            frames.AddRange(RosterAndUsage(c));
             PhonePaired(phone);
             return frames;
         }
@@ -526,8 +562,16 @@ namespace Orbweaver
             if (update.IsEmpty || !Welcomed) return [];
 
             var frames = new List<string>();
-            foreach (var c in _channels.Values.Where(c => c.Online))
+            foreach (var c in _channels.Values)
             {
+                // CB-316: a session that went generating -> idle rides its own
+                // delta with push done, to every paired phone — online or not,
+                // because the push is what reaches a backgrounded phone. Sent
+                // even when this scan also needs a roster, which would
+                // otherwise swallow the transition.
+                foreach (var d in update.Deltas.Where(d => d.Finished))
+                    frames.AddRange(Collect(DoneFor(c, d)));
+                if (!c.Online) continue;
                 if (update.NeedsRoster)
                 {
                     frames.AddRange(Collect(RosterFor(c)));
@@ -535,9 +579,79 @@ namespace Orbweaver
                 }
                 // An online phone has always been sent a roster (presence,
                 // Allow and resync all send one), so its stream is numbered.
-                foreach (var d in update.Deltas)
+                foreach (var d in update.Deltas.Where(d => !d.Finished))
                     if (SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.Delta(d)!) is { } frame)
                         frames.Add(frame);
+            }
+            return frames;
+        }
+
+        // The done delta (frames-v4 sealed_plaintext.done): the v2 delta itself,
+        // push done, and an e sealed to this phone's agreement key naming the
+        // session the amber's way — "<title> on <machine>", or the machine
+        // alone when the session has no title.
+        private string? DoneFor(Channel c, RelayDelta d)
+        {
+            // The book has just stamped this row (a finished delta is never a
+            // removal), so it is there to name the session.
+            var title = _book.Find(d.SessionId)!.Title;
+            var e = PushE(c, DoneE(d.SessionId, title, Machine));
+            return SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.DeltaForPush(d), push: "done", e: e);
+        }
+
+        // A push e sealed to this phone, or none when it could not fit the
+        // relay's 3600-character cap (a very long title): the alert then shows
+        // the generic text, which beats the relay refusing the envelope.
+        private static string? PushE(Channel c, string plaintext)
+        {
+            var bytes = Encoding.UTF8.GetBytes(plaintext);
+            return PushSeal.SealedLength(bytes.Length) <= PushSeal.MaxE ? PushSeal.Seal(c.Phone.KaPublic, bytes) : null;
+        }
+
+        internal static string DoneLabel(string title, string machine) =>
+            string.IsNullOrWhiteSpace(title) ? machine : $"{title} on {machine}";
+
+        internal static string DoneE(string sessionId, string title, string machine) =>
+            new CanonicalJson().Num("v", 1).Str("t", "done").Str("session_id", sessionId)
+                .Str("label", DoneLabel(title, machine)).Str("title", title).ToString();
+
+        // ---- CB-316 replies, windows and usage -------------------------------------
+
+        internal const string UsageCk = "usage";
+
+        // A sealed ok/err to the phone that asked. ck is the session's when the
+        // reply names one (so the phone can group it without opening it), else
+        // empty — frames-v4 ok.direction.
+        internal IReadOnlyList<string> SendReply(string phoneId, string? sessionId, string plaintext)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
+            return Collect(SealTo(c, "action", sessionId is null ? "" : RelayCrypto.Ck(c.CkKey, sessionId), Encoding.UTF8.GetBytes(plaintext)));
+        }
+
+        // One window to the phone watching. Online only: a watch dies with the
+        // phone's presence, so a window for an offline phone is a bug upstream,
+        // and is dropped here rather than filling the relay's queue.
+        internal IReadOnlyList<string> SendWindow(string phoneId, string sessionId, string plaintext)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c) || !c.Online) return [];
+            return Collect(SealTo(c, "chat", RelayCrypto.Ck(c.CkKey, sessionId), Encoding.UTF8.GetBytes(plaintext)));
+        }
+
+        // The usage frame to every online phone — or, carrying a limit crossing,
+        // to every paired phone with push limit and that phone's own e, since
+        // the alert has to reach a phone that is not open. Remembered either
+        // way, for the next phone that comes online.
+        internal IReadOnlyList<string> SendUsage(string plaintext, string? limitE = null)
+        {
+            _latestUsage = plaintext;
+            if (!Welcomed) return [];
+            var frames = new List<string>();
+            foreach (var c in _channels.Values)
+            {
+                if (limitE is null && !c.Online) continue;
+                var e = limitE is null ? null : PushE(c, limitE);
+                frames.AddRange(Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, UsageCk), Encoding.UTF8.GetBytes(plaintext),
+                    push: limitE is null ? "none" : "limit", e: e)));
             }
             return frames;
         }
@@ -548,6 +662,17 @@ namespace Orbweaver
         // not the diff — and it restarts the phone's numbering at 1.
         private string? RosterFor(Channel c) =>
             SealTo(c, "state", "", c.Stream.Roster(_book.Snapshot()));
+
+        // CB-316: a phone coming online (or just paired) gets its roster, then
+        // the latest usage frame (frames-v4: "sent on connect, after the
+        // roster"), when there has been a reading at all.
+        private List<string> RosterAndUsage(Channel c)
+        {
+            var frames = new List<string>(Collect(RosterFor(c)));
+            if (_latestUsage is { } usage)
+                frames.AddRange(Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, UsageCk), Encoding.UTF8.GetBytes(usage))));
+            return frames;
+        }
 
         // ---- CB-315 prompts ------------------------------------------------------
 
@@ -680,7 +805,17 @@ namespace Orbweaver
             var desktopId = _identity.DeviceId!;
             var ct = RelayCrypto.Seal(c.KeyFor(epoch), RelayCrypto.Nonce(RelayCrypto.DesktopToPhone, epoch, counter),
                 plaintext, RelayCrypto.Aad(desktopId, c.Phone.PhoneId, cls));
-            return Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null, id, push, e);
+            var envelope = Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null, id, push, e);
+            // The send boundary: a frame the relay would close the socket over is
+            // never sent. Said in the log, by size and class only; the counter it
+            // used is simply skipped, which the phone's window allows.
+            var bytes = Encoding.UTF8.GetByteCount(envelope);
+            if (bytes > MaxFrameBytes)
+            {
+                Note($"envelope {Known(cls, Classes)} of {bytes} bytes is over the relay's {MaxFrameBytes}; not sent");
+                return null;
+            }
+            return envelope;
         }
 
         private string Envelope(string from, string to, string cls, string ck, string ct, string? offer, string? id = null,
@@ -809,10 +944,25 @@ namespace Orbweaver
 
         private static IReadOnlyList<string> Collect(string? frame) => frame is null ? [] : [frame];
 
+        // Relaxed escaping (CB-316). The default encoder writes every `+` as
+        // \u002B, and `+` is about one base64 character in 64: a full 48,000-byte
+        // window sealed to a 64,000-character ct, and the envelope came out at
+        // 69,176 bytes — over the relay's 65,536-byte frame cap, so the relay
+        // closed the desk with MessageTooBig on every large backfill, the desk
+        // reconnected, the phone re-watched, and the link flapped about once a
+        // second (measured on a real 6.7 MB transcript). Relaxed it is 64,181.
+        // Everything these frames carry is ASCII ids, base64 and JSON the
+        // relay parses, so nothing needs the HTML-safe escapes.
+        private static readonly JsonWriterOptions FrameOptions =
+            new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+        // What the relay will take in one frame (relay Limits.MaxFrameBytes).
+        internal const int MaxFrameBytes = 64 * 1024;
+
         private static string Frame(Action<Utf8JsonWriter> body)
         {
             using var buffer = new MemoryStream();
-            using (var w = new Utf8JsonWriter(buffer))
+            using (var w = new Utf8JsonWriter(buffer, FrameOptions))
             {
                 w.WriteStartObject();
                 body(w);

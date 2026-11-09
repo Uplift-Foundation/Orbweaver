@@ -48,15 +48,34 @@ namespace Orbweaver
         internal static readonly TimeSpan Lifetime = TimeSpan.FromHours(1);
         private readonly Dictionary<(string Phone, string Nonce), DateTimeOffset> _seen = new();
 
+        // Locked since CB-316: answers come off the prompt pipeline and
+        // launches off the relay's request path, which run concurrently.
         internal bool Seen(string phoneId, string nonce, DateTimeOffset now)
         {
-            Prune(now);
-            return _seen.ContainsKey((phoneId, nonce));
+            lock (_seen)
+            {
+                Prune(now);
+                return _seen.ContainsKey((phoneId, nonce));
+            }
         }
 
-        internal void Add(string phoneId, string nonce, DateTimeOffset now) => _seen[(phoneId, nonce)] = now;
+        internal void Add(string phoneId, string nonce, DateTimeOffset now)
+        {
+            lock (_seen) _seen[(phoneId, nonce)] = now;
+        }
 
-        internal int Count => _seen.Count;
+        // Seen-then-add as one step, so two launches carrying one nonce cannot
+        // both pass between the check and the record.
+        internal bool TryAdd(string phoneId, string nonce, DateTimeOffset now)
+        {
+            lock (_seen)
+            {
+                Prune(now);
+                return _seen.TryAdd((phoneId, nonce), now);
+            }
+        }
+
+        internal int Count { get { lock (_seen) return _seen.Count; } }
 
         private void Prune(DateTimeOffset now)
         {
