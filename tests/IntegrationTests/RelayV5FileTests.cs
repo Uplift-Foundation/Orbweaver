@@ -16,7 +16,13 @@ public class RelayV5FileTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb321-" + Guid.NewGuid().ToString("N")[..8]);
 
-    public RelayV5FileTests() => Directory.CreateDirectory(_dir);
+    private readonly Xunit.Abstractions.ITestOutputHelper _output;
+
+    public RelayV5FileTests(Xunit.Abstractions.ITestOutputHelper output)
+    {
+        _output = output;
+        Directory.CreateDirectory(_dir);
+    }
 
     public void Dispose()
     {
@@ -62,6 +68,51 @@ public class RelayV5FileTests : IDisposable
             Assert.True(Encoding.UTF8.GetByteCount(w.Json) <= PersonaFrames.MaxWindowBytes);
             Assert.Equal(hash, JsonDocument.Parse(w.Json).RootElement.GetProperty("hash").GetString());
         }
+    }
+
+    // The reduction ladder end to end, through real Skia, on a picture the size
+    // of a real animated persona (CB-322's was 11 MB): 120 frames of 400x400
+    // noise in a GIF that never compresses, about 10.8 MB on disk. Noise defeats
+    // every codec, so 120 frames at 216 px cannot fit the 2 MiB budget as they
+    // are, and the ladder (drop alternate frames, lower quality, halve the
+    // side) has to bring it under, or the picture is not offered. Either way
+    // nothing over budget may reach a phone, and it is offered here: the test
+    // states which rungs it took.
+    [Fact]
+    public void A_real_sized_noisy_gif_goes_through_the_ladder_to_under_the_budget()
+    {
+        const int side = 400, frames = 120;
+        var rng = new Random(321);
+        var path = Path.Combine(_dir, "large.gif");
+        File.WriteAllBytes(path, TinyGif.Write(side, side,
+            Enumerable.Range(0, frames).Select(_ =>
+            {
+                var f = new byte[side * side];
+                for (var i = 0; i < f.Length; i++) f[i] = (byte)rng.Next(4);
+                return f;
+            }).ToList(),
+            Enumerable.Repeat(10, frames).ToList()));
+        var size = new FileInfo(path).Length;
+        Assert.InRange(size, 10_000_000L, PersonaFrames.MaxSourceBytes);     // a real persona's size, under the source cap
+
+        var store = RealStore();
+        Assert.Null(store.Offer(path));
+        var hash = store.Offer(path);
+        Assert.NotNull(hash);                                                   // offered: the ladder found a rung that fits
+        var b = store.ById(hash!)!;
+
+        Assert.True(b.Bytes <= PersonaFrames.MaxImageBytes, $"{b.Bytes} bytes is over the budget");
+        Assert.All(b.Frames, f => Assert.True(PersonaFrames.FrameAllowed(f.Data.Length)));
+        Assert.True(PersonaFrames.SideAllowed(b.W, b.H));
+        // The ladder really ran: 120 noise frames at 216 px cannot all be kept.
+        Assert.True(b.Frames.Count < frames || b.W < PersonaImageBundle.DefaultSide,
+            $"no rung taken: {b.Frames.Count} frames at {b.W}x{b.H}");
+        // Dropping a frame hands its time to the one kept, so the loop still
+        // lasts as long as the source's (120 x 100 ms), unless it fell to a still.
+        if (b.Frames.Count > 1) Assert.Equal(frames * 100, b.Frames.Sum(f => f.Ms));
+        Assert.All(b.Windows, w => Assert.True(Encoding.UTF8.GetByteCount(w.Json) <= PersonaFrames.MaxWindowBytes));
+        Assert.Contains(_log, l => l.StartsWith($"persona_image {hash![..12]} ready frames {b.Frames.Count} {b.W}x{b.H} {b.Bytes}B", StringComparison.Ordinal));
+        _output.WriteLine($"source {size} B, 120 frames {side}x{side} -> {b.Frames.Count} frames at {b.W}x{b.H}, {b.Bytes} B, {b.Windows.Count} windows");
     }
 
     [Fact]
