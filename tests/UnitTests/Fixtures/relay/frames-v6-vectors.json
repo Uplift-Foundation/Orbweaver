@@ -1,7 +1,7 @@
 {
  "_source": {
-  "generated_by": "Orbweaver-Mobile contracts/make_v6_vectors.py (architect, CB-321 addendum 2); to be reproduced by Uplift-Foundation/Orbweaver tools/relay-vectors",
-  "orbweaver_sha": "hand-authored",
+  "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (V6Vectors.cs: PushPersona, PromptFrames.FitPush, RelayLink.DoneE, RelayUsage.LimitE, RelayLink.PushPlaintext, PushSeal)",
+  "orbweaver_sha": "2f63d8ba",
   "spec": "CB-321 addendum 2 plan (docs/design/cb-321-notification-persona-plan.md); contracts/frames-v6.json push_changes",
   "encoding": "hex is lowercase; e is base64url without padding of header(66) || nonce(12) || ciphertext || tag(16); the done and limit plaintexts are canonical (frames-v4 canonical); the amber plaintext is v3's library form as push-vectors.json pins it (\\n short forms, BMP non-ASCII literal, non-BMP as uppercase \\u surrogate pairs); persona is the last key of each"
  },
