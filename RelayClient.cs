@@ -139,6 +139,11 @@ namespace Orbweaver
             // ResendPendingAsync for why every one, not only the unsent).
             _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
             _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
+            _link.PushAcked += (phone, id, atMs) =>
+            {
+                MirrorLog.Say("relay", $"push-ack {id} from {phone} at_ms={atMs}");
+                Defer(() => PushAcked(phone, id, atMs));
+            };
             _link.PushReplied += (id, code, ms) =>
             {
                 MirrorLog.Say("relay", $"push {id} {code}{(ms is { } n ? $" apns_ms={n}" : "")}");
@@ -152,6 +157,9 @@ namespace Orbweaver
         // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on
         // reconnect was throttled rather than alerted twice.
         internal event Action<string, string, int?> PushReplied = delegate { };
+
+        // Gate (a)'s far end: the phone's notification extension saw the amber.
+        internal event Action<string, string, long> PushAcked = delegate { };
 
         // The real panes. Excluded: each is one line into TerminalFocuser,
         // whose tmux calls a headless runner must not make.
