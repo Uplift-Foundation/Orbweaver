@@ -3443,6 +3443,34 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(Face, Assert.Single(harness.Client.Known()).Entry.Persona!.Avatar);
     }
 
+    // CB-322: a picture bigger than one piece goes in PictureChunkBytes pieces,
+    // not as one frame that holds the link for as long as its write takes, and
+    // the client puts them back together byte for byte. Three pieces, the last
+    // one short, so the split has a remainder to get wrong.
+    [Fact]
+    public async Task ALargePictureCrossesInPiecesAndArrivesWhole()
+    {
+        var big = new byte[2 * MirrorProtocol.PictureChunkBytes + 1234];
+        new Random(322).NextBytes(big);
+        Face.CopyTo(big, 0);
+
+        WritePersona(big);
+        var harness = new Harness(_dir);
+        harness.AddSession("first", WriteTranscript("first.jsonl", Conversation(2)));
+
+        harness.ForgetFramesSoFar();
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Equal(1, harness.PictureAsks);
+        Assert.Equal(big, Assert.Single(harness.Client.Known()).Entry.Persona!.Avatar);
+
+        var pictureId = MirrorProtocol.AvatarIdOf(big);
+        var pieces = harness.ToClient.Count(line =>
+            line.Contains(";t=" + MirrorProtocol.Chunk + ";")
+            && line.Contains(MirrorProtocol.AvatarIdField + "=" + pictureId));
+        Assert.Equal(3, pieces);
+    }
+
     // CB-306 regression on 6e1c2183: the persona, picture included, must still
     // reach the peer once a read that was pending at the first HELLO has
     // answered, and its id must be one the AVATAR request answers.

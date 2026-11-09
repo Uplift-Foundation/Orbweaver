@@ -4,6 +4,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.Channels;
 
 namespace Orbweaver
 {
@@ -77,11 +78,15 @@ namespace Orbweaver
         // renews a watch is the ordinary case, not a rare one. The old transport
         // had the same problem and solved it the same way — one relay, one turn
         // at a time.
-        private sealed class Connected(Stream stream, string pin, string? endpoint = null)
+        private sealed class Connected(WatchedStream stream, string pin, string? endpoint = null)
             : IDisposable
         {
-            public Stream Stream { get; } = stream;
+            public WatchedStream Stream { get; } = stream;
             public string Pin { get; } = pin;
+
+            // When this side last sent a keepalive on this connection. Starts
+            // at adoption, so a fresh link is not pinged the instant it opens.
+            public DateTime LastPing { get; set; } = stream.LastRead;
 
             // Where we dialled, as "host:port", when we dialled. Null on a
             // connection that came to us — the source port of an inbound socket
@@ -126,7 +131,12 @@ namespace Orbweaver
             try
             {
                 await PeerProtocol.WriteAsync(peer.Stream, message).ConfigureAwait(false);
-                MirrorLog.Say("peer-sent", $"to={machine} t={message.Type} id={message.Id}");
+
+                // A keepalive every fifteen seconds per peer would bury the
+                // lines worth reading, so it is the one write not logged.
+                if (message.Type != PeerProtocol.Ping)
+                    MirrorLog.Say("peer-sent", $"to={machine} t={message.Type} id={message.Id}");
+
                 return true;
             }
             catch (Exception ex)
@@ -161,8 +171,32 @@ namespace Orbweaver
         // MemoryStream: this is where a framing mistake would show up as a
         // corrupted transcript rather than an error, so it is the part that most
         // wants asserting without a socket in the way.
+        //
+        // **The loop reads; it never waits for a message to be handled (CB-322).**
+        // It used to await Deliver for each message before reading the next,
+        // and a handler that answers writes its answer before it returns. A
+        // persona picture was one 15MB frame, a write that cannot finish until
+        // the far side reads it — and when both Macs served each other's
+        // picture in the same few milliseconds, each side's reader was parked
+        // inside its own write, waiting on a reader that was waiting on it. No
+        // thread blocked anywhere, both sockets stayed ESTABLISHED, Recv-Q
+        // climbed to 1.8MB on the mini and stayed there. So messages now go
+        // into a queue that one task drains in arrival order: order is kept,
+        // because a transfer's pieces and its replies depend on it, and reading
+        // carries on whatever a handler is waiting for.
+        //
+        // The queue is unbounded on purpose. A bound would bring the deadlock
+        // back the moment it filled, and what can arrive is limited by a paired
+        // peer's own writes, each under PeerProtocol.MaxMessageBytes. The loop
+        // still returns only once everything it read has been handled, which is
+        // what lets a test over a MemoryStream assert on what was delivered.
         internal async Task PumpAsync(string machine, Stream stream, CancellationToken ct)
         {
+            var inbox = Channel.CreateUnbounded<(string Machine, PeerProtocol.PeerMessage Message)>(
+                new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+
+            var handling = HandleInOrderAsync(inbox.Reader);
+
             try
             {
                 while (!ct.IsCancellationRequested)
@@ -179,6 +213,10 @@ namespace Orbweaver
                             $"from={machine} theirs={message.Version} ours={PeerProtocol.Version}");
                         continue;
                     }
+
+                    // The keepalive has done its job by arriving: reading it is
+                    // what moved this connection's last-read time on.
+                    if (message.Type == PeerProtocol.Ping) continue;
 
                     MirrorLog.Say("peer-in", $"from={machine} t={message.Type} id={message.Id}");
 
@@ -219,20 +257,7 @@ namespace Orbweaver
                         break;
                     }
 
-                    try
-                    {
-                        await _seams.Deliver(machine, message).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        // One bad message must not take the connection down with
-                        // it. The relay learned this the expensive way: a
-                        // handler that threw was discarded silently and the
-                        // machine went on looking healthy while answering
-                        // nothing.
-                        MirrorLog.Say("peer-handler-threw",
-                            $"t={message.Type} {ex.GetType().Name}: {ex.Message}");
-                    }
+                    inbox.Writer.TryWrite((machine, message));
                 }
             }
             catch (OperationCanceledException)
@@ -243,6 +268,99 @@ namespace Orbweaver
             {
                 MirrorLog.Say("peer-read-failed", $"from={machine} {ex.GetType().Name}: {ex.Message}");
             }
+            finally
+            {
+                inbox.Writer.TryComplete();
+                await handling.ConfigureAwait(false);
+            }
+        }
+
+        // Hands each queued message to the mirror, one at a time and in the
+        // order it was read.
+        private async Task HandleInOrderAsync(
+            ChannelReader<(string Machine, PeerProtocol.PeerMessage Message)> inbox)
+        {
+            await foreach (var (machine, message) in inbox.ReadAllAsync().ConfigureAwait(false))
+            {
+                try
+                {
+                    await _seams.Deliver(machine, message).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // One bad message must not take the connection down with
+                    // it. The relay learned this the expensive way: a
+                    // handler that threw was discarded silently and the
+                    // machine went on looking healthy while answering
+                    // nothing.
+                    MirrorLog.Say("peer-handler-threw",
+                        $"t={message.Type} {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+
+        // --- liveness ----------------------------------------------------------------
+
+        // How often each side says it is still there, and how long a connection
+        // may go without reading a single byte before it is treated as dead.
+        //
+        // CB-322 is why the second exists. The wedged link read nothing for
+        // over an hour while both ends logged `connected=2` every ten seconds,
+        // because nothing ever asked whether bytes were moving — a socket that
+        // is ESTABLISHED is not one that works. Dropping it is the whole
+        // recovery: the dial tick redials anything not connected.
+        //
+        // Sixty seconds is four missed keepalives, so one slow write cannot trip
+        // it, and it is measured in bytes rather than messages, so a large
+        // message arriving slowly counts as progress the whole way through. A
+        // peer on a build without keepalives still sends its mirror HELLO about
+        // every ten seconds (the mini's log shows the cadence), which keeps a
+        // healthy idle link to it well inside the deadline.
+        internal static readonly TimeSpan KeepaliveEvery = TimeSpan.FromSeconds(15);
+        internal static readonly TimeSpan StalledAfter = TimeSpan.FromSeconds(60);
+        private static readonly TimeSpan WatchEvery = TimeSpan.FromSeconds(5);
+
+        private Timer? _watchdog;
+
+        // One pass of the watchdog: drop what has stalled, ping what is due.
+        //
+        // Internal and driven by Now so a test can step the clock rather than
+        // wait a minute. The stalled connection is dropped by identity, through
+        // Forget, for the reason Adopt gives: a name can have moved to a newer
+        // connection since this one was listed.
+        internal void CheckLiveness()
+        {
+            List<(string Name, Connected Peer)> peers;
+            lock (_gate) peers = _peers.Select(p => (p.Key, p.Value)).ToList();
+
+            var now = Now();
+
+            foreach (var (name, peer) in peers)
+            {
+                var quiet = now - peer.Stream.LastRead;
+
+                if (quiet > StalledAfter)
+                {
+                    MirrorLog.Say("peer-stalled", $"machine={name} quiet={quiet.TotalSeconds:0}s");
+                    Forget(peer);
+                    continue;
+                }
+
+                if (now - peer.LastPing < KeepaliveEvery) continue;
+
+                peer.LastPing = now;
+                _ = SendAsync(name, PeerProtocol.Message(PeerProtocol.Ping, PeerProtocol.NewId()));
+            }
+        }
+
+        // The timer's callback. Excluded from coverage: it is the try/catch
+        // that stops a throwing PeerDisconnected subscriber from ending the
+        // process on a timer thread, around a method tested on its own.
+        [ExcludeFromCodeCoverage]
+        private void Watch()
+        {
+            try { CheckLiveness(); }
+            catch (Exception ex) { MirrorLog.Say("peer-watchdog-threw", $"{ex.GetType().Name}: {ex.Message}"); }
         }
 
         // --- listening and connecting -----------------------------------------------
@@ -443,12 +561,15 @@ namespace Orbweaver
             string machine, Stream stream, string pin, CancellationToken ct,
             string? endpoint = null)
         {
-            var peer = new Connected(stream, pin, endpoint);
+            var watched = new WatchedStream(stream, () => Now());
+            var peer = new Connected(watched, pin, endpoint);
 
             lock (_gate)
             {
                 if (_peers.Remove(machine, out var existing)) existing.Dispose();
                 _peers[machine] = peer;
+
+                _watchdog ??= new Timer(_ => Watch(), null, WatchEvery, WatchEvery);
             }
 
             // **Dropped by identity, not by the name it had when it opened.**
@@ -463,7 +584,7 @@ namespace Orbweaver
             // would have arrived here the day inbound connections started being
             // named. Following the instance costs a scan of a dictionary that
             // holds one entry per machine.
-            _ = PumpAsync(machine, stream, ct)
+            _ = PumpAsync(machine, watched, ct)
                 .ContinueWith(_ => Forget(peer), TaskScheduler.Default);
         }
 
@@ -846,18 +967,23 @@ namespace Orbweaver
         {
             CancellationTokenSource? stopping;
             TcpListener? listener;
+            Timer? watchdog;
             List<Connected> peers;
 
             lock (_gate)
             {
                 stopping = _stopping;
                 listener = _listener;
+                watchdog = _watchdog;
                 peers = _peers.Values.ToList();
 
                 _stopping = null;
                 _listener = null;
+                _watchdog = null;
                 _peers.Clear();
             }
+
+            watchdog?.Dispose();
 
             try { stopping?.Cancel(); } catch { }
             try { listener?.Stop(); } catch { }
