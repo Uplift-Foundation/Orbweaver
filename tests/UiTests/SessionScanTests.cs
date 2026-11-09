@@ -3928,16 +3928,25 @@ public class SessionScanTests
     [AvaloniaFact]
     public void AWaitingSessionOutlivesKeepOrbsFor()
     {
-        using var scratch = new Scratch();
-        scratch.Write("dialog", title: "openclaw", written: DateTime.UtcNow.AddDays(-3));
+        // The lifetime this is about is set here rather than assumed: the test
+        // used to read whatever an earlier test left behind, and "forever" left
+        // behind kept the idle session too (CB-321).
+        var before = OrbweaverSettings.OrbLifetimeMinutes;
+        try
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = OrbweaverSettings.DefaultOrbLifetimeMinutes;
+            using var scratch = new Scratch();
+            scratch.Write("dialog", title: "openclaw", written: DateTime.UtcNow.AddDays(-3));
 
-        var gone = WithRecord(scratch, null);
-        gone.ScanAndUpdate();
-        Assert.Empty(OrbIds(gone));
+            var gone = WithRecord(scratch, null);
+            gone.ScanAndUpdate();
+            Assert.Empty(OrbIds(gone));
 
-        var kept = WithRecord(scratch, "waiting");
-        kept.ScanAndUpdate();
-        Assert.Equal(new[] { "dialog" }, OrbIds(kept));
+            var kept = WithRecord(scratch, "waiting");
+            kept.ScanAndUpdate();
+            Assert.Equal(new[] { "dialog" }, OrbIds(kept));
+        }
+        finally { OrbweaverSettings.OrbLifetimeMinutes = before; }
     }
 
     // And its transcript is never opened: waiting is never parked, so the last

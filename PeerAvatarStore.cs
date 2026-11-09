@@ -103,7 +103,7 @@ namespace Orbweaver
 
         // Excluded from coverage: a FileInfo, and nothing decided.
         [ExcludeFromCodeCoverage]
-        private static (long, DateTime)? StatFile(string path)
+        internal static (long, DateTime)? StatFile(string path)
         {
             try
             {

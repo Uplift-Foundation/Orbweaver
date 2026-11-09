@@ -32,6 +32,7 @@
          it to keep in step. -->
     <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
+    <Compile Include="..\UnitTests\TinyGif.cs" Link="TinyGif.cs" />
     <!-- CB-270 Stage 3: the captured native runs, as one scrubbed constant. -->
     <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
     <!-- CB-306: real commands.list and a /status card, as constants. -->

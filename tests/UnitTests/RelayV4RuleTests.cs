@@ -37,7 +37,8 @@ public class RelayV4RuleTests
         Assert.Equal("""{"t":"err","ref":"r","code":"not_at_prompt","session_id":"s"}""",
             RelayReplies.Err("r", RelayReplies.NotAtPrompt, "s"));
         Assert.Equal(4, RelayReplies.OkCodes.Length);
-        Assert.Equal(18, RelayReplies.ErrCodes.Length);
+        // 18 from v4, plus v5's unknown_image (CB-321).
+        Assert.Equal(19, RelayReplies.ErrCodes.Length);
     }
 
     // ---- request shapes -----------------------------------------------------------

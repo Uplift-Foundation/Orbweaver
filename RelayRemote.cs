@@ -16,6 +16,10 @@ namespace Orbweaver
     {
         void Reply(string phoneId, string? sessionId, string plaintext);
         void Window(string phoneId, string sessionId, string plaintext);
+
+        // CB-321: one persona_image window; false when nothing was produced
+        // (the phone is offline or the link is down), which ends the transfer.
+        bool ImageWindow(string phoneId, string hash, string plaintext);
     }
 
     internal sealed class RelayRemote
@@ -41,7 +45,16 @@ namespace Orbweaver
             Func<SessionStatus, TranscriptWatcher.Seams> WatchSeams,
             RelayInput Input,
             LaunchSeams Launch,
-            Action<string> Log);
+            Action<string> Log)
+        {
+            // CB-321: the finished bundle offered under a hash, or null. Off by
+            // default so a test that does not care about pictures gets
+            // unknown_image; the app's seams point it at PersonaImageStore.
+            internal Func<string, PersonaImageBundle?> Images { get; init; } = _ => null;
+        }
+
+        // CB-321: frames-v5 limits.image_windows_per_second, per phone.
+        internal static readonly TimeSpan ImageWindowEvery = TimeSpan.FromSeconds(1.0 / PersonaFrames.ImageWindowsPerSecond);
 
         private readonly Seams _seams;
         private readonly IRemoteSender _send;
@@ -49,6 +62,12 @@ namespace Orbweaver
         private readonly object _gate = new();
         private readonly Dictionary<(string Phone, string Session), TranscriptWatcher> _watches = new();
         private IReadOnlyList<(string SessionId, SessionStatus Status)> _snapshot = [];
+
+        // CB-321: one picture per phone at a time, later requests queued, and a
+        // generation per phone that going offline bumps, so a transfer in
+        // flight notices it was abandoned at its next window.
+        private readonly Dictionary<string, Queue<PersonaImageRequest>> _imageQueues = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _imageGeneration = new(StringComparer.Ordinal);
 
         internal RelayRemote(Seams seams, IRemoteSender send, NonceWindow nonces)
         {
@@ -98,14 +117,35 @@ namespace Orbweaver
         internal void PhoneOffline(string phoneId)
         {
             lock (_gate)
+            {
                 foreach (var key in _watches.Keys.Where(k => k.Phone == phoneId).ToList()) _watches.Remove(key);
+                AbandonImages(phoneId);
+            }
+        }
+
+        // Under _gate. The queue goes, and the transfer in flight stops at its
+        // next window; the phone asks again when it is back (frames-v5: an
+        // incomplete picture is discarded on the phone after 30 s).
+        private void AbandonImages(string phoneId)
+        {
+            _imageQueues.Remove(phoneId);
+            _imageGeneration[phoneId] = _imageGeneration.GetValueOrDefault(phoneId) + 1;
+        }
+
+        internal bool IsSendingImage(string phoneId)
+        {
+            lock (_gate) return _imageQueues.ContainsKey(phoneId);
         }
 
         // The socket closed: every watch dies, and the phone re-watches on
         // reconnect (frames-v4 watch.rules).
         internal void Disconnected()
         {
-            lock (_gate) _watches.Clear();
+            lock (_gate)
+            {
+                _watches.Clear();
+                foreach (var phone in _imageQueues.Keys.ToList()) AbandonImages(phone);
+            }
         }
 
         // One tick of every watch: what each owes its phone.
@@ -144,6 +184,9 @@ namespace Orbweaver
             UnwatchRequest u => Task.Run(() => Unwatch(phoneId, u)),
             InputRequest i => InputAsync(phoneId, i),
             LaunchRequest l => LaunchAsync(phoneId, phoneIdPublic, l),
+            // Off the event pump: chunking a picture is milliseconds, but the
+            // pump is the one place CB-322 says must never wait on a picture.
+            PersonaImageRequest p => Task.Run(() => ImageAsync(phoneId, p)),
             // The only other kind RelayRequests makes.
             _ => Task.Run(() => Err(phoneId, request.Ref, RelayReplies.BadFrame, ((BadFrameRequest)request).SessionId)),
         };
@@ -216,6 +259,80 @@ namespace Orbweaver
             var outcome = await _seams.Input.TypeAsync(status, i.Text).ConfigureAwait(false);
             if (outcome.Typed) Ok(phoneId, i.Ref, RelayReplies.Typed, i.SessionId);
             else Err(phoneId, i.Ref, outcome.Code!, i.SessionId, outcome.Why);
+        }
+
+        // ---- persona pictures (CB-321) ---------------------------------------------
+
+        // A hash this desktop does not hold is refused at once; one it does is
+        // queued behind any picture already going to this phone, and the first
+        // request to find the phone idle carries the queue.
+        private async Task ImageAsync(string phoneId, PersonaImageRequest r)
+        {
+            if (_seams.Images(r.Hash) is null)
+            {
+                UnknownImage(phoneId, r);
+                return;
+            }
+            lock (_gate)
+            {
+                if (_imageQueues.TryGetValue(phoneId, out var queue))
+                {
+                    queue.Enqueue(r);
+                    return;
+                }
+                _imageQueues[phoneId] = new Queue<PersonaImageRequest>();
+            }
+
+            for (PersonaImageRequest? next = r; next is not null;)
+            {
+                await SendImageAsync(phoneId, next).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    if (_imageQueues.TryGetValue(phoneId, out var queue) && queue.Count > 0) next = queue.Dequeue();
+                    else
+                    {
+                        _imageQueues.Remove(phoneId);
+                        next = null;
+                    }
+                }
+            }
+        }
+
+        private void UnknownImage(string phoneId, PersonaImageRequest r)
+        {
+            _seams.Log($"unknown_image {PersonaFrames.Short(r.Hash)}");
+            _send.Reply(phoneId, null, RelayReplies.Err(r.Ref, RelayReplies.UnknownImage));
+        }
+
+        // The bundle's windows at ten a second. Looked up again here, since a
+        // queued request can outlive the bundle's place in the bounded store.
+        // Stops when the phone went offline (its generation moved) or the link
+        // produced nothing for a window.
+        private async Task SendImageAsync(string phoneId, PersonaImageRequest r)
+        {
+            if (_seams.Images(r.Hash) is not { } bundle)
+            {
+                UnknownImage(phoneId, r);
+                return;
+            }
+            int generation;
+            lock (_gate) generation = _imageGeneration.GetValueOrDefault(phoneId);
+            foreach (var window in bundle.Windows)
+            {
+                if (window.From > 0) await _seams.Delay(ImageWindowEvery).ConfigureAwait(false);
+                lock (_gate)
+                    if (_imageGeneration.GetValueOrDefault(phoneId) != generation)
+                    {
+                        _seams.Log($"persona_image {PersonaFrames.Short(r.Hash)} abandoned at frame {window.From}: phone offline");
+                        return;
+                    }
+                if (!_send.ImageWindow(phoneId, r.Hash, window.Json))
+                {
+                    _seams.Log($"persona_image {PersonaFrames.Short(r.Hash)} abandoned at frame {window.From}: not sent");
+                    return;
+                }
+                _seams.Log($"persona_image {PersonaFrames.Short(r.Hash)} frames {window.From}..{window.From + window.Count - 1}/{bundle.Frames.Count}");
+            }
         }
 
         // ---- launch ----------------------------------------------------------------

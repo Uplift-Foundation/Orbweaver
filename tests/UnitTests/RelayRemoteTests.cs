@@ -146,6 +146,15 @@ public class RelayRemoteTests
         public readonly List<(string Phone, string Session, JsonElement Body)> Windows = [];
         public void Reply(string phoneId, string? sessionId, string plaintext) { lock (this) Replies.Add((phoneId, sessionId, J(plaintext))); }
         public void Window(string phoneId, string sessionId, string plaintext) { lock (this) Windows.Add((phoneId, sessionId, J(plaintext))); }
+        public readonly List<(string Phone, string Hash, JsonElement Body)> Images = [];
+        public bool ImagesDeliver = true;
+        public Action? OnImage;
+        public bool ImageWindow(string phoneId, string hash, string plaintext)
+        {
+            lock (this) Images.Add((phoneId, hash, J(plaintext)));
+            OnImage?.Invoke();
+            return ImagesDeliver;
+        }
     }
 
     private sealed class World
@@ -164,6 +173,8 @@ public class RelayRemoteTests
         public readonly List<ProcessStartInfo> WindowsStarts = [];
         public Action? OnLaunchDelay;
         public readonly NonceWindow Nonces = new();
+        public readonly Dictionary<string, PersonaImageBundle> Bundles = new();
+        public readonly List<TimeSpan> Delays = [];
         public RelayRemote Remote = null!;
 
         public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42)
@@ -174,7 +185,7 @@ public class RelayRemoteTests
             WindowsPid = pid;
             Remote = new RelayRemote(new RelayRemote.Seams(
                 () => Now,
-                d => { Now += d; OnLaunchDelay?.Invoke(); return Task.CompletedTask; },
+                d => { Delays.Add(d); Now += d; OnLaunchDelay?.Invoke(); return Task.CompletedTask; },
                 s => new TranscriptWatcher.Seams(
                     () => s.TranscriptPath.Length == 0 ? null : s.TranscriptPath,
                     p => Files.TryGetValue(p, out var l) && l is not null ? new TranscriptWatcher.Stamp(p, l.Count, DateTime.UnixEpoch) : null,
@@ -187,7 +198,7 @@ public class RelayRemoteTests
                     () => "/bin/zsh",
                     (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
                     psi => { WindowsStarts.Add(psi); return WindowsPid; }),
-                Log.Add), Sent, Nonces);
+                Log.Add) { Images = h => Bundles.GetValueOrDefault(h) }, Sent, Nonces);
         }
 
         public void Sessions(params (string Id, SessionStatus Status)[] rows) => Remote.OnStatuses(rows);
@@ -619,5 +630,165 @@ public class RelayRemoteTests
         Assert.True(RelayRemote.SameFolder("/", "/", false));
         Assert.False(RelayRemote.SameFolder(null, "/w", false));
         Assert.False(RelayRemote.SameFolder("", "/w", false));
+    }
+
+    // ---- CB-321 persona pictures ------------------------------------------------
+
+    private static PersonaImageBundle Bundle(char c, int frames, int bytesEach = 15_000) =>
+        new(new string(c, 64), 24, 24, Enumerable.Range(0, frames)
+            .Select(i => new PersonaFrames.Frame(frames == 1 ? 0 : 100, Enumerable.Repeat((byte)i, bytesEach).ToArray())).ToList());
+
+    [Fact]
+    public async Task A_held_picture_streams_its_windows_in_order_at_ten_a_second()
+    {
+        var w = new World();
+        var b = Bundle('a', 5);                                             // two frames a window: three windows
+        w.Bundles[b.Hash] = b;
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", b.Hash));
+
+        Assert.Equal(b.Windows.Select(x => x.Json), w.Sent.Images.Select(x => x.Body.GetRawText()));
+        Assert.Equal(3, w.Sent.Images.Count);
+        Assert.All(w.Sent.Images, x => Assert.Equal(("ph_1", b.Hash), (x.Phone, x.Hash)));
+        Assert.Equal([0, 2, 4], w.Sent.Images.Select(x => x.Body.GetProperty("from_frame").GetInt32()));
+        Assert.Equal([RelayRemote.ImageWindowEvery, RelayRemote.ImageWindowEvery], w.Delays);   // none before the first
+        Assert.Equal(TimeSpan.FromMilliseconds(100), RelayRemote.ImageWindowEvery);
+        Assert.Contains($"persona_image {b.Hash[..12]} frames 0..1/5", w.Log);
+        Assert.Contains($"persona_image {b.Hash[..12]} frames 4..4/5", w.Log);
+        Assert.Empty(w.Sent.Replies);
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+    }
+
+    [Fact]
+    public async Task An_unknown_hash_is_refused_unknown_image_with_the_ref_and_no_ck()
+    {
+        var w = new World();
+        var hash = new string('c', 64);
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r9", hash));
+        var reply = Assert.Single(w.Sent.Replies);
+        Assert.Equal(("ph_1", (string?)null), (reply.Phone, reply.Session));
+        Assert.Equal("""{"t":"err","ref":"r9","code":"unknown_image"}""", reply.Body.GetRawText());
+        Assert.Empty(w.Sent.Images);
+        Assert.Contains($"unknown_image {hash[..12]}", w.Log);
+        Assert.DoesNotContain(w.Log, l => l.Contains(hash));                 // a prefix only, never the whole hash
+    }
+
+    [Fact]
+    public async Task A_second_request_while_one_is_in_flight_queues_behind_it()
+    {
+        var w = new World();
+        var a = Bundle('a', 3);
+        var b = Bundle('b', 1);
+        w.Bundles[a.Hash] = a;
+        w.Bundles[b.Hash] = b;
+        Task? second = null;
+        // The second request arrives while the first is between windows.
+        w.OnLaunchDelay = () =>
+        {
+            if (second is not null) return;
+            Assert.True(w.Remote.IsSendingImage("ph_1"));
+            second = w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r2", b.Hash));
+            second.Wait();                                                 // queued, not started: the first is in flight
+        };
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        await second!;
+        Assert.Equal([a.Hash, a.Hash, b.Hash], w.Sent.Images.Select(x => x.Hash));
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+    }
+
+    [Fact]
+    public async Task A_queued_picture_the_store_has_forgotten_is_refused_when_its_turn_comes()
+    {
+        var w = new World();
+        var a = Bundle('a', 3);
+        var b = Bundle('b', 1);
+        w.Bundles[a.Hash] = a;
+        w.Bundles[b.Hash] = b;
+        Task? second = null;
+        w.OnLaunchDelay = () =>
+        {
+            if (second is not null) return;
+            second = w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r2", b.Hash));
+            second.Wait();                                                 // queued while the bundle was held
+            w.Bundles.Remove(b.Hash);                                       // then evicted before its turn
+        };
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        await second!;
+        Assert.Equal([a.Hash, a.Hash], w.Sent.Images.Select(x => x.Hash));
+        Assert.Equal("""{"t":"err","ref":"r2","code":"unknown_image"}""", Assert.Single(w.Sent.Replies).Body.GetRawText());
+    }
+
+    [Fact]
+    public async Task A_phone_going_offline_abandons_the_picture_in_flight_and_its_queue()
+    {
+        var w = new World();
+        var a = Bundle('a', 5);
+        var b = Bundle('b', 1);
+        w.Bundles[a.Hash] = a;
+        w.Bundles[b.Hash] = b;
+        var queued = false;
+        w.Sent.OnImage = () =>
+        {
+            if (queued) return;
+            queued = true;
+            // Queued (the first is in flight), then the phone goes away.
+            w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r2", b.Hash)).Wait();
+            w.Remote.PhoneOffline("ph_1");
+        };
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        Assert.Single(w.Sent.Images);                                       // the first window, then nothing
+        Assert.Contains($"persona_image {a.Hash[..12]} abandoned at frame 2: phone offline", w.Log);
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+
+        // Back online, it asks again and gets the whole picture.
+        w.Sent.OnImage = null;
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r3", a.Hash));
+        Assert.Equal(4, w.Sent.Images.Count);
+    }
+
+    [Fact]
+    public async Task A_disconnect_abandons_every_phone_s_picture()
+    {
+        var w = new World();
+        var a = Bundle('a', 5);
+        w.Bundles[a.Hash] = a;
+        w.Sent.OnImage = () => w.Remote.Disconnected();
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        Assert.Single(w.Sent.Images);
+        Assert.Contains($"persona_image {a.Hash[..12]} abandoned at frame 2: phone offline", w.Log);
+    }
+
+    [Fact]
+    public async Task A_window_the_link_could_not_send_ends_the_transfer()
+    {
+        var w = new World();
+        var a = Bundle('a', 5);
+        w.Bundles[a.Hash] = a;
+        w.Sent.ImagesDeliver = false;
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        Assert.Single(w.Sent.Images);
+        Assert.Contains($"persona_image {a.Hash[..12]} abandoned at frame 0: not sent", w.Log);
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+    }
+
+    [Fact]
+    public async Task Two_phones_are_served_independently()
+    {
+        var w = new World();
+        var a = Bundle('a', 1);
+        w.Bundles[a.Hash] = a;
+        await Task.WhenAll(
+            w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash)),
+            w.Remote.HandleAsync("ph_2", [], new PersonaImageRequest("r2", a.Hash)));
+        Assert.Equal(["ph_1", "ph_2"], w.Sent.Images.Select(x => x.Phone).Order());
+    }
+
+    [Fact]
+    public async Task The_default_seams_hold_no_pictures()
+    {
+        var seams = new RelayRemote.Seams(() => DateTimeOffset.UnixEpoch, _ => Task.CompletedTask, _ => null!, null!, null!, _ => { });
+        Assert.Null(seams.Images(new string('a', 64)));
+        var sent = new Sent();
+        await new RelayRemote(seams, sent, new NonceWindow()).HandleAsync("ph_1", [], new PersonaImageRequest("r", new string('a', 64)));
+        Assert.Equal("unknown_image", Assert.Single(sent.Replies).Body.GetProperty("code").GetString());
     }
 }

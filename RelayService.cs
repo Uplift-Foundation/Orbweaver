@@ -35,6 +35,40 @@ namespace Orbweaver
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static IReadOnlyList<string> DefaultUserConfigDirs() => LocalPersona.UserConfigDirs();
 
+        // CB-321: the registry persona a session wears (its id and picture
+        // path), the picture store's hash for a path, and the default persona —
+        // each a seam so the roster's v5 keys and the personas frame are tested
+        // without a scan, a file or a decode.
+        internal static Func<string, LocalPersona.Persona?> LocalPersonaFor { get; set; } = LocalPersonas.For;
+        internal static Func<string, string?> OfferImage { get; set; } = DefaultOfferImage;
+        internal static Func<IReadOnlyList<string>, LocalPersona.Persona?> DefaultPersona { get; set; } = CachedDefaultPersona;
+
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static string? DefaultOfferImage(string path) => PersonaImageStore.Shared.Offer(path);
+
+        // The default persona: what a Claude Code session started in the user's
+        // home folder would wear, i.e. the walk from home (home's own CLAUDE.md
+        // and what it @-imports, then each parent) followed by the user config
+        // dirs. The config dirs alone were the first reading (Candidates with no
+        // cwd is exactly their CLAUDE.md files), and on a real Mac that came to
+        // nothing: the persona everyone treats as the default is named by
+        // ~/CLAUDE.md, which only a walk from home reaches (CB-321, Juno's
+        // simulator rehearsal; the plan's stated fallback). Read off the scan
+        // thread like every other persona read here, and refreshed every 30 s.
+        internal static Func<string?> Home { get; set; } = () => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        internal static LocalPersona.Persona ResolveDefault(string? home, IReadOnlyList<string> dirs) =>
+            LocalPersona.Resolve(string.IsNullOrEmpty(home) ? null : home, SessionSource.ClaudeCode, dirs);
+
+        private static readonly OffThreadCache<(string Home, string Dirs), LocalPersona.Persona?> DefaultCache = new(new(
+            key => ResolveDefault(key.Home, key.Dirs.Length == 0 ? [] : key.Dirs.Split('\0')),
+            _ => null,
+            () => DateTime.UtcNow,
+            OffThread.OnOwnThread), PeerPersonaCache.RefreshAfter);
+
+        internal static LocalPersona.Persona? CachedDefaultPersona(IReadOnlyList<string> dirs) =>
+            DefaultCache.Peek((Home() ?? "", string.Join('\0', dirs)));
+
         internal static RelayClient? Client { get { lock (Gate) return _client; } }
 
         internal static event Action ClientChanged = delegate { };
@@ -71,13 +105,26 @@ namespace Orbweaver
         internal static Task RunRealHooks(IPairingClient client) =>
             RelayTestHooks.RunAsync(client, OrbweaverSettings.Directory, () => DateTimeOffset.UtcNow, Task.Delay, CancellationToken.None);
 
+        // What one scan becomes for the phones: the roster rows, each persona
+        // with its v5 id and offered picture, and the personas frame's plaintext.
+        internal static (IReadOnlyList<RelaySession> Rows, string Personas) Project(
+            IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
+        {
+            var dirs = UserConfigDirs();
+            var rows = RelayRoster.Project(snapshot, (sessionId, status) =>
+                RelayPersonaRows.For(PersonaName(status, dirs), status, LocalPersonaFor(sessionId), OfferImage));
+            return (rows, PersonaFrames.Personas(RelayPersonaRows.Rows(rows, DefaultPersona(dirs), OfferImage)));
+        }
+
         internal static void OnScanned(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             var client = Client;
             if (client is null) return;
-            var dirs = UserConfigDirs();
-            client.OnScanned(RelayRoster.Project(snapshot, status =>
-                RelayRoster.PersonaFrom(PersonaName(status, dirs), status)));
+            var (rows, personas) = Project(snapshot);
+            client.OnScanned(rows);
+            // CB-321: and the personas frame, which the link sends only when its
+            // bytes change.
+            client.OnPersonas(personas);
             // CB-315: and the prompt watcher, off this thread — it captures panes.
             _ = client.OnStatuses(snapshot);
         }
