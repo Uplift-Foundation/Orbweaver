@@ -890,7 +890,10 @@ public class RelayLinkTests : IDisposable
     public void The_receive_window_survives_a_restart()
     {
         var (link, _, phone, _, _) = Paired();
-        var old = phone.Sealed("action", "{}", epoch: 3, counter: 9);
+        // A t this desktop does not know, so the frame opens and is otherwise
+        // left alone (since CB-316 a t-less action is answered bad_frame,
+        // which would add a note of its own).
+        var old = phone.Sealed("action", """{"t":"noop"}""", epoch: 3, counter: 9);
         link.OnFrame(old);
         link.Disconnected();
 
@@ -898,7 +901,7 @@ public class RelayLinkTests : IDisposable
         restarted.OnFrame(Welcome(phone.Id));
         restarted.OnFrame(old);                                                // a replay across the restart
         Assert.Contains("envelope refused: wrong direction, replayed or reordered", notes);
-        restarted.OnFrame(phone.Sealed("action", "{}", epoch: 3, counter: 10));
+        restarted.OnFrame(phone.Sealed("action", """{"t":"noop"}""", epoch: 3, counter: 10));
         Assert.Single(notes);
     }
 
@@ -1139,5 +1142,163 @@ public class RelayLinkTests : IDisposable
         link.PushAcked += (_, _, _) => acks++;
         link.OnFrame(AckEnvelope("ph_ffffffffffffffff", AckCt($$"""{"t":"push-ack","request_id":"{{Rid}}","at_ms":1}""")));
         Assert.Equal(0, acks);
+    }
+
+    // ---- CB-316: v4 requests, replies, windows, usage and done ----------------------
+
+    private static string? Push(string frame) => J(frame).GetProperty("push").GetString();
+    private static string CkOf(string frame) => J(frame).GetProperty("ck").GetString()!;
+    private static bool HasE(string frame) => J(frame).TryGetProperty("e", out _);
+
+    [Fact]
+    public void A_v4_request_is_raised_with_the_envelope_id_as_its_ref()
+    {
+        var (link, _, phone, notes, _) = Paired();
+        var got = new List<(string Phone, byte[] IdPub, RelayRequest Request)>();
+        link.RequestReceived += (p, k, r) => got.Add((p, k, r));
+
+        Assert.Empty(link.OnFrame(phone.Sealed("action", """{"t":"watch","session_id":"s1"}""")));
+        var (from, idPub, request) = got.Single();
+        Assert.Equal(phone.Id, from);
+        Assert.Equal(phone.IdKey.Public, idPub);
+        Assert.Equal(new WatchRequest("y", "s1", null), request);
+        Assert.Contains(notes, n => n == $"watch from {phone.Id} ref=y");
+    }
+
+    [Fact]
+    public void An_action_with_no_t_or_no_json_is_bad_frame_and_an_unknown_t_is_ignored()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var got = new List<RelayRequest>();
+        link.RequestReceived += (_, _, r) => got.Add(r);
+
+        link.OnFrame(phone.Sealed("action", """{"session_id":"s1"}"""));
+        link.OnFrame(phone.Sealed("action", "not json"));
+        link.OnFrame(phone.Sealed("action", """{"t":"teleport"}"""));       // a newer phone's type: left alone
+        link.OnFrame(phone.Sealed("state", """{"t":"watch","session_id":"s1"}"""));   // wrong class: never dispatched
+        Assert.Equal([new BadFrameRequest("y", null), new BadFrameRequest("y", null)], got);
+    }
+
+    [Fact]
+    public void Going_offline_is_raised_once_and_coming_back_sends_roster_then_latest_usage()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var offline = new List<string>();
+        link.PhoneWentOffline += offline.Add;
+
+        link.OnFrame(Presence(phone.Id, false));
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Equal([phone.Id], offline);
+
+        // No reading yet: the roster alone.
+        Assert.Single(link.OnFrame(Presence(phone.Id, true)));
+        link.OnFrame(Presence(phone.Id, false));
+
+        var usage = """{"t":"usage","accounts":[]}""";
+        Assert.Empty(link.SendUsage(usage));                                 // offline and no limit: not sent, but kept
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(2, back.Count);
+        Assert.Equal("roster", phone.OpenFromDesktop(back[0]).GetProperty("t").GetString());
+        Assert.Equal("usage", phone.OpenFromDesktop(back[1]).GetProperty("t").GetString());
+        Assert.Equal(RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), RelayLink.UsageCk), CkOf(back[1]));
+    }
+
+    [Fact]
+    public void A_limit_usage_goes_to_every_phone_with_push_and_e_and_a_plain_one_only_to_online_phones()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var plain = link.SendUsage("""{"t":"usage","accounts":[]}""").Single();
+        Assert.Equal(("none", false), (Push(plain), HasE(plain)));
+        Assert.Equal("state", J(plain).GetProperty("class").GetString());
+
+        link.OnFrame(Presence(phone.Id, false));
+        var limit = link.SendUsage("""{"t":"usage","accounts":[]}""", """{"v":1,"t":"limit"}""").Single();
+        Assert.Equal(("limit", true), (Push(limit), HasE(limit)));
+        Assert.Equal("""{"v":1,"t":"limit"}""", Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, J(limit).GetProperty("e").GetString())!));
+    }
+
+    [Fact]
+    public void Replies_and_windows_seal_to_the_asking_phone_with_the_session_ck()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var ck = RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), "s1");
+
+        var reply = link.SendReply(phone.Id, "s1", RelayReplies.Ok("r", RelayReplies.Watching, "s1", 3)).Single();
+        Assert.Equal(("action", ck), (J(reply).GetProperty("class").GetString(), CkOf(reply)));
+        Assert.Equal("watching", phone.OpenFromDesktop(reply).GetProperty("code").GetString());
+        Assert.Equal("", CkOf(link.SendReply(phone.Id, null, RelayReplies.Err("r", RelayReplies.BadSignature)).Single()));
+        Assert.Empty(link.SendReply("ph_nobody", null, "{}"));
+
+        var window = link.SendWindow(phone.Id, "s1", """{"t":"window"}""").Single();
+        Assert.Equal(("chat", ck), (J(window).GetProperty("class").GetString(), CkOf(window)));
+        Assert.Empty(link.SendWindow("ph_nobody", "s1", "{}"));
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendWindow(phone.Id, "s1", "{}"));               // a watch dies with presence; never queued
+    }
+
+    [Fact]
+    public void Nothing_v4_is_sent_before_welcome()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.Disconnected();
+        Assert.Empty(link.SendReply(phone.Id, null, "{}"));
+        Assert.Empty(link.SendWindow(phone.Id, "s1", "{}"));
+        Assert.Empty(link.SendUsage("{}"));
+    }
+
+    [Fact]
+    public void Generating_to_idle_rides_its_delta_with_done_to_online_and_offline_phones()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var machine = new RelayLink(Identity(), new RelaySessionBook(), () => _now, "mac", "1", "h") { Machine = "MacBook Pro" };
+        Assert.Equal("MacBook Pro", machine.Machine);
+
+        link.OnScan([Row("s1")]);
+        link.OnScan([Row("s1", "generating")]);
+        var done = link.OnScan([Row("s1", "idle")]).Single();
+        Assert.Equal(("done", true), (Push(done), HasE(done)));
+        var delta = phone.OpenFromDesktop(done);
+        Assert.Equal(("delta", "idle"), (delta.GetProperty("t").GetString(), delta.GetProperty("state").GetString()));
+        var e = JsonDocument.Parse(PushSeal.Open(phone.KaKey, J(done).GetProperty("e").GetString())!).RootElement;
+        Assert.Equal(("done", "s1", "proj", "proj on "), (e.GetProperty("t").GetString(), e.GetProperty("session_id").GetString(),
+            e.GetProperty("title").GetString(), e.GetProperty("label").GetString()));
+
+        // waiting -> idle is an answered prompt, not a finished turn.
+        link.OnScan([Row("s1", "waiting")]);
+        Assert.Equal("none", Push(link.OnScan([Row("s1", "idle")]).Single()));
+
+        // Offline: the plain delta is not sent, the done one is.
+        link.OnScan([Row("s1", "generating")]);
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.OnScan([Row("s1", "waiting")]));
+        link.OnScan([Row("s1", "generating")]);
+        Assert.Equal("done", Push(link.OnScan([Row("s1", "idle")]).Single()));
+    }
+
+    [Fact]
+    public void A_done_in_the_same_scan_as_a_new_session_is_still_sent_beside_the_roster()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnScan([Row("s1", "generating")]);
+        var frames = link.OnScan([Row("s1", "idle"), Row("s2")]);
+        Assert.Equal(["done", "none"], frames.Select(Push));
+        Assert.Equal("roster", phone.OpenFromDesktop(frames[1]).GetProperty("t").GetString());
+    }
+
+    [Fact]
+    public void A_done_e_too_long_for_the_relay_is_left_off()
+    {
+        var (link, _, _, _, _) = Paired();
+        var longTitle = new string('t', 4000);
+        link.OnScan([new RelaySession("s1", "claude", longTitle, "/c", "generating", null, null)]);
+        var done = link.OnScan([new RelaySession("s1", "claude", longTitle, "/c", "idle", null, null)]).Single();
+        Assert.Equal(("done", false), (Push(done), HasE(done)));
+    }
+
+    [Fact]
+    public void The_done_label_is_the_ambers()
+    {
+        Assert.Equal("proj on Mac", RelayLink.DoneLabel("proj", "Mac"));
+        Assert.Equal("Mac", RelayLink.DoneLabel(" ", "Mac"));
     }
 }

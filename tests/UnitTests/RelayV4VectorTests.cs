@@ -396,3 +396,53 @@ public class RelayV4VectorTests
         }
     }
 }
+
+/// <summary>
+/// CB-316: tools/relay-vectors' V4Vectors regenerates frames-v4-vectors.json
+/// from the shipped code. With the committed signatures reused (ECDSA cannot be
+/// reproduced) and the committed _source stamped back, the regeneration is the
+/// committed file, byte for byte — the desktop's opinion of every vector agrees
+/// with the architect's generator and the independent checker.
+/// </summary>
+public class V4VectorsReproduceTests
+{
+    private static readonly string Dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "relay");
+
+    [Fact]
+    public void The_desktop_regenerates_the_committed_vectors_byte_for_byte()
+    {
+        var committedPath = Path.Combine(Dir, "frames-v4-vectors.json");
+        var committed = File.ReadAllText(committedPath);
+        var source = RelayV4VectorTests.V.GetProperty("_source");
+        var ours = V4Vectors.Build(Dir, source.GetProperty("orbweaver_sha").GetString()!, committedPath,
+            source.GetProperty("generated_by").GetString());
+        if (ours != committed)
+        {
+            var at = 0;
+            while (at < Math.Min(ours.Length, committed.Length) && ours[at] == committed[at]) at++;
+            Assert.Fail($"first difference at char {at}: ours «{ours[Math.Max(0, at - 80)..Math.Min(ours.Length, at + 80)]}» committed «{committed[Math.Max(0, at - 80)..Math.Min(committed.Length, at + 80)]}»");
+        }
+    }
+
+    [Fact]
+    public void Without_the_committed_signatures_only_signature_bytes_differ()
+    {
+        var fresh = JsonDocument.Parse(V4Vectors.Build(Dir, "x")).RootElement;
+        var phone = Convert.FromHexString(RelayV4VectorTests.V.GetProperty("inputs").GetProperty("phone_identity").GetProperty("public").GetString()!);
+        foreach (var p in fresh.GetProperty("launch").GetProperty("positives").EnumerateArray())
+            Assert.True(RelayCrypto.Verify(phone, Convert.FromHexString(p.GetProperty("message").GetString()!),
+                RelayCrypto.FromBase64Url(p.GetProperty("sig").GetString())));
+        Assert.Equal(RelayV4VectorTests.V.GetProperty("window").GetRawText(), fresh.GetProperty("window").GetRawText());
+        Assert.Equal(RelayV4VectorTests.V.GetProperty("usage").GetRawText(), fresh.GetProperty("usage").GetRawText());
+        Assert.Equal(RelayV4VectorTests.V.GetProperty("done").GetRawText(), fresh.GetProperty("done").GetRawText());
+    }
+
+    [Fact]
+    public void Python_float_and_ascii_layouts()
+    {
+        Assert.Equal("[\n  100.0,\n  0.4,\n  -1.0,\n  {},\n  [],\n  null\n]",
+            PyJson.Pretty(new System.Text.Json.Nodes.JsonArray(100.0, 0.4, -1.0, new System.Text.Json.Nodes.JsonObject(), new System.Text.Json.Nodes.JsonArray(), null)));
+        Assert.Equal("{\"a\":\"\\u00e9\\u2014\\ud83d\\ude42\\u007f\\b\\f\\r\\u0001\"}".Replace("\\u007f", "\u007f"),
+            PyJson.Compact(new System.Text.Json.Nodes.JsonObject { ["a"] = "é—🙂\u007f\b\f\r\u0001" }));
+    }
+}
