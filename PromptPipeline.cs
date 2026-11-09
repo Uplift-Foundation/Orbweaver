@@ -375,11 +375,16 @@ namespace Orbweaver
             if (await PressAsync(status, pending, requestId, key).ConfigureAwait(false) is { } early) return early;
             // The same test as before (the approved dialog's hash is gone), asked
             // sooner and again: a dialog that is still up after SettleDelay of
-            // looks is as stale as it was after one look at SettleDelay.
-            for (var waited = TimeSpan.Zero; waited < SettleDelay; waited += SettlePoll)
+            // looks is as stale as it was after one look at SettleDelay. A single
+            // look can catch a blank or half-drawn frame that is not the dialog
+            // going away, so Took needs the hash absent on two looks in a row;
+            // a streak begun inside the patience gets its confirming look.
+            var gone = 0;
+            for (var waited = TimeSpan.Zero; waited < SettleDelay || gone > 0; waited += SettlePoll)
             {
                 await _seams.Delay(SettlePoll).ConfigureAwait(false);
-                if (AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false))) return PressOutcome.Took;
+                gone = AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false)) ? gone + 1 : 0;
+                if (gone >= 2) return PressOutcome.Took;
             }
             return PressOutcome.NoEffect;
         }

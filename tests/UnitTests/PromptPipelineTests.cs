@@ -553,7 +553,7 @@ public class PromptPipelineTests
         await p.OnScannedAsync(Snap());
         events.Clear();
         await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
-        Assert.Equal(["capture", "delay 150", "capture", "press 1", "delay 75", "capture"], events);
+        Assert.Equal(["capture", "delay 150", "capture", "press 1", "delay 75", "capture", "delay 75", "capture"], events);
     }
 
     // Press to resolved used to cost a flat 500 ms. The recapture now looks every
@@ -562,11 +562,11 @@ public class PromptPipelineTests
         new(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, d => { delays.Add(d.TotalMilliseconds); return Task.CompletedTask; }, _log.Add), _sent, "Test Mac");
 
     [Theory]
-    [InlineData(0, 1)]   // gone at the first look
-    [InlineData(1, 1)]
-    [InlineData(3, 3)]   // gone at the third look: three polls, no more
-    [InlineData(7, 7)]   // gone at the last look inside the patience: still took
-    public async Task A_press_is_resolved_on_the_first_look_that_shows_the_dialog_gone(int clearAfterPolls, int polls)
+    [InlineData(0, 2)]   // gone at the first look, confirmed by the second
+    [InlineData(1, 2)]
+    [InlineData(3, 4)]   // gone from the third look: two more looks, no more
+    [InlineData(7, 8)]   // gone from the last look inside the patience: it gets its confirming look
+    public async Task A_press_is_resolved_on_the_second_consecutive_look_that_shows_the_dialog_gone(int clearAfterPolls, int polls)
     {
         var delays = new List<double>();
         var p = PipelineRecordingDelays(delays);
@@ -577,6 +577,27 @@ public class PromptPipelineTests
         Assert.Equal(Enumerable.Repeat(75d, polls).Prepend(150d), delays);
         Assert.Empty(_sent.Refusals);
         Assert.DoesNotContain(_log, l => l.StartsWith("press-no-effect"));
+        Assert.Equal((a.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
+    }
+
+    // A look can land on a blank or half-drawn frame mid-redraw. One such frame
+    // is not the dialog going away: here the pane blanks, shows the dialog again,
+    // and only then clears, so the press resolves on the fourth look, not the first.
+    [Fact]
+    public async Task A_blank_frame_between_looks_is_not_the_dialog_going_away()
+    {
+        var delays = new List<double>();
+        var looks = new Queue<string?>(["", Dialog, Cleared, Cleared]);
+        var captures = 0;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(++captures <= 2 ? Dialog : looks.Dequeue()), _pane.Press, _pane.Type, () => _now,
+            d => { delays.Add(d.TotalMilliseconds); return Task.CompletedTask; }, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        captures = 0;
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(Enumerable.Repeat(75d, 4).Prepend(150d), delays);
+        Assert.Empty(_sent.Refusals);
         Assert.Equal((a.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
     }
 
