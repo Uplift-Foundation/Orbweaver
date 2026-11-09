@@ -203,6 +203,14 @@ namespace Orbweaver
         // around it safe to remove in the next commit rather than the same one.
         public const int ChunkBytes = PeerProtocol.MaxMessageBytes;
 
+        // The piece size for a persona picture (CB-322). One 11MB animated GIF
+        // went as a single frame and held the connection for as long as that
+        // write took; in pieces this size every other frame queued behind it
+        // gets the write lock between two of them. Any client already
+        // reassembles multi-piece transfers and extends its wait on each
+        // piece, so an older build on the far end needs nothing new.
+        public const int PictureChunkBytes = 256 * 1024;
+
         // The tail a panel opens on, and the page it walks back by.
         //
         // These used to be LocalCliChatSession's numbers — 512KB and 1MB — on
