@@ -37,13 +37,18 @@ namespace Orbweaver
         private readonly Seams _s;
         private readonly Dictionary<(string Phone, string Session), List<PhoneFrames.Line>> _watches = new();
 
+        // The tail runs on a timer while requests arrive on the event pump, so the
+        // watch table is guarded. Held only for the synchronous parts: a typed
+        // message waits on the terminal outside it.
+        private readonly object _gate = new();
+
         // Launch is a signed request with its own checks; null leaves it unanswered
         // (a build without the real terminal seams).
         internal PhoneLaunch? Launch { get; set; }
 
         internal PhoneService(Seams seams) { _s = seams; }
 
-        internal int WatchCount => _watches.Count;
+        internal int WatchCount { get { lock (_gate) return _watches.Count; } }
 
         // ---- what the phone asks ---------------------------------------------
 
@@ -51,8 +56,8 @@ namespace Orbweaver
         {
             switch (Str(frame, "t"))
             {
-                case "watch": Watch(phoneId, requestId, frame); break;
-                case "unwatch": Unwatch(phoneId, requestId, frame); break;
+                case "watch": lock (_gate) Watch(phoneId, requestId, frame); break;
+                case "unwatch": lock (_gate) Unwatch(phoneId, requestId, frame); break;
                 case "input": return InputAsync(phoneId, requestId, frame);
                 case "launch" when Launch is not null && phoneIdPublic is not null:
                     return Launch.HandleAsync(phoneId, requestId, phoneIdPublic, frame);
@@ -125,11 +130,16 @@ namespace Orbweaver
         // the book ends its watch silently — the roster removal is the signal.
         internal void Tick()
         {
+            lock (_gate) TickLocked();
+        }
+
+        private void TickLocked()
+        {
             foreach (var key in _watches.Keys.ToList())
             {
                 if (_s.Find(key.Session) is not { } session) { _watches.Remove(key); continue; }
                 var rows = _s.Load(session) ?? [];
-                var prev = _watches[key];
+                if (!_watches.TryGetValue(key, out var prev)) continue;
                 switch (Diff(prev, rows))
                 {
                     case { Kind: DiffKind.None }: break;
@@ -149,7 +159,8 @@ namespace Orbweaver
         // 1 MB queue must never fill with frames nobody is reading.
         internal void PhoneOffline(string phoneId)
         {
-            foreach (var key in _watches.Keys.Where(k => k.Phone == phoneId).ToList()) _watches.Remove(key);
+            lock (_gate)
+                foreach (var key in _watches.Keys.Where(k => k.Phone == phoneId).ToList()) _watches.Remove(key);
         }
 
         internal enum DiffKind { None, Reset, Tail }

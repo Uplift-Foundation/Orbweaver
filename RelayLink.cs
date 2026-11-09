@@ -715,6 +715,22 @@ namespace Orbweaver
             return frames;
         }
 
+        private string? _accounts;
+
+        // The accounts a launch may name (PhoneAccounts.Frame): sent when it changes and after a
+        // roster, class state with a fixed ck so the relay keeps only the newest. A phone that
+        // does not know the frame type ignores it.
+        internal IReadOnlyList<string> OnAccounts(string plaintext)
+        {
+            if (plaintext == _accounts) return [];
+            _accounts = plaintext;
+            if (!Welcomed) return [];
+            var frames = new List<string>();
+            foreach (var c in _channels.Values.Where(c => c.Online))
+                if (SealTo(c, "state", RelayCrypto.Ck(c.CkKey, "accounts"), Encoding.UTF8.GetBytes(plaintext)) is { } frame) frames.Add(frame);
+            return frames;
+        }
+
         // A roster, and the usage that follows it: a phone coming online, a
         // resync and a fresh pairing all want both.
         private IReadOnlyList<string> RosterAndUsage(Channel c)
@@ -723,6 +739,8 @@ namespace Orbweaver
             if (RosterFor(c) is { } roster) frames.Add(roster);
             if (_usage is { } usage && SealTo(c, "state", RelayCrypto.Ck(c.CkKey, "usage"), Encoding.UTF8.GetBytes(PhoneUsage.Frame(usage))) is { } u)
                 frames.Add(u);
+            if (_accounts is { } accounts && SealTo(c, "state", RelayCrypto.Ck(c.CkKey, "accounts"), Encoding.UTF8.GetBytes(accounts)) is { } a)
+                frames.Add(a);
             return frames;
         }
 

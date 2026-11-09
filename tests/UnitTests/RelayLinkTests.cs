@@ -1267,4 +1267,19 @@ public class RelayLinkTests : IDisposable
         Assert.Equal("none", Push(Row("s1", "waiting"), Row("s2", "idle"), Row("s3", "idle")));         // generating -> waiting
         Assert.Equal("none", Push(Row("s2", "idle"), Row("s3", "idle")));                               // waiting -> gone
     }
+
+    [Fact]
+    public void The_accounts_frame_goes_to_online_phones_when_it_changes_and_after_a_roster()
+    {
+        var (link, _, phone, _, _) = Paired();
+        const string frame = """{"t":"accounts","accounts":[{"cli":"claude","id":"default","label":"Default"}]}""";
+        var sent = link.OnAccounts(frame);
+        Assert.Equal(Ck(CoalesceKey(phone.Base()), "accounts"), J(sent.Single()).GetProperty("ck").GetString());
+        Assert.Equal("accounts", phone.OpenFromDesktop(sent.Single()).GetProperty("t").GetString());
+        Assert.Empty(link.OnAccounts(frame));                                        // unchanged
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.OnAccounts(frame.Replace("Default", "Other")));            // nobody online
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(["roster", "accounts"], back.Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()));
+    }
 }

@@ -15,10 +15,13 @@ namespace Orbweaver
     {
         internal const string Domain = "orbweaver-launch-v1";
 
+        // account is signed only when present (between model and parent_session_id), so a
+        // request that does not name one is byte-for-byte the v4 body the vectors pin.
         internal static string Body(string cwd, string cli, string persona, string model, string parentSessionId,
-            string firstMessage, string nonce, long expiresAt) =>
+            string firstMessage, string nonce, long expiresAt, string account = "") =>
             "{\"cwd\":\"" + AnswerSigning.Escape(cwd) + "\",\"cli\":\"" + AnswerSigning.Escape(cli)
             + "\",\"persona\":\"" + AnswerSigning.Escape(persona) + "\",\"model\":\"" + AnswerSigning.Escape(model)
+            + (account.Length > 0 ? "\",\"account\":\"" + AnswerSigning.Escape(account) : "")
             + "\",\"parent_session_id\":\"" + AnswerSigning.Escape(parentSessionId)
             + "\",\"first_message_sha256\":\"" + RelayCrypto.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(firstMessage)))
             + "\",\"nonce\":\"" + AnswerSigning.Escape(nonce) + "\",\"expires_at\":"
@@ -30,7 +33,7 @@ namespace Orbweaver
     }
 
     // What a launch has been checked down to.
-    internal sealed record LaunchPlan(NewChatCli Cli, string Cwd, string Model, string? ParentSessionId, string FirstMessage);
+    internal sealed record LaunchPlan(NewChatCli Cli, string Cwd, string Model, string? ParentSessionId, string FirstMessage, string? ProfileDir = null);
 
     // The command a launch starts, pure: no process is spawned here, so every
     // quoting and flag decision has a case.
@@ -72,15 +75,19 @@ namespace Orbweaver
         internal static string Shell(LaunchPlan p, string binary, string? configDir) =>
             string.Join(" ", [NewChatCommand.ExecLine(p.Cli, binary, configDir), .. Words(p).Select(TerminalScripts.ShellQuote)]);
 
-        // conhost.exe, named outright, because a bare cmd.exe is handed to Windows
-        // Terminal by the OS default-terminal setting and then owns no console
-        // window, which the hook reads as no terminal. claude runs under cmd /k;
-        // codex and grok run directly with their argv built word by word, since
-        // cmd would re-parse & | > % in a message. Null when a codex/grok that is
-        // a script shim has a message to carry (no argv to put it in safely).
-        internal static ProcessStartInfo? Windows(LaunchPlan p, string binary, string? configDir)
+        // Windows Terminal first, the terminal the user lives in: a new tab in it,
+        // `wt.exe -d <folder> cmd.exe /k <cli> <words>` for claude and
+        // `wt.exe -d <folder> <cli> <words>` for codex and grok, whose argv is
+        // built word by word because cmd would re-parse & | > % in a message.
+        // conhost.exe, named outright, is the fallback when wt.exe is not there:
+        // a bare cmd.exe is handed to Windows Terminal by the OS default-terminal
+        // setting and then owns no console window the hook can see. Null when a
+        // codex/grok that is a script shim has a message to carry (no argv to
+        // put it in safely).
+        internal static ProcessStartInfo? Windows(LaunchPlan p, string binary, string? configDir, bool windowsTerminal = true)
         {
-            var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = false, WorkingDirectory = p.Cwd };
+            var start = new ProcessStartInfo(windowsTerminal ? "wt.exe" : "conhost.exe") { UseShellExecute = false, WorkingDirectory = p.Cwd };
+            if (windowsTerminal) { start.ArgumentList.Add("-d"); start.ArgumentList.Add(p.Cwd); }
             if (p.Cli == NewChatCli.ClaudeCode)
             {
                 start.ArgumentList.Add("cmd.exe");
@@ -122,7 +129,11 @@ namespace Orbweaver
             Func<PhoneService.Session, string, Task<(bool Typed, string? Refusal)>> Type,
             Func<string, string, string?, string, bool> Send,
             Func<bool> IsWindows,
-            Action<string> Log);
+            Action<string> Log,
+            // The desktop's account choices for a CLI, and the one last used in its New Chat
+            // dialog. Null seams mean no accounts: a request naming one is unknown_account.
+            Func<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>>? Choices = null,
+            Func<NewChatCli, string?>? LastUsed = null);
 
         private readonly Seams _s;
         private readonly NonceWindow _nonces;
@@ -138,8 +149,10 @@ namespace Orbweaver
                 || (f.TryGetProperty("parent_session_id", out var p) && p.ValueKind != JsonValueKind.String))
             { Err(phone, reference, "bad_frame"); return; }
             var parent = S("parent_session_id") ?? "";
+            if (f.TryGetProperty("account", out var a) && a.ValueKind != JsonValueKind.String) { Err(phone, reference, "bad_frame"); return; }
+            var account = S("account") ?? "";
 
-            var body = LaunchSigning.Body(cwd, cliName, persona, model, parent, message, nonce, expires);
+            var body = LaunchSigning.Body(cwd, cliName, persona, model, parent, message, nonce, expires, account);
             if (!LaunchSigning.Verify(phoneIdPublic, body, sig)) { Err(phone, reference, "bad_signature"); return; }
 
             var now = _s.Now();
@@ -151,6 +164,9 @@ namespace Orbweaver
             if (LaunchCommand.ParseCli(cliName) is not { } cli || _s.Locate(cli) is not { } binary) { Err(phone, reference, "unknown_cli"); return; }
             if (!IsAbsolute(cwd) || !_s.DirectoryExists(cwd)) { Err(phone, reference, "unknown_cwd"); return; }
             if (model.Length > 0 && !LaunchCommand.ModelShape.IsMatch(model)) { Err(phone, reference, "bad_model"); return; }
+            string? profileDir = null;
+            if (!PhoneAccounts.TryResolve(cli, account, _s.Choices?.Invoke(cli) ?? [], _s.LastUsed?.Invoke(cli), out profileDir))
+            { Err(phone, reference, "unknown_account"); return; }
             if (persona.Length > 0) { Err(phone, reference, "unsupported_persona"); return; }
             if (parent.Length > 0)
             {
@@ -161,7 +177,7 @@ namespace Orbweaver
                 || (_s.IsWindows() && cli != NewChatCli.ClaudeCode && LaunchCommand.PercentName.IsMatch(message)))
             { Err(phone, reference, "bad_input"); return; }
 
-            var plan = new LaunchPlan(cli, cwd, model, parent.Length > 0 ? parent : null, message);
+            var plan = new LaunchPlan(cli, cwd, model, parent.Length > 0 ? parent : null, message, profileDir);
             var began = now;
             var (code, why) = _s.Start(plan, binary);
             if (code is not null) { Err(phone, reference, code, why: why); return; }

@@ -171,7 +171,7 @@ namespace Orbweaver
             if (seams is null) Phone.Launch = new PhoneLaunch(new PhoneLaunch.Seams(
                 _now, delay => Task.Delay(delay), Directory.Exists, PhoneSeams.Locate, _phoneSeams.Find, _phoneSeams.Start,
                 _phoneSeams.FindNew, PhoneSeams.TypeAsync, SendToPhone, OperatingSystem.IsWindows,
-                line => MirrorLog.Say("relay", line)), Prompts.Nonces);
+                line => MirrorLog.Say("relay", line), c => AccountChoices(c), PhoneSeams.LastUsed), Prompts.Nonces);
             AccountOrbs.Polled += OnPolled;
             _link.RequestReceived += (phone, id, idPub, frame) => Defer(() => _ = HandleRequestAsync(phone, id, idPub, frame));
             _link.PhoneWentOffline += phone => Defer(() => PhoneOffline(phone));
@@ -207,7 +207,7 @@ namespace Orbweaver
             finally { Monitor.Exit(_tailGate); }
         }
 
-        private void PhoneOffline(string phone) { lock (_tailGate) Phone.PhoneOffline(phone); }
+        private void PhoneOffline(string phone) => Phone.PhoneOffline(phone);
 
         // The relay's answer to each amber (request id, pushed / push_throttled /
         // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on
@@ -462,7 +462,20 @@ namespace Orbweaver
 
         // ---- the scan and the UI -------------------------------------------------
 
-        internal void OnScanned(IReadOnlyList<RelaySession> rows) => Dispatch(() => _link.OnScan(rows));
+        internal void OnScanned(IReadOnlyList<RelaySession> rows)
+        {
+            Dispatch(() => _link.OnScan(rows));
+            // The accounts a launch may name: read off the desktop's settings at each scan, and sent when they change.
+            try
+            {
+                var frame = PhoneAccounts.Frame(PhoneAccounts.From(AccountChoices));
+                Dispatch(() => _link.OnAccounts(frame));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
+        }
+
+        // Replaced by tests and the harness.
+        internal Func<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>> AccountChoices { get; set; } = PhoneSeams.Choices;
 
         public async Task<RelayLink.PairOffer> BeginPairingAsync(CancellationToken token = default)
         {

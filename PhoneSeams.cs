@@ -67,6 +67,21 @@ namespace Orbweaver
 
         private HashSet<string> _before = new(StringComparer.Ordinal);
 
+        // The account's own directory, or null for the CLI's default one.
+        private static string? ConfigDir(LaunchPlan plan) =>
+            NewChatLauncher.ConfigDirFor(plan.Cli, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), plan.ProfileDir);
+
+        // The desktop's own New Chat account picker, per CLI.
+        internal static IReadOnlyList<NewChatAccounts.Choice> Choices(NewChatCli cli) =>
+            NewChatAccounts.Choices(cli, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), cli switch
+            {
+                NewChatCli.Codex => OrbweaverSettings.CodexHomes,
+                NewChatCli.Grok => OrbweaverSettings.GrokHomes,
+                _ => OrbweaverSettings.ClaudeCodeProfileDirs,
+            });
+
+        internal static string? LastUsed(NewChatCli cli) => OrbweaverSettings.NewChatLastProfileFor(cli);
+
         internal static string? Locate(NewChatCli cli) => cli switch
         {
             NewChatCli.Codex => CodexBinary.Locate(),
@@ -85,15 +100,24 @@ namespace Orbweaver
             {
                 if (OperatingSystem.IsWindows())
                 {
-                    var info = LaunchCommand.Windows(plan, binary, configDir: null);
-                    if (info is null) return ("launch_failed", "that CLI is a script shim, which cannot carry a message safely");
-                    using var started = Process.Start(info);
-                    return started is null ? ("launch_failed", "the console did not start") : (null, null);
+                    // Windows Terminal, the user's own terminal; conhost when it is not installed.
+                    foreach (var terminal in new[] { true, false })
+                    {
+                        var info = LaunchCommand.Windows(plan, binary, ConfigDir(plan), windowsTerminal: terminal);
+                        if (info is null) return ("launch_failed", "that CLI is a script shim, which cannot carry a message safely");
+                        try
+                        {
+                            using var started = Process.Start(info);
+                            if (started is not null) return (null, null);
+                        }
+                        catch (System.ComponentModel.Win32Exception) when (terminal) { /* no wt.exe: fall back to conhost */ }
+                    }
+                    return ("launch_failed", "the console did not start");
                 }
 
                 var tmux = TerminalLauncher.ResolveTmux();
                 if (tmux is null) return ("no_terminal", "tmux is not installed");
-                var command = LaunchCommand.Shell(plan, binary, configDir: null);
+                var command = LaunchCommand.Shell(plan, binary, ConfigDir(plan));
                 if (!string.IsNullOrEmpty(TerminalLauncher.PlaceInOwnTmuxWindow(command, plan.Cwd))) return (null, null);
 
                 // No attached tmux client: a detached session named orbweaver, and
@@ -126,10 +150,18 @@ namespace Orbweaver
         internal PhoneService.Session? FindNew(NewChatCli cli, string cwd, DateTimeOffset since)
         {
             var source = cli switch { NewChatCli.Codex => SessionSource.Codex, NewChatCli.Grok => SessionSource.Grok, _ => SessionSource.ClaudeCode };
-            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             lock (_gate)
                 return _sessions.Values.FirstOrDefault(s => !_before.Contains(s.Id) && s.Status.Source == source
-                    && string.Equals(s.Status.Cwd.TrimEnd('/', '\\'), cwd.TrimEnd('/', '\\'), comparison));
+                    && SameFolder(s.Status.Cwd, cwd, OperatingSystem.IsWindows()));
+        }
+
+        // The folder the phone typed and the one the CLI's hook recorded name the same
+        // place: C:/Users/me and C:\Users\me are one folder, as are a trailing separator
+        // or the drive letter's case on Windows.
+        internal static bool SameFolder(string recorded, string asked, bool windows)
+        {
+            static string Norm(string p) => p.Replace('\\', '/').TrimEnd('/');
+            return string.Equals(Norm(recorded), Norm(asked), windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
         }
 
         internal static bool CanType(SessionStatus status) =>

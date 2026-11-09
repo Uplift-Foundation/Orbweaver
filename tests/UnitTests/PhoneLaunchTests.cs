@@ -28,6 +28,8 @@ public class PhoneLaunchTests
         internal Func<(bool Typed, string? Refusal)> Typing = () => (true, null);
         internal LaunchPlan? Started;
         internal readonly List<string> Typed = new();
+        internal List<NewChatAccounts.Choice> Accounts = [new("Default (~/.claude)", null), new("~/.claude-kmart", ".claude-kmart"), new("~/.claude-uplift", ".claude-uplift")];
+        internal string? Last = ".claude-uplift";
         internal PhoneLaunch Launch;
 
         internal Rig()
@@ -43,14 +45,14 @@ public class PhoneLaunchTests
                 (_, text) => { Typed.Add(text); return Task.FromResult(Typing()); },
                 (phone, cls, ck, plain) => { Sent.Add((cls, ck, plain)); return true; },
                 () => Windows,
-                _ => { }), Nonces);
+                _ => { }, _ => Accounts, _ => Last), Nonces);
         }
 
         internal Task Run(JsonElement fields, string reference = "req1")
         {
             string S(string n) => fields.TryGetProperty(n, out var v) ? v.GetString()! : "";
             var expires = fields.GetProperty("expires_at").GetInt64();
-            var body = LaunchSigning.Body(S("cwd"), S("cli"), S("persona"), S("model"), S("parent_session_id"), S("first_message"), S("nonce"), expires);
+            var body = LaunchSigning.Body(S("cwd"), S("cli"), S("persona"), S("model"), S("parent_session_id"), S("first_message"), S("nonce"), expires, S("account"));
             var sig = Base64Url(Sign(Phone, [.. Encoding.UTF8.GetBytes(LaunchSigning.Domain), .. Encoding.UTF8.GetBytes(body)]));
             return Launch.HandleAsync("ph_1", reference, Phone.Public, Frame(fields, sig));
         }
@@ -253,7 +255,7 @@ public class PhoneLaunchTests
     {
         var rig = new Rig();
         await rig.Run(Base_(d => { d["model"] = "opus"; d["parent_session_id"] = "0f6c4f2a"; }));
-        Assert.Equal(new LaunchPlan(NewChatCli.ClaudeCode, "/Users/w/Source/p", "opus", "0f6c4f2a", "hello"), rig.Started);
+        Assert.Equal(new LaunchPlan(NewChatCli.ClaudeCode, "/Users/w/Source/p", "opus", "0f6c4f2a", "hello", ".claude-uplift"), rig.Started);
         Assert.Equal(["hello"], rig.Typed);
         Assert.Equal(["""{"t":"ok","ref":"req1","code":"launched","session_id":"9c1e002b"}""", """{"t":"ok","ref":"req1","code":"typed","session_id":"9c1e002b"}"""], rig.Plains);
         Assert.All(rig.Sent, s => Assert.Equal("9c1e002b", s.Ck));
@@ -316,6 +318,73 @@ public class PhoneLaunchTests
         Assert.Equal("replayed", rig.Code);
     }
 
+    // ---- accounts (additive to v4) ---------------------------------------------------------
+
+    [Fact]
+    public void AnAccountIsSignedOnlyWhenNamed()
+    {
+        var plain = LaunchSigning.Body("/x", "claude", "", "", "", "m", "n", 5);
+        Assert.DoesNotContain("account", plain);
+        Assert.Equal(plain, LaunchSigning.Body("/x", "claude", "", "", "", "m", "n", 5, ""));
+        Assert.Equal("{\"cwd\":\"/x\",\"cli\":\"claude\",\"persona\":\"\",\"model\":\"opus\",\"account\":\".claude-uplift\",\"parent_session_id\":\"\",\"first_message_sha256\":\"" +
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("m"u8)).ToLowerInvariant() + "\",\"nonce\":\"n\",\"expires_at\":5}",
+            LaunchSigning.Body("/x", "claude", "", "opus", "", "m", "n", 5, ".claude-uplift"));
+    }
+
+    [Fact]
+    public async Task ANamedAccountIsUsedAndAnUnnamedOneFallsBackToTheLastUsedInNewChat()
+    {
+        var named = new Rig();
+        await named.Run(Base_(d => d["account"] = ".claude-kmart"));
+        Assert.Equal(".claude-kmart", named.Started!.ProfileDir);
+
+        var unnamed = new Rig();
+        await unnamed.Run(Base_());
+        Assert.Equal(".claude-uplift", unnamed.Started!.ProfileDir);
+
+        var none = new Rig { Last = null };
+        await none.Run(Base_());
+        Assert.Null(none.Started!.ProfileDir);
+
+        var explicitDefault = new Rig();
+        await explicitDefault.Run(Base_(d => d["account"] = "default"));
+        Assert.Null(explicitDefault.Started!.ProfileDir);
+    }
+
+    [Fact]
+    public async Task AnAccountTheDesktopDoesNotListIsUnknownAccountAndNothingStarts()
+    {
+        var rig = new Rig();
+        await rig.Run(Base_(d => d["account"] = ".claude-other"));
+        Assert.Equal("unknown_account", rig.Code);
+        Assert.Null(rig.Started);
+    }
+
+    [Fact]
+    public async Task TheAccountIsCheckedAfterTheModelAndBeforeThePersona()
+    {
+        var rig = new Rig();
+        await rig.Run(Base_(d => { d["account"] = ".nope"; d["model"] = "bad model!"; }));
+        Assert.Equal("bad_model", rig.Code);
+        var persona = new Rig();
+        await persona.Run(Base_(d => { d["account"] = ".nope"; d["persona"] = "P"; d["nonce"] = "n9"; }));
+        Assert.Equal("unknown_account", persona.Code);
+    }
+
+    [Fact]
+    public void TheAccountsFrameListsEachClisChoicesAndNothingIsStillAFrame()
+    {
+        var choices = new Dictionary<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>>
+        {
+            [NewChatCli.ClaudeCode] = [new("Default (~/.claude)", null), new("~/.claude-uplift", ".claude-uplift")],
+            [NewChatCli.Codex] = [new("Default (~/.codex)", null)],
+            [NewChatCli.Grok] = [],
+        };
+        var frame = PhoneAccounts.Frame(PhoneAccounts.From(c => choices[c]));
+        Assert.Equal("{\"t\":\"accounts\",\"accounts\":[{\"cli\":\"claude\",\"id\":\"default\",\"label\":\"Default (~/.claude)\"},{\"cli\":\"claude\",\"id\":\".claude-uplift\",\"label\":\"~/.claude-uplift\"},{\"cli\":\"codex\",\"id\":\"default\",\"label\":\"Default (~/.codex)\"}]}", frame);
+        Assert.Equal("{\"t\":\"accounts\",\"accounts\":[]}", PhoneAccounts.Frame([]));
+    }
+
     // ---- the command ---------------------------------------------------------------------
 
     [Fact]
@@ -335,20 +404,39 @@ public class PhoneLaunchTests
     }
 
     [Fact]
-    public void TheWindowsLaunchNamesConhostAndBuildsArgvWordByWord()
+    public void TheWindowsLaunchUsesWindowsTerminalAndBuildsArgvWordByWord()
     {
         var claude = LaunchCommand.Windows(new(NewChatCli.ClaudeCode, @"C:\p", "opus", "p1", "m"), @"C:\bin\claude.exe", null)!;
-        Assert.Equal("conhost.exe", claude.FileName);
-        Assert.Equal(["cmd.exe", "/k", @"C:\bin\claude.exe", "--model", "opus", "--parent-session-id", "p1"], claude.ArgumentList);
-        Assert.Equal(@"C:\p", claude.WorkingDirectory);
+        Assert.Equal("wt.exe", claude.FileName);
+        Assert.Equal(["-d", @"C:\p", "cmd.exe", "/k", @"C:\bin\claude.exe", "--model", "opus", "--parent-session-id", "p1"], claude.ArgumentList);
 
         var codex = LaunchCommand.Windows(new(NewChatCli.Codex, @"C:\p", "", null, "a & b | c > d"), @"C:\bin\codex.exe", "C:\\home")!;
-        Assert.Equal([@"C:\bin\codex.exe", "--", "a & b | c > d"], codex.ArgumentList);
+        Assert.Equal(["-d", @"C:\p", @"C:\bin\codex.exe", "--", "a & b | c > d"], codex.ArgumentList);
         Assert.Equal("C:\\home", codex.Environment[NewChatAccountHome.For(NewChatCli.Codex).EnvVar]);
 
         Assert.Null(LaunchCommand.Windows(new(NewChatCli.Grok, @"C:\p", "", null, "hi"), @"C:\bin\grok.cmd", null));
         Assert.NotNull(LaunchCommand.Windows(new(NewChatCli.Grok, @"C:\p", "", null, ""), @"C:\bin\grok.cmd", null));
     }
+
+    [Fact]
+    public void TheConhostFallbackNamesConhostOutright()
+    {
+        var claude = LaunchCommand.Windows(new(NewChatCli.ClaudeCode, @"C:\p", "", null, ""), @"C:\bin\claude.exe", null, windowsTerminal: false)!;
+        Assert.Equal("conhost.exe", claude.FileName);
+        Assert.Equal(["cmd.exe", "/k", @"C:\bin\claude.exe"], claude.ArgumentList);
+        Assert.Equal(@"C:\p", claude.WorkingDirectory);
+        var codex = LaunchCommand.Windows(new(NewChatCli.Codex, @"C:\p", "", null, "x"), @"C:\bin\codex.exe", null, windowsTerminal: false)!;
+        Assert.Equal([@"C:\bin\codex.exe", "--", "x"], codex.ArgumentList);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\Hawai", "C:/Users/Hawai", true, true)]
+    [InlineData(@"c:\users\hawai\", "C:/Users/Hawai", true, true)]
+    [InlineData(@"c:\users\hawai", "C:/Users/Hawai", false, false)]
+    [InlineData("/home/a/", "/home/a", false, true)]
+    [InlineData("/home/a", "/home/b", false, false)]
+    public void ALaunchedFolderMatchesHoweverTheSlashesAreWritten(string recorded, string asked, bool windows, bool same) =>
+        Assert.Equal(same, PhoneSeams.SameFolder(recorded, asked, windows));
 
     [Theory]
     [InlineData("/Users/w", true)]
