@@ -16,7 +16,23 @@ namespace Orbweaver
             Func<SessionStatus, TerminalTyping.Route> Route,
             Func<SessionStatus, Task<string?>> Read,
             Func<SessionStatus, string, Task<bool>> Type,
-            Func<TimeSpan, Task> Delay);
+            Func<TimeSpan, Task> Delay,
+            // Whether the session's recorded tmux pane holds its pid; null when
+            // it cannot be told. Null seam: always holds (tests that are not
+            // about the pane).
+            Func<SessionStatus, bool?>? PaneHolds = null);
+
+        // The target is really this session (CB-316). A Codex hook running under
+        // Codex's shared app-server daemon once recorded the daemon's pid and
+        // the daemon's own tmux pane, which belonged to nobody in this session —
+        // so before a single key, the pane must hold the session's process, and
+        // a Codex session that recorded no process at all has no target. Fails
+        // closed: a pane that cannot be checked is not typed into.
+        internal static bool TargetVerified(SessionStatus status, TerminalTyping.Route route, Func<SessionStatus, bool?> paneHolds)
+        {
+            if (status.Source == SessionSource.Codex && status.SessionPid <= 0) return false;
+            return route != TerminalTyping.Route.Tmux || paneHolds(status) == true;
+        }
 
         // Typed, or refused with a contract code and (for not_at_prompt and
         // typing_failed) the desktop's own sentence.
@@ -44,7 +60,9 @@ namespace Orbweaver
         {
             if (!RelayText.Typeable(text, allowEmpty)) return Refuse(RelayReplies.BadInput);
             if (text.Length == 0) return Outcome.Done;   // a launch with no first message types nothing
-            if (!TerminalPress.Silent(_seams.Route(status))) return Refuse(RelayReplies.Untypeable);
+            var route = _seams.Route(status);
+            if (!TerminalPress.Silent(route)) return Refuse(RelayReplies.Untypeable);
+            if (!TargetVerified(status, route, _seams.PaneHolds ?? (_ => true))) return Refuse(RelayReplies.Untypeable);
 
             await _one.WaitAsync().ConfigureAwait(false);
             try

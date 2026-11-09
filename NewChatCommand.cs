@@ -105,7 +105,18 @@ namespace Orbweaver
         // AgentTeam reads off the process to link the new orb to its lead
         // (measured on a hand launch, CB-316); the gate refuses it for the
         // other two CLIs before this is reached.
-        internal static List<string> LaunchArgs(NewChatCli cli, string model, string parentSessionId)
+        // Codex and Grok take the phone's first message as their positional
+        // [PROMPT] instead of having it typed (CB-316, PM decision): Codex fires
+        // no hook until a turn is submitted, so a launch waiting to type could
+        // never see it check in, and Grok opens on its home menu, where the
+        // typing gate rightly refuses. Behind `--`, so a message starting with
+        // "-" (or naming a subcommand, like "exec ...") is a prompt and never a
+        // flag. Measured in tmux on the MacBook: `codex -- '-n reply…'` and
+        // `grok -- '-n reply…'` each ran it as the first turn, Grok straight
+        // into the chat (after a new folder's trust prompt).
+        internal static bool PromptAsArgument(NewChatCli cli) => cli is NewChatCli.Codex or NewChatCli.Grok;
+
+        internal static List<string> LaunchArgs(NewChatCli cli, string model, string parentSessionId, string firstMessage = "")
         {
             var args = new List<string>();
             if (model.Length > 0)
@@ -117,6 +128,11 @@ namespace Orbweaver
             {
                 args.Add("--parent-session-id");
                 args.Add(parentSessionId);
+            }
+            if (firstMessage.Length > 0 && PromptAsArgument(cli))
+            {
+                args.Add("--");
+                args.Add(firstMessage);
             }
             return args;
         }
@@ -142,11 +158,21 @@ namespace Orbweaver
         // session 2 on the Windows box: cmd's window handle was 0 under a bare
         // cmd.exe and non-zero under conhost.exe. Naming conhost.exe is also
         // what the contract's "conhost, not wt.exe" means in practice.
-        internal static ProcessStartInfo ConsoleStartInfo(string exe, string cwd, IReadOnlyList<string> args)
+        //
+        // viaCmd false (Codex and Grok, whose argv carries the user's message)
+        // drops the `cmd.exe /k`: cmd re-parses its command line, so & | > %
+        // in a message would be commands. conhost hands the rest of its command
+        // line to CreateProcess untouched, and ArgumentList quotes each word the
+        // way the CLI's own argv parser reads it back. The window then closes
+        // when the CLI exits (accepted, PM).
+        internal static ProcessStartInfo ConsoleStartInfo(string exe, string cwd, IReadOnlyList<string> args, bool viaCmd = true)
         {
             var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = true, WorkingDirectory = cwd };
-            start.ArgumentList.Add("cmd.exe");
-            start.ArgumentList.Add("/k");
+            if (viaCmd)
+            {
+                start.ArgumentList.Add("cmd.exe");
+                start.ArgumentList.Add("/k");
+            }
             start.ArgumentList.Add(exe);
             foreach (var arg in args) start.ArgumentList.Add(arg);
             return start;

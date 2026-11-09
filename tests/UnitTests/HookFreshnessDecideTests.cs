@@ -49,7 +49,9 @@ public class HookFreshnessDecideTests
             new[]
             {
                 Path.Combine(home, ".claude", "orbweaver", "OrbweaverHook.sh"),
-                Path.Combine(home, ".claude", "claude-buddy", "ClaudeBuddyHook.sh")
+                Path.Combine(home, ".claude", "claude-buddy", "ClaudeBuddyHook.sh"),
+                Path.Combine(home, ".codex", "orbweaver", "OrbweaverHook.sh"),
+                Path.Combine(home, ".codex", "claude-buddy", "ClaudeBuddyHook.sh"),
             },
             HookFreshness.InstalledCandidates(false, home, Path.Combine("l", "local")));
     }
@@ -62,8 +64,19 @@ public class HookFreshnessDecideTests
             new[]
             {
                 Path.Combine(local, "Orbweaver", "OrbweaverHook.ps1"),
-                Path.Combine(local, "ClaudeBuddy", "ClaudeBuddyHook.ps1")
+                Path.Combine(local, "ClaudeBuddy", "ClaudeBuddyHook.ps1"),
+                Path.Combine("h", "me", ".codex", "orbweaver", "OrbweaverHook.ps1"),
+                Path.Combine("h", "me", ".codex", "claude-buddy", "ClaudeBuddyHook.ps1"),
             },
             HookFreshness.InstalledCandidates(true, Path.Combine("h", "me"), local));
+    }
+
+    // CB-316: a CODEX_HOME moves Codex's copies with it.
+    [Fact]
+    public void A_codex_home_moves_the_codex_copies()
+    {
+        var candidates = HookFreshness.InstalledCandidates(false, Path.Combine("h", "me"), "l", codexHome: Path.Combine("c", "x"));
+        Assert.Contains(Path.Combine("c", "x", "orbweaver", "OrbweaverHook.sh"), candidates);
+        Assert.DoesNotContain(Path.Combine("h", "me", ".codex", "orbweaver", "OrbweaverHook.sh"), candidates);
     }
 }

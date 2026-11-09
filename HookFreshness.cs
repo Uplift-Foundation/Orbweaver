@@ -45,10 +45,18 @@ namespace Orbweaver
         // The installed copies, new first and legacy second — the same paths
         // NewChatHookState.HookCopyCandidates names for Claude Code, reused so the
         // two cannot disagree about where the installers put things.
+        // Codex's copies too (CB-316). The Codex hook is the same script, and
+        // its daemon fix only helps a machine whose copy is refreshed: the
+        // MacBook's ~/.codex copy was found three weeks stale. Overwriting the
+        // script never touches hooks.json, which is what Codex hashes for its
+        // trust review, so a refresh cannot silently disable Codex's hooks.
         internal static IReadOnlyList<string> InstalledCandidates(
-            bool onWindows, string userProfile, string localAppData) =>
+            bool onWindows, string userProfile, string localAppData, string? codexHome = null) =>
             NewChatHookState.HookCopyCandidates(
-                NewChatCli.ClaudeCode, onWindows, userProfile, localAppData, _ => null);
+                    NewChatCli.ClaudeCode, onWindows, userProfile, localAppData, _ => null)
+                .Concat(NewChatHookState.HookCopyCandidates(
+                    NewChatCli.Codex, onWindows, userProfile, localAppData, name => name == "CODEX_HOME" ? codexHome : null))
+                .ToList();
 
         // Where the bundled script sits in each layout the app runs from: inside
         // the .app, Contents/Resources beside the installers (BaseDirectory is
@@ -166,7 +174,8 @@ namespace Orbweaver
                         InstalledCandidates(
                             onWindows,
                             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            Environment.GetEnvironmentVariable("CODEX_HOME")),
                         message => HookInstallerLog.Record("hook-freshness",
                             new HookInstallResult(HookInstallOutcome.Ok, "hook-freshness", Output: message)));
                 }

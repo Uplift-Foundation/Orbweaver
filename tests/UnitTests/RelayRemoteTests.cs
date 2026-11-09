@@ -373,6 +373,62 @@ public class RelayRemoteTests
         Assert.Empty(w.WindowsStarts);
     }
 
+    // CB-316: Codex and Grok are handed the first message as their launch
+    // prompt; `typed` follows check-in and nothing is typed into a terminal.
+    [Fact]
+    public async Task A_codex_launch_hands_its_message_to_the_cli_and_types_nothing()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status(source: SessionSource.Codex));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "codex", message: "-n fix & ship"));
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Empty(w.Desk.Typed);
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", ["--", "-n fix & ship"]), w.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task A_windows_grok_launch_starts_the_cli_under_conhost_with_its_prompt()
+    {
+        var w = new World(windows: true, binary: "C:\\g\\grok.exe");
+        ChecksIn(w, "new", Status(source: SessionSource.Grok, cwd: "C:\\w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "grok", cwd: "C:\\w", message: "say % & hi"));
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Equal(["C:\\g\\grok.exe", "--", "say % & hi"], w.WindowsStarts.Single().ArgumentList);
+    }
+
+    [Fact]
+    public async Task A_windows_prompt_launch_of_a_script_shim_is_refused_and_starts_nothing()
+    {
+        var w = new World(windows: true, binary: "C:\\npm\\codex.cmd");
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "codex", cwd: "C:\\w", message: "hi"));
+        var reply = w.Sent.Replies.Single().Body;
+        Assert.Equal("launch_failed", reply.GetProperty("code").GetString());
+        Assert.Empty(w.WindowsStarts);
+
+        // The paired control: with no message there is nothing to re-parse.
+        var empty = new World(windows: true, binary: "C:\\npm\\codex.cmd");
+        ChecksIn(empty, "new", Status(source: SessionSource.Codex, cwd: "C:\\w"));
+        await empty.Remote.HandleAsync("ph", PhoneKey.Public, Launch(empty, cli: "codex", cwd: "C:\\w", message: ""));
+        Assert.Equal(["launched"], Codes(empty));
+    }
+
+    [Fact]
+    public async Task Input_into_a_pane_that_does_not_hold_the_session_is_untypeable()
+    {
+        var holds = (bool?)false;
+        var typed = new List<string>();
+        var input = new RelayInput(new RelayInput.Seams(_ => TerminalTyping.Route.Tmux, _ => Task.FromResult<string?>(Prompt),
+            (_, t) => { typed.Add(t); return Task.FromResult(true); }, _ => Task.CompletedTask, _ => holds));
+        var codex = new SessionStatus { Source = SessionSource.Codex, SessionPid = 7, TmuxPane = "%42" };
+        Assert.Equal(RelayReplies.Untypeable, (await input.TypeAsync(codex, "hi")).Code);
+        holds = null;
+        Assert.Equal(RelayReplies.Untypeable, (await input.TypeAsync(codex, "hi")).Code);
+        Assert.Empty(typed);
+        holds = true;
+        Assert.True((await input.TypeAsync(codex, "hi")).Typed);
+        Assert.Equal(["hi"], typed);
+    }
+
     [Fact]
     public async Task A_launch_with_no_message_gets_exactly_one_reply()
     {
@@ -392,7 +448,8 @@ public class RelayRemoteTests
         Assert.Equal(["launched"], Codes(w));
         var start = w.WindowsStarts.Single();
         Assert.Equal("conhost.exe", start.FileName);
-        Assert.Equal(["cmd.exe", "/k", "/bin/claude", "-m", "gpt-5"], start.ArgumentList);
+        // Codex: no cmd.exe (its argv can carry the user's message).
+        Assert.Equal(["/bin/claude", "-m", "gpt-5"], start.ArgumentList);
         Assert.Empty(w.MacStarts);
     }
 

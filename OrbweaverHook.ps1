@@ -256,6 +256,7 @@ $termPid = 0
 # also what the WSL case now gets, where the Windows-side chain dead-ends in an
 # interop bridge and previously recorded a doomed pid.
 $sessionPid = 0
+$codexDaemon = $false
 try {
     $cur = Get-CimInstance Win32_Process -Filter "ProcessId=$PID"
     for ($i = 0; $i -lt 10 -and $cur; $i++) {
@@ -306,6 +307,14 @@ try {
             $isClaudeWrapper = $Agent -eq 'claude' -and
                 $commandLine -match '(?i)(bg-pty-host|daemon run|--bg-spare|\sagents(?:\s|$))'
 
+            # Codex 0.167+ runs turns, and so hooks, in a shared
+            # `codex app-server` daemon (CB-316, measured on macOS): the first
+            # codex ancestor is the daemon, not the session's TUI, and the
+            # windowed ancestor above it is whichever console first started the
+            # daemon. Resolved after the walk instead of recorded here.
+            $isCodexDaemon = $Agent -eq 'codex' -and $commandLine -match '(?i)\sapp-server(\s|$)'
+            if ($isCodexDaemon) { $codexDaemon = $true; break }
+
             if (-not $isClaudeWrapper -and
                 ($name -like "$Agent.exe*" -or
                  ($name -eq 'node.exe' -and $commandLine -match $Agent))) {
@@ -316,6 +325,32 @@ try {
         if ($proc.MainWindowHandle -ne 0) { $termPid = [int]$parentId; break }
     }
 } catch {}
+
+# Under the Codex daemon nothing terminal-shaped in this environment is the
+# session's, so all of it is dropped. Windows cannot read another process's
+# working directory, so the session's TUI is found by uniqueness instead of by
+# folder: exactly one codex TUI (not an app-server) running is taken as the
+# session, and its own windowed ancestor as the terminal. Two or more record
+# no pid and no terminal, which the app refuses to type into — the safe
+# direction. The residual risk (one TUI plus a session from a non-TUI client)
+# is named in CB-316's PR.
+if ($codexDaemon) {
+    $termPid = 0; $termProgram = ''; $termId = ''; $sessionPid = 0
+    try {
+        $tuis = @(Get-CimInstance Win32_Process -Filter "Name like 'codex%'" |
+            Where-Object { "$($_.Name)" -like 'codex.exe*' -and "$($_.CommandLine)" -notmatch '(?i)\sapp-server(\s|$)' })
+        if ($tuis.Count -eq 1) {
+            $sessionPid = [int]$tuis[0].ProcessId
+            $cur = $tuis[0]
+            for ($i = 0; $i -lt 10 -and $cur; $i++) {
+                $p = Get-Process -Id $cur.ProcessId -ErrorAction SilentlyContinue
+                if ($p -and $p.MainWindowHandle -ne 0) { $termPid = [int]$cur.ProcessId; break }
+                if (-not $cur.ParentProcessId) { break }
+                $cur = Get-CimInstance Win32_Process -Filter "ProcessId=$($cur.ParentProcessId)"
+            }
+        }
+    } catch {}
+}
 
 # What Codex calls this chat.
 #

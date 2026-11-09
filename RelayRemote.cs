@@ -250,6 +250,15 @@ namespace Orbweaver
             Ok(phoneId, r.Ref, RelayReplies.Launched, sessionId);
             if (f.FirstMessage.Length == 0) return;
 
+            // Codex and Grok were handed the message as their launch prompt, so
+            // it is delivered the moment the session exists: `typed` here means
+            // "delivered as the launch prompt" (PM decision, frames-v4 note).
+            if (NewChatCommand.PromptAsArgument(LaunchGate.CliFor(f.Cli)))
+            {
+                Ok(phoneId, r.Ref, RelayReplies.Typed, sessionId);
+                return;
+            }
+
             var (typed, why) = await TypeFirstMessageAsync(sessionId, f.FirstMessage).ConfigureAwait(false);
             if (typed) Ok(phoneId, r.Ref, RelayReplies.Typed, sessionId);
             else Err(phoneId, r.Ref, RelayReplies.NotAtPrompt, sessionId, why);
@@ -261,11 +270,17 @@ namespace Orbweaver
         {
             var cli = LaunchGate.CliFor(f.Cli);
             var binary = _seams.Launch.Locate(f.Cli)!;
-            var args = NewChatCommand.LaunchArgs(cli, f.Model, f.ParentSessionId);
+            var args = NewChatCommand.LaunchArgs(cli, f.Model, f.ParentSessionId, f.FirstMessage);
             var name = NewChatLauncher.DisplayName(cli);
             if (_seams.Launch.IsWindows)
             {
-                var start = NewChatCommand.ConsoleStartInfo(binary, f.Cwd, args);
+                var inArgv = NewChatCommand.PromptAsArgument(cli);
+                // A batch shim (an npm-style codex.cmd) would be run by cmd
+                // after all, and cmd would re-parse the message: refused rather
+                // than started.
+                if (inArgv && f.FirstMessage.Length > 0 && !binary.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    return (RelayReplies.LaunchFailed, name + " here is a script, which cannot be handed a message safely.");
+                var start = NewChatCommand.ConsoleStartInfo(binary, f.Cwd, args, viaCmd: !inArgv);
                 return _seams.Launch.StartWindows(start) is null
                     ? (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".")
                     : null;

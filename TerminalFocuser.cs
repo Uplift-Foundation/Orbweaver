@@ -1173,6 +1173,23 @@ namespace Orbweaver
                 TmuxPaneOwnershipRules.ParseProcessListing(listing), panePid);
         }
 
+        // CB-316: whether this session's recorded pane really holds its pid,
+        // asked now, for a phone's input. Null when tmux or ps cannot answer.
+        // Excluded: two real subprocesses; the rule is TmuxPaneOwnershipRules.Holds.
+        [ExcludeFromCodeCoverage]
+        internal static bool? TmuxPaneHolds(SessionStatus status)
+        {
+            if (string.IsNullOrEmpty(status.TmuxPane)) return null;
+            var tmux = ResolveTmuxBinary(status.TmuxBin);
+            if (tmux is null
+                || !TryRun(tmux, out var panePidText,
+                    TmuxArgs(status, "display-message", "-p", "-t", status.TmuxPane, "#{pane_pid}"))
+                || !int.TryParse(panePidText.Trim(), out var panePid)
+                || !TryRun("/bin/ps", out var listing, "-eo", "pid=,ppid=,args="))
+                return null;
+            return TmuxPaneOwnershipRules.Holds(TmuxPaneOwnershipRules.ParseProcessListing(listing), panePid, status.SessionPid);
+        }
+
         // Every pane claim a scan pass holds, answered at once — see
         // TmuxPaneOwnershipRules.OwnersFor, which decides everything and is
         // where the batching is tested. What is left here is running tmux and

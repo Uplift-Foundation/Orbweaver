@@ -163,6 +163,25 @@ namespace Orbweaver
             return ids.Count == 1 ? ids[0] : null;
         }
 
+        // CB-316: whether a pane's process tree holds this pid — the CLI-neutral
+        // form of SessionIdIn, for a CLI (Codex) whose argv names no session.
+        // Null when there is nothing to judge, so a caller can fail closed.
+        internal static bool? Holds(IEnumerable<ProcessCommand>? processes, int panePid, int pid)
+        {
+            if (panePid <= 0 || pid <= 0 || processes is null) return null;
+            if (panePid == pid) return true;
+            var all = processes.ToList();
+            var descendants = new HashSet<int> { panePid };
+            var changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var process in all)
+                    if (descendants.Contains(process.ParentPid) && descendants.Add(process.Pid)) changed = true;
+            }
+            return descendants.Contains(pid);
+        }
+
         internal static TmuxPaneOwnership For(
             string? expectedSessionId, int panePid, IEnumerable<ProcessCommand>? processes)
         {

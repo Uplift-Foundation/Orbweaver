@@ -193,7 +193,8 @@ namespace Orbweaver
                 TerminalFocuser.RouteFor,
                 status => ScreenReaders.For(status)?.ReadAsync(status) ?? Task.FromResult<string?>(null),
                 TerminalFocuser.SendTextAndSubmit,
-                Task.Delay)),
+                Task.Delay,
+                TerminalFocuser.TmuxPaneHolds)),
             new RelayRemote.LaunchSeams(
                 OperatingSystem.IsWindows(),
                 cli => NewChatLauncher.LocateFresh(LaunchGate.CliFor(cli)),

@@ -433,6 +433,60 @@ public class RelayV4RuleTests
         Assert.Equal(["-m", "grok-4"], NewChatCommand.LaunchArgs(NewChatCli.Grok, "grok-4", ""));
     }
 
+    // CB-316: Codex and Grok get the first message as their positional prompt,
+    // behind `--` so a leading "-" or a subcommand name is never a flag; Claude
+    // still has it typed.
+    [Fact]
+    public void Codex_and_grok_take_the_first_message_as_a_prompt_behind_a_double_dash()
+    {
+        Assert.Equal(["-m", "gpt-5", "--", "-n exec rm"], NewChatCommand.LaunchArgs(NewChatCli.Codex, "gpt-5", "", "-n exec rm"));
+        Assert.Equal(["--", "hi"], NewChatCommand.LaunchArgs(NewChatCli.Grok, "", "", "hi"));
+        Assert.Empty(NewChatCommand.LaunchArgs(NewChatCli.Codex, "", "", ""));
+        Assert.Equal(["--model", "opus"], NewChatCommand.LaunchArgs(NewChatCli.ClaudeCode, "opus", "", "hi"));
+        Assert.True(NewChatCommand.PromptAsArgument(NewChatCli.Grok));
+        Assert.False(NewChatCommand.PromptAsArgument(NewChatCli.ClaudeCode));
+    }
+
+    // The message reaches the CLI's argv word for word, with no cmd.exe to
+    // re-parse & | > " % (PM: pin it with exactly those).
+    [Fact]
+    public void A_windows_prompt_launch_is_conhost_and_the_cli_with_no_cmd()
+    {
+        const string message = "a & b | c > d \" e %PATH% ^ f";
+        var start = NewChatCommand.ConsoleStartInfo("C:\\bin\\codex.exe", "C:\\w",
+            NewChatCommand.LaunchArgs(NewChatCli.Codex, "", "", message), viaCmd: false);
+        Assert.Equal("conhost.exe", start.FileName);
+        Assert.Equal(["C:\\bin\\codex.exe", "--", message], start.ArgumentList);
+        Assert.DoesNotContain("cmd.exe", start.ArgumentList);
+        Assert.DoesNotContain("/k", start.ArgumentList);
+    }
+
+    [Fact]
+    public void The_target_must_be_the_sessions_own_pane_and_codex_needs_a_process()
+    {
+        var codexNoPid = new SessionStatus { Source = SessionSource.Codex, SessionPid = 0 };
+        var codex = new SessionStatus { Source = SessionSource.Codex, SessionPid = 7, TmuxPane = "%1" };
+        var claudeNoPid = new SessionStatus { Source = SessionSource.ClaudeCode, SessionPid = 0 };
+        Assert.False(RelayInput.TargetVerified(codexNoPid, TerminalTyping.Route.WindowsConsole, _ => true));
+        Assert.True(RelayInput.TargetVerified(codex, TerminalTyping.Route.Tmux, _ => true));
+        Assert.False(RelayInput.TargetVerified(codex, TerminalTyping.Route.Tmux, _ => false));
+        Assert.False(RelayInput.TargetVerified(codex, TerminalTyping.Route.Tmux, _ => null));   // cannot tell: fail closed
+        Assert.True(RelayInput.TargetVerified(codex, TerminalTyping.Route.Kitty, _ => false));  // the pane rule is tmux's
+        Assert.True(RelayInput.TargetVerified(claudeNoPid, TerminalTyping.Route.WindowsConsole, _ => null));
+    }
+
+    [Fact]
+    public void A_pane_holds_a_pid_only_in_its_own_process_tree()
+    {
+        List<ProcessCommand> table = [new(10, 1, "zsh"), new(11, 10, "codex"), new(20, 1, "zsh"), new(21, 20, "codex")];
+        Assert.True(TmuxPaneOwnershipRules.Holds(table, 10, 11));
+        Assert.False(TmuxPaneOwnershipRules.Holds(table, 10, 21));
+        Assert.True(TmuxPaneOwnershipRules.Holds(table, 21, 21));
+        Assert.Null(TmuxPaneOwnershipRules.Holds(null, 10, 11));
+        Assert.Null(TmuxPaneOwnershipRules.Holds(table, 0, 11));
+        Assert.Null(TmuxPaneOwnershipRules.Holds(table, 10, 0));
+    }
+
     [Fact]
     public void Launch_line_runs_the_login_shell_with_every_word_quoted()
     {
