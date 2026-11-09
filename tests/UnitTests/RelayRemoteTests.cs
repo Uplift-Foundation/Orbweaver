@@ -84,6 +84,32 @@ public class RelayRemoteTests
         Assert.All(new[] { waiting, dialog, unread, changing, vanished }, d => Assert.Empty(d.Typed));
     }
 
+    private static string Fixture(string name) =>
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScreenReadFixtures", name));
+
+    // CB-316: Codex's and Grok's own prompts are typed into, on both platforms'
+    // real captures; their home screen and a running turn are not — on screen
+    // where it shows, and by the record where Codex streams with no marker.
+    [Theory]
+    [InlineData("tmux-codex-idle.txt", "Codex", "idle", null)]
+    [InlineData("tmux-grok-idle.txt", "Grok", "idle", null)]
+    [InlineData("conhost-grok-idle.txt", "Grok", "idle", null)]
+    [InlineData("conhost-codex-none.txt", "Codex", "idle", null)]
+    [InlineData("tmux-codex-working.txt", "Codex", "idle", "its screen could not be read as a prompt")]
+    [InlineData("tmux-grok-working.txt", "Grok", "idle", "its screen could not be read as a prompt")]
+    [InlineData("conhost-grok-working.txt", "Grok", "idle", "its screen could not be read as a prompt")]
+    [InlineData("tmux-grok-none.txt", "Grok", "idle", "its screen could not be read as a prompt")]
+    [InlineData("tmux-codex-streaming-nomarker.txt", "Codex", "generating", RelayInput.WorkingWhy)]
+    [InlineData("tmux-codex-streaming-nomarker.txt", "Codex", "idle", null)]
+    public async Task Codex_and_grok_prompts_are_typed_into_and_their_busy_screens_are_not(string fixture, string source, string state, string? why)
+    {
+        var desk = new Desk { Screen = Fixture(fixture) };
+        var status = new SessionStatus { Source = Enum.Parse<SessionSource>(source), State = state, SessionPid = 7 };
+        var outcome = await desk.Input().TypeAsync(status, "hi");
+        Assert.Equal(why, outcome.Why);
+        Assert.Equal(why is null ? ["hi"] : [], desk.Typed);
+    }
+
     [Fact]
     public async Task Bad_input_is_refused_first_an_empty_launch_message_types_nothing_and_a_refusing_typer_is_typing_failed()
     {

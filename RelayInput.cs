@@ -43,6 +43,7 @@ namespace Orbweaver
         }
 
         internal const string ChangingWhy = "its screen was still changing";
+        internal const string WorkingWhy = "it is still working on a turn";
         internal const string RefusedWhy = "the terminal refused the text";
 
         private readonly Seams _seams;
@@ -82,6 +83,14 @@ namespace Orbweaver
         // not_at_prompt refusal with the gate's own sentence.
         internal async Task<Outcome?> JudgeAsync(SessionStatus status)
         {
+            // Codex and Grok keep their input box on screen while a turn runs,
+            // and Codex can stream for seconds with nothing on screen that says
+            // so (a real capture, tmux-codex-streaming-nomarker). Their hooks
+            // record the turn, so the record decides first (CB-316). Claude's
+            // prompt has always accepted typing mid-turn; it is unchanged.
+            if (status.Source is SessionSource.Codex or SessionSource.Grok && status.State == RelayRoster.Generating)
+                return Refuse(RelayReplies.NotAtPrompt, WorkingWhy);
+
             string? first = null;
             var verdict = await TypingGate.JudgeAsync(
                 status,
