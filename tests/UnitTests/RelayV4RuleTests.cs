@@ -85,6 +85,12 @@ public class RelayV4RuleTests
         Assert.False(RelayText.Typeable(""));
         Assert.True(RelayText.Typeable("", allowEmpty: true));
         Assert.True(RelayText.Typeable("a\tb\nc"));
+        // C1: U+009B is an 8-bit CSI; refused with the rest of the range,
+        // while the first printable character after it is not.
+        Assert.False(RelayText.Typeable("ls\u009b2J"));
+        Assert.False(RelayText.Typeable("\u0080"));
+        Assert.False(RelayText.Typeable("\u009f"));
+        Assert.True(RelayText.Typeable("\u00a0é"));
     }
 
     // ---- TranscriptWatch ------------------------------------------------------------
@@ -121,6 +127,30 @@ public class RelayV4RuleTests
         Assert.Equal(TranscriptWatch.Change.Tail, TranscriptWatch.Diff(0, null, two));
         Assert.Equal(TranscriptWatch.Change.Reset, TranscriptWatch.Diff(3, L("a"), two));
         Assert.Equal(TranscriptWatch.Change.Reset, TranscriptWatch.Diff(1, L("z"), two));
+    }
+
+    // QA's finding: a parser stamps "now" on a row with no timestamp, so the
+    // same row parsed twice differs only in `at` — which must not be a reset.
+    [Fact]
+    public void Rows_are_compared_by_what_the_phone_draws_not_by_time()
+    {
+        List<TranscriptWatch.WireLine> now = [L("a", at: 99), L("b", at: 99)];
+        Assert.Equal(TranscriptWatch.Change.None, TranscriptWatch.Diff(2, L("a", at: 1), now, L("b", at: 1)));
+        Assert.True(TranscriptWatch.Same(L("a", 1), L("a", 2)));
+        Assert.False(TranscriptWatch.Same(L("a"), TranscriptWatch.Line("assistant", "a", 1)));
+        Assert.False(TranscriptWatch.Same(L("a"), TranscriptWatch.Line("user", "a", 1, error: true)));
+        Assert.False(TranscriptWatch.Same(L("a"), L(new string('a', 9000))));
+    }
+
+    // A last row that grew in place (Grok coalescing streamed chunks) is a
+    // reset, with or without new rows after it: the phone keeps lines by
+    // index, so a re-sent line would be dropped as a duplicate.
+    [Fact]
+    public void A_last_row_that_grew_in_place_is_a_reset()
+    {
+        Assert.Equal(TranscriptWatch.Change.Reset, TranscriptWatch.Diff(2, L("a"), [L("a"), L("bc")], L("b")));
+        Assert.Equal(TranscriptWatch.Change.Reset, TranscriptWatch.Diff(2, L("a"), [L("a"), L("bc"), L("d")], L("b")));
+        Assert.Equal(TranscriptWatch.Change.Tail, TranscriptWatch.Diff(2, L("a"), [L("a"), L("b"), L("d")], L("b")));
     }
 
     [Fact]
@@ -226,6 +256,16 @@ public class RelayV4RuleTests
         file.Lines = null;                                // gone
         w.Poll(Ms(1200));
         Assert.Empty(w.Poll(Ms(1500)));
+    }
+
+    [Fact]
+    public void A_page_of_an_empty_transcript_sends_no_window()
+    {
+        var file = new File();
+        var w = new TranscriptWatcher("ph", "s", file.Seams);
+        Assert.Empty(w.Page(5));
+        file.Append("a");
+        Assert.Single(w.Page(5));
     }
 
     [Fact]

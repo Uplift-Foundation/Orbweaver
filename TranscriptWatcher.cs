@@ -29,6 +29,7 @@ namespace Orbweaver
         private DateTimeOffset? _changedAt;
         private int _held;
         private TranscriptWatch.WireLine? _first;
+        private TranscriptWatch.WireLine? _last;
         private bool _backfilled;
 
         internal TranscriptWatcher(string phoneId, string sessionId, Seams seams)
@@ -56,8 +57,9 @@ namespace Orbweaver
         }
 
         // A page of older lines for `watch {before}`: no change to what is held.
+        // An empty transcript has no page: no window is sent with no lines.
         internal IReadOnlyList<string> Page(long before) =>
-            Current() is { } lines ? TranscriptWatch.Page(SessionId, lines, before) : [];
+            Current() is { Count: > 0 } lines ? TranscriptWatch.Page(SessionId, lines, before) : [];
 
         // One tick. A changed stamp starts (or restarts) the quiet period; once
         // it has lasted 250 ms the file is re-parsed and diffed.
@@ -75,7 +77,7 @@ namespace Orbweaver
 
             if (Current() is not { } lines) return [];
             if (!_backfilled) return Hold(lines, TranscriptWatch.Backfill(SessionId, lines));
-            return TranscriptWatch.Diff(_held, _first, lines) switch
+            return TranscriptWatch.Diff(_held, _first, lines, _last) switch
             {
                 TranscriptWatch.Change.Tail => Hold(lines, TranscriptWatch.Tail(SessionId, lines, _held)),
                 TranscriptWatch.Change.Reset => Hold(lines, TranscriptWatch.Backfill(SessionId, lines, reset: true)),
@@ -122,6 +124,7 @@ namespace Orbweaver
             if (lines.Count == 0) return [];
             _held = lines.Count;
             _first = lines[0];
+            _last = lines[^1];
             _backfilled = true;
             return windows;
         }

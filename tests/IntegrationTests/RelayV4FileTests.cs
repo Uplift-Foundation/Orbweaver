@@ -124,6 +124,41 @@ public class RelayV4FileTests : IDisposable
         Assert.True(J(moving.Poll(T0.AddMilliseconds(300)).Single()).GetProperty("reset").GetBoolean());
     }
 
+    // QA's repro, through the real parser: a Claude row with no timestamp is
+    // stamped "now" on every parse, and two parses a second apart must still
+    // be the same transcript — no reset, no window.
+    [Fact]
+    public void A_first_row_with_no_timestamp_does_not_reset_on_every_change()
+    {
+        var path = Path.Combine(_dir, "nostamp.jsonl");
+        File.WriteAllLines(path, ["""{"type":"user","message":{"role":"user","content":[{"type":"text","text":"no time"}]},"uuid":"u0"}"""]);
+        var w = Watcher(path, "claude");
+        w.Start();
+        Thread.Sleep(1100);
+        Append(path, "claude", 1, 1);
+        w.Poll(T0);
+        var tail = J(w.Poll(T0.AddMilliseconds(300)).Single());
+        Assert.True(tail.GetProperty("live").GetBoolean());
+        Assert.False(tail.TryGetProperty("reset", out _));
+    }
+
+    // Grok coalesces streamed chunks into one turn, so a turn grows with no
+    // new row: the phone gets a reset carrying the whole text.
+    [Fact]
+    public void A_grok_turn_that_grows_in_place_reaches_the_phone_as_a_reset()
+    {
+        var path = Transcript("grok", 2);
+        var w = Watcher(path, "grok");
+        w.Start();
+        File.AppendAllLines(path, ["{\"timestamp\":1788198399,\"method\":\"session/update\",\"params\":{\"sessionId\":\"s1\",\"update\":"
+            + "{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\" and more\"}}}}"]);
+        w.Poll(T0);
+        var reset = J(w.Poll(T0.AddMilliseconds(300)).Single());
+        Assert.True(reset.GetProperty("reset").GetBoolean());
+        Assert.Equal(2, reset.GetProperty("total").GetInt32());
+        Assert.Equal("agent 1 and more", reset.GetProperty("lines")[1].GetProperty("text").GetString());
+    }
+
     [Fact]
     public void A_transcript_held_open_for_writing_is_still_read_and_a_missing_one_is_null()
     {

@@ -162,7 +162,11 @@ namespace Orbweaver
 
     // input.text and launch.first_message (frames-v4 input.rules): 1 to 8,000
     // UTF-8 bytes (launch allows 0), newline and tab allowed, every other C0
-    // control and DEL refused — an escape byte would drive the TUI.
+    // control and DEL refused — an escape byte would drive the TUI. The C1
+    // range U+0080-U+009F is refused too (QA, CB-316): U+009B is a one-byte
+    // CSI to a terminal that honours 8-bit controls, and nobody types one into
+    // a chat. Stricter than frames-v4 as written; raised for a contract
+    // amendment so both apps refuse the same set.
     internal static class RelayText
     {
         internal const int MaxBytes = 8000;
@@ -172,7 +176,7 @@ namespace Orbweaver
             if (text.Length == 0) return allowEmpty;
             if (Encoding.UTF8.GetByteCount(text) > MaxBytes) return false;
             foreach (var c in text)
-                if ((c < 0x20 && c != '\n' && c != '\t') || c == 0x7F) return false;
+                if ((c < 0x20 && c != '\n' && c != '\t') || (c >= 0x7F && c <= 0x9F)) return false;
             return true;
         }
     }

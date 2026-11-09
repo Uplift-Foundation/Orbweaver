@@ -126,11 +126,26 @@ namespace Orbweaver
         // grow sends nothing, one that grew sends the new rows, and one that
         // shrank — or a first row that is no longer the one sent — means the
         // file was truncated or replaced, which is a reset backfill.
-        internal static Change Diff(int heldCount, WireLine? heldFirst, IReadOnlyList<WireLine> now)
+        //
+        // Two refinements QA found (CB-316). Rows are compared by what the
+        // phone draws, never by `at`: every parser falls back to "now" for a
+        // row with no timestamp, so the same row parsed twice differs in time
+        // and an Equals compare reset on every change. And the last row sent
+        // is compared too: Grok's parser coalesces streamed chunks into one
+        // turn, so that row grows in place without the count moving. The
+        // phone drops a repeated index, so a re-sent line could never update
+        // it; a reset is the one window the contract lets replace it.
+        internal static Change Diff(int heldCount, WireLine? heldFirst, IReadOnlyList<WireLine> now, WireLine? heldLast = null)
         {
             if (now.Count < heldCount) return Change.Reset;
-            if (heldCount > 0 && heldFirst is { } first && !first.Equals(now[0])) return Change.Reset;
+            if (heldCount > 0 && heldFirst is { } first && !Same(first, now[0])) return Change.Reset;
+            if (heldCount > 0 && heldLast is { } last && !Same(last, now[heldCount - 1])) return Change.Reset;
             return now.Count > heldCount ? Change.Tail : Change.None;
         }
+
+        // The same row as far as the phone is concerned: role, text and the
+        // error and cut marks. Not `at` (see Diff).
+        internal static bool Same(WireLine a, WireLine b) =>
+            a.Role == b.Role && a.Text == b.Text && a.Error == b.Error && a.Cut == b.Cut;
     }
 }
