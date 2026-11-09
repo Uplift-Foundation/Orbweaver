@@ -1282,4 +1282,19 @@ public class RelayLinkTests : IDisposable
         var back = link.OnFrame(Presence(phone.Id, true));
         Assert.Equal(["roster", "accounts"], back.Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()));
     }
+
+    [Fact]
+    public void A_session_going_generating_to_idle_is_announced_once_whoever_is_online()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var finished = new List<string>();
+        link.SessionFinished += finished.Add;
+        link.OnScan([Row("s1", "generating"), Row("s2", "waiting"), Row("s3", "idle")]);
+        link.OnScan([Row("s1", "idle"), Row("s2", "idle"), Row("s3", "generating")]);
+        Assert.Equal(["s1"], finished);                       // waiting -> idle and idle -> generating are not finishes
+        link.OnFrame(Presence(phone.Id, false));
+        link.OnScan([Row("s1", "generating"), Row("s2", "idle"), Row("s3", "idle")]);
+        link.OnScan([Row("s1", "idle"), Row("s2", "idle"), Row("s3", "idle")]);
+        Assert.Equal(["s1", "s3", "s1"], finished);           // announced with nobody online too: the desk may still summarise
+    }
 }

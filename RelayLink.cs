@@ -145,6 +145,9 @@ namespace Orbweaver
         // A phone went offline: its watches end, so the relay's queue is never
         // filled with windows for a phone that is not reading them.
         internal event Action<string> PhoneWentOffline = delegate { };
+        // A session went generating -> idle on this scan (the same transition a done push rides on),
+        // raised once per session whether or not a phone is online: the desk may have a summary to make.
+        internal event Action<string> SessionFinished = delegate { };
         // CB-315 gate (a): the relay's ok pushed / push_throttled /
         // push_no_token for an amber, with APNs's round trip when it gave one.
         internal event Action<string, string, int?> PushReplied = delegate { };
@@ -541,6 +544,9 @@ namespace Orbweaver
             var update = _book.Update(rows, _now());
             if (update.IsEmpty || !Welcomed) return [];
             var after = _book.Snapshot().ToDictionary(r => r.SessionId, r => r, StringComparer.Ordinal);
+            foreach (var d in update.Deltas)
+                if (d is { Removed: false, State: RelayRoster.Idle } && before.TryGetValue(d.SessionId, out var was0) && was0 == RelayRoster.Generating && after.ContainsKey(d.SessionId))
+                    SessionFinished(d.SessionId);
 
             var frames = new List<string>();
             foreach (var c in _channels.Values.Where(c => c.Online))

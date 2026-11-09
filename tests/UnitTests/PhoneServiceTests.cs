@@ -14,6 +14,9 @@ public class PhoneServiceTests
         internal bool CanType = true;
         internal (bool Typed, string? Refusal) Typing = (true, null);
         internal bool Throw;
+        internal Func<PhoneService.Session, string, Task<string?>>? Summarize;
+        internal readonly List<string> Summarized = new();
+        internal int Settled;
         internal readonly List<string> Typed = new();
         internal PhoneService Service;
 
@@ -26,7 +29,9 @@ public class PhoneServiceTests
                 _ => CanType,
                 (_, text) => { if (Throw) throw new InvalidOperationException("x"); Typed.Add(text); return Task.FromResult(Typing); },
                 (phone, cls, ck, plain) => { Sent.Add((phone, cls, ck, plain)); return true; },
-                _ => { }));
+                _ => { },
+                (sess, reply) => { Summarized.Add(reply); return Summarize is null ? Task.FromResult<string?>("Did the thing.") : Summarize(sess, reply); },
+                () => 1794111792, () => { Settled++; return Task.CompletedTask; }));
         }
 
         internal Task Ask(string json, string id = "req1") => Service.OnRequestAsync("ph_1", id, JsonDocument.Parse(json).RootElement);
@@ -249,5 +254,97 @@ public class PhoneServiceTests
         var r = new Rig();
         await r.Ask("""{"t":"launch"}""");
         Assert.Empty(r.Sent);
+    }
+
+    // ---- the vibe summary --------------------------------------------------------------
+
+    private static List<PhoneFrames.Line> Conversation() =>
+        [new("user", "fix it", 1), new("assistant", "Looking.", 2), new("system", "Bash: dotnet test", 3), new("assistant", "All green now. I fixed the race in the tail.", 4), new("system", "Bash: git status", 5)];
+
+    [Fact]
+    public async Task AFinishedSessionIsSummarisedForThePhonesWatchingItFromItsLastAssistantReply()
+    {
+        var r = new Rig { Rows = Conversation() };
+        await r.Ask("""{"t":"watch","session_id":"s1"}""");
+        r.Sent.Clear();
+        await r.Service.OnFinishedAsync("s1");
+        Assert.Equal(["All green now. I fixed the race in the tail."], r.Summarized);
+        Assert.Equal(1, r.Settled);
+        var sent = Assert.Single(r.Sent);
+        Assert.Equal(("ph_1", "state", "summary:s1"), (sent.Phone, sent.Cls, sent.Ck));
+        Assert.Equal("""{"t":"summary","session_id":"s1","text":"Did the thing.","at":1794111792}""", sent.Plain);
+    }
+
+    [Fact]
+    public async Task ASessionNobodyIsWatchingIsNotSummarisedAndCostsNoModelCall()
+    {
+        var r = new Rig { Rows = Conversation() };
+        await r.Service.OnFinishedAsync("s1");
+        Assert.Empty(r.Summarized);
+        Assert.Empty(r.Sent);
+        await r.Ask("""{"t":"watch","session_id":"s1"}""");
+        await r.Ask("""{"t":"unwatch","session_id":"s1"}""");
+        r.Sent.Clear();
+        await r.Service.OnFinishedAsync("s1");
+        Assert.Empty(r.Summarized);
+    }
+
+    [Fact]
+    public async Task OnlyTheWatchingPhoneGetsIt()
+    {
+        var r = new Rig { Rows = Conversation() };
+        await r.Service.OnRequestAsync("ph_1", "a", JsonDocument.Parse("""{"t":"watch","session_id":"s1"}""").RootElement);
+        await r.Service.OnRequestAsync("ph_2", "b", JsonDocument.Parse("""{"t":"watch","session_id":"s1"}""").RootElement);
+        await r.Service.OnRequestAsync("ph_3", "c", JsonDocument.Parse("""{"t":"watch","session_id":"s2"}""").RootElement);
+        r.Sent.Clear();
+        await r.Service.OnFinishedAsync("s1");
+        Assert.Equal(["ph_1", "ph_2"], r.Sent.Select(s => s.Phone).OrderBy(x => x));
+    }
+
+    [Fact]
+    public async Task APhoneThatLeavesWhileTheSummariserRunsIsNotSentIt()
+    {
+        var r = new Rig { Rows = Conversation() };
+        await r.Ask("""{"t":"watch","session_id":"s1"}""");
+        r.Summarize = (_, _) => { r.Service.PhoneOffline("ph_1"); return Task.FromResult<string?>("late"); };
+        r.Sent.Clear();
+        await r.Service.OnFinishedAsync("s1");
+        Assert.Empty(r.Sent);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public async Task NothingToSayIsNotSent(string? summary)
+    {
+        var r = new Rig { Rows = Conversation(), Summarize = (_, _) => Task.FromResult(summary) };
+        await r.Ask("""{"t":"watch","session_id":"s1"}""");
+        r.Sent.Clear();
+        await r.Service.OnFinishedAsync("s1");
+        Assert.Empty(r.Sent);
+    }
+
+    [Fact]
+    public async Task ASummariserThatThrowsOrASessionWithNoReplyOrNoTranscriptSendsNothingAndDoesNotThrow()
+    {
+        var thrower = new Rig { Rows = Conversation(), Summarize = (_, _) => throw new InvalidOperationException("x") };
+        await thrower.Ask("""{"t":"watch","session_id":"s1"}""");
+        thrower.Sent.Clear();
+        await thrower.Service.OnFinishedAsync("s1");
+        Assert.Empty(thrower.Sent);
+
+        var noReply = new Rig { Rows = [new("user", "hi", 1), new("system", "Bash", 2)] };
+        await noReply.Ask("""{"t":"watch","session_id":"s1"}""");
+        noReply.Sent.Clear();
+        await noReply.Service.OnFinishedAsync("s1");
+        Assert.Empty(noReply.Sent);
+        Assert.Empty(noReply.Summarized);
+
+        var gone = new Rig { Rows = Conversation() };
+        await gone.Ask("""{"t":"watch","session_id":"s1"}""");
+        gone.Book.Remove("s1");
+        await gone.Service.OnFinishedAsync("s1");
+        Assert.Empty(gone.Summarized);
     }
 }

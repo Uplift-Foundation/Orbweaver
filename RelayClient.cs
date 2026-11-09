@@ -166,7 +166,7 @@ namespace Orbweaver
         {
             Phone = new PhoneService(seams ?? new PhoneService.Seams(
                 _phoneSeams.Find, _phoneSeams.Load, PhoneSeams.CanType, PhoneSeams.TypeAsync,
-                SendToPhone, line => MirrorLog.Say("relay", line)));
+                SendToPhone, line => MirrorLog.Say("relay", line), PhoneSeams.Summarize, null, () => Task.Delay(500)));
             _link.DesktopName = _options.DesktopName;
             if (seams is null) Phone.Launch = new PhoneLaunch(new PhoneLaunch.Seams(
                 _now, delay => Task.Delay(delay), Directory.Exists, PhoneSeams.Locate, _phoneSeams.Find, _phoneSeams.Start,
@@ -175,6 +175,7 @@ namespace Orbweaver
             AccountOrbs.Polled += OnPolled;
             _link.RequestReceived += (phone, id, idPub, frame) => Defer(() => _ = HandleRequestAsync(phone, id, idPub, frame));
             _link.PhoneWentOffline += phone => Defer(() => PhoneOffline(phone));
+            _link.SessionFinished += sid => Defer(() => _ = FinishedAsync(sid));
             // 250 ms is the spec's debounce: rows appended within it become one window.
             _tail = new System.Threading.Timer(_ => TailTick(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
         }
@@ -187,6 +188,12 @@ namespace Orbweaver
         {
             var accounts = PhoneUsage.From(readings, _now());
             Dispatch(() => _link.OnUsage(accounts));
+        }
+
+        private async Task FinishedAsync(string sessionId)
+        {
+            try { await Phone.OnFinishedAsync(sessionId).ConfigureAwait(false); }
+            catch (Exception e) { MirrorLog.Say("relay", $"phone summary failed: {e.GetType().Name}"); }
         }
 
         private bool SendToPhone(string phoneId, string cls, string? ckSession, string plaintext) =>

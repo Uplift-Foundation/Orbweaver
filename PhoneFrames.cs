@@ -97,6 +97,12 @@ namespace Orbweaver
             return windows;
         }
 
+        // summary (desktop to phone, class state, ck = Ck(ck_key, "summary:" + session_id) so the relay keeps only the
+        // newest per session): what a session just finished, in the few sentences the desktop would speak. t,
+        // session_id, text, at (Unix seconds, when it was made, so a phone can refuse to read out a stale one).
+        internal static string Summary(string sessionId, string text, long at) =>
+            "{\"t\":\"summary\",\"session_id\":" + Str(sessionId) + ",\"text\":" + Str(text) + ",\"at\":" + Int(at) + "}";
+
         // ok: t, ref, code, session_id, total (watching only).
         internal static string Ok(string reference, string code, string sessionId, int? total = null) =>
             "{\"t\":\"ok\",\"ref\":" + Str(reference) + ",\"code\":" + Str(code) + ",\"session_id\":" + Str(sessionId)

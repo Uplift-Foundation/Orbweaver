@@ -32,7 +32,13 @@ namespace Orbweaver
             // One sealed plaintext to one phone: class, the session its ck
             // names (null for none), the plaintext. False when not sent.
             Func<string, string, string?, string, bool> Send,
-            Action<string> Log);
+            Action<string> Log,
+            // What a session finishing is spoken as: the reply in, the few spoken sentences out (the
+            // desktop's own summariser; a failure is a sentence, never null). Null: no summaries.
+            Func<Session, string, Task<string?>>? Summarize = null,
+            // Unix seconds now, and a short wait for the CLI to flush its last turn to the transcript.
+            Func<long>? Clock = null,
+            Func<Task>? Settle = null);
 
         private readonly Seams _s;
         private readonly Dictionary<(string Phone, string Session), List<PhoneFrames.Line>> _watches = new();
@@ -121,6 +127,38 @@ namespace Orbweaver
             if (result.Refusal is { } why) { Err(phone, reference, "not_at_prompt", sid, why); return; }
             if (!result.Typed) { Err(phone, reference, "typing_failed", sid, "the terminal refused the text"); return; }
             Ok(phone, reference, "typed", sid);
+        }
+
+        // ---- the vibe summary ----------------------------------------------------
+
+        // A session went generating -> idle. Every phone watching it is sent what it did, in the few
+        // sentences the desktop would speak: so a phone that is listening hears it without reading.
+        // Only watched sessions are summarised (each one costs a model call), and only the last
+        // assistant reply of the transcript is summarised.
+        internal async Task OnFinishedAsync(string sessionId)
+        {
+            if (_s.Summarize is null) return;
+            if (Watchers(sessionId).Count == 0) return;
+            if (_s.Find(sessionId) is not { } session) return;
+
+            if (_s.Settle is { } settle) await settle().ConfigureAwait(false);
+            var rows = _s.Load(session) ?? [];
+            var reply = rows.LastOrDefault(r => r.Role == "assistant" && !string.IsNullOrWhiteSpace(r.Text)).Text;
+            if (string.IsNullOrWhiteSpace(reply)) return;
+
+            string? text;
+            try { text = await _s.Summarize(session, reply).ConfigureAwait(false); }
+            catch (Exception e) { _s.Log($"summary {sessionId}: summariser threw {e.GetType().Name}"); return; }
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            var frame = PhoneFrames.Summary(sessionId, text, (_s.Clock ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds()))());
+            // Whoever is still watching after the wait: a phone that left meanwhile is not sent it.
+            foreach (var phone in Watchers(sessionId)) _s.Send(phone, "state", "summary:" + sessionId, frame);
+        }
+
+        private List<string> Watchers(string sessionId)
+        {
+            lock (_gate) return _watches.Keys.Where(k => k.Session == sessionId).Select(k => k.Phone).Distinct().ToList();
         }
 
         // ---- the tail ---------------------------------------------------------

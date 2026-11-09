@@ -171,6 +171,11 @@ namespace Orbweaver
             return string.Equals(Norm(recorded), Norm(asked), windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
         }
 
+        // The desktop's own summariser, asked for the few sentences it would speak when a turn finishes.
+        internal static Task<string?> Summarize(PhoneService.Session session, string reply) =>
+            SpeechSummary.SummarizeOrSayWhyAsync(reply, SpeechSummaryKind.TurnFinished,
+                SpeechSummary.AccountDirFor(session.Status.TranscriptPath)).ContinueWith(t => (string?)t.Result);
+
         internal static bool CanType(SessionStatus status) =>
             status.IsLocalCli && !status.IsDesktopHosted && TerminalFocuser.CanSendQuietly(status);
 
