@@ -105,7 +105,8 @@ namespace Orbweaver
                     // Windows Terminal, the user's own terminal; conhost when it is not installed.
                     foreach (var terminal in new[] { true, false })
                     {
-                        var info = LaunchCommand.Windows(plan, binary, ConfigDir(plan), windowsTerminal: terminal);
+                        var info = LaunchCommand.Windows(plan, binary, ConfigDir(plan), windowsTerminal: terminal,
+                            wt: LaunchCommand.WindowsTerminalPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), File.Exists));
                         if (info is null) return ("launch_failed", "that CLI is a script shim, which cannot carry a message safely");
                         try
                         {

@@ -87,9 +87,9 @@ namespace Orbweaver
         // conhost.exe, named outright, is the fallback when wt.exe is not there: a bare cmd.exe is handed
         // to Windows Terminal by the OS default-terminal setting and then owns no console window the
         // hook can see. Null when a codex/grok that is a script shim has a message to carry.
-        internal static ProcessStartInfo? Windows(LaunchPlan p, string binary, string? configDir, bool windowsTerminal = true)
+        internal static ProcessStartInfo? Windows(LaunchPlan p, string binary, string? configDir, bool windowsTerminal = true, string wt = "wt.exe")
         {
-            var start = new ProcessStartInfo(windowsTerminal ? "wt.exe" : "conhost.exe") { UseShellExecute = false, WorkingDirectory = p.Cwd };
+            var start = new ProcessStartInfo(windowsTerminal ? wt : "conhost.exe") { UseShellExecute = false, WorkingDirectory = p.Cwd };
             var viaCmd = p.Cli == NewChatCli.ClaudeCode;
             var envInCmd = viaCmd && configDir is not null && windowsTerminal && CmdSafe(configDir) && CmdSafe(binary);
             if (windowsTerminal)
@@ -118,6 +118,15 @@ namespace Orbweaver
             foreach (var w in Words(p)) start.ArgumentList.Add(w);
             if (configDir is not null) start.Environment[NewChatAccountHome.For(p.Cli).EnvVar] = configDir;
             return start;
+        }
+
+        // wt.exe is an app-execution alias under %LOCALAPPDATA%\Microsoft\WindowsApps, which a plain
+        // process start (no shell) did not find from this app (win32 error 2, measured on the desk's
+        // Windows box): the alias is run by its full path when it is there, else by name.
+        internal static string WindowsTerminalPath(string localAppData, Func<string, bool> exists)
+        {
+            var alias = Path.Combine(localAppData, "Microsoft", "WindowsApps", "wt.exe");
+            return localAppData.Length > 0 && exists(alias) ? alias : "wt.exe";
         }
 
         // A path or word safe to put inside one cmd command line: no quote, percent, caret, ampersand,

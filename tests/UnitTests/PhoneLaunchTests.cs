@@ -463,6 +463,17 @@ public class PhoneLaunchTests
         Assert.Equal(@"C:\Users\me\.codex-b", info.Environment[NewChatAccountHome.For(NewChatCli.Codex).EnvVar]);
     }
 
+    [Fact]
+    public void WindowsTerminalIsRunByTheAliasFullPathWhenItIsThereAndByNameWhenNot()
+    {
+        var alias = Path.Combine(@"C:\Users\me\AppData\Local", "Microsoft", "WindowsApps", "wt.exe");
+        Assert.Equal(alias, LaunchCommand.WindowsTerminalPath(@"C:\Users\me\AppData\Local", p => p == alias));
+        Assert.Equal("wt.exe", LaunchCommand.WindowsTerminalPath(@"C:\Users\me\AppData\Local", _ => false));
+        Assert.Equal("wt.exe", LaunchCommand.WindowsTerminalPath("", _ => true));
+        var info = LaunchCommand.Windows(new(NewChatCli.ClaudeCode, @"C:\p", "", null, ""), @"C:\bin\claude.exe", null, wt: alias)!;
+        Assert.Equal(alias, info.FileName);
+    }
+
     [Theory]
     [InlineData(@"C:\Users\me\.claude-uplift", true)]
     [InlineData(@"C:\Program Files\x", true)]
