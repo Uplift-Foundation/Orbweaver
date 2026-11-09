@@ -466,13 +466,22 @@ namespace Orbweaver
         {
             Dispatch(() => _link.OnScan(rows));
             // The accounts a launch may name: read off the desktop's settings at each scan, and sent when they change.
+            // A failure here must never reach the scan that called us (the prompt watcher runs after
+            // it), and it should say what failed: the type only, as the other relay notes do.
             try
             {
-                var frame = PhoneAccounts.Frame(PhoneAccounts.From(AccountChoices));
+                var accounts = PhoneAccounts.From(AccountChoices);
+                var frame = PhoneAccounts.Frame(accounts);
+                if (frame != _lastAccountsLogged) { _lastAccountsLogged = frame; MirrorLog.Say("relay", $"accounts offered to phones: {accounts.Count}"); }
                 Dispatch(() => _link.OnAccounts(frame));
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
+            catch (Exception e)
+            {
+                MirrorLog.Say("relay", $"accounts frame not built: {e.GetType().Name}");
+            }
         }
+
+        private string? _lastAccountsLogged;
 
         // Replaced by tests and the harness.
         internal Func<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>> AccountChoices { get; set; } = PhoneSeams.Choices;

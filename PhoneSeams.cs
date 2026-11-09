@@ -112,7 +112,11 @@ namespace Orbweaver
                             using var started = Process.Start(info);
                             if (started is not null) return (null, null);
                         }
-                        catch (System.ComponentModel.Win32Exception) when (terminal) { /* no wt.exe: fall back to conhost */ }
+                        catch (System.ComponentModel.Win32Exception e) when (terminal)
+                        {
+                            // No wt.exe, or it would not start: say so (the code only, never a path), then conhost.
+                            MirrorLog.Say("relay", $"launch: wt.exe did not start (win32 error {e.NativeErrorCode}); using a console window");
+                        }
                     }
                     return ("launch_failed", "the console did not start");
                 }

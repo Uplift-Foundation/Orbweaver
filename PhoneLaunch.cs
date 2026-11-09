@@ -75,30 +75,54 @@ namespace Orbweaver
         internal static string Shell(LaunchPlan p, string binary, string? configDir) =>
             string.Join(" ", [NewChatCommand.ExecLine(p.Cli, binary, configDir), .. Words(p).Select(TerminalScripts.ShellQuote)]);
 
-        // Windows Terminal first, the terminal the user lives in: a new tab in it,
-        // `wt.exe -d <folder> cmd.exe /k <cli> <words>` for claude and
-        // `wt.exe -d <folder> <cli> <words>` for codex and grok, whose argv is
-        // built word by word because cmd would re-parse & | > % in a message.
-        // conhost.exe, named outright, is the fallback when wt.exe is not there:
-        // a bare cmd.exe is handed to Windows Terminal by the OS default-terminal
-        // setting and then owns no console window the hook can see. Null when a
-        // codex/grok that is a script shim has a message to carry (no argv to
-        // put it in safely).
+        // Windows Terminal first, the terminal the user lives in, as a new TAB in their
+        // existing window (`-w 0` is the most recently used one; with none open it makes one):
+        //   claude:      wt.exe -w 0 new-tab -d <folder> cmd.exe /k [set "VAR=<account dir>" &&] "<claude>" <words>
+        //   codex/grok:  wt.exe -w 0 new-tab -d <folder> <cli> <words>   (argv word by word: cmd would
+        //                re-parse & | > % in a message)
+        // The account is set inside the tab's own command for claude, because a tab in an existing
+        // window is started by that window's process and inherits ITS environment, not this one's.
+        // codex and grok have no cmd to set it in, so a launch that names an account for them opens a
+        // window of its own and carries the variable on the process (measured to arrive, CB-203).
+        // conhost.exe, named outright, is the fallback when wt.exe is not there: a bare cmd.exe is handed
+        // to Windows Terminal by the OS default-terminal setting and then owns no console window the
+        // hook can see. Null when a codex/grok that is a script shim has a message to carry.
         internal static ProcessStartInfo? Windows(LaunchPlan p, string binary, string? configDir, bool windowsTerminal = true)
         {
             var start = new ProcessStartInfo(windowsTerminal ? "wt.exe" : "conhost.exe") { UseShellExecute = false, WorkingDirectory = p.Cwd };
-            if (windowsTerminal) { start.ArgumentList.Add("-d"); start.ArgumentList.Add(p.Cwd); }
-            if (p.Cli == NewChatCli.ClaudeCode)
+            var viaCmd = p.Cli == NewChatCli.ClaudeCode;
+            var envInCmd = viaCmd && configDir is not null && windowsTerminal && CmdSafe(configDir) && CmdSafe(binary);
+            if (windowsTerminal)
+            {
+                var ownWindow = !viaCmd && configDir is not null;
+                if (!ownWindow) { start.ArgumentList.Add("-w"); start.ArgumentList.Add("0"); start.ArgumentList.Add("new-tab"); }
+                start.ArgumentList.Add("-d");
+                start.ArgumentList.Add(p.Cwd);
+            }
+            if (viaCmd)
             {
                 start.ArgumentList.Add("cmd.exe");
                 start.ArgumentList.Add("/k");
             }
             else if (p.FirstMessage.Length > 0 && !binary.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return null;
+
+            if (envInCmd)
+            {
+                // One argument for cmd /k: set the account, then run the CLI. Every part is checked to carry
+                // nothing cmd would treat as syntax; a model name and a session id already match a strict shape.
+                var line = $"set \"{NewChatAccountHome.For(p.Cli).EnvVar}={configDir}\" && \"{binary}\"" + string.Concat(Words(p).Select(w => " " + w));
+                start.ArgumentList.Add(line);
+                return start;
+            }
             start.ArgumentList.Add(binary);
             foreach (var w in Words(p)) start.ArgumentList.Add(w);
             if (configDir is not null) start.Environment[NewChatAccountHome.For(p.Cli).EnvVar] = configDir;
             return start;
         }
+
+        // A path or word safe to put inside one cmd command line: no quote, percent, caret, ampersand,
+        // pipe, redirect or line break.
+        internal static bool CmdSafe(string text) => text.Length > 0 && text.IndexOfAny(['"', '%', '^', '&', '|', '<', '>', '\r', '\n', '(', ')']) < 0;
     }
 
     // CB-316 launch: a signed request to start a CLI on a folder, and the two

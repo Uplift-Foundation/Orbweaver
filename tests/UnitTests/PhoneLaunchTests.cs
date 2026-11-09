@@ -425,19 +425,53 @@ public class PhoneLaunchTests
     }
 
     [Fact]
-    public void TheWindowsLaunchUsesWindowsTerminalAndBuildsArgvWordByWord()
+    public void TheWindowsLaunchIsANewTabInTheExistingWindowAndBuildsArgvWordByWord()
     {
         var claude = LaunchCommand.Windows(new(NewChatCli.ClaudeCode, @"C:\p", "opus", "p1", "m"), @"C:\bin\claude.exe", null)!;
         Assert.Equal("wt.exe", claude.FileName);
-        Assert.Equal(["-d", @"C:\p", "cmd.exe", "/k", @"C:\bin\claude.exe", "--model", "opus", "--parent-session-id", "p1"], claude.ArgumentList);
+        Assert.Equal(["-w", "0", "new-tab", "-d", @"C:\p", "cmd.exe", "/k", @"C:\bin\claude.exe", "--model", "opus", "--parent-session-id", "p1"], claude.ArgumentList);
 
-        var codex = LaunchCommand.Windows(new(NewChatCli.Codex, @"C:\p", "", null, "a & b | c > d"), @"C:\bin\codex.exe", "C:\\home")!;
-        Assert.Equal(["-d", @"C:\p", @"C:\bin\codex.exe", "--", "a & b | c > d"], codex.ArgumentList);
-        Assert.Equal("C:\\home", codex.Environment[NewChatAccountHome.For(NewChatCli.Codex).EnvVar]);
+        var codex = LaunchCommand.Windows(new(NewChatCli.Codex, @"C:\p", "", null, "a & b | c > d"), @"C:\bin\codex.exe", null)!;
+        Assert.Equal(["-w", "0", "new-tab", "-d", @"C:\p", @"C:\bin\codex.exe", "--", "a & b | c > d"], codex.ArgumentList);
 
         Assert.Null(LaunchCommand.Windows(new(NewChatCli.Grok, @"C:\p", "", null, "hi"), @"C:\bin\grok.cmd", null));
         Assert.NotNull(LaunchCommand.Windows(new(NewChatCli.Grok, @"C:\p", "", null, ""), @"C:\bin\grok.cmd", null));
     }
+
+    [Fact]
+    public void AClaudeAccountIsSetInsideTheTabsOwnCommandBecauseATabInheritsTheWindowsEnvironment()
+    {
+        var info = LaunchCommand.Windows(new(NewChatCli.ClaudeCode, @"C:\p", "opus", null, "m"), @"C:\Program Files\claude.exe", @"C:\Users\me\.claude-uplift")!;
+        Assert.Equal(["-w", "0", "new-tab", "-d", @"C:\p", "cmd.exe", "/k",
+            "set \"CLAUDE_CONFIG_DIR=C:\\Users\\me\\.claude-uplift\" && \"C:\\Program Files\\claude.exe\" --model opus"], info.ArgumentList);
+        Assert.False(info.Environment.ContainsKey("CLAUDE_CONFIG_DIR") && info.Environment["CLAUDE_CONFIG_DIR"] == @"C:\Users\me\.claude-uplift");
+    }
+
+    [Fact]
+    public void AnAccountPathCmdWouldReadAsSyntaxIsCarriedOnTheProcessInstead()
+    {
+        var info = LaunchCommand.Windows(new(NewChatCli.ClaudeCode, @"C:\p", "", null, ""), @"C:\bin\claude.exe", @"C:\Users\a&b\.claude-x")!;
+        Assert.Equal(["-w", "0", "new-tab", "-d", @"C:\p", "cmd.exe", "/k", @"C:\bin\claude.exe"], info.ArgumentList);
+        Assert.Equal(@"C:\Users\a&b\.claude-x", info.Environment["CLAUDE_CONFIG_DIR"]);
+    }
+
+    [Fact]
+    public void ACodexAccountOpensItsOwnWindowCarryingTheVariableOnTheProcess()
+    {
+        var info = LaunchCommand.Windows(new(NewChatCli.Codex, @"C:\p", "", null, "x"), @"C:\bin\codex.exe", @"C:\Users\me\.codex-b")!;
+        Assert.Equal(["-d", @"C:\p", @"C:\bin\codex.exe", "--", "x"], info.ArgumentList);
+        Assert.Equal(@"C:\Users\me\.codex-b", info.Environment[NewChatAccountHome.For(NewChatCli.Codex).EnvVar]);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\me\.claude-uplift", true)]
+    [InlineData(@"C:\Program Files\x", true)]
+    [InlineData("a&b", false)]
+    [InlineData("50%", false)]
+    [InlineData("a\"b", false)]
+    [InlineData("a|b", false)]
+    [InlineData("", false)]
+    public void WhatIsSafeInsideOneCmdLine(string text, bool safe) => Assert.Equal(safe, LaunchCommand.CmdSafe(text));
 
     [Fact]
     public void TheConhostFallbackNamesConhostOutright()
