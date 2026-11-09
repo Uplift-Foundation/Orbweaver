@@ -553,7 +553,46 @@ public class PromptPipelineTests
         await p.OnScannedAsync(Snap());
         events.Clear();
         await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
-        Assert.Equal(["capture", "delay 150", "capture", "press 1", "delay 500", "capture"], events);
+        Assert.Equal(["capture", "delay 150", "capture", "press 1", "delay 75", "capture"], events);
+    }
+
+    // Press to resolved used to cost a flat 500 ms. The recapture now looks every
+    // 75 ms and resolves on the first look that shows the dialog gone.
+    private PromptPipeline PipelineRecordingDelays(List<double> delays) =>
+        new(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, d => { delays.Add(d.TotalMilliseconds); return Task.CompletedTask; }, _log.Add), _sent, "Test Mac");
+
+    [Theory]
+    [InlineData(0, 1)]   // gone at the first look
+    [InlineData(1, 1)]
+    [InlineData(3, 3)]   // gone at the third look: three polls, no more
+    [InlineData(7, 7)]   // gone at the last look inside the patience: still took
+    public async Task A_press_is_resolved_on_the_first_look_that_shows_the_dialog_gone(int clearAfterPolls, int polls)
+    {
+        var delays = new List<double>();
+        var p = PipelineRecordingDelays(delays);
+        await p.OnScannedAsync(Snap());
+        _pane.ClearAfterPolls = clearAfterPolls;
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(Enumerable.Repeat(75d, polls).Prepend(150d), delays);
+        Assert.Empty(_sent.Refusals);
+        Assert.DoesNotContain(_log, l => l.StartsWith("press-no-effect"));
+        Assert.Equal((a.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
+    }
+
+    [Fact]
+    public async Task A_dialog_still_up_after_the_patience_is_no_effect_after_exactly_seven_looks()
+    {
+        var delays = new List<double>();
+        var p = PipelineRecordingDelays(delays);
+        await p.OnScannedAsync(Snap());
+        _pane.ClearAfterPolls = 8;   // one look past the patience
+        var a = AnswerTo();
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(Enumerable.Repeat(75d, 7).Prepend(150d), delays);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        Assert.Contains($"press-no-effect {a.RequestId}", _log);
+        Assert.Empty(_sent.Resolved);
     }
 
     // QA's blank-gap case: the gate saw A, and 150 ms later the pane is being
