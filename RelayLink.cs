@@ -164,6 +164,11 @@ namespace Orbweaver
         // whatever SendUsage last sent, or nothing before the first reading.
         private string? _latestUsage;
 
+        // CB-321: the personas frame a phone coming online is sent after its
+        // roster and usage, and what SendPersonas compares against so an
+        // unchanged frame is not sent again every scan.
+        private string? _latestPersonas;
+
         // ---- connection -------------------------------------------------------
 
         internal string Hello() => Frame(w =>
@@ -656,6 +661,34 @@ namespace Orbweaver
             return frames;
         }
 
+        // CB-321: the personas frame (frames-v5 personas), to every online phone
+        // when its canonical bytes changed since the last one, and remembered for
+        // the next phone that comes online. class state, ck Ck("personas"), so
+        // the relay coalesces it for an offline phone as it does usage.
+        internal IReadOnlyList<string> SendPersonas(string plaintext)
+        {
+            if (plaintext == _latestPersonas) return [];
+            _latestPersonas = plaintext;
+            if (!Welcomed) return [];
+            var frames = new List<string>();
+            foreach (var c in _channels.Values.Where(c => c.Online))
+                frames.AddRange(Collect(PersonasFor(c, plaintext)));
+            return frames;
+        }
+
+        private string? PersonasFor(Channel c, string plaintext) =>
+            SealTo(c, "state", RelayCrypto.Ck(c.CkKey, PersonaFrames.PersonasCk), Encoding.UTF8.GetBytes(plaintext));
+
+        // One persona_image window to the phone that asked, class chat, ck
+        // Ck("img:" + hash). Online only, as transcript windows are: a picture
+        // in flight to a phone that went away is abandoned upstream, and a
+        // window that still arrives here for it is dropped rather than queued.
+        internal IReadOnlyList<string> SendImageWindow(string phoneId, string hash, string plaintext)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c) || !c.Online) return [];
+            return Collect(SealTo(c, "chat", RelayCrypto.Ck(c.CkKey, PersonaFrames.ImageCk(hash)), Encoding.UTF8.GetBytes(plaintext)));
+        }
+
         // A roster's ck is the empty string (CB-314 addendum 6): ck names a
         // session for coalescing, and a roster is every session at once.
         // Always the whole book, unconditionally — a resync asks for the book,
@@ -671,6 +704,9 @@ namespace Orbweaver
             var frames = new List<string>(Collect(RosterFor(c)));
             if (_latestUsage is { } usage)
                 frames.AddRange(Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, UsageCk), Encoding.UTF8.GetBytes(usage))));
+            // CB-321: then the personas frame (frames-v5: after the roster and
+            // the usage frame).
+            if (_latestPersonas is { } personas) frames.AddRange(Collect(PersonasFor(c, personas)));
             return frames;
         }
 

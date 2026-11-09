@@ -24,7 +24,11 @@ namespace Orbweaver
     // else changing — a session arriving, its folder, its lead, its persona —
     // is sent as a whole roster. Rosters are a few hundred bytes per session,
     // and arrivals are rare next to state flips, which is what deltas are for.
-    internal sealed record RelayPersona(string Name, string Initials, string? Color);
+    //
+    // CB-321 adds Id and ImageHash (frames-v5 roster_changes), written after
+    // the v2 three so a v4 phone's decoder ignores them. A changed id or hash
+    // is a changed record, so SameShape re-sends the whole roster for it.
+    internal sealed record RelayPersona(string Name, string Initials, string? Color, string? Id = null, string? ImageHash = null);
 
     internal sealed record RelaySession(
         string SessionId,
@@ -82,6 +86,13 @@ namespace Orbweaver
         internal static IReadOnlyList<RelaySession> Project(
             IEnumerable<(string SessionId, SessionStatus Status)> sessions,
             Func<SessionStatus, RelayPersona?>? persona = null) =>
+            Project(sessions, (_, status) => persona?.Invoke(status));
+
+        // CB-321: the persona by session id as well, since the id and picture
+        // come from the LocalPersonas registry, which is keyed by it.
+        internal static IReadOnlyList<RelaySession> Project(
+            IEnumerable<(string SessionId, SessionStatus Status)> sessions,
+            Func<string, SessionStatus, RelayPersona?> persona) =>
             sessions
                 .Where(s => s.Status.IsLocalCli)
                 .OrderBy(s => s.SessionId, StringComparer.Ordinal)
@@ -92,7 +103,7 @@ namespace Orbweaver
                     s.Status.Cwd,
                     MapState(s.Status.State),
                     s.Status.Source == SessionSource.ClaudeCode && !string.IsNullOrEmpty(s.Status.Lead) ? s.Status.Lead : null,
-                    persona?.Invoke(s.Status)))
+                    persona(s.SessionId, s.Status)))
                 .ToList();
 
         // The persona a phone draws for a session: the name the persona files
@@ -100,11 +111,15 @@ namespace Orbweaver
         // colour if Claude Code assigned one, else the session's /color. No
         // picture — milestone 2's roster carries none — and nothing at all
         // without a name, since initials of nothing are not a persona.
-        internal static RelayPersona? PersonaFrom(string? name, SessionStatus status)
+        //
+        // CB-321: and the persona's id (PersonaFrames.PersonaId over origin, the
+        // file that named it) and the picture's hash when this desktop can offer
+        // one right now. id is present whenever the persona is.
+        internal static RelayPersona? PersonaFrom(string? name, SessionStatus status, string? origin = null, string? imageHash = null)
         {
             if (string.IsNullOrWhiteSpace(name)) return null;
             var color = PersonaColor(status.AgentColor) ?? PersonaColor(status.Color);
-            return new RelayPersona(name, OrbGlyph.Initials(name), color);
+            return new RelayPersona(name, OrbGlyph.Initials(name), color, PersonaFrames.PersonaId(origin, name), imageHash);
         }
 
         // The colour names a phone may be sent (CB-314 addendum 4): exactly the
@@ -154,6 +169,8 @@ namespace Orbweaver
                         w.WriteString("name", p.Name);
                         w.WriteString("initials", p.Initials);
                         if (p.Color is { } color) w.WriteString("color", color);
+                        if (p.Id is { } id) w.WriteString("id", id);
+                        if (p.ImageHash is { } hash) w.WriteString("image_hash", hash);
                         w.WriteEndObject();
                     }
                     w.WriteEndObject();

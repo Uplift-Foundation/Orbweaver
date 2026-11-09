@@ -1340,4 +1340,80 @@ public class RelayLinkTests : IDisposable
         link.OnFrame(NoId("""{"session_id":"s1"}"""));
         Assert.Equal([new UnwatchRequest("", "s1"), new BadFrameRequest("", null)], got);
     }
+
+    // ---- CB-321 personas frame and picture windows ----------------------------
+
+    [Fact]
+    public void A_phone_coming_online_gets_roster_then_usage_then_personas()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var personas = PersonaFrames.Personas([new PersonaFrames.Row("1cdab556cd43b1b2", "Vector", "VE", true, null)]);
+        link.SendUsage("""{"t":"usage","accounts":[]}""");
+        link.SendPersonas(personas);
+        link.OnFrame(Presence(phone.Id, false));
+
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(["roster", "usage", "personas"], back.Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()).ToArray());
+        Assert.Equal(personas, phone.OpenFromDesktop(back[2]).GetRawText());
+        Assert.Equal(("state", RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), PersonaFrames.PersonasCk)),
+            (J(back[2]).GetProperty("class").GetString(), CkOf(back[2])));
+    }
+
+    [Fact]
+    public void Personas_go_to_online_phones_only_when_their_bytes_change()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var a = PersonaFrames.Personas([]);
+        var b = PersonaFrames.Personas([new PersonaFrames.Row("1cdab556cd43b1b2", "Vector", "VE", false, null)]);
+
+        Assert.Single(link.SendPersonas(a));
+        Assert.Empty(link.SendPersonas(a));                                  // unchanged: nothing
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendPersonas(b));                                  // offline: kept, not sent
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(b, phone.OpenFromDesktop(back.Last()).GetRawText());   // the kept one, on connect
+
+        // Before welcome nothing goes, and the frame is still remembered.
+        link.Disconnected();
+        Assert.Empty(link.SendPersonas(a));
+        link.OnFrame(Welcome());
+        Assert.Equal(a, phone.OpenFromDesktop(link.OnFrame(Presence(phone.Id, true)).Last()).GetRawText());
+    }
+
+    [Fact]
+    public void No_personas_frame_is_sent_on_connect_before_there_is_one()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Equal(["roster"], link.OnFrame(Presence(phone.Id, true)).Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()).ToArray());
+    }
+
+    [Fact]
+    public void Picture_windows_seal_to_the_asking_phone_as_chat_under_the_image_ck()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var hash = new string('a', 64);
+        var window = link.SendImageWindow(phone.Id, hash, """{"t":"persona_image"}""").Single();
+        Assert.Equal(("chat", RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), "img:" + hash)),
+            (J(window).GetProperty("class").GetString(), CkOf(window)));
+        Assert.Equal("persona_image", phone.OpenFromDesktop(window).GetProperty("t").GetString());
+
+        Assert.Empty(link.SendImageWindow("ph_nobody", hash, "{}"));
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendImageWindow(phone.Id, hash, "{}"));          // offline: dropped, never queued
+        link.Disconnected();
+        Assert.Empty(link.SendImageWindow(phone.Id, hash, "{}"));          // not welcomed
+    }
+
+    [Fact]
+    public void A_persona_image_request_is_dispatched_and_a_bad_hash_is_bad_frame()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var got = new List<RelayRequest>();
+        link.RequestReceived += (_, _, r) => got.Add(r);
+        var hash = new string('b', 64);
+        link.OnFrame(phone.Sealed("action", PersonaFrames.Request(hash)));
+        link.OnFrame(phone.Sealed("action", """{"t":"persona_image","hash":"BB"}"""));
+        Assert.Equal([new PersonaImageRequest("y", hash), new BadFrameRequest("y", null)], got);
+    }
 }

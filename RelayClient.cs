@@ -177,6 +177,9 @@ namespace Orbweaver
 
             public void Window(string phoneId, string sessionId, string plaintext) =>
                 client.Dispatch(() => client._link.SendWindow(phoneId, sessionId, plaintext));
+
+            public bool ImageWindow(string phoneId, string hash, string plaintext) =>
+                client.Dispatch(() => client._link.SendImageWindow(phoneId, hash, plaintext));
         }
 
         // The real desk: the session's own transcript and parser, the
@@ -202,7 +205,11 @@ namespace Orbweaver
                 () => Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } sh ? sh : "/bin/zsh",
                 TerminalLauncher.PlaceForPhone,
                 TerminalLauncher.StartConsole),
-            line => MirrorLog.Say("relay", line));
+            line => MirrorLog.Say("relay", line))
+        {
+            // CB-321: pictures are answered only from a finished bundle.
+            Images = hash => PersonaImageStore.Shared.ById(hash),
+        };
 
         // CB-316: the account readings the usage orbs just drew. Projected,
         // compared with what was last sent, and sent only when a number a phone
@@ -472,6 +479,10 @@ namespace Orbweaver
         // ---- the scan and the UI -------------------------------------------------
 
         internal void OnScanned(IReadOnlyList<RelaySession> rows) => Dispatch(() => _link.OnScan(rows));
+
+        // CB-321: the personas frame's plaintext, from each scan. The link sends
+        // it only when it changed.
+        internal void OnPersonas(string plaintext) => Dispatch(() => _link.SendPersonas(plaintext));
 
         public async Task<RelayLink.PairOffer> BeginPairingAsync(CancellationToken token = default)
         {

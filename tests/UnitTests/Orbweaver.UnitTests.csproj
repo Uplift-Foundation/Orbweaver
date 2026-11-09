@@ -63,5 +63,6 @@
     <!-- CB-316: the desktop's v4 vector generator, so the unit suite proves it
          reproduces the committed frames-v4-vectors.json byte for byte. -->
     <Compile Include="..\..\tools\relay-vectors\V4Vectors.cs" Link="V4Vectors.cs" />
+    <Compile Include="..\..\tools\relay-vectors\V5Vectors.cs" Link="V5Vectors.cs" />
   </ItemGroup>
 </Project>

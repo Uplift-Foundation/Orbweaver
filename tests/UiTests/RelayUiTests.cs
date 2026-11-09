@@ -274,6 +274,9 @@ public class RelaySettingsAndServiceTests : IDisposable
         RelayService.Factory = RelayService.RealClient;
         RelayService.PersonaName = RelayService.CachedPersonaName;
         RelayService.UserConfigDirs = RelayService.DefaultUserConfigDirs;
+        RelayService.LocalPersonaFor = LocalPersonas.For;
+        RelayService.OfferImage = RelayService.DefaultOfferImage;
+        RelayService.DefaultPersona = RelayService.CachedDefaultPersona;
         OrbweaverSettings.RelayEnabled = false;
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
@@ -426,6 +429,47 @@ public class RelaySettingsAndServiceTests : IDisposable
         manager.ScanAndUpdate();                                    // projected, persona asked, handed to the client
         Assert.Contains("/Users/someone/proj", asked);
         await RelayService.DisableAsync();
+    }
+
+    // CB-321: what the scan hands the client — each session's persona with its
+    // id and offered picture from the registry, and the personas frame with
+    // the default marked — through RelayService's own seams, no file or decode.
+    [AvaloniaFact]
+    public void A_scan_projects_persona_ids_pictures_and_the_personas_frame()
+    {
+        var hash = new string('a', 64);
+        var registry = new Dictionary<string, LocalPersona.Persona>
+        {
+            ["s1"] = new("Aurora", null, null, "/u/.claude/CLAUDE.md", "/u/.claude/aurora.gif", ["/u/.claude/CLAUDE.md"]),
+        };
+        var dirsAsked = new List<IReadOnlyList<string>>();
+        RelayService.UserConfigDirs = () => ["/u/.claude"];
+        RelayService.PersonaName = (status, _) => status.Cwd == "/w/a" ? "Aurora" : status.Cwd == "/w/b" ? "Vector" : null;
+        RelayService.LocalPersonaFor = id => registry.GetValueOrDefault(id);
+        RelayService.OfferImage = path => path == "/u/.claude/aurora.gif" ? hash : null;
+        RelayService.DefaultPersona = dirs => { dirsAsked.Add(dirs); return registry["s1"]; };
+
+        var (rows, personas) = RelayService.Project(
+        [
+            ("s1", new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = "/w/a", AgentColor = "purple" }),
+            ("s2", new SessionStatus { Source = SessionSource.Codex, Cwd = "/w/b" }),
+            ("s3", new SessionStatus { Source = SessionSource.Grok, Cwd = "/w/c" }),
+            ("oc", new SessionStatus { Source = SessionSource.OpenClaw, Cwd = "/w/a" }),
+        ]);
+        var aurora = PersonaFrames.PersonaId("/u/.claude/CLAUDE.md", "Aurora");
+        var vector = PersonaFrames.PersonaId(null, "Vector");
+        Assert.Equal(["s1", "s2", "s3"], rows.Select(r => r.SessionId));
+        Assert.Equal(new RelayPersona("Aurora", "AU", "purple", aurora, hash), rows[0].Persona);
+        Assert.Equal(new RelayPersona("Vector", "VE", null, vector), rows[1].Persona);
+        Assert.Null(rows[2].Persona);
+        Assert.Equal(["/u/.claude"], Assert.Single(dirsAsked));
+        Assert.Equal(PersonaFrames.Personas(
+        [
+            new PersonaFrames.Row(aurora, "Aurora", "AU", true, hash),
+            new PersonaFrames.Row(vector, "Vector", "VE", false, null),
+        ]), personas);
+        Assert.DoesNotContain("/u/", personas);
+        Assert.DoesNotContain("/u/", System.Text.Encoding.UTF8.GetString(RelayRoster.RosterJson(1, rows)).Replace("/w/", ""));
     }
 
     // Addendum 4: the colour names a phone may be sent are exactly the names

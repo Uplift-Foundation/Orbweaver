@@ -490,6 +490,95 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Equal(RelayClient.Status.Connected, client.State);
     }
 
+    // CB-321, with CB-322's failure as the thing to rule out: a large persona
+    // picture over a real socket goes out as many bounded windows, paced, and
+    // the read loop keeps answering the phone while it does — a resync sent
+    // mid-transfer gets its roster before the picture has finished. Then the
+    // personas frame follows roster on the next connect, and a hash the
+    // desktop never offered is refused unknown_image.
+    [Fact]
+    public async Task A_large_picture_streams_in_windows_while_the_link_keeps_answering()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var rng = new Random(321);
+        var frames = Enumerable.Range(0, 24).Select(_ =>
+        {
+            var b = new byte[30_000];
+            rng.NextBytes(b);
+            return new PersonaFrames.Frame(100, b);
+        }).ToList();
+        var bundle = new PersonaImageBundle(new string('d', 64), 216, 216, frames);
+        var remote = new RelayRemote.Seams(
+            () => DateTimeOffset.UtcNow, d => Task.Delay(d),
+            _ => new TranscriptWatcher.Seams(() => null, _ => null, _ => null),
+            new RelayInput(new RelayInput.Seams(_ => TerminalTyping.Route.Tmux, _ => Task.FromResult<string?>(null),
+                (_, _) => Task.FromResult(false), _ => Task.CompletedTask)),
+            new RelayRemote.LaunchSeams(false, _ => null, _ => false, () => "/bin/sh", (_, _) => (null, null), _ => null),
+            _ => { }) { Images = h => h == bundle.Hash ? bundle : null };
+        var client = Client(identity, prompts: new PromptPipeline.Seams(_ => Task.FromResult<string?>(null),
+            (_, _) => Task.FromResult(false), (_, _) => Task.FromResult(false), () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }),
+            remote: remote);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        var personas = PersonaFrames.Personas([new PersonaFrames.Row("1cdab556cd43b1b2", "Vector", "VE", true, bundle.Hash)]);
+        client.OnPersonas(personas);
+        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1 }));
+
+        var first = await _stub.Next(IsEnvelope);
+        Assert.Equal("roster", OpenAsPhone(first, phone, identity).GetProperty("t").GetString());
+        var second = await _stub.Next(IsEnvelope);
+        Assert.Equal(personas, OpenAsPhone(second, phone, identity).GetRawText());     // roster, then personas (no usage yet)
+
+        var desktopId = first.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        ulong counter = 0;
+        Task Ask(string id, string body) => _stub.Send(JsonSerializer.Serialize(new
+        {
+            v = 2, id, from = phone.Id, to = desktopId, ts = 0, @class = "action", push = "none", ck = "",
+            ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, counter++), Encoding.UTF8.GetBytes(body), Aad(phone.Id, desktopId, "action")),
+        }));
+        await Ask("img-1", PersonaFrames.Request(bundle.Hash));
+
+        var held = new SortedDictionary<int, int>();
+        var resyncAnsweredAt = -1;
+        var sentResync = false;
+        var started = DateTime.UtcNow;
+        while (held.Values.Sum() < frames.Count)
+        {
+            var env = await _stub.Next(IsEnvelope);
+            Assert.True(Encoding.UTF8.GetByteCount(env.GetRawText()) <= RelayStub.MaxFrameBytes);
+            var body = OpenAsPhone(env, phone, identity);
+            if (body.GetProperty("t").GetString() == "roster")
+            {
+                resyncAnsweredAt = held.Values.Sum();
+                continue;
+            }
+            Assert.Equal(("chat", "persona_image", bundle.Hash), (env.GetProperty("class").GetString(), body.GetProperty("t").GetString(), body.GetProperty("hash").GetString()));
+            Assert.Equal(frames.Count, body.GetProperty("frames_total").GetInt32());
+            held[body.GetProperty("from_frame").GetInt32()] = body.GetProperty("frames").GetArrayLength();
+            if (!sentResync)
+            {
+                sentResync = true;
+                await _stub.Send(JsonSerializer.Serialize(new { t = "resync", peer_id = phone.Id }));
+            }
+        }
+        var elapsed = DateTime.UtcNow - started;
+        Assert.Equal(held.Keys, held.Keys.Select((k, i) => held.Keys.Take(i).Sum(x => held[x])).ToArray());    // contiguous
+        Assert.True(held.Count >= 12, $"meant to need many windows, got {held.Count}");
+        Assert.InRange(resyncAnsweredAt, 1, frames.Count - 1);                                 // answered mid-picture
+        Assert.True(elapsed >= TimeSpan.FromMilliseconds(100 * (held.Count - 2)), $"not paced: {held.Count} windows in {elapsed}");
+        Assert.Equal(0, _stub.TooBigCloses);
+        Assert.Equal(1, _stub.Connections);
+
+        await Ask("img-2", PersonaFrames.Request(new string('e', 64)));
+        var refusal = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
+        Assert.Equal("""{"t":"err","ref":"img-2","code":"unknown_image"}""", refusal.GetRawText());
+        Assert.Equal(RelayClient.Status.Connected, client.State);
+    }
+
     // Lead's decision: every pending prompt goes out again on every welcome.
     // The relay's 30-second alert throttle (frames-v3 rate_limits.amber) is
     // what keeps that from being a second alert: this stub plays the relay's

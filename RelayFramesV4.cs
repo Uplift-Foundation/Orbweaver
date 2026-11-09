@@ -57,13 +57,17 @@ namespace Orbweaver
             UnsupportedParent = "unsupported_parent", NoTerminal = "no_terminal", LaunchFailed = "launch_failed",
             NoSession = "no_session";
 
+        // CB-321 (frames-v5 err.codes_added): the one code v5 adds. A picture
+        // request for a hash this desktop never offered, or has forgotten.
+        internal const string UnknownImage = "unknown_image";
+
         internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched];
 
         internal static readonly string[] ErrCodes =
         [
             BadFrame, UnknownSession, NotAtPrompt, Untypeable, TypingFailed, BadInput, BadSignature, Expired, Replayed,
             UnknownCli, UnknownCwd, BadModel, UnsupportedPersona, UnknownParent, UnsupportedParent, NoTerminal,
-            LaunchFailed, NoSession,
+            LaunchFailed, NoSession, UnknownImage,
         ];
 
         // Only these four carry the desktop's own sentence; every other code's
@@ -108,7 +112,7 @@ namespace Orbweaver
 
     internal static class RelayRequests
     {
-        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch"];
+        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image"];
 
         // Null when the plaintext is not a v4 request at all (an answer, or a
         // type this desktop does not know) — those keep their existing paths.
@@ -132,6 +136,12 @@ namespace Orbweaver
                     return sid is null || Str(f, "text") is not { } text
                         ? new BadFrameRequest(reference, sid)
                         : new InputRequest(reference, sid, text);
+                // CB-321: a hash that is not 64 lowercase hex is bad_frame, so
+                // nothing but a well-formed hash ever reaches the store.
+                case "persona_image":
+                    return PersonaFrames.IsHash(Str(f, "hash"))
+                        ? new PersonaImageRequest(reference, Str(f, "hash")!)
+                        : new BadFrameRequest(reference, null);
                 default:
                     return ParseLaunch(f, reference);
             }

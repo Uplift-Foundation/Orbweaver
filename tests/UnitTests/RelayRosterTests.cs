@@ -122,9 +122,9 @@ public class RelayRosterTests
         Assert.Equal(14, RelayRoster.PersonaColors.Count);
         Assert.All(RelayRoster.PersonaColors, c => Assert.Equal(c.ToLowerInvariant(), c));
         // An agent colour outside the set falls through to the session's own.
-        Assert.Equal(new RelayPersona("P", "P", "green"),
+        Assert.Equal(new RelayPersona("P", "P", "green", PersonaFrames.PersonaId(null, "P")),
             RelayRoster.PersonaFrom("P", new SessionStatus { AgentColor = "#123456", Color = "Green" }));
-        Assert.Equal(new RelayPersona("P", "P", null),
+        Assert.Equal(new RelayPersona("P", "P", null, PersonaFrames.PersonaId(null, "P")),
             RelayRoster.PersonaFrom("P", new SessionStatus { AgentColor = "chartreuse", Color = "#fff" }));
     }
 
@@ -133,11 +133,11 @@ public class RelayRosterTests
     {
         Assert.Null(RelayRoster.PersonaFrom(null, new SessionStatus()));
         Assert.Null(RelayRoster.PersonaFrom("  ", new SessionStatus()));
-        Assert.Equal(new RelayPersona("Jennifer Voss", "JV", "purple"),
+        Assert.Equal(new RelayPersona("Jennifer Voss", "JV", "purple", PersonaFrames.PersonaId(null, "Jennifer Voss")),
             RelayRoster.PersonaFrom("Jennifer Voss", new SessionStatus { AgentColor = "purple", Color = "green" }));
-        Assert.Equal(new RelayPersona("Pixel", "PI", "green"),
+        Assert.Equal(new RelayPersona("Pixel", "PI", "green", PersonaFrames.PersonaId(null, "Pixel")),
             RelayRoster.PersonaFrom("Pixel", new SessionStatus { AgentColor = " ", Color = "green" }));
-        Assert.Equal(new RelayPersona("Pixel", "PI", null),
+        Assert.Equal(new RelayPersona("Pixel", "PI", null, PersonaFrames.PersonaId(null, "Pixel")),
             RelayRoster.PersonaFrom("Pixel", new SessionStatus { Color = "" }));
     }
 
@@ -256,7 +256,8 @@ public class RosterFixtureTests
         var sessions = r.GetProperty("sessions").EnumerateArray().Select(s => new RelaySession(
             s.GetProperty("session_id").GetString()!, s.GetProperty("cli").GetString()!, s.GetProperty("title").GetString()!,
             s.GetProperty("cwd").GetString()!, s.GetProperty("state").GetString()!, Opt(s, "parent_session_id"),
-            s.TryGetProperty("persona", out var p) ? new RelayPersona(p.GetProperty("name").GetString()!, p.GetProperty("initials").GetString()!, Opt(p, "color")) : null)
+            s.TryGetProperty("persona", out var p) ? new RelayPersona(p.GetProperty("name").GetString()!, p.GetProperty("initials").GetString()!, Opt(p, "color"),
+                Opt(p, "id"), Opt(p, "image_hash")) : null)
         {
             Since = DateTimeOffset.FromUnixTimeSeconds(s.GetProperty("since").GetInt64()),
         }).ToList();

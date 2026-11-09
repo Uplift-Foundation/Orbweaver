@@ -11,7 +11,8 @@ using static Orbweaver.RelayCrypto;
 //   dotnet run --project tools/relay-vectors -- <out-dir> [<orbweaver-sha>]
 //
 // produces <out-dir>/pairing-vectors.json, session-vectors.json,
-// frames-v4-vectors.json (CB-316, see V4Vectors.cs) and
+// frames-v4-vectors.json (CB-316, see V4Vectors.cs),
+// frames-v5-vectors.json (CB-321, see V5Vectors.cs) and
 // roster-fixtures.json.
 // They go to Orbweaver-Mobile `contracts/`, where the iPhone's CryptoKit tests
 // consume them, and a copy goes to tests/UnitTests/Fixtures/relay/, where
@@ -263,16 +264,22 @@ RelaySession S(string id, string cli, string title, string cwd, string state, in
     new RelaySession(id, cli, title, cwd, state, parent, persona) { Since = t0.AddSeconds(sinceSec) };
 
 var lead = "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b";
+// CB-321: every persona carries its id (the desktop's derivation, here from the
+// name since a fixture has no files), and one carries an image_hash, so the
+// phone's reducer is built against both v5 keys and against their absence.
+RelayPersona Persona(string name, string initials, string? color, bool picture = false) =>
+    new(name, initials, color, PersonaFrames.PersonaId(null, name),
+        picture ? PersonaImageBundle.HashOf(Encoding.UTF8.GetBytes("roster fixture picture of " + name)) : null);
 var macbook = new[]
 {
-    S(lead, "claude", "CB-314 relay milestone", "/Users/someone/Source/Orbweaver", "generating", 0, persona: new RelayPersona("Jennifer Voss", "JV", "purple")),
-    S("b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9", "claude", "tamsin-oyelaran", "/Users/someone/Source/Orbweaver-wt/tamsin-oyelaran", "waiting", 12, parent: lead, persona: new RelayPersona("Tamsin Oyelaran", "TO", "pink")),
+    S(lead, "claude", "CB-314 relay milestone", "/Users/someone/Source/Orbweaver", "generating", 0, persona: Persona("Jennifer Voss", "JV", "purple", picture: true)),
+    S("b2c4d6e8-0a1b-4c2d-8e3f-a4b5c6d7e8f9", "claude", "tamsin-oyelaran", "/Users/someone/Source/Orbweaver-wt/tamsin-oyelaran", "waiting", 12, parent: lead, persona: Persona("Tamsin Oyelaran", "TO", "pink")),
     S("c3d5e7f9-1b2c-4d3e-9f4a-b5c6d7e8f9a0", "codex", "Orbweaver-Mobile", "/Users/someone/Source/Orbweaver-Mobile", "idle", 300),
 };
 var windows = new[]
 {
     S("0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a", "claude", "orbweaver", @"C:\Users\someone\Source\Orbweaver", "idle", 40),
-    S("1e2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5b", "grok", "scratch", @"C:\Users\someone\scratch", "generating", 55, persona: new RelayPersona("Pixel", "PI", null)),
+    S("1e2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5b", "grok", "scratch", @"C:\Users\someone\scratch", "generating", 55, persona: Persona("Pixel", "PI", null)),
 };
 JsonNode Parse(byte[] utf8) => JsonNode.Parse(utf8)!;
 var deltas = new JsonArray
@@ -310,4 +317,9 @@ PromptVectors.Write(outDir, sha, args.Length > 2 ? args[2] : Path.Combine("tests
 // verified and reused: the result is then byte-equal to it but for _source.
 File.WriteAllText(Path.Combine(outDir, "frames-v4-vectors.json"),
     V4Vectors.Build(outDir, sha, args.Length > 3 ? args[3] : Path.Combine("tests", "UnitTests", "Fixtures", "relay", "frames-v4-vectors.json")));
+// CB-321: frames-v5-vectors.json from the shipped v5 code. Its picture frames,
+// persona ids, prose and phone-only rule tables are inputs, read from the
+// committed file (args[4], default the unit-test fixture).
+File.WriteAllText(Path.Combine(outDir, "frames-v5-vectors.json"),
+    V5Vectors.Build(outDir, args.Length > 4 ? args[4] : Path.Combine("tests", "UnitTests", "Fixtures", "relay", "frames-v5-vectors.json"), sha));
 Console.WriteLine($"wrote prompt-vectors.json, answer-vectors.json, push-vectors.json and pairing-vectors.json, session-vectors.json, roster-fixtures.json and persona-colors.json to {Path.GetFullPath(outDir)} (check code {CheckCodeDisplay(code)})");
