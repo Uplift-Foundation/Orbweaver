@@ -449,13 +449,17 @@ public class RelayV4RuleTests
             TerminalScripts.TmuxDetachedArgs(true, "/w", "cmd"));
     }
 
+    // conhost.exe named outright: a bare cmd.exe is handed to Windows Terminal
+    // by the default-terminal setting and owns no console window, which the
+    // hook reads as "no terminal" (see ConsoleStartInfo).
     [Fact]
     public void The_windows_launch_is_conhost_with_the_clis_arguments()
     {
-        var start = NewChatCommand.GeneralWindowsStartInfo("C:\\bin\\claude.exe", "C:\\w",
-            NewChatCommand.LaunchArgs(NewChatCli.ClaudeCode, "opus", ""), useWindowsTerminal: false)!;
-        Assert.Equal("cmd.exe", start.FileName);
-        Assert.Equal(["/k", "C:\\bin\\claude.exe", "--model", "opus"], start.ArgumentList);
+        var start = NewChatCommand.ConsoleStartInfo("C:\\bin\\claude.exe", "C:\\w",
+            NewChatCommand.LaunchArgs(NewChatCli.ClaudeCode, "opus", ""));
+        Assert.Equal("conhost.exe", start.FileName);
+        Assert.Equal(["cmd.exe", "/k", "C:\\bin\\claude.exe", "--model", "opus"], start.ArgumentList);
         Assert.Equal("C:\\w", start.WorkingDirectory);
+        Assert.True(start.UseShellExecute);
     }
 }

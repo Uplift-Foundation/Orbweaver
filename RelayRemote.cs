@@ -265,7 +265,7 @@ namespace Orbweaver
             var name = NewChatLauncher.DisplayName(cli);
             if (_seams.Launch.IsWindows)
             {
-                var start = NewChatCommand.GeneralWindowsStartInfo(binary, f.Cwd, args, useWindowsTerminal: false)!;
+                var start = NewChatCommand.ConsoleStartInfo(binary, f.Cwd, args);
                 return _seams.Launch.StartWindows(start) is null
                     ? (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".")
                     : null;

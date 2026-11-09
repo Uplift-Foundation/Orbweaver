@@ -391,8 +391,8 @@ public class RelayRemoteTests
         await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "codex", cwd: "C:\\Work", model: "gpt-5", message: ""));
         Assert.Equal(["launched"], Codes(w));
         var start = w.WindowsStarts.Single();
-        Assert.Equal("cmd.exe", start.FileName);
-        Assert.Equal(["/k", "/bin/claude", "-m", "gpt-5"], start.ArgumentList);
+        Assert.Equal("conhost.exe", start.FileName);
+        Assert.Equal(["cmd.exe", "/k", "/bin/claude", "-m", "gpt-5"], start.ArgumentList);
         Assert.Empty(w.MacStarts);
     }
 

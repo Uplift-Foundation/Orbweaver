@@ -131,6 +131,27 @@ namespace Orbweaver
             return TerminalScripts.ShellQuote(shell) + " -lc " + TerminalScripts.ShellQuote(inner);
         }
 
+        // CB-316: a phone's launch on Windows, in a console window conhost
+        // itself owns: `conhost.exe cmd.exe /k <cli> <args>`. Not a bare
+        // `cmd.exe /k`: where Windows' default terminal is set to Windows
+        // Terminal, that hands the console to WT through a pseudo console, so
+        // cmd owns no window, WT is not an ancestor and WT_SESSION is not in
+        // the CLI's environment. The hook's walk then finds no terminal,
+        // records term_pid 0, and the scan drops the session as NoTerminal —
+        // a launch that always ends `no_session` (QA, CB-316). Measured in
+        // session 2 on the Windows box: cmd's window handle was 0 under a bare
+        // cmd.exe and non-zero under conhost.exe. Naming conhost.exe is also
+        // what the contract's "conhost, not wt.exe" means in practice.
+        internal static ProcessStartInfo ConsoleStartInfo(string exe, string cwd, IReadOnlyList<string> args)
+        {
+            var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = true, WorkingDirectory = cwd };
+            start.ArgumentList.Add("cmd.exe");
+            start.ArgumentList.Add("/k");
+            start.ArgumentList.Add(exe);
+            foreach (var arg in args) start.ArgumentList.Add(arg);
+            return start;
+        }
+
         internal static ProcessStartInfo? GeneralWindowsStartInfo(
             string? exe, string cwd, IReadOnlyList<string>? extraArgs, bool useWindowsTerminal)
         {

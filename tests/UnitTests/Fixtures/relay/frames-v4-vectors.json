@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (V4Vectors.cs: TranscriptWatch, LaunchGate, RelayUsage, RelayLink.DoneE, PushSeal, RelayCrypto)",
-    "orbweaver_sha": "319951c4",
+    "orbweaver_sha": "51af28b0",
     "spec": "CB-316 architect plan (docs/design/milestone-4-plan.md); contracts/frames-v4.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; nonce, sig and e are base64url without padding; every plaintext is the canonical form (keys in frames-v4.json's order, the shared escaper, bare integers, no whitespace)"
   },
