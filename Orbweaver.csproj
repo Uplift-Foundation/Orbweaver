@@ -109,6 +109,7 @@
     <InternalsVisibleTo Include="RelayVectors" />
     <!-- CB-314: tools/relay-probe runs the shipped RelayClient against the live relay. -->
     <InternalsVisibleTo Include="RelayProbe" />
+    <InternalsVisibleTo Include="PhoneDesk" />
   </ItemGroup>
 
   <ItemGroup>

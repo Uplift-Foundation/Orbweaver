@@ -179,6 +179,10 @@ namespace Orbweaver
             _tail = new System.Threading.Timer(_ => TailTick(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
         }
 
+        // Also the way a harness stands in for the poller (tools/phone-desk).
+        internal void OnPolledForTool(IReadOnlyList<AccountUsage> readings) => OnPolled(readings);
+        internal bool SendForTool(string phoneId, string cls, string? ckSession, string plaintext) => SendToPhone(phoneId, cls, ckSession, plaintext);
+
         private void OnPolled(IReadOnlyList<AccountUsage> readings)
         {
             var accounts = PhoneUsage.From(readings, _now());
