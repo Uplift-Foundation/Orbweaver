@@ -49,6 +49,11 @@ namespace Orbweaver
         public const string Err = "err";
         // Optional capability negotiation: an older Buddy ignores these two
         // messages, and the requester simply keeps its local/global fallback.
+        // CB-322: the link's own keepalive, consumed by the read loop and never
+        // delivered. A build without it hands it to the mirror, which finds no
+        // body and drops it, so sending one to an older peer is harmless.
+        public const string Ping = "ping";
+
         public const string OpenClawIdentityGet = "openclaw-identity-get";
         public const string OpenClawIdentity = "openclaw-identity";
 
