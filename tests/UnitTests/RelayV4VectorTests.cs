@@ -349,7 +349,7 @@ public class RelayV4VectorTests
 
     private static List<AccountUsage> Readings(int claudePct) =>
     [
-        new("/c", "warren@uplifttech.org", true, "Max",
+        new("/c", "user@example.com", true, "Max",
             new UsageWindow(claudePct, DateTimeOffset.FromUnixTimeSeconds(Mint + 5400)),
             new UsageWindow(31, DateTimeOffset.FromUnixTimeSeconds(Mint + 432000)), null,
             DateTimeOffset.FromUnixTimeSeconds(Mint), AccountUsageSource.ClaudeCode),

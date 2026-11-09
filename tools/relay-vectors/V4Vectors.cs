@@ -173,9 +173,9 @@ internal static class V4Vectors
         var nonceRaw = Convert.FromHexString("5a0d1f6b8c2e4a7d9b3f1c0e2d4b6a8c");
         var launches = new[]
         {
-            ("claude-minimal", new LaunchFields("/Users/warren/Source/Orbweaver", "claude", "", "", "", "Add a Watch complication target to the update feed fixture and run the tests.", "", 0)),
-            ("claude-full", new LaunchFields("/Users/warren/Source/Résumé-Builder", "claude", "", "opus", SessionId, "Résumé the failing tests \u2014 paths like C:\\Users\\w and \"quotes\" stay literal.", "", 0)),
-            ("codex-model", new LaunchFields("/Users/warren/Source/loginid-sdk-web", "codex", "", "gpt-5.5-codex", "", "Run the unit tests.", "", 0)),
+            ("claude-minimal", new LaunchFields("/Users/dev/Source/demo-app", "claude", "", "", "", "Add a Watch complication target to the update feed fixture and run the tests.", "", 0)),
+            ("claude-full", new LaunchFields("/Users/dev/Source/Résumé-Demo", "claude", "", "opus", SessionId, "Résumé the failing tests \u2014 paths like C:\\Users\\w and \"quotes\" stay literal.", "", 0)),
+            ("codex-model", new LaunchFields("/Users/dev/Source/demo-sdk", "codex", "", "gpt-5.5-codex", "", "Run the unit tests.", "", 0)),
             ("grok-no-message", new LaunchFields("C:\\Users\\dev\\Source\\Orbweaver", "grok", "", "", "", "", "", 0)),
         };
         string SigFor(Func<JsonElement, string?> pick, byte[] message, KeyPair signer, byte[]? verifyKey = null)
@@ -224,7 +224,7 @@ internal static class V4Vectors
             SigFor(r => r.GetProperty("launch").GetProperty("negatives").EnumerateArray()
                 .FirstOrDefault(n => n.GetProperty("name").GetString() == name) is { ValueKind: JsonValueKind.Object } n ? n.GetProperty("sig").GetString() : null,
                 message, signer);
-        Neg("cwd-changed", LaunchGate.Body(baseFields with { Cwd = "/Users/warren/Source/Orbweaver-Mobile" }), baseSig,
+        Neg("cwd-changed", LaunchGate.Body(baseFields with { Cwd = "/Users/dev/Source/demo-mobile" }), baseSig,
             "the claude-full signature over a body that now names another folder");
         Neg("parent-omitted-in-body", LaunchGate.Body(baseFields with { ParentSessionId = "" }), baseSig,
             "the same signature, but the body built with parent_session_id \"\" where the frame carried one; the desktop rebuilds the body from the frame, so this mismatch is bad_signature");
@@ -291,7 +291,7 @@ internal static class V4Vectors
         // ---- usage -------------------------------------------------------------
         List<RelayUsage.Account> Accounts(int claudePct) => RelayUsage.Order(new[]
         {
-            new AccountUsage("/c", "warren@uplifttech.org", true, "Max",
+            new AccountUsage("/c", "user@example.com", true, "Max",
                 new UsageWindow(claudePct, DateTimeOffset.FromUnixTimeSeconds(Mint + 5400)),
                 new UsageWindow(31, DateTimeOffset.FromUnixTimeSeconds(Mint + 432000)), null,
                 DateTimeOffset.FromUnixTimeSeconds(Mint), AccountUsageSource.ClaudeCode),
