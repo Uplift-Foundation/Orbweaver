@@ -331,7 +331,7 @@ try {
 # working directory, so the session's TUI is found by uniqueness instead of by
 # folder: exactly one codex TUI (not an app-server) running is taken as the
 # session, and its own windowed ancestor as the terminal. Two or more record
-# no pid and no terminal, which the app refuses to type into — the safe
+# no pid and no terminal, which the app refuses to type into -- the safe
 # direction. The residual risk (one TUI plus a session from a non-TUI client)
 # is named in CB-316's PR.
 if ($codexDaemon) {

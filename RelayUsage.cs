@@ -109,7 +109,8 @@ namespace Orbweaver
                 if (RelayUsage.Fires(_last.TryGetValue(key, out var prev) ? prev : null, pct, resets)) crossings.Add(a);
                 _last[key] = (pct, resets);
             }
-            foreach (var gone in _last.Keys.Where(k => !seen.Contains(k)).ToList()) _last.Remove(gone);
+            foreach (var key in _last.Keys.ToList())
+                if (!seen.Contains(key)) _last.Remove(key);
 
             var plaintext = RelayUsage.Frame(accounts);
             var shape = accounts.Select(a => a.Shape).ToList();

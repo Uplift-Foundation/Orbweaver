@@ -51,12 +51,14 @@ namespace Orbweaver
         // script never touches hooks.json, which is what Codex hashes for its
         // trust review, so a refresh cannot silently disable Codex's hooks.
         internal static IReadOnlyList<string> InstalledCandidates(
-            bool onWindows, string userProfile, string localAppData, string? codexHome = null) =>
-            NewChatHookState.HookCopyCandidates(
-                    NewChatCli.ClaudeCode, onWindows, userProfile, localAppData, _ => null)
-                .Concat(NewChatHookState.HookCopyCandidates(
-                    NewChatCli.Codex, onWindows, userProfile, localAppData, name => name == "CODEX_HOME" ? codexHome : null))
+            bool onWindows, string userProfile, string localAppData, string? codexHome = null)
+        {
+            // The only variable either lookup asks for is Codex's CODEX_HOME.
+            Func<string, string?> env = _ => codexHome;
+            return NewChatHookState.HookCopyCandidates(NewChatCli.ClaudeCode, onWindows, userProfile, localAppData, env)
+                .Concat(NewChatHookState.HookCopyCandidates(NewChatCli.Codex, onWindows, userProfile, localAppData, env))
                 .ToList();
+        }
 
         // Where the bundled script sits in each layout the app runs from: inside
         // the .app, Contents/Resources beside the installers (BaseDirectory is

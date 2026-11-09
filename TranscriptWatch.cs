@@ -109,8 +109,12 @@ namespace Orbweaver
         {
             var room = MaxWindowBytes - Encoding.UTF8.GetByteCount(Header(sessionId, long.MaxValue, total, live, reset)) - 2;
             if (Encoding.UTF8.GetByteCount(LineJson(line)) <= room) return line;
-            var text = line.Text.EndsWith(Ellipsis, StringComparison.Ordinal) && line.Cut ? line.Text[..^1] : line.Text;
-            int lo = 0, hi = text.Length;
+            // A cut text always ends with the ellipsis CutText appended.
+            var text = line.Cut ? line.Text[..^1] : line.Text;
+            // At least one character always fits (a window's header is a few
+            // hundred bytes, one escaped character at most six), and the whole
+            // text never does, or this line would have fit to begin with.
+            int lo = 1, hi = text.Length - 1;
             while (lo < hi)
             {
                 var mid = (lo + hi + 1) / 2;
@@ -120,9 +124,9 @@ namespace Orbweaver
             return line with { Text = Prefix(text, lo) + Ellipsis, Cut = true };
         }
 
-        // The first n UTF-16 units, backed off a split surrogate pair.
+        // The first n UTF-16 units (1 <= n < length), backed off a split surrogate pair.
         private static string Prefix(string text, int n) =>
-            n > 0 && n < text.Length && char.IsHighSurrogate(text[n - 1]) ? text[..(n - 1)] : text[..n];
+            char.IsHighSurrogate(text[n - 1]) ? text[..(n - 1)] : text[..n];
 
         // The last 200 lines, or all of them when there are fewer.
         internal static List<string> Backfill(string sessionId, IReadOnlyList<WireLine> all, bool reset = false)

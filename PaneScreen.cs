@@ -141,19 +141,18 @@ namespace Orbweaver
         // too (measured in the Windows console).
         private static readonly string[] GrokHome = ["Resume session", "New worktree"];
 
-        private static bool IsGrokMark(string line) =>
-            line.Length >= 3 && line[0] == '│' && line.TrimEnd().EndsWith('│')
-            && line[1..].TrimStart() is { Length: > 0 } inner && (inner[0] == '❯' || inner[0] == '>')
-            && (inner.Length == 1 || char.IsWhiteSpace(inner[1]));
+        private static readonly System.Text.RegularExpressions.Regex GrokMark =
+            new(@"^│\s*[❯>]\s.*│$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static bool IsGrokMark(string line) => GrokMark.IsMatch(line);
 
         // A spinner glyph, a space, then an activity with an ellipsis: Grok's
         // "working" line (`⠋ Responding… 2.0s`, `/ Thinking… 1.3s`). The ellipsis
         // keeps an ordinary line that happens to start "- " from counting.
-        private static bool IsSpinner(string line) =>
-            line.Length > 2
-            && (line[0] is >= '\u2801' and <= '\u28FF' or '|' or '/' or '-' or '\\')
-            && line[1] == ' '
-            && line.Contains('\u2026');
+        private static readonly System.Text.RegularExpressions.Regex Spinner =
+            new(@"^[\u2801-\u28FF|/\\-] .*\u2026", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static bool IsSpinner(string line) => Spinner.IsMatch(line);
 
         // Codex: `› <draft or placeholder>` over its footer (`? for shortcuts`),
         // no box. A numbered `› 1.` is an approval's option, not the prompt, and

@@ -627,3 +627,52 @@ public class GrokPasteMarkerTests
             new string(claude.Where(r => r.KeyDown == 1).Select(r => r.Char).ToArray()));
     }
 }
+
+/// <summary>
+/// CB-316: the arms of PaneScreen's Grok and Codex shapes that the real
+/// fixtures never land on — a box with no top or no bottom, a Windows-style
+/// cancel footer with no spinner, a numbered Codex option, a mark at the very
+/// bottom of the screen. Small synthetic screens, each beside the fixture
+/// shape it differs from by one line.
+/// </summary>
+public class PaneScreenShapeTests
+{
+    private const string Top = "╭────────────────────╮";
+    private const string Mark = "│ ❯                  │";
+    private const string Bottom = "╰──────────── Grok ──╯";
+
+    private static (PaneReading, string) R(params string[] lines) => PaneScreen.Read(string.Join("\n", lines) + "\n");
+
+    [Fact]
+    public void A_grok_box_reads_as_a_prompt_only_with_its_top_and_bottom()
+    {
+        Assert.Equal((PaneReading.Prompt, "grok-prompt"), R("ok", Top, Mark, Bottom));
+        Assert.Equal((PaneReading.Prompt, "grok-prompt"), R("ok", Top, "", Mark, Bottom));    // a blank between: skipped
+        Assert.NotEqual("grok-prompt", R(Mark, Bottom).Item2);                                // nothing above the mark
+        Assert.NotEqual("grok-prompt", R("", "", "", Mark, Bottom).Item2);                    // only blanks above
+        Assert.NotEqual("grok-prompt", R("text", Mark, Bottom).Item2);                        // above, but not the box top
+        Assert.NotEqual("grok-prompt", R(Top, Mark).Item2);                                   // no bottom: the screen ends
+        Assert.NotEqual("grok-prompt", R(Top, Mark, "a", "b", "c", Bottom).Item2);            // bottom too far below
+    }
+
+    [Fact]
+    public void A_windows_cancel_footer_alone_is_working_and_the_mark_shapes_are_exact()
+    {
+        Assert.Equal((PaneReading.Unknown, "working"), R(Top, Mark, Bottom, "Shift+Tab:mode  │  Ctrl+c:cancel"));
+        Assert.Equal((PaneReading.Prompt, "grok-prompt"), R(Top, "│ > draft text │", Bottom));
+        Assert.NotEqual("grok-prompt", R(Top, "│ ❯x                 │", Bottom).Item2);
+        Assert.NotEqual("grok-prompt", R(Top, "│ x                  │", Bottom).Item2);
+        Assert.Equal((PaneReading.Unknown, "working"), R("- Thinking… 1.0s", Top, Mark, Bottom));
+        Assert.Equal((PaneReading.Prompt, "grok-prompt"), R("- a bullet", Top, Mark, Bottom));   // no ellipsis: not a spinner
+    }
+
+    [Fact]
+    public void A_codex_mark_needs_its_footer_and_is_never_a_numbered_option()
+    {
+        Assert.Equal((PaneReading.Prompt, "codex-prompt"), R("› Ask Codex to do anything", "", "  ? for shortcuts"));
+        Assert.Equal((PaneReading.Prompt, "codex-prompt"), R("›", "? for shortcuts"));
+        Assert.NotEqual("codex-prompt", R("› 1. Yes, proceed (y)", "? for shortcuts").Item2);
+        Assert.NotEqual("codex-prompt", R("› Ask Codex to do anything").Item2);                 // the screen ends: no footer
+        Assert.NotEqual("codex-prompt", R("› Ask", "a", "b", "c", "d", "? for shortcuts").Item2); // footer too far below
+    }
+}
