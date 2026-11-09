@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (RelayCrypto.cs)",
-    "orbweaver_sha": "d920815a",
+    "orbweaver_sha": "a3dd8a3f",
     "spec": "CB-314 architect plan rev 1, sections 2.2 and 2.3",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16); QR k/s, sig fields inside plaintexts, and ck are base64url without padding"
   },
@@ -20,7 +20,9 @@
         "persona": {
           "name": "Jennifer Voss",
           "initials": "JV",
-          "color": "purple"
+          "color": "purple",
+          "id": "923dd9e296f736e6",
+          "image_hash": "1e3ee21f627894fc304af41555f060975f980fb203e2cbb8f227291c793d5bff"
         }
       },
       {
@@ -34,7 +36,8 @@
         "persona": {
           "name": "Tamsin Oyelaran",
           "initials": "TO",
-          "color": "pink"
+          "color": "pink",
+          "id": "7a22e1f2b218132b"
         }
       },
       {
@@ -68,7 +71,8 @@
         "since": 1794124855,
         "persona": {
           "name": "Pixel",
-          "initials": "PI"
+          "initials": "PI",
+          "id": "974293a0c5fed43f"
         }
       }
     ]

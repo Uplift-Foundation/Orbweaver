@@ -1,7 +1,7 @@
 {
   "_source": {
-    "generated_by": "Orbweaver-Mobile contracts/make_v5_vectors.py (architect, CB-321); to be reproduced by Uplift-Foundation/Orbweaver tools/relay-vectors",
-    "orbweaver_sha": "hand-authored",
+    "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (V5Vectors.cs: PersonaFrames, PersonaImageBundle.HashOf, RelayRoster.RosterJson, RelayReplies, RelayCrypto)",
+    "orbweaver_sha": "a3dd8a3f",
     "spec": "CB-321 architect plan (docs/design/cb-321-personas-plan.md); contracts/frames-v5.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; nonce and frame data are base64url without padding; every plaintext is the canonical form (keys in frames-v5.json's order, the shared escaper, bare integers, no whitespace); png_hex is the frame's encoded bytes, which data carries base64url"
   },
