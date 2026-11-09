@@ -98,13 +98,18 @@ public class SettingsWindowRowBuilderTests
     [AvaloniaFact]
     public void ChoosingALifetimeWritesIt()
     {
-        OrbweaverSettings.OrbLifetimeMinutes = 1;
-        var window = NewWindow();
+        var before = OrbweaverSettings.OrbLifetimeMinutes;
+        try
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = 1;
+            var window = NewWindow();
 
-        var combo = (ComboBox)window.LifetimePicker();
-        combo.SelectedIndex = 2;   // "15 minutes"
+            var combo = (ComboBox)window.LifetimePicker();
+            combo.SelectedIndex = 2;   // "15 minutes"
 
-        Assert.Equal(15, OrbweaverSettings.OrbLifetimeMinutes);
+            Assert.Equal(15, OrbweaverSettings.OrbLifetimeMinutes);
+        }
+        finally { OrbweaverSettings.OrbLifetimeMinutes = before; }
     }
 
     // "Forever" is a real choice rather than a very large number, and it is the
@@ -112,13 +117,21 @@ public class SettingsWindowRowBuilderTests
     [AvaloniaFact]
     public void ForeverIsTheLastChoiceAndMeansForever()
     {
-        OrbweaverSettings.OrbLifetimeMinutes = 1;
-        var window = NewWindow();
+        // Restored: "forever" left behind makes every later test that expects an
+        // orb to expire keep it instead (CB-321 found SessionScanTests'
+        // AWaitingSessionOutlivesKeepOrbsFor failing on exactly this).
+        var before = OrbweaverSettings.OrbLifetimeMinutes;
+        try
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = 1;
+            var window = NewWindow();
 
-        var combo = (ComboBox)window.LifetimePicker();
-        combo.SelectedIndex = CountOf(combo) - 1;
+            var combo = (ComboBox)window.LifetimePicker();
+            combo.SelectedIndex = CountOf(combo) - 1;
 
-        Assert.Equal(OrbweaverSettings.OrbLifetimeForever, OrbweaverSettings.OrbLifetimeMinutes);
+            Assert.Equal(OrbweaverSettings.OrbLifetimeForever, OrbweaverSettings.OrbLifetimeMinutes);
+        }
+        finally { OrbweaverSettings.OrbLifetimeMinutes = before; }
     }
 
     // A number hand-written into settings.json shows as itself rather than being
@@ -127,22 +140,28 @@ public class SettingsWindowRowBuilderTests
     [AvaloniaFact]
     public void AHandWrittenLifetimeIsOfferedAsItself()
     {
-        OrbweaverSettings.OrbLifetimeMinutes = 7;
-        var window = NewWindow();
+        var before = OrbweaverSettings.OrbLifetimeMinutes;
+        try
+        {
+            OrbweaverSettings.OrbLifetimeMinutes = 7;
+            var window = NewWindow();
 
-        var combo = (ComboBox)window.LifetimePicker();
+            var combo = (ComboBox)window.LifetimePicker();
 
-        Assert.True(combo.SelectedIndex >= 0, "a hand-written value must still be selected");
-        Assert.Equal(7, OrbweaverSettings.OrbLifetimeMinutes);
+            Assert.True(combo.SelectedIndex >= 0, "a hand-written value must still be selected");
+            Assert.Equal(7, OrbweaverSettings.OrbLifetimeMinutes);
 
-        var labels = ((IList)combo.ItemsSource!).Cast<string>().ToList();
-        Assert.Contains("7 minutes", labels);
+            var labels = ((IList)combo.ItemsSource!).Cast<string>().ToList();
+            Assert.Contains("7 minutes", labels);
 
-        // Inserted before "Forever" rather than appended after it, so the list
-        // still reads in order.
-        Assert.True(
-            labels.IndexOf("7 minutes") < labels.Count - 1,
-            "a hand-written value belongs before Forever, not after it");
+            // Inserted before "Forever" rather than appended after it, so the list
+            // still reads in order.
+            Assert.True(
+                labels.IndexOf("7 minutes") < labels.Count - 1,
+                "a hand-written value belongs before Forever, not after it");
+    
+        }
+        finally { OrbweaverSettings.OrbLifetimeMinutes = before; }
     }
 
     // --- which gateway sessions get an orb ---
