@@ -713,7 +713,8 @@ public class RelayServiceProjectTests
             RelayService.LocalPersonaFor = _ => null;
             RelayService.OfferImage = _ => null;
             RelayService.DefaultPersona = _ => null;
-            var (rows, personas) = RelayService.Project([("s1", new SessionStatus { Source = SessionSource.Codex, Cwd = "/w" })]);
+            var (rows, personas, defaultPersona) = RelayService.Project([("s1", new SessionStatus { Source = SessionSource.Codex, Cwd = "/w" })]);
+            Assert.Null(defaultPersona);                                     // CB-321 addendum 2: no default row, no limit persona
             var id = PersonaFrames.PersonaId(null, "Nova");
             Assert.Equal(new RelayPersona("Nova", "NO", null, id), Assert.Single(rows).Persona);
             Assert.Equal(PersonaFrames.Personas([new PersonaFrames.Row(id, "Nova", "NO", false, null)]), personas);

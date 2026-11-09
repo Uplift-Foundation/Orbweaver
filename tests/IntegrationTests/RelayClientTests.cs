@@ -621,6 +621,67 @@ public class RelayClientTests : IAsyncLifetime
         lock (replies) Assert.Equal([(first, "pushed"), (first, "push_throttled")], replies);
     }
 
+    // CB-321 addendum 2, end to end through the client over a real socket:
+    // the done and the amber name the session's roster persona, the limit the
+    // PC's default persona handed in beside the personas frame, each as the
+    // last key of the e a phone opens with its own agreement key.
+    [Fact]
+    public async Task Done_amber_and_limit_pushes_carry_their_persona_inside_e()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+
+        const string hash = "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3";
+        var aurora = new RelayPersona("Aurora", "AU", null, "3f7a9c1e5b2d8046", hash);
+        RelaySession Row(string state) => new("s1", "claude", "proj", "/c", state, null, aurora);
+        // The default persona arrives the production way: a scan through
+        // RelayService, whose projection hands the personas frame's default row
+        // to the client beside the frame. Every seam is put back.
+        var novaId = PersonaFrames.PersonaId("/u/.claude/CLAUDE.md", "Nova");
+        try
+        {
+            RelayService.UserConfigDirs = () => ["/u/.claude"];
+            RelayService.PersonaName = (_, _) => null;
+            RelayService.LocalPersonaFor = _ => null;
+            RelayService.OfferImage = _ => null;
+            RelayService.DefaultPersona = _ => new LocalPersona.Persona("Nova", null, null, null, null, ["/u/.claude/CLAUDE.md"]);
+            RelayService.UseForTests(client);
+            RelayService.OnScanned([]);
+        }
+        finally
+        {
+            RelayService.UseForTests(null);
+            RelayService.UserConfigDirs = RelayService.DefaultUserConfigDirs;
+            RelayService.PersonaName = RelayService.CachedPersonaName;
+            RelayService.LocalPersonaFor = LocalPersonas.For;
+            RelayService.OfferImage = RelayService.DefaultOfferImage;
+            RelayService.DefaultPersona = RelayService.CachedDefaultPersona;
+        }
+        client.OnScanned([Row("generating")]);
+        client.OnScanned([Row("idle")]);
+        string OpenE(JsonElement env) => Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, env.GetProperty("e").GetString())!);
+        const string auroraJson = ""","persona":{"id":"3f7a9c1e5b2d8046","name":"Aurora","image_hash":"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"}}""";
+
+        var done = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "done");
+        Assert.EndsWith(auroraJson, OpenE(done));
+
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber");
+        Assert.EndsWith(auroraJson, OpenE(amber));
+
+        client.OnUsage([new RelayUsage.Account("user@example.com", "claude", "max", 85, 1794117192, null, null, 1, true)]);
+        var limit = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "limit");
+        Assert.EndsWith($$$""","persona":{"id":"{{{novaId}}}","name":"Nova"}}""", OpenE(limit));
+    }
+
     // A prompt minted before the socket is up produces no frame; the welcome
     // sends it.
     [Fact]

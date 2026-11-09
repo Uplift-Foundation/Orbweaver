@@ -21,6 +21,9 @@ namespace Orbweaver
         // with a quiet "Answered at the desk" alert.
         void Resolved(string requestId, string sessionId, string by, string? pushPlaintext);
         void Refusal(string phoneId, string requestId, string sessionId, string code);
+        // CB-321 addendum 2: the persona this session's amber speaks as (its
+        // roster row's), or null. A sender that knows no roster names none.
+        PushPersona? PersonaFor(string sessionId) => null;
     }
 
     // CB-315 surface B, the desktop half of the amber loop:
@@ -205,12 +208,14 @@ namespace Orbweaver
             var tool = ToolOf(fp.Preview);
             var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
-            var push = PromptFrames.FitPush(requestId, sid, label, tool, SummaryOf(tool), preview, expires, options, fp.Hash);
+            var persona = _send.PersonaFor(sid);
+            var push = PromptFrames.FitPush(requestId, sid, label, tool, SummaryOf(tool), preview, expires, options, fp.Hash, persona);
 
             var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
             _live[sid] = live;
             _send.Prompt(requestId, sid, prompt, push?.Plaintext);
-            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")}");
+            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
+                + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));
         }
 
         // "Bash command" → Bash (Claude Code); Codex's "Would you like to run

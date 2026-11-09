@@ -12,7 +12,8 @@ using static Orbweaver.RelayCrypto;
 //
 // produces <out-dir>/pairing-vectors.json, session-vectors.json,
 // frames-v4-vectors.json (CB-316, see V4Vectors.cs),
-// frames-v5-vectors.json (CB-321, see V5Vectors.cs) and
+// frames-v5-vectors.json (CB-321, see V5Vectors.cs),
+// frames-v6-vectors.json (CB-321 addendum 2, see V6Vectors.cs) and
 // roster-fixtures.json.
 // They go to Orbweaver-Mobile `contracts/`, where the iPhone's CryptoKit tests
 // consume them, and a copy goes to tests/UnitTests/Fixtures/relay/, where
@@ -322,4 +323,9 @@ File.WriteAllText(Path.Combine(outDir, "frames-v4-vectors.json"),
 // committed file (args[4], default the unit-test fixture).
 File.WriteAllText(Path.Combine(outDir, "frames-v5-vectors.json"),
     V5Vectors.Build(outDir, args.Length > 4 ? args[4] : Path.Combine("tests", "UnitTests", "Fixtures", "relay", "frames-v5-vectors.json"), sha));
+// CB-321 addendum 2: frames-v6-vectors.json from the shipped push code. Its
+// inputs, the phone's nse records and the prose are read from the committed
+// file (args[5], default the unit-test fixture).
+File.WriteAllText(Path.Combine(outDir, "frames-v6-vectors.json"),
+    V6Vectors.Build(outDir, args.Length > 5 ? args[5] : Path.Combine("tests", "UnitTests", "Fixtures", "relay", "frames-v6-vectors.json"), sha));
 Console.WriteLine($"wrote prompt-vectors.json, answer-vectors.json, push-vectors.json and pairing-vectors.json, session-vectors.json, roster-fixtures.json and persona-colors.json to {Path.GetFullPath(outDir)} (check code {CheckCodeDisplay(code)})");

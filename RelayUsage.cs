@@ -64,10 +64,16 @@ namespace Orbweaver
         internal static string Frame(IEnumerable<Account> accounts) =>
             new CanonicalJson().Str("t", "usage").Array("accounts", accounts.Select(AccountJson)).ToString();
 
-        // The push ciphertext's plaintext for a crossing (frames-v4 limit_e).
-        internal static string LimitE(Account a) =>
-            new CanonicalJson().Num("v", 1).Str("t", "limit").Str("name", a.Name).Str("cli", a.Cli)
-                .Num("window_5h_pct", a.WindowPct!.Value).Num("resets_at", a.ResetsAt!.Value).ToString();
+        // The push ciphertext's plaintext for a crossing (frames-v4 limit_e),
+        // with the PC's default persona as the last key when there is one
+        // (frames-v6 limit_e: a crossing belongs to an account, not a session).
+        internal static string LimitE(Account a, PushPersona? persona = null)
+        {
+            var j = new CanonicalJson().Num("v", 1).Str("t", "limit").Str("name", a.Name).Str("cli", a.Cli)
+                .Num("window_5h_pct", a.WindowPct!.Value).Num("resets_at", a.ResetsAt!.Value);
+            if (persona is not null) j.Raw("persona", persona.Canonical());
+            return j.ToString();
+        }
 
         // The limit edge (frames-v4 usage.limit_rule): a reading at or over 80
         // fires when the previous reading for that account was absent, under

@@ -220,7 +220,7 @@ namespace Orbweaver
             IReadOnlyList<RelayUsageTracker.Send> sends;
             lock (_gate) sends = _usage.Next(accounts);
             foreach (var send in sends)
-                Dispatch(() => _link.SendUsage(send.Plaintext, send.Crossing is { } c ? RelayUsage.LimitE(c) : null));
+                Dispatch(() => _link.SendUsage(send.Plaintext, send.Crossing));
         }
 
         private readonly RelayUsageTracker _usage = new();
@@ -256,6 +256,10 @@ namespace Orbweaver
 
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
+
+        // CB-321 addendum 2: the persona an amber for this session speaks as,
+        // read off the link's book under the lock like everything else there.
+        PushPersona? IPromptSender.PersonaFor(string sessionId) { lock (_gate) return _link.PersonaFor(sessionId); }
 
         void IPromptSender.Resolved(string requestId, string sessionId, string by, string? pushPlaintext) =>
             Dispatch(() => _link.SendResolved(requestId, sessionId, by, pushPlaintext));
@@ -481,8 +485,10 @@ namespace Orbweaver
         internal void OnScanned(IReadOnlyList<RelaySession> rows) => Dispatch(() => _link.OnScan(rows));
 
         // CB-321: the personas frame's plaintext, from each scan. The link sends
-        // it only when it changed.
-        internal void OnPersonas(string plaintext) => Dispatch(() => _link.SendPersonas(plaintext));
+        // it only when it changed. Addendum 2: and the default persona it names,
+        // which the link keeps for limit pushes.
+        internal void OnPersonas(string plaintext, PushPersona? defaultPersona = null) =>
+            Dispatch(() => _link.SendPersonas(plaintext, defaultPersona));
 
         public async Task<RelayLink.PairOffer> BeginPairingAsync(CancellationToken token = default)
         {
