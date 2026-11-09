@@ -1,7 +1,7 @@
 {
   "_source": {
     "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (V4Vectors.cs: TranscriptWatch, LaunchGate, RelayUsage, RelayLink.DoneE, PushSeal, RelayCrypto)",
-    "orbweaver_sha": "51af28b0",
+    "orbweaver_sha": "32565a4d",
     "spec": "CB-316 architect plan (docs/design/milestone-4-plan.md); contracts/frames-v4.json sealed_plaintext",
     "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; nonce, sig and e are base64url without padding; every plaintext is the canonical form (keys in frames-v4.json's order, the shared escaper, bare integers, no whitespace)"
   },
@@ -2257,7 +2257,7 @@
       {
         "name": "grok-no-message",
         "fields": {
-          "cwd": "C:\\Users\\warre\\Source\\Claude-Buddy",
+          "cwd": "C:\\Users\\dev\\Source\\Orbweaver",
           "cli": "grok",
           "persona": "",
           "model": "",
@@ -2265,21 +2265,21 @@
           "nonce": "Wg0fa4wuSn2bPxwOLUtqAw",
           "expires_at": 1794111912
         },
-        "body": "{\"cwd\":\"C:\\\\Users\\\\warre\\\\Source\\\\Claude-Buddy\",\"cli\":\"grok\",\"persona\":\"\",\"model\":\"\",\"parent_session_id\":\"\",\"first_message_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"nonce\":\"Wg0fa4wuSn2bPxwOLUtqAw\",\"expires_at\":1794111912}",
-        "body_utf8": "7b22637764223a22433a5c5c55736572735c5c77617272655c5c536f757263655c5c436c617564652d4275646479222c22636c69223a2267726f6b222c22706572736f6e61223a22222c226d6f64656c223a22222c22706172656e745f73657373696f6e5f6964223a22222c2266697273745f6d6573736167655f736861323536223a2265336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535222c226e6f6e6365223a225767306661347775536e32625078774f4c5574714177222c22657870697265735f6174223a313739343131313931327d",
-        "message": "6f72627765617665722d6c61756e63682d76317b22637764223a22433a5c5c55736572735c5c77617272655c5c536f757263655c5c436c617564652d4275646479222c22636c69223a2267726f6b222c22706572736f6e61223a22222c226d6f64656c223a22222c22706172656e745f73657373696f6e5f6964223a22222c2266697273745f6d6573736167655f736861323536223a2265336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535222c226e6f6e6365223a225767306661347775536e32625078774f4c5574714177222c22657870697265735f6174223a313739343131313931327d",
-        "sig": "h2OBfSIkwlwhRY3rJAbtGP2Mk70Y2PzB1QGhRT-qW9-fuVzl5SaYea6pLLjQH8gCmm5TxDTyTi6wQ5QHx7jdYA",
+        "body": "{\"cwd\":\"C:\\\\Users\\\\dev\\\\Source\\\\Orbweaver\",\"cli\":\"grok\",\"persona\":\"\",\"model\":\"\",\"parent_session_id\":\"\",\"first_message_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"nonce\":\"Wg0fa4wuSn2bPxwOLUtqAw\",\"expires_at\":1794111912}",
+        "body_utf8": "7b22637764223a22433a5c5c55736572735c5c6465765c5c536f757263655c5c4f7262776561766572222c22636c69223a2267726f6b222c22706572736f6e61223a22222c226d6f64656c223a22222c22706172656e745f73657373696f6e5f6964223a22222c2266697273745f6d6573736167655f736861323536223a2265336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535222c226e6f6e6365223a225767306661347775536e32625078774f4c5574714177222c22657870697265735f6174223a313739343131313931327d",
+        "message": "6f72627765617665722d6c61756e63682d76317b22637764223a22433a5c5c55736572735c5c6465765c5c536f757263655c5c4f7262776561766572222c22636c69223a2267726f6b222c22706572736f6e61223a22222c226d6f64656c223a22222c22706172656e745f73657373696f6e5f6964223a22222c2266697273745f6d6573736167655f736861323536223a2265336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535222c226e6f6e6365223a225767306661347775536e32625078774f4c5574714177222c22657870697265735f6174223a313739343131313931327d",
+        "sig": "y5LDBKaHiP3GQR6HJiE4Sgok5Bwm_dMV3gJdTYOC8ShdK_9IZLbiow2qPc_nOQ7ZVwekBbUESzq8ENr0pkCnaQ",
         "launch_frame": {
           "from": "ph_a1b2c3d4e5f60718",
           "to": "dsk_5f3c9a0e1b7d2468",
           "class": "action",
           "push": "none",
           "ck": "",
-          "plaintext": "{\"t\":\"launch\",\"cwd\":\"C:\\\\Users\\\\warre\\\\Source\\\\Claude-Buddy\",\"cli\":\"grok\",\"persona\":\"\",\"model\":\"\",\"first_message\":\"\",\"nonce\":\"Wg0fa4wuSn2bPxwOLUtqAw\",\"expires_at\":1794111912,\"sig\":\"h2OBfSIkwlwhRY3rJAbtGP2Mk70Y2PzB1QGhRT-qW9-fuVzl5SaYea6pLLjQH8gCmm5TxDTyTi6wQ5QHx7jdYA\"}",
-          "plaintext_bytes": 269,
+          "plaintext": "{\"t\":\"launch\",\"cwd\":\"C:\\\\Users\\\\dev\\\\Source\\\\Orbweaver\",\"cli\":\"grok\",\"persona\":\"\",\"model\":\"\",\"first_message\":\"\",\"nonce\":\"Wg0fa4wuSn2bPxwOLUtqAw\",\"expires_at\":1794111912,\"sig\":\"y5LDBKaHiP3GQR6HJiE4Sgok5Bwm_dMV3gJdTYOC8ShdK_9IZLbiow2qPc_nOQ7ZVwekBbUESzq8ENr0pkCnaQ\"}",
+          "plaintext_bytes": 264,
           "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
           "nonce": "00000001000000000000006b",
-          "ct": "AAAAAQAAAAAAAABrVoCRcEDc2peoMbWT0i/mTYCZywRroQQOlrB0qf8DIeMSQx7javyYAgKvR+j9kjlNrCeTYC+nfxhztJu+BSKIgIsmYHtna3Qdr+EEpD1GQJSneKerylEoz4W4fh+SH4APGW+8kNi3vFn+5mS2Nxvb7XHbbgyNwBIqf+zZgYuiw/WGBMffKj6wpezZeV4bgN1Uezrx5zjuv/YRuFAuPXmeRhj3ARaThSCeDCZc85uUaDA6ezeiFX1bar/5LXgTG4ccf61A72Mc83Bbt6LkKe8vX9JW+AYAP1Ymo1tMbZu/JCIJxiXoqUkUaVHiXa/jlbQqYBHd7pZRPYq0R65E7uIXTlfSfYIGVzQc5bR99uuOsfN/0OexJqPlRa1fkqYS",
+          "ct": "AAAAAQAAAAAAAABrVoCRcEDc2peoMbWT0i/mTYCZywRroQQOlrB0qf8DIeMBRxrNU/OrJB+5UNfEgRdstyOHci/4H0E1s471CzrJi5BrMXssO2sT/75JujkWCdnrNaf8hxdhgcrtOFjSH9xESTDqqdygvF7A7GTnfliepHGPI0DCh15/M9jbk9fhoOXDMcjZPxubvJH3fFIdjuYjI2nV6Gqr7/Yal1goejDwEFXhChaVhSWdETUWq86acGEqKVncdV4IbZTPTXYpPt0jXZZc6EIx3XkasoW7O+BVObgD4hgWV0gi81pwJKG3JEY1/xH7qgt1eVjkY/fciM8aZy6A4pdeBfqzRZso0vgMSFDoC70vfiELasqwatkjZmZbYPUaDyb88w==",
           "envelope_id": "01JCA0LAUNCH00000000000003"
         },
         "replies": [
