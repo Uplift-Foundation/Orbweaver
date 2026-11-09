@@ -67,7 +67,7 @@ namespace Orbweaver
         // The push ciphertext's plaintext for a crossing (frames-v4 limit_e).
         internal static string LimitE(Account a) =>
             new CanonicalJson().Num("v", 1).Str("t", "limit").Str("name", a.Name).Str("cli", a.Cli)
-                .Num("window_5h_pct", a.WindowPct ?? 0).Num("resets_at", a.ResetsAt ?? 0).ToString();
+                .Num("window_5h_pct", a.WindowPct!.Value).Num("resets_at", a.ResetsAt!.Value).ToString();
 
         // The limit edge (frames-v4 usage.limit_rule): a reading at or over 80
         // fires when the previous reading for that account was absent, under

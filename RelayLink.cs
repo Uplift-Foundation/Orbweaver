@@ -592,7 +592,9 @@ namespace Orbweaver
         // alone when the session has no title.
         private string? DoneFor(Channel c, RelayDelta d)
         {
-            var title = _book.Find(d.SessionId)?.Title ?? d.Title ?? "";
+            // The book has just stamped this row (a finished delta is never a
+            // removal), so it is there to name the session.
+            var title = _book.Find(d.SessionId)!.Title;
             var e = PushE(c, DoneE(d.SessionId, title, Machine));
             return SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.DeltaForPush(d), push: "done", e: e);
         }

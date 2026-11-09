@@ -144,8 +144,8 @@ namespace Orbweaver
             UnwatchRequest u => Task.Run(() => Unwatch(phoneId, u)),
             InputRequest i => InputAsync(phoneId, i),
             LaunchRequest l => LaunchAsync(phoneId, phoneIdPublic, l),
-            BadFrameRequest b => Task.Run(() => Err(phoneId, b.Ref, RelayReplies.BadFrame, b.SessionId)),
-            _ => Task.CompletedTask,
+            // The only other kind RelayRequests makes.
+            _ => Task.Run(() => Err(phoneId, request.Ref, RelayReplies.BadFrame, ((BadFrameRequest)request).SessionId)),
         };
 
         private void Err(string phoneId, string reference, string code, string? sessionId = null, string? why = null)

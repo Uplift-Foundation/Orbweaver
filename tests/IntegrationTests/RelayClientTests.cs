@@ -46,7 +46,8 @@ public class RelayClientTests : IAsyncLifetime
 
     private RelayIdentity Identity() => new(_dir, _store);
 
-    private RelayClient Client(RelayIdentity identity, TimeSpan? ping = null, TimeSpan? silence = null, PromptPipeline.Seams? prompts = null)
+    private RelayClient Client(RelayIdentity identity, TimeSpan? ping = null, TimeSpan? silence = null, PromptPipeline.Seams? prompts = null,
+        RelayRemote.Seams? remote = null)
     {
         var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
         {
@@ -55,7 +56,7 @@ public class RelayClientTests : IAsyncLifetime
             MinBackoff = TimeSpan.FromMilliseconds(20),
             MaxBackoff = TimeSpan.FromMilliseconds(100),
         };
-        _client = new RelayClient(identity, options, new WebSocketRelayTransport(), promptSeams: prompts);
+        _client = new RelayClient(identity, options, new WebSocketRelayTransport(), promptSeams: prompts, remoteSeams: remote);
         return _client;
     }
 
@@ -342,6 +343,91 @@ public class RelayClientTests : IAsyncLifetime
         var resolved = OpenAsPhone(resolve, phone, identity);
         Assert.Equal(("resolved", "phone:" + phone.Id), (resolved.GetProperty("t").GetString(), resolved.GetProperty("by").GetString()));
         lock (keys) Assert.Equal(["1"], keys);
+    }
+
+    // CB-316: the v4 round trip through a real socket — a sealed watch from the
+    // phone becomes ok watching and a chat window, an input is typed and
+    // answered, a request whose handler throws costs only itself, usage goes
+    // out as state with the usage ck, and a dropped socket ends every watch.
+    [Fact]
+    public async Task A_watch_and_an_input_round_trip_and_usage_follows_the_readings()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var typed = new List<string>();
+        var screen = PaneFixtures.MacPromptAfterEsc;
+        var lines = new List<TranscriptWatch.WireLine> { TranscriptWatch.Line("user", "hello", 1) };
+        var throwOnce = true;
+        var remote = new RelayRemote.Seams(
+            () => DateTimeOffset.UtcNow, d => Task.Delay(d),
+            s => s.Title == "boom" && throwOnce ? throw new InvalidOperationException("one bad request")
+                : new TranscriptWatcher.Seams(() => "/t", p => new TranscriptWatcher.Stamp(p, lines.Count, DateTime.UnixEpoch), _ => lines),
+            new RelayInput(new RelayInput.Seams(_ => TerminalTyping.Route.Tmux, _ => Task.FromResult<string?>(screen),
+                (_, t) => { lock (typed) typed.Add(t); return Task.FromResult(true); }, _ => Task.CompletedTask)),
+            new RelayRemote.LaunchSeams(false, _ => null, _ => false, () => "/bin/sh", (_, _) => (null, null), _ => null),
+            _ => { });
+        var client = Client(identity, prompts: new PromptPipeline.Seams(_ => Task.FromResult<string?>(null),
+            (_, _) => Task.FromResult(false), (_, _) => Task.FromResult(false), () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }),
+            remote: remote);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("s1", new SessionStatus { Source = SessionSource.ClaudeCode, Title = "proj" }),
+                                 ("s2", new SessionStatus { Source = SessionSource.ClaudeCode, Title = "boom" })]);
+        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1 }));
+        var roster = await _stub.Next(IsEnvelope);
+        Assert.Equal("roster", OpenAsPhone(roster, phone, identity).GetProperty("t").GetString());
+
+        var desktopId = roster.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        ulong counter = 0;
+        Task Send(string id, string body)
+        {
+            var ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, counter++), Encoding.UTF8.GetBytes(body), Aad(phone.Id, desktopId, "action"));
+            return _stub.Send(JsonSerializer.Serialize(new { v = 2, id, from = phone.Id, to = desktopId, ts = 0, @class = "action", push = "none", ck = "", ct }));
+        }
+
+        // A handler that throws is logged and answered with nothing; the next
+        // request on the same connection is still served.
+        await Send("w0", """{"t":"watch","session_id":"s2"}""");
+        await Send("w1", """{"t":"watch","session_id":"s1"}""");
+        var ok = await _stub.Next(IsEnvelope);
+        var okBody = OpenAsPhone(ok, phone, identity);
+        Assert.Equal(("ok", "w1", "watching", 1), (okBody.GetProperty("t").GetString(), okBody.GetProperty("ref").GetString(),
+            okBody.GetProperty("code").GetString(), okBody.GetProperty("total").GetInt32()));
+        var window = await _stub.Next(IsEnvelope);
+        Assert.Equal(("chat", ok.GetProperty("ck").GetString()), (window.GetProperty("class").GetString(), window.GetProperty("ck").GetString()));
+        Assert.Equal("hello", OpenAsPhone(window, phone, identity).GetProperty("lines")[0].GetProperty("text").GetString());
+
+        await Send("i1", """{"t":"input","session_id":"s1","text":"go on"}""");
+        var typedReply = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
+        Assert.Equal(("typed", "i1"), (typedReply.GetProperty("code").GetString(), typedReply.GetProperty("ref").GetString()));
+        lock (typed) Assert.Equal(["go on"], typed);
+
+        // A tail, through the client's own poll loop.
+        lines.Add(TranscriptWatch.Line("assistant", "done", 2));
+        var tail = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
+        Assert.Equal((true, 1), (tail.GetProperty("live").GetBoolean(), tail.GetProperty("from_line").GetInt32()));
+
+        // Usage: one frame for a change, none for the same reading again.
+        var accounts = new List<RelayUsage.Account> { new("me", "claude", "max", 10, 100, null, null, 1, true) };
+        RelayService.UseForTests(null);
+        RelayService.OnUsage(accounts);                                     // no client: nothing, and no throw
+        RelayService.UseForTests(client);
+        try { RelayService.OnUsage(accounts); }
+        finally { RelayService.UseForTests(null); }
+        var usage = await _stub.Next(IsEnvelope);
+        Assert.Equal(("state", "none"), (usage.GetProperty("class").GetString(), usage.GetProperty("push").GetString()));
+        Assert.Equal("usage", OpenAsPhone(usage, phone, identity).GetProperty("t").GetString());
+        client.OnUsage(accounts);
+        client.OnUsage([accounts[0] with { WindowPct = 85 }]);
+        var limit = await _stub.Next(IsEnvelope);
+        Assert.Equal("limit", limit.GetProperty("push").GetString());
+
+        Assert.Equal(1, client.Remote.WatchCount);
+        await _stub.CloseConnection();
+        await Until(() => client.Remote.WatchCount == 0);
     }
 
     // Lead's decision: every pending prompt goes out again on every welcome.
