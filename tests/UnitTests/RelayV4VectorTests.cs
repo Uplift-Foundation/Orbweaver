@@ -82,6 +82,48 @@ public class RelayV4VectorTests
         AssertChunks(V.GetProperty("window").GetProperty("tail"), TranscriptWatch.Tail(Sid, grown, All.Count));
     }
 
+    // Mobile #31: a last row rewritten in place is restated from its own
+    // index, alone or with a row after it, decided by the desk's Diff.
+    [Theory]
+    [InlineData("restated_last_row")]
+    [InlineData("restated_and_appended")]
+    public void Restated_tail_byte_for_byte(string name)
+    {
+        var v = V.GetProperty("window").GetProperty(name);
+        var prev = All.Concat(Lines(V.GetProperty("window").GetProperty("tail_appended_input"))).ToList();
+        var changed = Lines(JsonDocument.Parse("[" + v.GetProperty("changed_row").GetRawText() + "]").RootElement);
+        var now = prev.Take(v.GetProperty("prev_count").GetInt32() - 1).Concat(changed).Concat(Lines(v.GetProperty("appended"))).ToList();
+        Assert.Equal(v.GetProperty("new_count").GetInt32(), now.Count);
+
+        var change = TranscriptWatch.Diff(prev.Count, prev[0], now, prev[^1]);
+        Assert.Equal(TranscriptWatch.Change.Restate, change);
+        AssertChunks(v.GetProperty("windows"), TranscriptWatch.Tail(Sid, now, TranscriptWatch.Start(change, prev.Count)!.Value));
+    }
+
+    public static TheoryData<string> DiffCases()
+    {
+        var d = new TheoryData<string>();
+        foreach (var c in V.GetProperty("window").GetProperty("diff_rule").GetProperty("cases").EnumerateArray()) d.Add(Str(c, "name"));
+        return d;
+    }
+
+    [Theory]
+    [MemberData(nameof(DiffCases))]
+    public void Diff_rule_case_matches_the_vector(string name)
+    {
+        var c = V.GetProperty("window").GetProperty("diff_rule").GetProperty("cases").EnumerateArray().Single(x => Str(x, "name") == name);
+        var prev = Lines(c.GetProperty("prev"));
+        var now = Lines(c.GetProperty("new"));
+        var change = TranscriptWatch.Diff(prev.Count, prev.Count > 0 ? prev[0] : null, now, prev.Count > 0 ? prev[^1] : null);
+        var start = TranscriptWatch.Start(change, prev.Count);
+        var expect = Str(c, "expect");
+        Assert.Equal(expect, start is not null ? "tail" : change == TranscriptWatch.Change.Reset ? "reset" : "none");
+        if (expect == "tail")
+            Assert.Equal((c.GetProperty("from_line").GetInt32(), c.GetProperty("line_count").GetInt32()), (start!.Value, now.Count - start.Value));
+        else
+            Assert.Equal((JsonValueKind.Null, JsonValueKind.Null), (c.GetProperty("from_line").ValueKind, c.GetProperty("line_count").ValueKind));
+    }
+
     [Fact]
     public void Reset_to_5_byte_for_byte() =>
         AssertChunks(V.GetProperty("window").GetProperty("reset_to_5"), TranscriptWatch.Backfill(Sid, All.Take(5).ToList(), reset: true));

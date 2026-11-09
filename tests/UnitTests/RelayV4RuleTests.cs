@@ -138,7 +138,7 @@ public class RelayV4RuleTests
         Assert.Equal(TranscriptWatch.Change.None, TranscriptWatch.Diff(2, L("a", at: 1), now, L("b", at: 1)));
         Assert.True(TranscriptWatch.Same(L("a", 1), L("a", 2)));
         Assert.False(TranscriptWatch.Same(L("a"), TranscriptWatch.Line("assistant", "a", 1)));
-        Assert.False(TranscriptWatch.Same(L("a"), TranscriptWatch.Line("user", "a", 1, error: true)));
+        Assert.True(TranscriptWatch.Same(L("a"), TranscriptWatch.Line("user", "a", 1, error: true)));   // the contract's rule: role and text only
         Assert.False(TranscriptWatch.Same(L("a"), L(new string('a', 9000))));
     }
 

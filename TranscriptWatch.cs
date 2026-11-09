@@ -148,9 +148,18 @@ namespace Orbweaver
             return now.Count > heldCount ? Change.Tail : Change.None;
         }
 
-        // The same row as far as the phone is concerned: role, text and the
-        // error and cut marks. Not `at` (see Diff).
-        internal static bool Same(WireLine a, WireLine b) =>
-            a.Role == b.Role && a.Text == b.Text && a.Error == b.Error && a.Cut == b.Cut;
+        // The same row as far as the diff is concerned: role and text, exactly
+        // frames-v4's window.diff_rule (Mobile #31). Not `at` (see Diff); and
+        // cut follows from the text, so it needs no compare of its own.
+        internal static bool Same(WireLine a, WireLine b) => a.Role == b.Role && a.Text == b.Text;
+
+        // Where the window a change produces starts: the previous count, or
+        // one before it for a restated last row. Null for none and reset.
+        internal static int? Start(Change change, int heldCount) => change switch
+        {
+            Change.Tail => heldCount,
+            Change.Restate => heldCount - 1,
+            _ => null,
+        };
     }
 }

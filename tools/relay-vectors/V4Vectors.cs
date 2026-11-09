@@ -67,7 +67,7 @@ internal static class V4Vectors
                 ["spec"] = "CB-316 architect plan (docs/design/milestone-4-plan.md); contracts/frames-v4.json sealed_plaintext",
                 ["encoding"] = "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; nonce, sig and e are base64url without padding; every plaintext is the canonical form (keys in frames-v4.json's order, the shared escaper, bare integers, no whitespace)",
             },
-            ["_rules"] = "Sealed with session-vectors.json's epoch-0 key and ck key, direction 0 = desktop to phone, 1 = phone to desktop, counters from 100. window: the last 200 parsed lines, chunked greedily so each canonical window is at most 48000 UTF-8 bytes and adding its next line would exceed that; a line's text over 8000 UTF-8 bytes is the longest scalar-boundary prefix of at most 7997 bytes plus U+2026, with cut:true; from_line counts parsed lines from the start of the transcript; total is the parsed-line count when sent; live is false on backfill and pages, true on tail; reset:true means drop everything held. launch: body = canonical {cwd,cli,persona,model,parent_session_id (\"\" when absent),first_message_sha256 (lowercase hex of UTF-8 first_message),nonce,expires_at}; message = UTF-8('orbweaver-launch-v1') || body; sig = P-256 ECDSA SHA-256 raw r||s by the phone's identity key (pairing id_pub); expires_at = mint + 120. ECDSA is randomized: verify sig, never byte-compare it. Replies carry ref = the request envelope's id.",
+            ["_rules"] = "Sealed with session-vectors.json's epoch-0 key and ck key, direction 0 = desktop to phone, 1 = phone to desktop, counters from 100. window: the last 200 parsed lines, chunked greedily so each canonical window is at most 48000 UTF-8 bytes and adding its next line would exceed that; a line's text over 8000 UTF-8 bytes is the longest scalar-boundary prefix of at most 7997 bytes plus U+2026, with cut:true; from_line counts parsed lines from the start of the transcript; total is the parsed-line count when sent; live is false on backfill and pages, true on tail; reset:true means drop everything held. Rows are compared by role and text, never at: a last row rewritten in place is re-sent as a tail window from its own index, and the phone replaces by index (window.restated_last_row, window.diff_rule). launch: body = canonical {cwd,cli,persona,model,parent_session_id (\"\" when absent),first_message_sha256 (lowercase hex of UTF-8 first_message),nonce,expires_at}; message = UTF-8('orbweaver-launch-v1') || body; sig = P-256 ECDSA SHA-256 raw r||s by the phone's identity key (pairing id_pub); expires_at = mint + 120. ECDSA is randomized: verify sig, never byte-compare it. Replies carry ref = the request envelope's id.",
             ["inputs"] = new JsonObject
             {
                 ["desktop_id"] = Desktop, ["phone_id"] = Phone, ["machine"] = Machine, ["session_id"] = SessionId,
@@ -127,6 +127,18 @@ internal static class V4Vectors
             ["page_before_30"] = Windows(TranscriptWatch.Page(SessionId, wire, 30)),
             ["tail"] = Windows(TranscriptWatch.Tail(SessionId, grown, total)),
             ["tail_appended_input"] = new JsonArray(appended.Select(LineNode).ToArray()),
+            // Mobile #31: a last row rewritten in place, alone and with a row
+            // after it — the desk's own Diff decides where each window starts.
+            ["restated_last_row"] = Restated(s, ckSession, grown,
+                appended.SkipLast(1).Append(appended[^1] with { Text = "Edit: tests/UnitTests/File61.cs (+3 \u22121)" }).ToList(), wire),
+            ["restated_and_appended"] = Restated(s, ckSession, grown,
+                appended.SkipLast(1).Append(appended[^1] with { Text = "Edit: tests/UnitTests/File61.cs (+3 \u22121)" })
+                    .Append(("assistant", "Fixed. Rerunning.", T0 + 7 * total + 15, false)).ToList(), wire),
+            ["diff_rule"] = new JsonObject
+            {
+                ["_rule"] = "rows compared by role and text, never at; shrink or a changed first row -> reset; else start = previous count, minus one when the previous last row changed in place; rows from start -> tail; none -> nothing",
+                ["cases"] = DiffCases(),
+            },
             ["reset_to_5"] = Windows(TranscriptWatch.Backfill(SessionId, wire.Take(5).ToList(), reset: true)),
         };
 
@@ -152,6 +164,8 @@ internal static class V4Vectors
                     ("empty", ""), ("escape-byte", "ls\u001b[A"), ("carriage-return", "ls\r"), ("over-8000-bytes", new string('y', 8001)),
                     ("newline-and-tab-allowed", "line one\n\tindented"), ("exactly-8000-bytes", new string('y', 8000)),
                     ("non-ascii-counted-in-bytes", new string('λ', 4001)),
+                    ("c1-csi-u009b", "ls\u009b[A"), ("c1-u0080", "ls\u0080"), ("c1-u009f", "ls\u009f"),
+                    ("u00a0-nbsp-allowed", "ls\u00a0-la"), ("del-u007f", "ls\u007f"),
                 }.Select(c => (JsonNode)new JsonObject { ["name"] = c.Item1, ["text"] = c.Item2, ["expect"] = Bad(c.Item2) }).ToArray()),
         };
 
@@ -374,6 +388,73 @@ internal static class V4Vectors
             lines.Add((role, text, T0 + 7 * i, i == 61));
         }
         return lines;
+    }
+
+    // A restated tail (make_v4_vectors.py restated_boxes): the rows last sent,
+    // the rows now, and the windows the desk's Diff and Tail produce.
+    private static JsonObject Restated(Sealer s, string ck, List<TranscriptWatch.WireLine> prev,
+        List<(string Role, string Text, long At, bool Error)> newTail, List<TranscriptWatch.WireLine> wire)
+    {
+        var now = wire.Concat(newTail.Select(a => TranscriptWatch.Line(a.Role, a.Text, a.At))).ToList();
+        var change = TranscriptWatch.Diff(prev.Count, prev[0], now, prev[^1]);
+        var start = TranscriptWatch.Start(change, prev.Count)
+            ?? throw new InvalidOperationException("a restated case must be a tail, was " + change);
+        var tailFrom = start - wire.Count;
+        var arr = new JsonArray();
+        foreach (var w in TranscriptWatch.Tail(SessionId, now, start))
+        {
+            var doc = JsonDocument.Parse(w).RootElement;
+            arr.Add(With(s.Box(Desktop, Phone, "chat", w, ck),
+                ("from_line", doc.GetProperty("from_line").GetInt32()), ("line_count", doc.GetProperty("lines").GetArrayLength())));
+        }
+        return new JsonObject
+        {
+            ["prev_count"] = prev.Count, ["new_count"] = now.Count,
+            ["changed_row"] = LineNode(newTail[tailFrom]),
+            ["appended"] = new JsonArray(newTail.Skip(tailFrom + 1).Select(LineNode).ToArray()),
+            ["windows"] = arr,
+        };
+    }
+
+    // make_v4_vectors.py diff_cases, decided by the desk's own Diff.
+    private static JsonArray DiffCases()
+    {
+        (string Role, string Text, long At, bool Error) R(int i, string role = "user", string? text = null, long at = 0) =>
+            (role, text ?? $"row {i}", T0 + at, false);
+        List<(string Role, string Text, long At, bool Error)> b = [R(0), R(1, "assistant"), R(2, "system")];
+        var cases = new (string Name, List<(string Role, string Text, long At, bool Error)> Prev, List<(string Role, string Text, long At, bool Error)> New)[]
+        {
+            ("unchanged", b, b),
+            ("last-at-only-changed", b, [.. b.SkipLast(1), b[^1] with { At = T0 + 99 }]),
+            ("appended-two", b, [.. b, R(3), R(4, "assistant")]),
+            ("last-changed-in-place", b, [.. b.SkipLast(1), b[^1] with { Text = "row 2 streamed further" }]),
+            ("last-role-changed", b, [.. b.SkipLast(1), b[^1] with { Role = "assistant" }]),
+            ("last-changed-and-appended", b, [.. b.SkipLast(1), b[^1] with { Text = "row 2 done" }, R(3)]),
+            ("shrank", b, b.Take(2).ToList()),
+            ("first-text-changed", b, [b[0] with { Text = "rewritten" }, .. b.Skip(1)]),
+            ("first-at-only-changed", b, [b[0] with { At = T0 + 5 }, .. b.Skip(1)]),
+            ("first-at-changed-and-appended", b, [b[0] with { At = T0 + 5 }, .. b.Skip(1), R(3)]),
+            ("empty-to-rows", [], b),
+            ("rows-to-empty", b, []),
+        };
+        var arr = new JsonArray();
+        foreach (var (name, prev, now) in cases)
+        {
+            var p = prev.Select(x => TranscriptWatch.Line(x.Role, x.Text, x.At)).ToList();
+            var n = now.Select(x => TranscriptWatch.Line(x.Role, x.Text, x.At)).ToList();
+            var change = TranscriptWatch.Diff(p.Count, p.Count > 0 ? p[0] : null, n, p.Count > 0 ? p[^1] : null);
+            var start = TranscriptWatch.Start(change, p.Count);
+            arr.Add(new JsonObject
+            {
+                ["name"] = name,
+                ["prev"] = new JsonArray(prev.Select(LineNode).ToArray()),
+                ["new"] = new JsonArray(now.Select(LineNode).ToArray()),
+                ["expect"] = start is not null ? "tail" : change == TranscriptWatch.Change.Reset ? "reset" : "none",
+                ["from_line"] = start,
+                ["line_count"] = start is { } st ? n.Count - st : null,
+            });
+        }
+        return arr;
     }
 
     private static JsonNode LineNode((string Role, string Text, long At, bool Error) l)

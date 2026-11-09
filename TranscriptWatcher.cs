@@ -77,10 +77,11 @@ namespace Orbweaver
 
             if (Current() is not { } lines) return [];
             if (!_backfilled) return Hold(lines, TranscriptWatch.Backfill(SessionId, lines));
-            return TranscriptWatch.Diff(_held, _first, lines, _last) switch
+            var change = TranscriptWatch.Diff(_held, _first, lines, _last);
+            return change switch
             {
-                TranscriptWatch.Change.Tail => Hold(lines, TranscriptWatch.Tail(SessionId, lines, _held)),
-                TranscriptWatch.Change.Restate => Hold(lines, TranscriptWatch.Tail(SessionId, lines, _held - 1)),
+                TranscriptWatch.Change.Tail or TranscriptWatch.Change.Restate =>
+                    Hold(lines, TranscriptWatch.Tail(SessionId, lines, TranscriptWatch.Start(change, _held)!.Value)),
                 TranscriptWatch.Change.Reset => Hold(lines, TranscriptWatch.Backfill(SessionId, lines, reset: true)),
                 _ => [],
             };
