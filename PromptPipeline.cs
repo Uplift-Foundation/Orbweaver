@@ -66,9 +66,18 @@ namespace Orbweaver
         // key was never sent — rule 6 again, one step later.
         internal enum PressOutcome { Took, NoEffect, LandedElsewhere, Changed }
 
-        // How long after a press the recapture waits, and how long a tell waits
+        // How long after a press the recapture keeps looking for the dialog to
+        // go away before calling the press NoEffect, and how long a tell waits
         // for the dialog to clear before typing (plan §4: ≤ 4 s).
         internal static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(500);
+
+        // How often that recapture looks. It used to wait the whole SettleDelay
+        // and look once, so every answer cost ~500 ms between the press and the
+        // resolve even when the dialog was gone in a frame (gate (b): press to
+        // resolved measured 548 ms on a Mac, 516 ms on Windows). Now it looks
+        // every SettlePoll and resolves on the first look that shows the dialog
+        // gone; SettleDelay is only the patience before NoEffect.
+        internal static readonly TimeSpan SettlePoll = TimeSpan.FromMilliseconds(75);
 
         // The settle check (lead's fix for QA's blank-gap rule-6 press): the
         // gate's fresh capture, then this long, then a second capture, and the
@@ -364,9 +373,15 @@ namespace Orbweaver
         private async Task<PressOutcome> PressOnceAsync(SessionStatus status, PendingPrompt pending, string requestId, string key)
         {
             if (await PressAsync(status, pending, requestId, key).ConfigureAwait(false) is { } early) return early;
-            await _seams.Delay(SettleDelay).ConfigureAwait(false);
-            return AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false))
-                ? PressOutcome.Took : PressOutcome.NoEffect;
+            // The same test as before (the approved dialog's hash is gone), asked
+            // sooner and again: a dialog that is still up after SettleDelay of
+            // looks is as stale as it was after one look at SettleDelay.
+            for (var waited = TimeSpan.Zero; waited < SettleDelay; waited += SettlePoll)
+            {
+                await _seams.Delay(SettlePoll).ConfigureAwait(false);
+                if (AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false))) return PressOutcome.Took;
+            }
+            return PressOutcome.NoEffect;
         }
 
         // tell: press the option, wait for the dialog to clear (the CLI then
