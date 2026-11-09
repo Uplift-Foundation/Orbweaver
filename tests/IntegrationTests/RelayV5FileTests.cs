@@ -165,6 +165,18 @@ public class RelayV5FileTests : IDisposable
         store.Offer(persona.AvatarPath!);
         var row = Assert.Single(RelayPersonaRows.Rows([], persona, store.Offer));
         Assert.Equal((true, "Aurora", PersonaImageBundle.HashOf(File.ReadAllBytes(gif))), (row.Default, row.Name, row.ImageHash));
+
+        // The paired negative at the frame level: a home with no CLAUDE.md and
+        // config dirs that name nobody give a personas frame with no default row.
+        var bare = Path.Combine(_dir, "bare-home");
+        Directory.CreateDirectory(Path.Combine(bare, ".claude"));
+        File.WriteAllText(Path.Combine(bare, ".claude", "CLAUDE.md"), "# Global notes\n\nNothing about who I am.\n");
+        var none = RelayService.ResolveDefault(bare, [Path.Combine(bare, ".claude")]);
+        Assert.Null(none.Name);
+        Assert.Equal("""{"t":"personas","personas":[]}""", PersonaFrames.Personas(RelayPersonaRows.Rows([], none, store.Offer)));
+        Assert.DoesNotContain("\"default\"", PersonaFrames.Personas(RelayPersonaRows.Rows(
+            [new RelaySession("s", "claude", "t", "/c", "idle", null, new RelayPersona("Vector", "VE", null, PersonaFrames.PersonaId(null, "Vector")))],
+            none, store.Offer)));
     }
 
     [Fact]
