@@ -133,7 +133,8 @@ namespace Orbweaver
             // The desktop's account choices for a CLI, and the one last used in its New Chat
             // dialog. Null seams mean no accounts: a request naming one is unknown_account.
             Func<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>>? Choices = null,
-            Func<NewChatCli, string?>? LastUsed = null);
+            Func<NewChatCli, string?>? LastUsed = null,
+            Func<NewChatCli, string?>? Designated = null);
 
         private readonly Seams _s;
         private readonly NonceWindow _nonces;
@@ -165,7 +166,7 @@ namespace Orbweaver
             if (!IsAbsolute(cwd) || !_s.DirectoryExists(cwd)) { Err(phone, reference, "unknown_cwd"); return; }
             if (model.Length > 0 && !LaunchCommand.ModelShape.IsMatch(model)) { Err(phone, reference, "bad_model"); return; }
             string? profileDir = null;
-            if (!PhoneAccounts.TryResolve(cli, account, _s.Choices?.Invoke(cli) ?? [], _s.LastUsed?.Invoke(cli), out profileDir))
+            if (!PhoneAccounts.TryResolve(cli, account, _s.Choices?.Invoke(cli) ?? [], _s.Designated?.Invoke(cli), _s.LastUsed?.Invoke(cli), out profileDir))
             { Err(phone, reference, "unknown_account"); return; }
             if (persona.Length > 0) { Err(phone, reference, "unsupported_persona"); return; }
             if (parent.Length > 0)

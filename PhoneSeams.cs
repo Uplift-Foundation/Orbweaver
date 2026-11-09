@@ -82,6 +82,8 @@ namespace Orbweaver
 
         internal static string? LastUsed(NewChatCli cli) => OrbweaverSettings.NewChatLastProfileFor(cli);
 
+        internal static string? Designated(NewChatCli cli) => OrbweaverSettings.PhoneLaunchProfileFor(cli);
+
         internal static string? Locate(NewChatCli cli) => cli switch
         {
             NewChatCli.Codex => CodexBinary.Locate(),

@@ -171,7 +171,7 @@ namespace Orbweaver
             if (seams is null) Phone.Launch = new PhoneLaunch(new PhoneLaunch.Seams(
                 _now, delay => Task.Delay(delay), Directory.Exists, PhoneSeams.Locate, _phoneSeams.Find, _phoneSeams.Start,
                 _phoneSeams.FindNew, PhoneSeams.TypeAsync, SendToPhone, OperatingSystem.IsWindows,
-                line => MirrorLog.Say("relay", line), c => AccountChoices(c), PhoneSeams.LastUsed), Prompts.Nonces);
+                line => MirrorLog.Say("relay", line), c => AccountChoices(c), PhoneSeams.LastUsed, PhoneSeams.Designated), Prompts.Nonces);
             AccountOrbs.Polled += OnPolled;
             _link.RequestReceived += (phone, id, idPub, frame) => Defer(() => _ = HandleRequestAsync(phone, id, idPub, frame));
             _link.PhoneWentOffline += phone => Defer(() => PhoneOffline(phone));

@@ -30,6 +30,7 @@ public class PhoneLaunchTests
         internal readonly List<string> Typed = new();
         internal List<NewChatAccounts.Choice> Accounts = [new("Default (~/.claude)", null), new("~/.claude-kmart", ".claude-kmart"), new("~/.claude-uplift", ".claude-uplift")];
         internal string? Last = ".claude-uplift";
+        internal string? Designated;
         internal PhoneLaunch Launch;
 
         internal Rig()
@@ -45,7 +46,7 @@ public class PhoneLaunchTests
                 (_, text) => { Typed.Add(text); return Task.FromResult(Typing()); },
                 (phone, cls, ck, plain) => { Sent.Add((cls, ck, plain)); return true; },
                 () => Windows,
-                _ => { }, _ => Accounts, _ => Last), Nonces);
+                _ => { }, _ => Accounts, _ => Last, _ => Designated), Nonces);
         }
 
         internal Task Run(JsonElement fields, string reference = "req1")
@@ -349,6 +350,26 @@ public class PhoneLaunchTests
         var explicitDefault = new Rig();
         await explicitDefault.Run(Base_(d => d["account"] = "default"));
         Assert.Null(explicitDefault.Started!.ProfileDir);
+    }
+
+    [Fact]
+    public async Task ADesignatedDefaultBeatsTheLastUsedAndALaunchThatNamesOneBeatsBoth()
+    {
+        var designated = new Rig { Designated = ".claude-kmart", Last = ".claude-uplift" };
+        await designated.Run(Base_());
+        Assert.Equal(".claude-kmart", designated.Started!.ProfileDir);
+
+        var named = new Rig { Designated = ".claude-kmart" };
+        await named.Run(Base_(d => d["account"] = ".claude-uplift"));
+        Assert.Equal(".claude-uplift", named.Started!.ProfileDir);
+
+        var theCliDefault = new Rig { Designated = "default", Last = ".claude-uplift" };
+        await theCliDefault.Run(Base_());
+        Assert.Null(theCliDefault.Started!.ProfileDir);
+
+        var unlisted = new Rig { Designated = ".claude-gone" };
+        await unlisted.Run(Base_());
+        Assert.Equal("unknown_account", unlisted.Code);
     }
 
     [Fact]

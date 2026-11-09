@@ -31,14 +31,15 @@ namespace Orbweaver
             "{\"t\":\"accounts\",\"accounts\":[" + string.Join(",", accounts.Select(a =>
                 "{\"cli\":" + Str(a.Cli) + ",\"id\":" + Str(a.Id) + ",\"label\":" + Str(a.Label) + "}")) + "]}";
 
-        // The profile directory a launch runs under: what the phone chose, else the last
-        // account used in the desktop's New Chat dialog, else the CLI's default. Null is
+        // The profile directory a launch runs under: what the phone chose, else the account
+        // the user designated for phone launches, else the last account used in the desktop's
+        // New Chat dialog, else the CLI's default. Null is
         // "the default directory". Returns false for an account the desktop does not list.
         internal static bool TryResolve(NewChatCli cli, string asked, IReadOnlyList<NewChatAccounts.Choice> choices,
-            string? lastUsed, out string? profileDir)
+            string? designated, string? lastUsed, out string? profileDir)
         {
             profileDir = null;
-            if (asked.Length == 0) asked = lastUsed ?? Default;
+            if (asked.Length == 0) asked = designated ?? lastUsed ?? Default;
             if (asked == Default) return true;
             var hit = choices.FirstOrDefault(c => c.ProfileDir is not null && string.Equals(c.ProfileDir, asked, StringComparison.OrdinalIgnoreCase));
             if (hit is null) return false;
