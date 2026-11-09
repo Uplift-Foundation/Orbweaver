@@ -141,6 +141,57 @@ public class RelayV4RuleTests
         Assert.False(char.IsHighSurrogate(fitted.Text[^2]));
     }
 
+    // An already-cut line (CutText kept 7,997 bytes and added the ellipsis)
+    // whose text is control characters escapes to about 48 KB: FitAlone drops
+    // the old ellipsis, cuts further and adds one back — never two.
+    [Fact]
+    public void An_already_cut_escape_heavy_line_is_cut_again_to_fit_with_one_ellipsis()
+    {
+        var cut = TranscriptWatch.Line("system", new string('\u0001', 9000), 1);
+        Assert.True(cut.Cut);
+        var fitted = TranscriptWatch.FitAlone(cut, "s", 1, false, false);
+        Assert.True(fitted.Cut);
+        Assert.True(fitted.Text.Length < cut.Text.Length);
+        Assert.Single(fitted.Text, '\u2026');
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(TranscriptWatch.Window("s", 0, 1, false, false, [TranscriptWatch.LineJson(fitted)]))
+                    <= TranscriptWatch.MaxWindowBytes);
+    }
+
+    // Emoji right at the cut point: whichever side of a surrogate pair the
+    // search lands on, no lone surrogate survives. Swept over the length of
+    // the control-character run so the cut falls both mid-pair and between
+    // pairs.
+    [Fact]
+    public void A_cut_landing_inside_a_surrogate_pair_backs_off_to_whole_characters()
+    {
+        var backedOff = 0;
+        for (var run = 7960; run < 8000; run++)
+        {
+            var text = new string('\u0001', run) + string.Concat(Enumerable.Repeat("🙂", 200));
+            var fitted = TranscriptWatch.FitAlone(new TranscriptWatch.WireLine("user", text, 1, false, false), "s", 1, false, false);
+            var kept = fitted.Text[..^1];
+            for (var i = 0; i < kept.Length; i++)
+            {
+                if (char.IsHighSurrogate(kept[i])) Assert.True(i + 1 < kept.Length && char.IsLowSurrogate(kept[i + 1]), $"lone high surrogate at {i}, run {run}");
+                if (char.IsLowSurrogate(kept[i])) Assert.True(i > 0 && char.IsHighSurrogate(kept[i - 1]), $"lone low surrogate at {i}, run {run}");
+            }
+            Assert.True(System.Text.Encoding.UTF8.GetByteCount(TranscriptWatch.Window("s", 0, 1, false, false, [TranscriptWatch.LineJson(fitted)]))
+                        <= TranscriptWatch.MaxWindowBytes);
+
+            // The control that the sweep reached the arm at all: one unit more —
+            // the high surrogate — would still have fitted (FitAlone measures
+            // with the widest from_line), so the search stopped mid-pair and
+            // the back-off is what removed it.
+            if (kept.Length < text.Length && char.IsHighSurrogate(text[kept.Length]))
+            {
+                var withHigh = fitted with { Text = text[..(kept.Length + 1)] + "\u2026" };
+                if (System.Text.Encoding.UTF8.GetByteCount(TranscriptWatch.Window("s", long.MaxValue, 1, false, false, [TranscriptWatch.LineJson(withHigh)]))
+                    <= TranscriptWatch.MaxWindowBytes) backedOff++;
+            }
+        }
+        Assert.True(backedOff > 0, "the sweep never cut mid-pair");
+    }
+
     [Fact]
     public void Diff_covers_every_arm()
     {
