@@ -1113,6 +1113,7 @@ public class RelayLinkTests : IDisposable
     [InlineData("""{"t":"push-ack","request_id":"01JC9R0A5N2Q7W8X3E4T6Y9ZBD","at_ms":"1"}""")]
     [InlineData("""{"t":"push-ack","request_id":"01JC9R0A5N2Q7W8X3E4T6Y9ZBD"}""")]
     [InlineData("""[1,2]""")]
+    [InlineData("""{"t":"push-ack","request_id":"01JC9R0A5N2Q7W8X3E4T6Y9ZBD","at_ms":1,"extra":true}""")]   // exactly three keys
     public void Anything_but_an_exact_push_ack_on_control_is_ignored(string body)
     {
         var (link, _, phone, notes, _) = Paired();

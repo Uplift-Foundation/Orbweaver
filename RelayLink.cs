@@ -553,14 +553,16 @@ namespace Orbweaver
 
         private static readonly System.Text.RegularExpressions.Regex UlidShape = new("^[0-9A-HJKMNP-TV-Z]{26}$");
 
-        // A push-ack's plaintext ct: base64 of {"t":"push-ack","request_id":<ULID>,"at_ms":N}.
-        // Null for anything else, including a well-formed JSON of another shape.
+        // A push-ack's plaintext ct: base64 of {"t":"push-ack","request_id":<ULID>,"at_ms":N}
+        // and exactly those three keys, the relay's own rule for the one unsealed
+        // ct. Null for anything else, including the right three plus another.
         internal static (string RequestId, long AtMs)? ParsePushAck(string ct)
         {
             byte[] raw;
             try { raw = Convert.FromBase64String(ct); }
             catch (FormatException) { return null; }
-            if (Json(raw) is not { } j || Str(j, "t") != "push-ack" || Str(j, "request_id") is not { } rid || !UlidShape.IsMatch(rid)
+            if (Json(raw) is not { } j || j.ValueKind != JsonValueKind.Object || j.EnumerateObject().Count() != 3
+                || Str(j, "t") != "push-ack" || Str(j, "request_id") is not { } rid || !UlidShape.IsMatch(rid)
                 || !j.TryGetProperty("at_ms", out var at) || at.ValueKind != JsonValueKind.Number || !at.TryGetInt64(out var ms))
                 return null;
             return (rid, ms);
