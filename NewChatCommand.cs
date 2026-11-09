@@ -97,6 +97,40 @@ namespace Orbweaver
         // Pure: it only builds a ProcessStartInfo and starts nothing, so a
         // test can assert on FileName/ArgumentList/WorkingDirectory directly,
         // the way WindowsAttachLaunchTests already does for the attach case.
+        // CB-316: the arguments a phone's launch adds after the binary — the
+        // model, and for Claude Code the lead it joins. Each CLI's own spelling
+        // (claude --model, codex -m, grok -m, all verified against their
+        // --help), and nothing for an empty value, so a launch with neither is
+        // exactly the desk's New Chat. --parent-session-id is the flag
+        // AgentTeam reads off the process to link the new orb to its lead
+        // (measured on a hand launch, CB-316); the gate refuses it for the
+        // other two CLIs before this is reached.
+        internal static List<string> LaunchArgs(NewChatCli cli, string model, string parentSessionId)
+        {
+            var args = new List<string>();
+            if (model.Length > 0)
+            {
+                args.Add(cli == NewChatCli.ClaudeCode ? "--model" : "-m");
+                args.Add(model);
+            }
+            if (parentSessionId.Length > 0 && cli == NewChatCli.ClaudeCode)
+            {
+                args.Add("--parent-session-id");
+                args.Add(parentSessionId);
+            }
+            return args;
+        }
+
+        // The Mac command line for a phone's launch: the binary and its
+        // arguments, each shell-quoted, run by the user's login shell so a
+        // tmux server this app started (with launchd's bare PATH) still finds
+        // node for Codex and whatever else the user's profile puts on PATH.
+        internal static string LaunchLine(string shell, string binaryPath, IReadOnlyList<string> args)
+        {
+            var inner = "exec " + string.Join(" ", new[] { binaryPath }.Concat(args).Select(TerminalScripts.ShellQuote));
+            return TerminalScripts.ShellQuote(shell) + " -lc " + TerminalScripts.ShellQuote(inner);
+        }
+
         internal static ProcessStartInfo? GeneralWindowsStartInfo(
             string? exe, string cwd, IReadOnlyList<string>? extraArgs, bool useWindowsTerminal)
         {

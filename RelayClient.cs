@@ -105,7 +105,8 @@ namespace Orbweaver
 
         internal RelayClient(RelayIdentity identity, Options options, IRelayTransport transport,
             HttpMessageHandler? http = null, Func<DateTimeOffset>? now = null,
-            Func<TimeSpan, CancellationToken, Task>? delay = null, PromptPipeline.Seams? promptSeams = null)
+            Func<TimeSpan, CancellationToken, Task>? delay = null, PromptPipeline.Seams? promptSeams = null,
+            RelayRemote.Seams? remoteSeams = null)
         {
             _identity = identity;
             _options = options;
@@ -115,7 +116,7 @@ namespace Orbweaver
             _now = now ?? (() => DateTimeOffset.UtcNow);
             _eventPump = Task.Run(PumpEventsAsync);
             _link = new RelayLink(identity, new RelaySessionBook(), _now,
-                options.Platform, options.AppVersion, options.RelayHost);
+                options.Platform, options.AppVersion, options.RelayHost) { Machine = options.DesktopName };
 
             // Raised inside RelayLink, under the lock: anything that reaches
             // outside this class is deferred until the lock is released.
@@ -139,6 +140,13 @@ namespace Orbweaver
             // ResendPendingAsync for why every one, not only the unsent).
             _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
             _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
+
+            // CB-316: watch / unwatch / input / launch, carried out off the
+            // event pump like an answer, never under the lock. Launches share
+            // the answer gate's nonce table (one per phone, one hour).
+            Remote = new RelayRemote(remoteSeams ?? DefaultRemoteSeams(_now), new RemoteSender(this), Prompts.Nonces);
+            _link.RequestReceived += (phone, idPub, request) => Defer(() => _ = HandleQuietly(phone, idPub, request));
+            _link.PhoneWentOffline += phone => Defer(() => Remote.PhoneOffline(phone));
             _link.PushAcked += (phone, id, atMs) =>
             {
                 MirrorLog.Say("relay", $"push-ack {id} from {phone} at_ms={atMs}");
@@ -152,6 +160,62 @@ namespace Orbweaver
         }
 
         internal PromptPipeline Prompts { get; }
+
+        internal RelayRemote Remote { get; }
+
+        // A request's own failure is logged and costs that request only.
+        private async Task HandleQuietly(string phone, byte[] idPub, RelayRequest request)
+        {
+            try { await Remote.HandleAsync(phone, idPub, request).ConfigureAwait(false); }
+            catch (Exception ex) { MirrorLog.Say("relay", $"request {RelayLink.Safe(request.Ref)} threw {ex.GetType().Name}"); }
+        }
+
+        private sealed class RemoteSender(RelayClient client) : IRemoteSender
+        {
+            public void Reply(string phoneId, string? sessionId, string plaintext) =>
+                client.Dispatch(() => client._link.SendReply(phoneId, sessionId, plaintext));
+
+            public void Window(string phoneId, string sessionId, string plaintext) =>
+                client.Dispatch(() => client._link.SendWindow(phoneId, sessionId, plaintext));
+        }
+
+        // The real desk: the session's own transcript and parser, the
+        // terminal routes and screen readers the amber loop already uses, the
+        // fresh CLI locate New Chat uses, tmux on the Mac and conhost on
+        // Windows. Excluded: each is one line into something that runs real
+        // processes; RelayRemote, RelayInput and LaunchGate are tested.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static RelayRemote.Seams DefaultRemoteSeams(Func<DateTimeOffset> now) => new(
+            now,
+            Task.Delay,
+            TranscriptWatcher.For,
+            new RelayInput(new RelayInput.Seams(
+                TerminalFocuser.RouteFor,
+                status => ScreenReaders.For(status)?.ReadAsync(status) ?? Task.FromResult<string?>(null),
+                TerminalFocuser.SendTextAndSubmit,
+                Task.Delay)),
+            new RelayRemote.LaunchSeams(
+                OperatingSystem.IsWindows(),
+                cli => NewChatLauncher.LocateFresh(LaunchGate.CliFor(cli)),
+                Directory.Exists,
+                () => Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } sh ? sh : "/bin/zsh",
+                TerminalLauncher.PlaceForPhone,
+                TerminalLauncher.StartConsole),
+            line => MirrorLog.Say("relay", line));
+
+        // CB-316: the account readings the usage orbs just drew. Projected,
+        // compared with what was last sent, and sent only when a number a phone
+        // would draw changed — or once per account that crossed 80%, with the
+        // limit push. Called on the UI thread after each poll.
+        internal void OnUsage(IReadOnlyList<RelayUsage.Account> accounts)
+        {
+            IReadOnlyList<RelayUsageTracker.Send> sends;
+            lock (_gate) sends = _usage.Next(accounts);
+            foreach (var send in sends)
+                Dispatch(() => _link.SendUsage(send.Plaintext, send.Crossing is { } c ? RelayUsage.LimitE(c) : null));
+        }
+
+        private readonly RelayUsageTracker _usage = new();
 
         // The relay's answer to each amber (request id, pushed / push_throttled /
         // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on
@@ -176,8 +240,11 @@ namespace Orbweaver
         // The whole scan, for the prompt watcher; the roster gets its
         // projection through OnScanned.
         // Nothing is captured for a desktop with no phone to send a prompt to.
-        internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot) =>
-            _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
+        internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
+        {
+            Remote.OnStatuses(snapshot);
+            return _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
+        }
 
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
@@ -217,6 +284,7 @@ namespace Orbweaver
                 _run = new CancellationTokenSource();
                 var token = _run.Token;
                 _loop = Task.Run(() => RunAsync(token));
+                _ = Task.Run(() => Remote.RunAsync(token));
             }
         }
 
@@ -347,6 +415,7 @@ namespace Orbweaver
                     _outbox = null;
                     _connection = null;
                 }
+                Remote.Disconnected();
                 outbox.Writer.TryComplete();
                 connection.Cancel();
                 await Task.WhenAll(Quietly(writer), Quietly(pinger)).ConfigureAwait(false);

@@ -44,7 +44,12 @@ namespace Orbweaver
             Cli == other.Cli && Cwd == other.Cwd && ParentSessionId == other.ParentSessionId && Persona == other.Persona;
     }
 
-    internal sealed record RelayDelta(string SessionId, string? State, string? Title, DateTimeOffset? Since, bool Removed);
+    // From is the state the session left (null when the state did not change):
+    // CB-316's `done` push rides only the delta that moves generating -> idle.
+    internal sealed record RelayDelta(string SessionId, string? State, string? Title, DateTimeOffset? Since, bool Removed, string? From = null)
+    {
+        internal bool Finished => From == RelayRoster.Generating && State == RelayRoster.Idle;
+    }
 
     internal readonly record struct RelayUpdate(bool NeedsRoster, IReadOnlyList<RelayDelta> Deltas)
     {
@@ -183,6 +188,8 @@ namespace Orbweaver
     {
         private readonly Dictionary<string, RelaySession> _rows = new(StringComparer.Ordinal);
 
+        internal RelaySession? Find(string sessionId) => _rows.GetValueOrDefault(sessionId);
+
         internal IReadOnlyList<RelaySession> Snapshot() =>
             _rows.Values.OrderBy(r => r.SessionId, StringComparer.Ordinal).ToList();
 
@@ -214,7 +221,8 @@ namespace Orbweaver
                         stateChanged ? row.State : null,
                         titleChanged ? row.Title : null,
                         stateChanged ? since : null,
-                        Removed: false));
+                        Removed: false,
+                        From: stateChanged ? old.State : null));
             }
 
             // Gone from the scan: one last delta saying it ended, and the row
@@ -249,6 +257,16 @@ namespace Orbweaver
         internal byte[]? Delta(RelayDelta delta)
         {
             if (Seq == 0) return null;
+            Seq++;
+            return RelayRoster.DeltaJson(Seq, delta);
+        }
+
+        // CB-316: the done delta goes to a phone that is offline too, because
+        // the push is what reaches a backgrounded phone. Numbered even before
+        // this process sent that phone a roster: the phone sees the gap and
+        // resyncs, and it is sent a fresh roster on coming online anyway.
+        internal byte[] DeltaForPush(RelayDelta delta)
+        {
             Seq++;
             return RelayRoster.DeltaJson(Seq, delta);
         }

@@ -245,7 +245,19 @@ namespace Orbweaver
             // failed is not news about usage, and removing the orb would make a
             // network blink look like an account being deleted.
             Redraw(now);
+            UsageApplied?.Invoke(RelayAccounts());
         }
+
+        // CB-316: every poll's readings, as the phone's usage frame sees them —
+        // only sources the user has switched on, named by the account email
+        // where the card knows it. RelayService forwards them to the relay.
+        internal static event Action<IReadOnlyList<RelayUsage.Account>>? UsageApplied;
+
+        internal IReadOnlyList<RelayUsage.Account> RelayAccounts() =>
+            _readings
+                .Where(p => SourceEnabled(p.Value.Source))
+                .Select(p => RelayUsage.From(p.Value, _emails.GetValueOrDefault(p.Key)))
+                .ToList();
 
         internal void Redraw(DateTimeOffset now)
         {
