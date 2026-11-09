@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
@@ -60,6 +61,75 @@ namespace Orbweaver
             {
                 return null;
             }
+        }
+
+        // ---- launch ------------------------------------------------------------
+
+        private HashSet<string> _before = new(StringComparer.Ordinal);
+
+        internal static string? Locate(NewChatCli cli) => cli switch
+        {
+            NewChatCli.Codex => CodexBinary.Locate(),
+            NewChatCli.Grok => GrokBinary.Locate(),
+            _ => ClaudeBinary.Locate(),
+        };
+
+        // Starts the CLI where it can be typed into: a conhost window on Windows
+        // (reached later by AttachConsole on the CLI's pid), tmux on a Mac or
+        // Linux box (a window in the user's attached session when there is one,
+        // else a detached session named orbweaver) — never Terminal.app.
+        internal (string? Code, string? Why) Start(LaunchPlan plan, string binary)
+        {
+            lock (_gate) _before = [.. _sessions.Keys];
+            try
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    var info = LaunchCommand.Windows(plan, binary, configDir: null);
+                    if (info is null) return ("launch_failed", "that CLI is a script shim, which cannot carry a message safely");
+                    using var started = Process.Start(info);
+                    return started is null ? ("launch_failed", "the console did not start") : (null, null);
+                }
+
+                var tmux = TerminalLauncher.ResolveTmux();
+                if (tmux is null) return ("no_terminal", "tmux is not installed");
+                var command = LaunchCommand.Shell(plan, binary, configDir: null);
+                if (!string.IsNullOrEmpty(TerminalLauncher.PlaceInOwnTmuxWindow(command, plan.Cwd))) return (null, null);
+
+                // No attached tmux client: a detached session named orbweaver, and
+                // later launches add windows to it.
+                var hasSession = RunTmux(tmux, "has-session", "-t", "orbweaver");
+                var ok = hasSession
+                    ? RunTmux(tmux, "new-window", "-d", "-t", "orbweaver:", "-c", plan.Cwd, command)
+                    : RunTmux(tmux, "new-session", "-d", "-s", "orbweaver", "-c", plan.Cwd, command);
+                return ok ? (null, null) : ("launch_failed", "tmux refused to start the session");
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+            {
+                return ("launch_failed", e.GetType().Name);
+            }
+        }
+
+        private static bool RunTmux(string tmux, params string[] args)
+        {
+            var info = new ProcessStartInfo(tmux) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in args) info.ArgumentList.Add(a);
+            using var p = Process.Start(info);
+            if (p is null) return false;
+            p.WaitForExit(10000);
+            return p.HasExited && p.ExitCode == 0;
+        }
+
+        // A session of this cli in this folder that was not in the book when the
+        // launch began. cwd is compared the way the OS does: ordinal on a Mac,
+        // case-blind on Windows.
+        internal PhoneService.Session? FindNew(NewChatCli cli, string cwd, DateTimeOffset since)
+        {
+            var source = cli switch { NewChatCli.Codex => SessionSource.Codex, NewChatCli.Grok => SessionSource.Grok, _ => SessionSource.ClaudeCode };
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            lock (_gate)
+                return _sessions.Values.FirstOrDefault(s => !_before.Contains(s.Id) && s.Status.Source == source
+                    && string.Equals(s.Status.Cwd.TrimEnd('/', '\\'), cwd.TrimEnd('/', '\\'), comparison));
         }
 
         internal static bool CanType(SessionStatus status) =>

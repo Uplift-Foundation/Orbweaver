@@ -168,8 +168,12 @@ namespace Orbweaver
                 _phoneSeams.Find, _phoneSeams.Load, PhoneSeams.CanType, PhoneSeams.TypeAsync,
                 SendToPhone, line => MirrorLog.Say("relay", line)));
             _link.DesktopName = _options.DesktopName;
+            if (seams is null) Phone.Launch = new PhoneLaunch(new PhoneLaunch.Seams(
+                _now, delay => Task.Delay(delay), Directory.Exists, PhoneSeams.Locate, _phoneSeams.Find, _phoneSeams.Start,
+                _phoneSeams.FindNew, PhoneSeams.TypeAsync, SendToPhone, OperatingSystem.IsWindows,
+                line => MirrorLog.Say("relay", line)), Prompts.Nonces);
             AccountOrbs.Polled += OnPolled;
-            _link.RequestReceived += (phone, id, idPub, frame) => Defer(() => _ = HandleRequestAsync(phone, id, frame));
+            _link.RequestReceived += (phone, id, idPub, frame) => Defer(() => _ = HandleRequestAsync(phone, id, idPub, frame));
             _link.PhoneWentOffline += phone => Defer(() => PhoneOffline(phone));
             // 250 ms is the spec's debounce: rows appended within it become one window.
             _tail = new System.Threading.Timer(_ => TailTick(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
@@ -184,9 +188,9 @@ namespace Orbweaver
         private bool SendToPhone(string phoneId, string cls, string? ckSession, string plaintext) =>
             Dispatch(() => _link.SendToPhone(phoneId, cls, ckSession, plaintext));
 
-        private async Task HandleRequestAsync(string phone, string id, System.Text.Json.JsonElement frame)
+        private async Task HandleRequestAsync(string phone, string id, byte[] idPub, System.Text.Json.JsonElement frame)
         {
-            try { await Phone.OnRequestAsync(phone, id, frame).ConfigureAwait(false); }
+            try { await Phone.OnRequestAsync(phone, id, frame, idPub).ConfigureAwait(false); }
             catch (Exception e) { MirrorLog.Say("relay", $"phone request failed: {e.GetType().Name}"); }
         }
 

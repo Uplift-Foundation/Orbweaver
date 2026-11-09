@@ -37,19 +37,25 @@ namespace Orbweaver
         private readonly Seams _s;
         private readonly Dictionary<(string Phone, string Session), List<PhoneFrames.Line>> _watches = new();
 
+        // Launch is a signed request with its own checks; null leaves it unanswered
+        // (a build without the real terminal seams).
+        internal PhoneLaunch? Launch { get; set; }
+
         internal PhoneService(Seams seams) { _s = seams; }
 
         internal int WatchCount => _watches.Count;
 
         // ---- what the phone asks ---------------------------------------------
 
-        internal Task OnRequestAsync(string phoneId, string requestId, JsonElement frame)
+        internal Task OnRequestAsync(string phoneId, string requestId, JsonElement frame, byte[]? phoneIdPublic = null)
         {
             switch (Str(frame, "t"))
             {
                 case "watch": Watch(phoneId, requestId, frame); break;
                 case "unwatch": Unwatch(phoneId, requestId, frame); break;
                 case "input": return InputAsync(phoneId, requestId, frame);
+                case "launch" when Launch is not null && phoneIdPublic is not null:
+                    return Launch.HandleAsync(phoneId, requestId, phoneIdPublic, frame);
             }
             return Task.CompletedTask;
         }

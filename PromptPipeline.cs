@@ -103,6 +103,9 @@ namespace Orbweaver
         private readonly Dictionary<string, Live> _live = new(StringComparer.Ordinal);   // by session id
         private readonly NonceWindow _nonces = new();
 
+        // One table per phone across answers and launches (frames-v4 launch).
+        internal NonceWindow Nonces => _nonces;
+
         internal PromptPipeline(Seams seams, IPromptSender send, string machine)
         {
             _seams = seams;
