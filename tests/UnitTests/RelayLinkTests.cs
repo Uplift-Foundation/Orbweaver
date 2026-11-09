@@ -1301,4 +1301,24 @@ public class RelayLinkTests : IDisposable
         Assert.Equal("proj on Mac", RelayLink.DoneLabel("proj", "Mac"));
         Assert.Equal("Mac", RelayLink.DoneLabel(" ", "Mac"));
     }
+
+    // CB-316: the envelope is written without HTML-safe escaping, so a base64
+    // `+` stays one byte, and an envelope over the relay's frame cap is refused
+    // at the send boundary — said in the log by size and class — never sent.
+    [Fact]
+    public void A_full_window_fits_the_relays_frame_and_an_oversize_one_is_never_sent()
+    {
+        var (link, _, phone, notes, _) = Paired();
+        var full = new string('x', TranscriptWatch.MaxWindowBytes);
+        var frame = link.SendWindow(phone.Id, "s1", full).Single();
+        Assert.DoesNotContain("\\u002B", frame);
+        Assert.Contains('+', J(frame).GetProperty("ct").GetString()!);
+        Assert.True(Encoding.UTF8.GetByteCount(frame) <= RelayLink.MaxFrameBytes);
+
+        Assert.Empty(link.SendWindow(phone.Id, "s1", new string('x', 50_000)));
+        Assert.Contains(notes, n => n.StartsWith("envelope chat of ", StringComparison.Ordinal) && n.EndsWith("; not sent", StringComparison.Ordinal));
+
+        // The next frame is unaffected.
+        Assert.Single(link.SendWindow(phone.Id, "s1", "{}"));
+    }
 }

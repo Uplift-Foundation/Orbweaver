@@ -805,7 +805,17 @@ namespace Orbweaver
             var desktopId = _identity.DeviceId!;
             var ct = RelayCrypto.Seal(c.KeyFor(epoch), RelayCrypto.Nonce(RelayCrypto.DesktopToPhone, epoch, counter),
                 plaintext, RelayCrypto.Aad(desktopId, c.Phone.PhoneId, cls));
-            return Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null, id, push, e);
+            var envelope = Envelope(desktopId, c.Phone.PhoneId, cls, ck, ct, null, id, push, e);
+            // The send boundary: a frame the relay would close the socket over is
+            // never sent. Said in the log, by size and class only; the counter it
+            // used is simply skipped, which the phone's window allows.
+            var bytes = Encoding.UTF8.GetByteCount(envelope);
+            if (bytes > MaxFrameBytes)
+            {
+                Note($"envelope {Known(cls, Classes)} of {bytes} bytes is over the relay's {MaxFrameBytes}; not sent");
+                return null;
+            }
+            return envelope;
         }
 
         private string Envelope(string from, string to, string cls, string ck, string ct, string? offer, string? id = null,
@@ -934,10 +944,25 @@ namespace Orbweaver
 
         private static IReadOnlyList<string> Collect(string? frame) => frame is null ? [] : [frame];
 
+        // Relaxed escaping (CB-316). The default encoder writes every `+` as
+        // \u002B, and `+` is about one base64 character in 64: a full 48,000-byte
+        // window sealed to a 64,000-character ct, and the envelope came out at
+        // 69,176 bytes — over the relay's 65,536-byte frame cap, so the relay
+        // closed the desk with MessageTooBig on every large backfill, the desk
+        // reconnected, the phone re-watched, and the link flapped about once a
+        // second (measured on a real 6.7 MB transcript). Relaxed it is 64,181.
+        // Everything these frames carry is ASCII ids, base64 and JSON the
+        // relay parses, so nothing needs the HTML-safe escapes.
+        private static readonly JsonWriterOptions FrameOptions =
+            new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+        // What the relay will take in one frame (relay Limits.MaxFrameBytes).
+        internal const int MaxFrameBytes = 64 * 1024;
+
         private static string Frame(Action<Utf8JsonWriter> body)
         {
             using var buffer = new MemoryStream();
-            using (var w = new Utf8JsonWriter(buffer))
+            using (var w = new Utf8JsonWriter(buffer, FrameOptions))
             {
                 w.WriteStartObject();
                 body(w);

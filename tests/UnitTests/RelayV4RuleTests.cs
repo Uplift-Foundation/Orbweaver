@@ -118,6 +118,28 @@ public class RelayV4RuleTests
         Assert.EndsWith("\u2026", cut);
     }
 
+    // CB-316: the 8,000-byte cap is on text, the window budget on escaped JSON;
+    // a line of control characters (six bytes each, escaped) is cut further so
+    // it still fits an empty window, and an ordinary line is left alone.
+    [Fact]
+    public void A_line_that_escapes_past_a_window_is_cut_to_fit_one()
+    {
+        var heavy = TranscriptWatch.Line("system", new string('\u0001', 8000), 1);
+        var window = TranscriptWatch.Backfill("s", [heavy]).Single();
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(window) <= TranscriptWatch.MaxWindowBytes);
+        var line = J(window).GetProperty("lines")[0];
+        Assert.True(line.GetProperty("cut").GetBoolean());
+        Assert.EndsWith("\u2026", line.GetProperty("text").GetString());
+
+        var plain = L("short");
+        Assert.Equal(plain, TranscriptWatch.FitAlone(plain, "s", 1, false, false));
+
+        // A surrogate pair is never split by the extra cut.
+        var astral = TranscriptWatch.Line("user", string.Concat(Enumerable.Repeat("\u0001🙂", 3000)), 1);
+        var fitted = TranscriptWatch.FitAlone(astral, "s", 1, false, false);
+        Assert.False(char.IsHighSurrogate(fitted.Text[^2]));
+    }
+
     [Fact]
     public void Diff_covers_every_arm()
     {

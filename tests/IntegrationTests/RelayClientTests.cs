@@ -430,6 +430,66 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => client.Remote.WatchCount == 0);
     }
 
+    // CB-316: a large backfill once never reached the phone, and the desk's
+    // link flapped about once a second. The cause, measured on a real 6.7 MB
+    // transcript: a full 48,000-byte window sealed to a 64,000-character ct and
+    // the default JSON encoder wrote every base64 `+` as \u002B, so the envelope
+    // was 69,176 bytes and the relay closed the desk for an oversize frame.
+    // Here a backfill built to be as escape-heavy as real tool output goes
+    // through the stub relay, which now enforces the relay's own 64 KB cap
+    // exactly as Router.ReadTextAsync does: every window must arrive, every
+    // frame must fit, and the link must stay up on its first connection.
+    [Fact]
+    public async Task A_large_escape_heavy_backfill_arrives_whole_and_the_link_stays_up()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var chunk = string.Concat(Enumerable.Repeat("say \"hi\" \\ C:\\x\n\ttab ", 300));
+        var lines = Enumerable.Range(0, 199)
+            .Select(i => TranscriptWatch.Line(i % 2 == 0 ? "user" : "system", (i + " " + chunk)[..Math.Min(chunk.Length, 7990)], i))
+            .Append(TranscriptWatch.Line("system", new string('\u0001', 8000), 999))   // 6 escaped bytes per character
+            .ToList();
+        var remote = new RelayRemote.Seams(
+            () => DateTimeOffset.UtcNow, d => Task.Delay(d),
+            _ => new TranscriptWatcher.Seams(() => "/big", p => new TranscriptWatcher.Stamp(p, lines.Count, DateTime.UnixEpoch), _ => lines),
+            new RelayInput(new RelayInput.Seams(_ => TerminalTyping.Route.Tmux, _ => Task.FromResult<string?>(null),
+                (_, _) => Task.FromResult(false), _ => Task.CompletedTask)),
+            new RelayRemote.LaunchSeams(false, _ => null, _ => false, () => "/bin/sh", (_, _) => (null, null), _ => null),
+            _ => { });
+        var client = Client(identity, prompts: new PromptPipeline.Seams(_ => Task.FromResult<string?>(null),
+            (_, _) => Task.FromResult(false), (_, _) => Task.FromResult(false), () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }),
+            remote: remote);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("big", new SessionStatus { Source = SessionSource.ClaudeCode, Title = "big" })]);
+        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1 }));
+        var roster = await _stub.Next(IsEnvelope);
+        var desktopId = roster.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        var watch = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, 0), Encoding.UTF8.GetBytes("""{"t":"watch","session_id":"big"}"""), Aad(phone.Id, desktopId, "action"));
+        await _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "w-big", from = phone.Id, to = desktopId, ts = 0, @class = "action", push = "none", ck = "", ct = watch }));
+
+        var ok = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
+        Assert.Equal(("watching", 200), (ok.GetProperty("code").GetString(), ok.GetProperty("total").GetInt32()));
+        var received = 0;
+        var windows = 0;
+        while (received < 200)
+        {
+            var env = await _stub.Next(IsEnvelope);
+            Assert.True(Encoding.UTF8.GetByteCount(env.GetRawText()) <= RelayStub.MaxFrameBytes);
+            var w = OpenAsPhone(env, phone, identity);
+            Assert.Equal(received, w.GetProperty("from_line").GetInt32());   // contiguous: nothing lost
+            received += w.GetProperty("lines").GetArrayLength();
+            windows++;
+        }
+        Assert.True(windows > 20, $"meant to need many full windows, got {windows}");
+        Assert.Equal(0, _stub.TooBigCloses);
+        Assert.Equal(1, _stub.Connections);
+        Assert.Equal(RelayClient.Status.Connected, client.State);
+    }
+
     // Lead's decision: every pending prompt goes out again on every welcome.
     // The relay's 30-second alert throttle (frames-v3 rate_limits.amber) is
     // what keeps that from being a second alert: this stub plays the relay's

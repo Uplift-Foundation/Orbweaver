@@ -70,8 +70,9 @@ namespace Orbweaver
             var open = new List<string>();
             var start = first;
             var size = 0;
-            foreach (var line in lines)
+            foreach (var raw in lines)
             {
+                var line = FitAlone(raw, sessionId, total, live, reset);
                 var json = LineJson(line);
                 var bytes = Encoding.UTF8.GetByteCount(json);
                 var firstReset = reset && windows.Count == 0;
@@ -93,6 +94,32 @@ namespace Orbweaver
             windows.Add(Window(sessionId, start, total, live, reset && windows.Count == 0, open));
             return windows;
         }
+
+        // The 8,000-byte cap is on the text, but a window's budget is on its
+        // escaped JSON, and the escaper writes a control character as six bytes:
+        // 8,000 bytes of them would be a 48,000-byte line no window could hold
+        // (CB-316). A line that cannot fit an empty window on its own is cut
+        // further, on a scalar boundary, until it does — so the contract's "a
+        // single line always fits an empty window" holds after escaping too.
+        // The header is measured with a 20-digit from_line, the widest one.
+        internal static WireLine FitAlone(WireLine line, string sessionId, long total, bool live, bool reset)
+        {
+            var room = MaxWindowBytes - Encoding.UTF8.GetByteCount(Header(sessionId, long.MaxValue, total, live, reset)) - 2;
+            if (Encoding.UTF8.GetByteCount(LineJson(line)) <= room) return line;
+            var text = line.Text.EndsWith(Ellipsis, StringComparison.Ordinal) && line.Cut ? line.Text[..^1] : line.Text;
+            int lo = 0, hi = text.Length;
+            while (lo < hi)
+            {
+                var mid = (lo + hi + 1) / 2;
+                var candidate = line with { Text = Prefix(text, mid) + Ellipsis, Cut = true };
+                if (Encoding.UTF8.GetByteCount(LineJson(candidate)) <= room) lo = mid; else hi = mid - 1;
+            }
+            return line with { Text = Prefix(text, lo) + Ellipsis, Cut = true };
+        }
+
+        // The first n UTF-16 units, backed off a split surrogate pair.
+        private static string Prefix(string text, int n) =>
+            n > 0 && n < text.Length && char.IsHighSurrogate(text[n - 1]) ? text[..(n - 1)] : text[..n];
 
         // The last 200 lines, or all of them when there are fewer.
         internal static List<string> Backfill(string sessionId, IReadOnlyList<WireLine> all, bool reset = false)
