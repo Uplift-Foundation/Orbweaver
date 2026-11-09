@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Orbweaver;
 
 // CB-316: the shipped desktop relay code (RelayClient, PhoneService, PhoneLaunch and the
@@ -14,6 +15,67 @@ using Orbweaver;
 // it; `launch` is verified for real (signature, expiry, replay, folder, model) and starts a
 // pretend session that checks in two seconds later. Nothing here types into a terminal,
 // and the transcript given is never written to (the copy is).
+
+// --tmux-check: the real tmux arm on this machine. A fake "claude" that draws an idle prompt
+// is launched through PhoneSeams.Start (a real detached tmux session), typed into through the
+// real guarded route (TypingGate, settle read, tmux paste), and a second one that draws a
+// permission dialog must be refused. Proves the Mac/Linux terminal code, not Windows' conhost.
+// Runs on a PRIVATE tmux server (TMUX_TMPDIR in a scratch directory) and only ever kills the
+// one session it made, so it can never touch the user's own tmux.
+if (args.Contains("--tmux-check"))
+{
+    var work = Path.Combine(Path.GetTempPath(), "phone-desk-tmux-" + Guid.NewGuid().ToString("N")[..6]);
+    Directory.CreateDirectory(work);
+    Environment.SetEnvironmentVariable("TMUX_TMPDIR", work);
+    Environment.SetEnvironmentVariable("TMUX", null);
+    var typedLog = Path.Combine(work, "typed.log");
+    string Fake(string name, string screen)
+    {
+        var path = Path.Combine(work, name);
+        File.WriteAllText(path, "#!/bin/sh\nprintf '\\033[2J\\033[H'\ncat <<'SCREEN'\n" + screen + "\nSCREEN\ncat -v >> '" + typedLog + "'\n");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return path;
+    }
+    var rule = new string('\u2500', 60);
+    var idle = Fake("claude-idle.sh", rule + "\n\u276f\u00a0\n" + rule);
+    var dialog = Fake("claude-dialog.sh", " Bash command\n\n   touch /tmp/x\n\n Do you want to proceed?\n \u276f 1. Yes\n   2. Yes, and don't ask again\n   3. No, and tell Claude what to do differently (esc)\n");
+
+    var checks = new PhoneSeams();
+    var ok = true;
+    void Say(bool pass, string what) { ok &= pass; Console.WriteLine($"{(pass ? "PASS" : "FAIL")}  {what}"); }
+    var tmux = TerminalLauncher.ResolveTmux() ?? throw new InvalidOperationException("no tmux");
+    string Tmux(params string[] a)
+    {
+        var info = new ProcessStartInfo(tmux) { RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var x in a) info.ArgumentList.Add(x);
+        using var p = Process.Start(info)!;
+        var o = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        return o;
+    }
+    foreach (var (label, script, expectTyped) in new[] { ("idle", idle, true), ("dialog", dialog, false) })
+    {
+        var plan = new LaunchPlan(NewChatCli.ClaudeCode, work, "", null, "");
+        var (code, why) = checks.Start(plan, script);
+        Say(code is null, $"{label}: Start launches a detached tmux session ({code} {why})");
+        await Task.Delay(1500);
+        var pane = Tmux("list-panes", "-a", "-F", "#{pane_id} #{session_name}").Split('\n').FirstOrDefault(l => l.EndsWith(" orbweaver"))?.Split(' ')[0];
+        Say(pane is not null, $"{label}: the pane exists ({pane})");
+        var status = new SessionStatus { State = "idle", Cwd = work, TmuxPane = pane ?? "", TmuxBin = tmux, SessionPid = 0, Source = SessionSource.ClaudeCode };
+        var session = new PhoneService.Session("fake-" + label, status, "idle");
+        Say(PhoneSeams.CanType(status), $"{label}: the route can be typed into");
+        var (didType, refusal) = await PhoneSeams.TypeAsync(session, "hello from the tmux check");
+        await Task.Delay(500);
+        var log = File.Exists(typedLog) ? File.ReadAllText(typedLog) : "";
+        if (expectTyped) Say(didType && refusal is null && log.Contains("hello from the tmux check"), $"{label}: typed={didType} refusal={refusal}; the pane received it ({log.Trim().Replace("\n", "|")})");
+        else Say(!didType && refusal is not null, $"{label}: refused ({refusal})");
+        Tmux("kill-session", "-t", "orbweaver");
+    }
+    Tmux("kill-server");   // the private server only: TMUX_TMPDIR above points it at the scratch directory
+    Directory.Delete(work, true);
+    return ok ? 0 : 1;
+}
+
 string Arg(string name, string fallback) { var i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback; }
 
 var relay = new Uri(Arg("--relay", "http://127.0.0.1:18080"));
