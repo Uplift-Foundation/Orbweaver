@@ -219,6 +219,10 @@ namespace Orbweaver
             });
         }
 
+        // CB-316: every poll's readings, for the phone's usage frame. Raised
+        // after the orbs have taken them, on the UI thread.
+        internal static event Action<IReadOnlyList<AccountUsage>> Polled = delegate { };
+
         internal void Apply(IReadOnlyList<AccountUsage> readings, DateTimeOffset now)
         {
             // Whether anything a person can see actually moved, decided before
@@ -240,6 +244,7 @@ namespace Orbweaver
             }
 
             _interval = UsagePollCadence.Next(_interval, changed);
+            Polled(_readings.Values.ToList());
 
             // Accounts that answered nothing keep the orb they had. A poll that
             // failed is not news about usage, and removing the orb would make a

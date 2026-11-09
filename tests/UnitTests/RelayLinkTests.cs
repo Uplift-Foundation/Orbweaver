@@ -1140,4 +1140,131 @@ public class RelayLinkTests : IDisposable
         link.OnFrame(AckEnvelope("ph_ffffffffffffffff", AckCt($$"""{"t":"push-ack","request_id":"{{Rid}}","at_ms":1}""")));
         Assert.Equal(0, acks);
     }
+
+    // ---- CB-316: live-screen requests, usage, done ----------------------------------
+
+    [Fact]
+    public void A_sealed_watch_input_or_launch_on_class_action_is_raised_with_its_envelope_id()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var got = new List<(string Phone, string Id, string T)>();
+        link.RequestReceived += (p, id, _, f) => got.Add((p, id, f.GetProperty("t").GetString()!));
+        foreach (var t in new[] { "watch", "unwatch", "input", "launch" })
+            link.OnFrame(phone.Sealed("action", $$"""{"t":"{{t}}","session_id":"s1"}"""));
+        Assert.Equal(["watch", "unwatch", "input", "launch"], got.Select(g => g.T));
+        Assert.All(got, g => Assert.Equal((phone.Id, "y"), (g.Phone, g.Id)));
+    }
+
+    [Fact]
+    public void A_watch_on_another_class_or_of_an_unknown_type_is_not_raised()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var raised = 0;
+        link.RequestReceived += (_, _, _, _) => raised++;
+        link.OnFrame(phone.Sealed("state", """{"t":"watch","session_id":"s1"}"""));
+        link.OnFrame(phone.Sealed("action", """{"t":"poke","session_id":"s1"}"""));
+        Assert.Equal(0, raised);
+    }
+
+    [Fact]
+    public void SendToPhone_seals_to_the_one_online_phone_with_the_sessions_ck()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var frames = link.SendToPhone(phone.Id, "chat", "s1", """{"t":"window"}""");
+        var env = J(frames.Single());
+        Assert.Equal(("chat", "none", Ck(CoalesceKey(phone.Base()), "s1")), (env.GetProperty("class").GetString(), env.GetProperty("push").GetString(), env.GetProperty("ck").GetString()));
+        Assert.Equal("window", phone.OpenFromDesktop(frames.Single()).GetProperty("t").GetString());
+        Assert.Equal("", J(link.SendToPhone(phone.Id, "action", null, "{}").Single()).GetProperty("ck").GetString());
+        Assert.Empty(link.SendToPhone("ph_stranger", "chat", "s1", "{}"));
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendToPhone(phone.Id, "chat", "s1", "{}"));
+    }
+
+    [Fact]
+    public void A_phone_going_offline_is_announced_once()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var gone = new List<string>();
+        link.PhoneWentOffline += gone.Add;
+        link.OnFrame(Presence(phone.Id, false));
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Equal([phone.Id], gone);
+    }
+
+    private static PhoneUsage.Account Acct(int? pct, long? resets = 1794117192, string name = "me@x.org") =>
+        new(name, "claude", "max", pct, pct is null ? null : resets, 31, 1794543792, 1794111792);
+
+    [Fact]
+    public void Usage_goes_to_online_phones_only_when_something_moved()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var first = link.OnUsage([Acct(62)]);
+        var env = J(first.Single());
+        Assert.Equal(("state", "none", Ck(CoalesceKey(phone.Base()), "usage")), (env.GetProperty("class").GetString(), env.GetProperty("push").GetString(), env.GetProperty("ck").GetString()));
+        Assert.Equal("usage", phone.OpenFromDesktop(first.Single()).GetProperty("t").GetString());
+        Assert.Empty(link.OnUsage([Acct(62) with { AsOf = 1794111999 }]));             // only as_of ticked
+        Assert.Single(link.OnUsage([Acct(63)]));                                        // a percent moved
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.OnUsage([Acct(64)]));                                         // nobody online
+    }
+
+    [Fact]
+    public void A_phone_coming_online_gets_the_roster_and_then_the_latest_usage()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnScan([Row("s1")]);
+        link.OnUsage([Acct(62)]);
+        link.OnFrame(Presence(phone.Id, false));
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(["roster", "usage"], back.Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()));
+    }
+
+    [Fact]
+    public void Crossing_eighty_percent_sends_a_limit_push_per_crossing_account_and_not_again_until_rearmed()
+    {
+        var (link, _, phone, _, _) = Paired();
+        Assert.Equal("none", J(link.OnUsage([Acct(40)]).Single()).GetProperty("push").GetString());
+        Assert.Equal("none", J(link.OnUsage([Acct(79)]).Single()).GetProperty("push").GetString());
+        var cross = link.OnUsage([Acct(81)]);
+        var env = J(cross.Single());
+        Assert.Equal("limit", env.GetProperty("push").GetString());
+        var e = PushSeal.Open(phone.KaKey, env.GetProperty("e").GetString());
+        Assert.Equal("""{"v":1,"t":"limit","name":"me@x.org","cli":"claude","window_5h_pct":81,"resets_at":1794117192}""", Encoding.UTF8.GetString(e!));
+        Assert.Equal("none", J(link.OnUsage([Acct(85)]).Single()).GetProperty("push").GetString());
+        Assert.Equal("none", J(link.OnUsage([Acct(78)]).Single()).GetProperty("push").GetString());
+        Assert.Equal("limit", J(link.OnUsage([Acct(90, 1794135192)]).Single()).GetProperty("push").GetString());   // a new window re-arms
+    }
+
+    [Fact]
+    public void Two_accounts_crossing_in_one_reading_send_two_frames_each_with_its_own_e()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnUsage([Acct(10, name: "a@x.org"), Acct(10, name: "b@x.org")]);
+        var frames = link.OnUsage([Acct(85, name: "a@x.org"), Acct(90, name: "b@x.org")]);
+        Assert.Equal(2, frames.Count);
+        var names = frames.Select(f => Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, J(f).GetProperty("e").GetString())!)).ToList();
+        Assert.Contains("a@x.org", names[0]);
+        Assert.Contains("b@x.org", names[1]);
+    }
+
+    [Fact]
+    public void A_session_going_from_generating_to_idle_is_a_done_push_and_nothing_else_is()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.DesktopName = "MacBook Pro";
+        link.OnScan([Row("s1", "generating"), Row("s2", "waiting"), Row("s3", "idle")]);
+        string Push(params RelaySession[] rows) => J(link.OnScan(rows).Single()).GetProperty("push").GetString()!;
+
+        var done = link.OnScan([Row("s1", "idle"), Row("s2", "waiting"), Row("s3", "idle")]);
+        var env = J(done.Single());
+        Assert.Equal(("state", "done"), (env.GetProperty("class").GetString(), env.GetProperty("push").GetString()));
+        Assert.Equal("""{"v":1,"t":"done","session_id":"s1","label":"proj on MacBook Pro","title":"proj"}""",
+            Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, env.GetProperty("e").GetString())!));
+        Assert.Equal("delta", phone.OpenFromDesktop(done.Single()).GetProperty("t").GetString());
+
+        Assert.Equal("none", Push(Row("s1", "generating"), Row("s2", "waiting"), Row("s3", "idle")));   // idle -> generating
+        Assert.Equal("none", Push(Row("s1", "generating"), Row("s2", "idle"), Row("s3", "idle")));      // waiting -> idle
+        Assert.Equal("none", Push(Row("s1", "waiting"), Row("s2", "idle"), Row("s3", "idle")));         // generating -> waiting
+        Assert.Equal("none", Push(Row("s2", "idle"), Row("s3", "idle")));                               // waiting -> gone
+    }
 }

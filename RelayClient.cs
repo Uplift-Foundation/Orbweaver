@@ -167,10 +167,18 @@ namespace Orbweaver
             Phone = new PhoneService(seams ?? new PhoneService.Seams(
                 _phoneSeams.Find, _phoneSeams.Load, PhoneSeams.CanType, PhoneSeams.TypeAsync,
                 SendToPhone, line => MirrorLog.Say("relay", line)));
+            _link.DesktopName = _options.DesktopName;
+            AccountOrbs.Polled += OnPolled;
             _link.RequestReceived += (phone, id, idPub, frame) => Defer(() => _ = HandleRequestAsync(phone, id, frame));
             _link.PhoneWentOffline += phone => Defer(() => PhoneOffline(phone));
             // 250 ms is the spec's debounce: rows appended within it become one window.
             _tail = new System.Threading.Timer(_ => TailTick(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+        }
+
+        private void OnPolled(IReadOnlyList<AccountUsage> readings)
+        {
+            var accounts = PhoneUsage.From(readings, _now());
+            Dispatch(() => _link.OnUsage(accounts));
         }
 
         private bool SendToPhone(string phoneId, string cls, string? ckSession, string plaintext) =>
@@ -279,6 +287,7 @@ namespace Orbweaver
 
         public void Dispose()
         {
+            AccountOrbs.Polled -= OnPolled;
             _tail?.Dispose();
             StopAsync().GetAwaiter().GetResult();
             _http.Dispose();

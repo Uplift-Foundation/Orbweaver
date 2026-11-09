@@ -255,7 +255,7 @@ namespace Orbweaver
                     if (Str(f, "peer_id") is { } peer && _channels.TryGetValue(peer, out var c) && c.Online)
                     {
                         Note($"resync from {peer}: fresh roster");
-                        return Collect(RosterFor(c));
+                        return RosterAndUsage(c);
                     }
                     // Said, not silent: a phone stuck waiting on a roster
                     // that never comes is otherwise undiagnosable.
@@ -302,7 +302,7 @@ namespace Orbweaver
             c.Online = online;
             if (wentOffline) PhoneWentOffline(id);
             PresenceChanged();
-            return cameOnline ? Collect(RosterFor(c)) : [];
+            return cameOnline ? RosterAndUsage(c) : [];
         }
 
         // ---- envelopes in -----------------------------------------------------
@@ -478,7 +478,7 @@ namespace Orbweaver
 
             var c = OpenChannel(phone, fresh: true);
             c.Online = true;   // it is talking to us right now
-            frames.AddRange(Collect(RosterFor(c)));
+            frames.AddRange(RosterAndUsage(c));
             PhonePaired(phone);
             return frames;
         }
@@ -537,8 +537,10 @@ namespace Orbweaver
 
         internal IReadOnlyList<string> OnScan(IReadOnlyList<RelaySession> rows)
         {
+            var before = _book.Snapshot().ToDictionary(r => r.SessionId, r => r.State, StringComparer.Ordinal);
             var update = _book.Update(rows, _now());
             if (update.IsEmpty || !Welcomed) return [];
+            var after = _book.Snapshot().ToDictionary(r => r.SessionId, r => r, StringComparer.Ordinal);
 
             var frames = new List<string>();
             foreach (var c in _channels.Values.Where(c => c.Online))
@@ -551,8 +553,23 @@ namespace Orbweaver
                 // An online phone has always been sent a roster (presence,
                 // Allow and resync all send one), so its stream is numbered.
                 foreach (var d in update.Deltas)
-                    if (SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.Delta(d)!) is { } frame)
+                {
+                    // generating -> idle is a session that finished; every other
+                    // transition (answered a prompt, started, waiting, ended)
+                    // stays a plain delta.
+                    var done = d is { Removed: false, State: RelayRoster.Idle }
+                        && before.TryGetValue(d.SessionId, out var was) && was == RelayRoster.Generating
+                        && after.ContainsKey(d.SessionId);
+                    string? e = null;
+                    if (done)
+                    {
+                        var title = after[d.SessionId].Title;
+                        e = PushSeal.Seal(c.Phone.KaPublic, Encoding.UTF8.GetBytes(
+                            PhoneUsage.DoneE(d.SessionId, PhoneUsage.DoneLabel(title, DesktopName), title)));
+                    }
+                    if (SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.Delta(d)!, null, done ? "done" : "none", e) is { } frame)
                         frames.Add(frame);
+                }
             }
             return frames;
         }
@@ -654,6 +671,59 @@ namespace Orbweaver
             if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
             return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
                 System.Text.Encoding.UTF8.GetBytes(PromptFrames.Refusal(requestId, sessionId, code))));
+        }
+
+        // ---- CB-316 usage and done --------------------------------------------
+
+        // The machine's name, for the label a done push carries.
+        internal string DesktopName { get; set; } = "";
+
+        private IReadOnlyList<PhoneUsage.Account>? _usage;
+        private string? _usageSignature;
+        private readonly UsageLimitWatch _limits = new();
+
+        // A fresh reading from the poller. Sent to every online phone when an
+        // integer percent, a reset time or availability changed (class state,
+        // fixed ck, so the relay keeps only the newest for an offline phone);
+        // a reading that crosses 80% goes as one frame per crossing account,
+        // each with its own limit push.
+        internal IReadOnlyList<string> OnUsage(IReadOnlyList<PhoneUsage.Account> accounts)
+        {
+            var signature = PhoneUsage.Signature(accounts);
+            var changed = signature != _usageSignature;
+            _usage = accounts;
+            _usageSignature = signature;
+            var crossings = _limits.Crossings(accounts);
+            if (!Welcomed || (!changed && crossings.Count == 0)) return [];
+
+            var frames = new List<string>();
+            foreach (var c in _channels.Values.Where(c => c.Online))
+            {
+                var ck = RelayCrypto.Ck(c.CkKey, "usage");
+                var plain = Encoding.UTF8.GetBytes(PhoneUsage.Frame(accounts));
+                if (crossings.Count == 0)
+                {
+                    if (SealTo(c, "state", ck, plain) is { } one) frames.Add(one);
+                    continue;
+                }
+                foreach (var a in crossings)
+                {
+                    var e = PushSeal.Seal(c.Phone.KaPublic, Encoding.UTF8.GetBytes(PhoneUsage.LimitE(a)));
+                    if (SealTo(c, "state", ck, plain, null, "limit", e) is { } frame) frames.Add(frame);
+                }
+            }
+            return frames;
+        }
+
+        // A roster, and the usage that follows it: a phone coming online, a
+        // resync and a fresh pairing all want both.
+        private IReadOnlyList<string> RosterAndUsage(Channel c)
+        {
+            var frames = new List<string>();
+            if (RosterFor(c) is { } roster) frames.Add(roster);
+            if (_usage is { } usage && SealTo(c, "state", RelayCrypto.Ck(c.CkKey, "usage"), Encoding.UTF8.GetBytes(PhoneUsage.Frame(usage))) is { } u)
+                frames.Add(u);
+            return frames;
         }
 
         // ---- sealing out ------------------------------------------------------
