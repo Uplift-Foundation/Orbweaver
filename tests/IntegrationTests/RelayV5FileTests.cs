@@ -120,13 +120,51 @@ public class RelayV5FileTests : IDisposable
     // And the default persona's cache: read off-thread, the stand-in (none)
     // until it has, then the config dir's own persona.
     [Fact]
-    public async Task The_cached_default_persona_is_read_from_the_config_dirs_off_thread()
+    public async Task The_cached_default_persona_is_read_from_home_and_the_config_dirs_off_thread()
     {
+        var home = Path.Combine(_dir, "home-cached");
         var config = Path.Combine(_dir, "cached");
+        Directory.CreateDirectory(home);
         Directory.CreateDirectory(config);
         File.WriteAllText(Path.Combine(config, "CLAUDE.md"), "# Nova\n\n- Name: Nova\n");
-        await Until(() => RelayService.CachedDefaultPersona([config])?.Name == "Nova");
-        await Until(() => RelayService.CachedDefaultPersona([]) is { Name: null });          // no dirs: no persona
+        try
+        {
+            RelayService.Home = () => home;                                                  // never the real home
+            await Until(() => RelayService.CachedDefaultPersona([config])?.Name == "Nova");  // home names nobody: the config dir
+            await Until(() => RelayService.CachedDefaultPersona([]) is { Name: null });      // nothing anywhere: no persona
+            RelayService.Home = () => null;
+            await Until(() => RelayService.CachedDefaultPersona([config])?.Name == "Nova");  // no home at all: the config dirs alone
+        }
+        finally { RelayService.Home = () => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile); }
+    }
+
+    // CB-321, from Juno's simulator rehearsal: on a real Mac the default persona
+    // is named by ~/CLAUDE.md through an @-import, and the config dirs say
+    // nothing. Resolving from home finds it, picture and all; the config dirs
+    // alone (the first reading) find nothing in the same tree — the negative
+    // control that shows the test can tell the two apart.
+    [Fact]
+    public void The_default_persona_comes_from_home_s_own_claude_md_and_its_import()
+    {
+        var home = Path.Combine(_dir, "home");
+        var config = Path.Combine(home, ".claude");
+        Directory.CreateDirectory(Path.Combine(home, ".claude", "persona"));
+        File.WriteAllText(Path.Combine(config, "CLAUDE.md"), "# Global notes\n\nNothing about who I am.\n");
+        File.WriteAllText(Path.Combine(home, "CLAUDE.md"), "@.claude/persona/persona.md\n");
+        File.WriteAllText(Path.Combine(home, ".claude", "persona", "persona.md"), "# Aurora\n\n- Name: Aurora\n- Avatar: aurora.gif\n");
+        var gif = Gif("home/.claude/persona/aurora.gif", 24, 24, 2);
+
+        var persona = RelayService.ResolveDefault(home, [config]);
+        Assert.Equal("Aurora", persona.Name);
+        Assert.Equal(Path.GetFullPath(gif), Path.GetFullPath(persona.AvatarPath!));
+        Assert.Equal(Path.GetFullPath(Path.Combine(home, ".claude", "persona", "persona.md")), Path.GetFullPath(persona.AvatarSource!));
+        Assert.Null(RelayService.ResolveDefault(null, [config]).Name);                       // the config dirs alone: nobody
+        Assert.Null(RelayService.ResolveDefault("", [config]).Name);
+
+        var store = RealStore();
+        store.Offer(persona.AvatarPath!);
+        var row = Assert.Single(RelayPersonaRows.Rows([], persona, store.Offer));
+        Assert.Equal((true, "Aurora", PersonaImageBundle.HashOf(File.ReadAllBytes(gif))), (row.Default, row.Name, row.ImageHash));
     }
 
     [Fact]

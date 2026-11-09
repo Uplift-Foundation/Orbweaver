@@ -46,20 +46,28 @@ namespace Orbweaver
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static string? DefaultOfferImage(string path) => PersonaImageStore.Shared.Offer(path);
 
-        // The default persona is what the user config dirs say on their own:
-        // Candidates with no cwd is exactly those dirs' CLAUDE.md files (the
-        // walk needs a cwd and there is no agent name), confirmed against
-        // LocalPersona.CandidatesBelow for CB-321. Read off the scan thread,
-        // like every other persona read here, and refreshed every 30 s.
-        private static readonly OffThreadCache<string, LocalPersona.Persona?> DefaultCache = new(new(
-            dirs => LocalPersona.ResolveFrom(
-                LocalPersona.Candidates(null, dirs.Length == 0 ? [] : dirs.Split('\0'), SessionSource.ClaudeCode)),
+        // The default persona: what a Claude Code session started in the user's
+        // home folder would wear, i.e. the walk from home (home's own CLAUDE.md
+        // and what it @-imports, then each parent) followed by the user config
+        // dirs. The config dirs alone were the first reading (Candidates with no
+        // cwd is exactly their CLAUDE.md files), and on a real Mac that came to
+        // nothing: the persona everyone treats as the default is named by
+        // ~/CLAUDE.md, which only a walk from home reaches (CB-321, Juno's
+        // simulator rehearsal; the plan's stated fallback). Read off the scan
+        // thread like every other persona read here, and refreshed every 30 s.
+        internal static Func<string?> Home { get; set; } = () => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        internal static LocalPersona.Persona ResolveDefault(string? home, IReadOnlyList<string> dirs) =>
+            LocalPersona.Resolve(string.IsNullOrEmpty(home) ? null : home, SessionSource.ClaudeCode, dirs);
+
+        private static readonly OffThreadCache<(string Home, string Dirs), LocalPersona.Persona?> DefaultCache = new(new(
+            key => ResolveDefault(key.Home, key.Dirs.Length == 0 ? [] : key.Dirs.Split('\0')),
             _ => null,
             () => DateTime.UtcNow,
             OffThread.OnOwnThread), PeerPersonaCache.RefreshAfter);
 
         internal static LocalPersona.Persona? CachedDefaultPersona(IReadOnlyList<string> dirs) =>
-            DefaultCache.Peek(string.Join('\0', dirs));
+            DefaultCache.Peek((Home() ?? "", string.Join('\0', dirs)));
 
         internal static RelayClient? Client { get { lock (Gate) return _client; } }
 
