@@ -76,6 +76,10 @@ if (args.Contains("--answer-phone"))
 // The pipeline's own log lines (prompt / refuse / press / press-no-effect /
 // resolved, each with the request id) print to stdout. Scratch identity, no
 // settings touched, no installed app involved.
+// --sid-prefix NAME names the sessions NAME-1, NAME-2 (or exactly NAME when
+// there is one). --one-shot ends the run on the first resolved prompt: it
+// unlinks the phone that answered from the desk side, then exits, so a real
+// phone paired for one approval is left with a clean roster.
 if (args.Contains("--prompt-desktop"))
 {
     string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
@@ -93,17 +97,19 @@ if (args.Contains("--prompt-desktop"))
     var pids = All("--pid");
     var termIds = All("--term-id");
     var count = Math.Max(1, Math.Max(panes.Count, Math.Max(pids.Count, termIds.Count)));
-    var sessions = Enumerable.Range(0, count).Select(i => ($"gate-{i + 1}", new SessionStatus
+    var sessions = Enumerable.Range(0, count).Select(i => (count == 1 && args.Contains("--sid-prefix") ? Arg("--sid-prefix", "gate") : $"{Arg("--sid-prefix", "gate")}-{i + 1}", new SessionStatus
     {
-        State = "waiting", Source = source, Title = $"gate {i + 1}", TmuxPane = i < panes.Count ? panes[i] : "", TmuxSocket = Arg("--socket", ""),
+        State = "waiting", Source = source, Title = $"{Arg("--sid-prefix", "gate")} {i + 1}", TmuxPane = i < panes.Count ? panes[i] : "", TmuxSocket = Arg("--socket", ""),
         TermProgram = Arg("--term-program", ""), TermId = i < termIds.Count ? termIds[i] : "", Tty = Arg("--tty", ""),
         SessionPid = i < pids.Count ? int.Parse(pids[i]) : 0,
     })).ToList();
     foreach (var (sid, st) in sessions)
         Console.WriteLine($"{sid}: route {TerminalFocuser.RouteFor(st)}; presses silently: {TerminalFocuser.CanPressSilently(st)}");
+    var oneShotResolved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var oneShot = args.Contains("--one-shot");
     var seams = new PromptPipeline.Seams(
         s => ScreenReaders.For(s)?.ReadAsync(s) ?? Task.FromResult<string?>(null), TerminalFocuser.PressKey, TerminalFocuser.TypeQuietly,
-        () => DateTimeOffset.UtcNow, Task.Delay, l => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"),
+        () => DateTimeOffset.UtcNow, Task.Delay, l => { Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} {l}"); if (l.StartsWith("resolved ")) oneShotResolved.TrySetResult(); },
         TerminalFocuser.CanPressSilently, TerminalFocuser.CaptureAndPress);
     var pd = new RelayClient(identity, new RelayClient.Options(baseUrl, OperatingSystem.IsWindows() ? "win" : "mac", "probe",
         Arg("--name", OperatingSystem.IsWindows() ? "Relay Probe PC" : "Relay Probe Mac")), new WebSocketRelayTransport(), promptSeams: seams);
@@ -128,6 +134,14 @@ if (args.Contains("--prompt-desktop"))
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; quit.Cancel(); };
     while (!quit.IsCancellationRequested)
     {
+        if (oneShot && oneShotResolved.Task.IsCompleted)
+        {
+            // A real person's pairing: unlink the phone from the desk side, then stop.
+            pd.Remove(pr.PhoneId);
+            Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} one-shot: resolved, unlinked {pr.PhoneId}");
+            await Task.Delay(2000);
+            break;
+        }
         await pd.OnStatuses(sessions);
         await Task.Delay(1000, quit.Token).ContinueWith(_ => { });
     }
