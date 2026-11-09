@@ -20,6 +20,16 @@ namespace Orbweaver
         private static readonly Regex ModelShape = new("^[A-Za-z0-9][A-Za-z0-9._:-]*$", RegexOptions.CultureInvariant);
         private static readonly Regex WindowsAbsolute = new(@"^[A-Za-z]:\\", RegexOptions.CultureInvariant);
 
+        // CB-316 (PM decision): a Codex or Grok first message reaches a Windows
+        // desk in argv through conhost.exe, and conhost expands %NAME% as it
+        // starts the CLI — measured: %PATH% arrived as the machine's PATH. There
+        // is no escape for it, so the expandable shape is refused, defined or
+        // not: checkable from the phone, and no environment value can leak. A
+        // lone %, "50%" or "% done %" is not that shape and passes verbatim.
+        private static readonly Regex Expandable = new("%[A-Za-z_][A-Za-z0-9_]*%", RegexOptions.CultureInvariant);
+
+        internal static bool ExpandsOnWindows(string message) => Expandable.IsMatch(message);
+
         // UTF-8 of exactly {cwd,cli,persona,model,parent_session_id,
         // first_message_sha256,nonce,expires_at}, canonical, rebuilt from the
         // frame's own fields — so any other byte layout the phone signed fails
@@ -74,6 +84,7 @@ namespace Orbweaver
                 if (f.Cli != "claude") return RelayReplies.UnsupportedParent;
             }
             if (!RelayText.Typeable(f.FirstMessage, allowEmpty: true)) return RelayReplies.BadInput;
+            if (env.IsWindows && f.Cli is "codex" or "grok" && ExpandsOnWindows(f.FirstMessage)) return RelayReplies.BadInput;
             return null;
         }
 

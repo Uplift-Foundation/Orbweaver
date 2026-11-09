@@ -445,6 +445,28 @@ public class RelayV4RuleTests
         Assert.Equal(RelayReplies.Replayed, Decide(refused, nonces: nonces));
     }
 
+    // CB-316 (PM): conhost expands %NAME% in a Windows Codex/Grok first
+    // message, so the expandable shape is bad_input, defined or not; anything
+    // else with a % passes. Claude (typed, not argv) and a Mac desk are not
+    // subject to it.
+    [Theory]
+    [InlineData("%PATH%", "codex", true, "bad_input")]
+    [InlineData("say %X% now", "grok", true, "bad_input")]
+    [InlineData("%_a9%", "codex", true, "bad_input")]
+    [InlineData("20%", "codex", true, null)]
+    [InlineData("100% sure", "codex", true, null)]
+    [InlineData("%", "grok", true, null)]
+    [InlineData("% %", "grok", true, null)]
+    [InlineData("50% done %", "codex", true, null)]
+    [InlineData("%9X%", "codex", true, null)]
+    [InlineData("%PATH%", "codex", false, null)]
+    [InlineData("%PATH%", "claude", true, null)]
+    public void Expandable_percent_names_are_refused_only_where_conhost_would_expand_them(string message, string cli, bool windows, string? expect)
+    {
+        var f = F(cli: cli, cwd: windows ? "C:\\w" : "/w", message: message);
+        Assert.Equal(expect, LaunchGate.Rules(f, "ph", Now, new NonceWindow(), Env(windows: windows)));
+    }
+
     [Fact]
     public void Model_cli_and_path_rules()
     {
