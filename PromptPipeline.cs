@@ -176,10 +176,10 @@ namespace Orbweaver
                         Settle(sid, live, fp is null ? "desk" : "gone");
                     }
                     if (fp is null || screen is null) continue;
-                    // AskUserQuestion forms are answered through FormAnswer's
-                    // own procedure on the desk; CB-315 sends no prompt for one.
-                    if (ChatTranscript.ParseAskForm(screen) is not null) continue;
-                    Mint(sid, status, fp, screen);
+                    // An AskUserQuestion form goes to the phone as a question
+                    // (CB-323): CB-315 sent none, so the phone saw the session
+                    // waiting with nothing to answer, and froze on it.
+                    Mint(sid, status, fp, screen, ChatTranscript.ParseAskForm(screen));
                 }
             }
             // Fired and forgotten by the caller, like an answer: said, not lost,
@@ -205,39 +205,74 @@ namespace Orbweaver
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
         }
 
-        private void Mint(string sid, SessionStatus status, PromptFingerprint fp, string screen)
+        private void Mint(string sid, SessionStatus status, PromptFingerprint fp, string screen, AskForm? form = null)
         {
             var now = _seams.Now();
             var requestId = RelayLink.Ulid(now);
             var expires = now.ToUnixTimeSeconds() + PromptFrames.Lifetime;
             var cli = MirrorProtocol.CliFor(status.Source);
-            const string kind = "permission";
+            var kind = form is null ? "permission" : "question";
             // A trust, update or hooks-review screen numbers its choices like a
             // permission dialog, so the fingerprint alone cannot tell them apart.
             // It goes to the phone as "Open on desk": the same prompt with no
             // options, and the gate refuses anything an answer names.
-            var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true);
-            var options = deskOnly ? [] : fp.Prompt.Options.Select(o =>
+            var questionOptions = form is null ? null : QuestionOptions(form);
+            var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true) || questionOptions is { Count: 0 };
+            var options = deskOnly ? [] : questionOptions ?? fp.Prompt.Options.Select(o =>
             {
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
             }).ToList();
-            var preview = string.Join("\n", fp.Preview);
-            var tool = ToolOf(fp.Preview);
+            var preview = form is null ? string.Join("\n", fp.Preview) : QuestionPreview(form);
+            var tool = form is null ? ToolOf(fp.Preview) : "";
             var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
-            var push = PromptFrames.FitPush(requestId, sid, label, tool, SummaryOf(tool), preview, expires, options, fp.Hash, persona);
+            var push = PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
+            // A question presses only what it offered (the gate's rule 7).
+            var keys = form is null ? null : options.Select(o => o.Key).ToList();
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
-            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, RelayActivity.CommandOf(fp.Preview));
+            // A question's line on the island is the question itself; its
+            // preview's first line is the form's tab bar ("☐ Colour").
+            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? RelayActivity.CommandOf(fp.Preview) : form.Prompt.Title);
             _send.Prompt(requestId, sid, prompt, push?.Plaintext);
             _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));
         }
+
+        // frames-v3 push_plaintext_e.summary for a question.
+        internal const string AsksAQuestion = "Asks a question";
+
+        // What of an AskUserQuestion form a phone may answer (CB-323): its own
+        // choices on a single-select question, each pressed by its digit, which
+        // selects it and moves on — to the next question, which goes out as a
+        // prompt of its own, or the review. On the review, "Submit answers"
+        // alone, so a phone can finish what it started; never "Cancel", which
+        // throws every answer away. Never "Type something." (its digit on an
+        // empty field declines the form) and never "Chat about this". A
+        // multi-select question (ticks, then an unnumbered Submit row) offers
+        // nothing: it goes as "Open on desk", which the phone shows instead of
+        // a session that is waiting on nothing it was told about.
+        internal static IReadOnlyList<PromptOption> QuestionOptions(AskForm form)
+        {
+            if (form.IsReview)
+                return form.Prompt.Options.Where(o => o.Key == form.SubmitAnswersKey)
+                    .Select(o => new PromptOption(o.Key, o.Label, OptionKinds.Option, null)).ToList();
+            if (form.MultiSelect) return [];
+            return form.Prompt.Options
+                .Where(o => o.Key != form.FreeTextKey && o.Key != form.ChatAboutKey && !o.Mode)
+                .Select(o => new PromptOption(o.Key, o.Label, OptionKinds.Option, null))
+                .ToList();
+        }
+
+        // The question as the phone shows it: "Question 2 of 3" when the form
+        // says so, then the question (and, on the review, what is about to be sent).
+        internal static string QuestionPreview(AskForm form) =>
+            AskFormView.ProgressOf(form) is { } progress ? progress + "\n" + AskFormView.TitleOf(form) : AskFormView.TitleOf(form);
 
         // "Bash command" → Bash (Claude Code); Codex's "Would you like to run
         // the following command?" → Bash; anything else names no tool.

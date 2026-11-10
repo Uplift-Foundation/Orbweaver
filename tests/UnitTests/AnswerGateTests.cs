@@ -376,4 +376,17 @@ public class AnswerGateTests
             7, AnswerGate.ForbiddenOption);
         Assert.Equal("1", AnswerGate.Decide(PendingFor(EdgeScreen), AnswerFor(EdgeScreen, "approve"), EdgeScreen, PhoneId, Phone.Public, Now, new NonceWindow()).Key);
     }
+
+    // CB-323: a prompt sent with a chosen subset of the screen's options (a
+    // question) presses only those, even when the fresh parse has more.
+    [Fact]
+    public void A_key_the_prompt_did_not_offer_is_forbidden_even_when_the_screen_has_it()
+    {
+        var hash = Fp.Hash;
+        var only1 = new PendingPrompt(RequestId, SessionId, "permission", hash, Expires, keys: ["1"]);
+        var approve = Decide(Answer("approve"), only1);
+        Assert.True(approve.Press);
+        var only3 = new PendingPrompt(RequestId, SessionId, "permission", hash, Expires, keys: ["3"]);
+        Refused(Decide(Answer("approve"), only3), 7, AnswerGate.ForbiddenOption);
+    }
 }

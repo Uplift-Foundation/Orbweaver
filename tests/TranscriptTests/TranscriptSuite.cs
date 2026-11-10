@@ -1394,6 +1394,22 @@ namespace Orbweaver.Tests
             Check("…and its free-text and chat options by label",
                 single?.FreeTextKey == "3" && single.ChatAboutKey == "4");
 
+            // CB-323: the question a phone could not answer, captured live.
+            var colour = ChatTranscript.ParseAskForm(PaneFixtures.MacColourQuestion);
+            Check("the MacBook's live AskUserQuestion capture reads as a single-select form",
+                colour is { MultiSelect: false, IsReview: false } && colour.Tabs.Count == 1 && colour.CurrentTab == 0);
+            Check("…its question, and its three choices by their own labels",
+                colour?.Prompt.Title == "Which colour should the orb be?"
+                && colour.Prompt.Options.Take(3).Select(o => o.Label).SequenceEqual(new[] { "Red", "Green", "Blue" }),
+                string.Join("|", colour?.Prompt.Options.Select(o => o.Key + ":" + o.Label) ?? Array.Empty<string>()));
+            Check("…with Type something and Chat about this found by label",
+                colour?.FreeTextKey == "4" && colour.ChatAboutKey == "5", $"{colour?.FreeTextKey}/{colour?.ChatAboutKey}");
+            var two = ChatTranscript.ParseAskForm(PaneFixtures.MacTwoQuestionsFirst);
+            Check("a live two-question form reads its question and its bar",
+                two?.Prompt.Title == "Pick a size?" && two.Tabs.Select(t => t.Name).SequenceEqual(new[] { "Size", "Shape", "Submit" })
+                && two.FreeTextKey == "3" && two.ChatAboutKey == "4",
+                string.Join("|", two?.Tabs.Select(t => t.Name) ?? Array.Empty<string>()));
+
             var bareForm = ChatTranscript.ParseAskForm(PaneFixtures.MiniOpenclawQuestionDialog);
             Check("a form with no bar or header in view is still a form by its Type something option",
                 bareForm is not null && bareForm.Tabs.Count == 0 && bareForm.CurrentTab == -1

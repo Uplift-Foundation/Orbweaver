@@ -12,9 +12,11 @@ namespace Orbweaver
     // the first finds it settled and is refused not_pending.
     internal sealed class PendingPrompt
     {
-        internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt, bool deskOnly = false)
+        internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt, bool deskOnly = false,
+            IReadOnlyList<string>? keys = null)
         {
             DeskOnly = deskOnly;
+            Keys = keys;
             RequestId = requestId;
             SessionId = sessionId;
             Kind = kind;
@@ -28,6 +30,12 @@ namespace Orbweaver
         internal string ScreenHash { get; }
         internal long ExpiresAt { get; }
         internal bool Answered { get; set; }
+
+        // The only keys an answer may press, when the prompt was sent with a
+        // chosen subset of the screen's options (a question: its own choices,
+        // never "Type something." or "Chat about this", whose digit declines
+        // the form). Null: any option the fresh parse allows.
+        internal IReadOnlyList<string>? Keys { get; }
 
         // A first-run screen (trust, update, hooks review: FirstRunDialogs) sent
         // as "Open on desk" with no options. Nothing about it is pressable from
@@ -182,7 +190,7 @@ namespace Orbweaver
             // whether the prompt was minted desk-only or the screen became one.
             if (pending.DeskOnly || FirstRunDialogs.Is(freshCapture)) return Refuse(7, ForbiddenOption);
             var key = KeyFor(answer, fresh, pending.Kind);
-            if (key is null) return Refuse(7, ForbiddenOption);
+            if (key is null || (pending.Keys is { } allowed && !allowed.Contains(key))) return Refuse(7, ForbiddenOption);
 
             // 8. press
             return new Decision(8, null, key);
