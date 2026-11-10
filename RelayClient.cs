@@ -147,6 +147,7 @@ namespace Orbweaver
             Remote = new RelayRemote(remoteSeams ?? DefaultRemoteSeams(_now), new RemoteSender(this), Prompts.Nonces);
             _link.RequestReceived += (phone, idPub, request) => Defer(() => _ = HandleQuietly(phone, idPub, request));
             _link.PhoneWentOffline += phone => Defer(() => Remote.PhoneOffline(phone));
+            _link.SessionFinished += sessionId => Defer(() => _ = SummarizeAsync(sessionId));
             _link.PushAcked += (phone, id, atMs) =>
             {
                 MirrorLog.Say("relay", $"push-ack {id} from {phone} at_ms={atMs}");
@@ -209,6 +210,9 @@ namespace Orbweaver
         {
             // CB-321: pictures are answered only from a finished bundle.
             Images = hash => PersonaImageStore.Shared.ById(hash),
+            Accounts = new RelayRemote.AccountSeams(RelayAccounts.Choices, OrbweaverSettings.PhoneLaunchProfileFor),
+            Summarize = RelayAccounts.Summarize,
+            Settle = () => Task.Delay(500),
         };
 
         // CB-316: the account readings the usage orbs just drew. Projected,
@@ -489,6 +493,22 @@ namespace Orbweaver
         // which the link keeps for limit pushes.
         internal void OnPersonas(string plaintext, PushPersona? defaultPersona = null) =>
             Dispatch(() => _link.SendPersonas(plaintext, defaultPersona));
+
+        // The accounts a launch may name, from each scan; the link sends it only when it changed.
+        internal void OnAccounts(string plaintext) => Dispatch(() => _link.SendAccounts(plaintext));
+
+        // A session finished: its summary, to the phones watching it. Off the event pump, because
+        // the summariser is a model call; a failure costs that summary only.
+        private async Task SummarizeAsync(string sessionId)
+        {
+            try
+            {
+                if (await Remote.SummaryForAsync(sessionId).ConfigureAwait(false) is not { } summary) return;
+                var frame = RelayAccounts.SummaryFrame(sessionId, summary.Text, _now().ToUnixTimeSeconds());
+                Dispatch(() => _link.SendSummary(sessionId, frame, summary.Phones));
+            }
+            catch (Exception e) { MirrorLog.Say("relay", $"phone summary failed: {e.GetType().Name}"); }
+        }
 
         public async Task<RelayLink.PairOffer> BeginPairingAsync(CancellationToken token = default)
         {

@@ -123,6 +123,7 @@ namespace Orbweaver
             "lastUpdateCheckUtc", "lastRunVersion",
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
+            "phoneLaunchProfiles",
             // Every hotkey override. toggleOrbsHotkey was missing from this
             // list from CB-155 until the new-chat hotkey was added beside it;
             // Save's ContainsKey guard kept that from throwing, but it meant
@@ -884,6 +885,12 @@ namespace Orbweaver
             // nor a downgrade loses a saved pick.
             public Dictionary<string, string> NewChatLastProfiles { get; init; } = new(StringComparer.Ordinal);
 
+            // CB-316: the account a session started from a phone runs under when the phone names
+            // none, per CLI ("ClaudeCode": ".claude-uplift"). A designated default, not a
+            // last-used: it stays what the user said until they say otherwise. "default" names
+            // the CLI's own default directory. Saved as "phoneLaunchProfiles".
+            public Dictionary<string, string> PhoneLaunchProfiles { get; init; } = new(StringComparer.Ordinal);
+
             // Auto-organize: which shape and how much space between orbs.
             public string ArrangeShape
             {
@@ -1524,6 +1531,24 @@ namespace Orbweaver
             {
                 return _model.NewChatLastProfiles.TryGetValue(cli.ToString(), out var dir) ? dir : null;
             }
+        }
+
+        internal static string? PhoneLaunchProfileFor(NewChatCli cli)
+        {
+            Load();
+            lock (Gate) return _model.PhoneLaunchProfiles.TryGetValue(cli.ToString(), out var dir) ? dir : null;
+        }
+
+        internal static void SetPhoneLaunchProfile(NewChatCli cli, string? profileDir)
+        {
+            var value = string.IsNullOrWhiteSpace(profileDir) ? null : profileDir;
+            Load();
+            lock (Gate)
+            {
+                if (value is null) _model.PhoneLaunchProfiles.Remove(cli.ToString());
+                else _model.PhoneLaunchProfiles[cli.ToString()] = value;
+            }
+            Save();
         }
 
         internal static void SetNewChatLastProfile(NewChatCli cli, string? profileDir)
@@ -2569,6 +2594,15 @@ namespace Orbweaver
                         }
                     }
 
+                    if (root["phoneLaunchProfiles"] is JsonObject phoneProfiles)
+                    {
+                        foreach (var (cliName, node) in phoneProfiles)
+                        {
+                            if (Enum.TryParse<NewChatCli>(cliName, out var parsedCli) && parsedCli.ToString() == cliName && Text(node) is { } dir)
+                                model.PhoneLaunchProfiles[cliName] = dir;
+                        }
+                    }
+
                     if (Text(root["newChatLastProfile"]) is { } legacyProfile)
                     {
                         model.NewChatLastProfiles.TryAdd(nameof(NewChatCli.ClaudeCode), legacyProfile);
@@ -3217,6 +3251,7 @@ namespace Orbweaver
                         ["newChatLastProfile"] = _model.NewChatLastProfiles.TryGetValue(
                             nameof(NewChatCli.ClaudeCode), out var claudeLastProfile) ? claudeLastProfile : null,
                         ["newChatLastProfiles"] = NewChatLastProfilesNode(_model.NewChatLastProfiles),
+                        ["phoneLaunchProfiles"] = NewChatLastProfilesNode(_model.PhoneLaunchProfiles),
                         // Grouped rather than three top-level keys: it reads as
                         // one setting in the file the way it reads as one card in
                         // the window. A null entry — which is what a colour left

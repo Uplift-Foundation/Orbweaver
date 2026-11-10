@@ -177,7 +177,12 @@ public class RelayRemoteTests
         public readonly List<TimeSpan> Delays = [];
         public RelayRemote Remote = null!;
 
-        public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42)
+        public List<NewChatAccounts.Choice> AccountChoices = [new("Default", null), new("~/.claude-uplift", ".claude-uplift"), new("~/.codex-b", ".codex-b")];
+        public string? Designated;
+        public Func<SessionStatus, string, Task<string?>> Summarizer = (_, reply) => Task.FromResult<string?>("summary of " + reply);
+
+        public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42,
+            bool accounts = true, bool summarizes = true)
         {
             Windows = windows;
             Binary = binary;
@@ -198,7 +203,13 @@ public class RelayRemoteTests
                     () => "/bin/zsh",
                     (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
                     psi => { WindowsStarts.Add(psi); return WindowsPid; }),
-                Log.Add) { Images = h => Bundles.GetValueOrDefault(h) }, Sent, Nonces);
+                Log.Add)
+            {
+                Images = h => Bundles.GetValueOrDefault(h),
+                Accounts = accounts ? new RelayRemote.AccountSeams(_ => AccountChoices, _ => Designated) : null,
+                Summarize = summarizes ? (s, reply) => Summarizer(s, reply) : null,
+                Settle = () => Task.CompletedTask,
+            }, Sent, Nonces);
         }
 
         public void Sessions(params (string Id, SessionStatus Status)[] rows) => Remote.OnStatuses(rows);
@@ -399,10 +410,10 @@ public class RelayRemoteTests
     private static readonly RelayCrypto.KeyPair PhoneKey = RelayCrypto.GenerateKeyPair();
 
     private static LaunchRequest Launch(World w, string cli = "claude", string message = "first", string cwd = "/w",
-        string model = "", string parent = "", string persona = "")
+        string model = "", string parent = "", string persona = "", string account = "")
     {
         var f = new LaunchFields(cwd, cli, persona, model, parent, message,
-            RelayCrypto.Base64Url(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)), w.Now.ToUnixTimeSeconds() + 120);
+            RelayCrypto.Base64Url(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)), w.Now.ToUnixTimeSeconds() + 120, account);
         return new LaunchRequest("L", f, RelayCrypto.Base64Url(RelayCrypto.Sign(PhoneKey, LaunchGate.Message(LaunchGate.Body(f)))));
     }
 
@@ -790,5 +801,148 @@ public class RelayRemoteTests
         var sent = new Sent();
         await new RelayRemote(seams, sent, new NonceWindow()).HandleAsync("ph_1", [], new PersonaImageRequest("r", new string('a', 64)));
         Assert.Equal("unknown_image", Assert.Single(sent.Replies).Body.GetProperty("code").GetString());
+    }
+
+    // ---- accounts (additive to v4) -------------------------------------------------------
+
+    [Fact]
+    public async Task A_launch_naming_no_account_starts_exactly_as_it_always_did()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status(cwd: "/w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", []), w.MacStarts.Single().Command);
+        Assert.DoesNotContain("CLAUDE_CONFIG_DIR", w.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task A_named_account_is_the_clis_profile_variable_in_front_of_the_binary_on_a_mac()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status(cwd: "/w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, account: ".claude-uplift"));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, ".claude-uplift")), w.MacStarts.Single().Command);
+        Assert.Contains("env CLAUDE_CONFIG_DIR=", w.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task The_designated_account_applies_when_none_is_named_and_default_asks_for_the_clis_own()
+    {
+        var designated = new World { Designated = ".claude-uplift" };
+        ChecksIn(designated, "new", Status(cwd: "/w"));
+        await designated.Remote.HandleAsync("ph", PhoneKey.Public, Launch(designated));
+        Assert.Contains("CLAUDE_CONFIG_DIR", designated.MacStarts.Single().Command);
+
+        var explicitDefault = new World { Designated = ".claude-uplift" };
+        ChecksIn(explicitDefault, "new", Status(cwd: "/w"));
+        await explicitDefault.Remote.HandleAsync("ph", PhoneKey.Public, Launch(explicitDefault, account: RelayAccounts.Default));
+        Assert.DoesNotContain("CLAUDE_CONFIG_DIR", explicitDefault.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task An_account_the_desktop_does_not_list_is_unknown_account_and_nothing_starts()
+    {
+        var w = new World();
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, account: ".claude-other"));
+        Assert.Equal(["unknown_account"], Codes(w));
+        Assert.Empty(w.MacStarts);
+
+        // A desktop with no account seams offers none, so naming one is the same refusal.
+        var none = new World(accounts: false);
+        await none.Remote.HandleAsync("ph", PhoneKey.Public, Launch(none, account: ".claude-uplift"));
+        Assert.Equal(["unknown_account"], Codes(none));
+        Assert.Empty(none.MacStarts);
+    }
+
+    [Fact]
+    public async Task A_windows_claude_account_is_set_inside_the_consoles_own_command_line()
+    {
+        var w = new World(windows: true);
+        w.Binary = "C:\\bin\\claude.exe";
+        ChecksIn(w, "new", Status(cwd: "C:\\w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "C:\\w", account: ".claude-uplift"));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        var start = w.WindowsStarts.Single();
+        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=.claude-uplift\" && \"C:\\bin\\claude.exe\""], start.ArgumentList);
+    }
+
+    [Fact]
+    public async Task A_windows_account_that_cmd_would_read_as_syntax_is_refused_not_started()
+    {
+        var w = new World(windows: true);
+        w.Binary = "C:\\bin\\claude.exe";
+        w.AccountChoices.Add(new("odd", ".a&b"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "C:\\w", account: ".a&b"));
+
+        Assert.Equal(["launch_failed"], Codes(w));
+        Assert.Empty(w.WindowsStarts);
+    }
+
+    // ---- the summary ---------------------------------------------------------------------
+
+    private static async Task<(string Text, IReadOnlyList<string> Phones)?> Summary(World w, string session = "s1")
+    {
+        w.Files["/t"] = [TranscriptWatch.Line("user", "do it", 1), TranscriptWatch.Line("assistant", "done, all green", 2), TranscriptWatch.Line("assistant", "  ", 3)];
+        w.Sessions((session, Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r", session, null));
+        return await w.Remote.SummaryForAsync(session);
+    }
+
+    [Fact]
+    public async Task A_watched_sessions_last_assistant_reply_is_summarised_for_the_phones_watching_it()
+    {
+        var w = new World();
+        var summary = await Summary(w);
+        Assert.Equal("summary of done, all green", summary!.Value.Text);
+        Assert.Equal(["ph"], summary.Value.Phones);
+    }
+
+    [Fact]
+    public async Task Nothing_is_summarised_unwatched_unsummarisable_empty_or_failed()
+    {
+        var w = new World();
+        w.Files["/t"] = [TranscriptWatch.Line("assistant", "done", 1)];
+        w.Sessions(("s1", Watched("/t")));
+        Assert.Null(await w.Remote.SummaryForAsync("s1"));                       // no one watching: no model call
+
+        Assert.Null(await new World(summarizes: false).Remote.SummaryForAsync("s1"));   // no summariser
+
+        var gone = new World();
+        await Summary(gone);
+        gone.Sessions();
+        Assert.Null(await gone.Remote.SummaryForAsync("s1"));                    // left the roster
+
+        var noReply = new World();
+        noReply.Files["/t"] = [TranscriptWatch.Line("user", "hi", 1)];
+        noReply.Sessions(("s1", Watched("/t")));
+        await noReply.Remote.HandleAsync("ph", [], new WatchRequest("r", "s1", null));
+        Assert.Null(await noReply.Remote.SummaryForAsync("s1"));                 // nothing the assistant said
+
+        var empty = new World { Summarizer = (_, _) => Task.FromResult<string?>("  ") };
+        Assert.Null(await Summary(empty));                                       // the summariser had nothing
+
+        var throws = new World { Summarizer = (_, _) => throw new InvalidOperationException("model down") };
+        Assert.Null(await Summary(throws));
+        Assert.Contains(throws.Log, l => l.Contains("summariser threw InvalidOperationException"));
+    }
+
+    [Fact]
+    public async Task A_phone_that_left_while_the_summary_was_made_is_not_sent_it()
+    {
+        var w = new World();
+        w.Summarizer = (_, reply) => { w.Remote.PhoneOffline("ph"); return Task.FromResult<string?>("late"); };
+        Assert.Null(await Summary(w));
+    }
+
+    [Fact]
+    public async Task A_phone_with_no_pending_session_has_no_watchers_to_summarise_for()
+    {
+        var w = new World();
+        Assert.Empty(w.Remote.Watchers("nope"));
     }
 }

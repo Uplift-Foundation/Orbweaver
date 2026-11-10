@@ -273,4 +273,36 @@ public class NewChatSettingsTests
         var root = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json")))!;
         Assert.Null(root["newChatLastProfile"]);
     }
+
+    // CB-316: the account a phone launch runs under when the phone names none.
+    [Fact]
+    public void ThePhoneLaunchDefaultsSurviveARestartPerCliAndCanBeCleared()
+    {
+        FreshSettings();
+        var dir = Environment.GetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR")!;
+        Assert.Null(OrbweaverSettings.PhoneLaunchProfileFor(NewChatCli.ClaudeCode));
+
+        OrbweaverSettings.SetPhoneLaunchProfile(NewChatCli.ClaudeCode, ".claude-uplift");
+        OrbweaverSettings.SetPhoneLaunchProfile(NewChatCli.Codex, "default");
+
+        Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", dir);
+        OrbweaverSettings.ReloadForTests();
+        Assert.Equal(".claude-uplift", OrbweaverSettings.PhoneLaunchProfileFor(NewChatCli.ClaudeCode));
+        Assert.Equal("default", OrbweaverSettings.PhoneLaunchProfileFor(NewChatCli.Codex));
+        Assert.Null(OrbweaverSettings.PhoneLaunchProfileFor(NewChatCli.Grok));
+        Assert.Contains("\"phoneLaunchProfiles\"", File.ReadAllText(Path.Combine(dir, "settings.json")));
+
+        OrbweaverSettings.SetPhoneLaunchProfile(NewChatCli.ClaudeCode, "  ");
+        Assert.Null(OrbweaverSettings.PhoneLaunchProfileFor(NewChatCli.ClaudeCode));
+    }
+
+    [Fact]
+    public void AHandEditedPhoneLaunchKeyForAnUnknownCliIsDroppedNotKept()
+    {
+        FreshSettings();
+        var dir = Environment.GetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR")!;
+        File.WriteAllText(Path.Combine(dir, "settings.json"), "{\"phoneLaunchProfiles\":{\"Gemini\":\".x\",\"ClaudeCode\":\".claude-kmart\"}}");
+        OrbweaverSettings.ReloadForTests();
+        Assert.Equal(".claude-kmart", OrbweaverSettings.PhoneLaunchProfileFor(NewChatCli.ClaudeCode));
+    }
 }

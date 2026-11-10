@@ -1434,6 +1434,62 @@ public class RelayLinkTests : IDisposable
         Assert.Equal([new UnwatchRequest("", "s1"), new BadFrameRequest("", null)], got);
     }
 
+    // ---- accounts and summary frames (additive to v4) -----------------------------
+
+    [Fact]
+    public void Accounts_go_to_online_phones_only_when_their_bytes_change_and_follow_the_personas_on_connect()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var personas = PersonaFrames.Personas([]);
+        var a = """{"t":"accounts","accounts":[]}""";
+        var b = """{"t":"accounts","accounts":[{"cli":"claude","id":"default","label":"Default"}]}""";
+
+        var sent = link.SendAccounts(a).Single();
+        Assert.Equal(("state", RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), "accounts")), (J(sent).GetProperty("class").GetString(), CkOf(sent)));
+        Assert.Equal(a, phone.OpenFromDesktop(sent).GetRawText());
+        Assert.Empty(link.SendAccounts(a));                                    // unchanged: nothing
+
+        link.SendPersonas(personas);
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendAccounts(b));                                    // offline: kept, not sent
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(["roster", "personas", "accounts"], back.Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()).ToArray());
+        Assert.Equal(b, phone.OpenFromDesktop(back.Last()).GetRawText());      // the kept one, on connect
+
+        link.Disconnected();                                                   // before welcome nothing goes
+        Assert.Empty(link.SendAccounts(a));
+    }
+
+    [Fact]
+    public void A_summary_goes_only_to_the_online_phones_named_under_the_sessions_summary_ck()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var frame = RelayAccounts.SummaryFrame("s1", "it passed", 1794111792);
+        var sent = link.SendSummary("s1", frame, [phone.Id]).Single();
+        Assert.Equal(("state", RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), "summary:s1")), (J(sent).GetProperty("class").GetString(), CkOf(sent)));
+        Assert.Equal(frame, phone.OpenFromDesktop(sent).GetRawText());
+
+        Assert.Empty(link.SendSummary("s1", frame, ["ph_someone_else"]));       // not named
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendSummary("s1", frame, [phone.Id]));                 // offline
+        link.Disconnected();
+        Assert.Empty(link.SendSummary("s1", frame, [phone.Id]));                 // not welcomed
+    }
+
+    [Fact]
+    public void A_session_going_generating_to_idle_is_announced_once_however_many_phones_are_paired()
+    {
+        var (link, _, _, _, _) = Paired();
+        var finished = new List<string>();
+        link.SessionFinished += finished.Add;
+        link.OnScan([Row("s1", "generating")]);
+        Assert.Empty(finished);
+        link.OnScan([Row("s1")]);
+        Assert.Equal(["s1"], finished);
+        link.OnScan([Row("s1", "waiting")]);                                     // not a finish
+        Assert.Equal(["s1"], finished);
+    }
+
     // ---- CB-321 personas frame and picture windows ----------------------------
 
     [Fact]

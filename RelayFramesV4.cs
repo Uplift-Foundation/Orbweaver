@@ -61,13 +61,16 @@ namespace Orbweaver
         // request for a hash this desktop never offered, or has forgotten.
         internal const string UnknownImage = "unknown_image";
 
+        // The launch's optional account names one this desktop does not list.
+        internal const string UnknownAccount = "unknown_account";
+
         internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched];
 
         internal static readonly string[] ErrCodes =
         [
             BadFrame, UnknownSession, NotAtPrompt, Untypeable, TypingFailed, BadInput, BadSignature, Expired, Replayed,
             UnknownCli, UnknownCwd, BadModel, UnsupportedPersona, UnknownParent, UnsupportedParent, NoTerminal,
-            LaunchFailed, NoSession, UnknownImage,
+            LaunchFailed, NoSession, UnknownImage, UnknownAccount,
         ];
 
         // Only these four carry the desktop's own sentence; every other code's
@@ -108,7 +111,7 @@ namespace Orbweaver
 
     internal sealed record LaunchFields(
         string Cwd, string Cli, string Persona, string Model, string ParentSessionId,
-        string FirstMessage, string Nonce, long ExpiresAt);
+        string FirstMessage, string Nonce, long ExpiresAt, string Account = "");
 
     internal static class RelayRequests
     {
@@ -156,12 +159,19 @@ namespace Orbweaver
                 if (p.ValueKind != JsonValueKind.String) return new BadFrameRequest(reference, null);
                 parent = p.GetString()!;
             }
+            // account is additive: absent means the desktop's own choice; when present it must be a string.
+            var account = "";
+            if (f.TryGetProperty("account", out var a))
+            {
+                if (a.ValueKind != JsonValueKind.String) return new BadFrameRequest(reference, null);
+                account = a.GetString()!;
+            }
             if (Str(f, "cwd") is not { } cwd || Str(f, "cli") is not { } cli || Str(f, "persona") is not { } persona
                 || Str(f, "model") is not { } model || Str(f, "first_message") is not { } message
                 || Str(f, "nonce") is not { } nonce || Str(f, "sig") is not { } sig
                 || !f.TryGetProperty("expires_at", out var e) || e.ValueKind != JsonValueKind.Number || !e.TryGetInt64(out var expires))
                 return new BadFrameRequest(reference, null);
-            return new LaunchRequest(reference, new LaunchFields(cwd, cli, persona, model, parent, message, nonce, expires), sig);
+            return new LaunchRequest(reference, new LaunchFields(cwd, cli, persona, model, parent, message, nonce, expires, account), sig);
         }
 
         private static string? Str(JsonElement e, string name) =>
