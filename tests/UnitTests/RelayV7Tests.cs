@@ -9,8 +9,8 @@ namespace Orbweaver.Tests;
 /// CB-323: the desktop against frames-v7-vectors.json. The file regenerates
 /// byte for byte from the shipped code; a computed value tampered in the input
 /// comes back recomputed rather than copied; and the activity grammar, written
-/// here from frames-v7.json's words, accepts the four accepted frames, refuses
-/// each of the eighteen refused ones on exactly its named field, and accepts
+/// here from frames-v7.json's words, accepts the five accepted frames, refuses
+/// each of the nineteen refused ones on exactly its named field, and accepts
 /// everything the desktop's own writer produces from a few thousand random
 /// books — which is what "the desktop cannot produce a refused frame" means
 /// when it has to be shown rather than said.
@@ -61,6 +61,7 @@ public class RelayV7Tests
     [InlineData("content_state_example.canonical", "{}")]
     [InlineData("limits.max_command_utf16", 161)]
     [InlineData("limits.boot_hex", 15)]
+    [InlineData("limits.max_session_id_utf16", 65)]
     public void A_tampered_computed_value_is_recomputed_not_copied(string path, object wrong)
     {
         var root = JsonNode.Parse(File.ReadAllText(Committed))!;
@@ -147,7 +148,7 @@ public class RelayV7Tests
         if (!f.TryGetProperty("oldest", out var o)) return "oldest";
         if (amber == 0) return o.ValueKind == JsonValueKind.Null ? null : "oldest";
         if (o.ValueKind != JsonValueKind.Object || !o.EnumerateObject().Select(p => p.Name).Order().SequenceEqual(OldestKeys.Order())) return "oldest";
-        if (!Str(o, "session_id", out var sid) || sid.Length == 0) return "oldest.session_id";
+        if (!Str(o, "session_id", out var sid) || sid.Length is 0 or > RelayActivity.MaxSessionId) return "oldest.session_id";
         if (!Str(o, "request_id", out var rid) || (rid.Length > 0 && !EnvelopeId.IsMatch(rid))) return "oldest.request_id";
         if (!Str(o, "title", out var title) || title.Length > RelayActivity.MaxTitle) return "oldest.title";
         if (!Str(o, "tool", out var tool) || tool.Length > RelayActivity.MaxTool) return "oldest.tool";
@@ -160,7 +161,7 @@ public class RelayV7Tests
     public void The_grammar_accepts_every_accepted_frame_and_every_timeline_snapshot()
     {
         var accepted = V.GetProperty("snapshot_grammar").GetProperty("accepted").EnumerateArray().ToList();
-        Assert.Equal(4, accepted.Count);
+        Assert.Equal(5, accepted.Count);
         Assert.All(accepted, f => Assert.Null(Refusal(f)));
         var snapshots = V.GetProperty("timeline").GetProperty("events").EnumerateArray()
             .Where(e => e.GetProperty("kind").GetString() == "snapshot").Select(e => e.GetProperty("frame")).ToList();
@@ -173,7 +174,7 @@ public class RelayV7Tests
     public void The_grammar_refuses_each_refused_frame_on_exactly_its_field()
     {
         var refused = V.GetProperty("snapshot_grammar").GetProperty("refused").EnumerateArray().ToList();
-        Assert.Equal(18, refused.Count);
+        Assert.Equal(19, refused.Count);
         Assert.All(refused, r => Assert.Equal(r.GetProperty("field").GetString(), Refusal(r.GetProperty("frame"))));
     }
 

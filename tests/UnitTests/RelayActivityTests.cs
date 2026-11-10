@@ -197,6 +197,8 @@ public class RelayActivityTests
         var r = RelayActivity.Ref(new string('f', 16), 9_007_199_254_740_992);
         Assert.Matches("^[A-Za-z0-9_.:-]{1,64}$", r);
         Assert.True(RelayActivity.IsActivityRef(r));
+        Assert.True(RelayActivity.IsActivityRef("activity"));        // the relay naming the frame
+        Assert.False(RelayActivity.IsActivityRef("activityx"));
         Assert.False(RelayActivity.IsActivityRef("unlink"));
         Assert.False(RelayActivity.IsActivityRef(null));
     }

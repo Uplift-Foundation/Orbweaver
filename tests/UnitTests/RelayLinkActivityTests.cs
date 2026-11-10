@@ -336,4 +336,19 @@ public partial class RelayLinkTests
         Assert.Equal(2, Activity(Assert.Single(link.FlushActivity())).GetProperty("seq").GetInt64());
         _ = notes;
     }
+
+    // frames-v7 relay addendum: a rate_limited reply whose ref the relay
+    // would not echo names the frame instead — still a resend.
+    [Fact]
+    public void A_rate_limited_naming_the_frame_instead_of_its_ref_resends_too()
+    {
+        var (link, notes, due, replies) = Watched(New(activity: new RelayActivity.Tracker(Boot)).Link, []);
+        link.OnFrame(Welcome());
+        link.OnFrame("""{"t":"err","ref":"activity","code":"rate_limited","message":"more than 20 control frames a second; this one was not processed, send it again"}""");
+        Assert.Equal([("activity", "err", "rate_limited")], replies);
+        Assert.Equal([_now.AddSeconds(2)], due);
+        _now = _now.AddSeconds(2);
+        Assert.Equal(2, Activity(Assert.Single(link.FlushActivity())).GetProperty("seq").GetInt64());
+        _ = notes;
+    }
 }

@@ -48,8 +48,14 @@ namespace Orbweaver
         // recognisable when the relay's reply comes back carrying it.
         internal static string Ref(string boot, long seq) => $"{RefPrefix}{boot}-{seq}";
 
+        // The relay echoes a frame's ref only when it is a valid id, and names
+        // the frame ("activity") otherwise (frames-v7 relay addendum). This
+        // desktop's refs are always valid, but a reply naming the frame is
+        // still a reply about it — a rate_limited one most of all.
+        internal const string FrameName = "activity";
+
         internal static bool IsActivityRef(string? reference) =>
-            reference is not null && reference.StartsWith(RefPrefix, StringComparison.Ordinal);
+            reference is not null && (reference.StartsWith(RefPrefix, StringComparison.Ordinal) || reference == FrameName);
 
         // The book's rows (waiting, generating, idle — an ended session has
         // already left the book) and the pending prompts, as one snapshot.

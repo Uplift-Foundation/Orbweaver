@@ -11,7 +11,7 @@ using Orbweaver;
 // relay's half — the timeline's pushes, replies, probes and decisions, the
 // route, the counts on the alert — is the relay's to reproduce (relay/tests)
 // and is carried here unchanged. The desktop's half comes out of the code the
-// app runs: every activity frame a desktop sends (the four accepted frames and
+// app runs: every activity frame a desktop sends (the accepted frames and
 // every snapshot in the timeline) is rebuilt by RelayActivity.Snapshot over
 // rows that put that frame's sessions in the book and its prompt in the
 // pipeline, then RelayActivity.Frame; the cut table by PromptFrames.Cut; the
@@ -41,6 +41,7 @@ internal static class V7Vectors
         limits["max_tool_utf16"] = RelayActivity.MaxTool;
         limits["max_machine_utf16"] = RelayActivity.MaxMachine;
         limits["max_command_utf16"] = RelayActivity.MaxCommand;
+        limits["max_session_id_utf16"] = RelayActivity.MaxSessionId;
         limits["boot_hex"] = RelayActivity.NewBoot().Length;
 
         foreach (var c in v["cut_rule"]!.AsArray())
