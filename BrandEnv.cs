@@ -94,6 +94,10 @@ namespace Orbweaver
         // Explicit opt-in only; nothing sets it by default.
         internal const string RelayTestHooks = "RELAY_TEST_HOOKS";
 
+        // CB-323: the hour gate's desktop activity log (RelayActivityLog), a
+        // path. Unset means no log. No older spelling ever existed.
+        internal const string ActivityLog = "ACTIVITY_LOG";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -102,7 +106,7 @@ namespace Orbweaver
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
-            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks,
+            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks, ActivityLog,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

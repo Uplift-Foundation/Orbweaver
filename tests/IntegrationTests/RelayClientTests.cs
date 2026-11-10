@@ -982,7 +982,12 @@ public class RelayClientTests : IAsyncLifetime
         for (var i = 0; i < 30; i++)
             seqs.Add(OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("seq").GetInt64());
         Assert.Equal(Enumerable.Range(2, 30).Select(i => (long)i), seqs);
-        Assert.DoesNotContain(waits, w => w < TimeSpan.FromMinutes(1));
+        // CB-323: the burst also changes the activity snapshot, and its 2 s
+        // debounce asks for exactly one wait — the burst's first change defers,
+        // the other 29 ride that deferral. Pacing 30 frames past a burst of 10
+        // would ask for about twenty, so at most one short wait still says
+        // pacing was off.
+        Assert.True(waits.Count(w => w < TimeSpan.FromMinutes(1)) <= 1, string.Join(", ", waits));
     }
 
     // CB-314 #11244: in the two-process end to end, the probe's PairRequested

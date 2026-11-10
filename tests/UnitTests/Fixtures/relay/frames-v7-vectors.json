@@ -1,0 +1,2284 @@
+{
+ "_source": {
+  "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (V7Vectors.cs: RelayActivity.Snapshot, RelayActivity.Frame, PromptFrames.Cut, CanonicalJson); the relay's timeline, route and counts carried from Orbweaver-Mobile contracts/make_v7_vectors.py for relay/tests to reproduce",
+  "orbweaver_sha": "c4fd39f9",
+  "spec": "CB-323 plan (docs/design/milestone-5-plan.md); contracts/frames-v7.json",
+  "encoding": "every plaintext canonical (frames-v4 canonical); times in the timeline are offsets in seconds from inputs.t0, absolute Unix seconds everywhere a frame or payload carries one; hash is the first 16 lowercase hex of SHA-256 over change_key"
+ },
+ "_rules": "frames-v7 aggregate: per-desktop snapshots keyed by desktop_id with replace semantics (a different boot always replaces; the same boot needs a greater seq); a snapshot is live while its socket is online, or for 15 s after an observed close, or for 90 s after it was received when the relay has observed nothing since it started; sums over live snapshots; the oldest amber by (since, desktop_id); the activity runs while amber > 0 and ends 60 s after it reaches 0; at most 4 pushes in any 60 s window, a held push sent at (4th most recent send + 60) with the aggregate as of then; priority 10 for start, end and an update whose amber or oldest.request_id changed, else 5.",
+ "inputs": {
+  "t0": 1794111800,
+  "phone_id": "ph_a1b2c3d4e5f60718",
+  "desktops": {
+   "dsk_5f3c9a0e1b7d2468": {
+    "machine": "MacBook Pro",
+    "sessions": [
+     {
+      "session_id": "0f6c4f2a",
+      "title": "orbweaver"
+     },
+     {
+      "session_id": "7a1b2c3d",
+      "title": "orbweaver-site"
+     }
+    ]
+   },
+   "dsk_b2c4d6e8f0a13579": {
+    "machine": "Studio PC",
+    "sessions": [
+     {
+      "session_id": "c3d4e5f6",
+      "title": "loginid-sdk-web"
+     },
+     {
+      "session_id": "9e8d7c6b",
+      "title": "CB-318"
+     }
+    ]
+   }
+  },
+  "start_token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "update_token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+  "activity_id": "act-7f3a2c",
+  "_note": "desktop A and the phone are frames-v4-vectors'; B is the second PC of the Widgets canvas. Tokens are fixed hex, never real."
+ },
+ "limits": {
+  "activity_min_interval_s": 2,
+  "activity_counts_max": 9999,
+  "max_title_utf16": 64,
+  "max_tool_utf16": 32,
+  "max_machine_utf16": 32,
+  "max_command_utf16": 160,
+  "max_session_id_utf16": 64,
+  "boot_hex": 16,
+  "offline_grace_s": 15,
+  "restart_grace_s": 90,
+  "stale_after_s": 120,
+  "end_after_s": 60,
+  "start_token_wait_s": 30,
+  "start_retry_after_s": 300,
+  "pushes_per_minute": 4,
+  "pacer_window_s": 60,
+  "max_liveactivity_payload_bytes": 4096,
+  "activity_token_hex_min": 64,
+  "activity_token_hex_max": 200
+ },
+ "cut_rule": [
+  {
+   "in": "MacBook Pro",
+   "limit": 32,
+   "out": "MacBook Pro"
+  },
+  {
+   "in": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+   "limit": 32,
+   "out": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+  },
+  {
+   "in": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+   "limit": 32,
+   "out": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM…"
+  },
+  {
+   "in": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+   "limit": 160,
+   "out": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots"
+  },
+  {
+   "in": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "limit": 160,
+   "out": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  {
+   "in": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "limit": 160,
+   "out": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc…"
+  },
+  {
+   "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀y",
+   "limit": 160,
+   "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+   "_note": "the 160th unit would be half a surrogate pair: the pair goes and … is the 160th"
+  },
+  {
+   "in": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+   "limit": 64,
+   "out": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT…"
+  }
+ ],
+ "content_state_example": {
+  "content_state": {
+   "amber": 2,
+   "working": 3,
+   "idle": 1,
+   "machines": 2,
+   "oldest": {
+    "desktop_id": "dsk_5f3c9a0e1b7d2468",
+    "machine": "MacBook Pro",
+    "session_id": "0f6c4f2a",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "title": "orbweaver",
+    "tool": "Bash",
+    "command": "dotnet test tests/UnitTests",
+    "since": 1794111792
+   },
+   "as_of": 1794111800
+  },
+  "canonical": "{\"amber\":2,\"working\":3,\"idle\":1,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/UnitTests\",\"since\":1794111792},\"as_of\":1794111800}",
+  "change_key": "{\"amber\":2,\"working\":3,\"idle\":1,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/UnitTests\",\"since\":1794111792}}",
+  "hash": "d9788254ee6f04b1"
+ },
+ "oldest_tiebreak": [
+  {
+   "snapshots": {
+    "dsk_5f3c9a0e1b7d2468": {
+     "amber": 1,
+     "since": 100
+    },
+    "dsk_b2c4d6e8f0a13579": {
+     "amber": 1,
+     "since": 90
+    }
+   },
+   "expect": "dsk_b2c4d6e8f0a13579",
+   "why": "smaller since"
+  },
+  {
+   "snapshots": {
+    "dsk_5f3c9a0e1b7d2468": {
+     "amber": 1,
+     "since": 100
+    },
+    "dsk_b2c4d6e8f0a13579": {
+     "amber": 1,
+     "since": 100
+    }
+   },
+   "expect": "dsk_5f3c9a0e1b7d2468",
+   "why": "equal since: the smaller desktop_id (ordinal: 5f… < b2…)"
+  },
+  {
+   "snapshots": {
+    "dsk_5f3c9a0e1b7d2468": {
+     "amber": 0,
+     "since": null
+    },
+    "dsk_b2c4d6e8f0a13579": {
+     "amber": 2,
+     "since": 500
+    }
+   },
+   "expect": "dsk_b2c4d6e8f0a13579",
+   "why": "a desktop with no amber has no oldest"
+  },
+  {
+   "snapshots": {
+    "dsk_5f3c9a0e1b7d2468": {
+     "amber": 0,
+     "since": null
+    },
+    "dsk_b2c4d6e8f0a13579": {
+     "amber": 0,
+     "since": null
+    }
+   },
+   "expect": null,
+   "why": "no amber anywhere: oldest is null"
+  }
+ ],
+ "snapshot_grammar": {
+  "accepted": [
+   {
+    "t": "activity",
+    "ref": "act-ok-1",
+    "boot": "9c1e3f7a5b2d8046",
+    "seq": 1,
+    "machine": "MacBook Pro",
+    "amber": 1,
+    "working": 2,
+    "idle": 3,
+    "oldest": {
+     "session_id": "0f6c4f2a",
+     "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+     "title": "orbweaver",
+     "tool": "Bash",
+     "command": "dotnet test tests/UnitTests",
+     "since": 1794111792
+    }
+   },
+   {
+    "t": "activity",
+    "ref": "act-ok-2",
+    "boot": "9c1e3f7a5b2d8046",
+    "seq": 2,
+    "machine": "MacBook Pro",
+    "amber": 0,
+    "working": 0,
+    "idle": 0,
+    "oldest": null
+   },
+   {
+    "t": "activity",
+    "ref": "act-ok-3",
+    "boot": "9c1e3f7a5b2d8046",
+    "seq": 3,
+    "machine": "MacBook Pro",
+    "amber": 1,
+    "working": 0,
+    "idle": 0,
+    "oldest": {
+     "session_id": "0f6c4f2a",
+     "request_id": "",
+     "title": "orbweaver",
+     "tool": "",
+     "command": "",
+     "since": 1794111792
+    }
+   },
+   {
+    "t": "activity",
+    "ref": "act-ok-4",
+    "boot": "9c1e3f7a5b2d8046",
+    "seq": 4,
+    "machine": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "amber": 9999,
+    "working": 9999,
+    "idle": 9999,
+    "oldest": {
+     "session_id": "0f6c4f2a",
+     "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+     "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+     "tool": "tttttttttttttttttttttttttttttttt",
+     "command": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "since": 1794111792
+    }
+   },
+   {
+    "t": "activity",
+    "ref": "act-ok-5",
+    "boot": "9c1e3f7a5b2d8046",
+    "seq": 5,
+    "machine": "MacBook Pro",
+    "amber": 1,
+    "working": 0,
+    "idle": 0,
+    "oldest": {
+     "session_id": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+     "request_id": "",
+     "title": "orbweaver",
+     "tool": "",
+     "command": "",
+     "since": 1794111792
+    }
+   }
+  ],
+  "refused": [
+   {
+    "field": "oldest",
+    "why": "amber > 0 with oldest null",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-1",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "oldest",
+    "why": "amber 0 with an oldest",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-2",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 1,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "",
+      "title": "orbweaver",
+      "tool": "",
+      "command": "",
+      "since": 1794111792
+     }
+    }
+   },
+   {
+    "field": "amber",
+    "why": "negative",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-3",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": -1,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "working",
+    "why": "over 9999",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-4",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 10000,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "idle",
+    "why": "not an integer",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-5",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 0,
+     "idle": "3",
+     "oldest": null
+    }
+   },
+   {
+    "field": "boot",
+    "why": "uppercase hex",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-6",
+     "boot": "9C1E3F7A5B2D8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "boot",
+    "why": "15 characters",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-7",
+     "boot": "9c1e3f7a5b2d804",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "seq",
+    "why": "zero",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-8",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 0,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "machine",
+    "why": "33 units, uncut",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-9",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+     "amber": 0,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "machine",
+    "why": "empty",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-10",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "",
+     "amber": 0,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "oldest.command",
+    "why": "161 units, uncut",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-11",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "",
+      "title": "orbweaver",
+      "tool": "Bash",
+      "command": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "since": 1794111792
+     }
+    }
+   },
+   {
+    "field": "oldest.title",
+    "why": "65 units, uncut",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-12",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "",
+      "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+      "tool": "Bash",
+      "command": "",
+      "since": 1794111792
+     }
+    }
+   },
+   {
+    "field": "oldest.tool",
+    "why": "33 units, uncut",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-13",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "",
+      "title": "orbweaver",
+      "tool": "ttttttttttttttttttttttttttttttttt",
+      "command": "",
+      "since": 1794111792
+     }
+    }
+   },
+   {
+    "field": "oldest.request_id",
+    "why": "not in the envelope-id grammar",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-14",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "has space",
+      "title": "orbweaver",
+      "tool": "",
+      "command": "",
+      "since": 1794111792
+     }
+    }
+   },
+   {
+    "field": "oldest.session_id",
+    "why": "empty",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-15",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "",
+      "request_id": "",
+      "title": "orbweaver",
+      "tool": "",
+      "command": "",
+      "since": 1794111792
+     }
+    }
+   },
+   {
+    "field": "oldest.since",
+    "why": "not an integer",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-16",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "",
+      "title": "orbweaver",
+      "tool": "",
+      "command": "",
+      "since": "1794111792"
+     }
+    }
+   },
+   {
+    "field": "ref",
+    "why": "65 characters",
+    "frame": {
+     "t": "activity",
+     "ref": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 0,
+     "idle": 0,
+     "oldest": null
+    }
+   },
+   {
+    "field": "oldest",
+    "why": "an extra key",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-18",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "",
+      "title": "orbweaver",
+      "tool": "",
+      "command": "",
+      "since": 1794111792,
+      "cwd": "/Users/x"
+     }
+    }
+   },
+   {
+    "field": "oldest.session_id",
+    "why": "65 units: the cap added by the relay addendum",
+    "frame": {
+     "t": "activity",
+     "ref": "act-bad-19",
+     "boot": "9c1e3f7a5b2d8046",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 0,
+     "oldest": {
+      "session_id": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+      "request_id": "",
+      "title": "orbweaver",
+      "tool": "",
+      "command": "",
+      "since": 1794111792
+     }
+    }
+   }
+  ],
+  "_note": "every refused frame is one field away from act-ok-1/2; a relay that accepts any of them is not applying the grammar. The sender is a desktop in every case; a phone sending act-ok-1 gets err forbidden (phone_sender below).",
+  "rate_limited": [
+   {
+    "frame_ref": "act-rl-1",
+    "reply": {
+     "t": "err",
+     "ref": "act-rl-1",
+     "code": "rate_limited",
+     "message": "more than 20 control frames a second; this one was not processed, send it again"
+    }
+   },
+   {
+    "frame_ref": "has a space",
+    "reply": {
+     "t": "err",
+     "ref": "activity",
+     "code": "rate_limited",
+     "message": "more than 20 control frames a second; this one was not processed, send it again"
+    },
+    "_note": "a ref that is not in the envelope-id grammar is never echoed: the frame's own name stands in"
+   }
+  ],
+  "phone_sender": {
+   "frame_ref": "act-ok-1",
+   "reply": {
+    "t": "err",
+    "ref": "act-ok-1",
+    "code": "forbidden",
+    "message": "only a desktop sends activity"
+   }
+  }
+ },
+ "timeline": {
+  "events": [
+   {
+    "t": -10,
+    "kind": "post",
+    "post": "start_token",
+    "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "note": "the app posted its push-to-start token on launch"
+   },
+   {
+    "t": 0,
+    "kind": "socket_open",
+    "desktop": "dsk_5f3c9a0e1b7d2468"
+   },
+   {
+    "t": 0,
+    "kind": "snapshot",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "frame": {
+     "t": "activity",
+     "ref": "act-5f3c-01-001",
+     "boot": "0a0a0a0a0a0a0a01",
+     "seq": 1,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 2,
+     "idle": 0,
+     "oldest": null
+    },
+    "note": "A connects: two sessions working, nothing amber, so no activity starts"
+   },
+   {
+    "t": 5,
+    "kind": "socket_open",
+    "desktop": "dsk_b2c4d6e8f0a13579"
+   },
+   {
+    "t": 5,
+    "kind": "snapshot",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "frame": {
+     "t": "activity",
+     "ref": "act-b2c4-01-001",
+     "boot": "0b0b0b0b0b0b0b01",
+     "seq": 1,
+     "machine": "Studio PC",
+     "amber": 1,
+     "working": 1,
+     "idle": 0,
+     "oldest": {
+      "session_id": "9e8d7c6b",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+      "title": "CB-318",
+      "tool": "Bash",
+      "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+      "since": 1794111803
+     }
+    },
+    "note": "B connects with CB-318 amber since t+3: the first amber starts the activity"
+   },
+   {
+    "t": 7,
+    "kind": "post",
+    "post": "update_token",
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "activity_id": "act-7f3a2c",
+    "note": "iOS launched the app for the start and it posted the update token; nothing changed, so no update follows"
+   },
+   {
+    "t": 10,
+    "kind": "snapshot",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "frame": {
+     "t": "activity",
+     "ref": "act-5f3c-01-002",
+     "boot": "0a0a0a0a0a0a0a01",
+     "seq": 2,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 1,
+     "idle": 0,
+     "oldest": {
+      "session_id": "7a1b2c3d",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+      "title": "orbweaver-site",
+      "tool": "Edit",
+      "command": "src/pages/index.astro",
+      "since": 1794111809
+     }
+    },
+    "note": "A's orbweaver-site goes amber at t+9: amber 1 -> 2, priority 10; the oldest stays B's (3 < 9)"
+   },
+   {
+    "t": 10,
+    "kind": "alert_push",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+    "note": "the prompt for R2 leaves A right after its activity frame, so the amber alert's counts already say 2"
+   },
+   {
+    "t": 12,
+    "kind": "snapshot",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "frame": {
+     "t": "activity",
+     "ref": "act-5f3c-01-003",
+     "boot": "0a0a0a0a0a0a0a01",
+     "seq": 3,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 1,
+     "oldest": {
+      "session_id": "7a1b2c3d",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+      "title": "orbweaver-site",
+      "tool": "Edit",
+      "command": "src/pages/index.astro",
+      "since": 1794111809
+     }
+    },
+    "note": "A's orbweaver finishes: working 2 -> 1, idle 0 -> 1, amber unchanged, priority 5"
+   },
+   {
+    "t": 14,
+    "kind": "snapshot",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "frame": {
+     "t": "activity",
+     "ref": "act-b2c4-01-002",
+     "boot": "0b0b0b0b0b0b0b01",
+     "seq": 2,
+     "machine": "Studio PC",
+     "amber": 1,
+     "working": 0,
+     "idle": 1,
+     "oldest": {
+      "session_id": "9e8d7c6b",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+      "title": "CB-318",
+      "tool": "Bash",
+      "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+      "since": 1794111803
+     }
+    },
+    "note": "B's loginid-sdk-web finishes: fourth push inside the minute; the budget is now spent until t+65"
+   },
+   {
+    "t": 20,
+    "kind": "snapshot",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "frame": {
+     "t": "activity",
+     "ref": "act-b2c4-01-003",
+     "boot": "0b0b0b0b0b0b0b01",
+     "seq": 3,
+     "machine": "Studio PC",
+     "amber": 0,
+     "working": 1,
+     "idle": 0,
+     "oldest": null
+    },
+    "note": "CB-318 is answered at the desk and sdk-web starts working: amber 2 -> 1, but no token until t+65, so HELD"
+   },
+   {
+    "t": 30,
+    "kind": "snapshot",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "frame": {
+     "t": "activity",
+     "ref": "act-5f3c-01-004",
+     "boot": "0a0a0a0a0a0a0a01",
+     "seq": 4,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 1,
+     "idle": 0,
+     "oldest": {
+      "session_id": "7a1b2c3d",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+      "title": "orbweaver-site",
+      "tool": "Edit",
+      "command": "src/pages/index.astro",
+      "since": 1794111809
+     }
+    },
+    "note": "A's orbweaver starts working again while the hold stands; the hold's content is whatever is true at release, not this"
+   },
+   {
+    "t": 40,
+    "kind": "snapshot",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "frame": {
+     "t": "activity",
+     "ref": "act-5f3c-01-003",
+     "boot": "0a0a0a0a0a0a0a01",
+     "seq": 3,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 0,
+     "idle": 1,
+     "oldest": {
+      "session_id": "7a1b2c3d",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+      "title": "orbweaver-site",
+      "tool": "Edit",
+      "command": "src/pages/index.astro",
+      "since": 1794111809
+     }
+    },
+    "note": "a late copy of A's seq 3 from a replaced socket: activity_stale, nothing changes"
+   },
+   {
+    "t": 56,
+    "kind": "socket_close",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "note": "B's socket drops; it counts for 15 more seconds"
+   },
+   {
+    "t": 65,
+    "kind": "pacer_release",
+    "note": "the hold releases at the 4th most recent send (t+5) + 60: one update with the aggregate as of t+65, priority 10 because amber and the oldest changed since the last push"
+   },
+   {
+    "t": 71,
+    "kind": "grace_expiry",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "note": "B has been gone 15 s: it stops counting (machines 2 -> 1, working 2 -> 1), priority 5"
+   },
+   {
+    "t": 75,
+    "kind": "socket_open",
+    "desktop": "dsk_b2c4d6e8f0a13579"
+   },
+   {
+    "t": 75,
+    "kind": "snapshot",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "frame": {
+     "t": "activity",
+     "ref": "act-b2c4-02-001",
+     "boot": "0b0b0b0b0b0b0b02",
+     "seq": 1,
+     "machine": "Studio PC",
+     "amber": 0,
+     "working": 1,
+     "idle": 0,
+     "oldest": null
+    },
+    "note": "B is back with a new boot and seq 1, accepted whatever the old seq was; machines 1 -> 2, priority 5"
+   },
+   {
+    "t": 80,
+    "kind": "snapshot",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "frame": {
+     "t": "activity",
+     "ref": "act-5f3c-01-005",
+     "boot": "0a0a0a0a0a0a0a01",
+     "seq": 5,
+     "machine": "MacBook Pro",
+     "amber": 0,
+     "working": 2,
+     "idle": 0,
+     "oldest": null
+    },
+    "note": "orbweaver-site answered on A: no amber anywhere, priority 10, and the end becomes due at t+140"
+   },
+   {
+    "t": 100,
+    "kind": "snapshot",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "frame": {
+     "t": "activity",
+     "ref": "act-b2c4-02-002",
+     "boot": "0b0b0b0b0b0b0b02",
+     "seq": 2,
+     "machine": "Studio PC",
+     "amber": 1,
+     "working": 0,
+     "idle": 1,
+     "oldest": {
+      "session_id": "c3d4e5f6",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R03",
+      "title": "loginid-sdk-web",
+      "tool": "",
+      "command": "",
+      "since": 1794111899
+     }
+    },
+    "note": "sdk-web on B asks something the desk could not read (no tool, no command: Open on desk): the end is cancelled; the budget (65, 71, 75, 80) holds this until t+125"
+   },
+   {
+    "t": 125,
+    "kind": "pacer_release",
+    "note": "the held update goes with the state as of t+125"
+   },
+   {
+    "t": 130,
+    "kind": "snapshot",
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "frame": {
+     "t": "activity",
+     "ref": "act-b2c4-02-003",
+     "boot": "0b0b0b0b0b0b0b02",
+     "seq": 3,
+     "machine": "Studio PC",
+     "amber": 0,
+     "working": 1,
+     "idle": 0,
+     "oldest": null
+    },
+    "note": "answered: amber 0 again, held until t+131 (71 + 60), end due 60 s after the aggregate reached zero, at t+190"
+   },
+   {
+    "t": 131,
+    "kind": "pacer_release",
+    "note": "the held update: amber 0, priority 10"
+   },
+   {
+    "t": 190,
+    "kind": "end_due",
+    "note": "no amber for 60 s: the end push, dismissal-date now"
+   },
+   {
+    "t": 200,
+    "kind": "relay_restart",
+    "note": "the relay restarts: snapshots survive in Postgres, sockets and the budget do not"
+   },
+   {
+    "t": 201,
+    "kind": "aggregate_probe",
+    "note": "after the restart nothing is observed about either socket: A's snapshot (received t+80) is 121 s old and outside the 90 s restart grace, B's (t+130) is 71 s old and inside it"
+   },
+   {
+    "t": 205,
+    "kind": "socket_open",
+    "desktop": "dsk_5f3c9a0e1b7d2468"
+   },
+   {
+    "t": 205,
+    "kind": "snapshot",
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "frame": {
+     "t": "activity",
+     "ref": "act-5f3c-02-001",
+     "boot": "0a0a0a0a0a0a0a02",
+     "seq": 1,
+     "machine": "MacBook Pro",
+     "amber": 1,
+     "working": 1,
+     "idle": 0,
+     "oldest": {
+      "session_id": "0f6c4f2a",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R04",
+      "title": "orbweaver",
+      "tool": "Bash",
+      "command": "git push origin feature/x",
+      "since": 1794112004
+     }
+    },
+    "note": "A reconnects after its own silence timeout with a new boot: an amber, so a start goes to the start token; B still counts through the restart grace"
+   },
+   {
+    "t": 221,
+    "kind": "aggregate_probe",
+    "note": "B's restart grace ran out at t+220 and it never reconnected: machines 2 -> 1; the activity is only starting, so nothing can be sent"
+   },
+   {
+    "t": 235,
+    "kind": "start_abandoned",
+    "note": "no update token within 30 s of the start: state none, and no start before t+535"
+   },
+   {
+    "t": 236,
+    "kind": "aggregate_probe",
+    "note": "still an amber on A, but the relay will not try another start until t+535"
+   }
+  ],
+  "replies": [
+   {
+    "t": 0,
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "ref": "act-5f3c-01-001",
+    "reply": {
+     "t": "ok",
+     "ref": "act-5f3c-01-001",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 5,
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "ref": "act-b2c4-01-001",
+    "reply": {
+     "t": "ok",
+     "ref": "act-b2c4-01-001",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 10,
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "ref": "act-5f3c-01-002",
+    "reply": {
+     "t": "ok",
+     "ref": "act-5f3c-01-002",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 12,
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "ref": "act-5f3c-01-003",
+    "reply": {
+     "t": "ok",
+     "ref": "act-5f3c-01-003",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 14,
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "ref": "act-b2c4-01-002",
+    "reply": {
+     "t": "ok",
+     "ref": "act-b2c4-01-002",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 20,
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "ref": "act-b2c4-01-003",
+    "reply": {
+     "t": "ok",
+     "ref": "act-b2c4-01-003",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 30,
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "ref": "act-5f3c-01-004",
+    "reply": {
+     "t": "ok",
+     "ref": "act-5f3c-01-004",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 40,
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "ref": "act-5f3c-01-003",
+    "reply": {
+     "t": "ok",
+     "ref": "act-5f3c-01-003",
+     "code": "activity_stale"
+    }
+   },
+   {
+    "t": 75,
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "ref": "act-b2c4-02-001",
+    "reply": {
+     "t": "ok",
+     "ref": "act-b2c4-02-001",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 80,
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "ref": "act-5f3c-01-005",
+    "reply": {
+     "t": "ok",
+     "ref": "act-5f3c-01-005",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 100,
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "ref": "act-b2c4-02-002",
+    "reply": {
+     "t": "ok",
+     "ref": "act-b2c4-02-002",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 130,
+    "desktop": "dsk_b2c4d6e8f0a13579",
+    "ref": "act-b2c4-02-003",
+    "reply": {
+     "t": "ok",
+     "ref": "act-b2c4-02-003",
+     "code": "activity"
+    }
+   },
+   {
+    "t": 205,
+    "desktop": "dsk_5f3c9a0e1b7d2468",
+    "ref": "act-5f3c-02-001",
+    "reply": {
+     "t": "ok",
+     "ref": "act-5f3c-02-001",
+     "code": "activity"
+    }
+   }
+  ],
+  "pushes": [
+   {
+    "t": 5,
+    "event": "start",
+    "priority": 10,
+    "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "hash": "6c8e84719b630d48",
+    "change_key": "{\"amber\":1,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803}}",
+    "aps": {
+     "timestamp": 1794111805,
+     "event": "start",
+     "attributes-type": "OrbweaverActivityAttributes",
+     "attributes": {
+      "phone_id": "ph_a1b2c3d4e5f60718"
+     },
+     "content-state": {
+      "amber": 1,
+      "working": 3,
+      "idle": 0,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_b2c4d6e8f0a13579",
+       "machine": "Studio PC",
+       "session_id": "9e8d7c6b",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+       "title": "CB-318",
+       "tool": "Bash",
+       "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+       "since": 1794111803
+      },
+      "as_of": 1794111805
+     },
+     "stale-date": 1794111925
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111805,\"event\":\"start\",\"attributes-type\":\"OrbweaverActivityAttributes\",\"attributes\":{\"phone_id\":\"ph_a1b2c3d4e5f60718\"},\"content-state\":{\"amber\":1,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803},\"as_of\":1794111805},\"stale-date\":1794111925}}",
+    "payload_bytes": 508,
+    "t_abs": 1794111805
+   },
+   {
+    "t": 10,
+    "event": "update",
+    "priority": 10,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "94c7c422d9403d8b",
+    "change_key": "{\"amber\":2,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803}}",
+    "aps": {
+     "timestamp": 1794111810,
+     "event": "update",
+     "content-state": {
+      "amber": 2,
+      "working": 2,
+      "idle": 0,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_b2c4d6e8f0a13579",
+       "machine": "Studio PC",
+       "session_id": "9e8d7c6b",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+       "title": "CB-318",
+       "tool": "Bash",
+       "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+       "since": 1794111803
+      },
+      "as_of": 1794111810
+     },
+     "stale-date": 1794111930
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111810,\"event\":\"update\",\"content-state\":{\"amber\":2,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803},\"as_of\":1794111810},\"stale-date\":1794111930}}",
+    "payload_bytes": 413,
+    "t_abs": 1794111810
+   },
+   {
+    "t": 12,
+    "event": "update",
+    "priority": 5,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "2a88e0e53e7f3783",
+    "change_key": "{\"amber\":2,\"working\":1,\"idle\":1,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803}}",
+    "aps": {
+     "timestamp": 1794111812,
+     "event": "update",
+     "content-state": {
+      "amber": 2,
+      "working": 1,
+      "idle": 1,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_b2c4d6e8f0a13579",
+       "machine": "Studio PC",
+       "session_id": "9e8d7c6b",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+       "title": "CB-318",
+       "tool": "Bash",
+       "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+       "since": 1794111803
+      },
+      "as_of": 1794111812
+     },
+     "stale-date": 1794111932
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111812,\"event\":\"update\",\"content-state\":{\"amber\":2,\"working\":1,\"idle\":1,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803},\"as_of\":1794111812},\"stale-date\":1794111932}}",
+    "payload_bytes": 413,
+    "t_abs": 1794111812
+   },
+   {
+    "t": 14,
+    "event": "update",
+    "priority": 5,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "e639726d4051d8f1",
+    "change_key": "{\"amber\":2,\"working\":0,\"idle\":2,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803}}",
+    "aps": {
+     "timestamp": 1794111814,
+     "event": "update",
+     "content-state": {
+      "amber": 2,
+      "working": 0,
+      "idle": 2,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_b2c4d6e8f0a13579",
+       "machine": "Studio PC",
+       "session_id": "9e8d7c6b",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+       "title": "CB-318",
+       "tool": "Bash",
+       "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+       "since": 1794111803
+      },
+      "as_of": 1794111814
+     },
+     "stale-date": 1794111934
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111814,\"event\":\"update\",\"content-state\":{\"amber\":2,\"working\":0,\"idle\":2,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"9e8d7c6b\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"CB-318\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111803},\"as_of\":1794111814},\"stale-date\":1794111934}}",
+    "payload_bytes": 413,
+    "t_abs": 1794111814
+   },
+   {
+    "t": 65,
+    "event": "update",
+    "priority": 10,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "ffb4b425c8ba37c5",
+    "change_key": "{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"7a1b2c3d\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R02\",\"title\":\"orbweaver-site\",\"tool\":\"Edit\",\"command\":\"src/pages/index.astro\",\"since\":1794111809}}",
+    "aps": {
+     "timestamp": 1794111865,
+     "event": "update",
+     "content-state": {
+      "amber": 1,
+      "working": 2,
+      "idle": 0,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_5f3c9a0e1b7d2468",
+       "machine": "MacBook Pro",
+       "session_id": "7a1b2c3d",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+       "title": "orbweaver-site",
+       "tool": "Edit",
+       "command": "src/pages/index.astro",
+       "since": 1794111809
+      },
+      "as_of": 1794111865
+     },
+     "stale-date": 1794111985
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111865,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"7a1b2c3d\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R02\",\"title\":\"orbweaver-site\",\"tool\":\"Edit\",\"command\":\"src/pages/index.astro\",\"since\":1794111809},\"as_of\":1794111865},\"stale-date\":1794111985}}",
+    "payload_bytes": 383,
+    "t_abs": 1794111865
+   },
+   {
+    "t": 71,
+    "event": "update",
+    "priority": 5,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "622ef8ce9d38af48",
+    "change_key": "{\"amber\":1,\"working\":1,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"7a1b2c3d\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R02\",\"title\":\"orbweaver-site\",\"tool\":\"Edit\",\"command\":\"src/pages/index.astro\",\"since\":1794111809}}",
+    "aps": {
+     "timestamp": 1794111871,
+     "event": "update",
+     "content-state": {
+      "amber": 1,
+      "working": 1,
+      "idle": 0,
+      "machines": 1,
+      "oldest": {
+       "desktop_id": "dsk_5f3c9a0e1b7d2468",
+       "machine": "MacBook Pro",
+       "session_id": "7a1b2c3d",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+       "title": "orbweaver-site",
+       "tool": "Edit",
+       "command": "src/pages/index.astro",
+       "since": 1794111809
+      },
+      "as_of": 1794111871
+     },
+     "stale-date": 1794111991
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111871,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":1,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"7a1b2c3d\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R02\",\"title\":\"orbweaver-site\",\"tool\":\"Edit\",\"command\":\"src/pages/index.astro\",\"since\":1794111809},\"as_of\":1794111871},\"stale-date\":1794111991}}",
+    "payload_bytes": 383,
+    "t_abs": 1794111871
+   },
+   {
+    "t": 75,
+    "event": "update",
+    "priority": 5,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "ffb4b425c8ba37c5",
+    "change_key": "{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"7a1b2c3d\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R02\",\"title\":\"orbweaver-site\",\"tool\":\"Edit\",\"command\":\"src/pages/index.astro\",\"since\":1794111809}}",
+    "aps": {
+     "timestamp": 1794111875,
+     "event": "update",
+     "content-state": {
+      "amber": 1,
+      "working": 2,
+      "idle": 0,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_5f3c9a0e1b7d2468",
+       "machine": "MacBook Pro",
+       "session_id": "7a1b2c3d",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+       "title": "orbweaver-site",
+       "tool": "Edit",
+       "command": "src/pages/index.astro",
+       "since": 1794111809
+      },
+      "as_of": 1794111875
+     },
+     "stale-date": 1794111995
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111875,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"7a1b2c3d\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R02\",\"title\":\"orbweaver-site\",\"tool\":\"Edit\",\"command\":\"src/pages/index.astro\",\"since\":1794111809},\"as_of\":1794111875},\"stale-date\":1794111995}}",
+    "payload_bytes": 383,
+    "t_abs": 1794111875
+   },
+   {
+    "t": 80,
+    "event": "update",
+    "priority": 10,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "e7c5f7c0a0c4fc19",
+    "change_key": "{\"amber\":0,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":null}",
+    "aps": {
+     "timestamp": 1794111880,
+     "event": "update",
+     "content-state": {
+      "amber": 0,
+      "working": 3,
+      "idle": 0,
+      "machines": 2,
+      "oldest": null,
+      "as_of": 1794111880
+     },
+     "stale-date": 1794112000
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111880,\"event\":\"update\",\"content-state\":{\"amber\":0,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":null,\"as_of\":1794111880},\"stale-date\":1794112000}}",
+    "payload_bytes": 168,
+    "t_abs": 1794111880
+   },
+   {
+    "t": 125,
+    "event": "update",
+    "priority": 10,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "e27b8af62d9b7357",
+    "change_key": "{\"amber\":1,\"working\":2,\"idle\":1,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"c3d4e5f6\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R03\",\"title\":\"loginid-sdk-web\",\"tool\":\"\",\"command\":\"\",\"since\":1794111899}}",
+    "aps": {
+     "timestamp": 1794111925,
+     "event": "update",
+     "content-state": {
+      "amber": 1,
+      "working": 2,
+      "idle": 1,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_b2c4d6e8f0a13579",
+       "machine": "Studio PC",
+       "session_id": "c3d4e5f6",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R03",
+       "title": "loginid-sdk-web",
+       "tool": "",
+       "command": "",
+       "since": 1794111899
+      },
+      "as_of": 1794111925
+     },
+     "stale-date": 1794112045
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111925,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":2,\"idle\":1,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_b2c4d6e8f0a13579\",\"machine\":\"Studio PC\",\"session_id\":\"c3d4e5f6\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R03\",\"title\":\"loginid-sdk-web\",\"tool\":\"\",\"command\":\"\",\"since\":1794111899},\"as_of\":1794111925},\"stale-date\":1794112045}}",
+    "payload_bytes": 357,
+    "t_abs": 1794111925
+   },
+   {
+    "t": 131,
+    "event": "update",
+    "priority": 10,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "e7c5f7c0a0c4fc19",
+    "change_key": "{\"amber\":0,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":null}",
+    "aps": {
+     "timestamp": 1794111931,
+     "event": "update",
+     "content-state": {
+      "amber": 0,
+      "working": 3,
+      "idle": 0,
+      "machines": 2,
+      "oldest": null,
+      "as_of": 1794111931
+     },
+     "stale-date": 1794112051
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111931,\"event\":\"update\",\"content-state\":{\"amber\":0,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":null,\"as_of\":1794111931},\"stale-date\":1794112051}}",
+    "payload_bytes": 168,
+    "t_abs": 1794111931
+   },
+   {
+    "t": 190,
+    "event": "end",
+    "priority": 10,
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "hash": "e7c5f7c0a0c4fc19",
+    "change_key": "{\"amber\":0,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":null}",
+    "aps": {
+     "timestamp": 1794111990,
+     "event": "end",
+     "content-state": {
+      "amber": 0,
+      "working": 3,
+      "idle": 0,
+      "machines": 2,
+      "oldest": null,
+      "as_of": 1794111990
+     },
+     "dismissal-date": 1794111990
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794111990,\"event\":\"end\",\"content-state\":{\"amber\":0,\"working\":3,\"idle\":0,\"machines\":2,\"oldest\":null,\"as_of\":1794111990},\"dismissal-date\":1794111990}}",
+    "payload_bytes": 169,
+    "t_abs": 1794111990
+   },
+   {
+    "t": 205,
+    "event": "start",
+    "priority": 10,
+    "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "hash": "04290dbbd7b4c039",
+    "change_key": "{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R04\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"git push origin feature/x\",\"since\":1794112004}}",
+    "aps": {
+     "timestamp": 1794112005,
+     "event": "start",
+     "attributes-type": "OrbweaverActivityAttributes",
+     "attributes": {
+      "phone_id": "ph_a1b2c3d4e5f60718"
+     },
+     "content-state": {
+      "amber": 1,
+      "working": 2,
+      "idle": 0,
+      "machines": 2,
+      "oldest": {
+       "desktop_id": "dsk_5f3c9a0e1b7d2468",
+       "machine": "MacBook Pro",
+       "session_id": "0f6c4f2a",
+       "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R04",
+       "title": "orbweaver",
+       "tool": "Bash",
+       "command": "git push origin feature/x",
+       "since": 1794112004
+      },
+      "as_of": 1794112005
+     },
+     "stale-date": 1794112125
+    },
+    "payload": "{\"aps\":{\"timestamp\":1794112005,\"event\":\"start\",\"attributes-type\":\"OrbweaverActivityAttributes\",\"attributes\":{\"phone_id\":\"ph_a1b2c3d4e5f60718\"},\"content-state\":{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":2,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R04\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"git push origin feature/x\",\"since\":1794112004},\"as_of\":1794112005},\"stale-date\":1794112125}}",
+    "payload_bytes": 477,
+    "t_abs": 1794112005
+   }
+  ],
+  "probes": [
+   {
+    "t": 201,
+    "content_state": {
+     "amber": 0,
+     "working": 1,
+     "idle": 0,
+     "machines": 1,
+     "oldest": null,
+     "as_of": 1794112001
+    },
+    "state": "none"
+   },
+   {
+    "t": 221,
+    "content_state": {
+     "amber": 1,
+     "working": 1,
+     "idle": 0,
+     "machines": 1,
+     "oldest": {
+      "desktop_id": "dsk_5f3c9a0e1b7d2468",
+      "machine": "MacBook Pro",
+      "session_id": "0f6c4f2a",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R04",
+      "title": "orbweaver",
+      "tool": "Bash",
+      "command": "git push origin feature/x",
+      "since": 1794112004
+     },
+     "as_of": 1794112021
+    },
+    "state": "starting"
+   },
+   {
+    "t": 236,
+    "content_state": {
+     "amber": 1,
+     "working": 1,
+     "idle": 0,
+     "machines": 1,
+     "oldest": {
+      "desktop_id": "dsk_5f3c9a0e1b7d2468",
+      "machine": "MacBook Pro",
+      "session_id": "0f6c4f2a",
+      "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R04",
+      "title": "orbweaver",
+      "tool": "Bash",
+      "command": "git push origin feature/x",
+      "since": 1794112004
+     },
+     "as_of": 1794112036
+    },
+    "state": "none"
+   }
+  ],
+  "log": [
+   {
+    "t": 5,
+    "event": "start",
+    "prio": 10,
+    "hash": "6c8e84719b630d48"
+   },
+   {
+    "t": 10,
+    "event": "update",
+    "prio": 10,
+    "hash": "94c7c422d9403d8b"
+   },
+   {
+    "t": 12,
+    "event": "update",
+    "prio": 5,
+    "hash": "2a88e0e53e7f3783"
+   },
+   {
+    "t": 14,
+    "event": "update",
+    "prio": 5,
+    "hash": "e639726d4051d8f1"
+   },
+   {
+    "t": 20,
+    "event": "hold",
+    "wanted": "update",
+    "due": 65,
+    "hash": "b4d928fdf114765a"
+   },
+   {
+    "t": 65,
+    "event": "update",
+    "prio": 10,
+    "hash": "ffb4b425c8ba37c5"
+   },
+   {
+    "t": 71,
+    "event": "update",
+    "prio": 5,
+    "hash": "622ef8ce9d38af48"
+   },
+   {
+    "t": 75,
+    "event": "update",
+    "prio": 5,
+    "hash": "ffb4b425c8ba37c5"
+   },
+   {
+    "t": 80,
+    "event": "end_due",
+    "at": 140
+   },
+   {
+    "t": 80,
+    "event": "update",
+    "prio": 10,
+    "hash": "e7c5f7c0a0c4fc19"
+   },
+   {
+    "t": 100,
+    "event": "end_cancelled"
+   },
+   {
+    "t": 100,
+    "event": "hold",
+    "wanted": "update",
+    "due": 125,
+    "hash": "e27b8af62d9b7357"
+   },
+   {
+    "t": 125,
+    "event": "update",
+    "prio": 10,
+    "hash": "e27b8af62d9b7357"
+   },
+   {
+    "t": 130,
+    "event": "end_due",
+    "at": 190
+   },
+   {
+    "t": 130,
+    "event": "hold",
+    "wanted": "update",
+    "due": 131,
+    "hash": "e7c5f7c0a0c4fc19"
+   },
+   {
+    "t": 131,
+    "event": "update",
+    "prio": 10,
+    "hash": "e7c5f7c0a0c4fc19"
+   },
+   {
+    "t": 190,
+    "event": "end",
+    "prio": 10,
+    "hash": "e7c5f7c0a0c4fc19"
+   },
+   {
+    "t": 200,
+    "event": "relay_restart",
+    "kept": [
+     "dsk_5f3c9a0e1b7d2468",
+     "dsk_b2c4d6e8f0a13579"
+    ]
+   },
+   {
+    "t": 205,
+    "event": "start",
+    "prio": 10,
+    "hash": "04290dbbd7b4c039"
+   },
+   {
+    "t": 235,
+    "event": "start_abandoned",
+    "retry_not_before": 535
+   }
+  ],
+  "_note": "pushes is every APNs liveactivity request the relay makes, in order, with the token it goes to; probes are the aggregate and lifecycle state at the named instants; log is the relay's decisions (hold, skip, end_due, end_cancelled, start_abandoned, relay_restart) for the gate checker's shape."
+ },
+ "relay_addendum": {
+  "scenarios": [
+   {
+    "name": "update_token_while_none",
+    "_note": "update_token with state none moves it to running; the first update is priority 10 (content unknown), the next is priority 5 (only working moved)",
+    "events": [
+     {
+      "t": 0,
+      "kind": "socket_open",
+      "desktop": "dsk_5f3c9a0e1b7d2468"
+     },
+     {
+      "t": 0,
+      "kind": "snapshot",
+      "desktop": "dsk_5f3c9a0e1b7d2468",
+      "frame": {
+       "t": "activity",
+       "ref": "sc-001",
+       "boot": "0a0a0a0a0a0a0a01",
+       "seq": 1,
+       "machine": "MacBook Pro",
+       "amber": 1,
+       "working": 0,
+       "idle": 0,
+       "oldest": {
+        "session_id": "0f6c4f2a",
+        "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+        "title": "orbweaver",
+        "tool": "Bash",
+        "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+        "since": 1794111795
+       }
+      }
+     },
+     {
+      "t": 5,
+      "kind": "post",
+      "post": "update_token",
+      "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "activity_id": "act-from-app",
+      "note": "no start token was ever posted and the relay started nothing: the token alone makes it running, and the island's content is unknown, so an update goes at once, priority 10"
+     },
+     {
+      "t": 6,
+      "kind": "aggregate_probe"
+     },
+     {
+      "t": 8,
+      "kind": "snapshot",
+      "desktop": "dsk_5f3c9a0e1b7d2468",
+      "frame": {
+       "t": "activity",
+       "ref": "sc-002",
+       "boot": "0a0a0a0a0a0a0a01",
+       "seq": 2,
+       "machine": "MacBook Pro",
+       "amber": 1,
+       "working": 2,
+       "idle": 0,
+       "oldest": {
+        "session_id": "0f6c4f2a",
+        "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+        "title": "orbweaver",
+        "tool": "Bash",
+        "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+        "since": 1794111795
+       }
+      }
+     }
+    ],
+    "pushes": [
+     {
+      "t": 5,
+      "event": "update",
+      "priority": 10,
+      "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "hash": "e8aff84e3b57f51c",
+      "change_key": "{\"amber\":1,\"working\":0,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795}}",
+      "aps": {
+       "timestamp": 1794111805,
+       "event": "update",
+       "content-state": {
+        "amber": 1,
+        "working": 0,
+        "idle": 0,
+        "machines": 1,
+        "oldest": {
+         "desktop_id": "dsk_5f3c9a0e1b7d2468",
+         "machine": "MacBook Pro",
+         "session_id": "0f6c4f2a",
+         "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+         "title": "orbweaver",
+         "tool": "Bash",
+         "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+         "since": 1794111795
+        },
+        "as_of": 1794111805
+       },
+       "stale-date": 1794111925
+      },
+      "payload": "{\"aps\":{\"timestamp\":1794111805,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":0,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795},\"as_of\":1794111805},\"stale-date\":1794111925}}",
+      "payload_bytes": 418,
+      "t_abs": 1794111805
+     },
+     {
+      "t": 8,
+      "event": "update",
+      "priority": 5,
+      "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "hash": "d0c1f201bd6b983c",
+      "change_key": "{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795}}",
+      "aps": {
+       "timestamp": 1794111808,
+       "event": "update",
+       "content-state": {
+        "amber": 1,
+        "working": 2,
+        "idle": 0,
+        "machines": 1,
+        "oldest": {
+         "desktop_id": "dsk_5f3c9a0e1b7d2468",
+         "machine": "MacBook Pro",
+         "session_id": "0f6c4f2a",
+         "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+         "title": "orbweaver",
+         "tool": "Bash",
+         "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+         "since": 1794111795
+        },
+        "as_of": 1794111808
+       },
+       "stale-date": 1794111928
+      },
+      "payload": "{\"aps\":{\"timestamp\":1794111808,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795},\"as_of\":1794111808},\"stale-date\":1794111928}}",
+      "payload_bytes": 418,
+      "t_abs": 1794111808
+     }
+    ],
+    "probes": [
+     {
+      "t": 6,
+      "content_state": {
+       "amber": 1,
+       "working": 0,
+       "idle": 0,
+       "machines": 1,
+       "oldest": {
+        "desktop_id": "dsk_5f3c9a0e1b7d2468",
+        "machine": "MacBook Pro",
+        "session_id": "0f6c4f2a",
+        "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+        "title": "orbweaver",
+        "tool": "Bash",
+        "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+        "since": 1794111795
+       },
+       "as_of": 1794111806
+      },
+      "state": "running"
+     }
+    ]
+   },
+   {
+    "name": "restart_while_running",
+    "_note": "a restart with an update token restores running: one update at the restart, priority 10 (content unknown), then priority 5 when only working moves",
+    "events": [
+     {
+      "t": -10,
+      "kind": "post",
+      "post": "start_token",
+      "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+     },
+     {
+      "t": 0,
+      "kind": "socket_open",
+      "desktop": "dsk_5f3c9a0e1b7d2468"
+     },
+     {
+      "t": 0,
+      "kind": "snapshot",
+      "desktop": "dsk_5f3c9a0e1b7d2468",
+      "frame": {
+       "t": "activity",
+       "ref": "sc-001",
+       "boot": "0a0a0a0a0a0a0a01",
+       "seq": 1,
+       "machine": "MacBook Pro",
+       "amber": 1,
+       "working": 0,
+       "idle": 0,
+       "oldest": {
+        "session_id": "0f6c4f2a",
+        "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+        "title": "orbweaver",
+        "tool": "Bash",
+        "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+        "since": 1794111795
+       }
+      }
+     },
+     {
+      "t": 3,
+      "kind": "post",
+      "post": "update_token",
+      "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "activity_id": "act-7f3a2c"
+     },
+     {
+      "t": 50,
+      "kind": "relay_restart",
+      "note": "the relay restarts with the activity running; A's snapshot (t+0) is 50 s old, inside the 90 s restart grace"
+     },
+     {
+      "t": 51,
+      "kind": "aggregate_probe"
+     },
+     {
+      "t": 60,
+      "kind": "snapshot",
+      "desktop": "dsk_5f3c9a0e1b7d2468",
+      "frame": {
+       "t": "activity",
+       "ref": "sc-002",
+       "boot": "0a0a0a0a0a0a0a01",
+       "seq": 2,
+       "machine": "MacBook Pro",
+       "amber": 1,
+       "working": 2,
+       "idle": 0,
+       "oldest": {
+        "session_id": "0f6c4f2a",
+        "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+        "title": "orbweaver",
+        "tool": "Bash",
+        "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+        "since": 1794111795
+       }
+      }
+     }
+    ],
+    "pushes": [
+     {
+      "t": 0,
+      "event": "start",
+      "priority": 10,
+      "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "hash": "e8aff84e3b57f51c",
+      "change_key": "{\"amber\":1,\"working\":0,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795}}",
+      "aps": {
+       "timestamp": 1794111800,
+       "event": "start",
+       "attributes-type": "OrbweaverActivityAttributes",
+       "attributes": {
+        "phone_id": "ph_a1b2c3d4e5f60718"
+       },
+       "content-state": {
+        "amber": 1,
+        "working": 0,
+        "idle": 0,
+        "machines": 1,
+        "oldest": {
+         "desktop_id": "dsk_5f3c9a0e1b7d2468",
+         "machine": "MacBook Pro",
+         "session_id": "0f6c4f2a",
+         "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+         "title": "orbweaver",
+         "tool": "Bash",
+         "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+         "since": 1794111795
+        },
+        "as_of": 1794111800
+       },
+       "stale-date": 1794111920
+      },
+      "payload": "{\"aps\":{\"timestamp\":1794111800,\"event\":\"start\",\"attributes-type\":\"OrbweaverActivityAttributes\",\"attributes\":{\"phone_id\":\"ph_a1b2c3d4e5f60718\"},\"content-state\":{\"amber\":1,\"working\":0,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795},\"as_of\":1794111800},\"stale-date\":1794111920}}",
+      "payload_bytes": 513,
+      "t_abs": 1794111800
+     },
+     {
+      "t": 50,
+      "event": "update",
+      "priority": 10,
+      "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "hash": "e8aff84e3b57f51c",
+      "change_key": "{\"amber\":1,\"working\":0,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795}}",
+      "aps": {
+       "timestamp": 1794111850,
+       "event": "update",
+       "content-state": {
+        "amber": 1,
+        "working": 0,
+        "idle": 0,
+        "machines": 1,
+        "oldest": {
+         "desktop_id": "dsk_5f3c9a0e1b7d2468",
+         "machine": "MacBook Pro",
+         "session_id": "0f6c4f2a",
+         "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+         "title": "orbweaver",
+         "tool": "Bash",
+         "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+         "since": 1794111795
+        },
+        "as_of": 1794111850
+       },
+       "stale-date": 1794111970
+      },
+      "payload": "{\"aps\":{\"timestamp\":1794111850,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":0,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795},\"as_of\":1794111850},\"stale-date\":1794111970}}",
+      "payload_bytes": 418,
+      "t_abs": 1794111850
+     },
+     {
+      "t": 60,
+      "event": "update",
+      "priority": 5,
+      "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "hash": "d0c1f201bd6b983c",
+      "change_key": "{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795}}",
+      "aps": {
+       "timestamp": 1794111860,
+       "event": "update",
+       "content-state": {
+        "amber": 1,
+        "working": 2,
+        "idle": 0,
+        "machines": 1,
+        "oldest": {
+         "desktop_id": "dsk_5f3c9a0e1b7d2468",
+         "machine": "MacBook Pro",
+         "session_id": "0f6c4f2a",
+         "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+         "title": "orbweaver",
+         "tool": "Bash",
+         "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+         "since": 1794111795
+        },
+        "as_of": 1794111860
+       },
+       "stale-date": 1794111980
+      },
+      "payload": "{\"aps\":{\"timestamp\":1794111860,\"event\":\"update\",\"content-state\":{\"amber\":1,\"working\":2,\"idle\":0,\"machines\":1,\"oldest\":{\"desktop_id\":\"dsk_5f3c9a0e1b7d2468\",\"machine\":\"MacBook Pro\",\"session_id\":\"0f6c4f2a\",\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9R01\",\"title\":\"orbweaver\",\"tool\":\"Bash\",\"command\":\"dotnet test tests/Orbweaver.Tests --filter PublishScreenshots\",\"since\":1794111795},\"as_of\":1794111860},\"stale-date\":1794111980}}",
+      "payload_bytes": 418,
+      "t_abs": 1794111860
+     }
+    ],
+    "probes": [
+     {
+      "t": 51,
+      "content_state": {
+       "amber": 1,
+       "working": 0,
+       "idle": 0,
+       "machines": 1,
+       "oldest": {
+        "desktop_id": "dsk_5f3c9a0e1b7d2468",
+        "machine": "MacBook Pro",
+        "session_id": "0f6c4f2a",
+        "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+        "title": "orbweaver",
+        "tool": "Bash",
+        "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+        "since": 1794111795
+       },
+       "as_of": 1794111851
+      },
+      "state": "running"
+     }
+    ]
+   }
+  ],
+  "counts_budget": {
+   "max_payload_bytes": 4096,
+   "longest_e_chars": 3600,
+   "longest_id_chars": 64,
+   "longest_ck_chars": 128,
+   "bytes_without_counts": 4083,
+   "slack_bytes": 13,
+   "counts_bytes": {
+    "zeros": 76,
+    "worst": 94
+   },
+   "e_max_chars_with_counts": {
+    "zeros": 3537,
+    "worst": 3519
+   },
+   "_note": "MEASURED, replacing CB-321's 'the slack covers counts': at the longest e the edge admits the slack is slack_bytes, not the size of counts, so an e longer than e_max_chars_with_counts loses to counts by the fallback (e is dropped, counts stay). A real sealed e (a title, a tool and a detail of at most 512 units) is a fraction of that. The relay's guard and these numbers are pinned against each other."
+  }
+ },
+ "counts_on_alert": {
+  "cases": [
+   {
+    "t": 10,
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+    "counts": {
+     "amber": 2,
+     "working": 2,
+     "idle": 0,
+     "machines": 2,
+     "longest_since": 1794111803
+    }
+   }
+  ],
+  "apns_body_fragment": {
+   "push": "amber",
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+   "counts": {
+    "amber": 2,
+    "working": 2,
+    "idle": 0,
+    "machines": 2,
+    "longest_since": 1794111803
+   }
+  },
+  "_note": "the plaintext counts the relay adds to the amber alert for R2 at t+10, computed after A's activity frame of the same scan; e and aps are the frames-v6 ones, unchanged"
+ },
+ "route_activity": {
+  "start_token": {
+   "request": {
+    "kind": "start_token",
+    "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+   },
+   "status": 200,
+   "reply": {
+    "ok": true
+   }
+  },
+  "update_token": {
+   "request": {
+    "kind": "update_token",
+    "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "activity_id": "act-7f3a2c"
+   },
+   "status": 200,
+   "reply": {
+    "ok": true
+   }
+  },
+  "ended": {
+   "request": {
+    "kind": "ended",
+    "activity_id": "act-7f3a2c"
+   },
+   "status": 200,
+   "reply": {
+    "ok": true
+   }
+  },
+  "refused": [
+   {
+    "request": {
+     "kind": "start_token"
+    },
+    "status": 400,
+    "why": "token missing"
+   },
+   {
+    "request": {
+     "kind": "start_token",
+     "token": "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1"
+    },
+    "status": 400,
+    "why": "token not lowercase hex"
+   },
+   {
+    "request": {
+     "kind": "start_token",
+     "token": "ababababababababababababababababababababababababababababababab"
+    },
+    "status": 400,
+    "why": "62 hex characters"
+   },
+   {
+    "request": {
+     "kind": "update_token",
+     "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    },
+    "status": 400,
+    "why": "activity_id missing"
+   },
+   {
+    "request": {
+     "kind": "ended",
+     "token": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "activity_id": "act-7f3a2c"
+    },
+    "status": 400,
+    "why": "ended carries no token"
+   },
+   {
+    "request": {
+     "kind": "other",
+     "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "status": 400,
+    "why": "unknown kind"
+   },
+   {
+    "request": {
+     "kind": "start_token",
+     "token": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "status": 403,
+    "why": "the bearer is a desktop",
+    "sender": "dsk_5f3c9a0e1b7d2468"
+   }
+  ]
+ },
+ "watch_application_context": {
+  "v": 1,
+  "as_of": 1794111810,
+  "amber": 2,
+  "working": 2,
+  "idle": 0,
+  "machines": 2,
+  "ambers": [
+   {
+    "desktop_id": "dsk_b2c4d6e8f0a13579",
+    "machine": "Studio PC",
+    "session_id": "9e8d7c6b",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R01",
+    "title": "CB-318",
+    "tool": "Bash",
+    "command": "dotnet test tests/Orbweaver.Tests --filter PublishScreenshots",
+    "since": 1794111803,
+    "kind": "permission"
+   },
+   {
+    "desktop_id": "dsk_5f3c9a0e1b7d2468",
+    "machine": "MacBook Pro",
+    "session_id": "7a1b2c3d",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9R02",
+    "title": "orbweaver-site",
+    "tool": "Edit",
+    "command": "src/pages/index.astro",
+    "since": 1794111809,
+    "kind": "permission"
+   }
+  ],
+  "working_sessions": [
+   {
+    "desktop_id": "dsk_5f3c9a0e1b7d2468",
+    "session_id": "0f6c4f2a",
+    "title": "orbweaver",
+    "since": 1794111100
+   },
+   {
+    "desktop_id": "dsk_b2c4d6e8f0a13579",
+    "session_id": "c3d4e5f6",
+    "title": "loginid-sdk-web",
+    "since": 1794111805
+   }
+  ],
+  "_note": "the phone's context for the Watch at t+10: the same two ambers the island knows, oldest first; app-internal, never on the relay"
+ }
+}

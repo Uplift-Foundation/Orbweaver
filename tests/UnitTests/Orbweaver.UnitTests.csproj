@@ -65,5 +65,6 @@
     <Compile Include="..\..\tools\relay-vectors\V4Vectors.cs" Link="V4Vectors.cs" />
     <Compile Include="..\..\tools\relay-vectors\V5Vectors.cs" Link="V5Vectors.cs" />
     <Compile Include="..\..\tools\relay-vectors\V6Vectors.cs" Link="V6Vectors.cs" />
+    <Compile Include="..\..\tools\relay-vectors\V7Vectors.cs" Link="V7Vectors.cs" />
   </ItemGroup>
 </Project>

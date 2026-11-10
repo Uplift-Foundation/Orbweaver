@@ -34,10 +34,11 @@ namespace Orbweaver.Tests
         // KEYCHAIN_TESTS, the opt-in gate on the one test that writes the login
         // Keychain, RELAY_URL, which points a build at a stub relay, and
         // RELAY_TEST_HOOKS, the scripted pairing for an end-to-end harness.
+        // CB-323 adds ACTIVITY_LOG, the hour gate's desktop activity log.
         [Fact]
-        public void TheListHoldsTwentyNineDistinctVariables()
+        public void TheListHoldsThirtyDistinctVariables()
         {
-            Assert.Equal(29, BrandEnv.All.Count);
+            Assert.Equal(30, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

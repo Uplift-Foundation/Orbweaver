@@ -45,6 +45,9 @@ namespace Orbweaver
             internal bool PaceFrames { get; init; } = true;
             internal TimeSpan MaxBackoff { get; init; } = TimeSpan.FromSeconds(60);
 
+            // CB-323: the gate's activity log (ORBWEAVER_ACTIVITY_LOG), or none.
+            internal RelayActivityLog? ActivityLog { get; init; } = RelayActivityLog.From(Environment.GetEnvironmentVariable);
+
             internal Uri SocketUri => new UriBuilder(Base)
             {
                 Scheme = Base.Scheme == Uri.UriSchemeHttp ? "ws" : "wss",
@@ -116,7 +119,13 @@ namespace Orbweaver
             _now = now ?? (() => DateTimeOffset.UtcNow);
             _eventPump = Task.Run(PumpEventsAsync);
             _link = new RelayLink(identity, new RelaySessionBook(), _now,
-                options.Platform, options.AppVersion, options.RelayHost) { Machine = options.DesktopName };
+                options.Platform, options.AppVersion, options.RelayHost)
+            {
+                Machine = options.DesktopName,
+                // CB-323: one boot per process, so a restarted app's seq 1 is
+                // taken by the relay rather than refused as stale.
+                Activity = new RelayActivity.Tracker(RelayActivity.NewBoot()),
+            };
 
             // Raised inside RelayLink, under the lock: anything that reaches
             // outside this class is deferred until the lock is released.
@@ -136,6 +145,14 @@ namespace Orbweaver
             // so it runs off the event pump (fire and forget, serialized inside
             // the pipeline) and never under the lock.
             Prompts = new PromptPipeline(promptSeams ?? DefaultPromptSeams(_now), this, options.DesktopName);
+            // CB-323: the activity frame's oldest amber names its minted prompt.
+            _link.ActivityPrompts = Prompts.ActivityFor;
+            _link.ActivityDue += at => Defer(() => _ = FlushActivityLaterAsync(at));
+            if (options.ActivityLog is { } activityLog)
+            {
+                _link.ActivityReplied += (reference, _, code) => activityLog.Reply(reference, code, _now());
+                activityLog.Failed += line => MirrorLog.Say("relay", line);
+            }
             // Every pending prompt goes out again on each welcome (see
             // ResendPendingAsync for why every one, not only the unsent).
             _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
@@ -461,6 +478,8 @@ namespace Orbweaver
                 var wait = _options.PaceFrames ? pacer.Reserve(_now()) : TimeSpan.Zero;
                 if (wait > TimeSpan.Zero) await _delay(wait, token).ConfigureAwait(false);
                 await socket.SendAsync(frame, token).ConfigureAwait(false);
+                // CB-323: logged as sent once it is, not when it was queued.
+                if (_options.ActivityLog is { } log && RelayActivityLog.IsActivityFrame(frame)) log.Sent(frame, _now());
             }
         }
 
@@ -488,6 +507,21 @@ namespace Orbweaver
             try { await _delay(RetryDelay(attempt, Random.Shared.NextDouble()), stop).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
             Dispatch(() => _link.Retry(key));
+        }
+
+        // CB-323: a debounced activity frame, sent when its interval ends with
+        // the snapshot as it is then. Raised only while connected, so the run
+        // exists; a stop or a lost socket meanwhile sends nothing (the link
+        // checks it is welcomed, and the next welcome sends a snapshot anyway).
+        private async Task FlushActivityLaterAsync(DateTimeOffset at)
+        {
+            var wait = at - _now();
+            if (wait > TimeSpan.Zero)
+            {
+                try { await _delay(wait, _run!.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+            }
+            Dispatch(() => _link.FlushActivity());
         }
 
         // ---- the scan and the UI -------------------------------------------------
