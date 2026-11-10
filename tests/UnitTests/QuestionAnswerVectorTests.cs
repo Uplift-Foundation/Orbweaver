@@ -30,7 +30,7 @@ public class QuestionAnswerVectorTests
     [Fact]
     public void The_vectors_are_the_ones_this_suite_was_written_against()
     {
-        Assert.Equal(37, V.GetProperty("cases").GetArrayLength());
+        Assert.Equal(38, V.GetProperty("cases").GetArrayLength());
         Assert.Equal(AnswerGate.MaxNoteBytes, In.GetProperty("note_max_bytes").GetInt32());
         Assert.Equal(AnswerSigning.Domain, In.GetProperty("domain").GetString());
     }

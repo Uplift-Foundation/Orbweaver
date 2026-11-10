@@ -1895,6 +1895,71 @@
    "why": ""
   },
   {
+   "name": "other_text_flag_alone",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+    "note": "hi",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "9W5HR6PWuozfLlbRtnj8qvPGkrc4dzMKAI0uSChYWNxgSs0FDfl9hUIoxbj7TVU4rRUHL0JoxzuGpZb4z6TFrg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238663433343334363634386636623936646638396464613930316335313736623130613664383339363164643363316163383862353962326463333237616134222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "the fresh screen shows a Type something row but the prompt was minted without text:true: the flag alone refuses"
+  },
+  {
    "name": "other_on_multi",
    "prompt": {
     "t": "prompt",
