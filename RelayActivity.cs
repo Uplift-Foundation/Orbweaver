@@ -242,7 +242,7 @@ namespace Orbweaver
     // its own.
     internal sealed class RelayActivityLog(string path)
     {
-        internal const string EnvVar = "ORBWEAVER_ACTIVITY_LOG";
+        internal static readonly string EnvVar = BrandEnv.Name(BrandEnv.ActivityLog);
         internal const int Attempts = 5;
         internal static readonly TimeSpan RetryPause = TimeSpan.FromMilliseconds(20);
         private readonly object _gate = new();
@@ -251,7 +251,7 @@ namespace Orbweaver
         internal string Path { get; } = path;
 
         internal static RelayActivityLog? From(Func<string, string?> env) =>
-            env(EnvVar) is { Length: > 0 } p ? new RelayActivityLog(p) : null;
+            BrandEnv.Get(BrandEnv.ActivityLog, env) is { } p ? new RelayActivityLog(p) : null;
 
         internal static bool IsActivityFrame(string frame) => frame.StartsWith("{\"t\":\"activity\",", StringComparison.Ordinal);
 
