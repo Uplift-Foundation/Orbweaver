@@ -1571,5 +1571,108 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 """"");
 
+
+        // MacBook, Claude Code 2.1.322, a scratch session asked to call
+        // AskUserQuestion with one single-select question (CB-323: the question
+        // Warren could not answer from his phone). Byte-exact capture-pane -p of
+        // a 120x45 tmux pane; the content is the scratch session's own, so
+        // nothing needed redacting.
+        internal static readonly string MacColourQuestion = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.322
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/claude-501/cb323-tamsin/qscratch · /rc
+
+
+❯ Call the AskUserQuestion tool exactly once with one single-select question: "Which colour should the orb be?" header
+  "Colour", options Red ("Warm"), Green ("Calm"), Blue ("Cool"). Do nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Colour
+
+Which colour should the orb be?
+
+❯ 1. Red
+     Warm
+  2. Green
+     Calm
+  3. Blue
+     Cool
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+""""");
+
+        // The same session, a two-question form on its first question: the
+        // ←/☐/✔ Submit bar, and each option's description under it.
+        internal static readonly string MacTwoQuestionsFirst = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.322
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/claude-501/cb323-tamsin/qscratch · /rc
+
+
+❯ Call the AskUserQuestion tool exactly once with one single-select question: "Which colour should the orb be?" header
+  "Colour", options Red ("Warm"), Green ("Calm"), Blue ("Cool"). Do nothing else.
+
+⏺ User answered Claude's questions:
+  ⎿  · Which colour should the orb be? → Green
+
+⏺ You picked green for the orb.
+
+✻ Churned for 7s · done 7:06 AM
+
+❯ Call AskUserQuestion once with TWO single-select questions: (1) "Pick a size?" header "Size", options Small, Large;
+  (2) "Pick a shape?" header "Shape", options Round, Square. Do nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Size  ☐ Shape  ✔ Submit  →
+
+Pick a size?
+
+❯ 1. Small
+     Small size
+  2. Large
+     Large size
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+""""");
     }
 }

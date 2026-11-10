@@ -122,14 +122,14 @@ public class PromptPipelineTests
     [InlineData("waiting", SessionSource.RemoteControl, "dialog")]
     [InlineData("waiting", SessionSource.ClaudeCode, "none")]
     [InlineData("waiting", SessionSource.ClaudeCode, "null")]
-    [InlineData("waiting", SessionSource.ClaudeCode, "form")]
+    // An AskUserQuestion form did belong here until CB-323 (it went to no
+    // phone); it is now a question prompt, pinned further down.
     public async Task No_prompt_without_a_waiting_local_session_showing_a_dialog(string state, SessionSource source, string screen)
     {
         _pane.Screen = screen switch
         {
             "dialog" => Dialog,
             "none" => Cleared,
-            "form" => PaneFixtures.MiniAskForm,
             _ => null,
         };
         await _p.OnScannedAsync([("s1", Status(state, source))]);
@@ -836,5 +836,111 @@ public class PromptPipelineTests
         Assert.NotNull(p.ActivityFor("s1"));
         await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
         Assert.Null(p.ActivityFor("s1"));
+    }
+
+    // ---- CB-323: an AskUserQuestion form goes to the phone as a question --------
+
+    private static JsonElement PromptJson(Sender sent, int i = 0) => JsonDocument.Parse(sent.Prompts[i].Prompt).RootElement;
+
+    private static string[] Keys(JsonElement prompt) => prompt.GetProperty("options").EnumerateArray().Select(o => o.GetProperty("key").GetString()!).ToArray();
+
+    [Fact]
+    public async Task A_question_goes_to_the_phone_with_its_own_choices_and_nothing_else()
+    {
+        _pane.Screen = PaneFixtures.MacColourQuestion;
+        await _p.OnScannedAsync(Snap());
+        var j = PromptJson(_sent);
+        Assert.Equal(("question", "", "Which colour should the orb be?"),
+            (j.GetProperty("kind").GetString(), j.GetProperty("tool").GetString(), j.GetProperty("preview").GetString()));
+        Assert.Equal(["1", "2", "3"], Keys(j));
+        Assert.All(j.GetProperty("options").EnumerateArray(), o => Assert.Equal("option", o.GetProperty("kind").GetString()));
+        Assert.Equal(["Red", "Green", "Blue"], j.GetProperty("options").EnumerateArray().Select(o => o.GetProperty("label").GetString()));
+        var push = JsonDocument.Parse(_sent.Prompts[0].Push!).RootElement;
+        Assert.Equal((PromptPipeline.AsksAQuestion, "Which colour should the orb be?"),
+            (push.GetProperty("summary").GetString(), push.GetProperty("detail").GetString()));
+    }
+
+    [Fact]
+    public async Task A_phones_choice_presses_its_digit_once_and_resolves_as_the_phones()
+    {
+        _pane.Screen = PaneFixtures.MacColourQuestion;
+        await _p.OnScannedAsync(Snap());
+        var a = AnswerTo(action: "option:2");
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(["2"], _pane.Keys);
+        Assert.Equal((a.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
+        Assert.Empty(_sent.Refusals);
+    }
+
+    // The digit of "Type something." on an empty field declines the whole
+    // form, and "Chat about this" leaves it: neither was offered, so neither
+    // is pressed, whatever a phone sends.
+    [Theory]
+    [InlineData("option:4")]
+    [InlineData("option:5")]
+    [InlineData("approve")]
+    public async Task Anything_the_question_did_not_offer_is_refused_and_presses_nothing(string action)
+    {
+        _pane.Screen = PaneFixtures.MacColourQuestion;
+        await _p.OnScannedAsync(Snap());
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: action));
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.ForbiddenOption, Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public async Task The_review_offers_Submit_answers_and_never_Cancel()
+    {
+        _pane.Screen = PaneFixtures.QaReview;
+        await _p.OnScannedAsync(Snap());
+        var j = PromptJson(_sent);
+        var form = ChatTranscript.ParseAskForm(PaneFixtures.QaReview)!;
+        Assert.Equal([form.SubmitAnswersKey!], Keys(j));
+        Assert.Equal(PromptPipeline.QuestionPreview(form), j.GetProperty("preview").GetString());
+        Assert.Contains("\u2192", j.GetProperty("preview").GetString()!);       // what is about to be sent is shown
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:" + form.CancelKey));
+        Assert.Empty(_pane.Keys);
+    }
+
+    [Fact]
+    public async Task A_multi_select_question_goes_as_open_on_desk()
+    {
+        _pane.Screen = PaneFixtures.QaMultiSelect;
+        await _p.OnScannedAsync(Snap());
+        var j = PromptJson(_sent);
+        Assert.Equal("question", j.GetProperty("kind").GetString());
+        Assert.Empty(Keys(j));
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:1"));
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.ForbiddenOption, Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public void Question_options_leave_out_free_text_chat_and_mode_and_a_review_without_Submit_offers_nothing()
+    {
+        var opts = new List<ChatPromptOption>
+        {
+            new("1", "Red"), new("2", "Auto mode", Mode: true), new("3", "Type something."), new("4", "Chat about this"),
+        };
+        var form = new AskForm(new ChatPrompt("Q?", opts), [], 0, "3", "4");
+        Assert.Equal(["1"], PromptPipeline.QuestionOptions(form).Select(o => o.Key));
+        Assert.Empty(PromptPipeline.QuestionOptions(form with { IsReview = true, SubmitAnswersKey = null }));
+        Assert.Equal(["1"], PromptPipeline.QuestionOptions(form with { IsReview = true, SubmitAnswersKey = "1" }).Select(o => o.Key));
+        Assert.Empty(PromptPipeline.QuestionOptions(form with { MultiSelect = true }));
+    }
+
+    [Fact]
+    public void A_question_preview_leads_with_its_progress_when_the_form_says_which_question()
+    {
+        var withProgress = new[] { PaneFixtures.MiniAskForm, PaneFixtures.QaFormQ1, PaneFixtures.MacTwoQuestionsFirst, PaneFixtures.QaReview, PaneFixtures.MacColourQuestion }
+            .Select(f => ChatTranscript.ParseAskForm(f)!).ToList();
+        foreach (var form in withProgress)
+        {
+            var progress = AskFormView.ProgressOf(form);
+            Assert.Equal(progress is null ? AskFormView.TitleOf(form) : progress + "\n" + AskFormView.TitleOf(form), PromptPipeline.QuestionPreview(form));
+        }
+        var synthetic = new AskForm(new ChatPrompt("Q?", [new ChatPromptOption("1", "A")]), [new AskTab("A", AskTabState.Open), new AskTab("B", AskTabState.Open)], 0, null, null);
+        Assert.NotNull(AskFormView.ProgressOf(synthetic));
+        Assert.Equal(AskFormView.ProgressOf(synthetic) + "\nQ?", PromptPipeline.QuestionPreview(synthetic));
     }
 }
