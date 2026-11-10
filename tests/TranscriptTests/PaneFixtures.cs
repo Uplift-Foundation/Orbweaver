@@ -1625,6 +1625,59 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
 """"");
 
+        // CB-323: a live multi-select question that is not the form's last. Its
+        // commit row reads "Next", not the "Submit" QA's capture (the last
+        // question) drew, so a parser that knew only "Submit" offered the phone
+        // nothing. Byte-exact capture-pane -p from Claude Code 2.1.322 on the
+        // MacBook; the content is the scratch session's own.
+        internal static readonly string MacMultiSelectNext = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.322
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/claude-501/cb323-tamsin/qscratch · /rc
+
+
+❯ Call AskUserQuestion once with TWO questions: (1) multiSelect true, "Which suites should run?" header "Suites",
+  options Unit, Integration, UI; (2) single-select "Which colour?" header "Colour", options Red, Blue. Then reply with
+  exactly my answers. Do nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Suites  ☐ Colour  ✔ Submit  →
+
+Which suites should run?
+
+❯ 1. [ ] Unit
+         Run the unit test suite
+  2. [ ] Integration
+         Run the integration test suite
+  3. [ ] UI
+         Run the UI test suite
+  4. [ ] Type something
+     Next
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+""""");
+
         // The same session, a two-question form on its first question: the
         // ←/☐/✔ Submit bar, and each option's description under it.
         internal static readonly string MacTwoQuestionsFirst = Lf("""""

@@ -1410,6 +1410,13 @@ namespace Orbweaver.Tests
                 && two.FreeTextKey == "3" && two.ChatAboutKey == "4",
                 string.Join("|", two?.Tabs.Select(t => t.Name) ?? Array.Empty<string>()));
 
+            var next = ChatTranscript.ParseAskForm(PaneFixtures.MacMultiSelectNext);
+            Check("a live multi-select question that is not the last reads its Next row as its commit row",
+                next is { MultiSelect: true, HasSubmitRow: true, IsReview: false } && next.Prompt.Title == "Which suites should run?"
+                && next.Prompt.Options.Take(3).Select(o => o.Label).SequenceEqual(new[] { "Unit", "Integration", "UI" })
+                && next.FreeTextKey == "4" && next.ChatAboutKey == "5" && next.Checked is { Count: 0 },
+                $"{next?.MultiSelect}/{next?.HasSubmitRow}/{next?.FreeTextKey}/{next?.ChatAboutKey}");
+
             var bareForm = ChatTranscript.ParseAskForm(PaneFixtures.MiniOpenclawQuestionDialog);
             Check("a form with no bar or header in view is still a form by its Type something option",
                 bareForm is not null && bareForm.Tabs.Count == 0 && bareForm.CurrentTab == -1

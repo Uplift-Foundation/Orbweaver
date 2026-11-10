@@ -13,10 +13,12 @@ namespace Orbweaver
     internal sealed class PendingPrompt
     {
         internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt, bool deskOnly = false,
-            IReadOnlyList<string>? keys = null)
+            IReadOnlyList<string>? keys = null, bool multi = false, bool text = false)
         {
             DeskOnly = deskOnly;
             Keys = keys;
+            Multi = multi;
+            Text = text;
             RequestId = requestId;
             SessionId = sessionId;
             Kind = kind;
@@ -36,6 +38,13 @@ namespace Orbweaver
         // never "Type something." or "Chat about this", whose digit declines
         // the form). Null: any option the fresh parse allows.
         internal IReadOnlyList<string>? Keys { get; }
+
+        // CB-323 frames-v7-questions: the flags the prompt went out with. Multi:
+        // a multi-select question, answered only by options:<keys>. Text: a
+        // single-select question with a "Type something." row, which also
+        // takes other (typed text).
+        internal bool Multi { get; }
+        internal bool Text { get; }
 
         // A first-run screen (trust, update, hooks review: FirstRunDialogs) sent
         // as "Open on desk" with no options. Nothing about it is pressable from
@@ -131,11 +140,19 @@ namespace Orbweaver
         internal const int NonceLength = 16;
 
         // Rule is the number of the rule that decided (1–7 for a refusal, 8 for
-        // a press); Key is set only for a press.
-        internal sealed record Decision(int Rule, string? Code, string? Key)
+        // a press). A press names what to press: Key alone (one option); Keys,
+        // the boxes a multi-select question is to end up with ticked
+        // (options:); or Text with Key the "Type something." row (other).
+        internal sealed record Decision(int Rule, string? Code, string? Key, IReadOnlyList<string>? Keys = null, string? Text = null)
         {
-            internal bool Press => Key is not null;
+            internal bool Press => Code is null;
         }
+
+        internal const string Other = "other";
+        internal const string OptionsPrefix = "options:";
+        internal const int MaxNoteBytes = 1000;
+        private static readonly System.Text.RegularExpressions.Regex OptionsShape =
+            new("^options:[1-9][0-9]*(,[1-9][0-9]*)*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
         private static Decision Refuse(int rule, string code) => new(rule, code, null);
 
@@ -158,8 +175,11 @@ namespace Orbweaver
             };
             var body = AnswerSigning.Body(answer.RequestId, answer.SessionId, answer.Action, answer.Scope, answer.Nonce, answer.ExpiresAt);
             if (verifier is null || !AnswerSigning.Verify(verifier, body, answer.Sig)) return Refuse(1, BadSignature);
-            if (answer.Action == "tell" && answer.Scope != AnswerSigning.TellScope(answer.Note)) return Refuse(1, BadSignature);
-            if (answer.Action != "tell" && answer.Note.Length > 0) return Refuse(1, BadSignature);
+            // tell and other (CB-323) bind their note through scope; every other
+            // action carries none.
+            var noted = answer.Action is "tell" or Other;
+            if (noted && answer.Scope != AnswerSigning.TellScope(answer.Note)) return Refuse(1, BadSignature);
+            if (!noted && answer.Note.Length > 0) return Refuse(1, BadSignature);
             if (RelayCrypto.FromBase64Url(answer.Nonce) is not { Length: NonceLength }) return Refuse(1, BadSignature);
 
             // 1w. the watch key approves or denies, nothing else. Reported as
@@ -189,27 +209,79 @@ namespace Orbweaver
             // 7. option, off the fresh parse — never on a first-run screen,
             // whether the prompt was minted desk-only or the screen became one.
             if (pending.DeskOnly || FirstRunDialogs.Is(freshCapture)) return Refuse(7, ForbiddenOption);
-            var key = KeyFor(answer, fresh, pending.Kind);
+            var form = ChatTranscript.ParseAskForm(freshCapture!);
+            var typeRow = form is { MultiSelect: false } ? form.FreeTextKey : null;
+            return Rule7(pending, answer, Classified(fresh, pending.Kind), typeRow);
+        }
+
+        // The fresh screen's options as the gate weighs them: classified for
+        // the prompt's kind, and never one whose scope was cut at the screen's
+        // edge (the phone could not show what it would grant; #228).
+        internal static IReadOnlyList<PromptOption> Classified(PromptFingerprint fresh, string kind) =>
+            fresh.Prompt.Options.Select(o =>
+            {
+                var c = OptionKinds.Classify(kind, o.Label, o.Mode);
+                return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
+            }).Where(o => !o.ScopeTruncated).ToList();
+
+        // Rule 7, pure: what the answer may press on the fresh screen, given
+        // what the prompt offered. typeRow is the "Type something." row's key
+        // on a single-select question, or null when the screen has none.
+        // frames-v7-questions: options:<keys> only on a multi:true prompt, in
+        // its exact grammar (ascending as integers, distinct, no spaces), every
+        // key a kind:option choice on the screen and among what was offered;
+        // other only on a text:true prompt whose screen still shows the row,
+        // with a one-line note of 1–1000 bytes; and a single option:<k> is not
+        // how a multi-select question is answered.
+        internal static Decision Rule7(PendingPrompt pending, PhoneAnswer answer, IReadOnlyList<PromptOption> fresh, string? typeRow)
+        {
+            if (answer.Action.StartsWith(OptionsPrefix, StringComparison.Ordinal))
+            {
+                if (!pending.Multi || OptionKeys(answer.Action) is not { } keys) return Refuse(7, ForbiddenOption);
+                foreach (var k in keys)
+                    if (!fresh.Any(o => o.Key == k && o.Kind == OptionKinds.Option) || (pending.Keys is { } offered && !offered.Contains(k)))
+                        return Refuse(7, ForbiddenOption);
+                return new Decision(8, null, null, keys);
+            }
+
+            if (answer.Action == Other)
+            {
+                if (!pending.Text || pending.Multi || typeRow is null || !NoteAllowed(answer.Note)) return Refuse(7, ForbiddenOption);
+                return new Decision(8, null, typeRow, Text: answer.Note);
+            }
+
+            if (pending.Multi) return Refuse(7, ForbiddenOption);
+            var key = KeyFor(answer, fresh);
             if (key is null || (pending.Keys is { } allowed && !allowed.Contains(key))) return Refuse(7, ForbiddenOption);
 
             // 8. press
             return new Decision(8, null, key);
         }
 
+        // options:<k1>,<k2>,… as its keys, or null when it is not exactly the
+        // grammar: digits with no leading zero, joined by "," alone, strictly
+        // ascending as integers (so distinct, and 2,10,11 rather than 10,2).
+        internal static IReadOnlyList<string>? OptionKeys(string action)
+        {
+            if (!OptionsShape.IsMatch(action)) return null;
+            var keys = action[OptionsPrefix.Length..].Split(',');
+            for (var i = 1; i < keys.Length; i++)
+                if (!(keys[i].Length > keys[i - 1].Length || (keys[i].Length == keys[i - 1].Length && string.CompareOrdinal(keys[i], keys[i - 1]) > 0)))
+                    return null;
+            return keys;
+        }
+
+        // other's note: one line of 1–1000 UTF-8 bytes, with no C0 control, no
+        // DEL and no C1 control — so no newline, carriage return or tab.
+        internal static bool NoteAllowed(string note) =>
+            note.Length > 0 && System.Text.Encoding.UTF8.GetByteCount(note) <= MaxNoteBytes
+            && !note.Any(c => c < 0x20 || c is >= '\u007f' and <= '\u009f');
+
         // The one key the action names on the fresh screen, or null. Mode is
         // never pressable; never is not an action a phone can send; an action
         // that matches two options is ambiguous and refused rather than guessed.
-        internal static string? KeyFor(PhoneAnswer answer, PromptFingerprint fresh, string kind)
+        internal static string? KeyFor(PhoneAnswer answer, IReadOnlyList<PromptOption> options)
         {
-            var options = fresh.Prompt.Options.Select(o =>
-            {
-                var c = OptionKinds.Classify(kind, o.Label, o.Mode);
-                return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
-            }).ToList()
-                // A cut scope is never pressable: the phone could not show what
-                // it would grant (lead's rule; the parser's flag, #228).
-                .Where(o => !o.ScopeTruncated).ToList();
-
             IEnumerable<PromptOption> matches;
             if (answer.Action.StartsWith("option:", StringComparison.Ordinal))
             {

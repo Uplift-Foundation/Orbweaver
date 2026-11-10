@@ -225,14 +225,19 @@ namespace Orbweaver
             }).ToList();
             var preview = form is null ? string.Join("\n", fp.Preview) : QuestionPreview(form);
             var tool = form is null ? ToolOf(fp.Preview) : "";
-            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires);
+            // frames-v7-questions: what else the question takes, from the screen,
+            // so the phone never has to guess. Neither on a question that went
+            // out with nothing to answer.
+            var multi = form is { MultiSelect: true } && options.Count > 0;
+            var text = form is { MultiSelect: false, IsReview: false, FreeTextKey: not null } && options.Count > 0;
+            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
             var push = PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
             // A question presses only what it offered (the gate's rule 7).
             var keys = form is null ? null : options.Select(o => o.Key).ToList();
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
@@ -253,16 +258,20 @@ namespace Orbweaver
         // prompt of its own, or the review. On the review, "Submit answers"
         // alone, so a phone can finish what it started; never "Cancel", which
         // throws every answer away. Never "Type something." (its digit on an
-        // empty field declines the form) and never "Chat about this". A
-        // multi-select question (ticks, then an unnumbered Submit row) offers
-        // nothing: it goes as "Open on desk", which the phone shows instead of
-        // a session that is waiting on nothing it was told about.
+        // empty field declines the form; a typed answer goes as `other` and the
+        // prompt says text:true) and never "Chat about this". A multi-select
+        // question offers its choices as boxes (multi:true), answered by
+        // options:<keys> and committed by its Submit row; without that row it
+        // offers nothing and goes as "Open on desk".
         internal static IReadOnlyList<PromptOption> QuestionOptions(AskForm form)
         {
             if (form.IsReview)
                 return form.Prompt.Options.Where(o => o.Key == form.SubmitAnswersKey)
                     .Select(o => new PromptOption(o.Key, o.Label, OptionKinds.Option, null)).ToList();
-            if (form.MultiSelect) return [];
+            // A multi-select question is answered by options:<keys> (frames-v7
+            // questions) and committed by its Submit row: without that row
+            // there is no commit to press, so nothing is offered.
+            if (form.MultiSelect && !form.HasSubmitRow) return [];
             return form.Prompt.Options
                 .Where(o => o.Key != form.FreeTextKey && o.Key != form.ChatAboutKey && !o.Mode)
                 .Select(o => new PromptOption(o.Key, o.Label, OptionKinds.Option, null))
@@ -346,7 +355,11 @@ namespace Orbweaver
                 // line can press this dialog again.
                 var pending = live!.Pending;
                 pending.Answered = true;
-                var outcome = answer.Action == "tell"
+                var outcome = d.Keys is { } ticks
+                    ? await PressOptionsAsync(live.Status, pending, answer.RequestId, ticks).ConfigureAwait(false)
+                    : d.Text is { } typed
+                    ? await PressOtherAsync(live.Status, pending, answer.RequestId, d.Key!, typed).ConfigureAwait(false)
+                    : answer.Action == "tell"
                     ? await PressTellAsync(live.Status, pending, answer.RequestId, d.Key!, answer.Note).ConfigureAwait(false)
                     : await PressOnceAsync(live.Status, pending, answer.RequestId, d.Key!).ConfigureAwait(false);
 
@@ -453,6 +466,62 @@ namespace Orbweaver
                 if (gone >= 2) return PressOutcome.Took;
             }
             return PressOutcome.NoEffect;
+        }
+
+        // CB-323 frames-v7-questions, rule 8 for options:<keys> and other,
+        // through FormAnswer (the CB-307 procedure the mirror path already
+        // runs), which re-reads the form before every key and presses nothing
+        // on a form that is not the one it read. Each starts from the approved
+        // screen: a question that moved on since the gate's look is Changed,
+        // and nothing is pressed.
+        private async Task<MirrorProtocol.WirePrompt?> ApprovedFormAsync(SessionStatus status, PendingPrompt pending)
+        {
+            var screen = await _seams.Capture(status).ConfigureAwait(false);
+            return PromptFingerprint.Of(screen)?.Hash == pending.ScreenHash ? MirrorProtocol.PromptFromScreen(screen) : null;
+        }
+
+        private static PressOutcome OutcomeOf(string? code) => code switch
+        {
+            null => PressOutcome.Took,
+            MirrorProtocol.ErrNoPrompt or MirrorProtocol.ErrPromptChanged => PressOutcome.Changed,
+            _ => PressOutcome.NoEffect,
+        };
+
+        // options: tick exactly the wanted boxes — each digit toggles one, so
+        // only the boxes whose state differs are pressed, a box already ticked
+        // that is not wanted included — read back that exactly those are
+        // ticked, then commit (Right), which moves the form on.
+        private async Task<PressOutcome> PressOptionsAsync(SessionStatus status, PendingPrompt pending, string requestId, IReadOnlyList<string> wanted)
+        {
+            if (await ApprovedFormAsync(status, pending).ConfigureAwait(false) is not { } form) return PressOutcome.Changed;
+            // Checked is a list on every prompt read off a screen
+            // (MirrorProtocol.Bounded), empty when nothing is ticked.
+            var ticked = form.Checked!;
+            foreach (var key in wanted.Except(ticked).Concat(ticked.Except(wanted)).OrderBy(k => int.Parse(k, System.Globalization.CultureInfo.InvariantCulture)))
+            {
+                var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, key, null, null)
+                    .ConfigureAwait(false);
+                if (code is not null) return OutcomeOf(code);
+                _seams.Log($"press {requestId} {key}");
+                if (MirrorProtocol.PromptFromScreen(await _seams.Capture(status).ConfigureAwait(false)) is not { } after) return PressOutcome.Changed;
+                form = after;
+            }
+            if (!form.Checked!.OrderBy(k => k).SequenceEqual(wanted.OrderBy(k => k))) return PressOutcome.NoEffect;
+            var commit = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, null,
+                MirrorProtocol.ActionCommit, null).ConfigureAwait(false);
+            if (commit is null) _seams.Log($"press {requestId} commit");
+            return OutcomeOf(commit);
+        }
+
+        // other: onto the "Type something." row, seen there; the note typed
+        // without Enter and read back on the row; then Enter.
+        private async Task<PressOutcome> PressOtherAsync(SessionStatus status, PendingPrompt pending, string requestId, string row, string note)
+        {
+            if (await ApprovedFormAsync(status, pending).ConfigureAwait(false) is not { } form) return PressOutcome.Changed;
+            var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, row, null, note)
+                .ConfigureAwait(false);
+            if (code is null) _seams.Log($"press {requestId} other");
+            return OutcomeOf(code);
         }
 
         // tell: press the option, wait for the dialog to clear (the CLI then

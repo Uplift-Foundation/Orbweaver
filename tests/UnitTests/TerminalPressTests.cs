@@ -98,4 +98,29 @@ public class TerminalPressTests
     {
         Assert.Equal(["capture-pane", "-p", "-t", "%3", ";", "send-keys", "-t", "%3", "1"], TerminalPress.TmuxCaptureThenKey("%3", "1"));
     }
+
+    // CB-323: the arrows a question form's "Type something." row needs.
+    [Theory]
+    [InlineData("Up", "\u001b[A", 0x26)]
+    [InlineData("Down", "\u001b[B", 0x28)]
+    [InlineData("Right", "\u001b[C", 0x27)]
+    public void An_arrow_is_its_VT_sequence_and_one_console_key_event(string key, string bytes, int vk)
+    {
+        Assert.Equal(bytes, TerminalPress.Bytes(key));
+        Assert.Equal(vk, TerminalPress.ArrowVirtualKey(bytes));
+        var records = TerminalPress.ConsoleRecords(bytes);
+        Assert.Equal(2, records.Count);
+        Assert.All(records, r => Assert.Equal((ushort)vk, r.VirtualKeyCode));
+        Assert.All(records, r => Assert.Equal('\0', r.Char));
+        Assert.Equal([1, 0], records.Select(r => r.KeyDown));
+    }
+
+    [Fact]
+    public void Left_and_other_names_are_still_not_keys_and_text_is_not_an_arrow()
+    {
+        Assert.Null(TerminalPress.Bytes("Left"));
+        Assert.Null(TerminalPress.Bytes("Escape"));
+        Assert.Equal(0, TerminalPress.ArrowVirtualKey("2"));
+        Assert.Equal(0, TerminalPress.ArrowVirtualKey("\u001b[D"));
+    }
 }
