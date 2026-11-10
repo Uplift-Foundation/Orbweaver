@@ -902,17 +902,173 @@ public class PromptPipelineTests
         Assert.Empty(_pane.Keys);
     }
 
+    // ---- CB-323 frames-v7-questions: multi-select and typed answers ------------
+
+    private static bool Flag(JsonElement prompt, string name) => prompt.TryGetProperty(name, out var f) && f.GetBoolean();
+
     [Fact]
-    public async Task A_multi_select_question_goes_as_open_on_desk()
+    public async Task A_multi_select_question_goes_out_with_its_boxes_and_multi()
     {
         _pane.Screen = PaneFixtures.QaMultiSelect;
         await _p.OnScannedAsync(Snap());
         var j = PromptJson(_sent);
-        Assert.Equal("question", j.GetProperty("kind").GetString());
-        Assert.Empty(Keys(j));
-        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:1"));
-        Assert.Empty(_pane.Keys);
-        Assert.Equal(AnswerGate.ForbiddenOption, Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(["1", "2", "3"], Keys(j));                      // never "Type something" or "Chat about this"
+        Assert.Equal((true, false), (Flag(j, "multi"), Flag(j, "text")));
+        Assert.True(_p.PendingFor("s1")!.Multi);
+    }
+
+    // The live capture that found the "Next" row: a multi-select question
+    // that is not the form's last goes out the same way, not as Open on desk.
+    [Fact]
+    public async Task A_live_multi_select_question_with_a_Next_row_goes_out_with_its_boxes()
+    {
+        _pane.Screen = PaneFixtures.MacMultiSelectNext;
+        await _p.OnScannedAsync(Snap());
+        var j = PromptJson(_sent);
+        Assert.Equal(["1", "2", "3"], Keys(j));
+        Assert.Equal((true, false), (Flag(j, "multi"), Flag(j, "text")));
+    }
+
+    [Theory]
+    [InlineData("colour", true)]
+    [InlineData("review", false)]
+    [InlineData("permission", false)]
+    public async Task Text_is_set_only_on_a_single_select_question_with_the_row(string screen, bool text)
+    {
+        _pane.Screen = screen switch { "colour" => PaneFixtures.QaFormQ1, "review" => PaneFixtures.QaReview, _ => Dialog };
+        await _p.OnScannedAsync(Snap());
+        var j = PromptJson(_sent);
+        Assert.Equal((false, text), (Flag(j, "multi"), Flag(j, "text")));
+        Assert.Equal(text, _p.PendingFor("s1")!.Text);
+    }
+
+    [Fact]
+    public async Task Options_tick_the_boxes_read_them_back_and_commit()
+    {
+        var ticks = new List<string>();
+        var p = WithPane(k =>
+        {
+            ticks.Add(k);
+            if (k == "Right") return Cleared;
+            return k == "1" ? PaneFixtures.QaMultiSelectOneTicked : PaneFixtures.QaMultiSelectDigitToggled;
+        });
+        await p.OnScannedAsync(Snap());
+        var answer = AnswerToFrom(p, "options:1,2,3");
+        await p.OnAnswerAsync(PhoneId, Phone.Public, answer);
+        Assert.Equal(["1", "2", "3", "Right"], ticks);
+        Assert.Equal((answer.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
+        Assert.Contains($"press {answer.RequestId} commit", _log);
+    }
+
+    [Fact]
+    public async Task Options_that_do_not_read_back_as_ticked_are_not_committed()
+    {
+        var keys = new List<string>();
+        var p = WithPane(k => { keys.Add(k); return null; });      // nothing the keys do shows
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "options:2"));
+        Assert.Equal(["2"], keys);                                  // no Right
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        Assert.Empty(_sent.Resolved);
+    }
+
+    [Fact]
+    public async Task Options_untick_a_box_that_was_ticked_and_is_not_wanted()
+    {
+        var keys = new List<string>();
+        var p = WithPane(k => { keys.Add(k); return null; }, PaneFixtures.QaMultiSelectOneTicked);
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "options:2"));
+        Assert.Equal(["1", "2"], keys);                             // 1 off, 2 on, in key order
+    }
+
+    [Fact]
+    public async Task A_question_that_moved_on_before_the_press_presses_nothing()
+    {
+        var keys = new List<string>();
+        var looks = 0;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(++looks <= 2 ? PaneFixtures.QaMultiSelect : PaneFixtures.QaReview),
+            (_, k) => { keys.Add(k); return Task.FromResult(true); }, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "options:1"));
+        Assert.Empty(keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public async Task Other_goes_to_the_row_types_reads_back_and_enters()
+    {
+        var downs = 0;
+        var keys = new List<string>();
+        var typed = new List<string>();
+        var screen = PaneFixtures.QaFormQ1;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) =>
+            {
+                keys.Add(k);
+                if (k == "Down" && ++downs == 2) screen = PaneFixtures.QaCursorOnFreeText;
+                if (k == "Enter") screen = Cleared;
+                return Task.FromResult(true);
+            },
+            (_, t) => { typed.Add(t); screen = PaneFixtures.QaFreeTextTyped; return Task.FromResult(true); },
+            () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        var a = AnswerToFrom(p, "other", "my own answer");
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(["Down", "Down", "Enter"], keys);
+        Assert.Equal(["my own answer"], typed);
+        Assert.Equal((a.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
+        Assert.Contains($"press {a.RequestId} other", _log);
+    }
+
+    [Fact]
+    public async Task Other_whose_text_never_shows_on_the_row_is_not_entered()
+    {
+        var keys = new List<string>();
+        var downs = 0;
+        var screen = PaneFixtures.QaFormQ1;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) => { keys.Add(k); if (k == "Down" && ++downs == 2) screen = PaneFixtures.QaCursorOnFreeText; return Task.FromResult(true); },
+            (_, _) => Task.FromResult(true),                          // typed, but the row never shows it
+            () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "other", "my own answer"));
+        Assert.DoesNotContain("Enter", keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public async Task Other_on_a_question_that_moved_on_presses_nothing()
+    {
+        var keys = new List<string>();
+        var looks = 0;
+        var p = new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(++looks <= 2 ? PaneFixtures.QaFormQ1 : PaneFixtures.QaMultiSelect),
+            (_, k) => { keys.Add(k); return Task.FromResult(true); }, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "other", "x"));
+        Assert.Empty(keys);
+    }
+
+    // A pipeline over the multi-select capture (or another start) whose key
+    // presses move the screen as `after` says (null: the screen stays).
+    private PromptPipeline WithPane(Func<string, string?> after, string? start = null)
+    {
+        var screen = start ?? PaneFixtures.QaMultiSelect;
+        return new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) => { if (after(k) is { } next) screen = next; return Task.FromResult(true); },
+            _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
+    }
+
+    // A signed answer to the prompt the given pipeline just sent (the last one).
+    private PhoneAnswer AnswerToFrom(PromptPipeline _, string action, string note = "")
+    {
+        var scope = action == AnswerGate.Other ? AnswerSigning.TellScope(note) : "";
+        return AnswerTo(prompt: _sent.Prompts.Count - 1, action: action, scope: scope, note: note);
     }
 
     [Fact]
@@ -926,7 +1082,8 @@ public class PromptPipelineTests
         Assert.Equal(["1"], PromptPipeline.QuestionOptions(form).Select(o => o.Key));
         Assert.Empty(PromptPipeline.QuestionOptions(form with { IsReview = true, SubmitAnswersKey = null }));
         Assert.Equal(["1"], PromptPipeline.QuestionOptions(form with { IsReview = true, SubmitAnswersKey = "1" }).Select(o => o.Key));
-        Assert.Empty(PromptPipeline.QuestionOptions(form with { MultiSelect = true }));
+        Assert.Empty(PromptPipeline.QuestionOptions(form with { MultiSelect = true }));                       // no Submit row: no commit
+        Assert.Equal(["1"], PromptPipeline.QuestionOptions(form with { MultiSelect = true, HasSubmitRow = true }).Select(o => o.Key));
     }
 
     [Fact]
@@ -954,5 +1111,53 @@ public class PromptPipelineTests
         var activity = _p.ActivityFor("s1")!;
         Assert.Equal(("", "Which colour should the orb be?"), (activity.Tool, activity.Command));
         Assert.Equal(JsonDocument.Parse(_sent.Prompts[0].Prompt).RootElement.GetProperty("request_id").GetString(), activity.RequestId);
+    }
+
+    // The press path's refusals, each from the screen it met: a pipeline whose
+    // captures follow `screens` in order (the last repeats), with presses that
+    // succeed or not as `pressWorks` says.
+    private PromptPipeline Sequenced(string[] screens, List<string> keys, bool pressWorks = true)
+    {
+        var looks = 0;
+        return new PromptPipeline(new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screens[Math.Min(looks++, screens.Length - 1)]),
+            (_, k) => { keys.Add(k); return Task.FromResult(pressWorks); }, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add),
+            _sent, "Test Mac");
+    }
+
+    // Mint (1 look), the gate's fresh capture (1), then what the press meets.
+    [Theory]
+    [InlineData("gone-before", "options:1")]      // the approved form is gone at the press: nothing pressed
+    [InlineData("gone-in-formanswer", "options:1")]
+    [InlineData("changed-in-formanswer", "options:1")]
+    [InlineData("gone-after-a-tick", "options:1,2")]
+    public async Task Options_meeting_another_screen_stop_and_say_stale(string when, string action)
+    {
+        var keys = new List<string>();
+        string[] screens = when switch
+        {
+            "gone-before" => [PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, Cleared],
+            "gone-in-formanswer" => [PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, Cleared],
+            "changed-in-formanswer" => [PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, PaneFixtures.QaReview],
+            _ => [PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, PaneFixtures.QaMultiSelect, Cleared],
+        };
+        var p = Sequenced(screens, keys);
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, action));
+        Assert.Equal(when == "gone-after-a-tick" ? ["1"] : [], keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        Assert.Empty(_sent.Resolved);
+    }
+
+    [Fact]
+    public async Task A_tick_the_terminal_refuses_is_no_effect()
+    {
+        var keys = new List<string>();
+        var p = Sequenced([PaneFixtures.QaMultiSelect], keys, pressWorks: false);
+        await p.OnScannedAsync(Snap());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "options:1"));
+        Assert.Equal(["1"], keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        Assert.Contains(_log, l => l.StartsWith("press-no-effect", StringComparison.Ordinal));
     }
 }

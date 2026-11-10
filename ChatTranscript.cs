@@ -747,7 +747,7 @@ namespace Orbweaver
             for (var i = first; i < cleaned.Length; i++)
             {
                 if (cleaned[i].TrimStart('❯', ' ').StartsWith(lastOption, StringComparison.Ordinal)) break;
-                if (cleaned[i] == SubmitRowLabel) submitRow = true;
+                if (cleaned[i] is SubmitRowLabel or NextRowLabel) submitRow = true;
             }
 
             string? cursor = null;
@@ -769,6 +769,11 @@ namespace Orbweaver
         internal const string SubmitAnswersLabel = "Submit answers";
         internal const string CancelLabel = "Cancel";
         internal const string SubmitRowLabel = "Submit";
+        // CB-323: the same row on a multi-select question that is not the form's
+        // last reads "Next" (live capture PaneFixtures.MacMultiSelectNext). It
+        // commits the same way, Right moving on to the next tab with the ticks
+        // kept, so HasSubmitRow means "has its commit row" whichever word it wears.
+        internal const string NextRowLabel = "Next";
 
         internal const string FreeTextLabel = "Type something";
         internal const string ChatAboutLabel = "Chat about this";
