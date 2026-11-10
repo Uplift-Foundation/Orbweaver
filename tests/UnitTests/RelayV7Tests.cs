@@ -77,6 +77,8 @@ public class RelayV7Tests
     [InlineData("snapshot_grammar.accepted[3].machine", 36, 'M', 32)]
     [InlineData("timeline.events[4].frame.oldest.command", 170, 'c', 160)]
     [InlineData("timeline.events[4].frame.oldest.tool", 40, 't', 32)]
+    [InlineData("relay_addendum.scenarios[0].events[1].frame.oldest.command", 170, 'c', 160)]
+    [InlineData("relay_addendum.scenarios[1].events[2].frame.machine", 36, 'M', 32)]
     public void An_uncut_input_comes_back_cut(string path, int length, char ch, int limit)
     {
         var root = JsonNode.Parse(File.ReadAllText(Committed))!;
@@ -90,6 +92,54 @@ public class RelayV7Tests
         var root = JsonNode.Parse(File.ReadAllText(Committed))!;
         var rebuilt = Rebuilt(root, "snapshot_grammar.accepted[3].working", JsonValue.Create(10_500));
         Assert.Equal(RelayActivity.CountsMax, Find(rebuilt, "snapshot_grammar.accepted[3].working")!.GetValue<int>());
+    }
+
+    // Every desktop frame in the file, wherever it sits, is recomputed: a key
+    // the desktop never writes, slipped into any of them, does not survive the
+    // rebuild. Found by walking the file for t:"activity" rather than listing
+    // places, so a new section of desktop frames (#69's channel scenarios
+    // were the last) fails here until the generator covers it. The refused
+    // frames are the exception: the desktop cannot produce them, so they are
+    // carried, and that is checked elsewhere.
+    public static TheoryData<string> DesktopFrames()
+    {
+        var paths = new TheoryData<string>();
+        void Walk(JsonNode? n, string path)
+        {
+            if (path.StartsWith("snapshot_grammar.refused")) return;
+            if (n is JsonObject o)
+            {
+                if (o["t"]?.GetValueKind() == System.Text.Json.JsonValueKind.String && o["t"]!.GetValue<string>() == "activity") paths.Add(path);
+                foreach (var (k, v) in o) Walk(v, path.Length == 0 ? k : $"{path}.{k}");
+            }
+            else if (n is JsonArray a)
+                for (var i = 0; i < a.Count; i++) Walk(a[i], $"{path}[{i}]");
+        }
+        Walk(JsonNode.Parse(File.ReadAllText(Committed)), "");
+        return paths;
+    }
+
+    [Theory]
+    [MemberData(nameof(DesktopFrames))]
+    public void Every_desktop_frame_wherever_it_sits_is_recomputed(string path)
+    {
+        var root = JsonNode.Parse(File.ReadAllText(Committed))!;
+        var original = Find(root, path)!.ToJsonString();
+        var tampered = Find(root, path)!.DeepClone().AsObject();
+        tampered["zz_not_the_desktops"] = 1;
+        Assert.Equal(original, Find(Rebuilt(root, path, tampered), path)!.ToJsonString());
+    }
+
+    // A file with no relay addendum (frames-v7 before #50) still builds: the
+    // scenarios are recomputed only where they exist.
+    [Fact]
+    public void A_file_without_the_relay_addendum_still_builds()
+    {
+        var root = JsonNode.Parse(File.ReadAllText(Committed))!;
+        root.AsObject().Remove("relay_addendum");
+        var rebuilt = Rebuilt(root, "timeline.events[4].frame.oldest.command", JsonValue.Create(new string('c', 170)));
+        Assert.Null(rebuilt["relay_addendum"]);
+        Assert.Equal(new string('c', 159) + "…", Find(rebuilt, "timeline.events[4].frame.oldest.command")!.GetValue<string>());
     }
 
     private static JsonNode Rebuilt(JsonNode root, string path, JsonNode? wrong)
@@ -114,7 +164,7 @@ public class RelayV7Tests
     private static void Set(JsonNode root, string path, JsonNode? value)
     {
         var parent = Find(root, path[..path.LastIndexOfAny(['.', '['])])!;
-        var last = Regex.Match(path, @"[^.\[\]]+$").Value;
+        var last = Regex.Match(path.TrimEnd(']'), @"[^.\[\]]+$").Value;   // a path may end in an index
         if (int.TryParse(last, out var i)) parent[i] = value; else parent[last] = value;
     }
 

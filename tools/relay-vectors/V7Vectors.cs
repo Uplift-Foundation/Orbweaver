@@ -53,6 +53,14 @@ internal static class V7Vectors
         foreach (var e in v["timeline"]!["events"]!.AsArray())
             if (Text(e!["kind"]) == "snapshot") e["frame"] = Desktop(e["frame"]!);
 
+        // The relay addendum's scenarios embed the same desktop snapshot frames
+        // (#50's token scenarios, and more to come). Recomputed like the
+        // timeline's, so a frame there is checked rather than carried.
+        if (v["relay_addendum"]?["scenarios"] is JsonArray scenarios)
+            foreach (var sc in scenarios)
+                foreach (var e in sc!["events"]!.AsArray())
+                    if (Text(e!["kind"]) == "snapshot") e["frame"] = Desktop(e["frame"]!);
+
         var example = v["content_state_example"]!;
         var state = example["content_state"]!.AsObject();
         example["canonical"] = Canonical(state);
