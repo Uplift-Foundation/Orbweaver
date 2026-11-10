@@ -280,6 +280,37 @@ public class HookInstallerScriptsTests : IDisposable
         Assert.True(result.Outcome == HookInstallOutcome.Ok, $"{script}: {result.Outcome} exit {result.ExitCode}: {result.Error}");
     }
 
+    // CB-316: the wired -TempDir must not end in a backslash. GetTempPath()
+    // does, and `...\Temp\"` reads as an escaped quote under PowerShell's -File
+    // parsing, so the hook got a TempDir with a stray quote and wrote no status
+    // file (measured on the Windows box). Pinned on the command Codex runs.
+    [WindowsOnlyFact]
+    public void TheCodexHookIsWiredWithATempDirThatDoesNotEndInABackslash()
+    {
+        var result = HookInstaller.RunPowerShell("install-codex-hooks.ps1", baseDirectory: RepoRoot,
+            environment: new Dictionary<string, string?>
+            {
+                ["USERPROFILE"] = _home,
+                ["HOME"] = _home,
+                ["CODEX_HOME"] = null,
+                ["GROK_HOME"] = null,
+                ["ORBWEAVER_SETTINGS_DIR"] = _settingsDir
+            });
+        Assert.True(result.Outcome == HookInstallOutcome.Ok, $"{result.Outcome}: {result.Error}");
+
+        var hooks = File.ReadAllText(Path.Combine(_home, ".codex", "hooks.json"));
+        var commands = System.Text.Json.JsonDocument.Parse(hooks).RootElement.GetProperty("hooks").EnumerateObject()
+            .SelectMany(e => e.Value.EnumerateArray()).SelectMany(g => g.GetProperty("hooks").EnumerateArray())
+            .Select(h => h.GetProperty("command").GetString()!).ToList();
+        Assert.NotEmpty(commands);
+        var temp = Path.GetTempPath().TrimEnd('\\');
+        Assert.All(commands, c =>
+        {
+            Assert.Contains("-TempDir \"" + temp + "\"", c);
+            Assert.DoesNotContain("\\\"", c);
+        });
+    }
+
     // The second bug found while testing the seam: the Grok installer re-invoked
     // itself for each extra home with ${UNINSTALL:+--uninstall}, and UNINSTALL is
     // 0 for an install — "0" being a non-empty string — so installing *unwired*

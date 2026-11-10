@@ -140,6 +140,35 @@ namespace Orbweaver
         // Finder it gets the bare system one.
         //
         // Moved verbatim from AgentTeamViewer.ResolveTmux.
+        // CB-316: a phone's launch on the Mac — tmux, always, never Terminal.app
+        // (refinement decision 2). A new window in the attached client's
+        // session, the desk's own New Chat rule; with no attached client, the
+        // detached `orbweaver` session. The pane id, or a why for the phone.
+        // Excluded: every line runs tmux; the decisions are TerminalScripts'.
+        [ExcludeFromCodeCoverage]
+        public static (string? Pane, string? Why) PlaceForPhone(string command, string cwd)
+        {
+            var tmux = ResolveTmux();
+            if (tmux is null) return (null, TerminalScripts.NoTmuxWhy);
+            if (PlaceInOwnTmuxWindow(command, cwd) is { } pane) return (pane, null);
+
+            var exists = TryRun(tmux, out _, "has-session", "-t", "=" + TerminalScripts.DetachedSession);
+            if (!TryRun(tmux, out var id, TerminalScripts.TmuxDetachedArgs(exists, cwd, command)))
+                return (null, "tmux could not start a session");
+            var trimmed = id.Trim();
+            return trimmed.StartsWith('%') ? (trimmed, null) : (null, "tmux did not name the new pane");
+        }
+
+        // CB-316: a phone's launch on Windows — its own conhost through
+        // cmd.exe /k, never wt.exe (whose single-instance handoff drops the
+        // launching process's environment). The started process's id, or null.
+        [ExcludeFromCodeCoverage]
+        public static int? StartConsole(ProcessStartInfo start)
+        {
+            try { return Process.Start(start)?.Id; }
+            catch { return null; }
+        }
+
         [ExcludeFromCodeCoverage]
         public static string? ResolveTmux()
         {

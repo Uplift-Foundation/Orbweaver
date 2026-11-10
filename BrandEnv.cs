@@ -82,6 +82,22 @@ namespace Orbweaver
         // downloads a real installer (UpdateRealNetworkTests). CI must never set it.
         internal const string NetworkTests = "NETWORK_TESTS";
 
+        // CB-314: opt-in gate on the one test that writes a real item into the
+        // login Keychain (RelaySecretStorePlatformTests). CI must never set it.
+        internal const string KeychainTests = "KEYCHAIN_TESTS";
+
+        // CB-314: where the phone relay is, for a test or QA's stub relay —
+        // the same shape as UPDATE_FEED_URL. Unset means the real relay.
+        internal const string RelayUrl = "RELAY_URL";
+
+        // CB-314: scripted pairing for an end-to-end harness (RelayTestHooks).
+        // Explicit opt-in only; nothing sets it by default.
+        internal const string RelayTestHooks = "RELAY_TEST_HOOKS";
+
+        // CB-323: the hour gate's desktop activity log (RelayActivityLog), a
+        // path. Unset means no log. No older spelling ever existed.
+        internal const string ActivityLog = "ACTIVITY_LOG";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -90,7 +106,7 @@ namespace Orbweaver
             KeepAliveDryRun, LaunchAgentsDir, KeepAliveAppCandidates, StopGraceSeconds,
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
-            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests,
+            UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks, ActivityLog,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

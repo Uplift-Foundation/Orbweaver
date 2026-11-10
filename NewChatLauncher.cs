@@ -172,7 +172,7 @@ namespace Orbweaver
             new(LaunchOutcome.SpawnFailed, "Couldn't open a terminal for " + displayName + ".");
 
         [ExcludeFromCodeCoverage]
-        private static string? LocateFresh(NewChatCli cli) => cli switch
+        internal static string? LocateFresh(NewChatCli cli) => cli switch
         {
             NewChatCli.ClaudeCode => ClaudeBinary.Locate(),
             NewChatCli.Codex => CodexBinary.Locate(),

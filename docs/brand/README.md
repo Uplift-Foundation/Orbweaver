@@ -18,6 +18,22 @@ The app's own icons are **not** these files: `tools/make-icons.py` draws them
 heavier cut at small sizes. The SVGs here are the same geometry at the large cut.
 If you change the shape in one, change the other.
 
+## The phone and Watch icons
+
+`docs/brand/mobile/` holds the icons for the iOS app and the Watch, drawn by `tools/make-icons.py` (not by `cairosvg`) so they share the app's geometry and its small-size cut. Regenerate with `python3 tools/make-icons.py`; `python3 tools/check-brand-icons.py` checks them.
+
+| File | What it is |
+| --- | --- |
+| `ios-light-1024.png` | The tile edge to edge, 8-bit RGB with no alpha channel (the App Store refuses one). iOS rounds the corners. |
+| `ios-dark-1024.png` | The web and orb on transparent; iOS supplies the dark backdrop. |
+| `ios-tinted-1024.png` | The mark in greyscale on transparent (grey web, white orb); iOS recolours it. |
+| `watchos-1024.png` | The tile edge to edge, with every part of the web inside 0.47 of the size from the centre, because watchOS masks the inscribed circle. |
+| `mark-template-256.png` | Alpha only, one colour: the tray mask's geometry, for the Lock Screen accessory and the complications, which tint it themselves. |
+
+All four 1024s use `cut_for(48)` (thread 16, two rings, orb 54), not the 512 cut: iOS only ever downscales the one 1024, down to the 29-pt Settings row, and the lighter cut drops the outer ring below the checker's bar at that size. The checker area-averages each tile to 29 px and measures the orb's contrast against the tile and how strongly the outer ring survives; the 512 cut is its negative control (`tools/test-check-brand-icons.py`).
+
+The Orbweaver-Mobile repository copies these files byte for byte into its asset catalogs and pins their SHA-256 in `app/Brand/SOURCE.md`. Regenerating here means re-copying there.
+
 ## Website
 
 The site's source is not in this repository. To adopt the new mark, copy

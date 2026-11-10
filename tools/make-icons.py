@@ -15,6 +15,8 @@ Outputs (PNG, RGBA, straight alpha — except the .ico, noted below):
   Assets/Orbweaver.ico        multi-size Windows icon: the .exe's embedded icon
                               (csproj ApplicationIcon) and the installer's
                               SetupIconFile
+  docs/brand/mobile/          the phone and Watch icons (CB-323), see "The mobile
+                              set" below; tools/check-brand-icons.py checks them
 
 The mark (CB-297) is a spiderweb with the orb at its hub: six spokes and two
 sagging rings in slate, a violet orb, on a near-black rounded tile. Orbweaver
@@ -34,6 +36,7 @@ import zlib
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(HERE, "Assets")
+MOBILE = os.path.join(HERE, "docs", "brand", "mobile")
 
 # The *default* three colors — OrbColors.DefaultIdle / DefaultGenerating /
 # DefaultWaiting in OrbColors.cs. Keep them in sync by hand.
@@ -53,20 +56,34 @@ IDLE = (0x5B, 0x7A, 0x94)
 GENERATING = (0x8B, 0x6F, 0xD1)
 WAITING = (0xE8, 0x98, 0x3B)
 
-def png_bytes(size, pixels):
-    """pixels: flat list of (r, g, b, a) tuples, row-major, length size*size."""
+def _shown(path):
+    """A path for the "wrote ..." lines, relative to the repo when it can be. os.path.relpath
+    raises ValueError across Windows drives (a runner's checkout on D:, a temp directory on C:),
+    and a progress line must never be what fails a run, so fall back to the path as given."""
+    try:
+        return os.path.relpath(path, HERE)
+    except ValueError:
+        return path
+
+
+def png_bytes(size, pixels, opaque=False):
+    """pixels: flat list of (r, g, b, a) tuples, row-major, length size*size.
+
+    opaque=True writes 8-bit RGB with no alpha channel at all (the alpha is dropped,
+    so the caller must have drawn every pixel at a == 255). iOS's 1024 App Store icon
+    must not carry an alpha channel, and a fully opaque RGBA is not the same thing."""
     raw = bytearray()
     for y in range(size):
         raw.append(0)  # filter type 0 (None) per scanline
         for x in range(size):
             r, g, b, a = pixels[y * size + x]
-            raw += bytes((r, g, b, a))
+            raw += bytes((r, g, b)) if opaque else bytes((r, g, b, a))
 
     def chunk(tag, data):
         out = struct.pack(">I", len(data)) + tag + data
         return out + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
-    ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)  # 8-bit RGBA
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2 if opaque else 6, 0, 0, 0)  # 8-bit RGB / RGBA
     return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", ihdr)
@@ -75,9 +92,9 @@ def png_bytes(size, pixels):
     )
 
 
-def write_png(path, size, pixels):
+def write_png(path, size, pixels, opaque=False):
     with open(path, "wb") as fh:
-        fh.write(png_bytes(size, pixels))
+        fh.write(png_bytes(size, pixels, opaque))
 
 
 def write_ico(path, images):
@@ -302,6 +319,71 @@ def draw_tray(size, color, muted=False):
     return out
 
 
+# --- the mobile set (CB-323) ---------------------------------------------------
+# iOS and watchOS are given one 1024 each and downscale it themselves, all the way
+# to the 29-pt Settings row, so the single drawing has to survive that. That is why
+# every mobile 1024 uses cut_for's 48-px cut (heavier thread, bigger orb) and not
+# the 512 cut the Mac icon gets: the lighter cut is what the Mac icon draws at 1024
+# and at 29 px its thread is a third of a pixel. tools/check-brand-icons.py measures
+# exactly that, with the lighter cut as its negative control.
+#
+# iOS draws its own corner mask, so these are square, full-bleed tiles. The watchOS
+# one is also full-bleed, but watchOS masks the inscribed circle, so the web must sit
+# inside WATCH_SAFE of the size from the centre (the 0.47 in the plan; a full circle
+# is 0.5, and the margin is for the antialiased edge and the system's own inset).
+
+MOBILE_SIZE = 1024
+WATCH_SAFE = 0.47
+TINT_WEB = (168, 168, 168)  # the tinted mark is grey: iOS maps luminance onto the tint
+TINT_ORB = (255, 255, 255)  # and the orb stays the brightest thing, as it is in the others
+
+
+def mobile_cut():
+    return cut_for(48)
+
+
+def _full_bleed_tile(size):
+    cv = Canvas(size)
+    cv.rounded_rect(size / 2, size / 2, size / 2, 0.0, (*TILE, 1.0))
+    return cv
+
+
+def draw_ios_light(size=MOBILE_SIZE, cut=None):
+    """The tile as the Mac icon has it, edge to edge. Opaque: written without alpha."""
+    cv = _full_bleed_tile(size)
+    draw_web(cv, size / 2, size / 2, size / 512, cut or mobile_cut(), (*IDLE, 1.0), (*GENERATING, 1.0))
+    return cv.pixels()
+
+
+def draw_ios_dark(size=MOBILE_SIZE, cut=None):
+    """Web and orb on transparent: iOS supplies the dark backdrop behind it."""
+    cv = Canvas(size)
+    draw_web(cv, size / 2, size / 2, size / 512, cut or mobile_cut(), (*IDLE, 1.0), (*GENERATING, 1.0))
+    return cv.pixels()
+
+
+def draw_ios_tinted(size=MOBILE_SIZE, cut=None):
+    """Grey web and white orb on transparent. iOS recolours it, so only luminance and
+    alpha matter, and r == g == b everywhere keeps it a true greyscale."""
+    cv = Canvas(size)
+    draw_web(cv, size / 2, size / 2, size / 512, cut or mobile_cut(), (*TINT_WEB, 1.0), (*TINT_ORB, 1.0))
+    return cv.pixels()
+
+
+def draw_watch(size=MOBILE_SIZE, cut=None):
+    """Full-bleed tile with the web at the iOS scale. At the 48 cut the web's outer
+    extent is (185 + 16/2)/512 = 0.377 of the size, comfortably inside WATCH_SAFE; the
+    checker asserts that from the pixels so a heavier cut cannot quietly break it."""
+    return draw_ios_light(size, cut)
+
+
+def draw_mark_template(size=256):
+    """Alpha-only mark for the Lock Screen accessory and complications, which tint it
+    themselves. It is the tray mask's geometry (the one already tuned to read small),
+    in black, so only the alpha channel carries anything."""
+    return draw_tray(size, (0, 0, 0))
+
+
 def main():
     os.makedirs(ASSETS, exist_ok=True)
 
@@ -309,22 +391,34 @@ def main():
     for name, color in (("idle", IDLE), ("generating", GENERATING), ("waiting", WAITING)):
         path = os.path.join(ASSETS, f"tray-{name}.png")
         write_png(path, 64, draw_tray(64, color))
-        print("wrote", os.path.relpath(path, HERE))
+        print("wrote", _shown(path))
 
         path = os.path.join(ASSETS, f"tray-{name}-muted.png")
         write_png(path, 64, draw_tray(64, color, muted=True))
-        print("wrote", os.path.relpath(path, HERE))
+        print("wrote", _shown(path))
 
     path = os.path.join(ASSETS, "appicon-1024.png")
     write_png(path, 1024, draw_appicon(1024, 824 / 1024))
-    print("wrote", os.path.relpath(path, HERE))
+    print("wrote", _shown(path))
 
     # Drawn at each size rather than downscaled from one bitmap, with the bolder cut
     # for the small ones (cut_for) — Explorer and the Start menu pick whichever size
     # they need, and 16px is the one that shows up most.
     ico = os.path.join(ASSETS, "Orbweaver.ico")
     write_ico(ico, [(s, png_bytes(s, draw_appicon(s, 0.94))) for s in (16, 32, 48, 64, 128, 256)])
-    print("wrote", os.path.relpath(ico, HERE))
+    print("wrote", _shown(ico))
+
+    os.makedirs(MOBILE, exist_ok=True)
+    for name, size, pixels, opaque in (
+        ("ios-light-1024.png", MOBILE_SIZE, draw_ios_light(), True),
+        ("ios-dark-1024.png", MOBILE_SIZE, draw_ios_dark(), False),
+        ("ios-tinted-1024.png", MOBILE_SIZE, draw_ios_tinted(), False),
+        ("watchos-1024.png", MOBILE_SIZE, draw_watch(), True),
+        ("mark-template-256.png", 256, draw_mark_template(), False),
+    ):
+        path = os.path.join(MOBILE, name)
+        write_png(path, size, pixels, opaque)
+        print("wrote", _shown(path))
 
 
 if __name__ == "__main__":

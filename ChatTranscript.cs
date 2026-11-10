@@ -456,7 +456,7 @@ namespace Orbweaver
         // ParseDialog, also handing back the cleaned lines and the index of
         // option 1, so ParseAskForm reads the same option run rather than a
         // second one of its own.
-        private static ChatPrompt? ParseDialogCore(string screen, out string[] cleanedLines, out int firstOption)
+        internal static ChatPrompt? ParseDialogCore(string screen, out string[] cleanedLines, out int firstOption)
         {
             cleanedLines = Array.Empty<string>();
             firstOption = -1;
@@ -472,6 +472,16 @@ namespace Orbweaver
             if (IsNavigatedList(cleaned)) return null;
 
             var from = WindowStart(cleaned);
+
+            // Grok's dialog is "1 (○) label", not "1. label", so nothing below
+            // would find it. It has its own shape, tried first and only when a
+            // radio line is on screen at all (CB-315).
+            if (GrokDialog.LooksLike(cleaned, from))
+            {
+                var grok = GrokDialog.Parse(cleaned, from, out firstOption);
+                if (grok is not null) return grok;
+                firstOption = -1;
+            }
 
             // The *last* run of numbered lines in the window. Last, because
             // anything the assistant wrote earlier in the conversation is above
@@ -514,11 +524,22 @@ namespace Orbweaver
             picked.Reverse();
             var runStart = picked[0];
 
+            var width = ScreenWidth(lines);
             var options = new List<ChatPromptOption>();
-            foreach (var i in picked)
+            for (var p = 0; p < picked.Count; p++)
             {
+                var i = picked[p];
                 var match = OptionLine.Match(cleaned[i]);
-                options.Add(new ChatPromptOption(match.Groups[1].Value, match.Groups[2].Value.Trim()));
+                var label = match.Groups[2].Value.Trim();
+
+                // The next option, or the end of the run, bounds how far down
+                // this label may have wrapped.
+                var limit = p + 1 < picked.Count ? picked[p + 1] : Math.Min(cleaned.Length, runEnd + 1 + MaxWrappedLines);
+                var unjoined = label;
+                label = JoinWrapped(lines, cleaned, i, label, limit, width);
+
+                options.Add(new ChatPromptOption(match.Groups[1].Value, label, Mode: OptionModes.IsMode(label),
+                    ScopeTruncated: OptionModes.IsTruncatedAtEdge(label, label != unjoined, lines[i].TrimEnd().Length, RuleWidth(lines))));
             }
 
             if (options.Count < 2) return null;
@@ -545,6 +566,90 @@ namespace Orbweaver
             firstOption = runStart;
             return new ChatPrompt(title, options);
         }
+
+        // The most lines one option's label may run over.
+        private const int MaxWrappedLines = 3;
+
+        // A terminal narrower than an option's label wraps it onto the next line,
+        // and that line is the rest of the label, not another line of the dialog.
+        // Left alone the parser kept the first half ("Yes, and always allow
+        // access to /private/tmp/… from this") and lost the rest ("project"),
+        // which is what iTerm2 and WezTerm showed at 80 columns (CB-313).
+        //
+        // A line continues an option's label only when ALL of these hold:
+        //  - it directly follows the option's line (or its other continuations);
+        //  - it is not itself an option, a rule, or a hint line;
+        //  - it is indented at least to the column the label started at, which
+        //    is where a terminal's wrap puts it (a footer is at the margin);
+        //  - the line above it was FULL: it ends within one word of the screen's
+        //    width. That last test is what keeps a description drawn UNDER an
+        //    option (an AskUserQuestion's indented text) from being glued into
+        //    the label: a description sits under a short label, a wrap under a
+        //    label that ran out of room. The width is the longest line on the
+        //    screen, which the wrapped line itself is a candidate for.
+        // Joined with a single space, as the terminal broke it at one.
+        private static string JoinWrapped(string[] lines, string[] cleaned, int optionLine, string label,
+                                          int limit, int width)
+        {
+            var labelColumn = lines[optionLine].IndexOf(label, StringComparison.Ordinal);
+            if (labelColumn < 0) return label;
+
+            var joined = label;
+            var previous = optionLine;
+
+            for (var k = optionLine + 1; k < limit && k < lines.Length; k++)
+            {
+                var text = cleaned[k];
+                if (text.Length == 0 || OptionLine.IsMatch(text) || IsHorizontalRule(text) || IsHint(text)) break;
+                if (ContentColumn(lines[k]) < labelColumn) break;
+
+                var firstWord = text.Split(' ', 2)[0];
+                var above = lines[previous].TrimEnd().Length;
+                if (above + 1 + firstWord.Length <= width) break;
+
+                // A terminal also breaks a word at a hyphen ("cb313-" / "probe"); that one is
+                // rejoined without the space it never had. A label that truly ends in " -"
+                // has a space before the hyphen, which is not a break inside a word.
+                var brokeAtHyphen = joined.Length >= 2 && joined[^1] == '-' && joined[^2] != ' ';
+                joined += (brokeAtHyphen ? "" : " ") + text;
+                previous = k;
+                if (k - optionLine >= MaxWrappedLines) break;
+            }
+
+            return joined;
+        }
+
+        // How wide the terminal is, read off the screen. The full-width rules Claude Code
+        // and Grok draw (a ─ ╌ or ━ run) are exactly one line wide, so the longest of
+        // those is the answer when there are any. Without one, the longest line on screen,
+        // which a wrapped label's first line is within one word of. (The longest line is
+        // not used first: a capture can hold one wider line than the terminal, as iTerm2's
+        // did, and that made a wrap look like it still had room.)
+        private static int ScreenWidth(string[] lines) => RuleWidth(lines) ?? lines.Max(l => l.TrimEnd().Length);
+
+        // The width the full-width rules give, or null when the screen has none (then the longest
+        // line is only a guess, and a line that long proves nothing about being cut).
+        private static int? RuleWidth(string[] lines)
+        {
+            var rules = lines.Select(l => l.Trim()).Where(l => l.Length >= 40 && l.All(c => "─━═╌╍┄┈-=".Contains(c))).ToList();
+            return rules.Count > 0 ? rules.Max(l => l.Length) : null;
+        }
+
+        // The column of a line's first character that is not padding or a frame.
+        private static int ContentColumn(string line)
+        {
+            var i = 0;
+            while (i < line.Length && (char.IsWhiteSpace(line[i]) || line[i] is '│' or '┃' or '|' or '║')) i++;
+            return i;
+        }
+
+        // "Esc to cancel · Tab to amend", "Press enter to confirm or esc to cancel",
+        // "Enter to confirm" — the footer of a dialog, never part of an option.
+        private static bool IsHint(string text) =>
+            text.StartsWith("Esc to ", StringComparison.Ordinal)
+            || text.StartsWith("Enter to ", StringComparison.Ordinal)
+            || text.StartsWith("Press enter", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("Tab:", StringComparison.Ordinal);
 
         // --- AskUserQuestion forms (CB-307 addendum item 3) ---
 
@@ -642,7 +747,7 @@ namespace Orbweaver
             for (var i = first; i < cleaned.Length; i++)
             {
                 if (cleaned[i].TrimStart('❯', ' ').StartsWith(lastOption, StringComparison.Ordinal)) break;
-                if (cleaned[i] == SubmitRowLabel) submitRow = true;
+                if (cleaned[i] is SubmitRowLabel or NextRowLabel) submitRow = true;
             }
 
             string? cursor = null;
@@ -664,6 +769,11 @@ namespace Orbweaver
         internal const string SubmitAnswersLabel = "Submit answers";
         internal const string CancelLabel = "Cancel";
         internal const string SubmitRowLabel = "Submit";
+        // CB-323: the same row on a multi-select question that is not the form's
+        // last reads "Next" (live capture PaneFixtures.MacMultiSelectNext). It
+        // commits the same way, Right moving on to the next tab with the ticks
+        // kept, so HasSubmitRow means "has its commit row" whichever word it wears.
+        internal const string NextRowLabel = "Next";
 
         internal const string FreeTextLabel = "Type something";
         internal const string ChatAboutLabel = "Chat about this";

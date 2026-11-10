@@ -917,8 +917,13 @@ namespace Orbweaver
                 return;
             }
 
+            // In PictureChunkBytes pieces rather than one frame (CB-322): each
+            // piece takes the link's write lock on its own, so a picture of
+            // many megabytes lets every other frame through between pieces
+            // instead of holding the connection for the whole of it.
             await SendTransferAsync(fromPeer, frame.Id, bytes,
-                new Dictionary<string, string> { [MirrorProtocol.AvatarIdField] = id! }, sub: null)
+                new Dictionary<string, string> { [MirrorProtocol.AvatarIdField] = id! }, sub: null,
+                MirrorProtocol.PictureChunkBytes)
                 .ConfigureAwait(false);
         }
 
@@ -2288,9 +2293,10 @@ namespace Orbweaver
         // Splits a payload, remembers the pieces, and sends them in order.
         private async Task SendTransferAsync(
             string toPeer, string id, byte[] payload,
-            Dictionary<string, string> fields, string? sub)
+            Dictionary<string, string> fields, string? sub,
+            int chunkBytes = MirrorProtocol.ChunkBytes)
         {
-            var pieces = MirrorProtocol.Split(payload);
+            var pieces = MirrorProtocol.Split(payload, chunkBytes);
 
             var transfer = new Transfer
             {

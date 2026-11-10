@@ -1,0 +1,24 @@
+                                                                                
+                                                                                
+• I’ll create that probe file outside the sandbox using the exact command you
+  provided.
+                                                                                
+• Running touch $HOME/cb313-probe
+                                                                                
+                                                                                
+  Would you like to run the following command?                                  
+                                                                                
+  Environment: local                                                            
+                                                                                
+  Reason: Do you want to allow creation of the requested probe file in your     
+  home directory outside the sandbox?                                           
+                                                                                
+  $ touch $HOME/cb313-probe                                                     
+                                                                                
+                                                                                
+› 1. Yes, proceed (y)                                                           
+  2. Yes, and don't ask again for commands that start with `touch $HOME/cb313-  
+     probe` (p)                                                                 
+  3. No, and tell Codex what to do differently (esc)                            
+                                                                                
+  Press enter to confirm or esc to cancel                                       

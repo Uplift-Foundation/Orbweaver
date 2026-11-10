@@ -469,7 +469,7 @@ namespace Orbweaver
         // itself stays pure — and asked in this order because probing for a
         // tmux binary costs a PATH walk that a session with no pane recorded
         // has no reason to pay.
-        private static TerminalTyping.Route RouteFor(SessionStatus? status) =>
+        internal static TerminalTyping.Route RouteFor(SessionStatus? status) =>
             TerminalTyping.RouteFor(
                 status,
                 OperatingSystem.IsMacOS(),
@@ -520,7 +520,7 @@ namespace Orbweaver
 
         // Excluded from coverage: walks the real PATH.
         [ExcludeFromCodeCoverage]
-        private static string? OnPath(string exe)
+        internal static string? OnPath(string exe)
         {
             var name = OperatingSystem.IsWindows() ? exe + ".exe" : exe;
 
@@ -566,6 +566,109 @@ namespace Orbweaver
             };
         }
 
+        // ---- CB-315: one key, from a phone, with nothing brought forward ----------
+        //
+        // The amber loop presses exactly one key into a dialog: a digit, or Enter
+        // after a tell's note. SendTextAndSubmit cannot stand in, because its
+        // trailing Enter would land on whatever the first key opened. So these
+        // are the same route typers without the submit, and only on the routes
+        // that write without focus: tmux send-keys, kitty and WezTerm
+        // send-text, iTerm2 `write text … newline NO`, and the Windows console
+        // under ConsoleGate. Terminal.app is not among them — a keystroke there
+        // needs Accessibility consent and focus, and stealing focus on a
+        // machine someone is sitting at is not an acceptable way to answer
+        // remotely — so its prompts go to the phone "Open on desk". Every
+        // argument travels through argv or stdin, never into script source.
+        internal static bool CanPressSilently(SessionStatus? status) => TerminalPress.Silent(RouteFor(status));
+
+        public static Task<bool> PressKey(SessionStatus? status, string key)
+        {
+            if (status is null || TerminalPress.Bytes(key) is not { } bytes || !CanPressSilently(status)) return Task.FromResult(false);
+            return RouteFor(status) switch
+            {
+                TerminalTyping.Route.Tmux => SendPaneKey(status, key),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), TerminalPress.Kitty(status, bytes))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), TerminalPress.WezTerm(status, bytes))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, TerminalPress.ITerm2Args(status, key == "Enter" ? "" : bytes))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, TerminalPress.ConsoleRecords(bytes))),
+            };
+        }
+
+        // The press with the screen it landed on (CB-315 rule 8). On tmux the
+        // capture and the key are ONE invocation — `capture-pane -p ; send-keys`
+        // — so they run back to back inside tmux's command queue with nothing of
+        // ours between them, and the capture is the screen the key went into.
+        // tmux cannot make the key conditional on what it captured, so this
+        // cannot stop a press; it makes the pipeline KNOW, every time, whether
+        // the key landed on the dialog the gate approved. Elsewhere there is no
+        // single command for both, so it is the screen reader, then `approved`
+        // asked of what it read (not approved: no press at all), then the press
+        // — two processes apart, the residual window PR #227 names.
+        public static async Task<(bool Pressed, string? Before)> CaptureAndPress(SessionStatus? status, string key, Func<string?, bool> approved)
+        {
+            if (status is null || TerminalPress.Bytes(key) is null || !CanPressSilently(status)) return (false, null);
+            if (RouteFor(status) == TerminalTyping.Route.Tmux)
+            {
+                return await Task.Run(() =>
+                {
+                    var tmux = ResolveTmuxBinary(status.TmuxBin);
+                    if (tmux is null) return (false, (string?)null);
+                    // The settle check's second look, then — no await, no log —
+                    // the key, with a capture of the screen it landed on.
+                    var look = TryRun(tmux, out var second, TmuxArgs(status, "capture-pane", "-p", "-t", status.TmuxPane)) ? second : null;
+                    if (!approved(look)) return (false, look);
+                    var ok = TryRun(tmux, out var landed, TmuxArgs(status, TerminalPress.TmuxCaptureThenKey(status.TmuxPane, key)));
+                    return (ok, ok ? landed : null);
+                });
+            }
+            var before = ScreenReaders.For(status) is { } reader ? await reader.ReadAsync(status) : null;
+            if (!approved(before)) return (false, before);
+            return (await PressKey(status, key), before);
+        }
+
+        // A tell's note, typed without Enter (the caller presses Enter after):
+        // bracketed exactly as the composer types it, through the same routes.
+        public static Task<bool> TypeQuietly(SessionStatus? status, string text)
+        {
+            if (status is null || string.IsNullOrEmpty(text) || !CanPressSilently(status)) return Task.FromResult(false);
+            var body = TerminalTyping.ForTyping(text, TerminalTyping.Brackets(status));
+            return RouteFor(status) switch
+            {
+                TerminalTyping.Route.Tmux => SendPaneText(status, text),
+                TerminalTyping.Route.Kitty => Task.Run(() => FeedPress(OnPath("kitty"), TerminalPress.Kitty(status, body))),
+                TerminalTyping.Route.WezTerm => Task.Run(() => FeedPress(OnPath("wezterm"), TerminalPress.WezTerm(status, body))),
+                TerminalTyping.Route.ITerm2 => Task.Run(() => TellTerminal(status.TermId, TerminalPress.ITerm2Args(status, body))),
+                _ => Task.Run(() => OperatingSystem.IsWindows() && WriteConsoleKeys(status, TerminalPress.ConsoleRecords(body))),
+            };
+        }
+
+        [ExcludeFromCodeCoverage]
+        private static bool FeedPress(string? exe, (string Stdin, string[] Args) call) => Feed(exe, call.Stdin, call.Args);
+
+        // AttachConsole, write, FreeConsole, under the gate the console typer and
+        // the screen reader share.
+        [SupportedOSPlatform("windows")]
+        [ExcludeFromCodeCoverage]
+        private static bool WriteConsoleKeys(SessionStatus status, List<NativeMethods.InputRecord> records)
+        {
+            lock (ConsoleGate)
+            {
+                NativeMethods.FreeConsole();
+                if (!NativeMethods.AttachConsole((uint)status.SessionPid)) return false;
+                try
+                {
+                    using var input = NativeMethods.OpenConsoleInput();
+                    if (input.IsInvalid) return false;
+                    var all = records.ToArray();
+                    return NativeMethods.WriteConsoleInput(input, all, (uint)all.Length, out var written) && written == all.Length;
+                }
+                finally
+                {
+                    NativeMethods.FreeConsole();
+                }
+            }
+        }
+
         // kitty, addressed by the window id it exports as KITTY_WINDOW_ID.
         //
         // Text goes over stdin rather than as an argument, which is what
@@ -579,7 +682,7 @@ namespace Orbweaver
         // Ctrl+J, which Claude Code and Codex read as "insert a newline", so
         // this route never submitted at any length.
         internal static (string Stdin, string[] Args) KittySend(SessionStatus status, string text) =>
-            (TerminalTyping.ForTypingAndSubmit(text),
+            (TerminalTyping.ForTypingAndSubmit(text, TerminalTyping.Brackets(status)),
                 new[] { "@", "send-text", "--match", "id:" + status.TermId, "--stdin" });
 
         [ExcludeFromCodeCoverage]
@@ -595,7 +698,7 @@ namespace Orbweaver
         // and letting wezterm add its own markers as well would deliver them
         // twice. The submit is "\r", not "\n", for the reason given at kitty.
         internal static (string Stdin, string[] Args) WezTermSend(SessionStatus status, string text) =>
-            (TerminalTyping.ForTypingAndSubmit(text),
+            (TerminalTyping.ForTypingAndSubmit(text, TerminalTyping.Brackets(status)),
                 new[] { "cli", "send-text", "--pane-id", status.TermId, "--no-paste" });
 
         [ExcludeFromCodeCoverage]
@@ -682,7 +785,7 @@ namespace Orbweaver
         };
 
         internal static string[] ITerm2Args(SessionStatus status, string text) =>
-            OsascriptArgs(ITerm2SendScript, status.TermId, TerminalTyping.ForTyping(text));
+            OsascriptArgs(ITerm2SendScript, status.TermId, TerminalTyping.ForTyping(text, TerminalTyping.Brackets(status)));
 
         [ExcludeFromCodeCoverage]
         private static bool SendViaITerm2(SessionStatus status, string text) =>
@@ -721,7 +824,7 @@ namespace Orbweaver
             OsascriptArgs(
                 TerminalAppSendScript,
                 TerminalTyping.DevicePath(status.Tty),
-                TerminalTyping.ForTyping(text));
+                TerminalTyping.ForTyping(text, TerminalTyping.Brackets(status)));
 
         [ExcludeFromCodeCoverage]
         private static bool SendViaTerminalApp(SessionStatus status, string text) =>
@@ -741,20 +844,8 @@ namespace Orbweaver
         // consent prompt, and on a Mac nobody is looking at that prompt is
         // answered slowly or not at all. Failing is correct there; failing in
         // three seconds while the user is still reading the dialog is not.
-        internal static string[] OsascriptArgs(string[] script, string wanted, string body)
-        {
-            var args = new List<string>();
-            foreach (var line in script)
-            {
-                args.Add("-e");
-                args.Add(line);
-            }
-
-            args.Add("--");
-            args.Add(wanted);
-            args.Add(body);
-            return args.ToArray();
-        }
+        internal static string[] OsascriptArgs(string[] script, string wanted, string body) =>
+            ScreenReaderCommands.Osascript(script, wanted, body);
 
         [ExcludeFromCodeCoverage]
         private static bool TellTerminal(string wanted, string[] args)
@@ -782,17 +873,19 @@ namespace Orbweaver
         // Hence the lock, and hence the `FreeConsole` in a finally: leaving
         // this process attached to a user's terminal would redirect anything
         // Buddy later wrote into their session.
-        private static readonly object ConsoleGate = new();
+        // Shared with the screen reader (ScreenReaders/WindowsConsoleScreenReader), which
+        // attaches to the same consoles and must not interleave with a send.
+        internal static readonly object ConsoleGate = new();
 
-        internal static string ConsoleBody(string text) => TerminalTyping.ForTyping(text);
+        internal static string ConsoleBody(string text, bool bracketed = true) => TerminalTyping.ForTyping(text, bracketed);
 
         // The records SendViaConsole writes: the bracketed body one keystroke
         // at a time, then VK_RETURN with '\r' as its character — a TUI reading
         // characters sees the carriage return and one reading key events sees
         // Enter, and both are correct. Pure, so the sequence is pinned in tests.
-        internal static List<NativeMethods.InputRecord> ConsoleRecords(string text)
+        internal static List<NativeMethods.InputRecord> ConsoleRecords(string text, bool bracketed = true)
         {
-            var body = ConsoleBody(text);
+            var body = ConsoleBody(text, bracketed);
             var records = new List<NativeMethods.InputRecord>(body.Length * 2 + 2);
 
             foreach (var c in body) AddKeystroke(records, c);
@@ -823,7 +916,7 @@ namespace Orbweaver
                     // Bracketed for the reason given at ForTyping: measured on the
                     // Windows box (Claude Code 2.1.316), a bare 300-character line
                     // plus VK_RETURN submitted 0/3 and the bracketed one 3/3 (CB-304).
-                    var all = ConsoleRecords(text).ToArray();
+                    var all = ConsoleRecords(text, TerminalTyping.Brackets(status)).ToArray();
                     return NativeMethods.WriteConsoleInput(
                         input, all, (uint)all.Length, out var written)
                         && written == all.Length;
@@ -945,15 +1038,8 @@ namespace Orbweaver
         {
             if (status is null || !CanSendQuietly(status)) return Task.FromResult<string?>(null);
 
-            return Task.Run<string?>(() =>
-            {
-                var tmux = ResolveTmuxBinary(status.TmuxBin);
-                if (tmux is null) return null;
-
-                return TryRun(tmux, out var screen, TmuxArgs(status, "capture-pane", "-p", "-t", status.TmuxPane))
-                    ? screen
-                    : null;
-            });
+            // One implementation of the tmux read (CB-315): the same reader the prompt pipeline uses.
+            return TmuxScreenReader.Instance.ReadAsync(status);
         }
 
         // Whether anything was actually brought forward. False means the click
@@ -1085,6 +1171,23 @@ namespace Orbweaver
 
             return TmuxPaneOwnershipRules.SessionIdIn(
                 TmuxPaneOwnershipRules.ParseProcessListing(listing), panePid);
+        }
+
+        // CB-316: whether this session's recorded pane really holds its pid,
+        // asked now, for a phone's input. Null when tmux or ps cannot answer.
+        // Excluded: two real subprocesses; the rule is TmuxPaneOwnershipRules.Holds.
+        [ExcludeFromCodeCoverage]
+        internal static bool? TmuxPaneHolds(SessionStatus status)
+        {
+            if (string.IsNullOrEmpty(status.TmuxPane)) return null;
+            var tmux = ResolveTmuxBinary(status.TmuxBin);
+            if (tmux is null
+                || !TryRun(tmux, out var panePidText,
+                    TmuxArgs(status, "display-message", "-p", "-t", status.TmuxPane, "#{pane_pid}"))
+                || !int.TryParse(panePidText.Trim(), out var panePid)
+                || !TryRun("/bin/ps", out var listing, "-eo", "pid=,ppid=,args="))
+                return null;
+            return TmuxPaneOwnershipRules.Holds(TmuxPaneOwnershipRules.ParseProcessListing(listing), panePid, status.SessionPid);
         }
 
         // Every pane claim a scan pass holds, answered at once — see
@@ -1246,7 +1349,7 @@ namespace Orbweaver
         // Kept as a wrapper over TerminalScripts.TmuxArgs so its twelve call
         // sites read the same as before; the socket-pinning rule itself is tested
         // there.
-        private static string[] TmuxArgs(SessionStatus status, params string[] args) =>
+        internal static string[] TmuxArgs(SessionStatus status, params string[] args) =>
             TerminalScripts.TmuxArgs(status.TmuxSocket, args);
 
         // The app can't count on PATH: launched from Finder or Login Items it
@@ -1261,7 +1364,7 @@ namespace Orbweaver
             "/usr/bin/tmux"
         };
 
-        private static string? ResolveTmuxBinary(string recorded)
+        internal static string? ResolveTmuxBinary(string recorded)
         {
             if (!string.IsNullOrEmpty(recorded) && File.Exists(recorded)) return recorded;
             return TmuxCandidates.FirstOrDefault(File.Exists);
@@ -1354,10 +1457,10 @@ namespace Orbweaver
 
         // --- process helpers ---
 
-        private static bool TryRun(string exe, out string stdout, params string[] args) =>
+        internal static bool TryRun(string exe, out string stdout, params string[] args) =>
             TryRun(exe, 3000, out stdout, args);
 
-        private static bool TryRun(string exe, int timeoutMs, out string stdout, params string[] args)
+        internal static bool TryRun(string exe, int timeoutMs, out string stdout, params string[] args)
         {
             stdout = "";
             try

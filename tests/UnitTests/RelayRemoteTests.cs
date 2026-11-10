@@ -1,0 +1,948 @@
+using System.Diagnostics;
+using System.Text.Json;
+using Xunit;
+
+namespace Orbweaver.Tests;
+
+/// <summary>
+/// CB-316: RelayInput and RelayRemote against a fake desk — screens, routes,
+/// typers, a fake clock, tmux and conhost stand-ins. Every refusal proves
+/// nothing was typed or started; every positive has the negative beside it.
+/// </summary>
+public class RelayRemoteTests
+{
+    private static JsonElement J(string s) => JsonDocument.Parse(s).RootElement;
+
+    private static readonly string Prompt = PaneFixtures.MacPromptAfterEsc;
+    private static readonly string Dialog = PaneFixtures.MiniExitDialog;
+
+    private static SessionStatus Status(string state = "idle", SessionSource source = SessionSource.ClaudeCode, string cwd = "/w") =>
+        new() { State = state, Source = source, Cwd = cwd };
+
+    // ---- RelayInput ------------------------------------------------------------
+
+    private sealed class Desk
+    {
+        public TerminalTyping.Route Route = TerminalTyping.Route.Tmux;
+        public Queue<string?> Screens = new();
+        public string? Screen = Prompt;
+        public bool TypeResult = true;
+        public readonly List<string> Typed = [];
+        public readonly List<TimeSpan> Delays = [];
+        public Func<TimeSpan, Task>? OnDelay;
+
+        public RelayInput Input() => new(new RelayInput.Seams(
+            _ => Route,
+            _ => Task.FromResult(Screens.Count > 0 ? Screens.Dequeue() : Screen),
+            (_, text) => { if (TypeResult) Typed.Add(text); return Task.FromResult(TypeResult); },
+            d => { Delays.Add(d); return OnDelay?.Invoke(d) ?? Task.CompletedTask; }));
+    }
+
+    [Fact]
+    public async Task A_settled_prompt_is_typed_after_two_identical_reads_150ms_apart()
+    {
+        var desk = new Desk();
+        var outcome = await desk.Input().TypeAsync(Status(), "rerun\nthe tests");
+        Assert.True(outcome.Typed);
+        Assert.Equal(["rerun\nthe tests"], desk.Typed);
+        Assert.Equal([PromptPipeline.SettleCheck], desk.Delays);
+    }
+
+    [Theory]
+    [InlineData("TerminalApp")]
+    [InlineData("None")]
+    public async Task Terminal_app_and_no_route_are_untypeable_without_reading_the_screen(string route)
+    {
+        var desk = new Desk { Route = Enum.Parse<TerminalTyping.Route>(route), Screen = null };
+        Assert.Equal(RelayReplies.Untypeable, (await desk.Input().TypeAsync(Status(), "hi")).Code);
+        Assert.Empty(desk.Typed);
+        Assert.Empty(desk.Delays);
+    }
+
+    [Fact]
+    public async Task Each_not_at_prompt_names_why_and_types_nothing()
+    {
+        async Task<RelayInput.Outcome> Run(Desk d, string state = "idle") => await d.Input().TypeAsync(Status(state), "hi");
+
+        var waiting = new Desk();
+        Assert.Equal((RelayReplies.NotAtPrompt, TypingGate.WaitingWhy), ((await Run(waiting, "waiting")).Code, (await Run(waiting, "waiting")).Why));
+
+        var dialog = new Desk { Screen = Dialog };
+        var o = await Run(dialog);
+        Assert.Equal(RelayReplies.NotAtPrompt, o.Code);
+        Assert.StartsWith("it is showing a dialog: ", o.Why);
+
+        var unread = new Desk { Screen = null };
+        Assert.Equal(TypingGate.UnreadableWhy, (await Run(unread)).Why);
+
+        var changing = new Desk { Screens = new([Prompt, Prompt + " "]) };
+        Assert.Equal(RelayInput.ChangingWhy, (await Run(changing)).Why);
+
+        var vanished = new Desk { Screens = new([Prompt, null]) };
+        Assert.Equal(RelayInput.ChangingWhy, (await Run(vanished)).Why);
+
+        Assert.All(new[] { waiting, dialog, unread, changing, vanished }, d => Assert.Empty(d.Typed));
+    }
+
+    private static string Fixture(string name) =>
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScreenReadFixtures", name));
+
+    // CB-316: Codex's and Grok's own prompts are typed into, on both platforms'
+    // real captures; their home screen and a running turn are not — on screen
+    // where it shows, and by the record where Codex streams with no marker.
+    [Theory]
+    [InlineData("tmux-codex-idle.txt", "Codex", "idle", null)]
+    [InlineData("tmux-grok-idle.txt", "Grok", "idle", null)]
+    [InlineData("conhost-grok-idle.txt", "Grok", "idle", null)]
+    [InlineData("conhost-codex-none.txt", "Codex", "idle", null)]
+    [InlineData("tmux-codex-working.txt", "Codex", "idle", "its screen could not be read as a prompt")]
+    [InlineData("tmux-grok-working.txt", "Grok", "idle", "its screen could not be read as a prompt")]
+    [InlineData("conhost-grok-working.txt", "Grok", "idle", "its screen could not be read as a prompt")]
+    [InlineData("tmux-grok-none.txt", "Grok", "idle", "its screen could not be read as a prompt")]
+    [InlineData("tmux-codex-streaming-nomarker.txt", "Codex", "generating", RelayInput.WorkingWhy)]
+    [InlineData("tmux-codex-streaming-nomarker.txt", "Codex", "idle", null)]
+    public async Task Codex_and_grok_prompts_are_typed_into_and_their_busy_screens_are_not(string fixture, string source, string state, string? why)
+    {
+        var desk = new Desk { Screen = Fixture(fixture) };
+        var status = new SessionStatus { Source = Enum.Parse<SessionSource>(source), State = state, SessionPid = 7 };
+        var outcome = await desk.Input().TypeAsync(status, "hi");
+        Assert.Equal(why, outcome.Why);
+        Assert.Equal(why is null ? ["hi"] : [], desk.Typed);
+    }
+
+    [Fact]
+    public async Task Bad_input_is_refused_first_an_empty_launch_message_types_nothing_and_a_refusing_typer_is_typing_failed()
+    {
+        var desk = new Desk();
+        Assert.Equal(RelayReplies.BadInput, (await desk.Input().TypeAsync(Status(), "\u001b")).Code);
+        Assert.True((await desk.Input().TypeAsync(Status(), "", allowEmpty: true)).Typed);
+        Assert.Empty(desk.Typed);
+
+        var refusing = new Desk { TypeResult = false };
+        var outcome = await refusing.Input().TypeAsync(Status(), "hi");
+        Assert.Equal((RelayReplies.TypingFailed, RelayInput.RefusedWhy), (outcome.Code, outcome.Why));
+    }
+
+    [Fact]
+    public async Task Two_typings_never_interleave()
+    {
+        var gate = new TaskCompletionSource();
+        var desk = new Desk { OnDelay = _ => gate.Task };
+        var input = desk.Input();
+        var first = input.TypeAsync(Status(), "one");
+        var second = input.TypeAsync(Status(), "two");
+        await Task.Delay(50);
+        Assert.Single(desk.Delays);                       // the second is waiting for the first, not reading
+        gate.SetResult();
+        await Task.WhenAll(first, second);
+        Assert.Equal(["one", "two"], desk.Typed);
+    }
+
+    // ---- RelayRemote -----------------------------------------------------------
+
+    private sealed class Sent : IRemoteSender
+    {
+        public readonly List<(string Phone, string? Session, JsonElement Body)> Replies = [];
+        public readonly List<(string Phone, string Session, JsonElement Body)> Windows = [];
+        public void Reply(string phoneId, string? sessionId, string plaintext) { lock (this) Replies.Add((phoneId, sessionId, J(plaintext))); }
+        public void Window(string phoneId, string sessionId, string plaintext) { lock (this) Windows.Add((phoneId, sessionId, J(plaintext))); }
+        public readonly List<(string Phone, string Hash, JsonElement Body)> Images = [];
+        public bool ImagesDeliver = true;
+        public Action? OnImage;
+        public bool ImageWindow(string phoneId, string hash, string plaintext)
+        {
+            lock (this) Images.Add((phoneId, hash, J(plaintext)));
+            OnImage?.Invoke();
+            return ImagesDeliver;
+        }
+    }
+
+    private sealed class World
+    {
+        public DateTimeOffset Now = DateTimeOffset.FromUnixTimeSeconds(1794111792);
+        public readonly Desk Desk = new();
+        public readonly Sent Sent = new();
+        public readonly List<string> Log = [];
+        public readonly Dictionary<string, List<TranscriptWatch.WireLine>?> Files = new();
+        public bool Windows;
+        public string? Binary = "/bin/claude";
+        public bool DirExists = true;
+        public (string? Pane, string? Why) MacPlace = ("%1", null);
+        public int? WindowsPid = 42;
+        public readonly List<(string Command, string Cwd)> MacStarts = [];
+        public readonly List<ProcessStartInfo> WindowsStarts = [];
+        public Action? OnLaunchDelay;
+        public readonly NonceWindow Nonces = new();
+        public readonly Dictionary<string, PersonaImageBundle> Bundles = new();
+        public readonly List<TimeSpan> Delays = [];
+        public RelayRemote Remote = null!;
+
+        public List<NewChatAccounts.Choice> AccountChoices = [new("Default", null), new("~/.claude-uplift", ".claude-uplift"), new("~/.codex-b", ".codex-b")];
+        public string? Designated;
+        public Func<SessionStatus, string, Task<string?>> Summarizer = (_, reply) => Task.FromResult<string?>("summary of " + reply);
+
+        public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42,
+            bool accounts = true, bool summarizes = true)
+        {
+            Windows = windows;
+            Binary = binary;
+            MacPlace = place ?? ("%1", null);
+            WindowsPid = pid;
+            Remote = new RelayRemote(new RelayRemote.Seams(
+                () => Now,
+                d => { Delays.Add(d); Now += d; OnLaunchDelay?.Invoke(); return Task.CompletedTask; },
+                s => new TranscriptWatcher.Seams(
+                    () => s.TranscriptPath.Length == 0 ? null : s.TranscriptPath,
+                    p => Files.TryGetValue(p, out var l) && l is not null ? new TranscriptWatcher.Stamp(p, l.Count, DateTime.UnixEpoch) : null,
+                    p => Files.TryGetValue(p, out var l) ? l : null),
+                Desk.Input(),
+                new RelayRemote.LaunchSeams(
+                    Windows,
+                    _ => Binary,
+                    _ => DirExists,
+                    () => "/bin/zsh",
+                    (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
+                    psi => { WindowsStarts.Add(psi); return WindowsPid; }),
+                Log.Add)
+            {
+                Images = h => Bundles.GetValueOrDefault(h),
+                Accounts = accounts ? new RelayRemote.AccountSeams(_ => AccountChoices, _ => Designated) : null,
+                Summarize = summarizes ? (s, reply) => Summarizer(s, reply) : null,
+                Settle = () => Task.CompletedTask,
+            }, Sent, Nonces);
+        }
+
+        public void Sessions(params (string Id, SessionStatus Status)[] rows) => Remote.OnStatuses(rows);
+    }
+
+    private static SessionStatus Watched(string path) => new() { Source = SessionSource.ClaudeCode, TranscriptPath = path, Cwd = "/w" };
+
+    private static List<TranscriptWatch.WireLine> Lines(int n) =>
+        Enumerable.Range(0, n).Select(i => TranscriptWatch.Line("user", "line " + i, i)).ToList();
+
+    [Fact]
+    public async Task Watch_replies_watching_then_backfills_and_unwatch_stops_the_stream()
+    {
+        var w = new World();
+        w.Files["/t"] = Lines(3);
+        w.Sessions(("s1", Watched("/t")));
+
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r1", "s1", null));
+        var (phone, session, ok) = w.Sent.Replies.Single();
+        Assert.Equal(("ph", "s1", "watching", 3), (phone, session, ok.GetProperty("code").GetString(), ok.GetProperty("total").GetInt32()));
+        Assert.Equal(3, w.Sent.Windows.Single().Body.GetProperty("lines").GetArrayLength());
+        Assert.True(w.Remote.IsWatching("ph", "s1"));
+
+        w.Files["/t"] = Lines(5);
+        w.Remote.Tick(w.Now);
+        w.Remote.Tick(w.Now.AddMilliseconds(300));
+        var tail = w.Sent.Windows.Last().Body;
+        Assert.Equal((true, 3), (tail.GetProperty("live").GetBoolean(), tail.GetProperty("from_line").GetInt32()));
+
+        await w.Remote.HandleAsync("ph", [], new UnwatchRequest("r2", "s1"));
+        Assert.Equal("unwatched", w.Sent.Replies.Last().Body.GetProperty("code").GetString());
+        Assert.Equal(0, w.Remote.WatchCount);
+        w.Files["/t"] = Lines(9);
+        w.Remote.Tick(w.Now.AddSeconds(1));
+        w.Remote.Tick(w.Now.AddSeconds(2));
+        Assert.Equal(2, w.Sent.Windows.Count);              // nothing after unwatch
+    }
+
+    // A scan landing mid-watch that drops the session: the watcher then has no
+    // status to ask for a path, which reads as "no transcript", not a throw.
+    [Fact]
+    public async Task A_session_leaving_the_roster_mid_watch_reads_as_no_transcript()
+    {
+        RelayRemote? remote = null;
+        var w = new World();
+        var asked = 0;
+        remote = new RelayRemote(new RelayRemote.Seams(() => w.Now, _ => Task.CompletedTask,
+            s =>
+            {
+                if (++asked == 1) remote!.OnStatuses([]);   // the scan lands between the lookup and the read
+                return new TranscriptWatcher.Seams(() => "/t", p => new TranscriptWatcher.Stamp(p, 1, DateTime.UnixEpoch), _ => Lines(1));
+            },
+            w.Desk.Input(), new RelayRemote.LaunchSeams(false, _ => null, _ => true, () => "", (_, _) => (null, null), _ => null),
+            w.Log.Add), w.Sent, w.Nonces);
+        remote.OnStatuses([("s1", Watched("/t"))]);
+        await remote.HandleAsync("ph", [], new WatchRequest("r", "s1", null));
+        Assert.Equal(0, w.Sent.Replies.Single().Body.GetProperty("total").GetInt32());
+        Assert.Empty(w.Sent.Windows);
+    }
+
+    [Fact]
+    public async Task A_page_sends_windows_and_changes_no_subscription()
+    {
+        var w = new World();
+        w.Files["/t"] = Lines(10);
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r", "s1", 4));
+        Assert.Empty(w.Sent.Replies);
+        Assert.Equal((0, 4), (w.Sent.Windows.Single().Body.GetProperty("from_line").GetInt32(), w.Sent.Windows.Single().Body.GetProperty("lines").GetArrayLength()));
+        Assert.Equal(0, w.Remote.WatchCount);
+    }
+
+    [Fact]
+    public async Task Unknown_and_non_local_sessions_are_unknown_session_with_an_empty_ck()
+    {
+        var w = new World();
+        w.Sessions(("oc", new SessionStatus { Source = SessionSource.OpenClaw }));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r", "oc", null));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r", "nope", 3));
+        await w.Remote.HandleAsync("ph", [], new UnwatchRequest("r", "nope"));
+        await w.Remote.HandleAsync("ph", [], new InputRequest("r", "nope", "hi"));
+        Assert.Equal(4, w.Sent.Replies.Count);
+        Assert.All(w.Sent.Replies, r => Assert.Equal(("unknown_session", (string?)null), (r.Body.GetProperty("code").GetString(), r.Session)));
+        Assert.Empty(w.Desk.Typed);
+    }
+
+    [Fact]
+    public async Task A_bad_frame_names_a_known_session_in_its_ck_only()
+    {
+        var w = new World();
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new BadFrameRequest("r", "s1"));
+        await w.Remote.HandleAsync("ph", [], new BadFrameRequest("r", null));
+        Assert.Equal(["s1", null], w.Sent.Replies.Select(r => r.Session));
+        Assert.All(w.Sent.Replies, r => Assert.Equal("bad_frame", r.Body.GetProperty("code").GetString()));
+    }
+
+    [Fact]
+    public async Task Watches_die_with_the_phone_the_socket_and_the_session()
+    {
+        var w = new World();
+        w.Files["/t"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")), ("s2", Watched("/t")));
+        await w.Remote.HandleAsync("a", [], new WatchRequest("r", "s1", null));
+        await w.Remote.HandleAsync("b", [], new WatchRequest("r", "s1", null));
+        await w.Remote.HandleAsync("b", [], new WatchRequest("r", "s2", null));
+        Assert.Equal(3, w.Remote.WatchCount);
+
+        w.Remote.PhoneOffline("a");
+        Assert.Equal(2, w.Remote.WatchCount);
+        w.Sessions(("s2", Watched("/t")));                 // s1 left the roster
+        Assert.Equal(1, w.Remote.WatchCount);
+        Assert.True(w.Remote.IsWatching("b", "s2"));
+        w.Remote.Disconnected();
+        Assert.Equal(0, w.Remote.WatchCount);
+    }
+
+    [Fact]
+    public async Task A_path_the_hook_names_later_is_picked_up_without_re_watching()
+    {
+        var w = new World();
+        w.Sessions(("s1", Watched("")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r", "s1", null));
+        Assert.Equal(0, w.Sent.Replies.Single().Body.GetProperty("total").GetInt32());
+        Assert.Empty(w.Sent.Windows);
+
+        w.Files["/later"] = Lines(2);
+        w.Sessions(("s1", Watched("/later")));
+        w.Remote.Tick(w.Now);
+        w.Remote.Tick(w.Now.AddMilliseconds(300));
+        Assert.False(w.Sent.Windows.Single().Body.GetProperty("live").GetBoolean());   // a backfill, not a tail
+    }
+
+    [Fact]
+    public async Task A_watcher_that_throws_is_logged_and_the_others_carry_on()
+    {
+        var w = new World();
+        var fail = false;
+        w.Files["/t"] = Lines(1);
+        var flaky = new RelayRemote(new RelayRemote.Seams(() => w.Now, _ => Task.CompletedTask,
+            s => s.TranscriptPath == "/x"
+                ? new TranscriptWatcher.Seams(() => "/x", p => fail ? throw new IOException("gone") : new TranscriptWatcher.Stamp(p, 0, DateTime.UnixEpoch), _ => [])
+                : new TranscriptWatcher.Seams(() => "/t", p => new TranscriptWatcher.Stamp(p, w.Files["/t"]!.Count, DateTime.UnixEpoch), _ => w.Files["/t"]),
+            w.Desk.Input(), new RelayRemote.LaunchSeams(false, _ => null, _ => true, () => "", (_, _) => (null, null), _ => null),
+            w.Log.Add), w.Sent, w.Nonces);
+        flaky.OnStatuses([("bad", Watched("/x")), ("good", Watched("/t"))]);
+        await flaky.HandleAsync("ph", [], new WatchRequest("r", "bad", null));
+        await flaky.HandleAsync("ph", [], new WatchRequest("r", "good", null));
+        var before = w.Sent.Windows.Count;
+
+        fail = true;
+        w.Files["/t"] = Lines(2);
+        flaky.Tick(w.Now);
+        flaky.Tick(w.Now.AddMilliseconds(300));
+        Assert.Contains(w.Log, l => l == "watch bad: IOException");
+        Assert.Equal(before + 1, w.Sent.Windows.Count);         // the good watch still sent its tail
+    }
+
+    [Fact]
+    public async Task The_poll_loop_ticks_until_cancelled()
+    {
+        var ticks = 0;
+        using var stop = new CancellationTokenSource();
+        var remote = new RelayRemote(new RelayRemote.Seams(
+            () => { if (++ticks == 3) stop.Cancel(); return DateTimeOffset.UnixEpoch; },
+            _ => Task.Delay(1),
+            _ => throw new InvalidOperationException(),
+            new Desk().Input(),
+            new RelayRemote.LaunchSeams(false, _ => null, _ => true, () => "", (_, _) => (null, null), _ => null),
+            _ => { }), new Sent(), new NonceWindow());
+        await remote.RunAsync(stop.Token);
+        Assert.Equal(3, ticks);
+
+        var never = new RelayRemote(new RelayRemote.Seams(() => DateTimeOffset.UnixEpoch, _ => Task.Delay(Timeout.Infinite),
+            _ => throw new InvalidOperationException(), new Desk().Input(),
+            new RelayRemote.LaunchSeams(false, _ => null, _ => true, () => "", (_, _) => (null, null), _ => null), _ => { }),
+            new Sent(), new NonceWindow());
+        using var soon = new CancellationTokenSource(50);
+        await never.RunAsync(soon.Token);                   // a cancelled wait returns, it does not throw
+    }
+
+    [Fact]
+    public async Task Input_types_through_the_gate_and_refusals_carry_their_why()
+    {
+        var w = new World();
+        w.Sessions(("s1", Status()), ("s2", Status("waiting")));
+        await w.Remote.HandleAsync("ph", [], new InputRequest("r1", "s1", "go"));
+        await w.Remote.HandleAsync("ph", [], new InputRequest("r2", "s2", "go"));
+        Assert.Equal(["go"], w.Desk.Typed);
+        Assert.Equal("typed", w.Sent.Replies[0].Body.GetProperty("code").GetString());
+        Assert.Equal(("not_at_prompt", TypingGate.WaitingWhy),
+            (w.Sent.Replies[1].Body.GetProperty("code").GetString(), w.Sent.Replies[1].Body.GetProperty("why").GetString()));
+        Assert.Equal("s2", w.Sent.Replies[1].Session);
+    }
+
+    // ---- launch -----------------------------------------------------------------
+
+    private static readonly RelayCrypto.KeyPair PhoneKey = RelayCrypto.GenerateKeyPair();
+
+    private static LaunchRequest Launch(World w, string cli = "claude", string message = "first", string cwd = "/w",
+        string model = "", string parent = "", string persona = "", string account = "")
+    {
+        var f = new LaunchFields(cwd, cli, persona, model, parent, message,
+            RelayCrypto.Base64Url(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)), w.Now.ToUnixTimeSeconds() + 120, account);
+        return new LaunchRequest("L", f, RelayCrypto.Base64Url(RelayCrypto.Sign(PhoneKey, LaunchGate.Message(LaunchGate.Body(f)))));
+    }
+
+    private static string[] Codes(World w) => w.Sent.Replies.Select(r => r.Body.GetProperty("code").GetString()!).ToArray();
+
+    // The new session checks in after the first poll.
+    private static void ChecksIn(World w, string id, SessionStatus status, int afterPolls = 1)
+    {
+        var polls = 0;
+        w.OnLaunchDelay = () => { if (++polls == afterPolls) w.Sessions(("old", Status()), (id, status)); };
+    }
+
+    [Fact]
+    public async Task A_mac_launch_starts_in_tmux_checks_in_and_types_its_first_message()
+    {
+        var w = new World();
+        w.Sessions(("old", Status()), ("lead", Status()));
+        ChecksIn(w, "new", Status(cwd: "/w/"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, model: "opus", parent: "lead"));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.All(w.Sent.Replies, r => Assert.Equal(("new", "L"), (r.Session, r.Body.GetProperty("ref").GetString())));
+        var (command, cwd) = w.MacStarts.Single();
+        Assert.Equal("/w", cwd);
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", ["--model", "opus", "--parent-session-id", "lead"]), command);
+        Assert.Equal(["first"], w.Desk.Typed);
+        Assert.Empty(w.WindowsStarts);
+    }
+
+    // CB-316: Codex and Grok are handed the first message as their launch
+    // prompt; `typed` follows check-in and nothing is typed into a terminal.
+    [Fact]
+    public async Task A_codex_launch_hands_its_message_to_the_cli_and_types_nothing()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status(source: SessionSource.Codex));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "codex", message: "-n fix & ship"));
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Empty(w.Desk.Typed);
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", ["--", "-n fix & ship"]), w.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task A_windows_grok_launch_starts_the_cli_under_conhost_with_its_prompt()
+    {
+        var w = new World(windows: true, binary: "C:\\g\\grok.exe");
+        ChecksIn(w, "new", Status(source: SessionSource.Grok, cwd: "C:\\w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "grok", cwd: "C:\\w", message: "say % & hi"));
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Equal(["C:\\g\\grok.exe", "--", "say % & hi"], w.WindowsStarts.Single().ArgumentList);
+    }
+
+    [Fact]
+    public async Task A_windows_prompt_launch_of_a_script_shim_is_refused_and_starts_nothing()
+    {
+        var w = new World(windows: true, binary: "C:\\npm\\codex.cmd");
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "codex", cwd: "C:\\w", message: "hi"));
+        var reply = w.Sent.Replies.Single().Body;
+        Assert.Equal("launch_failed", reply.GetProperty("code").GetString());
+        Assert.Empty(w.WindowsStarts);
+
+        // The paired control: with no message there is nothing to re-parse.
+        var empty = new World(windows: true, binary: "C:\\npm\\codex.cmd");
+        ChecksIn(empty, "new", Status(source: SessionSource.Codex, cwd: "C:\\w"));
+        await empty.Remote.HandleAsync("ph", PhoneKey.Public, Launch(empty, cli: "codex", cwd: "C:\\w", message: ""));
+        Assert.Equal(["launched"], Codes(empty));
+    }
+
+    [Fact]
+    public async Task Input_into_a_pane_that_does_not_hold_the_session_is_untypeable()
+    {
+        var holds = (bool?)false;
+        var typed = new List<string>();
+        var input = new RelayInput(new RelayInput.Seams(_ => TerminalTyping.Route.Tmux, _ => Task.FromResult<string?>(Prompt),
+            (_, t) => { typed.Add(t); return Task.FromResult(true); }, _ => Task.CompletedTask, _ => holds));
+        var codex = new SessionStatus { Source = SessionSource.Codex, SessionPid = 7, TmuxPane = "%42" };
+        Assert.Equal(RelayReplies.Untypeable, (await input.TypeAsync(codex, "hi")).Code);
+        holds = null;
+        Assert.Equal(RelayReplies.Untypeable, (await input.TypeAsync(codex, "hi")).Code);
+        Assert.Empty(typed);
+        holds = true;
+        Assert.True((await input.TypeAsync(codex, "hi")).Typed);
+        Assert.Equal(["hi"], typed);
+    }
+
+    [Fact]
+    public async Task A_launch_with_no_message_gets_exactly_one_reply()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status());
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, message: ""));
+        Assert.Equal(["launched"], Codes(w));
+        Assert.Empty(w.Desk.Typed);
+    }
+
+    [Fact]
+    public async Task A_windows_launch_is_conhost_and_matches_the_folder_without_case()
+    {
+        var w = new World(windows: true);
+        ChecksIn(w, "new", Status(source: SessionSource.Codex, cwd: "c:\\Work"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "codex", cwd: "C:\\Work", model: "gpt-5", message: ""));
+        Assert.Equal(["launched"], Codes(w));
+        var start = w.WindowsStarts.Single();
+        Assert.Equal("conhost.exe", start.FileName);
+        // Codex: no cmd.exe (its argv can carry the user's message).
+        Assert.Equal(["/bin/claude", "-m", "gpt-5"], start.ArgumentList);
+        Assert.Empty(w.MacStarts);
+    }
+
+    [Fact]
+    public async Task A_refused_launch_starts_nothing()
+    {
+        var w = new World();
+        var request = Launch(w, persona: "Pixel");
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, request);
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, request);
+        Assert.Equal(["unsupported_persona", "replayed"], Codes(w));
+        Assert.All(w.Sent.Replies, r => Assert.Null(r.Session));
+        Assert.Empty(w.MacStarts);
+
+        var noCli = new World(binary: null);
+        await noCli.Remote.HandleAsync("ph", PhoneKey.Public, Launch(noCli));
+        Assert.Equal(["unknown_cli"], Codes(noCli));
+    }
+
+    public static TheoryData<string?, string, string> MacFailures() => new()
+    {
+        { TerminalScripts.NoTmuxWhy, "no_terminal", TerminalScripts.NoTmuxWhy },
+        { "tmux could not start a session", "launch_failed", "tmux could not start a session" },
+        { null, "launch_failed", "Couldn't open a terminal for Claude Code." },
+    };
+
+    [Theory]
+    [MemberData(nameof(MacFailures))]
+    public async Task A_mac_launch_that_cannot_place_says_why(string? why, string code, string expectedWhy)
+    {
+        var w = new World(place: (null, why));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w));
+        var reply = w.Sent.Replies.Single().Body;
+        Assert.Equal((code, expectedWhy), (reply.GetProperty("code").GetString(), reply.GetProperty("why").GetString()));
+    }
+
+    [Fact]
+    public async Task A_windows_console_that_will_not_start_is_launch_failed()
+    {
+        var w = new World(windows: true, pid: null);
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "C:\\w"));
+        Assert.Equal("Couldn't open a console for Claude Code.", w.Sent.Replies.Single().Body.GetProperty("why").GetString());
+    }
+
+    [Fact]
+    public async Task A_session_that_never_checks_in_is_no_session_after_30_seconds()
+    {
+        var w = new World();
+        // The wrong CLI, and the right CLI in another folder, do not count.
+        w.Sessions(("old", Status()));
+        w.OnLaunchDelay = () => w.Sessions(("old", Status()), ("codex", Status(source: SessionSource.Codex)), ("elsewhere", Status(cwd: "/other")));
+        var start = w.Now;
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w));
+        Assert.Equal(["no_session"], Codes(w));
+        Assert.Equal(RelayRemote.LaunchCheckIn, w.Now - start);
+    }
+
+    [Fact]
+    public async Task A_first_message_held_by_a_dialog_is_typed_once_it_clears()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status());
+        w.Desk.Screens = new([Dialog, Dialog, Prompt, Prompt]);
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w));
+        Assert.Equal(["launched", "typed"], Codes(w));
+    }
+
+    [Fact]
+    public async Task A_first_message_still_held_after_60_seconds_is_not_at_prompt()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status());
+        w.Desk.Screen = Dialog;
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w));
+        Assert.Equal(["launched", "not_at_prompt"], Codes(w));
+        Assert.StartsWith("it is showing a dialog: ", w.Sent.Replies[1].Body.GetProperty("why").GetString());
+        Assert.Empty(w.Desk.Typed);
+    }
+
+    [Fact]
+    public async Task A_first_message_into_something_untypeable_or_refusing_stops_at_once()
+    {
+        var untypeable = new World();
+        ChecksIn(untypeable, "new", Status());
+        untypeable.Desk.Route = TerminalTyping.Route.TerminalApp;
+        await untypeable.Remote.HandleAsync("ph", PhoneKey.Public, Launch(untypeable));
+        Assert.Equal(RelayRemote.UntypeableWhy, untypeable.Sent.Replies[1].Body.GetProperty("why").GetString());
+
+        var refusing = new World();
+        ChecksIn(refusing, "new", Status());
+        refusing.Desk.TypeResult = false;
+        await refusing.Remote.HandleAsync("ph", PhoneKey.Public, Launch(refusing));
+        Assert.Equal(("not_at_prompt", RelayInput.RefusedWhy),
+            (refusing.Sent.Replies[1].Body.GetProperty("code").GetString(), refusing.Sent.Replies[1].Body.GetProperty("why").GetString()));
+    }
+
+    [Fact]
+    public async Task A_new_session_that_ends_before_its_message_is_not_at_prompt()
+    {
+        var w = new World();
+        var polls = 0;
+        w.OnLaunchDelay = () =>
+        {
+            if (++polls == 1) w.Sessions(("new", Status()));
+            else w.Sessions();
+        };
+        w.Desk.Screen = Dialog;
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w));
+        Assert.Equal(["launched", "not_at_prompt"], Codes(w));
+        Assert.Equal("the session ended", w.Sent.Replies[1].Body.GetProperty("why").GetString());
+    }
+
+    [Fact]
+    public void Same_folder_rule()
+    {
+        Assert.True(RelayRemote.SameFolder("/w/", "/w", false));
+        Assert.False(RelayRemote.SameFolder("/W", "/w", false));
+        Assert.True(RelayRemote.SameFolder("C:\\W\\", "c:\\w", true));
+        Assert.True(RelayRemote.SameFolder("/", "/", false));
+        Assert.False(RelayRemote.SameFolder(null, "/w", false));
+        Assert.False(RelayRemote.SameFolder("", "/w", false));
+    }
+
+    // ---- CB-321 persona pictures ------------------------------------------------
+
+    private static PersonaImageBundle Bundle(char c, int frames, int bytesEach = 15_000) =>
+        new(new string(c, 64), 24, 24, Enumerable.Range(0, frames)
+            .Select(i => new PersonaFrames.Frame(frames == 1 ? 0 : 100, Enumerable.Repeat((byte)i, bytesEach).ToArray())).ToList());
+
+    [Fact]
+    public async Task A_held_picture_streams_its_windows_in_order_at_ten_a_second()
+    {
+        var w = new World();
+        var b = Bundle('a', 5);                                             // two frames a window: three windows
+        w.Bundles[b.Hash] = b;
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", b.Hash));
+
+        Assert.Equal(b.Windows.Select(x => x.Json), w.Sent.Images.Select(x => x.Body.GetRawText()));
+        Assert.Equal(3, w.Sent.Images.Count);
+        Assert.All(w.Sent.Images, x => Assert.Equal(("ph_1", b.Hash), (x.Phone, x.Hash)));
+        Assert.Equal([0, 2, 4], w.Sent.Images.Select(x => x.Body.GetProperty("from_frame").GetInt32()));
+        Assert.Equal([RelayRemote.ImageWindowEvery, RelayRemote.ImageWindowEvery], w.Delays);   // none before the first
+        Assert.Equal(TimeSpan.FromMilliseconds(100), RelayRemote.ImageWindowEvery);
+        Assert.Contains($"persona_image {b.Hash[..12]} frames 0..1/5", w.Log);
+        Assert.Contains($"persona_image {b.Hash[..12]} frames 4..4/5", w.Log);
+        Assert.Empty(w.Sent.Replies);
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+    }
+
+    [Fact]
+    public async Task An_unknown_hash_is_refused_unknown_image_with_the_ref_and_no_ck()
+    {
+        var w = new World();
+        var hash = new string('c', 64);
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r9", hash));
+        var reply = Assert.Single(w.Sent.Replies);
+        Assert.Equal(("ph_1", (string?)null), (reply.Phone, reply.Session));
+        Assert.Equal("""{"t":"err","ref":"r9","code":"unknown_image"}""", reply.Body.GetRawText());
+        Assert.Empty(w.Sent.Images);
+        Assert.Contains($"unknown_image {hash[..12]}", w.Log);
+        Assert.DoesNotContain(w.Log, l => l.Contains(hash));                 // a prefix only, never the whole hash
+    }
+
+    [Fact]
+    public async Task A_second_request_while_one_is_in_flight_queues_behind_it()
+    {
+        var w = new World();
+        var a = Bundle('a', 3);
+        var b = Bundle('b', 1);
+        w.Bundles[a.Hash] = a;
+        w.Bundles[b.Hash] = b;
+        Task? second = null;
+        // The second request arrives while the first is between windows.
+        w.OnLaunchDelay = () =>
+        {
+            if (second is not null) return;
+            Assert.True(w.Remote.IsSendingImage("ph_1"));
+            second = w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r2", b.Hash));
+            second.Wait();                                                 // queued, not started: the first is in flight
+        };
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        await second!;
+        Assert.Equal([a.Hash, a.Hash, b.Hash], w.Sent.Images.Select(x => x.Hash));
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+    }
+
+    [Fact]
+    public async Task A_queued_picture_the_store_has_forgotten_is_refused_when_its_turn_comes()
+    {
+        var w = new World();
+        var a = Bundle('a', 3);
+        var b = Bundle('b', 1);
+        w.Bundles[a.Hash] = a;
+        w.Bundles[b.Hash] = b;
+        Task? second = null;
+        w.OnLaunchDelay = () =>
+        {
+            if (second is not null) return;
+            second = w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r2", b.Hash));
+            second.Wait();                                                 // queued while the bundle was held
+            w.Bundles.Remove(b.Hash);                                       // then evicted before its turn
+        };
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        await second!;
+        Assert.Equal([a.Hash, a.Hash], w.Sent.Images.Select(x => x.Hash));
+        Assert.Equal("""{"t":"err","ref":"r2","code":"unknown_image"}""", Assert.Single(w.Sent.Replies).Body.GetRawText());
+    }
+
+    [Fact]
+    public async Task A_phone_going_offline_abandons_the_picture_in_flight_and_its_queue()
+    {
+        var w = new World();
+        var a = Bundle('a', 5);
+        var b = Bundle('b', 1);
+        w.Bundles[a.Hash] = a;
+        w.Bundles[b.Hash] = b;
+        var queued = false;
+        w.Sent.OnImage = () =>
+        {
+            if (queued) return;
+            queued = true;
+            // Queued (the first is in flight), then the phone goes away.
+            w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r2", b.Hash)).Wait();
+            w.Remote.PhoneOffline("ph_1");
+        };
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        Assert.Single(w.Sent.Images);                                       // the first window, then nothing
+        Assert.Contains($"persona_image {a.Hash[..12]} abandoned at frame 2: phone offline", w.Log);
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+
+        // Back online, it asks again and gets the whole picture.
+        w.Sent.OnImage = null;
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r3", a.Hash));
+        Assert.Equal(4, w.Sent.Images.Count);
+    }
+
+    [Fact]
+    public async Task A_disconnect_abandons_every_phone_s_picture()
+    {
+        var w = new World();
+        var a = Bundle('a', 5);
+        w.Bundles[a.Hash] = a;
+        w.Sent.OnImage = () => w.Remote.Disconnected();
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        Assert.Single(w.Sent.Images);
+        Assert.Contains($"persona_image {a.Hash[..12]} abandoned at frame 2: phone offline", w.Log);
+    }
+
+    [Fact]
+    public async Task A_window_the_link_could_not_send_ends_the_transfer()
+    {
+        var w = new World();
+        var a = Bundle('a', 5);
+        w.Bundles[a.Hash] = a;
+        w.Sent.ImagesDeliver = false;
+        await w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash));
+        Assert.Single(w.Sent.Images);
+        Assert.Contains($"persona_image {a.Hash[..12]} abandoned at frame 0: not sent", w.Log);
+        Assert.False(w.Remote.IsSendingImage("ph_1"));
+    }
+
+    [Fact]
+    public async Task Two_phones_are_served_independently()
+    {
+        var w = new World();
+        var a = Bundle('a', 1);
+        w.Bundles[a.Hash] = a;
+        await Task.WhenAll(
+            w.Remote.HandleAsync("ph_1", [], new PersonaImageRequest("r1", a.Hash)),
+            w.Remote.HandleAsync("ph_2", [], new PersonaImageRequest("r2", a.Hash)));
+        Assert.Equal(["ph_1", "ph_2"], w.Sent.Images.Select(x => x.Phone).Order());
+    }
+
+    [Fact]
+    public async Task The_default_seams_hold_no_pictures()
+    {
+        var seams = new RelayRemote.Seams(() => DateTimeOffset.UnixEpoch, _ => Task.CompletedTask, _ => null!, null!, null!, _ => { });
+        Assert.Null(seams.Images(new string('a', 64)));
+        var sent = new Sent();
+        await new RelayRemote(seams, sent, new NonceWindow()).HandleAsync("ph_1", [], new PersonaImageRequest("r", new string('a', 64)));
+        Assert.Equal("unknown_image", Assert.Single(sent.Replies).Body.GetProperty("code").GetString());
+    }
+
+    // ---- accounts (additive to v4) -------------------------------------------------------
+
+    [Fact]
+    public async Task A_launch_naming_no_account_starts_exactly_as_it_always_did()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status(cwd: "/w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", []), w.MacStarts.Single().Command);
+        Assert.DoesNotContain("CLAUDE_CONFIG_DIR", w.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task A_named_account_is_the_clis_profile_variable_in_front_of_the_binary_on_a_mac()
+    {
+        var w = new World();
+        ChecksIn(w, "new", Status(cwd: "/w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, account: ".claude-uplift"));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, ".claude-uplift")), w.MacStarts.Single().Command);
+        Assert.Contains("env CLAUDE_CONFIG_DIR=", w.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task The_designated_account_applies_when_none_is_named_and_default_asks_for_the_clis_own()
+    {
+        var designated = new World { Designated = ".claude-uplift" };
+        ChecksIn(designated, "new", Status(cwd: "/w"));
+        await designated.Remote.HandleAsync("ph", PhoneKey.Public, Launch(designated));
+        Assert.Contains("CLAUDE_CONFIG_DIR", designated.MacStarts.Single().Command);
+
+        var explicitDefault = new World { Designated = ".claude-uplift" };
+        ChecksIn(explicitDefault, "new", Status(cwd: "/w"));
+        await explicitDefault.Remote.HandleAsync("ph", PhoneKey.Public, Launch(explicitDefault, account: RelayAccounts.Default));
+        Assert.DoesNotContain("CLAUDE_CONFIG_DIR", explicitDefault.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task An_account_the_desktop_does_not_list_is_unknown_account_and_nothing_starts()
+    {
+        var w = new World();
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, account: ".claude-other"));
+        Assert.Equal(["unknown_account"], Codes(w));
+        Assert.Empty(w.MacStarts);
+
+        // A desktop with no account seams offers none, so naming one is the same refusal.
+        var none = new World(accounts: false);
+        await none.Remote.HandleAsync("ph", PhoneKey.Public, Launch(none, account: ".claude-uplift"));
+        Assert.Equal(["unknown_account"], Codes(none));
+        Assert.Empty(none.MacStarts);
+    }
+
+    [Fact]
+    public async Task A_windows_claude_account_is_set_inside_the_consoles_own_command_line()
+    {
+        var w = new World(windows: true);
+        w.Binary = "C:\\bin\\claude.exe";
+        ChecksIn(w, "new", Status(cwd: "C:\\w"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "C:\\w", account: ".claude-uplift"));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        var start = w.WindowsStarts.Single();
+        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=.claude-uplift\" && \"C:\\bin\\claude.exe\""], start.ArgumentList);
+    }
+
+    [Fact]
+    public async Task A_windows_account_that_cmd_would_read_as_syntax_is_refused_not_started()
+    {
+        var w = new World(windows: true);
+        w.Binary = "C:\\bin\\claude.exe";
+        w.AccountChoices.Add(new("odd", ".a&b"));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "C:\\w", account: ".a&b"));
+
+        Assert.Equal(["launch_failed"], Codes(w));
+        Assert.Empty(w.WindowsStarts);
+    }
+
+    // ---- the summary ---------------------------------------------------------------------
+
+    private static async Task<(string Text, IReadOnlyList<string> Phones)?> Summary(World w, string session = "s1")
+    {
+        w.Files["/t"] = [TranscriptWatch.Line("user", "do it", 1), TranscriptWatch.Line("assistant", "done, all green", 2), TranscriptWatch.Line("assistant", "  ", 3)];
+        w.Sessions((session, Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r", session, null));
+        return await w.Remote.SummaryForAsync(session);
+    }
+
+    [Fact]
+    public async Task A_watched_sessions_last_assistant_reply_is_summarised_for_the_phones_watching_it()
+    {
+        var w = new World();
+        var summary = await Summary(w);
+        Assert.Equal("summary of done, all green", summary!.Value.Text);
+        Assert.Equal(["ph"], summary.Value.Phones);
+    }
+
+    [Fact]
+    public async Task Nothing_is_summarised_unwatched_unsummarisable_empty_or_failed()
+    {
+        var w = new World();
+        w.Files["/t"] = [TranscriptWatch.Line("assistant", "done", 1)];
+        w.Sessions(("s1", Watched("/t")));
+        Assert.Null(await w.Remote.SummaryForAsync("s1"));                       // no one watching: no model call
+
+        Assert.Null(await new World(summarizes: false).Remote.SummaryForAsync("s1"));   // no summariser
+
+        var gone = new World();
+        await Summary(gone);
+        gone.Sessions();
+        Assert.Null(await gone.Remote.SummaryForAsync("s1"));                    // left the roster
+
+        var noReply = new World();
+        noReply.Files["/t"] = [TranscriptWatch.Line("user", "hi", 1)];
+        noReply.Sessions(("s1", Watched("/t")));
+        await noReply.Remote.HandleAsync("ph", [], new WatchRequest("r", "s1", null));
+        Assert.Null(await noReply.Remote.SummaryForAsync("s1"));                 // nothing the assistant said
+
+        var empty = new World { Summarizer = (_, _) => Task.FromResult<string?>("  ") };
+        Assert.Null(await Summary(empty));                                       // the summariser had nothing
+
+        var throws = new World { Summarizer = (_, _) => throw new InvalidOperationException("model down") };
+        Assert.Null(await Summary(throws));
+        Assert.Contains(throws.Log, l => l.Contains("summariser threw InvalidOperationException"));
+    }
+
+    [Fact]
+    public async Task A_phone_that_left_while_the_summary_was_made_is_not_sent_it()
+    {
+        var w = new World();
+        w.Summarizer = (_, reply) => { w.Remote.PhoneOffline("ph"); return Task.FromResult<string?>("late"); };
+        Assert.Null(await Summary(w));
+    }
+
+    [Fact]
+    public async Task A_phone_with_no_pending_session_has_no_watchers_to_summarise_for()
+    {
+        var w = new World();
+        Assert.Empty(w.Remote.Watchers("nope"));
+    }
+}

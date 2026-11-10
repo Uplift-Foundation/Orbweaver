@@ -424,6 +424,22 @@ namespace Orbweaver
         // the next free index. That was a real failure, and stating it here rather
         // than in a comment beside an argument list is the point of extracting
         // this at all.
+        // CB-316: where a phone's launch goes on a Mac with no attached tmux
+        // client — a detached session named orbweaver, created the first time
+        // and given a new window by every later launch, so a person can
+        // `tmux attach -t orbweaver` and find every phone-started session in
+        // one place. -P -F '#{pane_id}' as the other builders, so the caller
+        // learns the pane either way.
+        internal const string DetachedSession = "orbweaver";
+
+        // The one launch failure that is no_terminal rather than launch_failed.
+        internal const string NoTmuxWhy = "tmux is not installed";
+
+        internal static string[] TmuxDetachedArgs(bool sessionExists, string cwd, string command) =>
+            sessionExists
+                ? TmuxNewWindowArgs(null, DetachedSession, cwd, command)
+                : ["new-session", "-d", "-s", DetachedSession, "-c", cwd, "-P", "-F", "#{pane_id}", ShellCommandLine(cwd, command)];
+
         internal static string[] TmuxNewWindowArgs(
             string? socket, string session, string? cwd, string command)
         {

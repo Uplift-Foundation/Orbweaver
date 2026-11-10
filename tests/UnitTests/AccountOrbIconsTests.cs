@@ -222,15 +222,12 @@ public class AccountOrbIconsTests : IDisposable
     [Fact]
     public void RenderStep_AloneNeverFetchesFromANestedSvg()
     {
-        var tcp = new TcpListener(IPAddress.Loopback, 0);
-        tcp.Start();
-        var port = ((IPEndPoint)tcp.LocalEndpoint).Port;
-        tcp.Stop();
+        // Bound once, never probed and released (CB-314: see LoopbackHttp).
+        var (started, root) = LoopbackHttp.Start();
+        var port = new Uri(root).Port;
 
         var hits = new List<string>();
-        using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        listener.Start();
+        using var listener = started;
         var loop = Task.Run(async () =>
         {
             try

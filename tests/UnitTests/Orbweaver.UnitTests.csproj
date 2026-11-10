@@ -18,6 +18,10 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
+    <!-- CB-314: race-free loopback listeners, shared rather than copied (tests/Shared/LoopbackHttp.cs). -->
+    <Compile Include="..\Shared\LoopbackHttp.cs" Link="LoopbackHttp.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\Orbweaver.csproj" />
   </ItemGroup>
   <ItemGroup>
@@ -25,6 +29,10 @@
     <Content Include="Fixtures\pages\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-308: the real GitHub releases API responses and SHA256SUMS.txt, captured 2026-11-06. -->
     <Content Include="Fixtures\update\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CB-314: the phone relay's contract vectors, copied from Orbweaver-Mobile contracts/ (see Fixtures/relay/SOURCE.md). -->
+    <Content Include="Fixtures\relay\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CB-313: real terminal captures, shared with tools/screen-read-probe. -->
+    <Content Include="Fixtures\screens\*" Link="ScreenReadFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -52,5 +60,11 @@
     <Compile Include="..\TranscriptTests\TranscriptSuite.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" />
     <Compile Include="..\TranscriptTests\AskFormFixtures.cs" />
+    <!-- CB-316: the desktop's v4 vector generator, so the unit suite proves it
+         reproduces the committed frames-v4-vectors.json byte for byte. -->
+    <Compile Include="..\..\tools\relay-vectors\V4Vectors.cs" Link="V4Vectors.cs" />
+    <Compile Include="..\..\tools\relay-vectors\V5Vectors.cs" Link="V5Vectors.cs" />
+    <Compile Include="..\..\tools\relay-vectors\V6Vectors.cs" Link="V6Vectors.cs" />
+    <Compile Include="..\..\tools\relay-vectors\V7Vectors.cs" Link="V7Vectors.cs" />
   </ItemGroup>
 </Project>

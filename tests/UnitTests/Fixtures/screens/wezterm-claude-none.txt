@@ -1,0 +1,24 @@
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/c3/wez-claude · /rc
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                
+────────────────────────────────────────────────────────────────────────────────
+❯ Try "how does <filepath> work?"
+────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · r…
+  Opus 5.5 | ~/wez-claude | [.claude]
+  ⏸ manual mode on

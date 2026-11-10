@@ -111,6 +111,11 @@ namespace Orbweaver
             "remoteControlEnabled", "remoteControlProfileDir", "remoteControlProfileDirs",
             "remoteControlIdleMinutes", "remoteControlServeOnLaunch",
             "peerLinkEnabled", "peerLinkPort",
+            // CB-314: the phone relay. Read, written and listed here, all three:
+            // a model property alone is never persisted (measured on the
+            // installed app: pairing set it, a restart lost it, and the relay
+            // stayed off).
+            "relayEnabled",
             // CB-308, the auto-updater. All five must be here: a key written by
             // Save() that is not in this list is also carried in _unknownKeys,
             // and Save() would then throw adding it twice.
@@ -118,6 +123,7 @@ namespace Orbweaver
             "lastUpdateCheckUtc", "lastRunVersion",
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
+            "phoneLaunchProfiles",
             // Every hotkey override. toggleOrbsHotkey was missing from this
             // list from CB-155 until the new-chat hotkey was added beside it;
             // Save's ContainsKey guard kept that from throwing, but it meant
@@ -529,6 +535,11 @@ namespace Orbweaver
             // point of it.
             public bool PeerLinkEnabled { get; set; }
 
+            // CB-314: whether this desktop keeps its connection to the phone
+            // relay. Off until the user first chooses "Pair phone…", so an
+            // install that never pairs a phone never opens the socket.
+            public bool RelayEnabled { get; set; }
+
             // CB-308. On by default: a user who never opens Settings still gets
             // told a fix exists, which is the whole reason for the feature. The
             // check is one anonymous GET to GitHub a day and installing is always
@@ -873,6 +884,12 @@ namespace Orbweaver
             // map has none, and is still written from it, so neither an upgrade
             // nor a downgrade loses a saved pick.
             public Dictionary<string, string> NewChatLastProfiles { get; init; } = new(StringComparer.Ordinal);
+
+            // CB-316: the account a session started from a phone runs under when the phone names
+            // none, per CLI ("ClaudeCode": ".claude-uplift"). A designated default, not a
+            // last-used: it stays what the user said until they say otherwise. "default" names
+            // the CLI's own default directory. Saved as "phoneLaunchProfiles".
+            public Dictionary<string, string> PhoneLaunchProfiles { get; init; } = new(StringComparer.Ordinal);
 
             // Auto-organize: which shape and how much space between orbs.
             public string ArrangeShape
@@ -1516,6 +1533,24 @@ namespace Orbweaver
             }
         }
 
+        internal static string? PhoneLaunchProfileFor(NewChatCli cli)
+        {
+            Load();
+            lock (Gate) return _model.PhoneLaunchProfiles.TryGetValue(cli.ToString(), out var dir) ? dir : null;
+        }
+
+        internal static void SetPhoneLaunchProfile(NewChatCli cli, string? profileDir)
+        {
+            var value = string.IsNullOrWhiteSpace(profileDir) ? null : profileDir;
+            Load();
+            lock (Gate)
+            {
+                if (value is null) _model.PhoneLaunchProfiles.Remove(cli.ToString());
+                else _model.PhoneLaunchProfiles[cli.ToString()] = value;
+            }
+            Save();
+        }
+
         internal static void SetNewChatLastProfile(NewChatCli cli, string? profileDir)
         {
             var value = string.IsNullOrWhiteSpace(profileDir) ? null : profileDir;
@@ -1550,6 +1585,12 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.PeerLinkEnabled; }
             set { Load(); lock (Gate) _model.PeerLinkEnabled = value; Save(); }
+        }
+
+        public static bool RelayEnabled
+        {
+            get { Load(); lock (Gate) return _model.RelayEnabled; }
+            set { Load(); lock (Gate) _model.RelayEnabled = value; Save(); }
         }
 
         public static bool AutoCheckForUpdates
@@ -2459,6 +2500,7 @@ namespace Orbweaver
                         RemoteControlServeOnLaunch =
                             root["remoteControlServeOnLaunch"]?.GetValue<bool>() ?? false,
                         PeerLinkEnabled = root["peerLinkEnabled"]?.GetValue<bool>() ?? false,
+                        RelayEnabled = root["relayEnabled"]?.GetValue<bool>() ?? false,
                         PeerLinkPort = root["peerLinkPort"]?.GetValue<int>() ?? 0,
                         AutoCheckForUpdates = Bool(root["autoCheckForUpdates"], true),
                         IncludePrereleaseUpdates = Bool(root["includePrereleaseUpdates"], false),
@@ -2549,6 +2591,15 @@ namespace Orbweaver
                             {
                                 model.NewChatLastProfiles[cliName] = profileDir;
                             }
+                        }
+                    }
+
+                    if (root["phoneLaunchProfiles"] is JsonObject phoneProfiles)
+                    {
+                        foreach (var (cliName, node) in phoneProfiles)
+                        {
+                            if (Enum.TryParse<NewChatCli>(cliName, out var parsedCli) && parsedCli.ToString() == cliName && Text(node) is { } dir)
+                                model.PhoneLaunchProfiles[cliName] = dir;
                         }
                     }
 
@@ -3129,6 +3180,7 @@ namespace Orbweaver
                         ["openclawNativeShape"] = _model.OpenClawNativeShape,
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
+                        ["relayEnabled"] = _model.RelayEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,
                         ["autoCheckForUpdates"] = _model.AutoCheckForUpdates,
                         ["includePrereleaseUpdates"] = _model.IncludePrereleaseUpdates,
@@ -3199,6 +3251,7 @@ namespace Orbweaver
                         ["newChatLastProfile"] = _model.NewChatLastProfiles.TryGetValue(
                             nameof(NewChatCli.ClaudeCode), out var claudeLastProfile) ? claudeLastProfile : null,
                         ["newChatLastProfiles"] = NewChatLastProfilesNode(_model.NewChatLastProfiles),
+                        ["phoneLaunchProfiles"] = NewChatLastProfilesNode(_model.PhoneLaunchProfiles),
                         // Grouped rather than three top-level keys: it reads as
                         // one setting in the file the way it reads as one card in
                         // the window. A null entry — which is what a colour left

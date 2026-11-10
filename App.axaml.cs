@@ -107,7 +107,12 @@ namespace Orbweaver
                 desktop.Exit += (_, _) => ChimePlayer.StopAll();
                 desktop.ShutdownRequested += (_, _) => ChimePlayer.KillCurrentlyPlayingForCancellableShutdown();
 
-                new SessionManager().Start();
+                var sessions = new SessionManager();
+                sessions.Start();
+
+                // The phone relay (CB-314): listens to the scan, and connects
+                // only if a phone has been paired before.
+                RelayService.Attach(sessions);
 
                 // The updater (CB-308). After SessionManager so the tray exists for
                 // PendingChanged to refresh. The post-update notice records this

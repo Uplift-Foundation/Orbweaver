@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RollForward>LatestMajor</RollForward>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>ScreenReadProbe</AssemblyName>
+    <RootNamespace>Orbweaver.ScreenReadProbe</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The shipped parser, compiled in (same list as TranscriptTests), so the
+         probe prints the app's answer and never one of its own. -->
+    <Compile Include="Program.cs" />
+    <Compile Include="Readers/*.cs" />
+    <Compile Include="../../ChatTranscript.cs" />
+    <Compile Include="../../GrokDialog.cs" />
+    <Compile Include="../../FirstRunDialogs.cs" />
+    <Compile Include="../../ScreenReaders/ScreenReaderCommands.cs" />
+    <Compile Include="../../ScreenReaders/WindowsConsoleRead.cs" />
+    <Compile Include="../../PaneScreen.cs" />
+    <Compile Include="../../CodexTranscript.cs" />
+    <Compile Include="../../GrokTranscript.cs" />
+    <Compile Include="../../ChatMarkdown.cs" />
+    <Compile Include="../../AgentPalette.cs" />
+    <Compile Include="../../OpenClawSessionKind.cs" />
+    <Compile Include="../../OpenClawHeartbeat.cs" />
+    <Compile Include="../../OpenClawHistoryShape.cs" />
+    <Compile Include="../../OpenClawJson.cs" />
+    <Compile Include="../../OpenClawVideoKind.cs" />
+    <Compile Include="../../OpenClawAttachmentKind.cs" />
+    <Compile Include="../../OpenClawAudioKind.cs" />
+    <Compile Include="../../RemoteChat.cs" />
+    <Compile Include="../../SlashRoute.cs" />
+  </ItemGroup>
+
+</Project>

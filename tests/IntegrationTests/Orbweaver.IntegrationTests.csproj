@@ -18,6 +18,10 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
+    <!-- CB-314: race-free loopback listeners, shared rather than copied (tests/Shared/LoopbackHttp.cs). -->
+    <Compile Include="..\Shared\LoopbackHttp.cs" Link="LoopbackHttp.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\Orbweaver.csproj" />
     <!-- CB-206: a second process to claim the single-instance mutex from. -->
     <ProjectReference Include="..\SingleInstanceProbe\SingleInstanceProbe.csproj" />
@@ -28,6 +32,7 @@
          it to keep in step. -->
     <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
+    <Compile Include="..\UnitTests\TinyGif.cs" Link="TinyGif.cs" />
     <!-- CB-270 Stage 3: the captured native runs, as one scrubbed constant. -->
     <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />
     <!-- CB-306: real commands.list and a /status card, as constants. -->

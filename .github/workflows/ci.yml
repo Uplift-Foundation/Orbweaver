@@ -83,6 +83,18 @@ jobs:
       - name: Brand check (check-brand.py)
         run: python tools/check-brand.py
 
+      # CB-323: the phone and Watch icons make-icons.py writes into docs/brand/mobile/.
+      # The unit tests carry the negative controls (the 512 cut must fail the 29-px
+      # check, a tinted icon with colour must fail, and so on); the second step runs
+      # the checker on the committed files and compares their decoded pixels with a
+      # fresh render, so a hand-exported PNG fails here. Pixels, not bytes: zlib's
+      # output differs between the two runners and the pixels do not.
+      - name: Unit tests (check-brand-icons.py)
+        run: python tools/test-check-brand-icons.py
+
+      - name: Mobile icon check (check-brand-icons.py)
+        run: python tools/check-brand-icons.py
+
       # CB-273: the PreToolUse hook that keeps agent-team members as team
       # processes and PR bodies honest. Skips itself where bash or jq is
       # missing, which is where the hook fails open by design.

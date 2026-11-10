@@ -202,6 +202,40 @@ public class AccountOrbsTests : IDisposable
         Assert.Empty(orbs.Cards);
     }
 
+    // CB-316: every applied poll is offered to the relay as the phone's usage
+    // frame sees it — switched-off sources left out, the card's email used as
+    // the name where it knows one.
+    [AvaloniaFact]
+    public void AnAppliedPollIsOfferedToTheRelayWithoutSwitchedOffSources()
+    {
+        OrbweaverSettings.ReloadForTests();
+        OrbweaverSettings.AccountUsageEnabled = true;
+        OrbweaverSettings.GrokAccountUsageEnabled = false;
+        var seen = new List<IReadOnlyList<RelayUsage.Account>>();
+        void Seen(IReadOnlyList<RelayUsage.Account> a) => seen.Add(a);
+        AccountOrbs.UsageApplied += Seen;
+        try
+        {
+            var orbs = Make(new FakeUsageSource());
+            orbs.SetEmail(string.Empty, "me@example.com");
+            orbs.Apply(new[]
+            {
+                Usage(null, "wthompson"),
+                Usage("/Users/x/.grok", "user", source: AccountUsageSource.Grok),
+            }, Now);
+
+            var offered = Assert.Single(seen);
+            var account = Assert.Single(offered);
+            Assert.Equal(("me@example.com", "claude", "team", 10), (account.Name, account.Cli, account.Plan, account.WindowPct));
+            orbs.CloseAll();
+        }
+        finally
+        {
+            AccountOrbs.UsageApplied -= Seen;
+            OrbweaverSettings.ReloadForTests();
+        }
+    }
+
     // Turning Grok usage on used to close every account orb, because
     // SyncToSettings' predecessor looked only at the Claude Code flag.
     [AvaloniaFact]
