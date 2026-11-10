@@ -956,6 +956,15 @@ namespace Orbweaver
             return frames;
         }
 
+        // The relay did not take a snapshot (rate_limited): the latest one goes
+        // again, same boot, next seq, once the interval has passed — whatever
+        // the desk does meanwhile, so a quiet desk is not left wrong at the
+        // relay. Refused again, it is re-armed again, until one is taken.
+        private void RetryActivity()
+        {
+            if (Activity?.Retry(_now()) is true) ActivityDue(Activity.DueAt!.Value);
+        }
+
         // The deferred send ActivityDue asked for, when it is time.
         internal IReadOnlyList<string> FlushActivity()
         {
@@ -1102,12 +1111,15 @@ namespace Orbweaver
                     _unlinksInFlight.Clear();
                     foreach (var peer in unlinks) ScheduleRetry("unlink:" + peer);
                     foreach (var key in _retryable.Keys.ToList()) ScheduleRetry(key);
+                    // CB-323: refused before parsing, so the last snapshot may be
+                    // among what the relay never took. Sent again, as of then.
+                    RetryActivity();
                     break;
                 case var r when RelayActivity.IsActivityRef(r):
                     // Not stored at the relay: the next snapshot goes whatever
                     // it carries, after the debounce.
                     ActivityReplied(r!, "err", "rate_limited");
-                    if (Activity?.Retry(_now()) is true) ActivityDue(Activity.DueAt!.Value);
+                    RetryActivity();
                     break;
                 default:
                     if (_retryable.ContainsKey("env:" + reference)) ScheduleRetry("env:" + reference);

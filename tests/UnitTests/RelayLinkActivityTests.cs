@@ -292,4 +292,48 @@ public partial class RelayLinkTests
         Assert.Equal((2L, 3L), (Activity(scan[0]).GetProperty("seq").GetInt64(), Activity(push[0]).GetProperty("seq").GetInt64()));
         Assert.Empty(due);                                           // nothing was deferred to get there
     }
+
+    // The lead's gap check: a refused snapshot on a desk that then goes quiet
+    // must still reach the relay, carrying the state as it is when it goes,
+    // and keep going until one is taken.
+    [Fact]
+    public void A_rate_limited_snapshot_on_a_quiet_desk_is_resent_with_the_current_state_until_taken()
+    {
+        var (link, notes, due, _) = Watched(New(activity: new RelayActivity.Tracker(Boot)).Link, []);
+        link.OnFrame(Welcome());                                     // seq 1, nothing
+        _now = _now.AddSeconds(3);
+        var sent = Activity(Assert.Single(link.OnScan([Row("s1", "waiting"), Row("s2", "generating")])));
+        Assert.Equal(2, sent.GetProperty("seq").GetInt64());
+
+        link.OnFrame($$"""{"t":"err","ref":"act-{{Boot}}-2","code":"rate_limited"}""");
+        Assert.Equal([_now.AddSeconds(2)], due);
+
+        _now = _now.AddSeconds(30);                                  // quiet: no scan changes anything
+        var resent = Activity(Assert.Single(link.FlushActivity()));
+        Assert.Equal((Boot, 3L, 1, 1), (resent.GetProperty("boot").GetString(), resent.GetProperty("seq").GetInt64(),
+            resent.GetProperty("amber").GetInt32(), resent.GetProperty("working").GetInt32()));
+
+        link.OnFrame($$"""{"t":"err","ref":"act-{{Boot}}-3","code":"rate_limited"}""");   // refused again
+        Assert.Equal(2, due.Count);
+        _now = _now.AddSeconds(2);
+        Assert.Equal(4, Activity(Assert.Single(link.FlushActivity())).GetProperty("seq").GetInt64());
+
+        link.OnFrame($$"""{"t":"ok","ref":"act-{{Boot}}-4","code":"activity"}""");       // taken
+        _now = _now.AddSeconds(60);
+        Assert.Empty(link.FlushActivity());
+        Assert.Equal(2, due.Count);
+        _ = notes;
+    }
+
+    [Fact]
+    public void A_rate_limited_with_no_ref_resends_the_snapshot_too()
+    {
+        var (link, notes, due, _) = Watched(New(activity: new RelayActivity.Tracker(Boot)).Link, []);
+        link.OnFrame(Welcome());
+        link.OnFrame("""{"t":"err","code":"rate_limited"}""");
+        Assert.Equal([_now.AddSeconds(2)], due);
+        _now = _now.AddSeconds(2);
+        Assert.Equal(2, Activity(Assert.Single(link.FlushActivity())).GetProperty("seq").GetInt64());
+        _ = notes;
+    }
 }

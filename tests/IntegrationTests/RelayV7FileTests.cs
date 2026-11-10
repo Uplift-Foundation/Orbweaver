@@ -162,6 +162,20 @@ public class RelayV7FileTests : IAsyncLifetime
         await Until(() => Lines(LogPath).Count(l => l.Contains("\"code\":\"unexpected\"")) == 1);
     }
 
+    [Fact]
+    public async Task A_rate_limited_snapshot_goes_again_through_the_clients_timer_with_no_change_at_the_desk()
+    {
+        var client = Client(LogPath);
+        client.OnScanned([Row("s1", "waiting")]);
+        client.Start();
+        var first = await _stub.NextT("activity");
+        await _stub.Send($$"""{"t":"err","ref":"{{first.GetProperty("ref").GetString()}}","code":"rate_limited"}""");
+        var again = await _stub.NextT("activity");                  // nothing scanned in between
+        Assert.Equal((first.GetProperty("boot").GetString(), 2L, 1),
+            (again.GetProperty("boot").GetString(), again.GetProperty("seq").GetInt64(), again.GetProperty("amber").GetInt32()));
+        await Until(() => Lines(LogPath).Count(l => l.Contains("\"code\":\"rate_limited\"")) == 1);
+    }
+
     // ---- the log on its own -------------------------------------------------------
 
     [Fact]
