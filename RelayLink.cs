@@ -155,10 +155,30 @@ namespace Orbweaver
         // die with it, so the relay's queue never fills with windows for a
         // phone that is not reading them.
         internal event Action<string> PhoneWentOffline = delegate { };
+        // CB-323: a scan's activity frame was deferred by the 2 s debounce;
+        // call FlushActivity at this time. Raised once per deferral.
+        internal event Action<DateTimeOffset> ActivityDue = delegate { };
+        // CB-323: the relay's reply to an activity frame (ref, t, code), for
+        // the activity log. Every reply, ok and err alike.
+        internal event Action<string, string, string> ActivityReplied = delegate { };
 
         // This desktop's name, for the done push's label (the amber's rule:
         // "<title> on <machine>"). Set by RelayClient from its options.
         internal string Machine { get; init; } = "";
+
+        // CB-323: this process's activity numbering (frames-v7 `activity`).
+        // Null sends none — the protocol tests that predate v7 run without it;
+        // RelayClient always sets one.
+        internal RelayActivity.Tracker? Activity { get; init; }
+
+        // CB-323: the minted prompt behind a waiting session, for the activity
+        // frame's oldest amber (PromptPipeline.ActivityFor). Set by RelayClient
+        // once the pipeline exists.
+        internal Func<string, ActivityPrompt?> ActivityPrompts { get; set; } = _ => null;
+
+        // One "this relay predates activity" line per connection, not one per
+        // frame every two seconds.
+        private bool _activityUnexpectedNoted;
 
         // The usage frame a phone coming online is sent after its roster:
         // whatever SendUsage last sent, or nothing before the first reading.
@@ -208,6 +228,8 @@ namespace Orbweaver
             _retryAttempts.Clear();
             _revokeKeys.Clear();
             _retryPending.Clear();
+            Activity?.Reset();
+            _activityUnexpectedNoted = false;
         }
 
         internal IReadOnlyList<string> OnFrame(string text)
@@ -238,6 +260,11 @@ namespace Orbweaver
                 // frame to resend, not a refusal to settle.
                 case "err" when Str(f, "code") == "rate_limited":
                     OnRateLimited(Str(f, "ref"));
+                    return [];
+                // CB-323: the relay's answer to an activity frame. After the
+                // rate_limited case, which resends it.
+                case "ok" or "err" when RelayActivity.IsActivityRef(Str(f, "ref")):
+                    OnActivityReply(t, Str(f, "ref")!, Str(f, "code") ?? "");
                     return [];
                 case "err" when Str(f, "ref") == "unlink":
                     // not_linked: already gone, which is what was wanted. Any
@@ -308,7 +335,11 @@ namespace Orbweaver
             // run, or sent and never answered: Remove on the PC must reach the
             // relay (acceptance 4), so every one is sent again here.
             _unlinksInFlight.Clear();
-            return _identity.PendingUnlinks.Select(SendUnlink).ToList();
+            // CB-323: the activity snapshot first, on every welcome — before
+            // anything else this connection sends, rosters included.
+            var frames = ActivityFrames(RelayActivity.Reason.Welcome);
+            frames.AddRange(_identity.PendingUnlinks.Select(SendUnlink));
+            return frames;
         }
 
         private IReadOnlyList<string> OnPresence(JsonElement f)
@@ -603,7 +634,12 @@ namespace Orbweaver
             // the phone's spoken-style summary (watched sessions only).
             foreach (var d in update.Deltas.Where(d => d.Finished)) SessionFinished(d.SessionId);
 
-            var frames = new List<string>();
+            // CB-323: the activity snapshot leads the scan's frames. A scan that
+            // sends a done push sends a changed snapshot at once, so the relay's
+            // counts on that alert already include it; any other scan is
+            // debounced.
+            var pushes = _channels.Count > 0 && update.Deltas.Any(d => d.Finished);
+            var frames = ActivityFrames(pushes ? RelayActivity.Reason.Push : RelayActivity.Reason.Scan);
             foreach (var c in _channels.Values)
             {
                 // CB-316: a session that went generating -> idle rides its own
@@ -867,7 +903,7 @@ namespace Orbweaver
                 if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, "amber", e) is { } frame)
                     frames.Add(frame);
             }
-            return frames;
+            return WithActivity(frames);
         }
 
         // resolved to every paired phone, so a sheet open on any of them closes:
@@ -886,7 +922,7 @@ namespace Orbweaver
                 if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, "resolve", e) is { } frame)
                     frames.Add(frame);
             }
-            return frames;
+            return WithActivity(frames);
         }
 
         // A refusal goes only to the phone that answered.
@@ -895,6 +931,52 @@ namespace Orbweaver
             if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
             return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
                 System.Text.Encoding.UTF8.GetBytes(PromptFrames.Refusal(requestId, sessionId, code))));
+        }
+
+        // ---- CB-323 activity -------------------------------------------------------
+
+        // The snapshot as of now, as zero or one frames to send now.
+        private List<string> ActivityFrames(RelayActivity.Reason reason)
+        {
+            if (Activity is null) return [];
+            var frame = Activity.Offer(Snapshot(), _now(), reason, out var becameDue);
+            if (becameDue) ActivityDue(Activity.DueAt!.Value);
+            return frame is null ? [] : [frame];
+        }
+
+        private ActivitySnapshot Snapshot() => RelayActivity.Snapshot(_book.Snapshot(), ActivityPrompts, Machine);
+
+        // A push-bearing send: the snapshot goes first, and only when the push
+        // itself went somewhere.
+        private List<string> WithActivity(List<string> pushFrames)
+        {
+            if (pushFrames.Count == 0) return pushFrames;
+            var frames = ActivityFrames(RelayActivity.Reason.Push);
+            frames.AddRange(pushFrames);
+            return frames;
+        }
+
+        // The deferred send ActivityDue asked for, when it is time.
+        internal IReadOnlyList<string> FlushActivity()
+        {
+            if (Activity is null || !Welcomed) return [];
+            return Collect(Activity.Flush(Snapshot(), _now()));
+        }
+
+        private void OnActivityReply(string t, string reference, string code)
+        {
+            ActivityReplied(reference, t, code);
+            if (t == "ok" && code == "activity") return;
+            if (t == "err" && code == "unexpected")
+            {
+                // frames-v7 back_compat: a relay that predates activity. Said
+                // once per connection; everything else carries on.
+                if (_activityUnexpectedNoted) return;
+                _activityUnexpectedNoted = true;
+                Note("relay does not know activity frames (err unexpected): an older relay; the island will not count this desktop");
+                return;
+            }
+            Note($"activity {Safe(reference)} answered {Known(t, ControlKinds)} code={Safe(code)}");
         }
 
         // ---- sealing out ------------------------------------------------------
@@ -1020,6 +1102,12 @@ namespace Orbweaver
                     _unlinksInFlight.Clear();
                     foreach (var peer in unlinks) ScheduleRetry("unlink:" + peer);
                     foreach (var key in _retryable.Keys.ToList()) ScheduleRetry(key);
+                    break;
+                case var r when RelayActivity.IsActivityRef(r):
+                    // Not stored at the relay: the next snapshot goes whatever
+                    // it carries, after the debounce.
+                    ActivityReplied(r!, "err", "rate_limited");
+                    if (Activity?.Retry(_now()) is true) ActivityDue(Activity.DueAt!.Value);
                     break;
                 default:
                     if (_retryable.ContainsKey("env:" + reference)) ScheduleRetry("env:" + reference);

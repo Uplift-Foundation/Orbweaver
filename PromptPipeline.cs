@@ -121,6 +121,24 @@ namespace Orbweaver
 
         internal PendingPrompt? PendingFor(string sessionId) => _live.TryGetValue(sessionId, out var l) ? l.Pending : null;
 
+        // CB-323: what the activity frame's oldest amber says about a session's
+        // minted prompt — request id, tool and command line. Read by RelayLink
+        // under the client's lock on another thread than the one minting, so it
+        // is a copy kept under its own lock rather than a look into _live.
+        private readonly object _activityGate = new();
+        private readonly Dictionary<string, ActivityPrompt> _activity = new(StringComparer.Ordinal);
+
+        internal ActivityPrompt? ActivityFor(string sessionId)
+        {
+            lock (_activityGate) return _activity.GetValueOrDefault(sessionId);
+        }
+
+        private void Drop(string sid)
+        {
+            _live.Remove(sid);
+            lock (_activityGate) _activity.Remove(sid);
+        }
+
         // ---- the watcher ------------------------------------------------------
 
         // A scan that arrives while the previous one is still capturing is
@@ -181,7 +199,7 @@ namespace Orbweaver
         // already did (Answered — its own resolved or refusal went out).
         private void Settle(string sid, Live live, string by)
         {
-            _live.Remove(sid);
+            Drop(sid);
             if (live.Pending.Answered) return;
             _send.Resolved(live.Pending.RequestId, sid, by, PromptFrames.ResolvedPush(live.Pending.RequestId, sid, by, live.Label));
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
@@ -213,6 +231,9 @@ namespace Orbweaver
 
             var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
             _live[sid] = live;
+            // Before the send, so the activity frame that goes ahead of this
+            // prompt's push already names it.
+            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, RelayActivity.CommandOf(fp.Preview));
             _send.Prompt(requestId, sid, prompt, push?.Plaintext);
             _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));
@@ -301,7 +322,7 @@ namespace Orbweaver
                     // (another was on screen when the key landed), so it is
                     // settled for everyone, by an actor nobody can name.
                     _seams.Log($"warning press-landed-elsewhere {answer.RequestId} {d.Key}");
-                    _live.Remove(answer.SessionId);
+                    Drop(answer.SessionId);
                     _send.Resolved(answer.RequestId, answer.SessionId, "unknown", PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "unknown", live.Label));
                     _seams.Log($"resolved {answer.RequestId} unknown");
                     return;
@@ -328,7 +349,7 @@ namespace Orbweaver
                     return;
                 }
 
-                _live.Remove(answer.SessionId);
+                Drop(answer.SessionId);
                 _send.Resolved(answer.RequestId, answer.SessionId, "phone:" + phoneId, PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "phone:" + phoneId, live.Label));
                 _seams.Log($"resolved {answer.RequestId} phone:{phoneId}");
             }

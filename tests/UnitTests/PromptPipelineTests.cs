@@ -783,4 +783,54 @@ public class PromptPipelineTests
         Assert.Null(none);
         Assert.Contains(noneLog, l => l.Contains(" no-e persona=dropped", StringComparison.Ordinal));
     }
+
+    // ---- CB-323: what the activity frame is told about a minted prompt ---------
+
+    // A sender that looks at the pipeline's activity view at the moment the
+    // prompt goes, as RelayLink does when it writes the snapshot ahead of it.
+    private sealed class PeekingSender : Sender, IPromptSender
+    {
+        public Func<string, ActivityPrompt?>? Peek;
+        public readonly List<ActivityPrompt?> Seen = new();
+        bool IPromptSender.Prompt(string r, string s, string p, string? push) { Seen.Add(Peek!(s)); return true; }
+    }
+
+    [Fact]
+    public async Task A_minted_prompt_is_named_to_the_activity_frame_before_it_goes_and_until_it_settles()
+    {
+        var sender = new PeekingSender();
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), sender, "Test Mac");
+        sender.Peek = p.ActivityFor;
+        Assert.Null(p.ActivityFor("s1"));
+
+        await p.OnScannedAsync(Snap());
+        var seen = Assert.Single(sender.Seen)!;
+        Assert.Equal(("Bash", "dotnet test tests/UnitTests"), (seen.Tool, seen.Command));
+        Assert.Matches("^[0-9A-HJKMNP-TV-Z]{26}$", seen.RequestId);
+        Assert.Equal(seen, p.ActivityFor("s1"));
+        Assert.Null(p.ActivityFor("s2"));
+
+        await p.OnScannedAsync(Snap("generating"));                    // answered at the desk
+        Assert.Null(p.ActivityFor("s1"));
+    }
+
+    [Fact]
+    public async Task A_prompt_the_phone_answered_is_no_longer_the_activity_frames()
+    {
+        await _p.OnScannedAsync(Snap());
+        Assert.NotNull(_p.ActivityFor("s1"));
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Null(_p.ActivityFor("s1"));
+    }
+
+    [Fact]
+    public async Task A_prompt_whose_key_landed_elsewhere_is_no_longer_the_activity_frames()
+    {
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add,
+            CaptureAndPress: (_, _, _) => Task.FromResult<(bool, string?)>((true, DialogB))), _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
+        Assert.NotNull(p.ActivityFor("s1"));
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Null(p.ActivityFor("s1"));
+    }
 }

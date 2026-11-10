@@ -41,10 +41,15 @@ public partial class RelayLinkTests : IDisposable
         return id;
     }
 
-    private (RelayLink Link, RelayIdentity Identity, List<string> Notes) New(RelayIdentity? identity = null)
+    // activity: CB-323's tracker, for the cases that exercise the activity
+    // frame (RelayLinkActivityTests.cs); none for everything that predates it.
+    private (RelayLink Link, RelayIdentity Identity, List<string> Notes) New(RelayIdentity? identity = null, RelayActivity.Tracker? activity = null)
     {
         identity ??= Identity();
-        var link = new RelayLink(identity, new RelaySessionBook(), () => _now, "mac", "1.0.4", "relay.example");
+        var link = new RelayLink(identity, new RelaySessionBook(), () => _now, "mac", "1.0.4", "relay.example")
+        {
+            Activity = activity,
+        };
         var notes = new List<string>();
         link.Note += notes.Add;
         return (link, identity, notes);
@@ -110,9 +115,9 @@ public partial class RelayLinkTests : IDisposable
     }
 
     // Welcome, offer, request, Allow: a phone paired and online.
-    private (RelayLink Link, RelayIdentity Identity, FakePhone Phone, List<string> Notes, IReadOnlyList<string> AllowFrames) Paired()
+    private (RelayLink Link, RelayIdentity Identity, FakePhone Phone, List<string> Notes, IReadOnlyList<string> AllowFrames) Paired(RelayActivity.Tracker? activity = null)
     {
-        var (link, identity, notes) = New();
+        var (link, identity, notes) = New(activity: activity);
         link.OnFrame(Welcome());
         var phone = new FakePhone();
         var offer = link.BeginPairing("off_1", _now.AddMinutes(5));
