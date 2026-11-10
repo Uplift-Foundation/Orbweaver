@@ -127,15 +127,59 @@ public class RelayActivityTests
 
     // ---- the command line out of a preview -------------------------------------
 
+    // Every real permission dialog captured for CB-313, through the parser the
+    // pipeline uses: the command line each CLI shows, on every terminal.
     [Theory]
-    [InlineData("Bash command|dotnet test tests/UnitTests|Run the unit tests|Do you want to proceed?", "dotnet test tests/UnitTests")]
-    [InlineData("Edit file|src/pages/index.astro|Do you want to make this edit?", "src/pages/index.astro")]
-    [InlineData("Would you like to run the following command?||  $ git push origin feature/x  ", "$ git push origin feature/x")]
-    [InlineData("Do you trust the files in this folder?", "Do you trust the files in this folder?")]
+    [InlineData("claude", "touch cb313-probe-file")]
+    [InlineData("codex", "touch $HOME/cb313-probe")]
+    [InlineData("grok", "touch $HOME/cb313-probe")]
+    public void The_command_of_every_real_capture_is_the_command_line(string cli, string expected)
+    {
+        var dir = Path.Combine(AppContext.BaseDirectory, "ScreenReadFixtures");
+        var files = Directory.GetFiles(dir, $"*-{cli}-prompt*.txt");
+        Assert.True(files.Length >= 5, $"{files.Length} {cli} captures");
+        foreach (var f in files)
+        {
+            var command = RelayActivity.CommandOf(PromptFingerprint.Of(File.ReadAllText(f))!.Preview);
+            // Windows captures run PowerShell's equivalents, and two Claude
+            // captures chain an ls: same rule, their own command line.
+            Assert.True(command.StartsWith(expected, StringComparison.Ordinal)
+                || command.StartsWith("New-Item C:/Users/", StringComparison.Ordinal)
+                || command.StartsWith("Remove-Item C:/Users/", StringComparison.Ordinal), $"{Path.GetFileName(f)}: «{command}»");
+        }
+    }
+
+    [Theory]
+    // Claude Code: the last line before its question, past a wrapped Tip and the description.
+    [InlineData("Bash command|Tip: auto mode handles these prompts — choose|below|Create empty probe file|touch x|Do you want to proceed?", "touch x")]
+    [InlineData("Edit file|src/pages/index.astro|Do you want to make this edit to index.astro?", "src/pages/index.astro")]
+    [InlineData("Write file|  notes.md  ", "notes.md")]
+    [InlineData("Bash command|Do you want to proceed?", "")]
     [InlineData("Bash command", "")]
+    // The pre-CB-313 layout (frames-v3's shim) put the command first; the rule
+    // follows the real captures, so that layout yields its description.
+    [InlineData("Bash command|dotnet test tests/UnitTests|Run the unit tests|Do you want to proceed?", "Run the unit tests")]
+    // Codex: the $ line, past Environment and a wrapped Reason.
+    [InlineData("Would you like to run the following command?|Environment: local|Reason: why|it wraps|$ touch $HOME/x", "touch $HOME/x")]
+    [InlineData("Would you like to run the following command?|Environment: local", "")]
+    // Grok: the framed line under what it is for.
+    [InlineData("›  Create the probe file|│ touch $HOME/x|← → narrow scope", "touch $HOME/x")]
+    // No header: the screen's own first line.
+    [InlineData("|Do you trust the files in this folder?|more", "Do you trust the files in this folder?")]
     [InlineData("", "")]
-    public void The_command_is_the_first_line_after_the_tool_header(string preview, string expected) =>
+    [InlineData("  |  ", "")]
+    public void The_command_follows_each_clis_layout(string preview, string expected) =>
         Assert.Equal(expected, RelayActivity.CommandOf(preview.Length == 0 ? [] : preview.Split('|')));
+
+    [Fact]
+    public void An_over_long_session_id_is_cut_to_the_contracts_cap()
+    {
+        var id = new string('s', 70);
+        var s = RelayActivity.Snapshot([Row(id, "waiting")], None, "m");
+        Assert.Equal(new string('s', 63) + "…", s.Oldest!.SessionId);
+        var uuid = Guid.NewGuid().ToString();
+        Assert.Equal(uuid, RelayActivity.Snapshot([Row(uuid, "waiting")], None, "m").Oldest!.SessionId);
+    }
 
     // ---- boot, ref -------------------------------------------------------------
 

@@ -29,6 +29,10 @@ namespace Orbweaver
         internal static readonly TimeSpan MinInterval = TimeSpan.FromSeconds(2);
         internal const int CountsMax = 9999;
         internal const int MaxTitle = 64, MaxTool = 32, MaxMachine = 32, MaxCommand = 160;
+        // The v7 addendum's cap on oldest.session_id. Every local CLI's id is
+        // far under it (a UUID is 36); the cut is there so a CLI that one day
+        // mints a longer one still sends a frame the relay takes.
+        internal const int MaxSessionId = 64;
         internal const string RefPrefix = "act-";
 
         // The relay refuses an empty machine, and a desktop whose name could not
@@ -78,7 +82,7 @@ namespace Orbweaver
             {
                 var prompt = pending(oldest.SessionId);
                 o = new ActivityOldest(
-                    oldest.SessionId,
+                    PromptFrames.Cut(oldest.SessionId, MaxSessionId),
                     prompt?.RequestId ?? "",
                     PromptFrames.Cut(oldest.Title, MaxTitle),
                     PromptFrames.Cut(prompt?.Tool ?? "", MaxTool),
@@ -99,20 +103,33 @@ namespace Orbweaver
         internal static string MachineName(string machine) =>
             string.IsNullOrWhiteSpace(machine) ? UnnamedMachine : PromptFrames.Cut(machine, MaxMachine);
 
-        // The command line out of a prompt's preview: the first line that is
-        // not the tool's own header ("Bash command", "Edit file") or Codex's
-        // "Would you like to run the following command?". The contract's
-        // examples and every vector carry exactly that line — the whole detail
-        // would put the header and "Do you want to proceed?" on the island.
+        // The command line out of a prompt's preview — what the island shows
+        // under the tool, rather than the whole detail (which would put the
+        // dialog's header and its question there too). One rule per CLI, read
+        // off the real captures in tests/UnitTests/Fixtures/screens:
+        //   * Codex: "Would you like to run the following command?", then
+        //     Environment/Reason lines, then "$ <command>" — the $ line.
+        //   * Grok: "› <what it is for>" then "│ <command>" — the framed line.
+        //   * Claude Code: "<Tool> command" / "<Tool> file", then perhaps a
+        //     "Tip:" that can wrap, a description, the command or path, and
+        //     "Do you want …?" — the last line before that question.
+        //   * Anything else (a trust, update or hooks screen, no header): its
+        //     first line, which is what that screen is asking about.
+        // Lines are trimmed and blank ones skipped; "" when nothing is left.
         internal static string CommandOf(IReadOnlyList<string> preview)
         {
-            foreach (var line in preview)
+            var lines = preview.Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+            if (lines.Count == 0) return "";
+            if (lines[0].Contains("run the following command", StringComparison.OrdinalIgnoreCase))
+                return lines.FirstOrDefault(l => l.StartsWith("$ ", StringComparison.Ordinal)) is { } dollar ? dollar[2..].Trim() : "";
+            if (lines.FirstOrDefault(l => l.StartsWith('│')) is { } framed) return framed[1..].Trim();
+            if (PromptPipeline.ToolOf([lines[0]]) != "")
             {
-                var t = line.Trim();
-                if (t.Length == 0 || PromptPipeline.ToolOf([t]) != "") continue;
-                return t;
+                var question = lines.FindIndex(1, l => l.StartsWith("Do you want", StringComparison.OrdinalIgnoreCase));
+                var last = (question < 0 ? lines.Count : question) - 1;
+                return last >= 1 ? lines[last] : "";
             }
-            return "";
+            return lines[0];
         }
 
         // frames-v7 frames.activity, canonical, keys in the contract's order.
@@ -212,7 +229,7 @@ namespace Orbweaver
     // CB-323 gate (frames-v7 gate.logs.desktop): ORBWEAVER_ACTIVITY_LOG=<path>
     // makes the desktop write one JSON line per activity frame it SENT — the
     // frame itself plus at_ms on this clock — and one per reply the relay
-    // gave it (t, ref, code, at_ms). The hour gate's checker rebuilds every
+    // gave it (ref, code, at_ms). The hour gate's checker rebuilds every
     // desktop's snapshot sequence from these. Off unless the variable is set,
     // in every build, because the gate runs against the installed app. The
     // lines carry this desktop's own titles and commands, which were already
@@ -237,8 +254,11 @@ namespace Orbweaver
         internal void Sent(string frame, DateTimeOffset at) =>
             Append(frame[..^1] + ",\"at_ms\":" + at.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture) + "}");
 
-        internal void Reply(string reference, string t, string code, DateTimeOffset at) =>
-            Append(new CanonicalJson().Str("t", t).Str("ref", reference).Str("code", code).Num("at_ms", at.ToUnixTimeMilliseconds()).ToString());
+        // frames-v7 gate.logs.desktop: (ref, code, at_ms) and nothing else —
+        // the code alone tells ok from err (activity, activity_stale against
+        // bad_frame, forbidden, unexpected, rate_limited).
+        internal void Reply(string reference, string code, DateTimeOffset at) =>
+            Append(new CanonicalJson().Str("ref", reference).Str("code", code).Num("at_ms", at.ToUnixTimeMilliseconds()).ToString());
 
         private void Append(string line)
         {

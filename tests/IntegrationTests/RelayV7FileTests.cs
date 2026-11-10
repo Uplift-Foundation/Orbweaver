@@ -109,7 +109,7 @@ public class RelayV7FileTests : IAsyncLifetime
         await Until(() => Lines(LogPath).Length == 2);
         var lines = Lines(LogPath);
         Assert.Equal(first.GetRawText()[..^1] + ",\"at_ms\":" + Now().ToUnixTimeMilliseconds() + "}", lines[0]);
-        Assert.Equal($$"""{"t":"ok","ref":"{{reference}}","code":"activity","at_ms":{{Now().ToUnixTimeMilliseconds()}}}""", lines[1]);
+        Assert.Equal($$"""{"ref":"{{reference}}","code":"activity","at_ms":{{Now().ToUnixTimeMilliseconds()}}}""", lines[1]);
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public class RelayV7FileTests : IAsyncLifetime
         var failures = new List<string>();
         log.Failed += failures.Add;
         log.Sent("""{"t":"activity","seq":1}""", DateTimeOffset.UnixEpoch);
-        log.Reply("act-x-1", "ok", "activity", DateTimeOffset.UnixEpoch);
+        log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
         var line = Assert.Single(failures);
         Assert.StartsWith("activity log not written: ", line);
     }
@@ -197,11 +197,11 @@ public class RelayV7FileTests : IAsyncLifetime
     {
         var log = new RelayActivityLog(LogPath);
         log.Sent("""{"t":"activity","seq":1}""", DateTimeOffset.FromUnixTimeMilliseconds(1794111792123));
-        log.Reply("act-x-1", "err", "bad_frame", DateTimeOffset.FromUnixTimeMilliseconds(1794111792200));
+        log.Reply("act-x-1", "bad_frame", DateTimeOffset.FromUnixTimeMilliseconds(1794111792200));
         Assert.Equal(
             [
                 """{"t":"activity","seq":1,"at_ms":1794111792123}""",
-                """{"t":"err","ref":"act-x-1","code":"bad_frame","at_ms":1794111792200}""",
+                """{"ref":"act-x-1","code":"bad_frame","at_ms":1794111792200}""",
             ],
             File.ReadAllLines(LogPath));
         foreach (var l in File.ReadAllLines(LogPath)) JsonDocument.Parse(l);

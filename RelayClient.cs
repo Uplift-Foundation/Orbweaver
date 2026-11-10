@@ -150,7 +150,7 @@ namespace Orbweaver
             _link.ActivityDue += at => Defer(() => _ = FlushActivityLaterAsync(at));
             if (options.ActivityLog is { } activityLog)
             {
-                _link.ActivityReplied += (reference, t, code) => activityLog.Reply(reference, t, code, _now());
+                _link.ActivityReplied += (reference, _, code) => activityLog.Reply(reference, code, _now());
                 activityLog.Failed += line => MirrorLog.Say("relay", line);
             }
             // Every pending prompt goes out again on each welcome (see

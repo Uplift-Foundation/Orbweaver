@@ -266,4 +266,30 @@ public partial class RelayLinkTests
         Assert.Empty(link.FlushActivity());
         _ = notes;
     }
+
+    // The lead's decision, pinned: ordering beats the debounce. A scan sends
+    // one snapshot; 5 ms later the pipeline mints the amber, and a second
+    // snapshot goes ahead of it — two activity frames 5 ms apart, the second
+    // one first in its own list, numbered in the order they were sent.
+    [Fact]
+    public void Ordering_beats_the_debounce_two_snapshots_milliseconds_apart_the_push_ones_first()
+    {
+        var (link, _, _, notes, _) = Paired(new RelayActivity.Tracker(Boot));
+        var (_, _, due, _) = Watched(link, notes);
+        var prompts = new Dictionary<string, ActivityPrompt>();
+        link.ActivityPrompts = id => prompts.GetValueOrDefault(id);
+        _now = _now.AddSeconds(5);
+        var scanAt = _now;
+        var scan = link.OnScan([Row("s1", "waiting")]);
+        Assert.True(IsActivity(scan[0]));
+
+        _now = _now.AddMilliseconds(5);
+        prompts["s1"] = new ActivityPrompt(Rid, "Bash", "touch x");
+        var push = link.SendPrompt(Rid, "s1", "{}", "{\"v\":1}");
+        Assert.Equal(TimeSpan.FromMilliseconds(5), _now - scanAt);
+        Assert.Equal(["activity", null], push.Select(T));            // the envelope has no t
+        Assert.Equal("amber", J(push[1]).GetProperty("push").GetString());
+        Assert.Equal((2L, 3L), (Activity(scan[0]).GetProperty("seq").GetInt64(), Activity(push[0]).GetProperty("seq").GetInt64()));
+        Assert.Empty(due);                                           // nothing was deferred to get there
+    }
 }

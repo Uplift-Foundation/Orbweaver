@@ -805,7 +805,11 @@ public class PromptPipelineTests
 
         await p.OnScannedAsync(Snap());
         var seen = Assert.Single(sender.Seen)!;
-        Assert.Equal(("Bash", "dotnet test tests/UnitTests"), (seen.Tool, seen.Command));
+        // The shim is frames-v3's pre-CB-313 layout, so its last line before
+        // the question is the description (RelayActivityTests pins the rule
+        // against every real capture).
+        Assert.Equal(("Bash", RelayActivity.CommandOf(PromptFingerprint.Of(Dialog)!.Preview)), (seen.Tool, seen.Command));
+        Assert.Equal("Run the unit tests", seen.Command);
         Assert.Matches("^[0-9A-HJKMNP-TV-Z]{26}$", seen.RequestId);
         Assert.Equal(seen, p.ActivityFor("s1"));
         Assert.Null(p.ActivityFor("s2"));
