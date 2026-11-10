@@ -1,0 +1,2642 @@
+{
+ "_source": {
+  "generated_by": "Orbweaver-Mobile contracts/make_v7_questions_vectors.py (CB-323, phone side)",
+  "orbweaver_sha": "hand-authored",
+  "spec": "contracts/frames-v7-questions.json",
+  "encoding": "message hex lowercase; sig base64url raw r||s; ECDSA randomized, verify never byte-compare"
+ },
+ "_rules": "cases: AnswerGate's decision for each answer against its pending prompt and the fresh parse (fresh_options, fresh_type_row); press means rule 8 runs. Rules 2-6 are satisfied in every case (the answer names the pending request, expiry, an unseen nonce and the prompt's screen_hash). sheet: what the phone draws for each prompt shape.",
+ "inputs": {
+  "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+  "session_id": "0f6c4f2a",
+  "nonce": "2PpudKkD-1hJcAK083KrgA",
+  "expires_at": 1794113592,
+  "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+  "id_pub": "04a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c",
+  "watch_pub": "042816fcee9cf2d592cfb090ea5ba37e95db99c7292b99e0f222c510362f291b30c882d8f73c0f9ecab869904ac13f90a2a3a005b7fc34770fcb93f1ad5fb947d2",
+  "domain": "orbweaver-answer-v1",
+  "note_max_bytes": 1000
+ },
+ "cases": [
+  {
+   "name": "options_two",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,3",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "PEV6ulEG7rh2iLqirqNNXxJwdIwaWw61DTVyU6pGn-W9_E-_KZzZNfnvMjSp1--5krKxxH7wnnqImvPwl5TI1w"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c33222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": "two ticks, sorted"
+  },
+  {
+   "name": "options_one",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:2",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "eth7ZF8Tk4RuXW8oZ3cv2dbAXBEZ8_pYXCDQ1-FekCj4wBcNEQrKi9eFtGmvbkCu0ZSe2Eja-HkppSQfkOEbdA"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:2\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a32222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": "a multi form answered with one tick"
+  },
+  {
+   "name": "options_all",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,2,3",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "Y3JuatFKFnU_cQi14mw71gGiwL6FU7nc-7yXSsudf34oxOMNP2mbyk2533T4x5PCC0-szgVyadd79IUEjAdrjg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,2,3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c322c33222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": ""
+  },
+  {
+   "name": "options_integer_order",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Choice 1",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Choice 2",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "Choice 3",
+      "kind": "option"
+     },
+     {
+      "key": "4",
+      "label": "Choice 4",
+      "kind": "option"
+     },
+     {
+      "key": "5",
+      "label": "Choice 5",
+      "kind": "option"
+     },
+     {
+      "key": "6",
+      "label": "Choice 6",
+      "kind": "option"
+     },
+     {
+      "key": "7",
+      "label": "Choice 7",
+      "kind": "option"
+     },
+     {
+      "key": "8",
+      "label": "Choice 8",
+      "kind": "option"
+     },
+     {
+      "key": "9",
+      "label": "Choice 9",
+      "kind": "option"
+     },
+     {
+      "key": "10",
+      "label": "Choice 10",
+      "kind": "option"
+     },
+     {
+      "key": "11",
+      "label": "Choice 11",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Choice 1",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Choice 2",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "Choice 3",
+     "kind": "option"
+    },
+    {
+     "key": "4",
+     "label": "Choice 4",
+     "kind": "option"
+    },
+    {
+     "key": "5",
+     "label": "Choice 5",
+     "kind": "option"
+    },
+    {
+     "key": "6",
+     "label": "Choice 6",
+     "kind": "option"
+    },
+    {
+     "key": "7",
+     "label": "Choice 7",
+     "kind": "option"
+    },
+    {
+     "key": "8",
+     "label": "Choice 8",
+     "kind": "option"
+    },
+    {
+     "key": "9",
+     "label": "Choice 9",
+     "kind": "option"
+    },
+    {
+     "key": "10",
+     "label": "Choice 10",
+     "kind": "option"
+    },
+    {
+     "key": "11",
+     "label": "Choice 11",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:2,10,11",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "xhOnKsMcm5oQbozLt2M6gqcqyzrwadVvBdYR-rICmOHZKH4WDKShAGxA9GPIBzavO6skLvDgvHhm34-FKRDMmw"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:2,10,11\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a322c31302c3131222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": "ascending as integers, not as text"
+  },
+  {
+   "name": "other_ascii",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "53a960d155555ba733bc1f9fe038be942201275fd264507cc57d0c11806415f5",
+    "note": "run only the fast ones",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "y272bStOrpbCCi09XpfuY3iY9TSMn1YBqw3pPjXY_GOJnEKtzPkCuqsNrIm0Bd8ehPHQ3dpqPmiCnkqdfrNXMA"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"53a960d155555ba733bc1f9fe038be942201275fd264507cc57d0c11806415f5\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2235336139363064313535353535626137333362633166396665303338626539343232303132373566643236343530376363353764306331313830363431356635222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": ""
+  },
+  {
+   "name": "other_unicode",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "e8f71a091ee213e7bb53d7d266a1c1a79b7e004df8de7a5e45369513f139c644",
+    "note": "café ☕ — \"quoted\" \\ slash /",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "O4sIPEMJwS6VR_G56J_RXt_DAXzfENQ9m4vPxtD9Jf8hCXPB2_5pvJVPZCO8zcFo2SdAyQY2se3ClempJRn0VQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"e8f71a091ee213e7bb53d7d266a1c1a79b7e004df8de7a5e45369513f139c644\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2265386637316130393165653231336537626235336437643236366131633161373962376530303464663864653761356534353336393531336631333963363434222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": "the shared escaper; scope over UTF-8"
+  },
+  {
+   "name": "option_single_unchanged",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "option:2",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "n3srnE976umcZi_kBPBgUDUcuRwNywypctBuW69tO4wcvolzmJ4lYfq8LaLnLaBXJkRfvSVHiT7cAQDT_N5s4Q"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"option:2\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e3a32222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": "frames-v3 single choice, unchanged"
+  },
+  {
+   "name": "option_on_text_prompt",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "option:1",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "RPDz8i4I78pzL--d1EnaoKycdlnYdvtsOzjrbxH-vG1rEiAOHI06zxjTWeKbiw8N-Yly8Nt_Fz0NTO8Va1nE4Q"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"option:1\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e3a31222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": "a text form still takes a plain choice"
+  },
+  {
+   "name": "other_scope_mismatch",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "f41f3fa625ff120ddca7ef456bf66371ecea23c129f4e4c32367101edb516cf8",
+    "note": "run only the fast ones",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "ybjms2d7xctJWDb733V0mU8rwHKvSoAYtLQtmqYgst33du60dL4a3RIq13lxT3nOmNRiFKeJL2xAxG_62BN9uA"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"f41f3fa625ff120ddca7ef456bf66371ecea23c129f4e4c32367101edb516cf8\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2266343166336661363235666631323064646361376566343536626636363337316563656132336331323966346534633332333637313031656462353136636638222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "bad_signature",
+   "why": ""
+  },
+  {
+   "name": "other_uppercase_scope",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
+    "note": "abc",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "INUF7Lb5m9ZeuvD6ISPIu-cZ_700SCh5666Nj4P85TBdjNsRiQHEYSqltQxkWUT6tGKmbaZfQuC44AhaJgQ3Ww"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2242413738313642463846303143464541343134313430444535444145323232334230303336314133393631373741394342343130464636314632303031354144222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "bad_signature",
+   "why": ""
+  },
+  {
+   "name": "options_with_note",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,3",
+    "scope": "",
+    "note": "x",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "VJgKjxUVLV5kdfajskC24gqN76dQGKaEK5gXoIBWOANK___9r7Xg-kyo7f-dJTte94Pd54ZnZ6kJY9_id5eLww"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c33222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "bad_signature",
+   "why": "only tell and other carry a note"
+  },
+  {
+   "name": "options_tampered",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,3",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "k5bfRwp6I-gc7UPzU7ccOhgoDaVPDqPYRhcte6IfATCqg9IZ9b_SKsDGLQVVI-U-Z7K2ixeY3iwchqvBd2lAbQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c33222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "bad_signature",
+   "why": "keys changed after signing"
+  },
+  {
+   "name": "watch_options",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,3",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "x6aTAquHT_dTmiF-r71n7E-OrU6B0qZ91toeEKN0xesFTyR_Tt4bo01EOvtCFPIfHMZWuGfs8Wix5ZuP_FUopQ",
+    "key": "watch"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c33222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "the Watch approves or denies only"
+  },
+  {
+   "name": "watch_other",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+    "note": "hi",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "KjA1houInGe_-bAK7BU1lPjNj4hceVyVoiEWhWGnI2DJ_oj87eQnd99a8H20OPP7nn41Ie9Dkq-HWyzzz66tbg",
+    "key": "watch"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238663433343334363634386636623936646638396464613930316335313736623130613664383339363164643363316163383862353962326463333237616134222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_unsorted",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:3,1",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "3Y12FqLXjgjxcDfI3GsIJeIdYsgniKCxg6eCIsN03mKHfhm406JepZGBVP5yJq9kxSaf0Z2J_PngZPqNGnn4AQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:3,1\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a332c31222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_duplicate",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,1",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "Jo9dGZ1BmeO1Eet9bg5VUkVBc-ByHGg9kCbwVkfW3uzDTIzvq-lnib0zUj-nmqYva6sNRkFVgMSqw5Qp5_gUUg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,1\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c31222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_empty",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "X8qGN_VLmeRxufSJs7uqVtvwEHw8U8vlOBTX7B-SSP6qqQ8-0w4sPf7sTMuU1rZ998oOIohTXdwZn1S3tCPHsQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_space",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1, 3",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "z_pUNlhPt_7V-cmVBhwgkSIws70bgfxTABUxWCQKntFQMecsuGZHFW3sPcv3TQYyxnJ94pScVZmIAqfaJIZitQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1, 3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c2033222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_trailing_comma",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,3,",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "3ILUqBYXBqKTsFdIvcjN41bpoWZfdaj0XHBFnsIPLF0pdHieQxryy1jPHbTV8ksvrC2MjuAsf711Pm8wJPAE-w"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,3,\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c332c222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_leading_zero",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:01,3",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "ka4eVc0gUAtJ1WhUZAT94D0UA-MqkFw3O5PJKDKFByGzdobaKCes6wh4g6yLg6dIDG5bXa-xyjpkSjDfP8lUkQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:01,3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a30312c33222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_text_order",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Choice 1",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Choice 2",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "Choice 3",
+      "kind": "option"
+     },
+     {
+      "key": "4",
+      "label": "Choice 4",
+      "kind": "option"
+     },
+     {
+      "key": "5",
+      "label": "Choice 5",
+      "kind": "option"
+     },
+     {
+      "key": "6",
+      "label": "Choice 6",
+      "kind": "option"
+     },
+     {
+      "key": "7",
+      "label": "Choice 7",
+      "kind": "option"
+     },
+     {
+      "key": "8",
+      "label": "Choice 8",
+      "kind": "option"
+     },
+     {
+      "key": "9",
+      "label": "Choice 9",
+      "kind": "option"
+     },
+     {
+      "key": "10",
+      "label": "Choice 10",
+      "kind": "option"
+     },
+     {
+      "key": "11",
+      "label": "Choice 11",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Choice 1",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Choice 2",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "Choice 3",
+     "kind": "option"
+    },
+    {
+     "key": "4",
+     "label": "Choice 4",
+     "kind": "option"
+    },
+    {
+     "key": "5",
+     "label": "Choice 5",
+     "kind": "option"
+    },
+    {
+     "key": "6",
+     "label": "Choice 6",
+     "kind": "option"
+    },
+    {
+     "key": "7",
+     "label": "Choice 7",
+     "kind": "option"
+    },
+    {
+     "key": "8",
+     "label": "Choice 8",
+     "kind": "option"
+    },
+    {
+     "key": "9",
+     "label": "Choice 9",
+     "kind": "option"
+    },
+    {
+     "key": "10",
+     "label": "Choice 10",
+     "kind": "option"
+    },
+    {
+     "key": "11",
+     "label": "Choice 11",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:10,2",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "Na7ERsST_7rvAAtMn-Bfv5gC7XBJ3RaMYWQbLs-dcKVLxSxoy6HVSINTquUkhwziknjDdSgTQdfItF19mIRw6g"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:10,2\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a31302c32222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_key_not_offered",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,9",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "wbPdIMAMH7ha6ItHJlwMV9vPztS0HH6_qX3yOwi-p1MFHNGocOIhz0DwJsnKQXvp8P9Qdrg62ZLBbCAOMuxDmQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,9\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c39222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "options_key_not_an_option",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "approve"
+     },
+     {
+      "key": "2",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "approve"
+    },
+    {
+     "key": "2",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,2",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "c-beDsaNSyaX5CwECZVxk6cRcpxDfIPDZb9QTxy6FDE5sshT-IP501LwHO30MGrEicytV9AlDNeAWNES-ZA53w"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,2\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c32222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "key 1 is approve, not option"
+  },
+  {
+   "name": "options_on_single_prompt",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,2",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "RwM00tlldSLk9UDUxfdNmEW70rtIMjXX-jqjHyGlebecLCaireWGmk4ZFzn0ZgfzJZK_sdPO45AyORiJLP3aHw"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,2\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c32222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "no multi:true"
+  },
+  {
+   "name": "option_on_multi_prompt",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "option:1",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "WZD0dgzGXwVGQU0DJX1plhkk69qxJbV7BKitEN_uFSc9iTuI0VG3mqbwgkpRPphuCtR4O3XORewB00iE_FT7cg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"option:1\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e3a31222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "a multi form takes options:"
+  },
+  {
+   "name": "options_key_gone_from_screen",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "options:1,3",
+    "scope": "",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "ss0SS41gp3JyrVm9csQ6kPD9TfFubMMRyKkk2lDnuaUpm-phoVMMPIIqCigYaKs7jPRbxoIDE97FWGAPDNL48g"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"options:1,3\",\"scope\":\"\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f7074696f6e733a312c33222c2273636f7065223a22222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "the fresh parse lost choice 3"
+  },
+  {
+   "name": "other_without_text_flag",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+    "note": "hi",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "328kEaiPdB3oh76oc5vrt5eptJwzSfzpajPCfQMwrwF87gfVwZaYsV9DguCSMTOnbf_Idq2ay7jep0qCeWP5fg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238663433343334363634386636623936646638396464613930316335313736623130613664383339363164643363316163383862353962326463333237616134222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "other_on_multi",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Unit",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Integration",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "UI",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "multi": true,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+    "note": "hi",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "P2LFsHEfd5bRPwtlcaBzV51F-feZ8TDa0s6nhjLD583tHqQxN3YzJo1IpmS5Q3U-AQy1h7gLh8uI673-lYt-fg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238663433343334363634386636623936646638396464613930316335313736623130613664383339363164643363316163383862353962326463333237616134222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "text is never with multi"
+  },
+  {
+   "name": "other_row_gone",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": false,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+    "note": "hi",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "ucjke_NWoRuiyAm8rDS39-2Xws19tL4Mro64c-URKgnh-8j6uWKVz89BMboe3Y7BZJNwLp8DGSzc7WhhOf4zZw"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238663433343334363634386636623936646638396464613930316335313736623130613664383339363164643363316163383862353962326463333237616134222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "the fresh screen has no Type something row"
+  },
+  {
+   "name": "other_empty",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "note": "",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "-flmFeUzwidl9FzmnsIpd3Wo9aE3i3Ex0OPRgtWrrFRQ9_axQZWsZeKsN3ocZgydWsDykHnfquqm7K414Dh_cw"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2265336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "other_newline",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "edc8c1284585d703bec48f34f842bd911200142ddd602264c77df65168abae1d",
+    "note": "two\nlines",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "WIxYb7YRtShahDgPUvUfqSUC3jTib5vvbHfNaAMuMDSJNR39OmOG_ubIKjewsEf9TxxWeoq5lCIC0daR2yGTiw"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"edc8c1284585d703bec48f34f842bd911200142ddd602264c77df65168abae1d\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2265646338633132383435383564373033626563343866333466383432626439313132303031343264646436303232363463373764663635313638616261653164222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "other_cr",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "a6cf28ad4df94744f56c66922de6dd87c02b92433e7b090159697996cf04912f",
+    "note": "two\rlines",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "R_3M5mq4jdO0ZlygjM00fnlRfB1MyO3AoeP5xvqdGlJhLni9pNBhXcjk_6M6-qL1w3LwyqWA8ACbAMGXiuH5UA"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"a6cf28ad4df94744f56c66922de6dd87c02b92433e7b090159697996cf04912f\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2261366366323861643464663934373434663536633636393232646536646438376330326239323433336537623039303135393639373939366366303439313266222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "other_tab",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "894891f8b78a9945b0aa07e70d5f71f10b1f1990af127de561cc0ac36024c188",
+    "note": "a\tb",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "rTeOQTWhcjiwqQhxZN6FwtO7PTtlIeQpUJaUNBQCPbFTsCr4cJFS4r2TRQQg1nVXa22FWv0HRfOW9Uxg8xtl1A"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"894891f8b78a9945b0aa07e70d5f71f10b1f1990af127de561cc0ac36024c188\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238393438393166386237386139393435623061613037653730643566373166313062316631393930616631323764653536316363306163333630323463313838222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "other_del",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "4ef992561c6efb5dd9dc8e156a4bf8d702ebceb36dbb86d7223c4438ad6db9fa",
+    "note": "ab",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "8BVrkr5iRQk5r_Qx-NlzPIeEtdCf_lFiBKh1v1zvwTzZlxtETWxph9AkRcN_Y0_FgmGsXBNYRa1n83127eyNQg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"4ef992561c6efb5dd9dc8e156a4bf8d702ebceb36dbb86d7223c4438ad6db9fa\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2234656639393235363163366566623564643964633865313536613462663864373032656263656233366462623836643732323363343433386164366462396661222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "other_c1",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "af17f7e105628f004b9206b20070de1da78595a7dc4a0f8f3a7e158c173e4dee",
+    "note": "ab",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "FehayVxssSiPEess0yBeI2wny3s-JdPWAvu2OTrgqSiSbhBHH7iFmLdNg21AB-mljGEl4f_FQSqE4eJ7cPzK-A"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"af17f7e105628f004b9206b20070de1da78595a7dc4a0f8f3a7e158c173e4dee\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2261663137663765313035363238663030346239323036623230303730646531646137383539356137646334613066386633613765313538633137336534646565222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": ""
+  },
+  {
+   "name": "other_too_long",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "85e81c706891a47e313a9f7d081c3462dfc72becb5b9c3744db7949f94676c06",
+    "note": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "JcSv3njKH0V6L0d7Xwd0j_KxmplPDS1FLLLw4Fe5olUlPGN7MkHHsLhID7GW8lfUsYqC0BN1WWf58OTco3UWFg"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"85e81c706891a47e313a9f7d081c3462dfc72becb5b9c3744db7949f94676c06\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238356538316337303638393161343765333133613966376430383163333436326466633732626563623562396333373434646237393439663934363736633036222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "forbidden_option",
+   "why": "1002 UTF-8 bytes"
+  },
+  {
+   "name": "other_at_limit",
+   "prompt": {
+    "t": "prompt",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "kind": "question",
+    "cli": "claude",
+    "tool": "AskUserQuestion",
+    "preview": "Which suites should run?",
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "No",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "expires_at": 1794113592,
+    "text": true
+   },
+   "fresh_options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "fresh_type_row": true,
+   "frame": {
+    "t": "answer",
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "action": "other",
+    "scope": "8b671e21c36a4d798b1f027ddf9b611a373ce10ff7f19a43ee8cd014721e5d98",
+    "note": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+    "nonce": "2PpudKkD-1hJcAK083KrgA",
+    "expires_at": 1794113592,
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "sig": "YloqAZjIHjbeXDphYxVRNgr2pzs0SpGNwXYrfflklGSuv5HTA6OywqvVil3pyfbOL2m3w4IhoIfV8CogD7akDQ"
+   },
+   "signed_body": "{\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"action\":\"other\",\"scope\":\"8b671e21c36a4d798b1f027ddf9b611a373ce10ff7f19a43ee8cd014721e5d98\",\"nonce\":\"2PpudKkD-1hJcAK083KrgA\",\"expires_at\":1794113592}",
+   "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a4339523041354e325137573858334534543659395a4244222c2273657373696f6e5f6964223a223066366334663261222c22616374696f6e223a226f74686572222c2273636f7065223a2238623637316532316333366134643739386231663032376464663962363131613337336365313066663766313961343365653863643031343732316535643938222c226e6f6e6365223a2232507075644b6b442d31684a63414b3038334b726741222c22657870697265735f6174223a313739343131333539327d",
+   "expect": "press",
+   "why": "exactly 1000 UTF-8 bytes"
+  }
+ ],
+ "sheet": [
+  {
+   "name": "multi",
+   "prompt_flags": {
+    "kind": "question",
+    "multi": true
+   },
+   "options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "shows": {
+    "checkboxes": [
+     "1",
+     "2",
+     "3"
+    ],
+    "single_choices": [],
+    "text_field": false
+   }
+  },
+  {
+   "name": "text",
+   "prompt_flags": {
+    "kind": "question",
+    "text": true
+   },
+   "options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "No",
+     "kind": "option"
+    }
+   ],
+   "shows": {
+    "checkboxes": [],
+    "single_choices": [
+     "1",
+     "2"
+    ],
+    "text_field": true
+   }
+  },
+  {
+   "name": "plain",
+   "prompt_flags": {
+    "kind": "question"
+   },
+   "options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "shows": {
+    "checkboxes": [],
+    "single_choices": [
+     "1",
+     "2",
+     "3"
+    ],
+    "text_field": false
+   }
+  },
+  {
+   "name": "both_flags",
+   "prompt_flags": {
+    "kind": "question",
+    "multi": true,
+    "text": true
+   },
+   "options": [
+    {
+     "key": "1",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "2",
+     "label": "Integration",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "shows": {
+    "checkboxes": [
+     "1",
+     "2",
+     "3"
+    ],
+    "single_choices": [],
+    "text_field": false
+   }
+  },
+  {
+   "name": "open_on_desk",
+   "prompt_flags": {
+    "kind": "question",
+    "text": true
+   },
+   "options": [],
+   "shows": {
+    "checkboxes": [],
+    "single_choices": [],
+    "text_field": false
+   }
+  },
+  {
+   "name": "multi_with_approve",
+   "prompt_flags": {
+    "kind": "question",
+    "multi": true
+   },
+   "options": [
+    {
+     "key": "1",
+     "label": "Yes",
+     "kind": "approve"
+    },
+    {
+     "key": "2",
+     "label": "Unit",
+     "kind": "option"
+    },
+    {
+     "key": "3",
+     "label": "UI",
+     "kind": "option"
+    }
+   ],
+   "shows": {
+    "checkboxes": [
+     "2",
+     "3"
+    ],
+    "single_choices": [],
+    "text_field": false
+   }
+  }
+ ]
+}

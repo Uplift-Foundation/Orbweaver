@@ -41,7 +41,7 @@ using static Orbweaver.RelayCrypto;
 //   unlink                                   unlink from the phone side and exit
 //   quit                                     exit without unlinking
 //
-// For tell, scope defaults to the SHA-256 hex of note, as the phone computes it.
+// For tell and other, scope defaults to the SHA-256 hex of note, as the phone computes it.
 internal static class AnswerPhone
 {
     private static string Now() => DateTimeOffset.UtcNow.ToString("HH:mm:ss.fff");
@@ -242,7 +242,8 @@ internal static class AnswerPhone
                         else if (w.StartsWith("signbody:")) { var (a, b) = Split(w[9..]); signBody[a] = Typed(a, b); }
                         else { var (a, b) = Split(w); f[a] = b; }
                     }
-                    if ((string)f["action"] == "tell" && (string)f["scope"] == "") f["scope"] = AnswerSigning.TellScope((string)f["note"]);
+                    // tell and (CB-323) other bind their note through scope.
+                    if ((string)f["action"] is "tell" or "other" && (string)f["scope"] == "") f["scope"] = AnswerSigning.TellScope((string)f["note"]);
                     var s = new Dictionary<string, object>(f);
                     foreach (var (a, b) in signBody) s[a] = b;
                     var bodyText = AnswerSigning.Body((string)s["request_id"], (string)s["session_id"], (string)s["action"], (string)s["scope"], (string)s["nonce"], (long)s["expires_at"]);

@@ -23,9 +23,31 @@ namespace Orbweaver
 
         // The bytes a key is: a single ASCII digit as itself, Enter as CR (not
         // LF, which Claude Code and Codex read as "insert a newline"; see
-        // TerminalFocuser.KittySend). Anything else is not a key this presses.
-        internal static string? Bytes(string key) =>
-            key == "Enter" ? "\r" : key.Length == 1 && char.IsAsciiDigit(key[0]) ? key : null;
+        // TerminalFocuser.KittySend), and — CB-323, for a question form's
+        // "Type something." row and a multi-select's commit — Up, Down and
+        // Right as the VT cursor sequences a terminal sends for those keys.
+        // Anything else is not a key this presses.
+        internal static string? Bytes(string key) => key switch
+        {
+            "Enter" => "\r",
+            "Up" => ArrowUp,
+            "Down" => ArrowDown,
+            "Right" => ArrowRight,
+            _ => key.Length == 1 && char.IsAsciiDigit(key[0]) ? key : null,
+        };
+
+        internal const string ArrowUp = "\u001b[A", ArrowDown = "\u001b[B", ArrowRight = "\u001b[C";
+
+        // The Windows virtual-key code for an arrow's sequence, or 0. A console
+        // reads an arrow as one key event carrying VK_UP / VK_DOWN / VK_RIGHT,
+        // not as the three characters of its VT spelling.
+        internal static ushort ArrowVirtualKey(string bytes) => bytes switch
+        {
+            ArrowUp => 0x26,
+            ArrowDown => 0x28,
+            ArrowRight => 0x27,
+            _ => 0,
+        };
 
         // kitty and WezTerm: exactly the bytes on stdin, no paste markers, no
         // trailing Enter.
@@ -70,6 +92,9 @@ namespace Orbweaver
         // VK_RETURN. Nothing after the last one.
         internal static List<TerminalFocuser.NativeMethods.InputRecord> ConsoleRecords(string bytes)
         {
+            if (ArrowVirtualKey(bytes) is var vk and > 0)
+                return [ArrowRecord(vk, 1), ArrowRecord(vk, 0)];
+
             var records = new List<TerminalFocuser.NativeMethods.InputRecord>(bytes.Length * 2);
             foreach (var c in bytes)
                 for (var down = 1; down >= 0; down--)
@@ -83,5 +108,14 @@ namespace Orbweaver
                     });
             return records;
         }
+
+        private static TerminalFocuser.NativeMethods.InputRecord ArrowRecord(ushort vk, int down) => new()
+        {
+            EventType = TerminalFocuser.NativeMethods.KeyEvent,
+            KeyDown = down,
+            RepeatCount = 1,
+            VirtualKeyCode = vk,
+            Char = '\0',
+        };
     }
 }

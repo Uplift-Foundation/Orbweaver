@@ -306,9 +306,11 @@ namespace Orbweaver
             return a;
         }
 
+        // CB-323 frames-v7-questions: multi and text, present only as true.
         internal static string Prompt(string requestId, string sessionId, string kind, string cli, string tool,
-            string preview, IReadOnlyList<PromptOption> options, string screenHash, long expiresAt) =>
-            new JsonObject
+            string preview, IReadOnlyList<PromptOption> options, string screenHash, long expiresAt, bool multi = false, bool text = false)
+        {
+            var j = new JsonObject
             {
                 ["t"] = "prompt",
                 ["request_id"] = requestId,
@@ -320,7 +322,11 @@ namespace Orbweaver
                 ["options"] = OptionsJson(options),
                 ["screen_hash"] = screenHash,
                 ["expires_at"] = expiresAt,
-            }.ToJsonString(Json);
+            };
+            if (multi) j["multi"] = true;
+            if (text) j["text"] = true;
+            return j.ToJsonString(Json);
+        }
 
         internal static string Resolved(string requestId, string sessionId, string by) =>
             new JsonObject { ["t"] = "resolved", ["request_id"] = requestId, ["session_id"] = sessionId, ["by"] = by }.ToJsonString(Json);
