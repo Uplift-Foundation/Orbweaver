@@ -77,6 +77,8 @@ public class RelayV7Tests
     [InlineData("snapshot_grammar.accepted[3].machine", 36, 'M', 32)]
     [InlineData("timeline.events[4].frame.oldest.command", 170, 'c', 160)]
     [InlineData("timeline.events[4].frame.oldest.tool", 40, 't', 32)]
+    [InlineData("relay_addendum.scenarios[0].events[1].frame.oldest.command", 170, 'c', 160)]
+    [InlineData("relay_addendum.scenarios[1].events[2].frame.machine", 36, 'M', 32)]
     public void An_uncut_input_comes_back_cut(string path, int length, char ch, int limit)
     {
         var root = JsonNode.Parse(File.ReadAllText(Committed))!;
@@ -90,6 +92,18 @@ public class RelayV7Tests
         var root = JsonNode.Parse(File.ReadAllText(Committed))!;
         var rebuilt = Rebuilt(root, "snapshot_grammar.accepted[3].working", JsonValue.Create(10_500));
         Assert.Equal(RelayActivity.CountsMax, Find(rebuilt, "snapshot_grammar.accepted[3].working")!.GetValue<int>());
+    }
+
+    // A file with no relay addendum (frames-v7 before #50) still builds: the
+    // scenarios are recomputed only where they exist.
+    [Fact]
+    public void A_file_without_the_relay_addendum_still_builds()
+    {
+        var root = JsonNode.Parse(File.ReadAllText(Committed))!;
+        root.AsObject().Remove("relay_addendum");
+        var rebuilt = Rebuilt(root, "timeline.events[4].frame.oldest.command", JsonValue.Create(new string('c', 170)));
+        Assert.Null(rebuilt["relay_addendum"]);
+        Assert.Equal(new string('c', 159) + "…", Find(rebuilt, "timeline.events[4].frame.oldest.command")!.GetValue<string>());
     }
 
     private static JsonNode Rebuilt(JsonNode root, string path, JsonNode? wrong)
