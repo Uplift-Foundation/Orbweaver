@@ -94,6 +94,42 @@ public class RelayV7Tests
         Assert.Equal(RelayActivity.CountsMax, Find(rebuilt, "snapshot_grammar.accepted[3].working")!.GetValue<int>());
     }
 
+    // Every desktop frame in the file, wherever it sits, is recomputed: a key
+    // the desktop never writes, slipped into any of them, does not survive the
+    // rebuild. Found by walking the file for t:"activity" rather than listing
+    // places, so a new section of desktop frames (#69's channel scenarios
+    // were the last) fails here until the generator covers it. The refused
+    // frames are the exception: the desktop cannot produce them, so they are
+    // carried, and that is checked elsewhere.
+    public static TheoryData<string> DesktopFrames()
+    {
+        var paths = new TheoryData<string>();
+        void Walk(JsonNode? n, string path)
+        {
+            if (path.StartsWith("snapshot_grammar.refused")) return;
+            if (n is JsonObject o)
+            {
+                if (o["t"]?.GetValueKind() == System.Text.Json.JsonValueKind.String && o["t"]!.GetValue<string>() == "activity") paths.Add(path);
+                foreach (var (k, v) in o) Walk(v, path.Length == 0 ? k : $"{path}.{k}");
+            }
+            else if (n is JsonArray a)
+                for (var i = 0; i < a.Count; i++) Walk(a[i], $"{path}[{i}]");
+        }
+        Walk(JsonNode.Parse(File.ReadAllText(Committed)), "");
+        return paths;
+    }
+
+    [Theory]
+    [MemberData(nameof(DesktopFrames))]
+    public void Every_desktop_frame_wherever_it_sits_is_recomputed(string path)
+    {
+        var root = JsonNode.Parse(File.ReadAllText(Committed))!;
+        var original = Find(root, path)!.ToJsonString();
+        var tampered = Find(root, path)!.DeepClone().AsObject();
+        tampered["zz_not_the_desktops"] = 1;
+        Assert.Equal(original, Find(Rebuilt(root, path, tampered), path)!.ToJsonString());
+    }
+
     // A file with no relay addendum (frames-v7 before #50) still builds: the
     // scenarios are recomputed only where they exist.
     [Fact]
@@ -128,7 +164,7 @@ public class RelayV7Tests
     private static void Set(JsonNode root, string path, JsonNode? value)
     {
         var parent = Find(root, path[..path.LastIndexOfAny(['.', '['])])!;
-        var last = Regex.Match(path, @"[^.\[\]]+$").Value;
+        var last = Regex.Match(path.TrimEnd(']'), @"[^.\[\]]+$").Value;   // a path may end in an index
         if (int.TryParse(last, out var i)) parent[i] = value; else parent[last] = value;
     }
 
