@@ -31,7 +31,13 @@ namespace Orbweaver
             DateTimeOffset PairedAt,
             ushort SendEpoch,
             bool SendExhausted,
-            (ushort Epoch, ulong Counter)? Received);
+            (ushort Epoch, ulong Counter)? Received,
+            // CB-323 watch-key addendum: the phone's watch key as its last
+            // accepted key.add left it (null when none, or after a key.remove),
+            // and the `at` of the last add or remove applied — which orders the
+            // next one even after the key itself is gone.
+            byte[]? WatchPublic = null,
+            long? WatchAt = null);
 
         private sealed class StoredPhone
         {
@@ -44,6 +50,9 @@ namespace Orbweaver
             [JsonPropertyName("send_exhausted")] public bool SendExhausted { get; set; }
             [JsonPropertyName("recv_epoch")] public ushort? ReceiveEpoch { get; set; }
             [JsonPropertyName("recv_counter")] public ulong? ReceiveCounter { get; set; }
+            // CB-323: absent from the file until a key.add is accepted.
+            [JsonPropertyName("watch_pub")] public string? WatchPublic { get; set; }
+            [JsonPropertyName("watch_at")] public long? WatchAt { get; set; }
         }
 
         private sealed class Stored
@@ -265,6 +274,31 @@ namespace Orbweaver
             }
         }
 
+        // CB-323: the phone's accepted watch key, or null — none accepted, or
+        // no such phone (one unpaired while its answer was in flight).
+        internal byte[]? WatchPublicOf(string phoneId) => PhoneById(phoneId)?.WatchPublic;
+
+        // CB-323: what an accepted key.add or key.remove leaves for the phone.
+        // Persisted before the caller replies key.ok; on a failed write the
+        // record is put back as it was and false comes back, so nothing is
+        // confirmed to the phone that a restart would forget. False too for a
+        // phone that is not (or no longer) paired.
+        internal bool SaveWatchKey(string phoneId, byte[]? watchPublic, long at)
+        {
+            lock (_gate)
+            {
+                EnsureLoaded();
+                var p = _stored.Phones.FirstOrDefault(x => x.PhoneId == phoneId);
+                if (p is null) return false;
+                var (oldPub, oldAt) = (p.WatchPublic, p.WatchAt);
+                p.WatchPublic = watchPublic is null ? null : RelayCrypto.Hex(watchPublic);
+                p.WatchAt = at;
+                if (Save()) return true;
+                (p.WatchPublic, p.WatchAt) = (oldPub, oldAt);
+                return false;
+            }
+        }
+
         // ---- unlinks owed to the relay -------------------------------------------
 
         internal IReadOnlyList<string> PendingUnlinks
@@ -302,7 +336,11 @@ namespace Orbweaver
             p.PairedAt, p.SendEpoch, p.SendExhausted,
             // Both or nothing: a hand-edited file with only one half has no
             // position anyone can trust, so it reads as none.
-            p.ReceiveEpoch is { } e && p.ReceiveCounter is { } c ? (e, c) : null);
+            p.ReceiveEpoch is { } e && p.ReceiveCounter is { } c ? (e, c) : null,
+            // A watch key that does not parse as a point is no key: every
+            // watch-signed answer is then bad_signature, which fails closed.
+            RelayCrypto.FromHex(p.WatchPublic) is { } w && RelayCrypto.IsValidPublicKey(w) ? w : null,
+            p.WatchAt);
 
         private void EnsureLoaded()
         {

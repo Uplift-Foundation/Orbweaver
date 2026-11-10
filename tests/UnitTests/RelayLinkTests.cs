@@ -12,7 +12,7 @@ namespace Orbweaver.Tests;
 /// before welcome, a request after the offer expired, a resync for a phone
 /// already removed, a replayed revoke, a reconnect mid-session.
 /// </summary>
-public class RelayLinkTests : IDisposable
+public partial class RelayLinkTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb-relay-link-" + Guid.NewGuid());
     private DateTimeOffset _now = new(2026, 11, 8, 10, 0, 0, TimeSpan.Zero);

@@ -269,7 +269,8 @@ namespace Orbweaver
 
         // ---- answers ----------------------------------------------------------
 
-        internal async Task OnAnswerAsync(string phoneId, byte[] phoneIdPublic, PhoneAnswer answer)
+        // watchPublic: that phone's accepted watch key, or null (CB-323).
+        internal async Task OnAnswerAsync(string phoneId, byte[] phoneIdPublic, PhoneAnswer answer, byte[]? watchPublic = null)
         {
             // Gate (a)'s breakdown starts here: when the answer reached the desk.
             _seams.Log($"answer {answer.RequestId} from {phoneId}");
@@ -278,7 +279,7 @@ namespace Orbweaver
             {
                 var live = _live.Values.FirstOrDefault(l => l.Pending.RequestId == answer.RequestId);
                 var fresh = live is null ? null : await _seams.Capture(live.Status).ConfigureAwait(false);
-                var d = AnswerGate.Decide(live?.Pending, answer, fresh, phoneId, phoneIdPublic, _seams.Now(), _nonces);
+                var d = AnswerGate.Decide(live?.Pending, answer, fresh, phoneId, phoneIdPublic, _seams.Now(), _nonces, watchPublic);
                 if (!d.Press)
                 {
                     Refuse(phoneId, answer, d.Code!);
