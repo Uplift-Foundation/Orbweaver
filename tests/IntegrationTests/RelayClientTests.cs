@@ -786,18 +786,34 @@ public class RelayClientTests : IAsyncLifetime
         await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true }));
         await _stub.Next(IsEnvelope);                              // the roster
 
-        for (var i = 0; i < 30; i++)
+        // The clock starts BEFORE the first frame is queued, so it is earlier
+        // than the pacer's first Reserve, whatever the scheduler does next. It
+        // used to start after queueing, and on a loaded run the pacer had
+        // already sent part of the burst by then, so the window it measured
+        // shrank and went red at 257 ms with pacing working (CB-321).
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        const int frames = 30;
+        for (var i = 0; i < frames; i++)
             client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", i % 2 == 0 ? "generating" : "idle", null, null)]);
 
-        var started = DateTime.UtcNow;
         var seqs = new List<long>();
-        for (var i = 0; i < 30; i++)
+        for (var i = 0; i < frames; i++)
             seqs.Add(OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("seq").GetInt64());
-        var took = DateTime.UtcNow - started;
+        var lastArrived = clock.Elapsed;
 
-        Assert.Equal(Enumerable.Range(2, 30).Select(i => (long)i), seqs);
-        // 10 go at once, the other 20 at 35/s: at least ~0.5 s, never one burst.
-        Assert.True(took >= TimeSpan.FromMilliseconds(400), $"30 frames arrived in {took.TotalMilliseconds} ms");
+        Assert.Equal(Enumerable.Range(2, frames).Select(i => (long)i), seqs);
+        // What the token bucket guarantees: n frames reserved from a moment no
+        // earlier than the clock's start cannot all be sent before
+        // (n - burst) / rate has passed, because at most `burst` tokens were
+        // banked at the first Reserve and the rest refill at `rate`. The last
+        // frame's arrival, read here, is no earlier than its send, so a slow
+        // reader or a busy machine only lengthens what is measured: the bound
+        // fails only when frames went out faster than the pacer allows.
+        // Per-frame gaps are deliberately not asserted: the first `burst`
+        // frames go together by design, and a late reader drains buffered
+        // frames together too, so a gap can be zero with pacing correct.
+        var floor = TimeSpan.FromSeconds((frames - RelayPacer.DefaultBurst) / RelayPacer.DefaultRate);
+        Assert.True(lastArrived >= floor, $"{frames} frames all arrived {lastArrived.TotalMilliseconds:F0} ms after queueing began; pacing allows no fewer than {floor.TotalMilliseconds:F0} ms");
     }
 
     // Acceptance 4 across a quit, through the real client: Remove while the
