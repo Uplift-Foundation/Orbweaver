@@ -79,6 +79,42 @@ class GeneratorTests(unittest.TestCase):
             self.assertEqual(cbi.check_dir(os.path.join(d, "m")), [])
 
 
+class CrossDrivePathTests(unittest.TestCase):
+    """relpath raises ValueError between Windows drives; CI's Windows leg hit it (a checkout on D:,
+    a temp directory on C:). Forced here on every platform so macOS can see it too."""
+
+    def setUp(self):
+        self._real = os.path.relpath
+
+        def other_drive(path, start=os.curdir):
+            raise ValueError("path is on mount 'C:', start on mount 'D:'")
+        os.path.relpath = other_drive
+
+    def tearDown(self):
+        os.path.relpath = self._real
+
+    def test_shown_falls_back_to_the_path_as_given(self):
+        self.assertEqual(mk._shown("/some/where/x.png"), "/some/where/x.png")
+
+    def test_control_shown_is_relative_when_it_can_be(self):
+        os.path.relpath = self._real
+        self.assertEqual(mk._shown(os.path.join(mk.HERE, "docs", "x.png")), os.path.join("docs", "x.png"))
+
+    def test_main_of_both_tools_survives_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = (mk.ASSETS, mk.MOBILE)
+            mk.ASSETS, mk.MOBILE = os.path.join(d, "a"), os.path.join(d, "m")
+            try:
+                with redirect_stdout(io.StringIO()) as out:
+                    mk.main()
+                self.assertIn(os.path.join(d, "m", "watchos-1024.png"), out.getvalue())
+            finally:
+                mk.ASSETS, mk.MOBILE = old
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(cbi.main(["--dir", os.path.join(d, "m"), "--no-regen"]), 0)
+            self.assertIn(os.path.join(d, "m"), out.getvalue())
+
+
 class ShippedFilesTests(unittest.TestCase):
     def test_committed_files_pass_including_the_regeneration_compare(self):
         self.assertEqual(cbi.check_dir(SHIPPED), [])

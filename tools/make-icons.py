@@ -56,6 +56,16 @@ IDLE = (0x5B, 0x7A, 0x94)
 GENERATING = (0x8B, 0x6F, 0xD1)
 WAITING = (0xE8, 0x98, 0x3B)
 
+def _shown(path):
+    """A path for the "wrote ..." lines, relative to the repo when it can be. os.path.relpath
+    raises ValueError across Windows drives (a runner's checkout on D:, a temp directory on C:),
+    and a progress line must never be what fails a run, so fall back to the path as given."""
+    try:
+        return os.path.relpath(path, HERE)
+    except ValueError:
+        return path
+
+
 def png_bytes(size, pixels, opaque=False):
     """pixels: flat list of (r, g, b, a) tuples, row-major, length size*size.
 
@@ -381,22 +391,22 @@ def main():
     for name, color in (("idle", IDLE), ("generating", GENERATING), ("waiting", WAITING)):
         path = os.path.join(ASSETS, f"tray-{name}.png")
         write_png(path, 64, draw_tray(64, color))
-        print("wrote", os.path.relpath(path, HERE))
+        print("wrote", _shown(path))
 
         path = os.path.join(ASSETS, f"tray-{name}-muted.png")
         write_png(path, 64, draw_tray(64, color, muted=True))
-        print("wrote", os.path.relpath(path, HERE))
+        print("wrote", _shown(path))
 
     path = os.path.join(ASSETS, "appicon-1024.png")
     write_png(path, 1024, draw_appicon(1024, 824 / 1024))
-    print("wrote", os.path.relpath(path, HERE))
+    print("wrote", _shown(path))
 
     # Drawn at each size rather than downscaled from one bitmap, with the bolder cut
     # for the small ones (cut_for) — Explorer and the Start menu pick whichever size
     # they need, and 16px is the one that shows up most.
     ico = os.path.join(ASSETS, "Orbweaver.ico")
     write_ico(ico, [(s, png_bytes(s, draw_appicon(s, 0.94))) for s in (16, 32, 48, 64, 128, 256)])
-    print("wrote", os.path.relpath(ico, HERE))
+    print("wrote", _shown(ico))
 
     os.makedirs(MOBILE, exist_ok=True)
     for name, size, pixels, opaque in (
@@ -408,7 +418,7 @@ def main():
     ):
         path = os.path.join(MOBILE, name)
         write_png(path, size, pixels, opaque)
-        print("wrote", os.path.relpath(path, HERE))
+        print("wrote", _shown(path))
 
 
 if __name__ == "__main__":

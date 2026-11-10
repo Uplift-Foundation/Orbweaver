@@ -342,7 +342,7 @@ def main(argv=None):
         print("FAIL", f)
     if failures:
         return 1
-    print(f"ok: {len(CHECKS)} files in {os.path.relpath(args.dir, ROOT)}")
+    print(f"ok: {len(CHECKS)} files in {mk._shown(args.dir)}")
     return 0
 
 
