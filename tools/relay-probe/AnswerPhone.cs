@@ -25,6 +25,16 @@ using static Orbweaver.RelayCrypto;
 //          [signbody:<field>=<value>]...     sign a body with this field changed,
 //                                            send the real one (a bad signature)
 //          [sign:other]                      sign with a different key
+//          [sign:watch]                      sign with the watch key and mark
+//                                            it key:"watch" (CB-323); key=<v>
+//                                            forges the marker on its own
+//   watch add [at=N] [sign:watch]            CB-323: publish this phone's watch
+//                                            key (key.add, signed by the
+//                                            identity key; sign:watch is the
+//                                            "key vouches for itself" control)
+//   watch remove [at=N] [sign:id]            withdraw it (key.remove, signed by
+//                                            the watch key; sign:id is a control)
+//   watch new                                make a fresh watch key (not sent)
 //   hold / answer … held                     snapshot the latest prompt now, answer it later
 //   replay                                   resend the last answer, same nonce
 //   wait <seconds>                           sleep before the next command
@@ -44,6 +54,7 @@ internal static class AnswerPhone
         var phId = GenerateKeyPair();
         var phKa = GenerateKeyPair();
         var other = GenerateKeyPair();
+        var watch = GenerateKeyPair();
         using var http = new HttpClient { BaseAddress = baseUrl };
         var body = new Dictionary<string, string> { ["platform"] = "ios", ["app_version"] = "probe", ["name"] = "Probe iPhone", ["id_pub"] = Hex(phId.Public), ["ka_pub"] = Hex(phKa.Public) };
         var first = await (await http.PostAsJsonAsync("/v1/register", body)).Content.ReadFromJsonAsync<JsonElement>();
@@ -107,10 +118,10 @@ internal static class AnswerPhone
         JsonElement? held = null;                 // `hold` snapshots the latest prompt; `answer … held` answers it
         object? lastAnswer = null;
 
-        Task SendSealed(string plaintext) =>
+        Task SendSealed(string plaintext, string cls = "action") =>
             Send(new { v = 2, id = RelayLink.Ulid(DateTimeOffset.UtcNow), from = phoneId, to = desktopId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                @class = "action", push = "none", ck = "",
-                ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, sent++), Encoding.UTF8.GetBytes(plaintext), Aad(phoneId, desktopId, "action")) });
+                @class = cls, push = "none", ck = "",
+                ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, sent++), Encoding.UTF8.GetBytes(plaintext), Aad(phoneId, desktopId, cls)) });
 
         // Reader: print every frame; remember the last prompt.
         var done = new CancellationTokenSource();
@@ -132,6 +143,12 @@ internal static class AnswerPhone
                 var plain = Open(EpochKey(basis, PeekNonce(ct)!.Value.Epoch), ct, Aad(desktopId, phoneId, cls), DesktopToPhone);
                 if (plain is null) { Console.WriteLine($"{Now()} FAIL  a {cls} frame did not open"); continue; }
                 var msg = JsonDocument.Parse(plain).RootElement.Clone();
+                // CB-323: the desktop's key.ok / key.err for a watch key frame.
+                if (cls == "pair" && msg.TryGetProperty("t", out var kt) && kt.GetString()!.StartsWith("key.", StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"{Now()} pair {Encoding.UTF8.GetString(plain)}");
+                    continue;
+                }
                 if (cls != "action") continue;   // rosters and deltas: not this tool's business
                 var push = f.TryGetProperty("push", out var p) ? p.GetString() : "?";
                 Console.WriteLine($"{Now()} {cls} push={push} id={f.GetProperty("id").GetString()} {Encoding.UTF8.GetString(plain)}");
@@ -171,6 +188,21 @@ internal static class AnswerPhone
                     held = lastPrompt;
                     Console.WriteLine($"{Now()} held {(held is { } h ? h.GetProperty("request_id").GetString() : "nothing")}");
                     break;
+                case "watch":
+                    if (words.Count > 1 && words[1] == "new")
+                    {
+                        watch = GenerateKeyPair();
+                        Console.WriteLine($"{Now()} new watch key {Hex(watch.Public)[..16]}…");
+                        break;
+                    }
+                    var op = words.Count > 1 && words[1] == "remove" ? "remove" : "add";
+                    var at = words.FirstOrDefault(w => w.StartsWith("at=")) is { } atw ? long.Parse(atw[3..]) : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    var keySigner = op == "add" ? (words.Contains("sign:watch") ? watch : phId) : (words.Contains("sign:id") ? phId : watch);
+                    var keySig = Sign(keySigner, RelayWatchKey.Message(RelayWatchKey.Body(op, "watch", Hex(watch.Public), phoneId, at)));
+                    var keyText = JsonSerializer.Serialize(new { t = "key." + op, kind = "watch", pub = Hex(watch.Public), at, sig = Base64Url(keySig) });
+                    await SendSealed(keyText, "pair");
+                    Console.WriteLine($"{Now()} sent {keyText}");
+                    break;
                 case "replay":
                     if (lastAnswer is null) { Console.WriteLine("no answer to replay"); break; }
                     await SendSealed(JsonSerializer.Serialize(lastAnswer));
@@ -205,6 +237,7 @@ internal static class AnswerPhone
                     foreach (var w in words.Skip(2))
                     {
                         if (w == "sign:other") signer = other;
+                        else if (w == "sign:watch") { signer = watch; f["key"] = "watch"; }
                         else if (w.StartsWith("set:")) sets.Add(Split(w[4..]));
                         else if (w.StartsWith("signbody:")) { var (a, b) = Split(w[9..]); signBody[a] = Typed(a, b); }
                         else { var (a, b) = Split(w); f[a] = b; }

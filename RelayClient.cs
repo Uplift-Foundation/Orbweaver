@@ -139,7 +139,13 @@ namespace Orbweaver
             // Every pending prompt goes out again on each welcome (see
             // ResendPendingAsync for why every one, not only the unsent).
             _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
-            _link.AnswerReceived += (phone, idPub, answer) => Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer));
+            // CB-323: with the phone's accepted watch key, read now, under the lock,
+            // so the gate judges the answer against the key as of its arrival.
+            _link.AnswerReceived += (phone, idPub, answer) =>
+            {
+                var watch = _identity.WatchPublicOf(phone);
+                Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer, watch));
+            };
 
             // CB-316: watch / unwatch / input / launch, carried out off the
             // event pump like an answer, never under the lock. Launches share

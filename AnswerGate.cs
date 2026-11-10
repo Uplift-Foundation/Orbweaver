@@ -37,8 +37,13 @@ namespace Orbweaver
 
     // The fields of a sealed answer frame (frames-v3 sealed_plaintext.answer),
     // exactly as they arrived.
+    //
+    // CB-323 watch-key addendum: Key is the optional `key` beside the signed
+    // body — null when absent (the approval key signed it, frames-v3 exactly),
+    // "watch" when the watch key did. Any other value, a non-string included,
+    // arrives as itself or "" and fails rule 1.
     internal sealed record PhoneAnswer(string RequestId, string SessionId, string Action, string Scope, string Note,
-        string Nonce, long ExpiresAt, string ScreenHash, string Sig);
+        string Nonce, long ExpiresAt, string ScreenHash, string Sig, string? Key = null);
 
     // Nonces seen per phone in the last hour (rule 4). Time is passed in, never
     // read, so the gate stays a pure function of its inputs and a test can walk
@@ -89,7 +94,12 @@ namespace Orbweaver
     // The rules run in exactly this order and the first that fails decides the
     // refusal, so a QA control that breaks one thing hits one rule:
     //   1. the signature verifies over the canonical body (and a tell's scope is
-    //      the hash of its note)                               bad_signature
+    //      the hash of its note), under the key the answer names: the pair's
+    //      id_pub when it names none, the stored watch key for key:"watch"
+    //      (CB-323), and nothing at all for any other name     bad_signature
+    //  1w. a watch-signed answer only approves or denies — "Always allow",
+    //      tell and a question's option stay Face ID only (CB-323)
+    //                                                          forbidden_option
     //   2. a prompt is pending for that request and session, and not answered
     //                                                          not_pending
     //   3. not expired, and expires_at equals the pending one  expired
@@ -126,15 +136,28 @@ namespace Orbweaver
         // freshCapture: the screen read just now, after rules 1–5 passed and
         // before this call returns — it is the caller's job to read it fresh,
         // never from a cache (IScreenReader promises that).
+        // watchPublic: that phone's watch key as this desktop last accepted it,
+        // or null when it holds none (CB-323).
         internal static Decision Decide(PendingPrompt? pending, PhoneAnswer answer, string? freshCapture,
-            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces)
+            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces, byte[]? watchPublic = null)
         {
-            // 1. signature
+            // 1. signature, under the key the answer names
+            var verifier = answer.Key switch
+            {
+                null => phoneIdPublic,
+                RelayWatchKey.Kind => watchPublic,
+                _ => null,
+            };
             var body = AnswerSigning.Body(answer.RequestId, answer.SessionId, answer.Action, answer.Scope, answer.Nonce, answer.ExpiresAt);
-            if (!AnswerSigning.Verify(phoneIdPublic, body, answer.Sig)) return Refuse(1, BadSignature);
+            if (verifier is null || !AnswerSigning.Verify(verifier, body, answer.Sig)) return Refuse(1, BadSignature);
             if (answer.Action == "tell" && answer.Scope != AnswerSigning.TellScope(answer.Note)) return Refuse(1, BadSignature);
             if (answer.Action != "tell" && answer.Note.Length > 0) return Refuse(1, BadSignature);
             if (RelayCrypto.FromBase64Url(answer.Nonce) is not { Length: NonceLength }) return Refuse(1, BadSignature);
+
+            // 1w. the watch key approves or denies, nothing else. Reported as
+            // rule 1: it is decided with the signature, before anything looks
+            // at what is pending.
+            if (answer.Key is not null && answer.Action is not ("approve" or "deny")) return Refuse(1, ForbiddenOption);
 
             // 2. pending, for that session, not answered
             if (pending is null || pending.RequestId != answer.RequestId || pending.SessionId != answer.SessionId || pending.Answered)

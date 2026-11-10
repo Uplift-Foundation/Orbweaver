@@ -367,6 +367,10 @@ namespace Orbweaver
                 else
                     Note("pair.revoke with a bad signature ignored");
             }
+            // CB-323: the phone's watch key, added or removed. Class pair only,
+            // out of a box that opened under this pair's key, as pair.revoke.
+            else if (cls == "pair" && Json(plain) is { } keyFrame && RelayWatchKey.IsKeyFrame(Str(keyFrame, "t")))
+                return OnWatchKey(channel, from, keyFrame);
             // CB-315: the phone's answer to an amber prompt. Class action only,
             // so nothing that arrived on another class — and nothing that did
             // not open under this pair's key — can reach the gate.
@@ -553,6 +557,26 @@ namespace Orbweaver
             _channels.Remove(phoneId);
             _identity.RemovePhone(phoneId);
             return frames;
+        }
+
+        // key.add / key.remove: decided against what is stored for this phone,
+        // persisted before key.ok goes, and answered sealed, class pair, to the
+        // phone that sent it. A decision that could not be persisted is not
+        // answered at all — the phone resends, and a repeat of an applied add
+        // or remove is confirmed without changing anything.
+        private IReadOnlyList<string> OnWatchKey(Channel channel, string from, JsonElement frame)
+        {
+            var phone = _identity.PhoneById(from);
+            if (phone is null) return [];
+            var before = new WatchKeyState(phone.WatchPublic, phone.WatchAt);
+            var d = RelayWatchKey.Decide(frame, from, phone.IdPublic, before);
+            if (d.Accepted && !d.After.Same(before) && !_identity.SaveWatchKey(from, d.After.Public, d.After.At!.Value))
+            {
+                Note($"key.{d.Op} from {from}: accepted but not persisted; no reply");
+                return [];
+            }
+            Note($"key.{d.Op} from {from}: {d.Code ?? "ok"}");
+            return Collect(SealTo(channel, "pair", "", Encoding.UTF8.GetBytes(d.Reply())));
         }
 
         private void DropPhone(string phoneId, bool byPhone)
@@ -782,7 +806,10 @@ namespace Orbweaver
                 || S("screen_hash") is not { } hash || S("sig") is not { } sig
                 || !f.TryGetProperty("expires_at", out var e) || e.ValueKind != JsonValueKind.Number || !e.TryGetInt64(out var exp))
                 return null;
-            return new PhoneAnswer(rid, sid, action, scope, note, nonce, exp, hash, sig);
+            // CB-323: `key` picks the verifying key. A non-string is no name
+            // the gate knows, so it reads as "" and fails rule 1.
+            var key = f.TryGetProperty("key", out var k) ? (k.ValueKind == JsonValueKind.String ? k.GetString() : "") : null;
+            return new PhoneAnswer(rid, sid, action, scope, note, nonce, exp, hash, sig, key);
         }
 
         // One amber to every paired phone, online or not — action frames are

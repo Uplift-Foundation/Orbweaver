@@ -345,6 +345,70 @@ public class RelayClientTests : IAsyncLifetime
         lock (keys) Assert.Equal(["1"], keys);
     }
 
+    // CB-323 watch-key addendum over a real socket: the phone publishes its
+    // watch key with a sealed key.add and gets a sealed key.ok; a watch-signed
+    // "always" is refused (rule 1w) and nothing is pressed; a watch-signed
+    // approve presses once and resolves as the phone's.
+    [Fact]
+    public async Task A_watch_key_added_over_the_socket_lets_a_watch_signed_approve_press_and_refuses_its_always()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for commands that start with dotnet test\n   3. No\n";
+        var keys = new List<string>();
+        var seams = new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) => { lock (keys) keys.Add(k); screen = "> \n"; return Task.FromResult(true); },
+            (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { });
+        var client = Client(identity, prompts: seams);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(IsEnvelope);
+        var prompt = OpenAsPhone(amber, phone, identity);
+        var rid = prompt.GetProperty("request_id").GetString()!;
+        var exp = prompt.GetProperty("expires_at").GetInt64();
+        var desktopId = amber.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        ulong counter = 0;
+        Task SendSealed(string cls, string body)
+        {
+            var ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, counter++), Encoding.UTF8.GetBytes(body), Aad(phone.Id, desktopId, cls));
+            return _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "w" + counter, from = phone.Id, to = desktopId, ts = 0, @class = cls, push = "none", ck = "", ct }));
+        }
+
+        var watch = GenerateKeyPair();
+        var addSig = Sign(phone.IdKey, RelayWatchKey.Message(RelayWatchKey.Body("add", "watch", Hex(watch.Public), phone.Id, 1794111700)));
+        await SendSealed("pair", JsonSerializer.Serialize(new { t = "key.add", kind = "watch", pub = Hex(watch.Public), at = 1794111700L, sig = Base64Url(addSig) }));
+        var ok = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("class").GetString() == "pair");
+        Assert.Equal("""{"t":"key.ok","op":"add","kind":"watch","at":1794111700}""", OpenAsPhone(ok, phone, identity).GetRawText());
+        Assert.Equal(Hex(watch.Public), Hex(identity.WatchPublicOf(phone.Id)!));
+
+        Task SendWatchAnswer(string action, string scope)
+        {
+            var nonce = Base64Url(RandomNumberGenerator.GetBytes(16));
+            var sig = Base64Url(Sign(watch, AnswerSigning.Message(AnswerSigning.Body(rid, "s1", action, scope, nonce, exp))));
+            return SendSealed("action", JsonSerializer.Serialize(new
+            {
+                t = "answer", request_id = rid, session_id = "s1", action, scope, note = "", nonce,
+                expires_at = exp, screen_hash = prompt.GetProperty("screen_hash").GetString(), sig, key = "watch",
+            }));
+        }
+
+        await SendWatchAnswer("always", "dotnet test");
+        var refusal = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
+        Assert.Equal(("err", "forbidden_option"), (refusal.GetProperty("t").GetString(), refusal.GetProperty("code").GetString()));
+        lock (keys) Assert.Empty(keys);
+
+        await SendWatchAnswer("approve", "");
+        var resolve = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "resolve");
+        Assert.Equal(("resolved", "phone:" + phone.Id), (OpenAsPhone(resolve, phone, identity).GetProperty("t").GetString(), OpenAsPhone(resolve, phone, identity).GetProperty("by").GetString()));
+        lock (keys) Assert.Equal(["1"], keys);
+    }
+
     // CB-316: the v4 round trip through a real socket — a sealed watch from the
     // phone becomes ok watching and a chat window, an input is typed and
     // answered, a request whose handler throws costs only itself, usage goes
