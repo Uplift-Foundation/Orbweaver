@@ -236,7 +236,9 @@ namespace Orbweaver
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
-            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, RelayActivity.CommandOf(fp.Preview));
+            // A question's line on the island is the question itself; its
+            // preview's first line is the form's tab bar ("☐ Colour").
+            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? RelayActivity.CommandOf(fp.Preview) : form.Prompt.Title);
             _send.Prompt(requestId, sid, prompt, push?.Plaintext);
             _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));

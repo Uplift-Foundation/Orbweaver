@@ -943,4 +943,16 @@ public class PromptPipelineTests
         Assert.NotNull(AskFormView.ProgressOf(synthetic));
         Assert.Equal(AskFormView.ProgressOf(synthetic) + "\nQ?", PromptPipeline.QuestionPreview(synthetic));
     }
+
+    // CB-323: the island names a question by the question, not by the form's
+    // tab bar ("☐ Colour"), which is its preview's first line.
+    [Fact]
+    public async Task A_questions_activity_line_is_the_question()
+    {
+        _pane.Screen = PaneFixtures.MacColourQuestion;
+        await _p.OnScannedAsync(Snap());
+        var activity = _p.ActivityFor("s1")!;
+        Assert.Equal(("", "Which colour should the orb be?"), (activity.Tool, activity.Command));
+        Assert.Equal(JsonDocument.Parse(_sent.Prompts[0].Prompt).RootElement.GetProperty("request_id").GetString(), activity.RequestId);
+    }
 }
