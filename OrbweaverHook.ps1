@@ -464,7 +464,7 @@ if ($Agent -eq 'claude' -and $env:CLAUDE_CODE_HOST_SESSION_ID) {
     $hostSessionId = $env:CLAUDE_CODE_HOST_SESSION_ID -replace '[^A-Za-z0-9_-]', ''
 }
 
-$status = @{
+$statusData = @{
     state           = $State
 
     # Which CLI wrote this, so the app can tell a Codex session from a Claude
@@ -481,7 +481,23 @@ $status = @{
     term_pid        = $termPid
     session_pid     = $sessionPid
     transcript_path = $transcript
-} | ConvertTo-Json -Compress
+}
+
+# A session running in WSL inside tmux. This script runs on the Windows side, so it sees the pane only
+# because the WSL hook command lists TMUX and TMUX_PANE in WSLENV and hands over the claude process's
+# pid and the distro's name (OW_WSL_PID / OW_WSL_DISTRO: plain hand-offs between two halves of one command,
+# not user overrides, so deliberately outside the ORBWEAVER_ list BrandEnv holds). Recorded as the pane, the
+# socket and tmux_bin "wsl:<distro>", which tells the app to run tmux through wsl.exe in that distro,
+# and as wsl_pid -- never session_pid, because a Linux pid names no process on this host and the
+# console route would otherwise AttachConsole to whatever has that number. Each value is checked for
+# its shape before it is written: nothing here is trusted just because it came from an environment.
+if ($env:TMUX_PANE -match '^%\d+$' -and $env:OW_WSL_PID -match '^\d+$' -and $env:OW_WSL_DISTRO -match '^[A-Za-z0-9._-]+$') {
+    $statusData.tmux_pane   = $env:TMUX_PANE
+    $statusData.tmux_socket = if ($env:TMUX) { ($env:TMUX -split ',')[0] } else { '' }
+    $statusData.tmux_bin    = "wsl:$($env:OW_WSL_DISTRO)"
+    $statusData.wsl_pid     = [int]$env:OW_WSL_PID
+}
+$status = $statusData | ConvertTo-Json -Compress
 
 # Not Set-Content: on Windows PowerShell 5.1 it writes the ANSI codepage and
 # replaces anything outside it with "?", so a chat name with an em dash or an

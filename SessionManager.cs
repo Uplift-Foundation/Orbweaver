@@ -242,6 +242,13 @@ namespace Orbweaver
         [JsonPropertyName("term_pid")]
         public int TermPid { get; set; }
 
+        // A session running in WSL, read through the PowerShell hook: the claude process's pid in the
+        // distro (session_pid stays 0, because a Linux pid is no process on this host and must never
+        // reach the console route). With tmux_bin "wsl:<distro>", it is how a pane is proved to hold
+        // the session before anything is typed. 0 when not a WSL session.
+        [JsonPropertyName("wsl_pid")]
+        public int WslPid { get; set; }
+
         // The claude process running this session. Recorded by both hooks; 0
         // from a hook older than this field, in which case liveness can't be
         // checked and only the lifetime timer applies. See SessionGone.

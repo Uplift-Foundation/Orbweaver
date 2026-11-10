@@ -492,6 +492,66 @@ public class HookScriptPs1Tests
     [PwshFact]
     public void HookAlwaysExitsZeroWithNoOutput_ForEveryLiveStateAndAgent_Pwsh() => HookAlwaysExitsZeroWithNoOutput_ForEveryLiveStateAndAgentCase("pwsh");
 
+    // A session in WSL inside tmux: the pane reaches this Windows-side hook only through WSLENV, with the
+    // claude pid and the distro the WSL command hands it. It is recorded as the pane, the socket,
+    // tmux_bin "wsl:<distro>" and wsl_pid -- and never as session_pid, which would send the console
+    // route after a Windows process that happens to have a Linux pid's number.
+    private static void AWslTmuxPaneIsRecordedAsWslNotAsASessionPidCase(string exe)
+    {
+        var root = Directory.CreateTempSubdirectory("cb-hook-ps1-wsl-").FullName;
+        var payload = Payload(new { session_id = "wsl-tmux", cwd = "/home/me/proj", transcript_path = "" });
+        var result = RunHook(exe, "claude", "idle", payload, root, extraEnv: new Dictionary<string, string>
+        {
+            ["ORBWEAVER_STATUS_ROOT"] = root,
+            ["TMUX_PANE"] = "%15", ["TMUX"] = "/tmp/tmux-1000/default,999,0",
+            ["OW_WSL_PID"] = "4242", ["OW_WSL_DISTRO"] = "Ubuntu",
+        });
+        AssertSilentSuccess(result);
+        using var doc = JsonDocument.Parse(File.ReadAllText(StatusFile(root, "wsl-tmux")));
+        var r = doc.RootElement;
+        Assert.Equal("%15", r.GetProperty("tmux_pane").GetString());
+        Assert.Equal("/tmp/tmux-1000/default", r.GetProperty("tmux_socket").GetString());
+        Assert.Equal("wsl:Ubuntu", r.GetProperty("tmux_bin").GetString());
+        Assert.Equal(4242, r.GetProperty("wsl_pid").GetInt32());
+        Assert.NotEqual(4242, r.GetProperty("session_pid").GetInt32());
+    }
+
+    // Anything that is not the exact shape is not recorded: a pane id with an injection, a non-numeric pid,
+    // a distro name with a path in it, or a missing half -- and an ordinary Windows session records nothing.
+    private static void WslTmuxValuesOfTheWrongShapeAreNotRecordedCase(string exe)
+    {
+        foreach (var env in new[]
+        {
+            new Dictionary<string, string> { ["TMUX_PANE"] = "%1; calc", ["OW_WSL_PID"] = "7", ["OW_WSL_DISTRO"] = "Ubuntu" },
+            new Dictionary<string, string> { ["TMUX_PANE"] = "%1", ["OW_WSL_PID"] = "7x", ["OW_WSL_DISTRO"] = "Ubuntu" },
+            new Dictionary<string, string> { ["TMUX_PANE"] = "%1", ["OW_WSL_PID"] = "7", ["OW_WSL_DISTRO"] = "a/b" },
+            new Dictionary<string, string> { ["TMUX_PANE"] = "%1", ["OW_WSL_DISTRO"] = "Ubuntu" },
+            new Dictionary<string, string>(),
+        })
+        {
+            var root = Directory.CreateTempSubdirectory("cb-hook-ps1-wsl-").FullName;
+            env["ORBWEAVER_STATUS_ROOT"] = root;
+            var result = RunHook(exe, "claude", "idle", Payload(new { session_id = "plain", cwd = "C:\\proj", transcript_path = "" }), root, extraEnv: env,
+                unsetEnv: new[] { "TMUX", "TMUX_PANE", "OW_WSL_PID", "OW_WSL_DISTRO" }.Where(k => !env.ContainsKey(k)));
+            AssertSilentSuccess(result);
+            var text = File.ReadAllText(StatusFile(root, "plain"));
+            Assert.DoesNotContain("tmux_pane", text);
+            Assert.DoesNotContain("wsl_pid", text);
+        }
+    }
+
+    [WindowsPowerShellFact]
+    public void AWslTmuxPaneIsRecordedAsWslNotAsASessionPid_Powershell51() => AWslTmuxPaneIsRecordedAsWslNotAsASessionPidCase("powershell");
+
+    [PwshFact]
+    public void AWslTmuxPaneIsRecordedAsWslNotAsASessionPid_Pwsh() => AWslTmuxPaneIsRecordedAsWslNotAsASessionPidCase("pwsh");
+
+    [WindowsPowerShellFact]
+    public void WslTmuxValuesOfTheWrongShapeAreNotRecorded_Powershell51() => WslTmuxValuesOfTheWrongShapeAreNotRecordedCase("powershell");
+
+    [PwshFact]
+    public void WslTmuxValuesOfTheWrongShapeAreNotRecorded_Pwsh() => WslTmuxValuesOfTheWrongShapeAreNotRecordedCase("pwsh");
+
     [WindowsPowerShellFact]
     public void StatusRootOutranksTheBakedTempDir_Powershell51() => StatusRootOutranksTheBakedTempDirCase("powershell");
 
