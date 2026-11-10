@@ -449,7 +449,7 @@ public class RelaySettingsAndServiceTests : IDisposable
         RelayService.OfferImage = path => path == "/u/.claude/aurora.gif" ? hash : null;
         RelayService.DefaultPersona = dirs => { dirsAsked.Add(dirs); return registry["s1"]; };
 
-        var (rows, personas) = RelayService.Project(
+        var (rows, personas, defaultPersona) = RelayService.Project(
         [
             ("s1", new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = "/w/a", AgentColor = "purple" }),
             ("s2", new SessionStatus { Source = SessionSource.Codex, Cwd = "/w/b" }),
@@ -468,6 +468,8 @@ public class RelaySettingsAndServiceTests : IDisposable
             new PersonaFrames.Row(aurora, "Aurora", "AU", true, hash),
             new PersonaFrames.Row(vector, "Vector", "VE", false, null),
         ]), personas);
+        // CB-321 addendum 2: the default row is what a limit push speaks as.
+        Assert.Equal(new PushPersona(aurora, "Aurora", hash), defaultPersona);
         Assert.DoesNotContain("/u/", personas);
         Assert.DoesNotContain("/u/", System.Text.Encoding.UTF8.GetString(RelayRoster.RosterJson(1, rows)).Replace("/w/", ""));
     }

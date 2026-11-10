@@ -1212,9 +1212,102 @@ public class RelayLinkTests : IDisposable
         Assert.Equal("state", J(plain).GetProperty("class").GetString());
 
         link.OnFrame(Presence(phone.Id, false));
-        var limit = link.SendUsage("""{"t":"usage","accounts":[]}""", """{"v":1,"t":"limit"}""").Single();
+        var limit = link.SendUsage("""{"t":"usage","accounts":[]}""", Crossing).Single();
         Assert.Equal(("limit", true), (Push(limit), HasE(limit)));
-        Assert.Equal("""{"v":1,"t":"limit"}""", Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, J(limit).GetProperty("e").GetString())!));
+        Assert.Equal(RelayUsage.LimitE(Crossing), Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, J(limit).GetProperty("e").GetString())!));
+    }
+
+    private static readonly RelayUsage.Account Crossing = new("user@example.com", "claude", "max", 81, 1794117192, null, null, 1794111792, true);
+
+    // ---- CB-321 addendum 2: the persona on done and limit pushes ---------------
+
+    private static readonly PushPersona Aurora =
+        PushPersona.From("3f7a9c1e5b2d8046", "Aurora", "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3")!;
+
+    private static RelaySession PersonaRow(string state, string title = "proj", RelayPersona? persona = null) =>
+        new("s1", "claude", title, "/c", state, null, persona ?? new RelayPersona(Aurora.Name, "AU", null, Aurora.Id, Aurora.ImageHash));
+
+    private static string FinishWith(RelayLink link, RelaySession generating, RelaySession idle)
+    {
+        link.OnScan([generating]);
+        return link.OnScan([idle]).Single();
+    }
+
+    [Fact]
+    public void A_done_push_names_the_session_s_roster_persona_last_and_logs_only_its_id_prefix()
+    {
+        var (link, _, phone, notes, _) = Paired();
+        link.OnScan([PersonaRow("idle")]);
+        var done = FinishWith(link, PersonaRow("generating"), PersonaRow("idle"));
+
+        var e = Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, J(done).GetProperty("e").GetString())!);
+        Assert.Equal(RelayLink.DoneE("s1", "proj", "", Aurora), e);
+        Assert.EndsWith(""","persona":{"id":"3f7a9c1e5b2d8046","name":"Aurora","image_hash":"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"}}""", e);
+        var note = Assert.Single(notes, n => n.StartsWith("push done", StringComparison.Ordinal));
+        Assert.Equal("push done e=yes persona=3f7a9c avatar=yes", note);
+        Assert.DoesNotContain(notes, n => n.Contains("Aurora", StringComparison.Ordinal) || n.Contains(Aurora.Id, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_done_whose_persona_would_not_fit_drops_the_persona_before_the_e()
+    {
+        var (link, _, phone, notes, _) = Paired();
+        // A title that fits only without the persona on this link's machine name
+        // (frames-v6-vectors' done.persona_dropped is the same window for "MacBook Pro").
+        var title = Enumerable.Range(1000, 400).Select(n => new string('t', n))
+            .First(t => RelayLink.PushPlaintext(Aurora, p => RelayLink.DoneE("s1", t, "", p)) is { Bytes: not null, WithPersona: false });
+        link.OnScan([PersonaRow("idle", title)]);
+        var done = FinishWith(link, PersonaRow("generating", title), PersonaRow("idle", title));
+
+        Assert.Equal(RelayLink.DoneE("s1", title, ""), Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, J(done).GetProperty("e").GetString())!));
+        Assert.Contains("push done e=yes persona=dropped", notes);
+    }
+
+    [Fact]
+    public void A_done_too_long_even_without_its_persona_goes_without_e_and_one_with_no_persona_says_none()
+    {
+        var (link, _, _, notes, _) = Paired();
+        var title = new string('t', 3000);
+        link.OnScan([PersonaRow("idle", title)]);
+        Assert.False(HasE(FinishWith(link, PersonaRow("generating", title), PersonaRow("idle", title))));
+        Assert.Contains("push done e=none persona=dropped", notes);
+
+        // A session with no persona (or one from before v5 ids) is today's done.
+        link.OnScan([Row("s2")]);
+        var plain = FinishWith(link, Row("s2", "generating"), Row("s2", "idle"));
+        Assert.True(HasE(plain));
+        Assert.Contains("push done e=yes persona=none", notes);
+    }
+
+    [Fact]
+    public void A_limit_speaks_as_the_default_persona_the_personas_frame_named_last()
+    {
+        var (link, _, phone, notes, _) = Paired();
+        string LimitE() => Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey,
+            J(link.SendUsage("""{"t":"usage","accounts":[]}""", Crossing).Single()).GetProperty("e").GetString())!);
+
+        Assert.Equal(RelayUsage.LimitE(Crossing), LimitE());                 // before any personas frame: none
+        Assert.Contains("push limit e=yes persona=none", notes);
+
+        var frame = PersonaFrames.Personas([]);
+        link.SendPersonas(frame, Aurora);
+        Assert.Equal(RelayUsage.LimitE(Crossing, Aurora), LimitE());
+        Assert.Contains("push limit e=yes persona=3f7a9c avatar=yes", notes);
+
+        // The same bytes again still update the default: a default that went away goes away.
+        Assert.Empty(link.SendPersonas(frame));
+        Assert.Equal(RelayUsage.LimitE(Crossing), LimitE());
+    }
+
+    [Fact]
+    public void The_persona_an_amber_speaks_as_is_the_session_s_roster_row_s()
+    {
+        var (link, _, _, _, _) = Paired();
+        link.OnScan([PersonaRow("idle"), Row("s2"), new RelaySession("s3", "claude", "p", "/c", "idle", null, new RelayPersona("Old", "OL", null))]);
+        Assert.Equal(Aurora, link.PersonaFor("s1"));
+        Assert.Null(link.PersonaFor("s2"));                                  // no persona
+        Assert.Null(link.PersonaFor("s3"));                                  // a persona with no v5 id cannot be named
+        Assert.Null(link.PersonaFor("gone"));                                // not in the book
     }
 
     [Fact]

@@ -621,6 +621,67 @@ public class RelayClientTests : IAsyncLifetime
         lock (replies) Assert.Equal([(first, "pushed"), (first, "push_throttled")], replies);
     }
 
+    // CB-321 addendum 2, end to end through the client over a real socket:
+    // the done and the amber name the session's roster persona, the limit the
+    // PC's default persona handed in beside the personas frame, each as the
+    // last key of the e a phone opens with its own agreement key.
+    [Fact]
+    public async Task Done_amber_and_limit_pushes_carry_their_persona_inside_e()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+
+        const string hash = "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3";
+        var aurora = new RelayPersona("Aurora", "AU", null, "3f7a9c1e5b2d8046", hash);
+        RelaySession Row(string state) => new("s1", "claude", "proj", "/c", state, null, aurora);
+        // The default persona arrives the production way: a scan through
+        // RelayService, whose projection hands the personas frame's default row
+        // to the client beside the frame. Every seam is put back.
+        var novaId = PersonaFrames.PersonaId("/u/.claude/CLAUDE.md", "Nova");
+        try
+        {
+            RelayService.UserConfigDirs = () => ["/u/.claude"];
+            RelayService.PersonaName = (_, _) => null;
+            RelayService.LocalPersonaFor = _ => null;
+            RelayService.OfferImage = _ => null;
+            RelayService.DefaultPersona = _ => new LocalPersona.Persona("Nova", null, null, null, null, ["/u/.claude/CLAUDE.md"]);
+            RelayService.UseForTests(client);
+            RelayService.OnScanned([]);
+        }
+        finally
+        {
+            RelayService.UseForTests(null);
+            RelayService.UserConfigDirs = RelayService.DefaultUserConfigDirs;
+            RelayService.PersonaName = RelayService.CachedPersonaName;
+            RelayService.LocalPersonaFor = LocalPersonas.For;
+            RelayService.OfferImage = RelayService.DefaultOfferImage;
+            RelayService.DefaultPersona = RelayService.CachedDefaultPersona;
+        }
+        client.OnScanned([Row("generating")]);
+        client.OnScanned([Row("idle")]);
+        string OpenE(JsonElement env) => Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, env.GetProperty("e").GetString())!);
+        const string auroraJson = ""","persona":{"id":"3f7a9c1e5b2d8046","name":"Aurora","image_hash":"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"}}""";
+
+        var done = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "done");
+        Assert.EndsWith(auroraJson, OpenE(done));
+
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber");
+        Assert.EndsWith(auroraJson, OpenE(amber));
+
+        client.OnUsage([new RelayUsage.Account("user@example.com", "claude", "max", 85, 1794117192, null, null, 1, true)]);
+        var limit = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "limit");
+        Assert.EndsWith($$$""","persona":{"id":"{{{novaId}}}","name":"Nova"}}""", OpenE(limit));
+    }
+
     // A prompt minted before the socket is up produces no frame; the welcome
     // sends it.
     [Fact]
@@ -725,18 +786,34 @@ public class RelayClientTests : IAsyncLifetime
         await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true }));
         await _stub.Next(IsEnvelope);                              // the roster
 
-        for (var i = 0; i < 30; i++)
+        // The clock starts BEFORE the first frame is queued, so it is earlier
+        // than the pacer's first Reserve, whatever the scheduler does next. It
+        // used to start after queueing, and on a loaded run the pacer had
+        // already sent part of the burst by then, so the window it measured
+        // shrank and went red at 257 ms with pacing working (CB-321).
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        const int frames = 30;
+        for (var i = 0; i < frames; i++)
             client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", i % 2 == 0 ? "generating" : "idle", null, null)]);
 
-        var started = DateTime.UtcNow;
         var seqs = new List<long>();
-        for (var i = 0; i < 30; i++)
+        for (var i = 0; i < frames; i++)
             seqs.Add(OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("seq").GetInt64());
-        var took = DateTime.UtcNow - started;
+        var lastArrived = clock.Elapsed;
 
-        Assert.Equal(Enumerable.Range(2, 30).Select(i => (long)i), seqs);
-        // 10 go at once, the other 20 at 35/s: at least ~0.5 s, never one burst.
-        Assert.True(took >= TimeSpan.FromMilliseconds(400), $"30 frames arrived in {took.TotalMilliseconds} ms");
+        Assert.Equal(Enumerable.Range(2, frames).Select(i => (long)i), seqs);
+        // What the token bucket guarantees: n frames reserved from a moment no
+        // earlier than the clock's start cannot all be sent before
+        // (n - burst) / rate has passed, because at most `burst` tokens were
+        // banked at the first Reserve and the rest refill at `rate`. The last
+        // frame's arrival, read here, is no earlier than its send, so a slow
+        // reader or a busy machine only lengthens what is measured: the bound
+        // fails only when frames went out faster than the pacer allows.
+        // Per-frame gaps are deliberately not asserted: the first `burst`
+        // frames go together by design, and a late reader drains buffered
+        // frames together too, so a gap can be zero with pacing correct.
+        var floor = TimeSpan.FromSeconds((frames - RelayPacer.DefaultBurst) / RelayPacer.DefaultRate);
+        Assert.True(lastArrived >= floor, $"{frames} frames all arrived {lastArrived.TotalMilliseconds:F0} ms after queueing began; pacing allows no fewer than {floor.TotalMilliseconds:F0} ms");
     }
 
     // Acceptance 4 across a quit, through the real client: Remove while the

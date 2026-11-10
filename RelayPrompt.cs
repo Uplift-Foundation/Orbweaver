@@ -341,9 +341,12 @@ namespace Orbweaver
                 ["label"] = label,
             }.ToJsonString(Json);
 
+        // CB-321 addendum 2: persona, when there is one, is the last key
+        // (frames-v6 amber_e), after every v3 key.
         internal static string PushPlaintext(string requestId, string sessionId, string label, string tool, string summary,
-            string detail, long expiresAt, IReadOnlyList<PromptOption> options, string screenHash) =>
-            new JsonObject
+            string detail, long expiresAt, IReadOnlyList<PromptOption> options, string screenHash, PushPersona? persona = null)
+        {
+            var j = new JsonObject
             {
                 ["v"] = 1,
                 ["request_id"] = requestId,
@@ -355,7 +358,10 @@ namespace Orbweaver
                 ["expires_at"] = expiresAt,
                 ["options"] = OptionsJson(options),
                 ["screen_hash"] = screenHash,
-            }.ToJsonString(Json);
+            };
+            if (persona is not null) j["persona"] = persona.Json();
+            return j.ToJsonString(Json);
+        }
 
         // #11248 rev 2's fitting rule for the e budget, deterministic so both
         // the vectors and a re-run agree:
@@ -364,17 +370,31 @@ namespace Orbweaver
         //      longest prefix that fits (ending in "…" when cut);
         //   2. if even an empty detail does not fit, cut every label longer than
         //      120 characters to 119 plus "…", then cut detail again as in 1;
-        //   3. never drop an option, a kind, a scope or the hash — if it still
+        //   3. (frames-v6, CB-321 addendum 2) if it still does not fit and a
+        //      persona was appended, drop the persona and repeat from 1 with
+        //      the v3 plaintext — the persona goes before e does;
+        //   4. never drop an option, a kind, a scope or the hash — if it still
         //      does not fit, null: the prompt goes over the socket without e.
         // Returns the plaintext and which cuts were made.
-        internal sealed record Fitted(string Plaintext, bool DetailCut, bool LabelsCut);
+        internal sealed record Fitted(string Plaintext, bool DetailCut, bool LabelsCut, bool PersonaDropped = false);
 
         internal static Fitted? FitPush(string requestId, string sessionId, string label, string tool, string summary,
-            string preview, long expiresAt, IReadOnlyList<PromptOption> options, string screenHash)
+            string preview, long expiresAt, IReadOnlyList<PromptOption> options, string screenHash, PushPersona? persona = null)
+        {
+            if (persona is not null && FitPushWith(requestId, sessionId, label, tool, summary, preview, expiresAt, options, screenHash, persona) is { } with)
+                return with;
+            return FitPushWith(requestId, sessionId, label, tool, summary, preview, expiresAt, options, screenHash, null) is { } without
+                ? without with { PersonaDropped = persona is not null }
+                : null;
+        }
+
+        // Steps 0 to 2 for one choice of persona.
+        private static Fitted? FitPushWith(string requestId, string sessionId, string label, string tool, string summary,
+            string preview, long expiresAt, IReadOnlyList<PromptOption> options, string screenHash, PushPersona? persona)
         {
             var detail = Cut(preview, MaxDetail);
             string Build(string d, IReadOnlyList<PromptOption> opts) =>
-                PushPlaintext(requestId, sessionId, label, tool, summary, d, expiresAt, opts, screenHash);
+                PushPlaintext(requestId, sessionId, label, tool, summary, d, expiresAt, opts, screenHash, persona);
             bool Fits(string pt) => PushSeal.SealedLength(Encoding.UTF8.GetByteCount(pt)) <= PushSeal.MaxE;
 
             var full = Build(detail, options);

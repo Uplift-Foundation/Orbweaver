@@ -540,10 +540,11 @@ internal static class V4Vectors
 // ensure_ascii=True (a library-escaped body, one signature negative).
 internal static class PyJson
 {
-    internal static string Pretty(JsonNode node)
+    // indent: json.dumps's indent (2 for v4 and v5, 1 for v6).
+    internal static string Pretty(JsonNode node, int indent = 2)
     {
         var sb = new StringBuilder();
-        Write(sb, node, 0, pretty: true, ascii: false);
+        Write(sb, node, 0, pretty: true, ascii: false, indent);
         return sb.ToString();
     }
 
@@ -554,9 +555,9 @@ internal static class PyJson
         return sb.ToString();
     }
 
-    private static void Write(StringBuilder sb, JsonNode? node, int depth, bool pretty, bool ascii)
+    private static void Write(StringBuilder sb, JsonNode? node, int depth, bool pretty, bool ascii, int indent = 2)
     {
-        string Pad(int d) => pretty ? "\n" + new string(' ', 2 * d) : "";
+        string Pad(int d) => pretty ? "\n" + new string(' ', indent * d) : "";
         switch (node)
         {
             case null:
@@ -571,7 +572,7 @@ internal static class PyJson
                     if (!first) sb.Append(',');
                     first = false;
                     sb.Append(Pad(depth + 1)).Append(Str(k, ascii)).Append(pretty ? ": " : ":");
-                    Write(sb, v, depth + 1, pretty, ascii);
+                    Write(sb, v, depth + 1, pretty, ascii, indent);
                 }
                 sb.Append(Pad(depth)).Append('}');
                 return;
@@ -582,7 +583,7 @@ internal static class PyJson
                 {
                     if (i > 0) sb.Append(',');
                     sb.Append(Pad(depth + 1));
-                    Write(sb, a[i], depth + 1, pretty, ascii);
+                    Write(sb, a[i], depth + 1, pretty, ascii, indent);
                 }
                 sb.Append(Pad(depth)).Append(']');
                 return;

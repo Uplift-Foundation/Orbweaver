@@ -168,6 +168,8 @@ namespace Orbweaver
         // roster and usage, and what SendPersonas compares against so an
         // unchanged frame is not sent again every scan.
         private string? _latestPersonas;
+        // CB-321 addendum 2: the default persona that frame named, for limit pushes.
+        private PushPersona? _defaultPersona;
 
         // ---- connection -------------------------------------------------------
 
@@ -595,30 +597,62 @@ namespace Orbweaver
         // push done, and an e sealed to this phone's agreement key naming the
         // session the amber's way — "<title> on <machine>", or the machine
         // alone when the session has no title.
+        //
+        // CB-321 addendum 2: the e also names the session's roster persona, so
+        // the phone can show it as the sender (frames-v6 done_e).
         private string? DoneFor(Channel c, RelayDelta d)
         {
             // The book has just stamped this row (a finished delta is never a
             // removal), so it is there to name the session.
-            var title = _book.Find(d.SessionId)!.Title;
-            var e = PushE(c, DoneE(d.SessionId, title, Machine));
+            var row = _book.Find(d.SessionId)!;
+            var persona = PushPersona.Of(row.Persona);
+            var e = PushE(c, "done", persona, p => DoneE(d.SessionId, row.Title, Machine, p));
             return SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.DeltaForPush(d), push: "done", e: e);
         }
 
         // A push e sealed to this phone, or none when it could not fit the
         // relay's 3600-character cap (a very long title): the alert then shows
         // the generic text, which beats the relay refusing the envelope.
-        private static string? PushE(Channel c, string plaintext)
+        // frames-v6: with a persona, the e is tried with it first and then
+        // without it before giving up, so the persona goes before e does. The
+        // log line says which, by the persona's id prefix only.
+        private string? PushE(Channel c, string kind, PushPersona? persona, Func<PushPersona?, string> plaintext)
         {
-            var bytes = Encoding.UTF8.GetBytes(plaintext);
-            return PushSeal.SealedLength(bytes.Length) <= PushSeal.MaxE ? PushSeal.Seal(c.Phone.KaPublic, bytes) : null;
+            var (bytes, withPersona) = PushPlaintext(persona, plaintext);
+            Note($"push {kind} e={(bytes is null ? "none" : "yes")} {PushPersona.LogTagFor(persona, withPersona)}");
+            return bytes is null ? null : PushSeal.Seal(c.Phone.KaPublic, bytes);
         }
+
+        // The done/limit fitting rule (frames-v6 done_e, limit_e), pure so the
+        // vectors and the tests run the one the app does: the plaintext with
+        // the persona if its e fits, else without it if that fits, else none.
+        internal static (byte[]? Bytes, bool WithPersona) PushPlaintext(PushPersona? persona, Func<PushPersona?, string> plaintext)
+        {
+            if (persona is not null && Fits(plaintext(persona)) is { } with) return (with, true);
+            return (Fits(plaintext(null)), false);
+
+            static byte[]? Fits(string p)
+            {
+                var bytes = Encoding.UTF8.GetBytes(p);
+                return PushSeal.SealedLength(bytes.Length) <= PushSeal.MaxE ? bytes : null;
+            }
+        }
+
+        // CB-321 addendum 2: the persona a session's amber speaks as — its
+        // roster row's, as last projected. Null for a session the book does not
+        // hold or one with no persona.
+        internal PushPersona? PersonaFor(string sessionId) => PushPersona.Of(_book.Find(sessionId)?.Persona);
 
         internal static string DoneLabel(string title, string machine) =>
             string.IsNullOrWhiteSpace(title) ? machine : $"{title} on {machine}";
 
-        internal static string DoneE(string sessionId, string title, string machine) =>
-            new CanonicalJson().Num("v", 1).Str("t", "done").Str("session_id", sessionId)
-                .Str("label", DoneLabel(title, machine)).Str("title", title).ToString();
+        internal static string DoneE(string sessionId, string title, string machine, PushPersona? persona = null)
+        {
+            var j = new CanonicalJson().Num("v", 1).Str("t", "done").Str("session_id", sessionId)
+                .Str("label", DoneLabel(title, machine)).Str("title", title);
+            if (persona is not null) j.Raw("persona", persona.Canonical());
+            return j.ToString();
+        }
 
         // ---- CB-316 replies, windows and usage -------------------------------------
 
@@ -646,17 +680,21 @@ namespace Orbweaver
         // to every paired phone with push limit and that phone's own e, since
         // the alert has to reach a phone that is not open. Remembered either
         // way, for the next phone that comes online.
-        internal IReadOnlyList<string> SendUsage(string plaintext, string? limitE = null)
+        //
+        // CB-321 addendum 2: a crossing's e speaks as the PC's default persona
+        // (the personas frame's default:true row, as last sent), not a
+        // session's — a limit belongs to an account (frames-v6 limit_e).
+        internal IReadOnlyList<string> SendUsage(string plaintext, RelayUsage.Account? crossing = null)
         {
             _latestUsage = plaintext;
             if (!Welcomed) return [];
             var frames = new List<string>();
             foreach (var c in _channels.Values)
             {
-                if (limitE is null && !c.Online) continue;
-                var e = limitE is null ? null : PushE(c, limitE);
+                if (crossing is null && !c.Online) continue;
+                var e = crossing is null ? null : PushE(c, "limit", _defaultPersona, p => RelayUsage.LimitE(crossing, p));
                 frames.AddRange(Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, UsageCk), Encoding.UTF8.GetBytes(plaintext),
-                    push: limitE is null ? "none" : "limit", e: e)));
+                    push: crossing is null ? "none" : "limit", e: e)));
             }
             return frames;
         }
@@ -665,8 +703,13 @@ namespace Orbweaver
         // when its canonical bytes changed since the last one, and remembered for
         // the next phone that comes online. class state, ck Ck("personas"), so
         // the relay coalesces it for an offline phone as it does usage.
-        internal IReadOnlyList<string> SendPersonas(string plaintext)
+        //
+        // CB-321 addendum 2: and the default row, kept as the persona a limit
+        // push speaks as. Taken even when the frame's bytes did not change, so
+        // it is always the one the phones were last told about.
+        internal IReadOnlyList<string> SendPersonas(string plaintext, PushPersona? defaultPersona = null)
         {
+            _defaultPersona = defaultPersona;
             if (plaintext == _latestPersonas) return [];
             _latestPersonas = plaintext;
             if (!Welcomed) return [];

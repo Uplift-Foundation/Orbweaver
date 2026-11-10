@@ -48,7 +48,7 @@ public class PromptPipelineTests
         public Task<bool> Type(SessionStatus _, string text) { Typed.Add(text); return Task.FromResult(true); }
     }
 
-    private sealed class Sender : IPromptSender
+    private class Sender : IPromptSender
     {
         public readonly List<(string Rid, string Sid, string Prompt, string? Push)> Prompts = new();
         public readonly List<(string Rid, string Sid, string By)> Resolved = new();
@@ -58,6 +58,13 @@ public class PromptPipelineTests
         public readonly List<string?> ResolvedPushes = new();
         void IPromptSender.Resolved(string r, string s, string by, string? push) { Resolved.Add((r, s, by)); ResolvedPushes.Add(push); }
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
+    }
+
+    // CB-321 addendum 2: a sender whose roster gives each session a persona.
+    private sealed class PersonaSender(Func<string, PushPersona?> persona) : Sender, IPromptSender
+    {
+        public readonly List<string> Asked = new();
+        PushPersona? IPromptSender.PersonaFor(string sessionId) { Asked.Add(sessionId); return persona(sessionId); }
     }
 
     private DateTimeOffset _now = DateTimeOffset.FromUnixTimeSeconds(1794111792);
@@ -103,7 +110,8 @@ public class PromptPipelineTests
         var e = JsonDocument.Parse(push!).RootElement;
         Assert.Equal(("orbweaver on Test Mac", "Wants to run a command"), (e.GetProperty("label").GetString(), e.GetProperty("summary").GetString()));
         Assert.Equal(rid, j.GetProperty("request_id").GetString());
-        Assert.Contains($"prompt {rid} {PromptFingerprint.Of(Dialog)!.Hash}", _log);
+        Assert.Contains($"prompt {rid} {PromptFingerprint.Of(Dialog)!.Hash} persona=none", _log);
+        Assert.False(e.TryGetProperty("persona", out _));               // a sender with no roster names no persona
 
         await _p.OnScannedAsync(Snap());   // the same dialog: nothing new
         Assert.Single(_sent.Prompts);
@@ -173,7 +181,7 @@ public class PromptPipelineTests
                        + new string('s', 3000) + "\n   3. No\n";
         await _p.OnScannedAsync(Snap());
         Assert.Null(Assert.Single(_sent.Prompts).Push);
-        Assert.Contains(_log, l => l.EndsWith(" no-e"));
+        Assert.Contains(_log, l => l.EndsWith(" no-e persona=none"));
     }
 
     // ---- answers -------------------------------------------------------------
@@ -713,5 +721,66 @@ public class PromptPipelineTests
         Assert.Equal(2, _sent.Prompts.Count);
         Assert.Equal(["s1", "s2"], _sent.Prompts.Select(p => p.Sid));
         Assert.NotEqual(_sent.Prompts[0].Rid, _sent.Prompts[1].Rid);
+    }
+
+    // ---- CB-321 addendum 2: the persona on the amber --------------------------
+
+    private static readonly PushPersona Aurora =
+        PushPersona.From("3f7a9c1e5b2d8046", "Aurora", "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3")!;
+
+    [Fact]
+    public async Task An_amber_s_push_speaks_as_the_session_s_roster_persona()
+    {
+        var sender = new PersonaSender(sid => sid == "s1" ? Aurora : null);
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add),
+            sender, "Test Mac");
+
+        await p.OnScannedAsync([("s1", Status()), ("s2", Status())]);
+        Assert.Equal(["s1", "s2"], sender.Asked.Order());
+        var bySid = sender.Prompts.ToDictionary(x => x.Sid, x => x.Push!);
+        var persona = JsonDocument.Parse(bySid["s1"]).RootElement.GetProperty("persona");
+        Assert.Equal(("3f7a9c1e5b2d8046", "Aurora", Aurora.ImageHash),
+            (persona.GetProperty("id").GetString(), persona.GetProperty("name").GetString(), persona.GetProperty("image_hash").GetString()));
+        Assert.EndsWith(",\"persona\":" + Aurora.Json().ToJsonString() + "}", bySid["s1"]);   // the last key
+        Assert.False(JsonDocument.Parse(bySid["s2"]).RootElement.TryGetProperty("persona", out _));
+        var rid1 = sender.Prompts.Single(x => x.Sid == "s1").Rid;
+        Assert.Contains(_log, l => l.StartsWith($"prompt {rid1} ", StringComparison.Ordinal) && l.EndsWith(" persona=3f7a9c avatar=yes", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log, l => l.Contains("Aurora", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_amber_whose_persona_had_to_go_still_goes_and_logs_dropped_and_one_with_no_e_logs_it_too()
+    {
+        // The session label carries the title, so a longer title eats the e
+        // budget. Binary search for the shortest title at which the persona no
+        // longer fits even with the detail and labels cut (frames-v6 amber
+        // step 3): there the push must still go, without the persona.
+        async Task<(string? Push, List<string> Log)> MintWith(int titleLength)
+        {
+            var log = new List<string>();
+            var sender = new PersonaSender(_ => Aurora);
+            var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, log.Add),
+                sender, "Test Mac");
+            await p.OnScannedAsync([("s1", Status(title: new string('y', titleLength)))]);
+            return (Assert.Single(sender.Prompts).Push, log);
+        }
+        static bool HasPersona(string? push) => push is not null && JsonDocument.Parse(push).RootElement.TryGetProperty("persona", out _);
+
+        int lo = 0, hi = 4000;
+        Assert.True(HasPersona((await MintWith(lo)).Push));
+        Assert.False(HasPersona((await MintWith(hi)).Push));
+        while (lo + 1 < hi)
+        {
+            var mid = (lo + hi) / 2;
+            if (HasPersona((await MintWith(mid)).Push)) lo = mid; else hi = mid;
+        }
+        var (dropped, droppedLog) = await MintWith(hi);
+        Assert.NotNull(dropped);                                             // e kept, persona gone
+        Assert.Contains(droppedLog, l => l.StartsWith("prompt ", StringComparison.Ordinal) && !l.Contains(" no-e", StringComparison.Ordinal)
+            && l.EndsWith(" persona=dropped", StringComparison.Ordinal));
+
+        var (none, noneLog) = await MintWith(4000);                          // nothing fits: no e at all
+        Assert.Null(none);
+        Assert.Contains(noneLog, l => l.Contains(" no-e persona=dropped", StringComparison.Ordinal));
     }
 }

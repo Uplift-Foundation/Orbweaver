@@ -106,25 +106,28 @@ namespace Orbweaver
             RelayTestHooks.RunAsync(client, OrbweaverSettings.Directory, () => DateTimeOffset.UtcNow, Task.Delay, CancellationToken.None);
 
         // What one scan becomes for the phones: the roster rows, each persona
-        // with its v5 id and offered picture, and the personas frame's plaintext.
-        internal static (IReadOnlyList<RelaySession> Rows, string Personas) Project(
+        // with its v5 id and offered picture, the personas frame's plaintext,
+        // and (CB-321 addendum 2) that frame's default row as the persona a
+        // limit push speaks as.
+        internal static (IReadOnlyList<RelaySession> Rows, string Personas, PushPersona? Default) Project(
             IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             var dirs = UserConfigDirs();
             var rows = RelayRoster.Project(snapshot, (sessionId, status) =>
                 RelayPersonaRows.For(PersonaName(status, dirs), status, LocalPersonaFor(sessionId), OfferImage));
-            return (rows, PersonaFrames.Personas(RelayPersonaRows.Rows(rows, DefaultPersona(dirs), OfferImage)));
+            var personaRows = RelayPersonaRows.Rows(rows, DefaultPersona(dirs), OfferImage);
+            return (rows, PersonaFrames.Personas(personaRows), PushPersona.Of(personaRows.FirstOrDefault(r => r.Default)));
         }
 
         internal static void OnScanned(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             var client = Client;
             if (client is null) return;
-            var (rows, personas) = Project(snapshot);
+            var (rows, personas, defaultPersona) = Project(snapshot);
             client.OnScanned(rows);
             // CB-321: and the personas frame, which the link sends only when its
-            // bytes change.
-            client.OnPersonas(personas);
+            // bytes change, with its default persona for limit pushes.
+            client.OnPersonas(personas, defaultPersona);
             // CB-315: and the prompt watcher, off this thread — it captures panes.
             _ = client.OnStatuses(snapshot);
         }

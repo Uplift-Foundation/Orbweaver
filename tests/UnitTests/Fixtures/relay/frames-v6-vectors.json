@@ -1,0 +1,682 @@
+{
+ "_source": {
+  "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (V6Vectors.cs: PushPersona, PromptFrames.FitPush, RelayLink.DoneE, RelayUsage.LimitE, RelayLink.PushPlaintext, PushSeal)",
+  "orbweaver_sha": "2f63d8ba",
+  "spec": "CB-321 addendum 2 plan (docs/design/cb-321-notification-persona-plan.md); contracts/frames-v6.json push_changes",
+  "encoding": "hex is lowercase; e is base64url without padding of header(66) || nonce(12) || ciphertext || tag(16); the done and limit plaintexts are canonical (frames-v4 canonical); the amber plaintext is v3's library form as push-vectors.json pins it (\\n short forms, BMP non-ASCII literal, non-BMP as uppercase \\u surrogate pairs); persona is the last key of each"
+ },
+ "_rules": "CB-311's orbweaver-push-v1 seal, unchanged. Each plaintext is the v3/v4 one with `persona` {id, name, image_hash?} appended as the last key (frames-v6 push_changes.persona). name is the roster name cut to 64 UTF-16 units (… last when cut). Amber fitting: detail cut at 512, persona present from the start; cut detail, then labels over 120, then DROP persona and repeat, then no e. The no_persona plaintexts equal the v3/v4 vectors' byte for byte (back-compat).",
+ "inputs": {
+  "desktop_id": "dsk_5f3c9a0e1b7d2468",
+  "phone_id": "ph_a1b2c3d4e5f60718",
+  "machine": "MacBook Pro",
+  "session_id": "0f6c4f2a",
+  "phone_agreement": {
+   "private": "a8a840c28d24ee5bbdd7fe4f9785b81ba783503d5c340b43fa6e713c9e6c9ba9",
+   "public": "0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40"
+  },
+  "ck_session": "_APVA4tadxC7cR0g6HWoxg",
+  "ck_usage": "WKG4KGaUZAO5klJY9TZadw",
+  "personas": {
+   "aurora": {
+    "id": "3f7a9c1e5b2d8046",
+    "name": "Aurora",
+    "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"
+   },
+   "nova": {
+    "id": "9b0e2d4c6a8f1357",
+    "name": "Nova"
+   },
+   "long_name": {
+    "id": "c0ffee0123456789",
+    "name": "Persephone Alexandrina Montgomery-Fitzwilliam of the Western Reaches",
+    "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"
+   }
+  },
+  "_note": "phone_agreement is push-vectors.json's; ck_session and ck_usage are frames-v4-vectors'. aurora and nova are frames-v5-vectors' two personas (one with a picture, one without); long_name is 69 UTF-16 units, over the 64 cap."
+ },
+ "limits": {
+  "max_e_chars": 3600,
+  "max_apns_body_bytes": 4096,
+  "max_persona_name_utf16": 64,
+  "persona_id_hex": 16,
+  "image_hash_hex": 64,
+  "avatar_max_side": 256,
+  "nse_donate_wait_ms": 2000
+ },
+ "amber": {
+  "with_picture": {
+   "input": {
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "label": "orbweaver on MacBook Pro",
+    "tool": "Bash",
+    "summary": "Wants to run a command",
+    "preview": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?",
+    "expires_at": 1794113592,
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "approve"
+     },
+     {
+      "key": "2",
+      "label": "Yes, and don't ask again for commands that start with dotnet test",
+      "kind": "always",
+      "scope": "dotnet test"
+     },
+     {
+      "key": "3",
+      "label": "No, and tell Claude what to do differently",
+      "kind": "tell"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "persona": {
+     "id": "3f7a9c1e5b2d8046",
+     "name": "Aurora",
+     "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"
+    }
+   },
+   "detail_cut": false,
+   "labels_cut": false,
+   "persona_dropped": false,
+   "eph": {
+    "private": "fe0d4ff42956d900182b3e8227a6734a6d3f8e256a2de178e1fe31f90aeee102",
+    "public": "04cff2796e842413dc05331edbc30836552b9e0642e63662d826b5774c4ddef36cf3174caa3f16b2a60a7488a782f2151d3889f4744c2a3cfa9a3248e7e86981fc"
+   },
+   "shared_secret": "860e83ae7d0f07c4c0267700be072fc095d248a65aa97488c7a693bd3d1c0785",
+   "key": "9c031b3c36a8fb9dc7c89f3175e9b58f210f04477dd256994a5d1ea93890563a",
+   "nonce": "8a656d0b519fe9b9d5528ae9",
+   "plaintext": "{\"v\":1,\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"tool\":\"Bash\",\"summary\":\"Wants to run a command\",\"detail\":\"Bash command\\ndotnet test tests/UnitTests\\nRun the unit tests\\nDo you want to proceed?\",\"expires_at\":1794113592,\"options\":[{\"key\":\"1\",\"label\":\"Yes\",\"kind\":\"approve\"},{\"key\":\"2\",\"label\":\"Yes, and don't ask again for commands that start with dotnet test\",\"kind\":\"always\",\"scope\":\"dotnet test\"},{\"key\":\"3\",\"label\":\"No, and tell Claude what to do differently\",\"kind\":\"tell\"}],\"screen_hash\":\"4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4\",\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"Aurora\",\"image_hash\":\"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3\"}}",
+   "e": "AQTP8nluhCQT3AUzHtvDCDZVK54GQuY2YtgmtXdMTd7zbPMXTKo_FrKmCnSIp4LyFR04ifR0TCo8-poySOfoaYH8imVtC1Gf6bnVUorpglo2p4EXUbGnlWrCj4NiJC9jZCiW8SthE4VjZALGXFwk3lXutNdxxaBDjM2dWclbpLo_gM7KuUGqMzeFLMmmxKthXJe2FKPD6IPOp-Jtho34AHflG2VfgVVicbceI-VUO48f_sTZwam6y70NCJx_eIuWrEsEoYCl5a03cQSH3Fhr5NDm2DYlHwSZZTigLUsmp3g6xPbXQQXc4fRXPwtlzdX02eKLYMnCQqhNOKE4Khre7_kLyUI81ifzRABBF5aQd2fKWfyDe4FGSykk-FED6WaYlTF3w-sMKoUc0Hyi37xAJ1FFJJmrb5tTqtwIwkbz8dz2YT61hVF5r-2Mo9U_WSL15wL8U1pnaYmyKvQeCfprcTWZBzkZ_CcZtOLaW2Eid5bxiskXkVbO_LYYeTfXh7oV04mPMjz3APSXvhAIzh-W4EZnO51xz4Q0PhwiM4aCv5UumEvn4_OC6mOVb9-lEP_7pUbYATSxuxv1N5Bndu0B2tU5126KLaQ4u-FIDA6yDdT-XDSngLLeYjyfh_yJEhV_LFsWO7SJYoX5kKjYSss0JPtUOAjxrL4hYm5-payyqpyikcHD_Moj-RSbglpEuJxdjvGg5HmkmntI5v_OFB65y_kvufPYwoB0-LF2sFMtsTOYXWKX5PbPqFtaIjzmAM7INl2vnyT_wNkS9ypNlG7ongYMfRT8DUvJnNvT18vUvP9twfMCnqVb91RIfyD5F1ecMT4U-asOAtvu9v7fy6rsoTPs6pm5QUBGJk6kT0tBG0qObYYhMU1YbDZp1ILbfJH2TsIvbTqVDF632O7dJrWxibmcThPEVw0cX4j-5owfvQUshf4rKN1jX3UF60WKwClRhBWTUJy2taQLix2YnMXQYtxYHsjKcpf9cbhgxv30hT_dSW8ghab3e_yzD-Qp4SUl0s2u02OhK3aEiaRVbJNtVpVqG6g4rzXmxeP1BmcWGgLsatX7Kh7UnWoTA4tCXGnKHBN6UZsWjmfU",
+   "e_length": 1100,
+   "plaintext_bytes": 731,
+   "_note": "the frames-v3 example with Aurora appended: fits untouched; the NSE reads Aurora's avatar file",
+   "nse": {
+    "sender": "Aurora",
+    "sender_id": "dsk_5f3c9a0e1b7d2468:3f7a9c1e5b2d8046",
+    "title": "Orbweaver · orbweaver on MacBook Pro needs you",
+    "body": "Orbweaver · orbweaver on MacBook Pro needs you — Wants to run a command",
+    "conversation_id": "dsk_5f3c9a0e1b7d2468:0f6c4f2a",
+    "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3",
+    "_note": "sender is INPerson.displayName; sender_id is its customIdentifier and handle; image_hash names the <hash>.avatar.png the NSE reads from the app-group cache, or null for the default avatar"
+   }
+  },
+  "without_picture": {
+   "input": {
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBE",
+    "session_id": "0f6c4f2a",
+    "label": "orbweaver on MacBook Pro",
+    "tool": "Bash",
+    "summary": "Wants to run a command",
+    "preview": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?",
+    "expires_at": 1794113592,
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "approve"
+     },
+     {
+      "key": "2",
+      "label": "Yes, and don't ask again for commands that start with dotnet test",
+      "kind": "always",
+      "scope": "dotnet test"
+     },
+     {
+      "key": "3",
+      "label": "No, and tell Claude what to do differently",
+      "kind": "tell"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "persona": {
+     "id": "9b0e2d4c6a8f1357",
+     "name": "Nova"
+    }
+   },
+   "detail_cut": false,
+   "labels_cut": false,
+   "persona_dropped": false,
+   "eph": {
+    "private": "13ce09f9929deda0eaaa22e1337a96d7d8ef26e42c657d5acf7f71053c4cc16a",
+    "public": "048f300d413ffac09faadef39d3d250248548f3ce3414f5739fabcff7deac6b77306e20133dfe9cc69ecaab72a4f5cd13432a4e600220228873ed4cef870500c57"
+   },
+   "shared_secret": "94f46a850958d1d8e32759024e9492ad57f8bd1bd17389d0c03fc09316bc4180",
+   "key": "491b9ef126679bfeffd6f146a88ba3ebe0a498b9cc5b669c5d1a5e1f17a3ab55",
+   "nonce": "211b95a5aeea017a034e753a",
+   "plaintext": "{\"v\":1,\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBE\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"tool\":\"Bash\",\"summary\":\"Wants to run a command\",\"detail\":\"Bash command\\ndotnet test tests/UnitTests\\nRun the unit tests\\nDo you want to proceed?\",\"expires_at\":1794113592,\"options\":[{\"key\":\"1\",\"label\":\"Yes\",\"kind\":\"approve\"},{\"key\":\"2\",\"label\":\"Yes, and don't ask again for commands that start with dotnet test\",\"kind\":\"always\",\"scope\":\"dotnet test\"},{\"key\":\"3\",\"label\":\"No, and tell Claude what to do differently\",\"kind\":\"tell\"}],\"screen_hash\":\"4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4\",\"persona\":{\"id\":\"9b0e2d4c6a8f1357\",\"name\":\"Nova\"}}",
+   "e": "AQSPMA1BP_rAn6re8509JQJIVI8840FPVzn6vP996sa3cwbiATPf6cxp7Kq3Kk9c0TQypOYAIgIohz7UzvhwUAxXIRuVpa7qAXoDTnU6fANRuL1O_-eTU8weCZ0Bv0SZ0J9uAJjxsit2-nKKuo4FT8HYciRos1tbWoAjQ0Ea1k-JjJv7Y9XU6iGLLWJDyHjDLlYqoS0l1CE3rOu3j5cHlgclz0hCY0fysiMAJ_RtUwWxQIqJkg7TDwazWJdRDZ73tnmBZQH_D93hZ3pbO3yEJZJAIheE99BjxVrc5w0oGrCubWEsaqQWiOXD4kck1ZHRin0zqniwFHyxntF9ixu115n4W7F6QsBTnpjB728W6M0fpLzsiW5PIlyyeoGr4-baDNVsaoM0LD-mihMybZGKsbLls5DlMuswByHbNm5wGzVlKzX7gEK8SbbZ_pothBkHLSIX4saAynScNP2E0RAfriY066-xmkmc39Mb-E3ATyiO9cMj96ottU8oJBd5hLTXquJox46VTO_fv6hSo6ZDCoQkq5VmhEcmY5RJx21QsRY1PbF1WToKsevjDNUAisOpWKw7exkJuqATsLF7-vMns-yCBUofdruSpG5Z69TCn4wsTc918Rqm_Fir9rn_Bnn_SUfT59YYTNJIICcyxsg0HUTgFGUkQbeC5CxQRK40_GK5wmVeAl4BRl_bwCs2LlFvnes2Z30pQ5_TYIlCbVhL7kj5iH8FFmu3GihmacsEYb7q3QEsuyIk1zR1OEL577J8cGmwQWDv1djEmBwxqW15WqKT3g28K3mhUv4nxhmwqYHYRaqJPKQ09ZRFEK0Nvj1lyTCxunnQUV9U7hvJzR6SId8rWlw86M3KNeiACc17-80CAV1g4UZvZ2Uozit_MfaACxcehqS_0VceEoch9_yy5kCQ12HB9y79YaTiXpNRQdbCw1sZDBFisYtea9VuWRf2PSv5miIt_bIAHFsnPs8Q6iW60OUhye4",
+   "e_length": 991,
+   "plaintext_bytes": 649,
+   "_note": "Nova has no image_hash: the sender is named, iOS draws the default avatar",
+   "nse": {
+    "sender": "Nova",
+    "sender_id": "dsk_5f3c9a0e1b7d2468:9b0e2d4c6a8f1357",
+    "title": "Orbweaver · orbweaver on MacBook Pro needs you",
+    "body": "Orbweaver · orbweaver on MacBook Pro needs you — Wants to run a command",
+    "conversation_id": "dsk_5f3c9a0e1b7d2468:0f6c4f2a",
+    "image_hash": null,
+    "_note": "sender is INPerson.displayName; sender_id is its customIdentifier and handle; image_hash names the <hash>.avatar.png the NSE reads from the app-group cache, or null for the default avatar"
+   }
+  },
+  "name_cut": {
+   "input": {
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBF",
+    "session_id": "0f6c4f2a",
+    "label": "orbweaver on MacBook Pro",
+    "tool": "Bash",
+    "summary": "Wants to run a command",
+    "preview": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?",
+    "expires_at": 1794113592,
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "approve"
+     },
+     {
+      "key": "2",
+      "label": "Yes, and don't ask again for commands that start with dotnet test",
+      "kind": "always",
+      "scope": "dotnet test"
+     },
+     {
+      "key": "3",
+      "label": "No, and tell Claude what to do differently",
+      "kind": "tell"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "persona": {
+     "id": "c0ffee0123456789",
+     "name": "Persephone Alexandrina Montgomery-Fitzwilliam of the Western Reaches",
+     "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"
+    }
+   },
+   "detail_cut": false,
+   "labels_cut": false,
+   "persona_dropped": false,
+   "eph": {
+    "private": "23b4505afdcf33cf00b82bae27e7e1578cd8ae7f50a6d40b6473ab9480466917",
+    "public": "04f5aa3a89c5a5901a12e15c04e6341363f11c8fda471e2707ad999babaaf5972ef7c5261b47fd47e16771bcd00ce66e516b9767fa4a81e7f56d01272431648bb1"
+   },
+   "shared_secret": "dfed311aeca970792d680b843ebf09499e8e3b5d7554c4388c3d0a6763a676a0",
+   "key": "b3054ccba416ce9756f6d63fd8b57c1b3482c3d220b6aa33f7718e4fe6353227",
+   "nonce": "9d55a675bcc95b1b2cad8553",
+   "plaintext": "{\"v\":1,\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBF\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"tool\":\"Bash\",\"summary\":\"Wants to run a command\",\"detail\":\"Bash command\\ndotnet test tests/UnitTests\\nRun the unit tests\\nDo you want to proceed?\",\"expires_at\":1794113592,\"options\":[{\"key\":\"1\",\"label\":\"Yes\",\"kind\":\"approve\"},{\"key\":\"2\",\"label\":\"Yes, and don't ask again for commands that start with dotnet test\",\"kind\":\"always\",\"scope\":\"dotnet test\"},{\"key\":\"3\",\"label\":\"No, and tell Claude what to do differently\",\"kind\":\"tell\"}],\"screen_hash\":\"4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4\",\"persona\":{\"id\":\"c0ffee0123456789\",\"name\":\"Persephone Alexandrina Montgomery-Fitzwilliam of the Western Re…\",\"image_hash\":\"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3\"}}",
+   "e": "AQT1qjqJxaWQGhLhXATmNBNj8RyP2kceJwetmZurqvWXLvfFJhtH_UfhZ3G80AzmblFrl2f6SoHn9W0BJyQxZIuxnVWmdbzJWxssrYVTO71jDqnMv0L_zGq4EJGdTXGWJSxyvTlC3z31lexaMRr1Aear9dfOnrkV7dnihTiyVCwZjmhgAm8EriSUXEIDPV3z_SKYj5yWpel_27y_i5PWnPof0Sb5ob3Gw4eHqP0zffax7dZ_Nw1sP6GDDT7p_ZrJF65-4ohmqCQCbXTaSmqmTzbJgWNlGtttvNG7avVjO3doecrrj8yXUMlTxUakC7cHTtZYW0E7aetGsJDhD2uEaipP4bScAr3jC5zqIy07hmQ9YqFXt0V-UfB4BzthWgOyLwpaFfUOa9WZ8vaRl6vpDi9CU9pmP-cETXfBx0lft7Zfpa71tO5aeQlq_Qnx8bYPQcg2p3rvD_sJKJZ4Z8GUVTZzuoKdH5oeY7h9oFGsyWV5k2WkFPjDvDoRno2X6yYkAUG43X4C1o0F6EZHjUdTJn0bpiiKvY1mj4R_-LId3L19R7t_juAyzAFAgmGggDb2N89FyScrD8wja-bDcutLcVQsXvfc4iO85-pZspmhrkQ5vYIctUKNsSnN_6A6kkygJvVT1nJWCRmLFTMPtMcSYe4vLdkVlkit-ToSinEgFbK8UZKOlRp1LD3CAssB_XDHfHsz4gOQcl01MXtj6E37RdYRTK2ChQYsLZSVmqnGALDLr9pFppF9aAX7WzEyOeiQmQc7swH2h7f8YF6HFYjoQ5zZXndaMQ2bRpyqcrrovlXTbgF-3VlLHh9MMgigdtg-KfrIHTUFuebuu6iqWI24VRKQhurrGaPtkGHXHeGzVM6QeQ1VQ-wLO9x_gx_8KWKmptWvATEzDUXqQHBCy0RXlWIBXeBn2HlaWJSxotR7arJxtAzY1TU7XP7kubVjSQ937a6WwE48diY9JP5z2yB5Fp2pwJbTxmThQkZ7cIG5EvKxhOYpi-G0xisisn_9KPdiptruY5J6fQZvn_e1FRplL4HhwwYxQXyBQnXLzXSYhHDwRbUJnnFZ0DBQmyqQxghduB6bzckdC1MMwXf0ZIgfjayn6W8o-uP6nvo1VrVMCQJ6X4UOJbEkEjYhiX9n2cLTLUw_iymKQ3f9JIJ16CSAgVq8CMr0",
+   "e_length": 1180,
+   "plaintext_bytes": 791,
+   "_note": "a 69-unit name is cut to 63 + …",
+   "nse": {
+    "sender": "Persephone Alexandrina Montgomery-Fitzwilliam of the Western Re…",
+    "sender_id": "dsk_5f3c9a0e1b7d2468:c0ffee0123456789",
+    "title": "Orbweaver · orbweaver on MacBook Pro needs you",
+    "body": "Orbweaver · orbweaver on MacBook Pro needs you — Wants to run a command",
+    "conversation_id": "dsk_5f3c9a0e1b7d2468:0f6c4f2a",
+    "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3",
+    "_note": "sender is INPerson.displayName; sender_id is its customIdentifier and handle; image_hash names the <hash>.avatar.png the NSE reads from the app-group cache, or null for the default avatar"
+   }
+  },
+  "persona_dropped": {
+   "input": {
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBG",
+    "session_id": "0f6c4f2a",
+    "label": "orbweaver on MacBook Pro ",
+    "tool": "Bash",
+    "summary": "Wants to run a command",
+    "preview": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?",
+    "expires_at": 1794113592,
+    "options": [
+     {
+      "key": "1",
+      "label": "Option 1: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "2",
+      "label": "Option 2: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "3",
+      "label": "Option 3: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "4",
+      "label": "Option 4: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "5",
+      "label": "Option 5: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "6",
+      "label": "Option 6: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "7",
+      "label": "Option 7: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "8",
+      "label": "Option 8: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "9",
+      "label": "Option 9: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "10",
+      "label": "Option 10: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "11",
+      "label": "Option 11: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "12",
+      "label": "Option 12: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "13",
+      "label": "Option 13: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     },
+     {
+      "key": "14",
+      "label": "Option 14: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "option"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "persona": {
+     "id": "3f7a9c1e5b2d8046",
+     "name": "Aurora",
+     "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3"
+    }
+   },
+   "detail_cut": true,
+   "labels_cut": true,
+   "persona_dropped": true,
+   "eph": {
+    "private": "fc5a18ae5d67d59b1133d2e0e0a7c51570a2c02446db1188827fc1e00cb4fe6e",
+    "public": "04d4a2c1f49fa857535fb3fdab3f2263ecad3e9cbba18c806ab4181739e3a085b96a5e5de60453abf88b6b4f9da30f292475247f5eb16a1cd5f24db8c373b39184"
+   },
+   "shared_secret": "22f72038c70c0423c5d1ad744a9b04e85e5c99cbb41c699d4d48f6a1254d734c",
+   "key": "2be91e0da5a280bfa759b1a2c85026aadd658288a6b5b1f09dd476833c54c795",
+   "nonce": "63b6f857e3a768f17ea1a140",
+   "plaintext": "{\"v\":1,\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBG\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro \",\"tool\":\"Bash\",\"summary\":\"Wants to run a command\",\"detail\":\"Bash command\\ndotnet test tests/UnitTests\\nRun the unit tests\\nDo you want to …\",\"expires_at\":1794113592,\"options\":[{\"key\":\"1\",\"label\":\"Option 1: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"2\",\"label\":\"Option 2: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"3\",\"label\":\"Option 3: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"4\",\"label\":\"Option 4: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"5\",\"label\":\"Option 5: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"6\",\"label\":\"Option 6: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"7\",\"label\":\"Option 7: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"8\",\"label\":\"Option 8: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"9\",\"label\":\"Option 9: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"10\",\"label\":\"Option 10: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"11\",\"label\":\"Option 11: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"12\",\"label\":\"Option 12: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"13\",\"label\":\"Option 13: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"},{\"key\":\"14\",\"label\":\"Option 14: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"kind\":\"option\"}],\"screen_hash\":\"4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4\"}",
+   "e": "AQTUosH0n6hXU1-z_as_ImPsrT6cu6GMgGq0GBc546CFuWpeXeYEU6v4i2tPnaMPKSR1JH9esWoc1fJNuMNzs5GEY7b4V-OnaPF-oaFAzecgZpf8TMVR8TGPRVwyZvbHmRJhFySvUOm-J7suhVyDtGX0vwiiMRl7dblr6km5vgUhc3by88YvlBQ6KEgclHcFs6F50iOmMhUJRoK0yCicAckcr3NpX-0cxJoirN1r7AfPFfwu3v4aFcxdyiq5WMftfMz0aQkXF8ouKXZUo0JKe-aWspR0w_b_b2lQefiZtAN8N5j5aRhKHpLV-zP1ORL9wx2MGVjBvETP1SbHiixbbjiOMoslL4QjksDJiXRKMIsF7RqgzIAkoJ598fMxogniIotkGiYb6PCLJuQb7XDwWqOwSDK2CRuvC2fpUmMfrktDnYNRiLqwbRiJp2liCHvegvGpwtrupvcRSm5zLI1Al6Hxa3D1jj8vnihWIIHBd6bPfjdtUp1C_cBaYgCxkPQa4F2aFwchV4IyVB3l69xEK8CbmPyYYvZ3xBzq7X87aAOyMiSejay9vsAyKNc1gr9INEn1XcwQqXFRo1vAhqKSNHTrchqZUeqgqG0zKcdKm8tUaaRQrp7Mmdn2Jnk7Ecz17UxkB3A50kXG-PLc0Td1SfDrpvbLo1Lcp5uD8uGaYAArAohteD4mC4lQzvb1wFyiX0hkgcvg7bJ7FAJZWaZJO3f0DuBt5rwxznh6AbCWBvE67sX9YUzaeRAVQ6Vzok0-68IpHr-iwwGB4I_fW03nAStNQlefNzsAwQjbkC9IRZdIj0fUHyeCGNKXaPQzK3MMb5Ga5v2bVO7FfrxKaKM3c3jNSu8pc7bNT_Yv_kebw3b2oird4PBgBfxfa8oLFKOPScGdyjnoGZyFesjLLVpRCFKq0z_UBWWrSGIQ0QKbs0YGzYpJoLAQnYuwAy2eyD0W34aYDYafjYij7c7W08Fq6TAUQNdmsHTVJWtxNgX_Akjw7PXJxvlWeyeVd_80IZzCUxIeuB2aRbUJ9tcRsN2C1DLLAfqKIeeQcFRfHUNGUgAZo9DKcMJUnvA7X1DbkpzihAiejuCrMYK8fp8jw7462b8Gikv33VcHTVlg6nyzn8-p8u5KzjThNeBJVoGLiUSm4SlRildGApVP74grxlsx9BdAwU17SO-7Dh5RwkcgKqLfe5SyXvkpn6BvevjNCBVu3JGXgPOWOq_j975__qyASm3ZRrcGhuGAGKhh2kt9eKRhxVlvqAiEYZOn8_23YpIUNxmYqgxYR9Z-wW7nyqzaYn3VEcmzD54CicetNGaqcMhTG8TyO880mIva9daHJ5E38KTmkacYzC-cYqtfHWwlwceTLqOyqBn9t0X6-ookOhRlP5w1TimKhPDwJlam93zMW-VCpObvMB0shC8rBEQIKuady7dkxfvKHs7-t2MepELcDnbnSPH7NzHbW4Ov0B69FXaWn2kELXZE3DyIDgLhH9iDUS1bgyKc7YHGn-O8nbvSqluoCGWR42_Uad3h9EUSvkJxfEfUBDsBAXJiAHcMijeWnZW9Fw0OeuwHBpdXf8aq9wPIHqKSGqUfTTaPsqMOTmvZhCmZ5nF3WHqDjjrc2blJeJDEqpq3whstEY88OnG4rWCJ4CZKj--hoUdOCfdgH8JDJlor_Rh3eu1Qpi1sAUJ32ko6sqXDGo5t1S9iUtEOGfv39JwvQTFs2IGX8ucNqSJUV_LGO_qOsmQ60M1gzpyaq-0bYvZashRWbAcyY0bvPEJTcKrSgWFE0OQW3XNKMUiSZcA4sDQxlpT7gSt9Fe7hhMhdhzilCKFRNWMcD5oo08uStj9l-dK-xjLRA8BqYGsSaWe6MgfcOnyucMC-kyXfUiPz-rnK6GreOPu7DHkIABuF6DfX9ph14CZAnki0oNzwbBMptiAaYO4ksvWB8XajxXnnAf2FolZ3FjcJHSCPegtnTFktzypBDzUyGpo_u_D_p7m7VoFvW4rXgqGk42CFHEt75TQb2vP64P2F2XbGMyjgZDgWTNAYYSuwXBermIdKb0yw1oE7TTkx6W7LoixRxAOfIby4uETFNrVLLQzkUqMN7WCTh1LJk4ipylK8N79zWOGljVFC4A5cknAwhbKkzeSIMjKvQNetXCHT4hw_q5CcqAuMJxAyHKUe9gOf8TbBaqFWk0-QYUp2js76Xe4LfncLAgH9-KXnmJufFQuMkiGPomQIrmUBX4ymbZpReD3qPo64kf9glaeMoo-9X0zFUja98K2bKfoyC0Rkvk2VT0XG8ovbTrSivHg7gWe3tGczZDgc-yK_uAWuJr190yXcW-Qx9kG_lWGKJANzeHo5GZhsWDWS3_YWbpraIeOVP8kLXv0yJ3sL438txllS4LAfFj7PNl6vfntnlz9CoCWGoHzZzpJWTcIlQAKlPy5pO0paLp09ZgGxAXnt3Gz6bFQzy94yh9cOroCVG95wQqj7hD2_UPbPVDJCg52n_5tFdRKgmwYAf_sDVY13icCIinwCMchN2Uow60E8_V2TcARZc-OkwBw3m20vcMfkbDrVbq6RhDQI7qupGhKcr7XBYCQGTRrlXM86bATV4_XYiF7WevUPDGJIVNx6FNvf6N-IdiMWKaWhYMs-JSrYHORZfkrbqlqGhCCaGlYhx5R7S3lhspoAGGMlb7Z6WTMmiJus33kmGt8PhKdQcl0ClXoJiOgxmXDrq4iPq54MkRxqZHRx_1Stc55QPEj5Rt60rFQ1400ZiNlcik5NHnXvxO1k6Jijo59NPBJ7bJ19uvzvV_GlSa0V4rgj-jNei1sR6saGcWF7DKzO7UcwHv_QD63lHf07X3RQizEd4A5CGjnoZrRhNUT2N-FAJm9jR9rTiHs-MeYNzA_UUXqrUry1LWXv33jfNNtvwne8APfU4wpoZwm4K-WvTX70PjYCzjolZBocZB5L8dhbP_XBfz2tZAw8-MpbJzVbBhfB1MK2oqqrVUxOWR497bpB-DbI619eMzHI26q53nI2RUXwY0NoaaXDiuem-l5WbyMklLNLeKYCpfvemswh9oqKHyaD6YUgDaoqU3Qa1PaNaC7a3Q-C3qzEUnwfZk51RizRS41kzxGBKlgPlwNFr3xE-lzmSM7NMX4G9AhXU7XE8fX_YCuwOIf9Dxv0IH9hcfB-f5rYvUmtmLjesuUPkN2VhOsy7P5e57LmtkrDp08Qb11Ga7mowfpKzpYAtFGkPg0GpFlt_TIAnwS7bCn5tgcOlb4fS4FKaI1WGFx1xWf-rPG63kG-fkWSXlOkGIb2OKgvQ0Svkc7NGsj2o-s4fIIhkZk2kQFbktPQZjox9IXgN7XFkG0hZ8RAInfQNrFz577LGfW8_y75L_KsOrZDwD5Kthce37m2-qQBnj9a9F-7e7nz7Zw9lYt9-OvCqGkf5G9a5PPUVdyR0GyNGki3-EqsFi3qwEK4eAalrbDFcNflhzOY9vVBohGG8q1qlqmuj2mOs7wHmWsA-By1_3zSoNkI7X2lBJQHrDV2LlPA3SpJG-KMnhPGB-BOMzTich9BEA7UYBCVzVG7GHVmLpv4wEMxy6qPclEird4MPkUNiPpaZy4QM6PE",
+   "e_length": 3600,
+   "plaintext_bytes": 2606,
+   "_note": "fourteen long options: even with every label cut and no detail the persona does not fit, so it is dropped and the v3 plaintext goes (detail then fits in part)",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro  needs you",
+    "body": "Wants to run a command",
+    "_note": "no persona: today's rewrite, no intent"
+   }
+  },
+  "no_persona": {
+   "input": {
+    "request_id": "01JC9R0A5N2Q7W8X3E4T6Y9ZBD",
+    "session_id": "0f6c4f2a",
+    "label": "orbweaver on MacBook Pro",
+    "tool": "Bash",
+    "summary": "Wants to run a command",
+    "preview": "Bash command\ndotnet test tests/UnitTests\nRun the unit tests\nDo you want to proceed?",
+    "expires_at": 1794113592,
+    "options": [
+     {
+      "key": "1",
+      "label": "Yes",
+      "kind": "approve"
+     },
+     {
+      "key": "2",
+      "label": "Yes, and don't ask again for commands that start with dotnet test",
+      "kind": "always",
+      "scope": "dotnet test"
+     },
+     {
+      "key": "3",
+      "label": "No, and tell Claude what to do differently",
+      "kind": "tell"
+     }
+    ],
+    "screen_hash": "4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4",
+    "persona": null
+   },
+   "detail_cut": false,
+   "labels_cut": false,
+   "persona_dropped": false,
+   "eph": {
+    "private": "502181f6f623a764acbb7bc20c408a4ae1a67e066c645ed372a28f38a1587ca1",
+    "public": "041b5c8ea458fde461e9f1ebc987f95cfad327a08b49d33a92e61a543c929dae283b9daed143654c77fec159f66e5af9177a13f7ac83dfef4473ce41b478666d51"
+   },
+   "shared_secret": "fd89442f33a8a050c8527dfa140ec9e485fb32e5a920a94d581cf3897693731c",
+   "key": "d5e36aae3094b70ca56b50b3c7b89f3151ff2e6596c58806e9f29a784e571bce",
+   "nonce": "4edc4fec4f8fb438380ab41c",
+   "plaintext": "{\"v\":1,\"request_id\":\"01JC9R0A5N2Q7W8X3E4T6Y9ZBD\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"tool\":\"Bash\",\"summary\":\"Wants to run a command\",\"detail\":\"Bash command\\ndotnet test tests/UnitTests\\nRun the unit tests\\nDo you want to proceed?\",\"expires_at\":1794113592,\"options\":[{\"key\":\"1\",\"label\":\"Yes\",\"kind\":\"approve\"},{\"key\":\"2\",\"label\":\"Yes, and don't ask again for commands that start with dotnet test\",\"kind\":\"always\",\"scope\":\"dotnet test\"},{\"key\":\"3\",\"label\":\"No, and tell Claude what to do differently\",\"kind\":\"tell\"}],\"screen_hash\":\"4hXyRkvjGjfb7YA1VBxYG6Oy7ktnetl3wQHh2sHerG4\"}",
+   "e": "AQQbXI6kWP3kYenx68mH-Vz60yegi0nTOpLmGlQ8kp2uKDudrtFDZUx3_sFZ9m5a-Rd6E_esg9_vRHPOQbR4Zm1RTtxP7E-PtDg4CrQcW2vuIRpCKl69pJzIpaVkZxBe0z4t3EGwVE2eiGYHvFmMgNwh15dWPLe2Fi5uPCmJE_z3kbwVHQYLQ57NBpvrohrvrdIyyrumW-GfE2Z1w6JlO6QIw7GxFYdCTE0-rQJPltII2g7q2H0G2Gp97nyJizcN1YNRHVNXbSJVEIj3wCPRAg3jsQu0M7oTbNscBBHNc7xSmSkGfwQovu8aUemJnTBEMXanBYIDypEiHOIX5tYta7lsmDwwwoYeu0ff8es1dwGsUFoXoNYyNpBHFIhBTPLqSkiE_R9t-C1w545wVOULTmR1qx637MCBkSidX90z8ur-oeJPnWKDuHoyVqwJn0bvO1W99HUe80rO3YSgfaEfa0C4JIsTRdjH1yNAwFisgwtfllQPqRKI5edfz0LDtRxs9TZG2QA-_PR_9xSVZJjC5lvCMUijePMe9bfGoEe3xJuMLpfzc3Fw2_sbDIirG0rLaundHoJXP52K8rzU-G50jenTRIv9wXdKiyc7-qC18qOqQM3ss54TgMZImydFuOq6kkrm8GIbt27ksGVI6aDEl8pSM5Ni_uRfWHwGCNqghRa7Ktoy2icT5UonzRji_QuKuAjnK5ryfseCJroxVPY23DZJl-zvziAIdNpEjBDkb_79QsDw8kuTPcYEI8Quob0gzpowBOsGa2qYZYpC8MPJJwJG0TLUYLsFge6m-yS9uxetYjLgptYzUp18p4i-QuSk7I1IWLa0m7gcDpdXgYHp7D1Wd6ex5aQw75xBvXFTzLE4MyksjJjGne-Su9Hbe5bJRvths7VATYy8nTEA9lwjD_rupjGi",
+   "e_length": 924,
+   "plaintext_bytes": 599,
+   "_note": "an older desktop: the plaintext equals push-vectors.json positives[0].plaintext byte for byte",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro needs you",
+    "body": "Wants to run a command",
+    "_note": "no persona: today's rewrite, no intent"
+   }
+  }
+ },
+ "done": {
+  "e": {
+   "eph": {
+    "private": "93926e9507fdf614ed817c0e5e6200337afe3d174ec83de52fa0528423e8233b",
+    "public": "04b4ee2520e61210c47b702344598f621e28b47e68b421f5a71e7a849be66f36b791097715cd317995fd2c14d35e7357c7f521d30d78532857418497e5849d62c9"
+   },
+   "shared_secret": "c046844b0b22a7f027a1a5e4c1605ebf13677a783066f5a380787769d06f254c",
+   "key": "d1dcf9b4d49da417be8e28bece9421c923ff1c421d501e3032dbf3c441c11863",
+   "nonce": "19bc1fade5c6e8537333eca5",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"Aurora\",\"image_hash\":\"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3\"}}",
+   "e": "AQS07iUg5hIQxHtwI0RZj2IeKLR-aLQh9aceeoSb5m82t5EJdxXNMXmV_SwU015zV8f1IdMNeFMoV0GEl-WEnWLJGbwfreXG6FNzM-yl0XQJ79FFULPCEaLBrfzFuOCqOW6gVDbPSxVU9qXvCfjLfS_cbWX4VkzVJ3RXA3ZYuSRyolSd8V_MuGe4-6ay8Epue2J32lByfGUTnRbf_lLk5oMn_WIhvY6XU86hurC6JRBmIu9JjD6cUXmDYDPn8J86TxWUCRJxF7q3bGZ5eOCLQjDxSn7h5HPiOV-ABc8mNUYmy1m7uOfFCF1ECDj6W6TrrV_F4ofxQsmsXzrG8cAiH4aKLrMMz32o7H4sJn8PqeKOsE8k45JBhQhAOJCsE_qRQcXz5EeNGiETcT-IR_bTJPVhizMUoe0tkmLoic94G8nKRog",
+   "e_length": 431
+  },
+  "apns_body": {
+   "aps": {
+    "alert": {
+     "title": "Orbweaver",
+     "body": "A session finished"
+    },
+    "mutable-content": 1,
+    "interruption-level": "passive",
+    "thread-id": "dsk_5f3c9a0e1b7d2468:_APVA4tadxC7cR0g6HWoxg"
+   },
+   "push": "done",
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "id": "01JCA0DONE0000000000000AB2",
+   "e": "AQS07iUg5hIQxHtwI0RZj2IeKLR-aLQh9aceeoSb5m82t5EJdxXNMXmV_SwU015zV8f1IdMNeFMoV0GEl-WEnWLJGbwfreXG6FNzM-yl0XQJ79FFULPCEaLBrfzFuOCqOW6gVDbPSxVU9qXvCfjLfS_cbWX4VkzVJ3RXA3ZYuSRyolSd8V_MuGe4-6ay8Epue2J32lByfGUTnRbf_lLk5oMn_WIhvY6XU86hurC6JRBmIu9JjD6cUXmDYDPn8J86TxWUCRJxF7q3bGZ5eOCLQjDxSn7h5HPiOV-ABc8mNUYmy1m7uOfFCF1ECDj6W6TrrV_F4ofxQsmsXzrG8cAiH4aKLrMMz32o7H4sJn8PqeKOsE8k45JBhQhAOJCsE_qRQcXz5EeNGiETcT-IR_bTJPVhizMUoe0tkmLoic94G8nKRog"
+  },
+  "nse": {
+   "sender": "Aurora",
+   "sender_id": "dsk_5f3c9a0e1b7d2468:3f7a9c1e5b2d8046",
+   "title": "Orbweaver · orbweaver on MacBook Pro",
+   "body": "Orbweaver · orbweaver on MacBook Pro — Finished and is waiting for you",
+   "conversation_id": "dsk_5f3c9a0e1b7d2468:0f6c4f2a",
+   "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3",
+   "_note": "sender is INPerson.displayName; sender_id is its customIdentifier and handle; image_hash names the <hash>.avatar.png the NSE reads from the app-group cache, or null for the default avatar"
+  },
+  "no_persona": {
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\"}",
+   "_note": "equals frames-v4-vectors.json done.e.plaintext byte for byte"
+  },
+  "persona_dropped": {
+   "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt on MacBook Pro\",\"title\":\"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\"}",
+   "_note": "a 1200-character title (it appears twice, in label and title): with the persona the e would be over 3600, without it it fits, so the persona is dropped and the v4 plaintext goes; a title that does not fit even then sends no e, as in v4"
+  }
+ },
+ "limit": {
+  "e": {
+   "eph": {
+    "private": "9cda6ac412cbbfd094f178ce80055b2b04ad93e23022fcb9731bc8fd33e0ddf5",
+    "public": "0460de937276b26e1e8fbec0e2a62adea06eee7f1eedf0a4f95a2dd5b89afbdafe6004aa625a47baa37d17c3edd56acf5b0fbeda533345517d04bcae8edff46740"
+   },
+   "shared_secret": "964e37f2a16551afcfe51d8e2619e7c2aeaa3d407a37fab6840b4fbee7fdf9dc",
+   "key": "c8addc30ecb17e57e4c135c126637a30e3136a527b3a6a7578845c827df96f7a",
+   "nonce": "4f667f67b7b1f8f4bab0fcd9",
+   "plaintext": "{\"v\":1,\"t\":\"limit\",\"name\":\"user@example.com\",\"cli\":\"claude\",\"window_5h_pct\":81,\"resets_at\":1794117192,\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"Aurora\",\"image_hash\":\"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3\"}}",
+   "e": "AQRg3pNydrJuHo--wOKmKt6gbu5_Hu3wpPlaLdW4mvva_mAEqmJaR7qjfRfD7dVqz1sPvtpTM0VRfQS8ro7f9GdAT2Z_Z7ex-PS6sPzZkHAezvSiu9tVbEhs357e_fdag8zzt4LD3xWDTBeCU4dRc7HTm7WR3J1_vSpqNO_i5x_aek5WvkJ-acBEIdaeIopi5K2hvg_c2dMyZVIT0nJsJtoNwSKysFIUU6HYNmkIpVFjLml5TYJciJh0YLuYKbRAcRHcreoJf32Is3_Ab0-h9-H5tFD7263c8_1xKw-rZjOU_jWWXAESo5G_wI_xYgQ0UEjU_HAOxBCCPQWO8ecWLUiggH-PQq9012PK2x2DwyjjVmaXTL088_tHEN0qx1lAUGqEaw-FqD6LMYslKHjXOW7eIWteJ15H6Z7NTCqGrssV1dzo0jenvw",
+   "e_length": 438
+  },
+  "apns_body": {
+   "aps": {
+    "alert": {
+     "title": "Orbweaver",
+     "body": "An account is near its limit"
+    },
+    "mutable-content": 1,
+    "interruption-level": "active",
+    "thread-id": "dsk_5f3c9a0e1b7d2468:WKG4KGaUZAO5klJY9TZadw"
+   },
+   "push": "limit",
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "id": "01JCA0LIMIT000000000000AB2",
+   "e": "AQRg3pNydrJuHo--wOKmKt6gbu5_Hu3wpPlaLdW4mvva_mAEqmJaR7qjfRfD7dVqz1sPvtpTM0VRfQS8ro7f9GdAT2Z_Z7ex-PS6sPzZkHAezvSiu9tVbEhs357e_fdag8zzt4LD3xWDTBeCU4dRc7HTm7WR3J1_vSpqNO_i5x_aek5WvkJ-acBEIdaeIopi5K2hvg_c2dMyZVIT0nJsJtoNwSKysFIUU6HYNmkIpVFjLml5TYJciJh0YLuYKbRAcRHcreoJf32Is3_Ab0-h9-H5tFD7263c8_1xKw-rZjOU_jWWXAESo5G_wI_xYgQ0UEjU_HAOxBCCPQWO8ecWLUiggH-PQq9012PK2x2DwyjjVmaXTL088_tHEN0qx1lAUGqEaw-FqD6LMYslKHjXOW7eIWteJ15H6Z7NTCqGrssV1dzo0jenvw"
+  },
+  "nse": {
+   "sender": "Aurora",
+   "sender_id": "dsk_5f3c9a0e1b7d2468:3f7a9c1e5b2d8046",
+   "title": "Orbweaver · user@example.com",
+   "body": "Orbweaver · user@example.com — 81% of the 5-hour window, resets at <local time of resets_at>",
+   "conversation_id": "dsk_5f3c9a0e1b7d2468:usage",
+   "image_hash": "6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3",
+   "_note": "sender is INPerson.displayName; sender_id is its customIdentifier and handle; image_hash names the <hash>.avatar.png the NSE reads from the app-group cache, or null for the default avatar"
+  },
+  "no_persona": {
+   "plaintext": "{\"v\":1,\"t\":\"limit\",\"name\":\"user@example.com\",\"cli\":\"claude\",\"window_5h_pct\":81,\"resets_at\":1794117192}",
+   "_note": "equals frames-v4-vectors.json usage.limit_e.plaintext byte for byte"
+  },
+  "_which": "the PC's default persona (the frames-v5 personas row with default:true), not a session's"
+ },
+ "negatives": [
+  {
+   "name": "id-uppercase",
+   "expect": "persona_ignored",
+   "why": "id is not lowercase hex",
+   "e": "AQT5fzyoHfZ1qEKhC3o5_CS7QgAWoEXL5OPRsnTiz-4Vo1DbQ2iASUR7O2ZzSzjQ3UQIihaG1og3u9OUvF_SMcdehAh-MRwHjAKRAYg7CnTYg3f6g6NgTSalcuoazC8F20T0jG7RVd2N3x-oxbvDtSwlXYpLyajOty5io7Ze5aCd9oxzObU_Unf7nzQeitf1EUVY2n7jpaYPn-DWJLN5peeZWz8BVCd-iQtD0a174rU5dQWrdQp5pg8Gxy-TzuETrGCWgRUmp2WFg_Ly3JF2PGKchqrPET91NqHkML1uQfBm2Zo7p7Fki29jERvh3J5Gq9Ab",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3F7A9C1E5B2D8046\",\"name\":\"Aurora\"}}",
+   "eph": {
+    "private": "e01d9d0d266aaa7ab770334e7a9893f9c83849886472c291f80656f9fa113e98",
+    "public": "04f97f3ca81df675a842a10b7a39fc24bb420016a045cbe4e3d1b274e2cfee15a350db43688049447b3b66734b38d0dd44088a1686d68837bbd394bc5fd231c75e"
+   },
+   "nonce": "84087e311c078c029101883b",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "id-short",
+   "expect": "persona_ignored",
+   "why": "id is 15 characters",
+   "e": "AQQ6aFXIVp9ZYV3Oo_2pcVab8Ek4wKO5inhSHhz0IvXKGPhlBgJf-zGBjSrpVoEwTuOQstuZ1iucIdh_Hvh2FYO_b6sR5HPxILkPGsgcyHgb2fZsQBjfCtCKokBnTnh7a_ii17xolixzSKoALaQ1JhPOZo1QJAQZyCGBn1b9bZmkewp4po25-PRrZtOui1i0qBU7w3xUQEmLKvLOimQ00vk9BhUexZqL0Pvuq9pdKHuqT4UkHdMNsY1KxT_-8oIIyhpNfOr9dQTFFxIYziyO5HUgWTBpTHjoeK6-9ASRTdh78vB9y9LjW5ZSKcBcgclYQHQ",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3f7a9c1e5b2d804\",\"name\":\"Aurora\"}}",
+   "eph": {
+    "private": "5287f96e1a348bc64071fb26b05448aa4e58aaf3f6a087e0244444620a373600",
+    "public": "043a6855c8569f59615dcea3fda971569bf04938c0a3b98a78521e1cf422f5ca18f86506025ffb31818d2ae95681304ee390b2db99d62b9c21d87f1ef8761583bf"
+   },
+   "nonce": "6fab11e473f120b90f1ac81c",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "id-missing",
+   "expect": "persona_ignored",
+   "why": "id is required when persona is present",
+   "e": "AQS7N3HATZTubXELLv7-WH1OMULR00caYB6-VYlDFkD-RlTEjAIQm6ugzRhLeRqV4E-AsPDcTA7yf7e1ronW4hrKGZXCiae8hb7jcpmwYlky7borQHGS4xSMVl4JwOvAKtA90TM8RQ8RDWQmBkw-zOmC-3WOdgzafVvTL5JcHWHZlzSvO4xKaxo6w_52Yhplaj64V7u9lKqV4Y-OSIa9j2_A0IcB6SeMTih70XOUYfjpTd1zUNm-bD76qgfoNN3HSpL_CbPMXsgL2lPdNBbYUnNqjx8Ecws2mbEf",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"name\":\"Aurora\"}}",
+   "eph": {
+    "private": "6bf136e133d1ea4a7ac0bc5d5216a5f2e052e117c25301549e342d9e2097e56e",
+    "public": "04bb3771c04d94ee6d710b2efefe587d4e3142d1d3471a601ebe5589431640fe4654c48c02109baba0cd184b791a95e04f80b0f0dc4c0ef27fb7b5ae89d6e21aca"
+   },
+   "nonce": "1995c289a7bc85bee37299b0",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "name-empty",
+   "expect": "persona_ignored",
+   "why": "name is empty",
+   "e": "AQT-88PjWnsQqYIMIf_K7Nz94u9RvVvgH6ycUBk-hbVQKfhMPZ1dpt3lhFKbpc0f1QvSSdrsPdgneWZg47G8nFHpAFQb2EsIMg63GgVtN1mOKXdCnDsfX9iBRTTsxFePRunwAOWRcguVVV8z7CTJGoT6FgDsv4-HgqCgKbZ-pY4sJmIGW0y7Ei1MirbFlIbUuoEx-4G9IX30cZN_GIhabI44M2-58KKOedSqrXc9D0AFrooJvrmxBZCRvxynjXmlbstoHzWszD2pHp0J2ifZC3u3OtoZXXoZBOis6OJOKHkXuprh5nwoR-m6tSCL",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"\"}}",
+   "eph": {
+    "private": "3fc408dbef69917b4c0eb91f2d4dd5277318092cfb6a412178a412a1c99de584",
+    "public": "04fef3c3e35a7b10a9820c21ffcaecdcfde2ef51bd5be01fac9c50193e85b55029f84c3d9d5da6dde584529ba5cd1fd50bd249daec3dd827796660e3b1bc9c51e9"
+   },
+   "nonce": "00541bd84b08320eb71a056d",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "name-whitespace",
+   "expect": "persona_ignored",
+   "why": "name is whitespace",
+   "e": "AQRCpylGhddfUv7gR1ZmOCiNCKsFl6PKtSCjEVmaYqoZ98PtP5ZQMLkwXNqUbzoStB0PB_UXSeSIMcftBCiXjJemHw1Fbsn2r5FvuHUpAluUaWAXGTrHitCyV7hUbjOwBffsMBhQBnenU34AAQLR4cjGHHt_wwbRHy5BLOhT5Q-p7_zktwA8Ppr45_xwid7vY7jcrtFZnQZ_wybZ9jaP4uL-7PWyQ4mG3fws6FeyXaFlTip1r9CKtG0eXvPKyei7MCXQteaMgh6-d9njtFN789PdLT6yGOQ9H_vmYdP22r7xgqgru8TTGriOTxhhgmKB",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"   \"}}",
+   "eph": {
+    "private": "0fb1292bb22aaa6edd8a46d7c46c37e23da79ad9eb1b788376a28cd0d127b24b",
+    "public": "0442a7294685d75f52fee047566638288d08ab0597a3cab520a311599a62aa19f7c3ed3f965030b9305cda946f3a12b41d0f07f51749e48831c7ed0428978c97a6"
+   },
+   "nonce": "1f0d456ec9f6af916fb87529",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "name-over-cap",
+   "expect": "persona_ignored",
+   "why": "name is 65 UTF-16 units, over the cap a sender always applies",
+   "e": "AQTqY9NcyhCBfih1IYinkGUXqUOc6ZWsZisvyLsJ3jAdBY61rwl5OEL7QWwKC9KfnTVuEj3M2S6Go-84BsBmpJCHb8Va-V7vTV-wjx_cp2f-NBIw1HAZ4jHtuu513bc5XdCPgg1IrJCOs-LJf9faTeIKTEtpdS-EOt4jBq9K46h5dBnfGNCfynylsGiulbDtAkNoPhXKvKiuAkV8q2MTyWlPYBE5mTeq5UQtHCwqAMQC7crknxC8Zf8LbpS5zfo2-2Q1ZzGaFMAn1eu6i8FgQtv6CVkwRmoHJQB0o6cUkBuQc417bmYWmHOiltv5F4QlObkD-Kf_YpBDgi7ogLHoth_Jl1Dz2P89ZAm1cSE1W_Q5TXNouVKcyCjRWKrJEBkvPd0R_H0UCoKqnqjiq54",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\"}}",
+   "eph": {
+    "private": "d7829ac75a55b48e1c0da0f50117cf4f04773bdc52b8a4d93d2eb31181f33ce2",
+    "public": "04ea63d35cca10817e28752188a7906517a9439ce995ac662b2fc8bb09de301d058eb5af09793842fb416c0a0bd29f9d356e123dccd92e86a3ef3806c066a49087"
+   },
+   "nonce": "6fc55af95eef4d5fb08f1fdc",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "hash-short",
+   "expect": "persona_ignored",
+   "why": "image_hash is 63 characters",
+   "e": "AQSEq-mBEumJUOLNi4BWthbVmkBZNjnNADL8Ov2kfhc8wo5ILZ1AQIqk7FL9B7C7saMvhqY-tbOnQ6qhMJFNAGBafZrNo-4gPHw4lSJXliRem_mbASGVbS1WlyrL3Esoen9pkDWJwMsjrfw_H9LCGLJ2Aiv8I7ComDc6Ah9-ZYAYqHJGHdrytLeBzp-hBncNid1zAj41AqtuGilI2D5s7ptZgIG9r0RxYTSojQ5CcCNrKB-ScbFSkPYyd0kWCdYPnEVS_0iOxNd2RhV_R1DLjuZM9kJFeVUUzhJHAKg6gnJplOb82zmO80M97NPDQvMYOtbAnzW2bPXDiAZP9vWWgNP67blrF5EPNdslYY-Shqxkk8ZXzSfNXsQQmU2rVwUs6NREZ5UwXUojhOdNWGfeJhc8pXwOfqZdBlXt_NEX6Y1xUw",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"Aurora\",\"image_hash\":\"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b\"}}",
+   "eph": {
+    "private": "323a28101019aa7d3f766e462a3830ab04e0e0f3e35486864803fb7a9a40b770",
+    "public": "0484abe98112e98950e2cd8b8056b616d59a40593639cd0032fc3afda47e173cc28e482d9d40408aa4ec52fd07b0bbb1a32f86a63eb5b3a743aaa130914d00605a"
+   },
+   "nonce": "7d9acda3ee203c7c38952257",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "hash-uppercase",
+   "expect": "persona_ignored",
+   "why": "image_hash is not lowercase",
+   "e": "AQSIUiwOL8-zVijtWNVvBX4ZK-Rjua_1MpRd9X8Pdzyk7ovpmp9zBBavTquQgMN_oF_YCr6OJkxTZufC6hNBl_-UOWEj5ZjvL1tzAAxJDO1kP7ZesgLGZL3W1aQ6e7VhpOC_pa-6nFMQDFCdbRCQ8wQjvI_oh8npZngLaMEkIptyq_yr5pciW2Ol5v0bK3cGtnfts5gyxbdS1LfHOf7pj0fXPJryoZ65r360b39cb3mqYCq15kdCix38O9jHkYapJsUQfxxOSw1aaQTOwHBHTxzYWc_QNzumL-6U8prb3kX0fNE8SIheaOoUefWVWWFVQv452nHFWFWAUc6fpx8kdcs4iq3TzZo4UfPS6WZftKcIFCPETrl6NAhxqHHY1smcSWI8fJGN6D34cVPsw4Myz4hsGZORtiq-8s03EAE44y_Zy9k",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"Aurora\",\"image_hash\":\"6A3F8C2D1E0B9A7F4C5D6E7F8091A2B3C4D5E6F708192A3B4C5D6E7F8091A2B3\"}}",
+   "eph": {
+    "private": "95ff4a47ac025e459d0eb90e8c2f802763871084c442045f09983ed07ed7e01c",
+    "public": "0488522c0e2fcfb35628ed58d56f057e192be463b9aff532945df57f0f773ca4ee8be99a9f730416af4eab9080c37fa05fd80abe8e264c5366e7c2ea134197ff94"
+   },
+   "nonce": "396123e598ef2f5b73000c49",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "not-an-object",
+   "expect": "persona_ignored",
+   "why": "persona is a string, not an object",
+   "e": "AQQbP4fTmAOm-DAEW1QiKSFg9r2Lj9AU7Q_0YNZ_V75B517EWEZy3t9ovfFkenhvod97uPbYPfWuvFO8LRulZaSutSM1nFlcTOsaRSW9CMlj_rKgOPahxqS0T3wESlK-Mc8QsufQ2_uC2gZeXiPinrnbyP4UNGRdVLTQBX5rCAgMgLbbdvnwFVpU1WVkFyNX0O0GRi9Y_U_f4eI8T9uLZAMJvxGNiP8lEW3owsgsJPdcYh2JUBdhTU0f9mOyyZpmeVtVwXB5hwFvRnRtnvqRKspv",
+   "plaintext": "{\"v\":1,\"t\":\"done\",\"session_id\":\"0f6c4f2a\",\"label\":\"orbweaver on MacBook Pro\",\"title\":\"orbweaver\",\"persona\":\"Aurora\"}",
+   "eph": {
+    "private": "5660ca16208f335c26486cfb56121ce03c56afc8dbca907afd9f52c53f9c9f7d",
+    "public": "041b3f87d39803a6f830045b5422292160f6bd8b8fd014ed0ff460d67f57be41e75ec4584672dedf68bdf1647a786fa1df7bb8f6d83df5aebc53bc2d1ba565a4ae"
+   },
+   "nonce": "b523359c595c4ceb1a4525bd",
+   "nse": {
+    "sender": null,
+    "title": "Orbweaver · orbweaver on MacBook Pro",
+    "body": "Finished and is waiting for you"
+   }
+  },
+  {
+   "name": "tag-flipped",
+   "expect": "open_fails",
+   "e": "AQS07iUg5hIQxHtwI0RZj2IeKLR-aLQh9aceeoSb5m82t5EJdxXNMXmV_SwU015zV8f1IdMNeFMoV0GEl-WEnWLJGbwfreXG6FNzM-yl0XQJ79FFULPCEaLBrfzFuOCqOW6gVDbPSxVU9qXvCfjLfS_cbWX4VkzVJ3RXA3ZYuSRyolSd8V_MuGe4-6ay8Epue2J32lByfGUTnRbf_lLk5oMn_WIhvY6XU86hurC6JRBmIu9JjD6cUXmDYDPn8J86TxWUCRJxF7q3bGZ5eOCLQjDxSn7h5HPiOV-ABc8mNUYmy1m7uOfFCF1ECDj6W6TrrV_F4ofxQsmsXzrG8cAiH4aKLrMMz32o7H4sJn8PqeKOsE8k45JBhQhAOJCsE_qRQcXz5EeNGiETcT-IR_bTJPVhizMUoe0tkmLoic94G8nKRok",
+   "why": "the last byte of the tag flipped: the AEAD refuses, the generic text stands, exactly as v3"
+  }
+ ],
+ "rules": {
+  "name_cut": [
+   {
+    "name": "Aurora",
+    "sent": "Aurora"
+   },
+   {
+    "name": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+    "sent": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN"
+   },
+   {
+    "name": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+    "sent": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN…"
+   },
+   {
+    "name": "Persephone Alexandrina Montgomery-Fitzwilliam of the Western Reaches",
+    "sent": "Persephone Alexandrina Montgomery-Fitzwilliam of the Western Re…"
+   },
+   {
+    "name": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA😀B",
+    "sent": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…",
+    "_note": "the 64th unit would be half a surrogate pair: the pair goes, … is the 64th"
+   }
+  ],
+  "persona_order": [
+   "id",
+   "name",
+   "image_hash"
+  ],
+  "persona_is_last_key": {
+   "amber": "screen_hash",
+   "done": "title",
+   "limit": "resets_at",
+   "_note": "the key persona follows in each plaintext"
+  },
+  "which_persona": {
+   "amber": "session's roster persona",
+   "done": "session's roster persona",
+   "limit": "PC's default persona"
+  },
+  "nse_text": "body = title + ' — ' + body (U+2014); the sender's displayName replaces the title on screen"
+ }
+}
