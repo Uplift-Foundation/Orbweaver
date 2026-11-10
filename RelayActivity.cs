@@ -237,6 +237,8 @@ namespace Orbweaver
     internal sealed class RelayActivityLog(string path)
     {
         internal const string EnvVar = "ORBWEAVER_ACTIVITY_LOG";
+        internal const int Attempts = 5;
+        internal static readonly TimeSpan RetryPause = TimeSpan.FromMilliseconds(20);
         private readonly object _gate = new();
         private bool _warned;
 
@@ -264,12 +266,29 @@ namespace Orbweaver
         {
             lock (_gate)
             {
-                try { File.AppendAllText(Path, line + "\n"); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                // Shared for reading and writing, and a few short retries: on
+                // Windows a reader that opened the file without write sharing
+                // (File.ReadAllLines does) makes the append fail while it reads,
+                // and the gate's checker reads this file while the app writes
+                // it. Measured on the Windows box: the plain AppendAllText lost
+                // the reply line under a polling reader.
+                var bytes = Encoding.UTF8.GetBytes(line + "\n");
+                for (var attempt = 1; ; attempt++)
                 {
-                    if (_warned) return;
-                    _warned = true;
-                    Failed($"activity log not written: {ex.GetType().Name}");
+                    try
+                    {
+                        using var file = new FileStream(Path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                        file.Write(bytes);
+                        return;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        if (attempt < Attempts && ex is IOException and not DirectoryNotFoundException) { Thread.Sleep(RetryPause); continue; }
+                        if (_warned) return;
+                        _warned = true;
+                        Failed($"activity log not written: {ex.GetType().Name}");
+                        return;
+                    }
                 }
             }
         }

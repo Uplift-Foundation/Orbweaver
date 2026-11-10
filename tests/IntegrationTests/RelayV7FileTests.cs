@@ -89,7 +89,15 @@ public class RelayV7FileTests : IAsyncLifetime
         }
     }
 
-    private static string[] Lines(string path) => File.Exists(path) ? File.ReadAllLines(path) : [];
+    // Read the way the gate's checker does — sharing the file with the app
+    // writing it — never File.ReadAllLines, which on Windows locks the writer out.
+    private static string[] Lines(string path)
+    {
+        if (!File.Exists(path)) return [];
+        using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var r = new StreamReader(f);
+        return r.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    }
 
     [Fact]
     public async Task The_snapshot_follows_hello_and_the_log_has_one_line_per_frame_and_per_reply()
@@ -217,7 +225,47 @@ public class RelayV7FileTests : IAsyncLifetime
                 """{"t":"activity","seq":1,"at_ms":1794111792123}""",
                 """{"ref":"act-x-1","code":"bad_frame","at_ms":1794111792200}""",
             ],
-            File.ReadAllLines(LogPath));
-        foreach (var l in File.ReadAllLines(LogPath)) JsonDocument.Parse(l);
+            Lines(LogPath));
+        foreach (var l in Lines(LogPath)) JsonDocument.Parse(l);
+    }
+
+    // The Windows case that lost a line: a reader holding the file without
+    // write sharing while the app appends. The append waits it out.
+    [Fact]
+    public void An_append_waits_out_a_reader_that_shares_only_for_reading()
+    {
+        var log = new RelayActivityLog(LogPath);
+        log.Sent("""{"t":"activity","seq":1}""", DateTimeOffset.UnixEpoch);
+        var failures = new List<string>();
+        log.Failed += failures.Add;
+        var reader = new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var released = Task.Run(async () => { await Task.Delay(30); reader.Dispose(); });
+        log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
+        released.Wait();
+        if (OperatingSystem.IsWindows()) Assert.Empty(failures);   // macOS has no mandatory share locks at all
+        Assert.Equal(2, Lines(LogPath).Length);
+    }
+
+    [Fact]
+    public void A_log_in_a_missing_directory_fails_at_once_without_retrying()
+    {
+        var log = new RelayActivityLog(Path.Combine(_dir, "no-such-dir", "a.jsonl"));
+        var failures = new List<string>();
+        log.Failed += failures.Add;
+        log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
+        Assert.Equal("activity log not written: DirectoryNotFoundException", Assert.Single(failures));
+    }
+
+    // An IOException that does not clear — a file name no file system takes —
+    // is tried every time, then said once, and the next line is tried again.
+    [Fact]
+    public void An_io_failure_that_persists_is_retried_then_said_once()
+    {
+        var log = new RelayActivityLog(Path.Combine(_dir, new string('n', 300) + ".jsonl"));
+        var failures = new List<string>();
+        log.Failed += failures.Add;
+        log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
+        log.Reply("act-x-2", "activity", DateTimeOffset.UnixEpoch);
+        Assert.StartsWith("activity log not written: ", Assert.Single(failures));
     }
 }
