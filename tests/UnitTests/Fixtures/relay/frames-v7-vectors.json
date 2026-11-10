@@ -1,7 +1,7 @@
 {
  "_source": {
-  "generated_by": "Orbweaver-Mobile contracts/make_v7_vectors.py (architect, CB-323); to be reproduced by Uplift-Foundation/Orbweaver tools/relay-vectors (the frames and cut rule) and relay/tests (the timeline)",
-  "orbweaver_sha": "hand-authored",
+  "generated_by": "Uplift-Foundation/Orbweaver tools/relay-vectors (V7Vectors.cs: RelayActivity.Snapshot, RelayActivity.Frame, PromptFrames.Cut, CanonicalJson); the relay's timeline, route and counts carried from Orbweaver-Mobile contracts/make_v7_vectors.py for relay/tests to reproduce",
+  "orbweaver_sha": "4ddff293",
   "spec": "CB-323 plan (docs/design/milestone-5-plan.md); contracts/frames-v7.json",
   "encoding": "every plaintext canonical (frames-v4 canonical); times in the timeline are offsets in seconds from inputs.t0, absolute Unix seconds everywhere a frame or payload carries one; hash is the first 16 lowercase hex of SHA-256 over change_key"
  },
