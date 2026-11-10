@@ -128,6 +128,9 @@ namespace Orbweaver
             // CB-321: and the personas frame, which the link sends only when its
             // bytes change, with its default persona for limit pushes.
             client.OnPersonas(personas, defaultPersona);
+            // The accounts a phone's launch may name, read off the settings at each scan.
+            try { client.OnAccounts(RelayAccounts.Frame(RelayAccounts.From(RelayAccounts.Choices))); }
+            catch (Exception e) { MirrorLog.Say("relay", $"accounts frame not built: {e.GetType().Name}"); }
             // CB-315: and the prompt watcher, off this thread — it captures panes.
             _ = client.OnStatuses(snapshot);
         }

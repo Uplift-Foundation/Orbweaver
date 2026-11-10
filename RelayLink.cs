@@ -171,6 +171,13 @@ namespace Orbweaver
         // CB-321 addendum 2: the default persona that frame named, for limit pushes.
         private PushPersona? _defaultPersona;
 
+        // The accounts frame a phone coming online is sent after the personas frame,
+        // and what SendAccounts compares against so an unchanged one is not resent.
+        private string? _latestAccounts;
+
+        // A session this desktop saw go generating -> idle, by id.
+        internal event Action<string> SessionFinished = delegate { };
+
         // ---- connection -------------------------------------------------------
 
         internal string Hello() => Frame(w =>
@@ -568,6 +575,10 @@ namespace Orbweaver
             var update = _book.Update(rows, _now());
             if (update.IsEmpty || !Welcomed) return [];
 
+            // Once per finished session, whoever is paired: the client turns it into
+            // the phone's spoken-style summary (watched sessions only).
+            foreach (var d in update.Deltas.Where(d => d.Finished)) SessionFinished(d.SessionId);
+
             var frames = new List<string>();
             foreach (var c in _channels.Values)
             {
@@ -719,6 +730,34 @@ namespace Orbweaver
             return frames;
         }
 
+        // The accounts a launch may name (additive to frames-v4): class state, ck Ck("accounts"),
+        // to every online phone when its bytes changed, and remembered for the next phone online.
+        internal IReadOnlyList<string> SendAccounts(string plaintext)
+        {
+            if (plaintext == _latestAccounts) return [];
+            _latestAccounts = plaintext;
+            if (!Welcomed) return [];
+            var frames = new List<string>();
+            foreach (var c in _channels.Values.Where(c => c.Online))
+                frames.AddRange(Collect(AccountsFor(c, plaintext)));
+            return frames;
+        }
+
+        private string? AccountsFor(Channel c, string plaintext) =>
+            SealTo(c, "state", RelayCrypto.Ck(c.CkKey, "accounts"), Encoding.UTF8.GetBytes(plaintext));
+
+        // What a session just did, in a few spoken-style sentences (additive to frames-v4): class
+        // state, ck Ck("summary:" + session_id) so the relay keeps only the newest per session.
+        // To the phones named, online only: a summary is for a phone that is watching.
+        internal IReadOnlyList<string> SendSummary(string sessionId, string plaintext, IReadOnlyCollection<string> phones)
+        {
+            if (!Welcomed) return [];
+            var frames = new List<string>();
+            foreach (var c in _channels.Values.Where(c => c.Online && phones.Contains(c.Phone.PhoneId)))
+                frames.AddRange(Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, "summary:" + sessionId), Encoding.UTF8.GetBytes(plaintext))));
+            return frames;
+        }
+
         private string? PersonasFor(Channel c, string plaintext) =>
             SealTo(c, "state", RelayCrypto.Ck(c.CkKey, PersonaFrames.PersonasCk), Encoding.UTF8.GetBytes(plaintext));
 
@@ -750,6 +789,7 @@ namespace Orbweaver
             // CB-321: then the personas frame (frames-v5: after the roster and
             // the usage frame).
             if (_latestPersonas is { } personas) frames.AddRange(Collect(PersonasFor(c, personas)));
+            if (_latestAccounts is { } accounts) frames.AddRange(Collect(AccountsFor(c, accounts)));
             return frames;
         }
 

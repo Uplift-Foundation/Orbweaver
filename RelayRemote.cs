@@ -51,7 +51,26 @@ namespace Orbweaver
             // default so a test that does not care about pictures gets
             // unknown_image; the app's seams point it at PersonaImageStore.
             internal Func<string, PersonaImageBundle?> Images { get; init; } = _ => null;
+
+            // The desktop's account choices per CLI and the one the user designated for
+            // phone launches. A launch that names none runs under the designated one, else
+            // the CLI's default, exactly as it always did (the last-used account of New
+            // Chat is deliberately not consulted). Null means no accounts: a launch naming
+            // one is unknown_account.
+            internal AccountSeams? Accounts { get; init; }
+
+            // The few spoken-style sentences a finished turn's reply comes to: the
+            // desktop's own summariser, off by default so a test that does not care
+            // gets no summaries.
+            internal Func<SessionStatus, string, Task<string?>>? Summarize { get; init; }
+
+            // Lets the transcript settle after a turn ends before it is read.
+            internal Func<Task>? Settle { get; init; }
         }
+
+        internal sealed record AccountSeams(
+            Func<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>> Choices,
+            Func<NewChatCli, string?> Designated);
 
         // CB-321: frames-v5 limits.image_windows_per_second, per phone.
         internal static readonly TimeSpan ImageWindowEvery = TimeSpan.FromSeconds(1.0 / PersonaFrames.ImageWindowsPerSecond);
@@ -110,6 +129,39 @@ namespace Orbweaver
         private IReadOnlyList<(string SessionId, SessionStatus Status)> Snapshot()
         {
             lock (_gate) return _snapshot;
+        }
+
+        // ---- the summary ------------------------------------------------------
+
+        // The phones watching a session.
+        internal IReadOnlyList<string> Watchers(string sessionId)
+        {
+            lock (_gate) return _watches.Keys.Where(k => k.Session == sessionId).Select(k => k.Phone).Distinct().ToList();
+        }
+
+        // A session went generating -> idle: what it did, in the few sentences the desktop
+        // would speak, and the phones that should hear it (those watching when it is ready).
+        // Only watched sessions are summarised, since each one costs a model call, and only
+        // the last assistant reply is. Null when there is nothing to say or no one to say it to.
+        internal async Task<(string Text, IReadOnlyList<string> Phones)?> SummaryForAsync(string sessionId)
+        {
+            if (_seams.Summarize is not { } summarize || Watchers(sessionId).Count == 0) return null;
+            if (Local(sessionId) is not { } status) return null;
+
+            if (_seams.Settle is { } settle) await settle().ConfigureAwait(false);
+            var seams = _seams.WatchSeams(status);
+            var lines = seams.PathOf() is { } path ? seams.Parse(path) : null;
+            var reply = lines?.LastOrDefault(l => l.Role == "assistant" && !string.IsNullOrWhiteSpace(l.Text)).Text;
+            if (string.IsNullOrWhiteSpace(reply)) return null;
+
+            string? text;
+            try { text = await summarize(status, reply).ConfigureAwait(false); }
+            catch (Exception e) { _seams.Log($"summary {sessionId}: summariser threw {e.GetType().Name}"); return null; }
+            if (string.IsNullOrWhiteSpace(text)) return null;
+
+            // Whoever is still watching after the wait: a phone that left meanwhile is not sent it.
+            var phones = Watchers(sessionId);
+            return phones.Count == 0 ? null : (text, phones);
         }
 
         // ---- watch lifetime ----------------------------------------------------
@@ -351,8 +403,25 @@ namespace Orbweaver
                 return;
             }
 
+            string? profileDir = null;
+            if (_seams.Accounts is { } accounts)
+            {
+                var launchCli = LaunchGate.CliFor(f.Cli);
+                if (!RelayAccounts.TryResolve(launchCli, f.Account, accounts.Choices(launchCli),
+                        accounts.Designated(launchCli), null, out profileDir))
+                {
+                    Err(phoneId, r.Ref, RelayReplies.UnknownAccount);
+                    return;
+                }
+            }
+            else if (f.Account.Length > 0)
+            {
+                Err(phoneId, r.Ref, RelayReplies.UnknownAccount);
+                return;
+            }
+
             var before = Snapshot().Select(s => s.SessionId).ToHashSet(StringComparer.Ordinal);
-            if (Start(f) is { } failed)
+            if (Start(f, profileDir) is { } failed)
             {
                 Err(phoneId, r.Ref, failed.Code, why: failed.Why);
                 return;
@@ -383,7 +452,7 @@ namespace Orbweaver
 
         // Starts the CLI where the contract says — tmux on the Mac, its own
         // conhost on Windows — or names why it could not.
-        private (string Code, string Why)? Start(LaunchFields f)
+        private (string Code, string Why)? Start(LaunchFields f, string? profileDir)
         {
             var cli = LaunchGate.CliFor(f.Cli);
             var binary = _seams.Launch.Locate(f.Cli)!;
@@ -397,12 +466,16 @@ namespace Orbweaver
                 // than started.
                 if (inArgv && f.FirstMessage.Length > 0 && !binary.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
                     return (RelayReplies.LaunchFailed, name + " here is a script, which cannot be handed a message safely.");
-                var start = NewChatCommand.ConsoleStartInfo(binary, f.Cwd, args, viaCmd: !inArgv);
+                var start = profileDir is null
+                    ? NewChatCommand.ConsoleStartInfo(binary, f.Cwd, args, viaCmd: !inArgv)
+                    : NewChatCommand.ConsoleStartInfoForAccount(cli, binary, f.Cwd, args, profileDir, viaCmd: !inArgv);
+                if (start is null)
+                    return (RelayReplies.LaunchFailed, "That account's folder can't be carried safely into a console for " + name + ".");
                 return _seams.Launch.StartWindows(start) is null
                     ? (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".")
                     : null;
             }
-            var (pane, why) = _seams.Launch.PlaceMac(NewChatCommand.LaunchLine(_seams.Launch.Shell(), binary, args), f.Cwd);
+            var (pane, why) = _seams.Launch.PlaceMac(NewChatCommand.LaunchLine(_seams.Launch.Shell(), binary, args, profileDir is null ? null : (cli, profileDir)), f.Cwd);
             if (pane is not null) return null;
             return why == TerminalScripts.NoTmuxWhy
                 ? (RelayReplies.NoTerminal, why)

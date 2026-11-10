@@ -141,9 +141,14 @@ namespace Orbweaver
         // arguments, each shell-quoted, run by the user's login shell so a
         // tmux server this app started (with launchd's bare PATH) still finds
         // node for Codex and whatever else the user's profile puts on PATH.
-        internal static string LaunchLine(string shell, string binaryPath, IReadOnlyList<string> args)
+        internal static string LaunchLine(string shell, string binaryPath, IReadOnlyList<string> args, (NewChatCli Cli, string ConfigDir)? account = null)
         {
-            var inner = "exec " + string.Join(" ", new[] { binaryPath }.Concat(args).Select(TerminalScripts.ShellQuote));
+            // An account is the CLI's own profile variable in front of the binary, the same
+            // `env VAR=dir binary` the New Chat dialog runs (For above).
+            var head = account is { } a
+                ? "env " + NewChatAccountHome.For(a.Cli).EnvVar + "=" + TerminalScripts.ShellQuote(a.ConfigDir) + " " + TerminalScripts.ShellQuote(binaryPath)
+                : TerminalScripts.ShellQuote(binaryPath);
+            var inner = "exec " + head + string.Concat(args.Select(w => " " + TerminalScripts.ShellQuote(w)));
             return TerminalScripts.ShellQuote(shell) + " -lc " + TerminalScripts.ShellQuote(inner);
         }
 
@@ -177,6 +182,35 @@ namespace Orbweaver
             foreach (var arg in args) start.ArgumentList.Add(arg);
             return start;
         }
+
+        // A phone's launch under a named account on Windows. conhost cannot be handed an
+        // environment through ShellExecute, so the variable is set where the CLI starts:
+        // inside the cmd /k line for Claude (every part checked to carry nothing cmd would read
+        // as syntax), or on the process itself for Codex and Grok, which have no cmd to set it
+        // in. Null when a value is not safe to carry that way.
+        internal static ProcessStartInfo? ConsoleStartInfoForAccount(NewChatCli cli, string exe, string cwd, IReadOnlyList<string> args, string configDir, bool viaCmd = true)
+        {
+            var variable = NewChatAccountHome.For(cli).EnvVar;
+            if (viaCmd)
+            {
+                if (!CmdSafe(configDir) || !CmdSafe(exe) || args.Any(a => !CmdSafe(a))) return null;
+                var line = $"set \"{variable}={configDir}\" && \"{exe}\"" + string.Concat(args.Select(a => " " + a));
+                var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = true, WorkingDirectory = cwd };
+                start.ArgumentList.Add("cmd.exe");
+                start.ArgumentList.Add("/k");
+                start.ArgumentList.Add(line);
+                return start;
+            }
+            var direct = new ProcessStartInfo("conhost.exe") { UseShellExecute = false, WorkingDirectory = cwd };
+            direct.ArgumentList.Add(exe);
+            foreach (var arg in args) direct.ArgumentList.Add(arg);
+            direct.Environment[variable] = configDir;
+            return direct;
+        }
+
+        // A path or word safe to put inside one cmd command line: no quote, percent, caret,
+        // ampersand, pipe, redirect, parenthesis or line break.
+        internal static bool CmdSafe(string text) => text.Length > 0 && text.IndexOfAny(['"', '%', '^', '&', '|', '<', '>', '\r', '\n', '(', ')']) < 0;
 
         internal static ProcessStartInfo? GeneralWindowsStartInfo(
             string? exe, string cwd, IReadOnlyList<string>? extraArgs, bool useWindowsTerminal)

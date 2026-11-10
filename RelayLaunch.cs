@@ -35,10 +35,16 @@ namespace Orbweaver
         // frame's own fields — so any other byte layout the phone signed fails
         // as bad_signature rather than being trusted.
         internal static string Body(LaunchFields f) =>
-            new CanonicalJson().Str("cwd", f.Cwd).Str("cli", f.Cli).Str("persona", f.Persona).Str("model", f.Model)
+            AccountField(new CanonicalJson().Str("cwd", f.Cwd).Str("cli", f.Cli).Str("persona", f.Persona).Str("model", f.Model), f)
                 .Str("parent_session_id", f.ParentSessionId)
                 .Str("first_message_sha256", RelayCrypto.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(f.FirstMessage))))
                 .Str("nonce", f.Nonce).Num("expires_at", f.ExpiresAt).ToString();
+
+        // account is signed only when the phone named one, between model and
+        // parent_session_id, so a phone that never sends it (the iPhone app)
+        // signs, and is checked against, exactly the body it always did.
+        private static CanonicalJson AccountField(CanonicalJson body, LaunchFields f) =>
+            f.Account.Length > 0 ? body.Str("account", f.Account) : body;
 
         internal static byte[] Message(string body) => [.. Encoding.UTF8.GetBytes(Domain), .. Encoding.UTF8.GetBytes(body)];
 
