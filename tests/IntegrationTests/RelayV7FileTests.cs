@@ -229,39 +229,141 @@ public class RelayV7FileTests : IAsyncLifetime
         foreach (var l in Lines(LogPath)) JsonDocument.Parse(l);
     }
 
-    // The Windows case that lost a line: a reader holding the file without
-    // write sharing while the app appends. The append waits it out.
-    [Fact]
-    public void An_append_waits_out_a_reader_that_shares_only_for_reading()
+    // A stand-in for Windows' sharing violation, so the waiting path runs on
+    // every OS: ERROR_SHARING_VIOLATION in HResult, as .NET reports it.
+    private static IOException Sharing() => new("in use by another process", unchecked((int)0x80070020));
+
+    private sealed class Blockable
     {
-        var log = new RelayActivityLog(LogPath);
-        log.Sent("""{"t":"activity","seq":1}""", DateTimeOffset.UnixEpoch);
+        internal bool Blocked = true;
+        internal int Opens;
+        internal readonly List<Action> Retries = new();
+        internal Stream Open(string path)
+        {
+            Opens++;
+            if (Blocked) throw Sharing();
+            return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        }
+    }
+
+    [Fact]
+    public void Lines_refused_for_sharing_wait_in_order_and_go_on_the_one_retry()
+    {
+        var b = new Blockable();
+        var log = new RelayActivityLog(LogPath, b.Open, b.Retries.Add);
         var failures = new List<string>();
         log.Failed += failures.Add;
-        var reader = new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var released = Task.Run(async () => { await Task.Delay(30); reader.Dispose(); });
-        log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
-        released.Wait();
-        if (OperatingSystem.IsWindows()) Assert.Empty(failures);   // macOS has no mandatory share locks at all
+        log.Sent("""{"t":"activity","seq":1}""", DateTimeOffset.FromUnixTimeMilliseconds(1));
+        log.Reply("act-x-1", "activity", DateTimeOffset.FromUnixTimeMilliseconds(2));
+        Assert.Equal((2, 1), (log.PendingCount, b.Retries.Count));      // one retry, not one per line
+        Assert.False(File.Exists(LogPath));
+
+        b.Retries[0]();                                                  // still held: waits again
+        Assert.Equal((2, 2), (log.PendingCount, b.Retries.Count));
+
+        b.Blocked = false;
+        b.Retries[1]();
+        Assert.Equal(0, log.PendingCount);
+        Assert.Equal(["""{"t":"activity","seq":1,"at_ms":1}""", """{"ref":"act-x-1","code":"activity","at_ms":2}"""], Lines(LogPath));
+        Assert.Empty(failures);
+    }
+
+    [Fact]
+    public void A_waiting_line_goes_with_the_next_one_that_gets_through_and_the_retry_then_has_nothing_to_do()
+    {
+        var b = new Blockable();
+        var log = new RelayActivityLog(LogPath, b.Open, b.Retries.Add);
+        log.Reply("act-x-1", "activity", DateTimeOffset.FromUnixTimeMilliseconds(1));
+        b.Blocked = false;
+        log.Reply("act-x-2", "activity", DateTimeOffset.FromUnixTimeMilliseconds(2));
+        Assert.Equal(2, Lines(LogPath).Length);
+        var opens = b.Opens;
+        b.Retries.Single()();
+        Assert.Equal(opens, b.Opens);                                   // nothing pending: no open at all
         Assert.Equal(2, Lines(LogPath).Length);
     }
+
+    // The real lock, on the real file system: a reader that shares only for
+    // reading. On Windows the line waits until the reader is gone and then
+    // goes; elsewhere there is no mandatory lock and it goes at once. Either
+    // way nothing is lost, and nothing here depends on how long anything takes.
+    [Fact]
+    public void A_reader_that_shares_only_for_reading_costs_no_line()
+    {
+        var retries = new List<Action>();
+        var log = new RelayActivityLog(LogPath, later: retries.Add);
+        var failures = new List<string>();
+        log.Failed += failures.Add;
+        log.Sent("""{"t":"activity","seq":1}""", DateTimeOffset.UnixEpoch);
+        using (new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
+            Assert.Equal(OperatingSystem.IsWindows() ? 1 : 0, log.PendingCount);
+        }
+        foreach (var retry in retries.ToList()) retry();
+        Assert.Equal(0, log.PendingCount);
+        Assert.Equal(2, Lines(LogPath).Length);
+        Assert.Empty(failures);
+    }
+
+    // The default retry is real: it fires on its own, off the caller's thread,
+    // and the waiting line lands. Bounded by a deadline that fails a hang, not
+    // a slow pass.
+    [Fact]
+    public async Task The_default_retry_fires_by_itself_and_the_line_lands()
+    {
+        var b = new Blockable();
+        var log = new RelayActivityLog(LogPath, b.Open);
+        log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
+        Assert.Equal(1, log.PendingCount);
+        b.Blocked = false;
+        await Until(() => log.PendingCount == 0);
+        Assert.Single(Lines(LogPath));
+    }
+
+    [Fact]
+    public void A_reader_that_never_lets_go_costs_the_oldest_lines_past_the_cap_and_says_so_once()
+    {
+        var b = new Blockable();
+        var log = new RelayActivityLog(LogPath, b.Open, b.Retries.Add) { MaxPending = 3 };
+        var failures = new List<string>();
+        log.Failed += failures.Add;
+        for (var i = 1; i <= 5; i++) log.Reply($"act-x-{i}", "activity", DateTimeOffset.FromUnixTimeMilliseconds(i));
+        Assert.Equal(3, log.PendingCount);
+        Assert.StartsWith("activity log behind a reader", Assert.Single(failures));
+        b.Blocked = false;
+        b.Retries[0]();
+        Assert.Equal(["act-x-3", "act-x-4", "act-x-5"], Lines(LogPath).Select(l => JsonDocument.Parse(l).RootElement.GetProperty("ref").GetString()));
+    }
+
+    [Theory]
+    [InlineData(unchecked((int)0x80070020), true)]     // ERROR_SHARING_VIOLATION
+    [InlineData(unchecked((int)0x80070021), true)]     // ERROR_LOCK_VIOLATION
+    [InlineData(unchecked((int)0x80070050), false)]    // ERROR_FILE_EXISTS
+    [InlineData(unchecked((int)0x80131620), false)]    // a plain COR_E_IO
+    public void Only_a_sharing_or_lock_violation_is_worth_waiting_for(int hresult, bool expected) =>
+        Assert.Equal(expected, RelayActivityLog.IsSharingViolation(new IOException("x", hresult)));
 
     [Fact]
     public void A_log_in_a_missing_directory_fails_at_once_without_retrying()
     {
-        var log = new RelayActivityLog(Path.Combine(_dir, "no-such-dir", "a.jsonl"));
+        var retries = new List<Action>();
+        var log = new RelayActivityLog(Path.Combine(_dir, "no-such-dir", "a.jsonl"), later: retries.Add);
         var failures = new List<string>();
         log.Failed += failures.Add;
         log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);
         Assert.Equal("activity log not written: DirectoryNotFoundException", Assert.Single(failures));
+        Assert.Empty(retries);
+        Assert.Equal(0, log.PendingCount);
     }
 
-    // An IOException that does not clear — a file name no file system takes —
-    // is tried every time, then said once, and the next line is tried again.
+    // An IOException that is not about sharing — a file name no file system
+    // takes — will not clear by waiting: the line goes, said once, and the
+    // next line is tried again.
     [Fact]
-    public void An_io_failure_that_persists_is_retried_then_said_once()
+    public void An_io_failure_that_is_not_sharing_is_said_once_and_not_waited_on()
     {
-        var log = new RelayActivityLog(Path.Combine(_dir, new string('n', 300) + ".jsonl"));
+        var log = new RelayActivityLog(Path.Combine(_dir, new string('n', 300) + ".jsonl"), later: _ => Assert.Fail("not a sharing violation: nothing to wait for"));
         var failures = new List<string>();
         log.Failed += failures.Add;
         log.Reply("act-x-1", "activity", DateTimeOffset.UnixEpoch);

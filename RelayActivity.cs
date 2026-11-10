@@ -240,23 +240,46 @@ namespace Orbweaver
     // in every build, because the gate runs against the installed app. The
     // lines carry this desktop's own titles and commands, which were already
     // its own.
-    internal sealed class RelayActivityLog(string path)
+    internal sealed class RelayActivityLog
     {
         internal static readonly string EnvVar = BrandEnv.Name(BrandEnv.ActivityLog);
-        internal const int Attempts = 5;
-        internal static readonly TimeSpan RetryPause = TimeSpan.FromMilliseconds(20);
+        internal static readonly TimeSpan RetryPause = TimeSpan.FromMilliseconds(50);
+
+        // More lines than this waiting on a reader that never lets go, and the
+        // oldest are dropped (and said, once): the gate then has a hole, but the
+        // app does not grow without bound for a log nobody is reading.
+        internal const int DefaultMaxPending = 10_000;
+
         private readonly object _gate = new();
+        private readonly Queue<string> _pending = new();
+        private readonly Func<string, Stream> _open;
+        private readonly Action<Action> _later;
+        private bool _retryScheduled;
         private bool _warned;
 
-        internal string Path { get; } = path;
+        // open and later are seams: the file the lines go to, and how a retry
+        // is scheduled. Real ones by default — an append-only stream shared for
+        // reading and writing, and a retry RetryPause from now on the pool.
+        internal RelayActivityLog(string path, Func<string, Stream>? open = null, Action<Action>? later = null)
+        {
+            Path = path;
+            _open = open ?? (p => new FileStream(p, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete));
+            _later = later ?? (retry => _ = Task.Delay(RetryPause).ContinueWith(_ => retry(), TaskScheduler.Default));
+        }
+
+        internal string Path { get; }
+
+        internal int MaxPending { get; init; } = DefaultMaxPending;
+
+        internal int PendingCount { get { lock (_gate) return _pending.Count; } }
 
         internal static RelayActivityLog? From(Func<string, string?> env) =>
             BrandEnv.Get(BrandEnv.ActivityLog, env) is { } p ? new RelayActivityLog(p) : null;
 
         internal static bool IsActivityFrame(string frame) => frame.StartsWith("{\"t\":\"activity\",", StringComparison.Ordinal);
 
-        // Fired when the line could not be written, once: the gate then has a
-        // hole in it, and a log that silently stopped is worse than none.
+        // Fired when lines were lost, once: the gate then has a hole in it, and
+        // a log that silently stopped is worse than none.
         internal event Action<string> Failed = delegate { };
 
         internal void Sent(string frame, DateTimeOffset at) =>
@@ -268,35 +291,70 @@ namespace Orbweaver
         internal void Reply(string reference, string code, DateTimeOffset at) =>
             Append(new CanonicalJson().Str("ref", reference).Str("code", code).Num("at_ms", at.ToUnixTimeMilliseconds()).ToString());
 
+        // Windows refuses an append while another process holds the file
+        // without write sharing (File.ReadAllLines does, and the gate's checker
+        // reads this file while the app writes it). A fixed handful of short
+        // retries lost the line whenever the reader outlasted them: measured on
+        // CI's windows-latest, where the reader held on for most of a second.
+        // So a line refused for sharing is never dropped and never slept on —
+        // it waits, in order, and goes with the next line or the next retry,
+        // whichever comes first. Any other failure (no directory, no access, a
+        // name no file system takes) will not clear by waiting: those lines go,
+        // and that is said once.
         private void Append(string line)
         {
             lock (_gate)
             {
-                // Shared for reading and writing, and a few short retries: on
-                // Windows a reader that opened the file without write sharing
-                // (File.ReadAllLines does) makes the append fail while it reads,
-                // and the gate's checker reads this file while the app writes
-                // it. Measured on the Windows box: the plain AppendAllText lost
-                // the reply line under a polling reader.
-                var bytes = Encoding.UTF8.GetBytes(line + "\n");
-                for (var attempt = 1; ; attempt++)
+                _pending.Enqueue(line);
+                if (_pending.Count > MaxPending)
                 {
-                    try
-                    {
-                        using var file = new FileStream(Path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-                        file.Write(bytes);
-                        return;
-                    }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        if (attempt < Attempts && ex is IOException and not DirectoryNotFoundException) { Thread.Sleep(RetryPause); continue; }
-                        if (_warned) return;
-                        _warned = true;
-                        Failed($"activity log not written: {ex.GetType().Name}");
-                        return;
-                    }
+                    while (_pending.Count > MaxPending) _pending.Dequeue();
+                    Warn($"activity log behind a reader that will not let go; oldest lines dropped past {MaxPending}");
                 }
+                Flush();
             }
+        }
+
+        private void Retry()
+        {
+            lock (_gate)
+            {
+                _retryScheduled = false;
+                Flush();
+            }
+        }
+
+        private void Flush()
+        {
+            if (_pending.Count == 0) return;
+            try
+            {
+                using var file = _open(Path);
+                file.Write(Encoding.UTF8.GetBytes(string.Concat(_pending.Select(l => l + "\n"))));
+                _pending.Clear();
+            }
+            catch (IOException ex) when (IsSharingViolation(ex))
+            {
+                if (_retryScheduled) return;
+                _retryScheduled = true;
+                _later(Retry);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _pending.Clear();
+                Warn($"activity log not written: {ex.GetType().Name}");
+            }
+        }
+
+        // ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33), which
+        // .NET surfaces as a bare IOException with the Win32 code in HResult.
+        internal static bool IsSharingViolation(IOException ex) => (ex.HResult & 0xFFFF) is 32 or 33;
+
+        private void Warn(string line)
+        {
+            if (_warned) return;
+            _warned = true;
+            Failed(line);
         }
     }
 }
