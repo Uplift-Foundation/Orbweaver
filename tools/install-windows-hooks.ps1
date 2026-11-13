@@ -706,9 +706,18 @@ if ($Uninstall -or $Wsl -or $UninstallWsl) {
         # bash's double-quote rules don't treat backslashes before ordinary
         # characters as special, so it passes through unchanged, exactly like
         # -TempDir already does above.
+        #
+        # The prefix hands the hook what only the WSL side can see (this is a Windows process, and WSL
+        # passes it nothing it was not told to): WSLENV lists TMUX and TMUX_PANE, so the pane the session
+        # runs in reaches the hook, and OW_WSL_PID / OW_WSL_DISTRO give it the claude
+        # process's pid ($PPID, the shell's parent) and the distro name. The hook records them, and the
+        # app then types into and reads the pane through wsl.exe. Outside tmux the variables are simply
+        # empty and the hook records nothing extra. Single-quoted here so PowerShell leaves every $ for
+        # the shell that runs the command.
+        $wslEnvPrefix = 'WSLENV="${WSLENV:+$WSLENV:}TMUX:TMUX_PANE:OW_WSL_PID:OW_WSL_DISTRO" OW_WSL_PID=$PPID OW_WSL_DISTRO=$WSL_DISTRO_NAME '
         $wslCommandBuilder = {
             param($State)
-            "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$installed`" -State $State -TempDir `"$resolvedTempDir`""
+            $wslEnvPrefix + "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$installed`" -State $State -TempDir `"$resolvedTempDir`""
         }.GetNewClosure()
 
         if (-not $WslProfileDirOnly) {

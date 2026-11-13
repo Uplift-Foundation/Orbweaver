@@ -233,7 +233,7 @@ namespace Orbweaver
                     // target chooses which.
                     FocusPaneIfAny(
                         AgentTeamViewer.AttachTmuxSocket(
-                            ResolveTmuxBinary(status.TmuxBin) ?? "", status.TmuxSocket,
+                            ResolveLocalTmuxBinary(status.TmuxBin) ?? "", status.TmuxSocket,
                             status.TmuxPane, status.Cwd),
                         status.Cwd);
                     break;
@@ -1184,9 +1184,14 @@ namespace Orbweaver
             if (tmux is null
                 || !TryRun(tmux, out var panePidText,
                     TmuxArgs(status, "display-message", "-p", "-t", status.TmuxPane, "#{pane_pid}"))
-                || !int.TryParse(panePidText.Trim(), out var panePid)
-                || !TryRun("/bin/ps", out var listing, "-eo", "pid=,ppid=,args="))
+                || !int.TryParse(panePidText.Trim(), out var panePid))
                 return null;
+            // A WSL session's process table is the distro's, and its pid is the one the hook read there.
+            if (WslDistro(status.TmuxBin) is { } distro)
+                return TryRun(tmux, out var wslListing, "-d", distro, "-e", "ps", "-eo", "pid=,ppid=,args=")
+                    ? TmuxPaneOwnershipRules.Holds(TmuxPaneOwnershipRules.ParseProcessListing(wslListing), panePid, status.WslPid)
+                    : null;
+            if (!TryRun("/bin/ps", out var listing, "-eo", "pid=,ppid=,args=")) return null;
             return TmuxPaneOwnershipRules.Holds(TmuxPaneOwnershipRules.ParseProcessListing(listing), panePid, status.SessionPid);
         }
 
@@ -1349,8 +1354,24 @@ namespace Orbweaver
         // Kept as a wrapper over TerminalScripts.TmuxArgs so its twelve call
         // sites read the same as before; the socket-pinning rule itself is tested
         // there.
-        internal static string[] TmuxArgs(SessionStatus status, params string[] args) =>
-            TerminalScripts.TmuxArgs(status.TmuxSocket, args);
+        internal static string[] TmuxArgs(SessionStatus status, params string[] args)
+        {
+            var pinned = TerminalScripts.TmuxArgs(status.TmuxSocket, args);
+            // A WSL session's tmux is run through wsl.exe, in the distro the hook named: `-e` execs it
+            // directly, with no shell between, so a message's quotes and symbols arrive as they were.
+            if (WslDistro(status.TmuxBin) is not { } distro) return pinned;
+            return ["-d", distro, "-e", "tmux", .. pinned];
+        }
+
+        // A session running in WSL records its tmux as "wsl:<distro>" (the PowerShell hook, which can see the
+        // pane only through WSLENV): there is no tmux binary on this Windows host to point at, and the
+        // pane's process tree lives in the distro too. Null for a tmux that is on this machine.
+        internal const string WslTmuxPrefix = "wsl:";
+
+        internal static string? WslDistro(string? tmuxBin) =>
+            tmuxBin is { } b && b.Length > WslTmuxPrefix.Length && b.StartsWith(WslTmuxPrefix, StringComparison.Ordinal)
+                ? b[WslTmuxPrefix.Length..]
+                : null;
 
         // The app can't count on PATH: launched from Finder or Login Items it
         // gets the bare system PATH, with no Homebrew or MacPorts in it. The
@@ -1364,7 +1385,18 @@ namespace Orbweaver
             "/usr/bin/tmux"
         };
 
-        internal static string? ResolveTmuxBinary(string recorded)
+        internal static string? ResolveTmuxBinary(string recorded) =>
+            WslDistro(recorded) is not null ? WslExe(OperatingSystem.IsWindows(), Environment.SystemDirectory, File.Exists) : ResolveLocalTmuxBinary(recorded);
+
+        // The program a WSL session's tmux is run through: wsl.exe, from the system directory.
+        internal static string? WslExe(bool onWindows, string systemDirectory, Func<string, bool> exists)
+        {
+            if (!onWindows) return null;
+            var path = Path.Combine(systemDirectory, "wsl.exe");
+            return exists(path) ? path : null;
+        }
+
+        private static string? ResolveLocalTmuxBinary(string recorded)
         {
             if (!string.IsNullOrEmpty(recorded) && File.Exists(recorded)) return recorded;
             return TmuxCandidates.FirstOrDefault(File.Exists);
@@ -1494,6 +1526,9 @@ namespace Orbweaver
                     // on macOS, where every other TryRun caller lives.
                     CreateNoWindow = true
                 };
+                // What a WSL program writes is UTF-8, whatever this machine's console code page is.
+                if (string.Equals(Path.GetFileName(exe), "wsl.exe", StringComparison.OrdinalIgnoreCase))
+                    psi.StandardOutputEncoding = System.Text.Encoding.UTF8;
                 foreach (var arg in args) psi.ArgumentList.Add(arg);
 
                 using var process = Process.Start(psi);
