@@ -158,12 +158,20 @@ public class VoicePreviewTests : IDisposable
         };
 
         var task = VoicePreview.Toggle(null);
-        Assert.Equal(Speak.Preparing, VoicePreview.Look);   // answered before any engine ran
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
-        Assert.Equal(Speak.Preparing, VoicePreview.Look);   // and still so while the worker resolves
-
-        release.Set();
-        await task;
+        try
+        {
+            Assert.Equal(Speak.Preparing, VoicePreview.Look);   // answered before any engine ran
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+            Assert.Equal(Speak.Preparing, VoicePreview.Look);   // and still so while the worker resolves
+        }
+        finally
+        {
+            // Released and drained on every path, so a failed assertion above can
+            // neither dispose the gate under a waiting worker nor leave that worker
+            // running into the next case of this serialised collection.
+            release.Set();
+            await task;
+        }
 
         Assert.Empty(_spoken);
         Assert.Equal(Speak.Idle, VoicePreview.Look);
