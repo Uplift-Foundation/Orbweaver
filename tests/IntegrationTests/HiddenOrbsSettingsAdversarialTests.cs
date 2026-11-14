@@ -7,8 +7,22 @@ namespace Orbweaver.Tests;
 // CB-276 QA: the hiddenOrbs key through a real settings file, the cases most
 // likely to be missed. Complements HiddenOrbsSettingsTests.
 [Collection("Settings")]
-public class HiddenOrbsSettingsAdversarialTests
+public class HiddenOrbsSettingsAdversarialTests : IDisposable
 {
+    // CB-276: every test here points settings at a fresh directory and hides
+    // things in it. Without putting the variable and the model back, the
+    // hides outlive the test in memory and take orbs away from the next
+    // class in this collection that scans one (LocalPersonaScanTests does).
+    private readonly string? _previousSettingsDir =
+        Environment.GetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR");
+
+    public void Dispose()
+    {
+        OrbweaverSettings.RestoreAllHiddenOrbs();
+        Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", _previousSettingsDir);
+        OrbweaverSettings.ReloadForTests();
+    }
+
     private static string NewDir()
     {
         var dir = Path.Combine(Path.GetTempPath(), "cb276-qa-settings-" + Guid.NewGuid());

@@ -19,15 +19,13 @@ public class HiddenOrbsPhoneTrayTests : IDisposable
 {
     private static readonly int LivePid = Environment.ProcessId;
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb-hiddenphone-" + Guid.NewGuid());
-    private readonly string _settingsDir = Path.Combine(Path.GetTempPath(), "cb-hiddenphone-settings-" + Guid.NewGuid());
+    // Restored on Dispose, hides included; see SettingsDirScope (CB-276).
+    private readonly SettingsDirScope _settings = new();
     private readonly List<string> _ids = new();
 
     public HiddenOrbsPhoneTrayTests()
     {
         Directory.CreateDirectory(_dir);
-        Directory.CreateDirectory(_settingsDir);
-        Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", _settingsDir);
-        OrbweaverSettings.ReloadForTests();
         OrbweaverSettings.ClaudeCodeEnabled = true;
     }
 
@@ -38,7 +36,7 @@ public class HiddenOrbsPhoneTrayTests : IDisposable
         RelayService.PersonaName = _personaName;
         foreach (var id in _ids) LocalPersonas.Forget(id);
         try { Directory.Delete(_dir, recursive: true); } catch { }
-        try { Directory.Delete(_settingsDir, recursive: true); } catch { }
+        _settings.Dispose();
     }
 
     // A job's file names no pid and no terminal, which is what makes the scan

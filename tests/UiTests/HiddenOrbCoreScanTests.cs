@@ -26,14 +26,15 @@ public class HiddenOrbCoreScanTests
     private sealed class Scratch : IDisposable
     {
         public string Dir { get; } = Path.Combine(Path.GetTempPath(), "cb-hidden-" + Guid.NewGuid());
-        public string SettingsDir { get; } = Path.Combine(Path.GetTempPath(), "cb-hidden-settings-" + Guid.NewGuid());
+        // Settings in a scratch directory for the life of the test, and put
+        // back afterwards — hides included. Deleting the directory alone left
+        // the hides in the in-memory model, and took "a" away from the next
+        // class to scan an "a" (PR #250's red CI). See SettingsDirScope.
+        private readonly SettingsDirScope _settings = new();
 
         public Scratch()
         {
             Directory.CreateDirectory(Dir);
-            Directory.CreateDirectory(SettingsDir);
-            Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", SettingsDir);
-            OrbweaverSettings.ReloadForTests();
             OrbweaverSettings.ClaudeCodeEnabled = true;
             OrbweaverSettings.CodexEnabled = true;
             OrbweaverSettings.GrokEnabled = true;
@@ -69,7 +70,7 @@ public class HiddenOrbCoreScanTests
         public void Dispose()
         {
             try { Directory.Delete(Dir, recursive: true); } catch { }
-            try { Directory.Delete(SettingsDir, recursive: true); } catch { }
+            _settings.Dispose();
         }
     }
 

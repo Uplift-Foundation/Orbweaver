@@ -14,16 +14,14 @@ public class HiddenOrbScanTests : IDisposable
 {
     private static readonly int LivePid = Environment.ProcessId;
     private readonly string _statusDir = Path.Combine(Path.GetTempPath(), "cb-hiddenqa-" + Guid.NewGuid());
-    private readonly string _settingsDir = Path.Combine(Path.GetTempPath(), "cb-hiddenqa-settings-" + Guid.NewGuid());
+    // Restored on Dispose, hides included; see SettingsDirScope (CB-276).
+    private readonly SettingsDirScope _settings = new();
     private readonly List<string> _played = new();
     private readonly object _lock = new();
 
     public HiddenOrbScanTests()
     {
         Directory.CreateDirectory(_statusDir);
-        Directory.CreateDirectory(_settingsDir);
-        Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", _settingsDir);
-        OrbweaverSettings.ReloadForTests();
         OrbweaverSettings.ClaudeCodeEnabled = true;
         OrbweaverSettings.CodexEnabled = true;
         OrbweaverSettings.GrokEnabled = true;
@@ -43,7 +41,7 @@ public class HiddenOrbScanTests : IDisposable
         OpenClawSessions.SetListingCurrentForTests(false);
         RemoteControlSessions.SetListedByPeerForTests(new Dictionary<string, IReadOnlySet<string>>());
         try { Directory.Delete(_statusDir, recursive: true); } catch { }
-        try { Directory.Delete(_settingsDir, recursive: true); } catch { }
+        _settings.Dispose();
     }
 
     private SessionManager NewManager()
