@@ -31,7 +31,14 @@ namespace Orbweaver
 
         public enum MdStyle { Normal, Bold, Italic, BoldItalic, Code, Link }
 
-        public sealed record MdSpan(string Text, MdStyle Style);
+        // Url is where a Link span goes, and it is null on every other style.
+        //
+        // The contract is that a Link span always carries one: a destination
+        // the launcher would refuse (CloudSessionLink.IsOpenable) is not made
+        // into a Link span in the first place, so a span that looks clickable
+        // and a span that is clickable are the same set. Defaulted so the
+        // styles that have no destination do not have to say so.
+        public sealed record MdSpan(string Text, MdStyle Style, string? Url = null);
 
         // --- blocks ---
 
