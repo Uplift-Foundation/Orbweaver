@@ -285,6 +285,36 @@ public class HiddenOrbScanTests : IDisposable
         Assert.Equal("wren-asare", entry.Detail);
     }
 
+    [AvaloniaFact]
+    public void AFarHideMadeAfterTheMachineLeftTheSnapshotHasNoPeerAndIsNeverPruned()
+    {
+        // Not a race to be waved away: a peer dropping between the scan that drew
+        // the orb and the click is an ordinary Tuesday. The orb is still in
+        // _statuses, the snapshot no longer lists its row, so Describe gets a
+        // null peer. An entry with no peer cannot be judged against any
+        // machine's roster, so it must read "cannot say" for ever.
+        PublishFarTeam();
+        var m = NewManager();
+        m.HiddenPruneGrace = TimeSpan.Zero;
+        m.ScanAndUpdate();
+        Assert.Contains(RcA, Orbs(m));
+
+        RemoteControlSessions.SetSnapshotForTests(Array.Empty<RemoteControlSessions.Remote>());
+        m.HideSession(RcA);
+
+        var entry = Assert.Single(OrbweaverSettings.HiddenOrbList());
+        Assert.Equal(RcA, entry.SessionId);
+        Assert.Null(entry.Peer);
+
+        // The machine comes back answering, and its roster does not list RcA.
+        PublishFarTeam();
+        PublishListedByPeer(("far-mac", new[] { RcLead, RcB }));
+        for (var i = 0; i < 6; i++) m.ScanAndUpdate();
+
+        Assert.Single(OrbweaverSettings.HiddenOrbList());   // not pruned
+        Assert.DoesNotContain(RcA, Orbs(m));                // and still hidden
+    }
+
     // ---- Local ------------------------------------------------------------
 
     [AvaloniaFact]
