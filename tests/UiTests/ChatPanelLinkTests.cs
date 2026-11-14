@@ -121,8 +121,18 @@ public class ChatPanelLinkTests : IDisposable
             block.RaiseEvent(new PointerPressedEventArgs(
                 block, _pointer, panel, p, 0,
                 new PointerPointProperties(
-                    button == MouseButton.Left ? RawInputModifiers.LeftMouseButton : RawInputModifiers.RightMouseButton,
-                    button == MouseButton.Left ? PointerUpdateKind.LeftButtonPressed : PointerUpdateKind.RightButtonPressed),
+                    button switch
+                    {
+                        MouseButton.Left => RawInputModifiers.LeftMouseButton,
+                        MouseButton.Middle => RawInputModifiers.MiddleMouseButton,
+                        _ => RawInputModifiers.RightMouseButton,
+                    },
+                    button switch
+                    {
+                        MouseButton.Left => PointerUpdateKind.LeftButtonPressed,
+                        MouseButton.Middle => PointerUpdateKind.MiddleButtonPressed,
+                        _ => PointerUpdateKind.RightButtonPressed,
+                    }),
                 KeyModifiers.None, clicks));
             if (flush) Dispatcher.UIThread.RunJobs();
         }
@@ -143,7 +153,12 @@ public class ChatPanelLinkTests : IDisposable
                 block, _pointer, panel, p, 0,
                 new PointerPointProperties(
                     RawInputModifiers.None,
-                    button == MouseButton.Left ? PointerUpdateKind.LeftButtonReleased : PointerUpdateKind.RightButtonReleased),
+                    button switch
+                    {
+                        MouseButton.Left => PointerUpdateKind.LeftButtonReleased,
+                        MouseButton.Middle => PointerUpdateKind.MiddleButtonReleased,
+                        _ => PointerUpdateKind.RightButtonReleased,
+                    }),
                 KeyModifiers.None, button));
             Dispatcher.UIThread.RunJobs();
         }
@@ -202,23 +217,105 @@ public class ChatPanelLinkTests : IDisposable
 
     // A URL longer than the bubble is wide wraps, and every line of it is the
     // link. IsInside, which LinkUnder first used, is false on every line after
-    // the first, so this case is the guard against that coming back.
+    // the first, so this case is the guard against that coming back. One click
+    // per wrapped line, found by walking the URL's characters and keeping the
+    // first on each new line.
     [AvaloniaFact]
     public void EveryLineOfAWrappedUrlOpensIt()
     {
-        const string longUrl = "https://example.com/a/very/long/path/that/cannot/fit/on/one/line/of/a/bubble";
+        const string longUrl = "https://example.com/a/very/long/path/that/cannot/fit/on/one/line/of/a/bubble"
+            + "/and/keeps/going/well/past/a/second/line/so/that/it/wraps/three/times";
         var panel = Open($"see {longUrl} now");
         var block = BlockSaying(panel, longUrl);
+        var start = Rendered(block).IndexOf(longUrl, StringComparison.Ordinal);
 
-        var first = At(panel, block, longUrl, offset: 2);
-        var last = At(panel, block, longUrl, offset: longUrl.Length - 2);
-        Assert.True(last.Y > first.Y, "premise: the URL wraps onto a second line");
+        var perLine = new List<Point>();
+        for (var i = 0; i < longUrl.Length; i++)
+        {
+            var p = At(panel, block, start + i);
+            if (perLine.Count == 0 || p.Y > perLine[^1].Y + 1) perLine.Add(p);
+        }
+
+        Assert.True(perLine.Count >= 3, $"premise: the URL wraps onto three or more lines, got {perLine.Count}");
 
         var mouse = new Mouse(panel, block);
-        mouse.Click(first);
-        mouse.Click(last, clicks: 1);
+        foreach (var p in perLine) mouse.Click(p);
 
-        Assert.Equal(new[] { longUrl, longUrl }, _opened);
+        Assert.Equal(Enumerable.Repeat(longUrl, perLine.Count), _opened);
+    }
+
+    // An emoji outside the BMP before a link is two UTF-16 units, and the
+    // ranges and the layout have to count it the same way or every click
+    // lands two characters off.
+    [AvaloniaFact]
+    public void ASurrogatePairBeforeALinkDoesNotShiftIt()
+    {
+        var panel = Open($"🚀🚀 [docs]({Url}) after");
+        var block = BlockSaying(panel, "docs");
+        var mouse = new Mouse(panel, block);
+
+        mouse.Click(At(panel, block, "after", offset: 1));
+        Assert.Empty(_opened);
+
+        mouse.Click(At(panel, block, "docs", offset: 0, along: 0.3));
+        mouse.Click(At(panel, block, "docs", offset: 3, along: 0.7));
+
+        Assert.Equal(new[] { Url, Url }, _opened);
+    }
+
+    [AvaloniaFact]
+    public void AnAutolinkOpensIt()
+    {
+        var panel = Open($"go to <{Url}> now");
+        var block = BlockSaying(panel, Url);
+
+        new Mouse(panel, block).Click(At(panel, block, Url, offset: 9));
+
+        Assert.Equal(new[] { Url }, _opened);
+    }
+
+    // An opener that refuses — CloudSessionLink.Open returns false for
+    // anything it will not launch — is the end of it, not an exception.
+    [AvaloniaFact]
+    public void AnOpenerThatRefusesIsNotAnError()
+    {
+        ChatLinks.Open = url => { _opened.Add(url); return false; };
+        var panel = Open($"read [the docs]({Url}) first");
+        var block = BlockSaying(panel, "the docs");
+
+        new Mouse(panel, block).Click(At(panel, block, "the docs", offset: 3));
+
+        Assert.Equal(new[] { Url }, _opened);
+    }
+
+    // Opening a link must not take focus from the composer, which ChatPanel.axaml
+    // keeps as the only focusable thing in the window.
+    [AvaloniaFact]
+    public void ClickingALinkLeavesTheComposerFocused()
+    {
+        var panel = Open($"read [the docs]({Url}) first");
+        var input = panel.FindControl<TextBox>("Input")!;
+        input.Focus();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(input, panel.FocusManager?.GetFocusedElement());
+
+        var block = BlockSaying(panel, "the docs");
+        new Mouse(panel, block).Click(At(panel, block, "the docs", offset: 3));
+
+        Assert.Equal(new[] { Url }, _opened);
+        Assert.Same(input, panel.FocusManager?.GetFocusedElement());
+    }
+
+    // The suite's own guard: TestBootstrap swapped the real launcher out before
+    // this class's constructor captured what it replaced. Were that line ever
+    // dropped, every click test above would still pass against the recorder
+    // while some other test opened a real browser.
+    [AvaloniaFact]
+    public void TheSuitesDefaultOpenerIsNotTheRealLauncher()
+    {
+        Func<string, bool> real = CloudSessionLink.Open;
+        Assert.NotEqual(real.Method, _previousOpener.Method);
+        Assert.False(_previousOpener(Url));
     }
 
     // Negative control for the case above: the same block, the same kind of
@@ -278,7 +375,14 @@ public class ChatPanelLinkTests : IDisposable
         var panel = Open($"run `curl {Url}` now");
         var block = BlockSaying(panel, "curl");
 
-        new Mouse(panel, block).Click(At(panel, block, Url, offset: 8));
+        var ibeam = block.Cursor;
+        var mouse = new Mouse(panel, block);
+        mouse.Move(At(panel, block, Url, offset: 8));
+
+        Assert.Null(ToolTip.GetTip(block));
+        Assert.Same(ibeam, block.Cursor);
+
+        mouse.Click(At(panel, block, Url, offset: 8));
 
         Assert.Empty(_opened);
         Assert.Null(block.Tag);
@@ -324,6 +428,22 @@ public class ChatPanelLinkTests : IDisposable
         mouse.Up(away);
 
         Assert.Empty(_opened);
+        Assert.False(string.IsNullOrEmpty(block.SelectedText));
+    }
+
+    [AvaloniaFact]
+    public void PressingOnPlainTextAndReleasingOnALinkOpensNothing()
+    {
+        var panel = Open($"read [the docs]({Url}) first");
+        var block = BlockSaying(panel, "the docs");
+
+        var mouse = new Mouse(panel, block);
+        mouse.Down(At(panel, block, "read", offset: 1));
+        var onLink = At(panel, block, "the docs", offset: 3);
+        mouse.Move(onLink, dragging: true);
+        mouse.Up(onLink);
+
+        Assert.Empty(_opened);
     }
 
     [AvaloniaFact]
@@ -361,7 +481,7 @@ public class ChatPanelLinkTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void ARightClickOnALinkOpensNothing()
+    public void ARightOrMiddleClickOnALinkOpensNothing()
     {
         var panel = Open($"read [the docs]({Url}) first");
         var block = BlockSaying(panel, "the docs");
@@ -370,6 +490,8 @@ public class ChatPanelLinkTests : IDisposable
         var mouse = new Mouse(panel, block);
         mouse.Down(p, MouseButton.Right);
         mouse.Up(p, MouseButton.Right);
+        mouse.Down(p, MouseButton.Middle);
+        mouse.Up(p, MouseButton.Middle);
 
         Assert.Empty(_opened);
     }
@@ -453,20 +575,30 @@ public class ChatPanelLinkTests : IDisposable
 
     // A streaming reply rebuilds its blocks as text arrives. A link that was
     // half-written a moment ago has to be clickable once it is whole, on the
-    // new block rather than a stale one.
+    // new block rather than a stale one — and when the text changes again, the
+    // same spot opens the new destination, never the old one.
     [AvaloniaFact]
     public void ALinkFinishedByAStreamingUpdateIsClickable()
     {
+        const string later = "https://example.net/second";
         var turn = new ChatTurn { Role = ChatRole.Assistant, Text = "read [the docs](https://exa" };
         var panel = Open(turn);
 
         turn.Text = $"read [the docs]({Url}) first";
-        turn.IsComplete = true;
         FlushRender();
 
         var block = BlockSaying(panel, "the docs");
         new Mouse(panel, block).Click(At(panel, block, "the docs", offset: 3));
 
-        Assert.Equal(new[] { Url }, _opened);
+        turn.Text = $"read [the docs]({later}) first";
+        turn.IsComplete = true;
+        FlushRender();
+
+        var rebuilt = BlockSaying(panel, "the docs");
+        Assert.NotSame(block, rebuilt);
+        new Mouse(panel, rebuilt).Click(At(panel, rebuilt, "the docs", offset: 3));
+
+        Assert.Equal(new[] { Url, later }, _opened);
     }
+
 }

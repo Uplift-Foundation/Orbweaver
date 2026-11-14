@@ -64,6 +64,21 @@ public class ChatLinksTests
         Assert.Equal(new[] { new ChatLinks.LinkRange(3, 4, Url) }, ranges);
     }
 
+    // Offsets are UTF-16 code units, which is what the text layout counts in:
+    // an emoji outside the BMP is two of them, and a range computed in
+    // "characters" would land two short of the link it names.
+    [Fact]
+    public void RangesCountUtf16UnitsSoASurrogatePairBeforeALinkTakesTwo()
+    {
+        var ranges = ChatLinks.RangesOf(new[] { Text("🚀 é "), Link("go", Url) });
+
+        Assert.Equal(new[] { new ChatLinks.LinkRange(5, 2, Url) }, ranges);
+    }
+
+    [Fact]
+    public void ALinkSpanWithNoUrlIsNoRange() =>
+        Assert.Empty(ChatLinks.RangesOf(new[] { Link("label", null) }));
+
     [Fact]
     public void ALineWithNoLinksHasNoRanges() =>
         Assert.Empty(ChatLinks.RangesOf(new[] { Text("plain"), new MdSpan("code", MdStyle.Code) }));
@@ -80,6 +95,16 @@ public class ChatLinksTests
         var ranges = new[] { new ChatLinks.LinkRange(4, 4, Url) };
 
         Assert.Equal(expected, ChatLinks.UrlAt(ranges, position));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(8)]   // the line's length: one past its last character
+    public void UrlAtOffEitherEndOfTheLineIsNull(int position)
+    {
+        var ranges = new[] { new ChatLinks.LinkRange(0, 8, Url) };
+
+        Assert.Null(ChatLinks.UrlAt(ranges, position));
     }
 
     [Fact]
