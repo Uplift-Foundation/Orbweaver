@@ -175,10 +175,18 @@ namespace Orbweaver
             TimeSpan grace)
         {
             var ids = new HashSet<string>(hiddenIds, StringComparer.OrdinalIgnoreCase);
-            foreach (var stale in absentSince.Keys.Where(k => !ids.Contains(k)).ToList())
+
+            // Two plain loops rather than a Where(...).ToList(): the LINQ form
+            // carried a branch arc coverage could not attribute to anything a
+            // test chooses, and this form has only the two that matter — a
+            // clock for an id that is no longer hidden, and one that still is.
+            var stale = new List<string>();
+            foreach (var key in absentSince.Keys)
             {
-                absentSince.Remove(stale);
+                if (!ids.Contains(key)) stale.Add(key);
             }
+
+            foreach (var key in stale) absentSince.Remove(key);
 
             var due = new List<string>();
             foreach (var id in ids)

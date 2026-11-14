@@ -3439,14 +3439,19 @@ namespace Orbweaver
         {
             // Feed the tray in stacking order so the menu reads top-to-bottom
             // like the orbs do on screen.
-            //
-            // CB-276: then the hidden sessions, marked, in the order the scan
-            // met them.
-            _tray?.Update(DisplayOrder()
+            _tray?.Update(TrayEntries());
+        }
+
+        // What the tray is handed: the visible orbs in stacking order, then
+        // (CB-276) the hidden sessions, marked, in the order the scan met
+        // them. Split out of UpdateTray because the tray itself only exists
+        // after Start(), which no headless test calls; this is the decision,
+        // and it needs no tray to be tested.
+        internal List<TrayController.SessionEntry> TrayEntries() =>
+            DisplayOrder()
                 .Select(id => new TrayController.SessionEntry(id, _statuses[id]))
                 .Concat(_hidden.Select(h => new TrayController.SessionEntry(h.SessionId, h.Status, Hidden: true)))
-                .ToList());
-        }
+                .ToList();
 
         // --- agent teams ------------------------------------------------------
 

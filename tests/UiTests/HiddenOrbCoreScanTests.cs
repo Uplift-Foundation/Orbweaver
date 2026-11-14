@@ -345,4 +345,29 @@ public class HiddenOrbCoreScanTests
             LocalPersonas.Forget(id);
         }
     }
+
+    [AvaloniaFact]
+    public void TheTrayListsVisibleOrbsFirstThenHiddenOnesMarked()
+    {
+        // The entries UpdateTray hands the tray, read without one: visible in
+        // stacking order and unmarked, then hidden and marked, carrying the
+        // hidden session's live state.
+        using var scratch = new Scratch();
+        scratch.Write("a");
+        scratch.Write("b", state: "waiting");
+        scratch.Write("c");
+        var manager = Scan(scratch);
+        manager.HideSession("b");
+        manager.ScanAndUpdate();
+
+        var entries = manager.TrayEntries();
+
+        // Visible order is the stacking order, which follows the order the
+        // scan first met them; this is about visible-then-hidden, not that.
+        Assert.Equal(3, entries.Count);
+        Assert.Equal(new[] { "a", "c" }, entries.Take(2).Select(e => e.SessionId).OrderBy(x => x).ToArray());
+        Assert.All(entries.Take(2), e => Assert.False(e.Hidden));
+        Assert.Equal(("b", true), (entries[2].SessionId, entries[2].Hidden));
+        Assert.Equal("waiting", entries.Single(e => e.SessionId == "b").Status.State);
+    }
 }
