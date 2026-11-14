@@ -72,7 +72,13 @@ namespace Orbweaver
         // teams at once would otherwise have no live view at all. The persona
         // is still the one it is an instance of, so the portrait and voice are
         // looked up under the name before the suffix too.
-        private static readonly Regex InstanceSuffix = new(@"^(?<base>.+)_(?<n>[0-9]+)$", RegexOptions.Compiled);
+        //
+        // Claude Code spells the same collision `<name>-2`: when a crashed team
+        // is respawned under its old names, the dead processes still hold them
+        // and the new members come up as `juno-abernathy-2` (CB-288). Only
+        // digits count, so `name-v2` — a name that merely ends in a version —
+        // is left whole, and the member's own full name is always tried first.
+        private static readonly Regex InstanceSuffix = new(@"^(?<base>.+)[_-](?<n>[0-9]+)$", RegexOptions.Compiled);
 
         // The names a team member is looked up under, most specific first: its
         // own full name, then the persona it is an instance of. A persona whose

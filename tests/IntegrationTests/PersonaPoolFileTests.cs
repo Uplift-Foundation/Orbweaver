@@ -107,6 +107,32 @@ public class PersonaPoolFileTests : IDisposable
     }
 
     [Fact]
+    public void ARespawnedMemberWithAHyphenSuffixWearsItsOriginalPersona()
+    {
+        // CB-288: `juno-abernathy-2` has no directory under .profiles-assets,
+        // but `juno-abernathy` does, and it must not fall back to the lead.
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno-abernathy", "Juno Abernathy");
+
+        var persona = Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-abernathy-2");
+
+        Assert.Equal("Juno Abernathy", persona.Name);
+        Assert.NotNull(persona.AvatarPath);
+    }
+
+    [Fact]
+    public void AHyphenSuffixedMembersOwnFileWinsAndAVersionIsNotStripped()
+    {
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno", "Juno");
+        WriteProfile(pool, "juno-2", "Juno Two");
+
+        Assert.Equal("Juno Two", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-2").Name);
+        Assert.Equal("Juno", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-12").Name);
+        Assert.True(Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-v2").IsEmpty);
+    }
+
+    [Fact]
     public void AnInstanceThatHasItsOwnFileWearsItsOwnPersona()
     {
         // A persona whose real name ends in _2 finds its own file first.

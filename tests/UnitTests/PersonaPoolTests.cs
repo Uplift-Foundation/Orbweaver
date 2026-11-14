@@ -74,7 +74,13 @@ public class PersonaPoolTests
     [InlineData("atlas_2", new[] { "atlas_2", "atlas" })]
     [InlineData("atlas_17", new[] { "atlas_17", "atlas" })]
     [InlineData("a_b_12", new[] { "a_b_12", "a_b" })]
-    [InlineData("atlas-2", new[] { "atlas-2" })]            // a hyphen is part of a name, not an instance
+    [InlineData("atlas-2", new[] { "atlas-2", "atlas" })]   // Claude Code's collision suffix (CB-288)
+    [InlineData("juno-abernathy-2", new[] { "juno-abernathy-2", "juno-abernathy" })]
+    [InlineData("juno-abernathy-12", new[] { "juno-abernathy-12", "juno-abernathy" })]
+    [InlineData("atlas-v2", new[] { "atlas-v2" })]          // not digits only: a version, not an instance
+    [InlineData("atlas-", new[] { "atlas-" })]
+    [InlineData("-2", new[] { "-2" })]                       // nothing before the suffix
+    [InlineData("juno-abernathy", new[] { "juno-abernathy" })]
     [InlineData("atlas_", new[] { "atlas_" })]
     [InlineData("atlas_x", new[] { "atlas_x" })]
     [InlineData("_2", new[] { "_2" })]                       // nothing before the suffix to be an instance of
