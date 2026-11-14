@@ -3057,22 +3057,6 @@ namespace Orbweaver
                     status.Agent = string.IsNullOrEmpty(status.Lead) ? "" : membership.Name;
                 }
 
-                // CB-276: a hidden session leaves here, after every check that
-                // would have dropped it anyway — so the tray only lists one
-                // that would otherwise have had an orb — and after the team
-                // block above, so the tray's label has the agent's name. From
-                // here it takes the path an ended session takes: never in
-                // `seen`, so the removal pass below closes its window, disposes
-                // its chat, drops its status and reflows; and never observed by
-                // the turn-sound tracker, so it cannot chime.
-                if (hidden.Contains(sessionId))
-                {
-                    hiddenNow.Add((sessionId, status));
-                    continue;   // removed in the pass below
-                }
-
-                seen.Add(sessionId);
-
                 // A room member whose room is hidden stands alone. The room is
                 // not a team lead for hiding (HiddenOrbs.PropagatingLead), so
                 // the member stays; but its Lead still names the room, and an
@@ -3148,6 +3132,28 @@ namespace Orbweaver
                 // after would draw one tick of the old answer every time a
                 // persona changed.
                 ApplyPersona(sessionId, status, candidatesByCwd);
+
+                // CB-276: a hidden session leaves here. After every check that
+                // would have dropped it anyway, so the tray only lists one that
+                // would otherwise have had an orb; and after everything that
+                // finishes describing it — the team block, the shape, kind and
+                // presence block, and ApplyPersona — because the tray and the
+                // phone still show it, and the phone's row reads its persona
+                // from the registry ApplyPersona fills. Leaving any earlier
+                // handed the phone a bare status: no persona, and a background
+                // job reading as a terminal session (QA, wren-asare).
+                //
+                // From here it takes the path an ended session takes: never in
+                // `seen`, so the removal pass below closes its window, disposes
+                // its chat, drops its status and reflows; and never observed by
+                // the turn-sound tracker, so it cannot chime.
+                if (hidden.Contains(sessionId))
+                {
+                    hiddenNow.Add((sessionId, status));
+                    continue;   // removed in the pass below
+                }
+
+                seen.Add(sessionId);
 
                 // Immediately before the dictionary is overwritten, so the
                 // tracker is comparing against exactly the state this
@@ -3225,6 +3231,12 @@ namespace Orbweaver
                 // is a Bitmap per frame, held by a process-wide cache that has
                 // no other reason to ever let one go. The registry entry is
                 // small; the picture behind it is not, and Forget drops both.
+                //
+                // CB-276: except for a session that left because it was hidden.
+                // The phone still lists it, and forgetting here would hand the
+                // phone a row with no persona for the pass it was hidden on.
+                if (hiddenNow.Any(h => h.SessionId == id)) continue;
+
                 _personas.Remove(id);
                 LocalPersonas.Forget(id);
                 PeerPersonas.Forget(id);
@@ -3293,6 +3305,20 @@ namespace Orbweaver
 
             // CB-276: the sessions this pass kept off the screen, for the tray
             // and the phone; and the hides of any that have since ended.
+            // A hidden session's persona is kept for the phone (see the removal
+            // pass), so it is this pass's job to drop one whose session is no
+            // longer hidden and not on screen either — ended, or gone for any
+            // other reason. Otherwise a decoded portrait outlives its session
+            // for the life of the process, which is the leak the removal pass
+            // forgets personas to prevent.
+            foreach (var (id, _) in _hidden)
+            {
+                if (seen.Contains(id) || hiddenNow.Any(h => h.SessionId == id)) continue;
+                _personas.Remove(id);
+                LocalPersonas.Forget(id);
+                PeerPersonas.Forget(id);
+            }
+
             _hidden = hiddenNow;
             PruneHiddenOrbs(now);
 

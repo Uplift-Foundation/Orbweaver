@@ -288,4 +288,61 @@ public class HiddenOrbCoreScanTests
             OrbweaverSettings.PeerLinkEnabled = false;
         }
     }
+
+    [AvaloniaFact]
+    public void AHiddenSessionKeepsItsPersonaForThePhoneAndDropsItWhenItEnds()
+    {
+        // QA (wren-asare): the hide used to leave the loop before ApplyPersona,
+        // and the removal pass forgot the persona on the pass the orb was
+        // hidden, so the phone's row for a hidden session had no name or
+        // picture. Checked three ways: hidden from the first scan of a fresh
+        // manager (a restart), hidden mid-life (the pass the orb goes), and
+        // the persona going once the session ends, so it does not leak.
+        using var scratch = new Scratch();
+        var project = Path.Combine(scratch.Dir, "project");
+        Directory.CreateDirectory(project);
+        File.WriteAllText(Path.Combine(project, "CLAUDE.md"), "# Notes\n\nHer name is Leota.\n");
+
+        var id = "persona-hidden-" + Guid.NewGuid();
+        File.WriteAllText(Path.Combine(scratch.Dir, id + ".txt"),
+            System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+            {
+                State = "idle",
+                Cwd = project,
+                SessionPid = LivePid,
+                TermProgram = "iTerm.app",
+                Tty = "/dev/ttys004",
+            }));
+
+        try
+        {
+            // Hidden mid-life.
+            var manager = new SessionManager(scratch.Dir, null, userConfigDirs: () => Array.Empty<string>());
+            manager.ScanAndUpdate();
+            Assert.Equal("Leota", LocalPersonas.For(id)?.Name);
+
+            manager.HideSession(id);
+            manager.ScanAndUpdate();
+            Assert.Empty(OrbIds(manager));
+            Assert.Equal("Leota", LocalPersonas.For(id)?.Name);
+
+            // Hidden from the first scan.
+            LocalPersonas.Forget(id);
+            var restarted = new SessionManager(scratch.Dir, null, userConfigDirs: () => Array.Empty<string>());
+            restarted.ScanAndUpdate();
+            Assert.Empty(OrbIds(restarted));
+            Assert.Equal(new[] { id }, HiddenIds(restarted));
+            Assert.Equal("Leota", LocalPersonas.For(id)?.Name);
+
+            // Ended while hidden: the persona goes with it.
+            File.Delete(Path.Combine(scratch.Dir, id + ".txt"));
+            restarted.ScanAndUpdate();
+            Assert.Empty(HiddenIds(restarted));
+            Assert.Null(LocalPersonas.For(id));
+        }
+        finally
+        {
+            LocalPersonas.Forget(id);
+        }
+    }
 }
