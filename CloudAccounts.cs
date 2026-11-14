@@ -213,7 +213,11 @@ namespace Orbweaver
     // excluded from coverage and are as thin as they can be made.
     internal sealed class CloudAccountBoard
     {
-        private sealed record Slot(IReadOnlyList<ClaudeCloudSessions.Session> Sessions, string Status);
+        // Authoritative: this account's last tick produced a listing that reached
+        // the end of its roster. False before the first tick, after a failed or
+        // halted one, and after a walk the page cap cut short (CB-276).
+        private sealed record Slot(
+            IReadOnlyList<ClaudeCloudSessions.Session> Sessions, string Status, bool Authoritative = false);
 
         private readonly object _gate = new();
         private readonly IReadOnlyList<CloudAccount> _accounts;
@@ -285,7 +289,11 @@ namespace Orbweaver
                     sessions = snapshot.Select(s => s with { OwnerRoot = root }).ToList();
                 }
 
-                _slots[root] = new Slot(sessions, status);
+                // A tick that published nothing (a failed fetch) leaves the old
+                // sessions on screen on purpose, and says nothing about whether they
+                // are still the roster: not authoritative until a tick that did.
+                var authoritative = step.Snapshot is not null && !step.Next.Halted && step.Next.Complete;
+                _slots[root] = new Slot(sessions, status, authoritative);
 
                 if (step.RateLimited) _holdUntilUtc = nowUtc + step.Wait;
 
@@ -299,7 +307,22 @@ namespace Orbweaver
         // line and touch nothing else.
         internal void ApplyError(string root, string message)
         {
-            lock (_gate) _slots[root] = _slots[root] with { Status = message };
+            lock (_gate) _slots[root] = _slots[root] with { Status = message, Authoritative = false };
+        }
+
+        // CB-276: every session id any account lists, or null when this board
+        // cannot say. It can say only when every account is authoritative, because
+        // a cloud id does not carry which account owns it: one halted account
+        // publishes an empty list, which is "no access", and would otherwise make
+        // that account's sessions read as ended. No accounts at all is also null.
+        internal IReadOnlySet<string>? ListedIds()
+        {
+            lock (_gate)
+            {
+                if (_accounts.Count == 0 || _accounts.Any(a => !_slots[a.Root].Authoritative)) return null;
+
+                return _merged.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+            }
         }
     }
 }

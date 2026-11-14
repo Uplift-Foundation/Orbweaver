@@ -256,4 +256,36 @@ public class HiddenOrbCoreScanTests
 
         Assert.Equal(3, OrbweaverSettings.HiddenOrbList().Count);
     }
+
+    [AvaloniaFact]
+    public void ARemoteHideIsForgottenWhenItsPeerAnswersWithoutItAndKeptWhenThePeerIsAway()
+    {
+        // Through the real seam rather than HiddenOrbs.Listed alone, so the
+        // wiring from the scan to RemoteControlSessions.ListedByPeer is what is
+        // being tested. The control is the same entry against a peer that is
+        // not answering at all.
+        using var scratch = new Scratch();
+        OrbweaverSettings.PeerLinkEnabled = true;
+        try
+        {
+            var manager = Scan(scratch);
+            manager.HiddenPruneGrace = TimeSpan.Zero;
+            OrbweaverSettings.HideOrb(new HiddenOrb("rc:work:ended", DateTime.UtcNow, "e", "Other machine", "", "mini"));
+            OrbweaverSettings.HideOrb(new HiddenOrb("rc:work:away", DateTime.UtcNow, "a", "Other machine", "", "laptop"));
+            RemoteControlSessions.SetListedByPeerForTests(new Dictionary<string, IReadOnlySet<string>>
+            {
+                ["mini"] = new HashSet<string> { "rc:work:still-running" }
+            });
+
+            manager.ScanAndUpdate();
+            manager.ScanAndUpdate();
+
+            Assert.Equal(new[] { "rc:work:away" }, OrbweaverSettings.HiddenOrbIds().ToArray());
+        }
+        finally
+        {
+            RemoteControlSessions.SetListedByPeerForTests(new Dictionary<string, IReadOnlySet<string>>());
+            OrbweaverSettings.PeerLinkEnabled = false;
+        }
+    }
 }
