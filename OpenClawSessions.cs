@@ -1084,7 +1084,60 @@ namespace Orbweaver
         {
             if (!OrbweaverSettings.OpenClawEnabled || !_listingCurrent) return null;
 
-            lock (Gate) return new HashSet<string>(_natives.Keys, StringComparer.Ordinal);
+            lock (Gate)
+            {
+                // A page the gateway cut short lists fewer sessions than exist, and
+                // every key past the cut would read as ended.
+                if (!_listingComplete) return null;
+
+                return new HashSet<string>(_natives.Keys, StringComparer.Ordinal);
+            }
+        }
+
+        // Whether the last Parse saw the whole roster, set beside _natives.
+        private static bool _listingComplete;
+
+        // The gateway's page size when a sessions.list request carries no limit.
+        // Read from the installed gateway (openclaw 2026.11.2) at
+        // dist/session-utils-list-*.mjs, where the handler passes defaultLimit: 100
+        // to selectSessionEntries; the schema's own comment says omitted Gateway
+        // RPC calls "use a bounded default". PollAsync sends no limit, so this is
+        // the page size every poll gets. Not read from a live gateway, and another
+        // version may differ, which is why the explicit fields below come first.
+        internal const int DefaultPageSize = 100;
+
+        // Whether a sessions.list payload is the whole roster (CB-276).
+        //
+        // The same response carries hasMore, totalCount, limitApplied and
+        // nextOffset (read from the same handler's result object), and any one of
+        // them saying "more" makes the page partial. A gateway that sends none of
+        // them cannot be asked, so a page as long as the default is read as
+        // possibly cut: that errs toward "cannot say", the only direction that
+        // cannot delete a hide. A payload that states hasMore: false is believed
+        // even at exactly the default length, since that is the gateway
+        // declaring it.
+        internal static bool ListingIsComplete(JsonElement payload, int rows)
+        {
+            var declared = false;
+
+            if (payload.ValueKind == JsonValueKind.Object)
+            {
+                if (payload.TryGetProperty("hasMore", out var more)
+                    && more.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    if (more.ValueKind == JsonValueKind.True) return false;
+                    declared = true;
+                }
+
+                if (payload.TryGetProperty("totalCount", out var total)
+                    && total.ValueKind == JsonValueKind.Number && total.TryGetInt64(out var n))
+                {
+                    if (n > rows) return false;
+                    declared = true;
+                }
+            }
+
+            return declared || rows < DefaultPageSize;
         }
 
         // Accept whatever certificate the gateway is now serving.
@@ -1764,6 +1817,7 @@ namespace Orbweaver
                 _roomColours = roomColours;
                 _deliveries = deliveries;
                 _natives = natives;
+                _listingComplete = ListingIsComplete(payload, list.GetArrayLength());
                 _runStates = runStates;
                 _runStatuses = runStatuses;
                 _hiddenByCluster = hiddenByCluster;
