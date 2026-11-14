@@ -24,6 +24,15 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="17.14.2" />
+    <!-- CB-279: MTP's hang dump, so a hang in this suite names the tests in
+         flight instead of only hitting the job's timeout-minutes (CB-269 gave
+         the VSTest suites blame-hang-timeout; this is the MTP equivalent,
+         the hangdump switch in ci.yml). Pinned to 1.9.1 because that is exactly the
+         Microsoft.Testing.Platform xunit.v3 3.2.2 resolves, and 1.9.1 is what
+         this package's nuspec asks for; any 2.x would drag in MTP 2.x and the
+         IDataConsumer TypeLoadException described at CodeCoverage's pin.
+         Bumping xunit.v3 means re-checking this one too. -->
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" Version="1.9.1" />
     <!-- xUnit v3, not v2 (this suite moved alongside tests/UiScreenshots) —
          forced by Avalonia.Headless.XUnit 12.x, which depends on
          xunit.v3.extensibility.core and has no v2-compatible release.
