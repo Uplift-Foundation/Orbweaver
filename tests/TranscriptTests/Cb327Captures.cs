@@ -47,6 +47,7 @@ namespace Orbweaver.Tests
                 "form1-w23", "form1-w32", "form1-w60", "form1-w100", "form4-w32", "form4-w60", "form4-w100",
                 "form4long-w40", "form4long-w60", "form4long-w80", "form4long-w100",
                 "modelswitch-w20", "modelswitch-w23", "modelswitch-w60",
+                "model-w100", "model-w60", "model-w40", "model-w32-h60",
             })
             {
                 var (reading, why) = PaneScreen.Read(Load(name));

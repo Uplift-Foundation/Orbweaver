@@ -37,6 +37,10 @@ Produced by `dotnet run --project tests/TranscriptTests -- <file>`, which prints
 | `idle-named-w80` | Prompt (prompt) | none | Prompt |
 | `idle-short-w23` | Prompt (prompt) | none | Prompt |
 | `idle-unnamed-w23` | Prompt (prompt) | none | Prompt |
+| `model-w100` | Dialog (dialog) | none | Dialog: develop offers the picker as buttons, and a fix does not take that away |
+| `model-w60` | Dialog (dialog) | none | Dialog (same) |
+| `model-w40` | Unknown (no-prompt-mark) | none | Dialog while fully on screen (same) |
+| `model-w32-h60` | Unknown (no-prompt-mark) | none | Dialog while fully on screen (same) |
 | `model-w23` | Unknown (no-prompt-mark) | none | not Prompt |
 | `model-w32` | Unknown (no-prompt-mark) | none | not Prompt |
 | `modelswitch-w20` | Dialog (dialog) | none | Dialog |

@@ -533,6 +533,8 @@ namespace Orbweaver
                 var numberColumn = lines[at].IndexOf(OptionLine.Match(cleaned[at]).Groups[1].Value, StringComparison.Ordinal);
                 var indentFloor = numberColumn + 2;
 
+                // `crossed` counts the lines walked past; the line after the 16th
+                // is still looked at, because it may be the option itself.
                 var above = -1;
                 var crossed = 0;
                 for (var j = at - 1; j >= 0 && crossed <= MaxOptionGap; j--)
@@ -889,19 +891,20 @@ namespace Orbweaver
         // navigated list such as `/permissions` rather than a question.
         internal const string PermissionsTabBar = "Permissions  Recently blocked";
 
-        // The `/model` picker's own heading (CB-327). Its options are numbered
-        // and have no input box under them, so once a gap could span a narrow
-        // pane's wrapped descriptions it read as a five-option dialog whose
-        // digits would pick a model — a list that is navigated, like
-        // /permissions, not a question that is answered. Matched whole: the
-        // picker is the only screen that draws the line on its own. Measured
-        // at 23 and 32 columns (model-w23, model-w32); other widths assumed.
-        internal const string ModelPickerHeading = "Select model";
+        // A list that does not fit the pane (CB-327): when it is taller than the
+        // screen the terminal marks the cut with a line that is only an arrow, or
+        // ends in spaces and one (`↓`, `       ↓`), as the /model picker does at
+        // 23 and 32 columns. Its footer and its last options are not on the screen,
+        // so whatever is read of it is a part of a list, and a button pressed on a
+        // part of a list can mean something its label does not say. Not minted.
+        internal static bool IsClipped(string cleanedLine) =>
+            cleanedLine.Length > 0 && cleanedLine[^1] is '↓' or '↑'
+            && (cleanedLine.Length == 1 || char.IsWhiteSpace(cleanedLine[^2]));
 
         internal static bool IsNavigatedList(IEnumerable<string> cleanedLines) =>
             cleanedLines.Any(l =>
                 l.StartsWith(PermissionsTabBar, StringComparison.Ordinal)
-                || l == ModelPickerHeading
+                || IsClipped(l)
                 || l.Contains("←/→ to switch", StringComparison.Ordinal)
                 || l.StartsWith('⌕'));
 

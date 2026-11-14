@@ -216,13 +216,40 @@ public class NarrowPaneTests
         Assert.Single(form.Review!);
     }
 
-    // --- the /model picker is a navigated list ---
+    // --- a list the pane cuts off is not minted ---
+
+    [Theory]
+    [InlineData("↓", true)]
+    [InlineData("↑", true)]
+    [InlineData("                  ↓", true)]
+    [InlineData("Fastest for ↑", true)]
+    [InlineData("", false)]
+    [InlineData("↓/↑ to navigate", false)]
+    [InlineData("down↓", false)]
+    [InlineData("Enter to select · ↑/↓", false)]
+    public void ALineThatIsOnlyAnArrowOrEndsInOneAfterSpacesIsAClip(string line, bool clipped) =>
+        Assert.Equal(clipped, ChatTranscript.IsClipped(line));
 
     [Fact]
-    public void TheModelPickerHeadingMarksANavigatedList()
+    public void AClippedListIsNoDialogAndAnUnclippedOneIs()
     {
-        Assert.True(ChatTranscript.IsNavigatedList(new[] { "Select model", "1. a", "2. b" }));
-        Assert.False(ChatTranscript.IsNavigatedList(new[] { "Select models of cars", "1. a", "2. b" }));
-        Assert.Null(ChatTranscript.ParseDialog("Select model\n  1. Default\n  2. Opus\n"));
+        const string list = "Pick one\n  1. Default\n  2. Opus\n";
+        Assert.NotNull(ChatTranscript.ParseDialog(list));
+        Assert.Null(ChatTranscript.ParseDialog(list + "                    ↓\n"));
+        Assert.True(ChatTranscript.IsNavigatedList(new[] { "1. a", "      ↓" }));
+    }
+
+    [Theory]
+    [InlineData("model-w100", true)]    // fully on screen: as on develop, a dialog
+    [InlineData("model-w60", true)]
+    [InlineData("model-w40", true)]
+    [InlineData("model-w32-h60", true)]
+    [InlineData("model-w32", false)]    // cut off, with an arrow where the list stops
+    [InlineData("model-w23", false)]
+    public void TheModelPickerIsADialogOnlyWhereItIsFullyOnScreen(string capture, bool dialog)
+    {
+        var screen = Cb327Captures.Load(capture);
+        Assert.Equal(dialog, ChatTranscript.ParseDialog(screen) is not null);
+        Assert.NotEqual(PaneReading.Prompt, PaneScreen.Classify(screen));
     }
 }
