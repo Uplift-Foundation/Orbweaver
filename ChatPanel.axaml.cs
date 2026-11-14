@@ -4044,14 +4044,9 @@ namespace Orbweaver
                 {
                     var run = new Run(span.Text);
 
-                    // A Link span with nothing openable behind it is drawn as
-                    // plain text: the same rule the click handler uses, so what
-                    // looks like a link is exactly what opens one.
-                    var style = span.Style == ChatMarkdown.MdStyle.Link && !ChatLinks.IsLive(span)
-                        ? ChatMarkdown.MdStyle.Normal
-                        : span.Style;
-
-                    switch (style)
+                    // See ChatLinks.StyleOf: what looks like a link is exactly
+                    // what opens one.
+                    switch (ChatLinks.StyleOf(span))
                     {
                         case ChatMarkdown.MdStyle.Bold:
                             run.FontWeight = FontWeight.SemiBold;

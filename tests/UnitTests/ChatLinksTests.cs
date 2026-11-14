@@ -35,6 +35,29 @@ public class ChatLinksTests
     public void AnOpenableUrlOnANonLinkSpanIsNot() =>
         Assert.False(ChatLinks.IsLive(new MdSpan(Url, MdStyle.Code, Url)));
 
+    // --- StyleOf ---
+
+    [Fact]
+    public void ALiveLinkIsDrawnAsALink() =>
+        Assert.Equal(MdStyle.Link, ChatLinks.StyleOf(Link("here", Url)));
+
+    // The defensive arm: a Link span the parser promises never to emit.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("docs/x.md")]
+    [InlineData("javascript:alert(1)")]
+    public void ADeadLinkIsDrawnAsPlainText(string? url) =>
+        Assert.Equal(MdStyle.Normal, ChatLinks.StyleOf(Link("here", url)));
+
+    [Theory]
+    [InlineData(MdStyle.Normal)]
+    [InlineData(MdStyle.Bold)]
+    [InlineData(MdStyle.Italic)]
+    [InlineData(MdStyle.BoldItalic)]
+    [InlineData(MdStyle.Code)]
+    public void EveryOtherStyleIsDrawnAsItsOwn(MdStyle style) =>
+        Assert.Equal(style, ChatLinks.StyleOf(new MdSpan("x", style, Url)));
+
     // --- RangesOf ---
 
     [Fact]

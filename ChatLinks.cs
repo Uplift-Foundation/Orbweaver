@@ -32,6 +32,15 @@ namespace Orbweaver
         internal static bool IsLive(ChatMarkdown.MdSpan span) =>
             span.Style == ChatMarkdown.MdStyle.Link && CloudSessionLink.IsOpenable(span.Url);
 
+        // The style a span is drawn in: its own, except that a Link span with
+        // nothing openable behind it is drawn as plain text — the same rule
+        // the click handler uses, so what looks like a link is exactly what
+        // opens one. The parser never emits such a span today; this is the arm
+        // that keeps a dead link off the screen if it ever does, and it lives
+        // here rather than inline in the renderer so it is a unit case.
+        internal static ChatMarkdown.MdStyle StyleOf(ChatMarkdown.MdSpan span) =>
+            span.Style == ChatMarkdown.MdStyle.Link && !IsLive(span) ? ChatMarkdown.MdStyle.Normal : span.Style;
+
         // The link ranges of a line, in the same character offsets the block's
         // text layout reports: each span's text is concatenated into Runs in
         // order, so a running sum over span lengths is the layout's offset.
