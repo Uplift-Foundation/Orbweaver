@@ -556,6 +556,7 @@ namespace Orbweaver
 
             picked.Reverse();
             var runStart = picked[0];
+            if (IsClippedList(cleaned, runStart)) return null;
 
             var width = ScreenWidth(lines);
             var options = new List<ChatPromptOption>();
@@ -897,6 +898,23 @@ namespace Orbweaver
         // 23 and 32 columns. Its footer and its last options are not on the screen,
         // so whatever is read of it is a part of a list, and a button pressed on a
         // part of a list can mean something its label does not say. Not minted.
+        //
+        // Only the two places a list's own scroll marks are drawn count: the last
+        // drawn line of the screen (measured at model-w23 and model-w32, where the
+        // mark is the final line) and the nearest line above option 1. An arrow in
+        // scrollback, higher up, is the assistant's prose and says nothing about
+        // the dialog beneath it.
+        internal static bool IsClippedList(string[] cleaned, int firstOption)
+        {
+            var last = cleaned.Length - 1;
+            while (last >= 0 && cleaned[last].Length == 0) last--;
+            if (last >= 0 && IsClipped(cleaned[last])) return true;
+
+            var above = firstOption - 1;
+            while (above >= 0 && cleaned[above].Length == 0) above--;
+            return above >= 0 && IsClipped(cleaned[above]);
+        }
+
         internal static bool IsClipped(string cleanedLine) =>
             cleanedLine.Length > 0 && cleanedLine[^1] is '↓' or '↑'
             && (cleanedLine.Length == 1 || char.IsWhiteSpace(cleanedLine[^2]));
@@ -904,7 +922,6 @@ namespace Orbweaver
         internal static bool IsNavigatedList(IEnumerable<string> cleanedLines) =>
             cleanedLines.Any(l =>
                 l.StartsWith(PermissionsTabBar, StringComparison.Ordinal)
-                || IsClipped(l)
                 || l.Contains("←/→ to switch", StringComparison.Ordinal)
                 || l.StartsWith('⌕'));
 

@@ -231,12 +231,35 @@ public class NarrowPaneTests
         Assert.Equal(clipped, ChatTranscript.IsClipped(line));
 
     [Fact]
-    public void AClippedListIsNoDialogAndAnUnclippedOneIs()
+    public void AListWithAMarkAtItsFootOrHeadIsNoDialogAndAnUnclippedOneIs()
     {
         const string list = "Pick one\n  1. Default\n  2. Opus\n";
         Assert.NotNull(ChatTranscript.ParseDialog(list));
         Assert.Null(ChatTranscript.ParseDialog(list + "                    ↓\n"));
-        Assert.True(ChatTranscript.IsNavigatedList(new[] { "1. a", "      ↓" }));
+        Assert.Null(ChatTranscript.ParseDialog("Pick one\n                    ↑\n  1. Default\n  2. Opus\n"));
+        Assert.Null(ChatTranscript.ParseDialog("Pick one\n\nsomething ↑\n\n  1. Default\n  2. Opus\n"));
+        // Above the title is scrollback, not the list's own mark.
+        Assert.NotNull(ChatTranscript.ParseDialog("                    ↑\n" + list));
+    }
+
+    // Scrollback with an arrow in it, above a real dialog and above a real form,
+    // is the assistant's prose and changes nothing.
+    [Theory]
+    [InlineData("Run it, then scroll ↓")]
+    [InlineData("↑")]
+    [InlineData("      ↓")]
+    public void AnArrowInScrollbackAboveARealDialogOrFormStillParses(string prose)
+    {
+        var dialog = prose + "\n" + PaneFixtures.MiniExitDialog;
+        Assert.NotNull(ChatTranscript.ParseDialog(dialog));
+        Assert.Equal(ChatTranscript.ParseDialog(PaneFixtures.MiniExitDialog)!.Options.Count,
+            ChatTranscript.ParseDialog(dialog)!.Options.Count);
+
+        var form = Cb327Captures.Load("form4-w60");
+        var withProse = prose + "\n\n" + form + "\n";
+        Assert.NotNull(ChatTranscript.ParseAskForm(withProse));
+        Assert.Equal(5, ChatTranscript.ParseAskForm(withProse)!.Tabs.Count);
+        Assert.Equal(PaneReading.Dialog, PaneScreen.Classify(withProse));
     }
 
     [Theory]
