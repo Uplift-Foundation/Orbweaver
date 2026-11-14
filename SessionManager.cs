@@ -4633,6 +4633,57 @@ namespace Orbweaver
             DeleteStatusFile(sessionId);
         }
 
+        // ---- "Hide this orb" (CB-276) ---------------------------------------
+
+        // The sessions the last scan found and would have drawn, but did not
+        // because they are hidden. Kept for two readers that still want them:
+        // the tray, which lists a hidden session with a marker, and the phone,
+        // which the PM decided keeps showing it. Never in _statuses, so nothing
+        // that draws, arranges, links or chimes ever sees one.
+        private List<(string SessionId, SessionStatus Status)> _hidden = new();
+
+        // Unlike Dismiss, which is a statement about the screen that the next
+        // hook event overrides, a hide is a setting: it lasts until it is
+        // restored in Settings or its session is known to have ended. Writing
+        // the entry is the whole of it; the scan reads the setting and takes
+        // the orb away through the path an ended session takes.
+        //
+        // A no-op for an id with no orb, because there is nothing to describe:
+        // the entry's title, badge and detail are read off the orb's status.
+        public void HideSession(string sessionId)
+        {
+            if (!_statuses.TryGetValue(sessionId, out var status)) return;
+
+            var peer = status.Source == SessionSource.RemoteControl
+                ? RemoteControlSessions.Snapshot().FirstOrDefault(r => r.Key == sessionId)?.Ref
+                : null;
+
+            OrbweaverSettings.HideOrb(HiddenOrbs.Describe(sessionId, status, DateTime.UtcNow, peer));
+            _ = ScheduleScan();
+        }
+
+        public void RestoreHiddenOrb(string sessionId)
+        {
+            if (OrbweaverSettings.RestoreHiddenOrb(sessionId)) _ = ScheduleScan();
+        }
+
+        public void RestoreAllHiddenOrbs()
+        {
+            OrbweaverSettings.RestoreAllHiddenOrbs();
+            _ = ScheduleScan();
+        }
+
+        // Whether hiding this orb takes others with it: any orb on screen
+        // whose propagating lead is this one. Read off _statuses, which holds
+        // each orb's lead as the scan last assigned it.
+        internal bool LeadsATeam(string sessionId) =>
+            _statuses.Any(pair =>
+                !string.Equals(pair.Key, sessionId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    HiddenOrbs.PropagatingLead(pair.Value.Source, pair.Value.Lead),
+                    sessionId,
+                    StringComparison.OrdinalIgnoreCase));
+
         // One place that knows how a status file is removed, and the only place
         // that swallows the failure. Both callers want exactly the same thing:
         // the file gone if it can be, and no complaint if it cannot.
