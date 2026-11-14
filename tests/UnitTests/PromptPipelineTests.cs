@@ -1207,4 +1207,34 @@ public class PromptPipelineTests
         Assert.Empty(_pane.Keys);
         Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
     }
+
+    // The real capture of the second question (Venue already answered by "2"),
+    // its question and options 1-2 scrolled away. The prompt is that question,
+    // matched by the labels still drawn, and a press goes to it; once the screen
+    // shows another question the gate's fresh read refuses.
+    [Fact]
+    public async Task A_tall_form_on_its_second_question_is_minted_as_that_question_and_pressed_there()
+    {
+        _pane.Screen = Cb327Captures.Load("ask-catering-tall-w23h30");
+        await _p.OnScannedAsync(TallSnap());
+        var j = PromptJson(_sent);
+        Assert.Equal("Question 2 of 4\nHow should we handle food and drinks during the offsite?", j.GetProperty("preview").GetString());
+        Assert.Equal("Full-service catered buffet covering breakfast, lunch, and afternoon snacks",
+            j.GetProperty("options")[0].GetProperty("label").GetString());
+
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:1"));
+        Assert.Equal(["1"], _pane.Keys);
+        Assert.Empty(_sent.Refusals);
+    }
+
+    [Fact]
+    public async Task A_tall_form_minted_on_its_second_question_refuses_once_the_screen_shows_another()
+    {
+        _pane.Screen = Cb327Captures.Load("ask-catering-tall-w23h30");
+        await _p.OnScannedAsync(TallSnap());
+        _pane.Screen = Cb327Captures.Load("ask-venue-tall-w23h30");
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:1"));
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+    }
 }
