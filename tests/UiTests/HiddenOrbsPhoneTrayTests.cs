@@ -31,21 +31,26 @@ public class HiddenOrbsPhoneTrayTests : IDisposable
         OrbweaverSettings.ClaudeCodeEnabled = true;
     }
 
+    private readonly Func<SessionStatus, IReadOnlyList<string>, string?> _personaName = RelayService.PersonaName;
+
     public void Dispose()
     {
+        RelayService.PersonaName = _personaName;
         foreach (var id in _ids) LocalPersonas.Forget(id);
         try { Directory.Delete(_dir, recursive: true); } catch { }
         try { Directory.Delete(_settingsDir, recursive: true); } catch { }
     }
 
-    private string WriteSession(string cwd)
+    // A job's file names no pid and no terminal, which is what makes the scan
+    // worth asking the daemon about it (SessionPresence's gate); a terminal
+    // session's names both, so nothing here ever shells out.
+    private string WriteSession(string cwd, bool job = false)
     {
         var id = "hidden-phone-" + Guid.NewGuid();
         _ids.Add(id);
-        File.WriteAllText(Path.Combine(_dir, id + ".txt"), JsonSerializer.Serialize(new SessionStatus
-        {
-            State = "idle", Cwd = cwd, SessionPid = LivePid, TermProgram = "iTerm.app", Tty = "/dev/ttys004",
-        }));
+        File.WriteAllText(Path.Combine(_dir, id + ".txt"), JsonSerializer.Serialize(job
+            ? new SessionStatus { State = "idle", Cwd = cwd }
+            : new SessionStatus { State = "idle", Cwd = cwd, SessionPid = LivePid, TermProgram = "iTerm.app", Tty = "/dev/ttys004" }));
         return id;
     }
 
@@ -91,6 +96,13 @@ public class HiddenOrbsPhoneTrayTests : IDisposable
         File.WriteAllText(Path.Combine(project, "CLAUDE.md"), "# Notes\n\nHer name is Leota.\n");
         var id = WriteSession(project);
 
+        // The phone's name comes from PeerPersonaCache.Peek, which nothing in a
+        // scan warms. This answers what a warm cache would, from the registry
+        // the scan fills, so the row can only name her if the scan resolved her
+        // for this session, hidden or not. The id and picture come from the
+        // registry in production too.
+        RelayService.PersonaName = (status, _) => status.Cwd == project ? LocalPersonas.For(id)?.Name : null;
+
         // Visible: the control, so a persona-less row below cannot be this
         // fixture failing to produce one.
         var visible = Manager();
@@ -116,7 +128,7 @@ public class HiddenOrbsPhoneTrayTests : IDisposable
     [AvaloniaFact]
     public void AHiddenBackgroundJobKeepsItsKindAndShapeForThePhoneAndTheTray()
     {
-        var id = WriteSession("/Users/user/project");
+        var id = WriteSession("/Users/user/project", job: true);
         var jobs = new Dictionary<string, string>(StringComparer.Ordinal) { [id] = "working" };
 
         // Control: visible, the scan marks it a background job.
