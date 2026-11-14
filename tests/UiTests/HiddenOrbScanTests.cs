@@ -40,6 +40,8 @@ public class HiddenOrbScanTests : IDisposable
         RemoteControlSessions.SetSnapshotForTests(Array.Empty<RemoteControlSessions.Remote>());
         ClaudeCloudSessions.SetSnapshotForTests(Array.Empty<ClaudeCloudSessions.Session>());
         OrbweaverSettings.ClaudeCloudEnabled = false;
+        OpenClawSessions.SetListingCurrentForTests(false);
+        RemoteControlSessions.SetListedByPeerForTests(new Dictionary<string, IReadOnlySet<string>>());
         try { Directory.Delete(_statusDir, recursive: true); } catch { }
         try { Directory.Delete(_settingsDir, recursive: true); } catch { }
     }
@@ -375,6 +377,126 @@ public class HiddenOrbScanTests : IDisposable
         await TurnSounds.ChimesEnqueuedSoFar();
         await Task.Delay(300);
         Assert.Empty(_played);
+    }
+
+    // ---- Pruning through the real seams ------------------------------------
+
+    private const string AuroraKey = "agent:aurora:discord:direct:2467";
+    private const string AuroraId = "openclaw:" + AuroraKey;
+
+    private static string Aurora(string key = AuroraKey) =>
+        $$"""{"sessions":[{"key":"{{key}}","chatType":"direct","lastActivityAt":{{JustNow}}}]}""";
+
+    private SessionManager HiddenAuroraManager()
+    {
+        PublishGateway(Aurora());
+        OpenClawSessions.SetListingCurrentForTests(true);
+        var m = NewManager();
+        m.HiddenPruneGrace = TimeSpan.Zero;
+        m.ScanAndUpdate();
+        m.HideSession(AuroraId);
+        m.ScanAndUpdate();
+        Assert.Single(OrbweaverSettings.HiddenOrbList());
+        return m;
+    }
+
+    [AvaloniaFact]
+    public void AGatewayListingWithoutTheKeyPrunesItAfterTheGrace()
+    {
+        var m = HiddenAuroraManager();
+        PublishGateway(Aurora("agent:other:discord:direct:1"));
+        OpenClawSessions.SetListingCurrentForTests(true);
+        m.ScanAndUpdate();
+        Assert.Single(OrbweaverSettings.HiddenOrbList());   // the first absent pass only starts the clock
+        m.ScanAndUpdate();
+        Assert.Empty(OrbweaverSettings.HiddenOrbList());
+    }
+
+    [AvaloniaFact]
+    public void ADisconnectedGatewayPrunesNothingHoweverLongItStaysDown()
+    {
+        var m = HiddenAuroraManager();
+        OpenClawSessions.SetSnapshotForTests(Array.Empty<OpenClawSessions.Session>());
+        OpenClawSessions.SetListingCurrentForTests(false);
+        for (var i = 0; i < 6; i++) m.ScanAndUpdate();
+        Assert.Single(OrbweaverSettings.HiddenOrbList());
+    }
+
+    [AvaloniaFact]
+    public void AHiddenConversationThatWentQuietIsNotTakenForEnded()
+    {
+        // Parse drops a session quiet for longer than "active within"; the
+        // hide must survive that, or it un-hides on the next message.
+        var m = HiddenAuroraManager();
+        var old = DateTimeOffset.UtcNow.AddHours(-5).ToUnixTimeMilliseconds();
+        OrbweaverSettings.OpenClawActiveWithinMinutes = 1;
+        var (sessions, _) = OpenClawSessions.Parse(JsonDocument.Parse(
+            $$"""{"sessions":[{"key":"{{AuroraKey}}","chatType":"direct","lastActivityAt":{{old}}}]}""").RootElement,
+            DateTime.UtcNow);
+        Assert.Empty(sessions);   // the control: the snapshot really no longer carries it
+        OpenClawSessions.SetSnapshotForTests(sessions);
+        OpenClawSessions.SetListingCurrentForTests(true);
+        for (var i = 0; i < 5; i++) m.ScanAndUpdate();
+        Assert.Single(OrbweaverSettings.HiddenOrbList());
+    }
+
+    private static void PublishListedByPeer(params (string Peer, string[] Keys)[] peers) =>
+        RemoteControlSessions.SetListedByPeerForTests(peers.ToDictionary(
+            p => p.Peer, p => (IReadOnlySet<string>)p.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase));
+
+    private SessionManager HiddenFarMember()
+    {
+        PublishFarTeam();
+        PublishListedByPeer(("far-mac", new[] { RcLead, RcA, RcB }));
+        var m = NewManager();
+        m.HiddenPruneGrace = TimeSpan.Zero;
+        m.ScanAndUpdate();
+        m.HideSession(RcA);
+        m.ScanAndUpdate();
+        Assert.Single(OrbweaverSettings.HiddenOrbList());
+        return m;
+    }
+
+    [AvaloniaFact]
+    public void AFarMemberTheMachineNoLongerListsIsPrunedButOnlyWhileTheMachineIsAnswering()
+    {
+        var m = HiddenFarMember();
+        PublishListedByPeer(("far-mac", new[] { RcLead, RcB }));   // answering, without RcA
+        m.ScanAndUpdate();
+        m.ScanAndUpdate();
+        Assert.Empty(OrbweaverSettings.HiddenOrbList());
+    }
+
+    [AvaloniaFact]
+    public void AFarMachineThatListsNothingPrunesNothing()
+    {
+        var m = HiddenFarMember();
+        PublishListedByPeer();                                     // off, asleep or reconnecting
+        for (var i = 0; i < 6; i++) m.ScanAndUpdate();
+        Assert.Single(OrbweaverSettings.HiddenOrbList());
+    }
+
+    [AvaloniaFact]
+    public void AnotherMachinesRosterNeverPrunesThisMachinesHide()
+    {
+        var m = HiddenFarMember();
+        PublishListedByPeer(("other-mac", new[] { "rc:.claude:sid:x" }));
+        for (var i = 0; i < 6; i++) m.ScanAndUpdate();
+        Assert.Single(OrbweaverSettings.HiddenOrbList());
+    }
+
+    [AvaloniaFact]
+    public void AFarHideKeepsItsPeerAcrossARestartSoPruningStillWorks()
+    {
+        var m = HiddenFarMember();
+        OrbweaverSettings.ReloadForTests();
+        var restarted = NewManager();
+        restarted.HiddenPruneGrace = TimeSpan.Zero;
+        PublishListedByPeer(("far-mac", new[] { RcLead, RcB }));
+        restarted.ScanAndUpdate();
+        restarted.ScanAndUpdate();
+        Assert.Empty(OrbweaverSettings.HiddenOrbList());
     }
 
     // ---- Tray counting ----------------------------------------------------
