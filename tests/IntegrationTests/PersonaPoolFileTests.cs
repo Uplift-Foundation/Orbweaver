@@ -120,6 +120,56 @@ public class PersonaPoolFileTests : IDisposable
         Assert.NotNull(persona.AvatarPath);
     }
 
+    // profile-gen's gitignored layout: .profiles-assets/<name>/<name>.md, the
+    // picture relative to the root the folder sits in.
+    private void WriteAssetsProfile(string root, string name, string display)
+    {
+        var dir = Dir(Path.GetRelativePath(_root, root), ".profiles-assets", name);
+        File.WriteAllText(Path.Combine(dir, name + ".md"),
+            $"---\nschema_version: 1\nname: \"{display}\"\nslug: \"{name}\"\n"
+            + $"image: \".profiles-assets/{name}/{name}.png\"\n---\n\n# {display}\n");
+        File.WriteAllBytes(Path.Combine(dir, name + ".png"), Png());
+    }
+
+    // The lead: a project CLAUDE.md that imports a main-session persona.
+    private string WriteLeadProject()
+    {
+        var project = Dir("work", "project");
+        var lead = Dir("work", "project", "persona");
+        File.WriteAllText(Path.Combine(project, "CLAUDE.md"), "@persona/persona.md\n");
+        File.WriteAllText(Path.Combine(lead, "persona.md"),
+            "---\nname: \"Jennifer Voss\"\nslug: \"jennifer-voss\"\nimage: \"persona/lead.png\"\n---\n");
+        File.WriteAllBytes(Path.Combine(lead, "lead.png"), Png());
+        return project;
+    }
+
+    [Fact]
+    public void ARespawnedTeammateInAProjectWearsItsOwnPersonaNotTheLeads()
+    {
+        // CB-288 as it happened: the project's .profiles-assets holds
+        // juno-abernathy, the member came up as juno-abernathy-2, and it drew
+        // the lead's face because the lead's CLAUDE.md was all that matched.
+        var project = WriteLeadProject();
+        WriteAssetsProfile(project, "juno-abernathy", "Juno Abernathy");
+
+        var persona = Resolve(project, Array.Empty<string>(), null, "juno-abernathy-2");
+
+        Assert.Equal("Juno Abernathy", persona.Name);
+        Assert.Contains("juno-abernathy", persona.AvatarPath);
+        Assert.DoesNotContain("lead.png", persona.AvatarPath);
+    }
+
+    [Fact]
+    public void ARespawnedTeammatesOwnAssetsFileStillWinsAndAVersionFallsToTheLead()
+    {
+        var project = WriteLeadProject();
+        WriteAssetsProfile(project, "juno", "Juno");
+        WriteAssetsProfile(project, "juno-2", "Juno Two");
+
+        Assert.Equal("Juno Two", Resolve(project, Array.Empty<string>(), null, "juno-2").Name);
+        Assert.Equal("Jennifer Voss", Resolve(project, Array.Empty<string>(), null, "juno-v2").Name);
+    }
+
     [Fact]
     public void AHyphenSuffixedMembersOwnFileWinsAndAVersionIsNotStripped()
     {

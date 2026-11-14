@@ -83,7 +83,10 @@ public class PersonaPoolTests
     [InlineData("juno-abernathy", new[] { "juno-abernathy" })]
     [InlineData("a-b-12", new[] { "a-b-12", "a-b" })]
     [InlineData("atlas-2x", new[] { "atlas-2x" })]
-    [InlineData("atlas-2-3", new[] { "atlas-2-3", "atlas-2" })]  // strips once, never recursively
+    // One level only, deliberately: a name that really ends in `-2` keeps
+    // that as its base rather than being walked down to nothing.
+    [InlineData("atlas-2-3", new[] { "atlas-2-3", "atlas-2" })]
+    [InlineData("Juno-Abernathy-2", new[] { "Juno-Abernathy-2", "Juno-Abernathy" })]
     [InlineData("atlas-02", new[] { "atlas-02", "atlas" })]      // leading zeros are still digits
     [InlineData("2", new[] { "2" })]                              // all digits: no name before a separator
     [InlineData("12", new[] { "12" })]
