@@ -413,6 +413,9 @@ namespace Orbweaver
         // run of indented prose cannot be crossed without end.
         private const int MaxOptionGap = 16;
 
+        // The gap develop crossed, of lines of any kind, kept as a fallback.
+        private const int LegacyOptionGap = 3;
+
         // How far above the options a form's tab bar may be looked for. The
         // option walk is no longer held to the DialogWindow, since a narrow
         // pane wraps one form over far more than 30 rows; the head search has
@@ -548,6 +551,19 @@ namespace Orbweaver
                     if (cleaned[j].Length > 0 && !IsHorizontalRule(cleaned[j]) && CrossColumn(lines[j]) < indentFloor) break;
                     crossed++;
                 }
+
+                // What develop did, kept for what the structural walk refuses: up to
+                // LegacyOptionGap lines of anything, the nearest option being the
+                // right number. A dialog can carry a note at the margin between its
+                // options ("Remaining output is hidden"), which is no description
+                // and no rule, and develop read it as a dialog.
+                if (above < 0)
+                    for (var j = at - 1; j >= Math.Max(from, at - 1 - LegacyOptionGap); j--)
+                    {
+                        if (!OptionLine.IsMatch(cleaned[j])) continue;
+                        if (OptionLine.Match(cleaned[j]).Groups[1].Value == want.ToString()) above = j;
+                        break;
+                    }
 
                 if (above < 0) break;
                 picked.Add(above);

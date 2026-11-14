@@ -1327,8 +1327,13 @@ namespace Orbweaver.Tests
                 ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n"
                     + string.Concat(Enumerable.Range(0, 16).Select(i => "     line " + i + "\n"))
                     + "  2. No\n") is { } atCap && atCap.Options.Count == 2);
-            Check("a line at the margin ends the run even between the right numbers",
-                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n     one\nprose at the margin\n     two\n  2. No\n") is null);
+            Check("a margin note between the right numbers is crossed, as on develop",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\nRemaining output is hidden\n  2. No\n") is { } noted
+                && noted.Options.Count == 2);
+            Check("a run of margin lines past the old gap ends the run",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\nprose\nprose\nprose\nprose\n  2. No\n") is null);
+            Check("indented lines then a margin line then the right number past the old gap end the run",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n     one\n     two\nprose at the margin\n     three\n  2. No\n") is null);
             Check("blank lines and rules between options are crossed",
                 ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n\n  2. Maybe\n──────────────────────\n  3. No\n") is { } ruled
                 && ruled.Options.Count == 3);
