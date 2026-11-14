@@ -219,12 +219,13 @@ namespace Orbweaver
             // label, so its first row alone ("Lakeside cabin") would agree with any
             // label that starts that way; the joined text runs on into the
             // description, which Agrees allows, and must hold the whole label.
+            // The run always holds the type row after the last choice, so a choice
+            // always has a next option to stop at; blank rows join as spaces and
+            // Agrees evens those out.
             var shown = new List<(string, string)>();
-            for (var n = 0; n < run.Count && run[n].Key <= count; n++)
+            for (var n = 0; run[n].Key <= count; n++)
             {
-                var end = n + 1 < run.Count ? run[n + 1].Line : footer;
-                var text = string.Join(" ", new[] { StripBox(run[n].Label) }
-                    .Concat(cleaned[(run[n].Line + 1)..end].TakeWhile(l => l.Length > 0 && !ChatTranscript.IsHorizontalRule(l))));
+                var text = string.Join(" ", new[] { StripBox(run[n].Label) }.Concat(cleaned[(run[n].Line + 1)..run[n + 1].Line]));
                 shown.Add((run[n].Key.ToString(), text));
             }
             if (MatchQuestion(call, shown, count) is not { } index) return null;

@@ -105,7 +105,7 @@ public class AskFormTranscriptTests
     public void A_missing_header_reads_as_empty()
     {
         var q = AskFormTranscript.PendingCall([
-            "{\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t\",\"name\":\"AskUserQuestion\",\"input\":{\"questions\":[{\"question\":\"Q\",\"multiSelect\":\"yes\",\"options\":[{\"label\":\"A\"}]}]}}]}}",
+            "{\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t\",\"name\":\"AskUserQuestion\",\"input\":{\"questions\":[{\"question\":\"Q\",\"header\":5,\"multiSelect\":\"yes\",\"options\":[{\"label\":\"A\"}]}]}}]}}",
         ])!.Questions[0];
         Assert.Equal(("", "A", false), (q.Header, q.Options[0], q.MultiSelect));
     }
@@ -464,5 +464,41 @@ public class AskFormTranscriptTests
 
         Assert.Equal(MirrorProtocol.ErrTypeFailed, code);
         Assert.Equal(["5"], pressed);
+    }
+
+    // ---- the arms coverage found unexercised ----------------------------------
+
+    // Keys outside 1..n keep their own labels: a key that is no number, and one
+    // below 1, are never rewritten from the call.
+    [Fact]
+    public void Only_keys_one_to_n_take_the_calls_labels()
+    {
+        var form = new AskForm(new ChatPrompt("t", [new ChatPromptOption("1", "Yes"), new ChatPromptOption("2", "No"),
+            new ChatPromptOption("0", "Type something."), new ChatPromptOption("x", "Chat about this")]), [], -1, "0", "x");
+        var merged = AskFormTranscript.Merge(form, CallOf(["Yes please", "No thanks"]));
+        Assert.Equal(["Yes please", "No thanks", "Type something.", "Chat about this"], merged.Prompt.Options.Select(o => o.Label));
+    }
+
+    // Blank rows above the first visible option are still mid-form.
+    [Fact]
+    public void A_blank_row_above_the_first_visible_option_is_not_the_margin() =>
+        Assert.NotNull(AskFormTranscript.Tall("\n" + TallTail, Three));
+
+    // The digit that should reach the free-text row fails: nothing is typed and
+    // the failure is what comes back.
+    [Fact]
+    public async Task A_failed_digit_press_on_a_tall_form_types_nothing()
+    {
+        var before = Screen("ask-venue-tall-w23h30");
+        var status = new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode,
+            TranscriptPath = Cb327Captures.PathOf("ask-venue-pending.jsonl") };
+        var fp = MirrorProtocol.PromptFromScreen(before, VenueCall)!.Fingerprint;
+
+        var reads = 0;
+        var code = await FormAnswer.AnswerAsync(status, _ => { reads++; return Task.FromResult<string?>(before); },
+            (_, _) => Task.FromResult(false), (_, _) => throw new InvalidOperationException("typed"), fp, "5", null, "a barn");
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed, code);
+        Assert.Equal(1, reads);                                                // returned at the press, before any read-back
     }
 }
