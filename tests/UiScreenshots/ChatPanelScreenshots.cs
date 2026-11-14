@@ -1,6 +1,7 @@
 using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Media;
@@ -329,6 +330,67 @@ public class ChatPanelScreenshots : IDisposable
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-tool-lines.png");
+    }
+
+    // CB-284: a reply with each kind of link in it, and the URL in inline code
+    // that must stay code. What a reviewer is judging is that the two links
+    // read as links (blue, underlined) on the agent's tint, and that the code
+    // span does not.
+    //
+    // Then one real click, through the window rather than raised on the block:
+    // this suite draws through Skia, so the window's hit test lands on actual
+    // glyphs here — the one place that route can be exercised at all, since
+    // under tests/UiTests' null renderer no TextBlock is ever hit. The capture
+    // comes first, so the picture is the panel before anything was pressed.
+    [AvaloniaFact]
+    public void AReplyWithAMarkdownLinkABareUrlAndAUrlInCode()
+    {
+        const string docs = "https://example.com/docs/getting_started";
+        const string bare = "https://en.wikipedia.org/wiki/Markdown_(language)";
+
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Where are the setup docs?" },
+            new ChatTurn
+            {
+                Role = ChatRole.Assistant,
+                IsComplete = true,
+                Text = $"Start with [the getting-started guide]({docs}).\n\n"
+                     + $"Background reading: {bare}.\n\n"
+                     + $"Or fetch it raw with `curl {docs}`.",
+            },
+        }, displayName: "main");
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        var panel = ChatPanelTestAccess.Instance!;
+        ScreenshotHelper.CaptureAlreadyShown(panel, "chat-panel-links.png");
+
+        var opened = new List<string>();
+        var previous = ChatLinks.Open;
+        ChatLinks.Open = url => { opened.Add(url); return true; };
+        try
+        {
+            var block = panel.FindControl<ItemsControl>("Turns")!
+                .GetVisualDescendants()
+                .OfType<SelectableTextBlock>()
+                .First(b => b.Tag is not null && b.Inlines is { } inl
+                    && inl.OfType<Avalonia.Controls.Documents.Run>().Any(r => r.Text == "the getting-started guide"));
+
+            var rect = block.TextLayout.HitTestTextRange("Start with ".Length + 4, 1).First();
+            var point = block.TranslatePoint(rect.Center, panel)!.Value;
+
+            panel.MouseDown(point, MouseButton.Left, RawInputModifiers.None);
+            ScreenshotHelper.Flush();
+            panel.MouseUp(point, MouseButton.Left, RawInputModifiers.None);
+            ScreenshotHelper.Flush();
+
+            Assert.Equal(new[] { docs }, opened);
+        }
+        finally
+        {
+            ChatLinks.Open = previous;
+        }
     }
 
     // CB-270 Stage 4: the run controls of a native conversation. The chip in the

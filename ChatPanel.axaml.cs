@@ -2366,6 +2366,116 @@ namespace Orbweaver
             // Target to whichever control opened it, which is the only thing
             // the two items need to know.
             block.ContextFlyout = _bubbleMenu;
+
+            AdoptLinks(block);
+        }
+
+        // A pointing hand over a link, because it is the one thing in a bubble
+        // that does something when clicked and the I-beam says the opposite.
+        internal static readonly Cursor LinkCursor = new(StandardCursorType.Hand);
+
+        // Clicking, hovering and leaving a link in one line of a message
+        // (CB-284). Every bubble block passes through Adopt, read-only and room
+        // panels included, so links work in every mode with no mode check here.
+        //
+        // handledEventsToo throughout, because SelectableTextBlock marks its
+        // own pointer events handled while it runs a selection, and these have
+        // to see the same press and release it does. They never mark anything
+        // handled themselves: selection, the shared context menu and copy all
+        // keep working across a link exactly as they do across plain text.
+        //
+        // The press is read on the tunnel route, ahead of SelectableTextBlock's
+        // own handler, so it hit-tests the layout the person was looking at
+        // rather than the one the selection reset is about to throw away (see
+        // LinkUnder).
+        private static void AdoptLinks(SelectableTextBlock block)
+        {
+            var normalCursor = block.Cursor;
+            string? pressed = null;
+            string? hovered = null;
+
+            void Hover(string? url)
+            {
+                if (url == hovered) return;
+                hovered = url;
+                block.Cursor = url is null ? normalCursor : LinkCursor;
+
+                // The destination, not the label: [google.com](https://evil.example)
+                // has to be readable for what it is before anyone clicks it.
+                ToolTip.SetTip(block, url);
+            }
+
+            block.AddHandler(
+                InputElement.PointerPressedEvent,
+                (_, e) =>
+                {
+                    pressed = e.GetCurrentPoint(block).Properties.IsLeftButtonPressed
+                        ? LinkUnder(block, e.GetPosition(block))
+                        : null;
+                },
+                RoutingStrategies.Tunnel,
+                handledEventsToo: true);
+
+            block.AddHandler(
+                InputElement.PointerReleasedEvent,
+                (_, e) =>
+                {
+                    var released = e.InitialPressMouseButton == MouseButton.Left
+                        ? LinkUnder(block, e.GetPosition(block))
+                        : null;
+
+                    // Read after SelectableTextBlock has finished with the
+                    // release, so a drag's selection is already in place.
+                    var hasSelection = !string.IsNullOrEmpty(block.SelectedText);
+
+                    if (ChatLinks.ShouldOpen(pressed, released, hasSelection)) ChatLinks.Open(released!);
+                    pressed = null;
+                },
+                RoutingStrategies.Bubble,
+                handledEventsToo: true);
+
+            block.AddHandler(
+                InputElement.PointerMovedEvent,
+                (_, e) => Hover(LinkUnder(block, e.GetPosition(block))),
+                RoutingStrategies.Bubble,
+                handledEventsToo: true);
+
+            // Direct, not Bubble: PointerExited is raised on the element the
+            // pointer left and routes nowhere, so a bubble-only registration is
+            // never called and the hand and tooltip would outlive the pointer.
+            block.AddHandler(
+                InputElement.PointerExitedEvent,
+                (_, _) => Hover(null),
+                RoutingStrategies.Direct,
+                handledEventsToo: true);
+        }
+
+        // The destination of the link under a point in a block's own
+        // coordinates, or null.
+        //
+        // HitTestPoint answers with the nearest character even for a point past
+        // the end of a line or below the last one, so IsInside is what stops a
+        // click in the empty space after a link from opening it. The character
+        // is CharacterHit's first index rather than TextPosition, which adds
+        // the trailing length — so the right half of a link's last letter
+        // would otherwise read as the plain character after it, and the right
+        // half of the letter before a link as the link.
+        internal static string? LinkUnder(SelectableTextBlock block, Point point)
+        {
+            if (block.Tag is not IReadOnlyList<ChatLinks.LinkRange> ranges) return null;
+
+            // A press resets the selection, which throws the text layout away
+            // and invalidates the block's measure; the replacement is not built
+            // until the next layout pass. That pass normally runs before the
+            // release is dispatched, but nothing promises it for a click fast
+            // enough to land both halves in one frame — so run it now rather
+            // than hit-test a layout that is zero wide.
+            if (!block.IsMeasureValid) block.UpdateLayout();
+
+            var hit = block.TextLayout.HitTestPoint(
+                new Point(point.X - block.Padding.Left, point.Y - block.Padding.Top));
+
+            return hit.IsInside ? ChatLinks.UrlAt(ranges, hit.CharacterHit.FirstCharacterIndex) : null;
         }
 
         // Right-click on a message: copy what is selected, or the message
@@ -3912,11 +4022,27 @@ namespace Orbweaver
                     return block;
                 }
 
+                // Where this line's links sit, for the panel's pointer handlers
+                // to hit-test against (CB-284; see ChatPanel.LinkUnder). On the
+                // block itself rather than in a side table, because a streaming
+                // reply rebuilds its blocks wholesale and the ranges have to go
+                // wherever the block goes. Left null on a line with no link, so
+                // the handlers' first question is answered without a lookup.
+                var links = ChatLinks.RangesOf(spans);
+                if (links.Count > 0) block.Tag = links;
+
                 foreach (var span in spans)
                 {
                     var run = new Run(span.Text);
 
-                    switch (span.Style)
+                    // A Link span with nothing openable behind it is drawn as
+                    // plain text: the same rule the click handler uses, so what
+                    // looks like a link is exactly what opens one.
+                    var style = span.Style == ChatMarkdown.MdStyle.Link && !ChatLinks.IsLive(span)
+                        ? ChatMarkdown.MdStyle.Normal
+                        : span.Style;
+
+                    switch (style)
                     {
                         case ChatMarkdown.MdStyle.Bold:
                             run.FontWeight = FontWeight.SemiBold;
