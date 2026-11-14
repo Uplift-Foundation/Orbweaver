@@ -246,6 +246,21 @@ namespace Orbweaver
 
         private static CloudAccountBoard? _board;
 
+        // CB-276: every cloud session id the accounts list, or null when this
+        // source cannot say: cloud switched off, no board yet, or any account not
+        // authoritative (see CloudAccountBoard.ListedIds). Read from the board
+        // rather than Snapshot(), which also hides sessions this app has just
+        // archived; a session archived elsewhere is dropped by the roster itself
+        // and reads as ended, which is what archived means here.
+        internal static IReadOnlySet<string>? ListedIds()
+        {
+            if (!OrbweaverSettings.ClaudeCloudEnabled) return null;
+
+            CloudAccountBoard? board;
+            lock (Gate) board = _board;
+            return board?.ListedIds();
+        }
+
         // The seam every downstream test uses, matching
         // OpenClawSessions.SetSnapshotForTests: the poll loop is the only
         // production publisher and is excluded from coverage, so without this
@@ -301,7 +316,13 @@ namespace Orbweaver
             string? CredentialStamp,
             bool Halted,
             DateTime LastWalkUtc,
-            TimeSpan? Backoff)
+            TimeSpan? Backoff,
+            // CB-276: the last deep walk reached the end of the roster. False
+            // until one has, and after one that hit the page cap, because a roster
+            // cut short lists fewer sessions than exist and a session missing from
+            // it has not thereby ended. Carried through the page-one refreshes
+            // that follow a walk, which only add to what that walk found.
+            bool Complete = false)
         {
             internal static ArmState Initial { get; } = new(
                 Array.Empty<Session>(), "checking…", null, false, default, null);
@@ -424,6 +445,7 @@ namespace Orbweaver
                     Halted = false,
                     Backoff = null,
                     LastWalkUtc = now,
+                    Complete = !reduction.Truncated,
                 },
                 reduction.Sessions,
                 status,
@@ -600,6 +622,7 @@ namespace Orbweaver
                     CredentialStamp = stamp,
                     Halted = true,
                     Backoff = null,
+                    Complete = false,
                 },
                 Array.Empty<Session>(),
                 status,
