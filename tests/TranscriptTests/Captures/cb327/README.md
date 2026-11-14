@@ -1,0 +1,52 @@
+# CB-327 captures
+
+Real `tmux capture-pane -p` output, byte for byte, taken 2026-11-14 on a MacBook from throwaway Claude Code 2.1.325 sessions in a scratch tmux 3.7c server. Nothing here was composed by hand. The session was started with `claude -n long-session-name` in a scratch directory under `/private/tmp`, so no home path or person's name is on any screen. The file name carries the pane width (`-w23` is 23 columns); each was taken by resizing the window and waiting for the redraw, except `idle-short-w23` and `idle-unnamed-w23`, whose sessions were started at 23 columns.
+
+These are raw material for fixtures. Turn the ones a test needs into `PaneFixtures` constants (or load them as files) rather than retyping them.
+
+## What `upstream/develop` at 07b86eb7 makes of each
+
+Produced by `dotnet run --project tests/TranscriptTests -- <file>`, which prints the gate's reading, the form and the dialog for one capture.
+
+| capture | pane reading (check) | form | should be |
+| --- | --- | --- | --- |
+| `form1-w100` | Dialog (dialog) | 1 tab(s), 5 option(s) | Dialog, form minted |
+| `form1-w23` | Unknown (no-prompt-mark) | none | Dialog, form minted |
+| `form1-w32` | Unknown (no-prompt-mark) | none | Dialog, form minted |
+| `form1-w60` | Dialog (dialog) | 1 tab(s), 5 option(s) | Dialog, form minted |
+| `form4-w100` | Dialog (dialog) | 5 tab(s), 6 option(s) | Dialog, form minted |
+| `form4-w23` | Unknown (no-prompt-mark) | none | see below: taller than the pane |
+| `form4-w32` | Unknown (no-prompt-mark) | none | Dialog, form minted |
+| `form4-w60` | Dialog (dialog) | 5 tab(s), 6 option(s) | Dialog, form minted |
+| `form4long-w100` | Dialog (dialog) | 5 tab(s), 6 option(s) | Dialog, form minted |
+| `form4long-w40` | Unknown (no-prompt-mark) | none | Dialog, form minted |
+| `form4long-w60` | Unknown (no-prompt-mark) | none | Dialog, form minted |
+| `form4long-w80` | Unknown (no-prompt-mark) | none | Dialog, form minted |
+| `idle-after-turns-w20` | Unknown (no-box-top) | none | Prompt |
+| `idle-after-turns-w23` | Unknown (no-box-top) | none | Prompt |
+| `idle-named-draft-w23` | Unknown (no-box-top) | none | Prompt |
+| `idle-named-w100` | Prompt (prompt) | none | Prompt |
+| `idle-named-w12` | Unknown (no-box-top) | none | Prompt |
+| `idle-named-w15` | Unknown (no-box-top) | none | Prompt |
+| `idle-named-w18` | Unknown (no-box-top) | none | Prompt |
+| `idle-named-w20` | Unknown (no-box-top) | none | Prompt |
+| `idle-named-w23` | Unknown (no-box-top) | none | Prompt |
+| `idle-named-w32` | Prompt (prompt) | none | Prompt |
+| `idle-named-w40` | Prompt (prompt) | none | Prompt |
+| `idle-named-w60` | Prompt (prompt) | none | Prompt |
+| `idle-named-w80` | Prompt (prompt) | none | Prompt |
+| `idle-short-w23` | Prompt (prompt) | none | Prompt |
+| `idle-unnamed-w23` | Prompt (prompt) | none | Prompt |
+| `model-w23` | Unknown (no-prompt-mark) | none | not Prompt |
+| `model-w32` | Unknown (no-prompt-mark) | none | not Prompt |
+| `modelswitch-w20` | Dialog (dialog) | none | Dialog |
+| `modelswitch-w23` | Dialog (dialog) | none | Dialog |
+| `modelswitch-w60` | Dialog (dialog) | none | Dialog |
+| `permissions-w23` | Unknown (no-prompt-mark) | none | not Prompt |
+| `permissions-w32` | Unknown (no-prompt-mark) | none | not Prompt |
+| `trust-w100` | Unknown (no-box-top) | none | not Prompt |
+| `trust-w32` | Unknown (no-box-top) | none | not Prompt |
+
+`form4-w23` is a different case from the other failing forms: at 23 columns by 49 rows the form is taller than the pane, so its tab bar, question and option 1 are not on the screen at all (the pane is on the alternate screen, and `capture-pane -S -80` returned nothing above the visible rows). No screen parser can read what was not drawn.
+
+The `modelswitch-*` captures hold the user's own echoed `❯ hi` and `❯ /model` lines in scrollback above a real "Switch model?" dialog. They are the narrow-pane version of the case CB-307's addendum was written against, and a loosened box-top rule must keep reading them as a dialog, never a prompt.

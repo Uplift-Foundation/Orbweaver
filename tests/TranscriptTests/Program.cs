@@ -79,7 +79,20 @@ if (args.Length > 0)
         return 0;
     }
 
-    var dialog = ChatTranscript.ParseDialog(File.ReadAllText(path));
+    var screen = File.ReadAllText(path);
+
+    // What the typing gate makes of the same screen, and which check decided
+    // it (CB-327): "no dialog" alone cannot tell a prompt from a screen the
+    // gate refuses, and that difference is the whole bug on a narrow pane.
+    var (reading, check) = PaneScreen.Read(screen);
+    Console.WriteLine($"pane: {reading} ({check})");
+
+    var form = ChatTranscript.ParseAskForm(screen);
+    Console.WriteLine(form is null
+        ? "form: none"
+        : $"form: {form.Tabs.Count} tab(s), {form.Prompt.Options.Count} option(s), free text [{form.FreeTextKey ?? "-"}]");
+
+    var dialog = ChatTranscript.ParseDialog(screen);
 
     if (dialog is null)
     {

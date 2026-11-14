@@ -1,0 +1,40 @@
+
+           Claude Code
+ ▐▛███▛█   v2.1.325
+▝▜██████▀  Haiku 5.5
+ ▝▝   ▝▝   Claude Team
+           /…/proj
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+─── long-session-name ─
+❯ this is a draft
+  that is long enough
+  to wrap twice here
+───────────────────────
+  Haiku 5.5 | ~/proj…
+  ⏵⏵ bypass

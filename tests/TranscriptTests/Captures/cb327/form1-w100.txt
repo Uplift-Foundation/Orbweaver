@@ -1,0 +1,40 @@
+     breakout meeting rooms for small team workshops / Hold the offsite at a mountain cabin resort
+     two hours away from the main office location / Use a restored historic venue in the city center
+     for day trips and evening departures)
+     · How should meals be handled during the offsite? (Serve a buffet lunch and plated dinner
+     prepared by an external catering company with dietary accommodations / Order boxed lunches and
+     a casual barbecue dinner so people can eat whenever they like / Provide an all-day coffee and
+     snack bar stocked with fresh fruit and dietary-friendly options throughout / Hire a private
+     chef to prepare a three-course farm-to-table dinner each evening during the offsite)
+     · What format should the offsite schedule follow? (Run a two-day agenda with focused team
+     workshops in the morning and open afternoons for rest / Keep one full day of strategy sessions
+     followed by free afternoons for personal time and socializing / Schedule three shorter days
+     with planned evening social activities and relaxed group dinners each night / Plan a single-day
+     offsite with a long shared lunch and a closing review of key outcomes)
+     · How should attendees get to and from the offsite? (Charter a motorcoach bus for all staff
+     departing from the main office together each morning / Reimburse individual mileage for
+     employees who choose to drive their own vehicles to the venue / Arrange shared rideshare
+     vouchers and organized carpool matching for every attendee who requests help / Book a fleet of
+     company vans with a designated driver rotation for smaller group travel)
+
+✻ Baked for 24s · done 1:17 PM
+
+❯ Call the AskUserQuestion tool right now, once, with exactly 1 question (header: Venue) with 3
+  options; each label 6 to 9 words with a one-sentence description. No other text.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Venue
+
+Which venue style should the team offsite use?
+
+❯ 1. Book a lakeside retreat center with overnight lodging
+     Everyone stays on site, which keeps the group together after hours.
+  2. Rent a downtown hotel with private breakout meeting rooms
+     Attendees can commute home each evening, and workshops get dedicated space.
+  3. Hold the offsite at a mountain cabin resort
+     A quieter setting offers a real change of scenery, though travel takes longer.
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+──────────────────────────────────────────────────────────────────────────────── long-session-name ─

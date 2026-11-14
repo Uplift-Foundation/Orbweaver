@@ -1,0 +1,49 @@
+     · What format should the offsite schedule follow? (Run a two-day agenda
+     with team workshops in the morning sessions / Keep one full day of strategy
+     sessions followed by free afternoons / Schedule three shorter days with
+     evening social activities planned daily / Plan a single-day offsite with a
+     long lunch and closing review)
+     · How should attendees get to and from the offsite? (Charter a motorcoach
+     bus for all staff from the main office / Reimburse individual mileage for
+     employees driving their own vehicles / Arrange shared rideshare vouchers
+     and carpool matching for attendees / Book a fleet of company vans with a
+     designated driver rotation)
+
+✻ Sautéed for 12s · done 1:16 PM
+
+❯ Call the AskUserQuestion tool right now, once, with exactly 4 questions about
+  planning a team offsite (headers: Venue, Catering, Schedule, Transport).
+  Each question must have 4 options; every option label must be a phrase of 14
+  to 18 words, and every description must be two full sentences of about 15
+  words each. Do not write any other text.
+────────────────────────────────────────────────────────────────────────────────
+←  ☐ Venue  ☐ Catering  ☐ Schedule  ☐ Transport  ✔ Submit  →
+
+Which venue style should the team offsite use?
+
+❯ 1. Book a lakeside retreat center with overnight lodging so the entire team
+     can stay together
+     Everyone stays on site, which keeps the group together after hours and
+     makes informal conversations easy. Lodging costs are higher, but travel
+     time is minimal and the setting feels restorative.
+  2. Rent a downtown conference hotel with private breakout meeting rooms for
+     small team workshops
+     Commuters can reach it easily, and attendees return home each evening
+     without a long drive. Breakout rooms let smaller groups work in focus,
+     though evenings feel less immersive.
+  3. Hold the offsite at a mountain cabin resort two hours away from the main
+     office location
+     A quieter setting offers a real change of scenery that helps people step
+     away from daily routines. The drive takes a couple of hours, so plan for
+     travel time and an early departure.
+  4. Use a restored historic venue in the city center for day trips and evening
+     departures
+     The building has character and sits close to restaurants, hotels, and
+     public transit for everyone. Atmosphere is strong, but meeting rooms may be
+     smaller and accessibility varies by floor.
+  5. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  6. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+──────────────────────────────────────────────────────────── long-session-name ─
