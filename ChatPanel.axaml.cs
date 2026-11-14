@@ -2453,13 +2453,16 @@ namespace Orbweaver
         // The destination of the link under a point in a block's own
         // coordinates, or null.
         //
-        // HitTestPoint answers with the nearest character even for a point past
-        // the end of a line or below the last one, so IsInside is what stops a
-        // click in the empty space after a link from opening it. The character
-        // is CharacterHit's first index rather than TextPosition, which adds
-        // the trailing length — so the right half of a link's last letter
-        // would otherwise read as the plain character after it, and the right
-        // half of the letter before a link as the link.
+        // HitTestPoint answers with the nearest character even for a point
+        // past the end of a line or below the last one, so the point is then
+        // checked against that character's own box — which is what stops a
+        // click in the empty space after a link from opening it. Not
+        // IsInside: measured on Avalonia 12.1.1, it is false for every
+        // character on the second and later lines of a wrapped block, so a
+        // long URL would have been clickable on its first line only. The
+        // character is CharacterHit's first index rather than TextPosition,
+        // which adds the trailing length — so the right half of a link's last
+        // letter would otherwise read as the plain character after it.
         internal static string? LinkUnder(SelectableTextBlock block, Point point)
         {
             if (block.Tag is not IReadOnlyList<ChatLinks.LinkRange> ranges) return null;
@@ -2472,10 +2475,16 @@ namespace Orbweaver
             // than hit-test a layout that is zero wide.
             if (!block.IsMeasureValid) block.UpdateLayout();
 
-            var hit = block.TextLayout.HitTestPoint(
-                new Point(point.X - block.Padding.Left, point.Y - block.Padding.Top));
+            var layout = block.TextLayout;
+            var local = new Point(point.X - block.Padding.Left, point.Y - block.Padding.Top);
+            var index = layout.HitTestPoint(local).CharacterHit.FirstCharacterIndex;
 
-            return hit.IsInside ? ChatLinks.UrlAt(ranges, hit.CharacterHit.FirstCharacterIndex) : null;
+            foreach (var box in layout.HitTestTextRange(index, 1))
+            {
+                if (box.Contains(local)) return ChatLinks.UrlAt(ranges, index);
+            }
+
+            return null;
         }
 
         // Right-click on a message: copy what is selected, or the message

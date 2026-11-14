@@ -200,6 +200,27 @@ public class ChatPanelLinkTests : IDisposable
         Assert.Equal(new[] { Url }, _opened);
     }
 
+    // A URL longer than the bubble is wide wraps, and every line of it is the
+    // link. IsInside, which LinkUnder first used, is false on every line after
+    // the first, so this case is the guard against that coming back.
+    [AvaloniaFact]
+    public void EveryLineOfAWrappedUrlOpensIt()
+    {
+        const string longUrl = "https://example.com/a/very/long/path/that/cannot/fit/on/one/line/of/a/bubble";
+        var panel = Open($"see {longUrl} now");
+        var block = BlockSaying(panel, longUrl);
+
+        var first = At(panel, block, longUrl, offset: 2);
+        var last = At(panel, block, longUrl, offset: longUrl.Length - 2);
+        Assert.True(last.Y > first.Y, "premise: the URL wraps onto a second line");
+
+        var mouse = new Mouse(panel, block);
+        mouse.Click(first);
+        mouse.Click(last, clicks: 1);
+
+        Assert.Equal(new[] { longUrl, longUrl }, _opened);
+    }
+
     // Negative control for the case above: the same block, the same kind of
     // click, a few characters to the left.
     [AvaloniaFact]
