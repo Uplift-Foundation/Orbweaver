@@ -79,6 +79,12 @@ internal static class TestBootstrap
         // and the same line in tests/UiTests/TestBootstrap.cs.
         CursorProbe.Read = () => null;
 
+        // CB-284: no test in this assembly opens a real browser. A link in a
+        // chat bubble opens through ChatLinks.Open on a click, and a
+        // synthesized click is exactly what these tests make; tests that want
+        // to see what would have opened swap in a recorder and put this back.
+        ChatLinks.Open = _ => false;
+
         OrbweaverSettings.ReloadForTests();
     }
 }

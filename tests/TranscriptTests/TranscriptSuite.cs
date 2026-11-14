@@ -391,11 +391,47 @@ namespace Orbweaver.Tests
             Check("bold-italic is three stars",
                 Spans("***very***").Single().Style == ChatMarkdown.MdStyle.BoldItalic);
 
-            var link = Spans("see [the findings](docs/openclaw-findings.md) for more");
-            Check("a link keeps its label and drops its url",
-                link.Any(s => s.Style == ChatMarkdown.MdStyle.Link && s.Text == "the findings")
-                && link.All(s => !s.Text.Contains(".md")),
-                string.Join(" | ", link.Select(s => s.Style + ":" + s.Text)));
+            // Links (CB-284). A link keeps its destination when the launcher
+            // would open it; anything else keeps only its label, as plain text.
+            static string Show(ChatMarkdown.MdSpan[] s) =>
+                string.Join(" | ", s.Select(x => x.Style + ":" + x.Text + (x.Url is null ? "" : "->" + x.Url)));
+
+            var link = Spans("see [the findings](https://example.com/findings) for more");
+            Check("a link keeps its label and its url",
+                link.Any(s => s.Style == ChatMarkdown.MdStyle.Link && s.Text == "the findings"
+                              && s.Url == "https://example.com/findings"),
+                Show(link));
+
+            var relative = Spans("see [the findings](docs/openclaw-findings.md) for more");
+            Check("a relative link is its label as plain text",
+                relative.Length == 1 && relative[0].Style == ChatMarkdown.MdStyle.Normal
+                && relative[0].Text == "see the findings for more",
+                Show(relative));
+
+            var scheme = Spans("[open](file:///etc/hosts)");
+            Check("a non-http scheme is plain text",
+                scheme.Length == 1 && scheme[0].Style == ChatMarkdown.MdStyle.Normal && scheme[0].Url is null,
+                Show(scheme));
+
+            var bareUrl = Spans("go to https://example.com/a now");
+            Check("a bare url is a link",
+                bareUrl.Length == 3 && bareUrl[1].Url == "https://example.com/a",
+                Show(bareUrl));
+
+            var trailing = Spans("see https://example.com/a.");
+            Check("trailing punctuation is outside the link",
+                trailing.Any(s => s.Url == "https://example.com/a") && trailing[^1].Text == ".",
+                Show(trailing));
+
+            var parens = Spans("(see https://en.wikipedia.org/wiki/A_(b))");
+            Check("balanced parens stay inside the link",
+                parens.Any(s => s.Url == "https://en.wikipedia.org/wiki/A_(b)") && parens[^1].Text == ")",
+                Show(parens));
+
+            var code = Spans("run `curl https://example.com/a` first");
+            Check("a url in code is not a link",
+                code.All(s => s.Style != ChatMarkdown.MdStyle.Link),
+                Show(code));
 
             // Blocks.
             var fenced = Blocks("""

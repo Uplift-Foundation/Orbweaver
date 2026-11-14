@@ -309,10 +309,10 @@ public class ChatMarkdownGapTests
         Assert.Equal(text, span.Text);
     }
 
-    // The url is deliberately dropped — nothing in a panel-sized bubble opens
-    // links, and the label is the part that reads.
+    // The url is kept on the span now (CB-284) — the panel opens it. Every
+    // other shape of link is in ChatMarkdownLinkTests.
     [Fact]
-    public void AWellFormedLinkKeepsTheLabelAndDropsTheUrl()
+    public void AWellFormedLinkKeepsTheLabelAndTheUrl()
     {
         var spans = Spans("read [the findings](https://example.com/x) first");
 
@@ -320,7 +320,9 @@ public class ChatMarkdownGapTests
         Assert.Equal("read ", spans[0].Text);
         Assert.Equal(ChatMarkdown.MdStyle.Link, spans[1].Style);
         Assert.Equal("the findings", spans[1].Text);
+        Assert.Equal("https://example.com/x", spans[1].Url);
         Assert.Equal(" first", spans[2].Text);
+        Assert.Null(spans[2].Url);
     }
 
     // Half-written emphasis is the normal state of a streaming reply, and the

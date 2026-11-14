@@ -21,6 +21,14 @@ namespace Orbweaver
     //    anyway; monospace at least keeps the columns in line.
     //  * No nested lists, no reference links, no HTML, no images. None of it
     //    turns up, and every rule here is a rule that can mis-fire.
+    //  * Links are http and https only. An inline link, an <autolink> and a
+    //    bare URL in prose all become Link spans carrying their destination,
+    //    but only when CloudSessionLink.IsOpenable would hand that destination
+    //    to a browser. Anything else — a relative path, file:, a scheme some
+    //    installed program registered — keeps its label as plain text, so
+    //    nothing on screen looks clickable that a click would not open.
+    //  * Spans do not nest, so a URL inside **bold** or *italic* stays part
+    //    of the emphasis and is not a link.
     public static class ChatMarkdown
     {
         public enum MdKind { Paragraph, Heading, Bullet, Ordered, Code, Quote }
@@ -31,7 +39,14 @@ namespace Orbweaver
 
         public enum MdStyle { Normal, Bold, Italic, BoldItalic, Code, Link }
 
-        public sealed record MdSpan(string Text, MdStyle Style);
+        // Url is where a Link span goes, and it is null on every other style.
+        //
+        // The contract is that a Link span always carries one: a destination
+        // the launcher would refuse (CloudSessionLink.IsOpenable) is not made
+        // into a Link span in the first place, so a span that looks clickable
+        // and a span that is clickable are the same set. Defaulted so the
+        // styles that have no destination do not have to say so.
+        public sealed record MdSpan(string Text, MdStyle Style, string? Url = null);
 
         // --- blocks ---
 
@@ -266,12 +281,51 @@ namespace Orbweaver
                 }
                 else if (c == '[')
                 {
-                    var span = Link(text, i);
-                    if (span is not null)
+                    var link = Link(text, i);
+                    if (link is not null)
+                    {
+                        // A destination the launcher would refuse keeps its
+                        // label and loses the markup: the words still read,
+                        // and nothing is drawn as a link that opens nothing.
+                        if (link.Value.Url is null)
+                        {
+                            plain.Append(link.Value.Label);
+                        }
+                        else
+                        {
+                            Flush();
+                            spans.Add(new MdSpan(link.Value.Label, MdStyle.Link, link.Value.Url));
+                        }
+
+                        i = link.Value.Next;
+                        continue;
+                    }
+                }
+                else if (c == '<')
+                {
+                    // <https://…>, CommonMark's autolink. Anything else in
+                    // angle brackets is text, as it always was.
+                    var close = text.IndexOf('>', i + 1);
+                    if (close > i + 1)
+                    {
+                        var inner = text[(i + 1)..close];
+                        if (CloudSessionLink.IsOpenable(inner))
+                        {
+                            Flush();
+                            spans.Add(new MdSpan(inner, MdStyle.Link, inner));
+                            i = close + 1;
+                            continue;
+                        }
+                    }
+                }
+                else if (StartsBareUrl(text, i))
+                {
+                    var url = BareUrl(text, i);
+                    if (CloudSessionLink.IsOpenable(url))
                     {
                         Flush();
-                        spans.Add(span.Value.Span);
-                        i = span.Value.Next;
+                        spans.Add(new MdSpan(url, MdStyle.Link, url));
+                        i += url.Length;
                         continue;
                     }
                 }
@@ -284,20 +338,98 @@ namespace Orbweaver
             return spans;
         }
 
-        // "[label](url)" becomes the label, styled. The url is dropped: a
-        // panel-sized bubble has no room for it and nothing here opens links.
-        private static (MdSpan Span, int Next)? Link(string text, int start)
+        // "[label](dest)": the label, and the destination when a browser
+        // should be handed it, or null when it should not.
+        //
+        // The closing ')' is found by balancing, not by taking the first one,
+        // because the URLs people actually paste carry parentheses —
+        // Wikipedia's disambiguated titles most of all — and stopping at the
+        // first ')' cut those short and left a stray ")" in the prose.
+        // Unbalanced to the end of the text is not a link, which is the normal
+        // state of a reply that is still being streamed.
+        private static (string Label, string? Url, int Next)? Link(string text, int start)
         {
             var close = text.IndexOf(']', start + 1);
             if (close < 0 || close + 1 >= text.Length || text[close + 1] != '(') return null;
 
-            var end = text.IndexOf(')', close + 2);
+            var end = -1;
+            var depth = 1;
+            for (var j = close + 2; j < text.Length; j++)
+            {
+                if (text[j] == '(') depth++;
+                else if (text[j] == ')' && --depth == 0)
+                {
+                    end = j;
+                    break;
+                }
+            }
+
             if (end < 0) return null;
 
             var label = text[(start + 1)..close];
             if (label.Length == 0) return null;
 
-            return (new MdSpan(label, MdStyle.Link), end + 1);
+            return (label, Destination(text[(close + 2)..end]), end + 1);
         }
+
+        // The URL inside a link's parentheses: a "title" after it dropped,
+        // CommonMark's <…> wrapping taken off, and then the launcher's rule.
+        private static string? Destination(string inner)
+        {
+            var dest = inner.Trim();
+
+            var space = dest.IndexOfAny([' ', '\t']);
+            if (space >= 0) dest = dest[..space];
+
+            if (dest.Length >= 2 && dest[0] == '<' && dest[^1] == '>') dest = dest[1..^1];
+
+            return CloudSessionLink.IsOpenable(dest) ? dest : null;
+        }
+
+        // A bare URL starts at "http://" or "https://", and not in the middle
+        // of a word — "xhttps://" is somebody's identifier, not an address.
+        private static bool StartsBareUrl(string text, int i) =>
+            (i == 0 || !char.IsLetterOrDigit(text[i - 1]))
+            && (text.AsSpan(i).StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || text.AsSpan(i).StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
+        // From the scheme to the first character no URL in prose contains,
+        // then trimmed of what belongs to the sentence rather than the
+        // address. A full stop or a comma after a link is the sentence's; a
+        // closing bracket is the sentence's only when the URL has no opener
+        // for it, which is what keeps ".../A_(b)" whole and "(see .../x)" not.
+        // The trimmed characters are not lost — the caller only consumes the
+        // URL, so they come back round as plain text.
+        private static string BareUrl(string text, int start)
+        {
+            var end = start;
+            while (end < text.Length
+                   && !char.IsWhiteSpace(text[end])
+                   && !char.IsControl(text[end])
+                   && text[end] is not ('<' or '>' or '`'))
+            {
+                end++;
+            }
+
+            var url = text[start..end];
+
+            // Never runs dry: the caller only gets here at "http://" or
+            // "https://", and a '/' is never trimmed, so url[^1] always exists.
+            while (BelongsToTheSentence(url)) url = url[..^1];
+
+            return url;
+        }
+
+        private static bool BelongsToTheSentence(string url) => url[^1] switch
+        {
+            '.' or ',' or ';' or ':' or '!' or '?' or '\'' or '"' or '\u2019' or '\u201D' => true,
+            ')' => Unmatched(url, '(', ')'),
+            ']' => Unmatched(url, '[', ']'),
+            '}' => Unmatched(url, '{', '}'),
+            _ => false
+        };
+
+        private static bool Unmatched(string url, char open, char close) =>
+            url.Count(c => c == close) > url.Count(c => c == open);
     }
 }

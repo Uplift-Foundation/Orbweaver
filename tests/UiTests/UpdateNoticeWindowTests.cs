@@ -466,8 +466,12 @@ public class UpdateNoticeWindowTests : IDisposable
         Assert.Contains(runs, r => r.FontWeight == Avalonia.Media.FontWeight.SemiBold && r.FontStyle == Avalonia.Media.FontStyle.Italic);
         Assert.Contains(runs, r => r.FontStyle == Avalonia.Media.FontStyle.Italic && r.FontWeight != Avalonia.Media.FontWeight.SemiBold);
         Assert.Contains(runs, r => r.FontWeight == Avalonia.Media.FontWeight.SemiBold && r.FontStyle != Avalonia.Media.FontStyle.Italic);
-        Assert.Contains(runs, r => r.TextDecorations is { Count: > 0 });
         Assert.Contains(runs, r => r.Text == "code" && r.FontFamily.Name.Contains("Menlo"));
+
+        // CB-284: a link here opens nothing, so it is drawn as plain text — its
+        // label kept, no underline anywhere — rather than as a dead link.
+        Assert.Contains(runs, r => r.Text == "a link");
+        Assert.DoesNotContain(runs, r => r.TextDecorations is { Count: > 0 });
     }
 
     private static IEnumerable<Avalonia.Controls.Documents.Inline> Descendants(IEnumerable<Control> controls)
