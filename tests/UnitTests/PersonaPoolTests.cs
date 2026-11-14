@@ -81,6 +81,8 @@ public class PersonaPoolTests
     [InlineData("atlas-", new[] { "atlas-" })]
     [InlineData("-2", new[] { "-2" })]                       // nothing before the suffix
     [InlineData("juno-abernathy", new[] { "juno-abernathy" })]
+    [InlineData("a-b-12", new[] { "a-b-12", "a-b" })]
+    [InlineData("atlas-2x", new[] { "atlas-2x" })]
     [InlineData("atlas-2-3", new[] { "atlas-2-3", "atlas-2" })]  // strips once, never recursively
     [InlineData("atlas-02", new[] { "atlas-02", "atlas" })]      // leading zeros are still digits
     [InlineData("2", new[] { "2" })]                              // all digits: no name before a separator
@@ -135,6 +137,21 @@ public class PersonaPoolTests
         string agent, IEnumerable<string> configDirs, string? pool, SessionSource source = SessionSource.ClaudeCode) =>
         LocalPersona.CandidatesBelow(
             Path.Combine(Home, "work", "project"), configDirs, source, agent, ceiling: Path.Combine(Home, "work", "project"), pool);
+
+    [Fact]
+    public void ARespawnedMembersOwnFileIsOfferedBeforeTheOneItWasRespawnedFrom()
+    {
+        // CB-288: `ines-harrow-2` is looked up under its own name first, then
+        // `ines-harrow`, in both layouts at the same level.
+        var paths = Candidates("ines-harrow-2", Array.Empty<string>(), null).Select(c => c.Path).ToList();
+        var work = Path.Combine(Home, "work", "project");
+
+        var own = paths.IndexOf(Path.Combine(work, ".profiles-assets", "ines-harrow-2", "ines-harrow-2.md"));
+        var original = paths.IndexOf(Path.Combine(work, ".profiles-assets", "ines-harrow", "ines-harrow.md"));
+
+        Assert.True(own >= 0, "its own file is offered");
+        Assert.True(original > own, "the original persona's file is offered, after its own");
+    }
 
     [Fact]
     public void AnAccountsPoolIsOfferedBeforeThatAccountsClaudeMdAndTheSharedPoolLast()
