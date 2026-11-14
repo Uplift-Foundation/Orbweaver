@@ -56,9 +56,24 @@ public class HiddenOrbsPhoneTrayTests : IDisposable
 
     // Built through the same internal seam ScanProbeScanTests uses, so nothing
     // here asks the real daemon, tmux or the machine's own agent teams.
+    //
+    // onWindows: false, pinned. On Windows a pid-less job whose cwd is a POSIX
+    // path reads as a WSL session the local daemon cannot answer for
+    // (SessionPresence.LocalDaemonCanAnswerFor), so the job listing is never
+    // asked and even the visible control stays Kind.Unknown — found on the
+    // win-x64 leg at d125398a. Pinning it makes this test about hiding on
+    // every runner, not about which platform it happens to run on.
+    //
+    // So on Windows this test runs the non-Windows detection branch by
+    // design, and does NOT exercise how Windows decides a session is a
+    // background job. Do not remove the pin to "test the real platform":
+    // that turns the visible control red for a reason that has nothing to
+    // do with hiding. What this test is about — the hide branch sitting
+    // after the Kind/Shape and persona enrichment — is platform-independent.
     private SessionManager Manager(Dictionary<string, string>? jobs = null) =>
         new(_dir,
             () => jobs ?? new Dictionary<string, string>(StringComparer.Ordinal),
+            onWindows: false,
             attachClients: () => new HashSet<string>(StringComparer.Ordinal),
             userConfigDirs: () => Array.Empty<string>(),
             dependents: _ => SessionDependents.Nothing,
