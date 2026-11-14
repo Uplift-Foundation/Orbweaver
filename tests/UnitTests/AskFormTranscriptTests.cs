@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Xunit;
 using Call = Orbweaver.AskFormTranscript.Call;
-using CallOption = Orbweaver.AskFormTranscript.CallOption;
 using CallQuestion = Orbweaver.AskFormTranscript.CallQuestion;
 
 namespace Orbweaver.Tests;
@@ -32,8 +31,7 @@ public class AskFormTranscriptTests
         var venue = call.Questions[0];
         Assert.Equal("Which venue style should we book for the team offsite?", venue.Question);
         Assert.False(venue.MultiSelect);
-        Assert.Equal(new CallOption("Modern downtown hotel conference suite near restaurants and nightlife",
-            "A convenient city location with professional AV and plenty of evening options."), venue.Options[1]);
+        Assert.Equal("Modern downtown hotel conference suite near restaurants and nightlife", venue.Options[1]);
     }
 
     [Fact]
@@ -104,12 +102,12 @@ public class AskFormTranscriptTests
     }
 
     [Fact]
-    public void A_missing_header_or_description_reads_as_empty()
+    public void A_missing_header_reads_as_empty()
     {
         var q = AskFormTranscript.PendingCall([
             "{\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t\",\"name\":\"AskUserQuestion\",\"input\":{\"questions\":[{\"question\":\"Q\",\"multiSelect\":\"yes\",\"options\":[{\"label\":\"A\"}]}]}}]}}",
         ])!.Questions[0];
-        Assert.Equal(("", "", false), (q.Header, q.Options[0].Description, q.MultiSelect));
+        Assert.Equal(("", "A", false), (q.Header, q.Options[0], q.MultiSelect));
     }
 
     // ---- reading the file ----------------------------------------------------
@@ -138,7 +136,7 @@ public class AskFormTranscriptTests
     }
 
     [Fact]
-    public void A_narrow_form_takes_its_tabs_question_labels_and_descriptions_from_the_call()
+    public void A_narrow_form_takes_its_tabs_question_and_labels_from_the_call()
     {
         var screen = Screen("ask-mixed-colour-w32");
         Assert.Contains(ChatTranscript.ParseAskForm(screen)!.Tabs, t => t.Name.EndsWith('…'));   // what the screen alone gives
@@ -149,8 +147,6 @@ public class AskFormTranscriptTests
         Assert.Equal(AskTabState.Submit, form.Tabs[^1].State);
         Assert.Equal(0, form.CurrentTab);
         Assert.Equal(["Red", "Green", "Blue", "Type something.", "Chat about this"], form.Prompt.Options.Select(o => o.Label));
-        Assert.Equal(new string?[] { "Warm and attention-grabbing.", "Calm and signals success.", "Cool and neutral.", null, null },
-            form.Prompt.Options.Select(o => o.Description));
         Assert.Equal(("4", "5", false), (form.FreeTextKey, form.ChatAboutKey, form.MultiSelect));
     }
 
@@ -173,7 +169,7 @@ public class AskFormTranscriptTests
         -1, (labels.Length + 1).ToString(), (labels.Length + 2).ToString());
 
     private static Call CallOf(params string[][] questions) => new("t",
-        questions.Select((q, i) => new CallQuestion("Question " + i, "H" + i, false, q.Select(l => new CallOption(l, "")).ToList())).ToList());
+        questions.Select((q, i) => new CallQuestion("Question " + i, "H" + i, false, q)).ToList());
 
     [Fact]
     public void The_screens_tab_states_are_kept_when_its_bar_had_one_tab_per_question()
@@ -182,7 +178,6 @@ public class AskFormTranscriptTests
         Assert.Equal([AskTabState.Answered, AskTabState.Open, AskTabState.Submit], form.Tabs.Select(t => t.State));
         Assert.Equal(["H0", "H1", "Submit"], form.Tabs.Select(t => t.Name));
         Assert.Equal((1, "Question 1"), (form.CurrentTab, form.Prompt.Title));
-        Assert.Null(form.Prompt.Options[0].Description);                     // an empty description is none
     }
 
     [Fact]
@@ -217,6 +212,7 @@ public class AskFormTranscriptTests
     [InlineData("Book a mountain cabin", "Book a lakeside retreat", false)]
     [InlineData("…", "Book", false)]
     [InlineData("Book", "", false)]
+    [InlineData("a team- building day", "a team-building day out", true)]                              // broke at a hyphen
     public void A_label_agrees_when_one_runs_into_the_other(string screen, string label, bool agrees) =>
         Assert.Equal(agrees, AskFormTranscript.Agrees(screen, label));
 
@@ -241,7 +237,6 @@ public class AskFormTranscriptTests
         Assert.Equal("Which venue style should we book for the team offsite?", form.Prompt.Title);
         Assert.Equal(["1", "2", "3", "4", "5", "6"], form.Prompt.Options.Select(o => o.Key));
         Assert.Equal("Rustic mountain lodge with large meeting room and hiking trails", form.Prompt.Options[0].Label);
-        Assert.Equal("A secluded retreat that blends focused work sessions with outdoor team activities.", form.Prompt.Options[0].Description);
         Assert.Equal(["Type something.", "Chat about this"], form.Prompt.Options.Skip(4).Select(o => o.Label));
         Assert.Equal(("5", "6", 0, (string?)null), (form.FreeTextKey, form.ChatAboutKey, form.CurrentTab, form.CursorKey));
         Assert.Equal(["Venue", "Catering", "Schedule", "Transport", "Submit"], form.Tabs.Select(t => t.Name));
@@ -343,5 +338,131 @@ public class AskFormTranscriptTests
         var prompt = LocalCliChatSession.ReadPrompt(Screen("ask-venue-tall-w23h30"), VenueCall)!;
         Assert.Equal("Rustic mountain lodge with large meeting room and hiking trails", prompt.Options[0].Label);
         Assert.Equal("Question 1 of 4", prompt.Progress);
+    }
+
+    // ---- idris's three: wrapped labels, the count, multiSelect after the match --
+
+    // A label's first row alone ("Lakeside cabin") would agree with both
+    // questions; the rows under it, joined, agree with one.
+    [Fact]
+    public void A_wrapped_label_is_matched_on_all_its_rows_not_its_first()
+    {
+        var screen = TallTail.Replace("  3. Third choice", "  3. Lakeside cabin\n     compound with kitchen\n     A quiet place.");
+        var call = CallOf(["First choice", "Second choice", "Lakeside cabin compound with kitchen"],
+                          ["Other first", "Other second", "Lakeside cabin resort far away"]);
+        Assert.Equal(0, AskFormTranscript.Tall(screen, call)!.CurrentTab);
+
+        // The first row alone would have fit both, and two fits is no match.
+        Assert.Null(AskFormTranscript.MatchQuestion(call, [("3", "Lakeside cabin")], 3));
+    }
+
+    // Matching comes first and multiSelect is read off the match, so a screen
+    // that fits a multi-select question as well as another is no match at all.
+    [Fact]
+    public void An_ambiguous_match_that_includes_a_multi_select_question_mints_nothing()
+    {
+        var single = new CallQuestion("Single?", "S", false, ["First choice", "Second choice", "Third choice"]);
+        var multi = single with { Question = "Multi?", MultiSelect = true };
+        Assert.Null(AskFormTranscript.Tall(TallTail, new Call("t", [single, multi])));
+        Assert.Null(AskFormTranscript.Tall(TallTail, new Call("t", [multi])));
+        Assert.NotNull(AskFormTranscript.Tall(TallTail, new Call("t", [single])));
+
+        var form = FormOf("Yes", "No");
+        var yesNo = new CallQuestion("Q", "H", false, ["Yes", "No"]);
+        Assert.Same(form, AskFormTranscript.Merge(form, new Call("t", [yesNo, yesNo with { MultiSelect = true }])));
+    }
+
+    // Every form and dialog fixture in the repository hashes the same with a
+    // call as without one: a changed hash would re-mint a prompt already on a
+    // phone. The call is built from the screen's own form, so the merge fires.
+    [Fact]
+    public void Every_existing_fixture_keeps_its_hash_with_a_call()
+    {
+        var screens = new[] { typeof(PaneFixtures), typeof(AskFormFixtures) }
+            .SelectMany(t => t.GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+            .Where(f => f.FieldType == typeof(string))
+            .Select(f => (f.Name, Screen: (string)f.GetValue(null)!))
+            .Where(x => PromptFingerprint.Of(x.Screen) is not null)
+            .ToList();
+        Assert.True(screens.Count > 20, $"only {screens.Count} fixtures hash");
+
+        var merged = 0;
+        foreach (var (name, screen) in screens)
+        {
+            var form = ChatTranscript.ParseAskForm(screen);
+            var own = form is null ? MixedCall : new Call("t", [new CallQuestion("Q", "H", false,
+                form.Prompt.Options.Where(o => o.Key != form.FreeTextKey && o.Key != form.ChatAboutKey).Select(o => o.Label).ToList())]);
+            if (form is not null && AskFormTranscript.Merge(form, own) != form) merged++;
+            Assert.True(PromptFingerprint.Of(screen)!.Hash == PromptFingerprint.Of(screen, own)!.Hash, name);
+        }
+        Assert.True(merged > 5, $"the call rewrote only {merged} forms, so the pin proves little");
+    }
+
+    // ---- free text on a tall form (measured: Captures/cb327 ask-freetext-*) ----
+
+    private static Call FreeTextCall => AskFormTranscript.PendingCall(Rows("ask-freetext-pending.jsonl"))!;
+
+    [Fact]
+    public void The_real_tall_free_text_row_reads_with_the_cursor_on_it_and_then_with_the_text()
+    {
+        var onRow = AskFormTranscript.ReadForm(Screen("ask-freetext-on-row-w23h30"), FreeTextCall)!;
+        Assert.Equal(("5", "5"), (onRow.FreeTextKey, onRow.CursorKey));
+        var typed = AskFormTranscript.ReadForm(Screen("ask-freetext-typed-w23h30"), FreeTextCall)!;
+        Assert.Equal(("5", "a quiet barn"), (typed.FreeTextKey, typed.Prompt.Options[4].Label));
+    }
+
+    // A row above "Chat about this" that is neither "Type something" nor under
+    // the cursor is not the free-text row.
+    [Fact]
+    public void A_free_text_row_without_its_label_needs_the_cursor_on_it() =>
+        Assert.Null(AskFormTranscript.ReadForm(Screen("ask-freetext-typed-w23h30").Replace("❯ 5. a quiet barn", "  5. a quiet barn"), FreeTextCall));
+
+    // FormAnswer on a tall form with the cursor scrolled away: the row's digit,
+    // the read-back of the cursor there, the text, its read-back, then Enter.
+    // The screen before the digit is the real on-row capture with the cursor
+    // mark and the footer as they were before it (seen in the same session; the
+    // capture itself was not kept). The two after it are the real captures.
+    [Fact]
+    public async Task Free_text_on_a_tall_form_reaches_the_row_by_its_digit()
+    {
+        var onRow = Screen("ask-freetext-on-row-w23h30");
+        var before = onRow.Replace("❯ 5. Type something.", "  5. Type something.")
+            .Replace("navigate · ctrl+g to\nedit in Vim · Esc to\n", "navigate · Esc to\n");
+        Assert.NotEqual(onRow, before);
+        Assert.Null(AskFormTranscript.ReadForm(before, FreeTextCall)!.CursorKey);
+
+        var status = new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode,
+            TranscriptPath = Cb327Captures.PathOf("ask-freetext-pending.jsonl") };
+        var screen = before;
+        var pressed = new List<string>();
+        var typed = new List<string>();
+        var fp = MirrorProtocol.PromptFromScreen(before, FreeTextCall)!.Fingerprint;
+
+        var code = await FormAnswer.AnswerAsync(status, _ => Task.FromResult<string?>(screen),
+            (_, key) => { pressed.Add(key); if (key == "5") screen = onRow; return Task.FromResult(true); },
+            (_, text) => { typed.Add(text); screen = Screen("ask-freetext-typed-w23h30"); return Task.FromResult(true); },
+            fp, "5", null, "a quiet barn");
+
+        Assert.Null(code);
+        Assert.Equal(["5", "Enter"], pressed);
+        Assert.Equal(["a quiet barn"], typed);
+    }
+
+    // If the digit does not put the cursor on the row, nothing is typed.
+    [Fact]
+    public async Task A_digit_that_does_not_reach_the_row_types_nothing()
+    {
+        var before = Screen("ask-venue-tall-w23h30");
+        var status = new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode,
+            TranscriptPath = Cb327Captures.PathOf("ask-venue-pending.jsonl") };
+        var pressed = new List<string>();
+        var fp = MirrorProtocol.PromptFromScreen(before, VenueCall)!.Fingerprint;
+
+        var code = await FormAnswer.AnswerAsync(status, _ => Task.FromResult<string?>(before),
+            (_, key) => { pressed.Add(key); return Task.FromResult(true); },
+            (_, _) => throw new InvalidOperationException("typed"), fp, "5", null, "a barn");
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed, code);
+        Assert.Equal(["5"], pressed);
     }
 }

@@ -69,6 +69,11 @@ The `ask-*` files come from a second scratch session (same Claude Code 2.1.325, 
 | `ask-mixed-colour-w32` | Colour at 32 columns: the tab names are cut to `Colo…` and `S…` |
 | `ask-mixed-suites-w32` | Suites at 32 columns, after `3` was pressed on Colour |
 | `ask-mixed-suites-tall-w23h22` | Suites in a 23x22 pane, taller than it |
+| `ask-freetext-pending.jsonl` | a third session's pending two-question call (Venue, Food), rows up to and not including its tool_result |
+| `ask-freetext-on-row-w23h30` | its Venue question in a 23x30 pane after `5` was pressed with the cursor scrolled away: the cursor is on `5. Type something.` and the footer offers ctrl+g |
+| `ask-freetext-typed-w23h30` | the same after `a quiet barn` was typed: the row reads `❯ 5. a quiet barn` |
 
 Measured on the venue form in the 23x30 pane: with options 1 and 2 off screen and the cursor on option 1, pressing `2` answered Venue with option 2, and on Catering (1 and 2 off screen again) pressing `1` answered option 1. The review screen and the tool_result both said so. A digit selects its option whether or not the option is drawn.
+
+Measured on the free-text row in the same 23x30 shape: pressing the row's digit with the cursor scrolled away put the cursor on the row and opened the field without answering (no tool_result was written), the typed text showed in the row, and Enter answered Venue with it (the review read `→ a quiet barn`). The screen before the digit was seen but not kept; the test that needs it rebuilds it from `ask-freetext-on-row-w23h30` by clearing the cursor mark and the ctrl+g footer, which is the whole of the difference that was seen.
 

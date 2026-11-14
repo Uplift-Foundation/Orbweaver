@@ -1180,6 +1180,7 @@ public class PromptPipelineTests
         Assert.Equal("Modern downtown hotel conference suite near restaurants and nightlife",
             j.GetProperty("options")[1].GetProperty("label").GetString());
         Assert.Equal("Question 1 of 4\nWhich venue style should we book for the team offsite?", j.GetProperty("preview").GetString());
+        Assert.Equal((false, true), (Flag(j, "multi"), Flag(j, "text")));   // its free-text row reaches by digit (FormAnswer)
 
         // Option 2 is off screen; the digit still selects it (measured, see AskFormTranscript.Tall).
         await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:2"));

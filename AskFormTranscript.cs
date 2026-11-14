@@ -14,7 +14,7 @@ namespace Orbweaver
     // its description — and on a pane shorter than the form it cannot carry one at
     // all, because the tab bar, the question and option 1 were never drawn. The
     // transcript holds the whole form: Claude Code writes the AskUserQuestion
-    // tool_use row, every question, header, label, description and multiSelect,
+    // tool_use row, every question, header, label and multiSelect,
     // before the form appears, and answers it with a tool_result naming the same
     // tool_use id only once it is submitted (measured on 2.1.325 in a scratch
     // session: the tool_use was the transcript's last row while the form was up).
@@ -30,9 +30,9 @@ namespace Orbweaver
     // one impure step, and it is a thin wrapper (CallFor) over a parser of lines.
     internal static class AskFormTranscript
     {
-        internal sealed record CallOption(string Label, string Description);
-
-        internal sealed record CallQuestion(string Question, string Header, bool MultiSelect, IReadOnlyList<CallOption> Options);
+        // Descriptions are not taken: nothing shows them (CB-327 leaves them out), and
+        // a label is all the matching needs.
+        internal sealed record CallQuestion(string Question, string Header, bool MultiSelect, IReadOnlyList<string> Options);
 
         // The latest AskUserQuestion the transcript has asked and not had answered.
         internal sealed record Call(string ToolUseId, IReadOnlyList<CallQuestion> Questions);
@@ -102,11 +102,11 @@ namespace Orbweaver
                 if (q.ValueKind != JsonValueKind.Object || Str(q, "question") is not { } text
                     || !q.TryGetProperty("options", out var os) || os.ValueKind != JsonValueKind.Array) return null;
 
-                var options = new List<CallOption>();
+                var options = new List<string>();
                 foreach (var o in os.EnumerateArray())
                 {
                     if (o.ValueKind != JsonValueKind.Object || Str(o, "label") is not { } label) return null;
-                    options.Add(new CallOption(label, Str(o, "description") ?? ""));
+                    options.Add(label);
                 }
 
                 var multi = q.TryGetProperty("multiSelect", out var m) && m.ValueKind == JsonValueKind.True;
@@ -149,7 +149,7 @@ namespace Orbweaver
 
             var options = form.Prompt.Options.Select(o =>
                 int.TryParse(o.Key, out var k) && k >= 1 && k <= question.Options.Count
-                    ? o with { Label = question.Options[k - 1].Label, Description = NullIfEmpty(question.Options[k - 1].Description) }
+                    ? o with { Label = question.Options[k - 1] }
                     : o).ToList();
 
             return form with
@@ -200,17 +200,39 @@ namespace Orbweaver
 
             var last = run[^1];
             if (!last.Label.StartsWith(ChatTranscript.ChatAboutLabel, StringComparison.Ordinal)) return null;
+            // The row above "Chat about this" is "Type something." — or, once the
+            // cursor is on it and text has been typed, that text (ask-freetext-
+            // typed): FormAnswer reads the row back before pressing Enter, so it
+            // must still read as the form's free-text row.
             var typeRow = run[^2];
-            if (!StripBox(typeRow.Label).StartsWith(ChatTranscript.FreeTextLabel, StringComparison.Ordinal)) return null;
+            if (!StripBox(typeRow.Label).StartsWith(ChatTranscript.FreeTextLabel, StringComparison.Ordinal)
+                && !cleaned[typeRow.Line].StartsWith('❯')) return null;
 
+            // The option count is anchored on "Type something", not on the last key:
+            // every real tall capture (single-select ask-venue/ask-catering/
+            // ask-freetext, multi-select ask-mixed-suites) draws both it and "Chat
+            // about this", but the row it sits on is what says where the choices end.
             var count = typeRow.Key - 1;
-            var shown = run.Where(r => r.Key <= count).Select(r => (r.Key.ToString(), StripBox(r.Label))).ToList();
+
+            // Each visible choice's label as drawn: its option line and the indented
+            // rows under it up to the next option, joined. A narrow pane wraps the
+            // label, so its first row alone ("Lakeside cabin") would agree with any
+            // label that starts that way; the joined text runs on into the
+            // description, which Agrees allows, and must hold the whole label.
+            var shown = new List<(string, string)>();
+            for (var n = 0; n < run.Count && run[n].Key <= count; n++)
+            {
+                var end = n + 1 < run.Count ? run[n + 1].Line : footer;
+                var text = string.Join(" ", new[] { StripBox(run[n].Label) }
+                    .Concat(cleaned[(run[n].Line + 1)..end].TakeWhile(l => l.Length > 0 && !ChatTranscript.IsHorizontalRule(l))));
+                shown.Add((run[n].Key.ToString(), text));
+            }
             if (MatchQuestion(call, shown, count) is not { } index) return null;
             var question = call.Questions[index];
             if (question.MultiSelect) return null;
 
             var options = question.Options
-                .Select((o, i) => new ChatPromptOption((i + 1).ToString(), o.Label, Description: NullIfEmpty(o.Description)))
+                .Select((o, i) => new ChatPromptOption((i + 1).ToString(), o))
                 .Append(new ChatPromptOption(typeRow.Key.ToString(), StripBox(typeRow.Label)))
                 .Append(new ChatPromptOption(last.Key.ToString(), last.Label))
                 .ToList();
@@ -234,7 +256,7 @@ namespace Orbweaver
             {
                 var options = call.Questions[q].Options;
                 if (options.Count != count) continue;
-                if (!shown.All(s => int.TryParse(s.Key, out var k) && k >= 1 && k <= count && Agrees(s.Label, options[k - 1].Label))) continue;
+                if (!shown.All(s => int.TryParse(s.Key, out var k) && k >= 1 && k <= count && Agrees(s.Label, options[k - 1]))) continue;
                 if (found is not null) return null;
                 found = q;
             }
@@ -275,8 +297,8 @@ namespace Orbweaver
         private static string StripBox(string label) =>
             label.StartsWith("[ ] ", StringComparison.Ordinal) || label.StartsWith("[✔] ", StringComparison.Ordinal) ? label[4..] : label;
 
-        private static string Squash(string text) => Regex.Replace(text, @"\s+", " ").Trim();
-
-        private static string? NullIfEmpty(string text) => text.Length == 0 ? null : text;
+        // Spacing evened out, and a terminal's break after a hyphen ("team-" /
+        // "building") closed up, on both sides alike.
+        private static string Squash(string text) => Regex.Replace(Regex.Replace(text, @"\s+", " "), @"(?<=\S-) ", "").Trim();
     }
 }

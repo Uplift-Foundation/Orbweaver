@@ -719,11 +719,7 @@ namespace Orbweaver
         // terminal could show and was cut there, so the scope on screen is not
         // necessarily the scope granted. Parsed and carried; a phone must not press
         // it. Computed in one place, OptionModes.IsTruncatedScope.
-        bool ScopeTruncated = false,
-        // CB-327: an AskUserQuestion option's one-sentence description, taken from
-        // the transcript's tool_use row (AskFormTranscript) — never read off a
-        // screen, where a narrow pane glues it onto the label. Null otherwise.
-        string? Description = null);
+        bool ScopeTruncated = false);
 
     // ArmedActivation marks a prompt whose answer cannot be undone and must not be
     // given by accident: its options ignore presses for a moment after the prompt

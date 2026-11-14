@@ -25,11 +25,19 @@ namespace Orbweaver
     //
     // **Enter on an empty "Type something" declines the whole form** (capture
     // 03), and a digit on it on a single-select question selects it empty,
-    // which is the same thing. So that option is never pressed by its digit,
-    // never with empty, whitespace-only or multi-line text, and Enter goes
+    // which is the same thing. So that option is never pressed by its digit
+    // as an answer, never with empty, whitespace-only or multi-line text, and Enter goes
     // only after the typed text has been read back off the row. Free text on a
     // multi-select question is refused: typing into its "[ ] Type something"
     // row was not captured.
+    //
+    // CB-327 measured the digit once more, on 2.1.325, on a form taller than
+    // its pane: it moved the cursor onto the row and opened the field, and the
+    // form was not answered until text and Enter followed. That is the one
+    // case it is pressed — to reach the field when the cursor's row scrolled
+    // away and arrows cannot be counted — and only with usable text in hand,
+    // with the read-back required before typing. Whether a digit on an empty
+    // row declines the form on a pane that fits it was not re-measured.
     //
     // Returns null when the answer was given, otherwise a MirrorProtocol error
     // code; on every refusal nothing more was pressed than the code says.
@@ -106,11 +114,22 @@ namespace Orbweaver
             var keys = prompt.Options.Select(o => o.Key).ToList();
             var from = prompt.CursorKey is { } c ? keys.IndexOf(c) : -1;
             var to = keys.IndexOf(prompt.FreeTextKey!);
-            if (from < 0) return MirrorProtocol.ErrTypeFailed;
 
-            for (var i = 0; i < Math.Abs(to - from); i++)
-                if (await PressAsync(press, status, to > from ? "Down" : "Up").ConfigureAwait(false) is { } failed)
-                    return failed;
+            if (from >= 0)
+            {
+                for (var i = 0; i < Math.Abs(to - from); i++)
+                    if (await PressAsync(press, status, to > from ? "Down" : "Up").ConfigureAwait(false) is { } failed)
+                        return failed;
+            }
+            // CB-327: a form taller than the pane, its cursor on a row that
+            // scrolled away, so there is nothing to count arrows from. Measured on
+            // 2.1.325 in a 23x30 pane (Captures/cb327 ask-freetext-*): the row's
+            // digit moves the cursor onto it and opens the field, without
+            // answering — the transcript had no tool_result, the typed text showed
+            // in the row, and Enter answered with it. The read-back below still
+            // has to see the cursor there before anything is typed.
+            else if (await PressAsync(press, status, prompt.FreeTextKey!).ConfigureAwait(false) is { } failed)
+                return failed;
 
             // On the row, and still the same form.
             var there = await ReadAsync(capture, status).ConfigureAwait(false);
