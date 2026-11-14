@@ -1,0 +1,40 @@
+
+✻ Baked for 5s · done
+  1:18 PM
+
+❯ /model
+  ⎿ Kept model as Haiku
+    5.5
+
+❯ hi
+
+⏺ Hi! The model is
+  still Haiku 5.5. The
+  offsite venue
+  question was answered
+  with the downtown
+  hotel and breakout
+  rooms. What would you
+  like to do next?
+
+✻ Sautéed for 1s · done
+  1:19 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Switch model?
+   Your next
+   response will be
+   slower and use
+   more tokens
+
+   This conversation
+   is cached for
+   the current
+   model. Switching
+   to Opus 5.5 means
+   the full history
+   gets re-read.
+
+   ❯ 1. Yes, switch
+        to Opus 5.5
+     2. No, go back
+

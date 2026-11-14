@@ -1,0 +1,22 @@
+         subprocesses
+         instead of
+         mocks.
+  3. [ ] Headless UI
+         tests in
+         Release
+         Runs the UI
+         test suite
+         headlessly
+         against a
+         Release build
+         configuration.
+  4. [ ] Type something
+     Next
+───────────────────────
+  5. Chat about this
+
+Enter to select ·
+Tab/Arrow keys to
+navigate · Esc to
+cancel
+─── long-session-name ─

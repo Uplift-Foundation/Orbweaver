@@ -1,0 +1,40 @@
+
+✻ Baked for 24s · done 1:17 PM
+
+❯ Call the AskUserQuestion tool
+  right now, once, with
+  exactly 1 question (header:
+  Venue) with 3 options; each
+  label 6 to 9 words with a
+  one-sentence description. No
+  other text.
+────────────────────────────────
+ ☐ Venue
+
+Which venue style should the
+team offsite use?
+
+❯ 1. Book a lakeside retreat
+     center with overnight
+     lodging
+     Everyone stays on site,
+     which keeps the group
+     together after hours.
+  2. Rent a downtown hotel with
+     private breakout meeting
+     rooms
+     Attendees can commute home
+     each evening, and workshops
+     get dedicated space.
+  3. Hold the offsite at a
+     mountain cabin resort
+     A quieter setting offers a
+     real change of scenery,
+     though travel takes longer.
+  4. Type something.
+────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to
+navigate · Esc to cancel
+──────────── long-session-name ─

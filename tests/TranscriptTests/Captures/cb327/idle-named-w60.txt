@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Haiku 5.5 · Claude Team
+ ▝▝   ▝▝   /private/tmp/cb327-scratch/proj · /rc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────── long-session-name ─
+❯ Try "fix lint errors"
+────────────────────────────────────────────────────────────
+  Haiku 5.5 | ~/proj | [.claude]
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 age…

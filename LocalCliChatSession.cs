@@ -1635,16 +1635,19 @@ namespace Orbweaver
                 // A question form (CB-307) first: it is a dialog with more on it
                 // (the whole question, which tab, a text option), and anything
                 // that is not a form falls through to the ordinary reading.
-                var parsed = screen is null ? null : ReadPrompt(screen);
+                // CB-327: the transcript's pending AskUserQuestion supplies the
+                // form's words where a narrow or short pane could not draw them.
+                var ask = AskFormTranscript.CallFor(screen, _status.TranscriptPath);
+                var parsed = screen is null ? null : ReadPrompt(screen, ask);
 
                 // The fingerprint of a form as it was shown, so an answer to it
                 // is refused if the screen has since moved on. Null for an
                 // ordinary dialog, which answers by its key as it always has.
-                _formFingerprint = screen is not null && ChatTranscript.ParseAskForm(screen) is not null
+                _formFingerprint = screen is not null && AskFormTranscript.ReadForm(screen, ask) is not null
                     // A screen that parses as a form always has a wire reading
                     // (PromptFromScreen reads the same form first), so there is no
                     // null to guard here.
-                    ? MirrorProtocol.PromptFromScreen(screen)!.Fingerprint
+                    ? MirrorProtocol.PromptFromScreen(screen, ask)!.Fingerprint
                     : null;
 
                 // The form just answered, read again before the terminal has
@@ -1695,8 +1698,8 @@ namespace Orbweaver
         // being drawn as the current form.
         private int _generation;
 
-        internal static ChatPrompt? ReadPrompt(string screen) =>
-            ChatTranscript.ParseAskForm(screen) is { } form
+        internal static ChatPrompt? ReadPrompt(string screen, AskFormTranscript.Call? call = null) =>
+            AskFormTranscript.ReadForm(screen, call) is { } form
                 ? AskFormView.ToPrompt(form)
                 : ChatTranscript.ParseDialog(screen);
 

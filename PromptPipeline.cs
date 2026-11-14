@@ -163,7 +163,8 @@ namespace Orbweaver
                 {
                     if (status.State != "waiting" || !status.IsLocalCli) continue;
                     var screen = await _seams.Capture(status).ConfigureAwait(false);
-                    var fp = PromptFingerprint.Of(screen);
+                    var ask = AskFormTranscript.CallFor(screen, status.TranscriptPath);
+                    var fp = PromptFingerprint.Of(screen, ask);
                     _live.TryGetValue(sid, out var live);
                     if (live is not null)
                     {
@@ -179,7 +180,7 @@ namespace Orbweaver
                     // An AskUserQuestion form goes to the phone as a question
                     // (CB-323): CB-315 sent none, so the phone saw the session
                     // waiting with nothing to answer, and froze on it.
-                    Mint(sid, status, fp, screen, ChatTranscript.ParseAskForm(screen));
+                    Mint(sid, status, fp, screen, AskFormTranscript.ReadForm(screen, ask));
                 }
             }
             // Fired and forgotten by the caller, like an answer: said, not lost,
@@ -344,7 +345,8 @@ namespace Orbweaver
             {
                 var live = _live.Values.FirstOrDefault(l => l.Pending.RequestId == answer.RequestId);
                 var fresh = live is null ? null : await _seams.Capture(live.Status).ConfigureAwait(false);
-                var d = AnswerGate.Decide(live?.Pending, answer, fresh, phoneId, phoneIdPublic, _seams.Now(), _nonces, watchPublic);
+                var d = AnswerGate.Decide(live?.Pending, answer, fresh, phoneId, phoneIdPublic, _seams.Now(), _nonces, watchPublic,
+                    AskFormTranscript.CallFor(fresh, live?.Status.TranscriptPath));
                 if (!d.Press)
                 {
                     Refuse(phoneId, answer, d.Code!);
@@ -428,7 +430,7 @@ namespace Orbweaver
         // screen every read, and would never settle.
         private async Task<PressOutcome?> PressAsync(SessionStatus status, PendingPrompt pending, string requestId, string key)
         {
-            bool Approved(string? screen) => PromptFingerprint.Of(screen)?.Hash == pending.ScreenHash;
+            bool Approved(string? screen) => Fingerprint(status, screen)?.Hash == pending.ScreenHash;
             await _seams.Delay(SettleCheck).ConfigureAwait(false);
             var (pressed, before) = _seams.CaptureAndPress is { } both
                 ? await both(status, key, Approved).ConfigureAwait(false)
@@ -462,7 +464,8 @@ namespace Orbweaver
             for (var waited = TimeSpan.Zero; waited < SettleDelay || gone > 0; waited += SettlePoll)
             {
                 await _seams.Delay(SettlePoll).ConfigureAwait(false);
-                gone = AnswerGate.PressTookEffect(pending, await _seams.Capture(status).ConfigureAwait(false)) ? gone + 1 : 0;
+                var recapture = await _seams.Capture(status).ConfigureAwait(false);
+                gone = AnswerGate.PressTookEffect(pending, recapture, AskFormTranscript.CallFor(recapture, status.TranscriptPath)) ? gone + 1 : 0;
                 if (gone >= 2) return PressOutcome.Took;
             }
             return PressOutcome.NoEffect;
@@ -477,8 +480,14 @@ namespace Orbweaver
         private async Task<MirrorProtocol.WirePrompt?> ApprovedFormAsync(SessionStatus status, PendingPrompt pending)
         {
             var screen = await _seams.Capture(status).ConfigureAwait(false);
-            return PromptFingerprint.Of(screen)?.Hash == pending.ScreenHash ? MirrorProtocol.PromptFromScreen(screen) : null;
+            var ask = AskFormTranscript.CallFor(screen, status.TranscriptPath);
+            return PromptFingerprint.Of(screen, ask)?.Hash == pending.ScreenHash ? MirrorProtocol.PromptFromScreen(screen, ask) : null;
         }
+
+        // A screen's fingerprint with the session's transcript to help read a
+        // form on it (CB-327), the one way every look in this class takes it.
+        private static PromptFingerprint? Fingerprint(SessionStatus status, string? screen) =>
+            PromptFingerprint.Of(screen, AskFormTranscript.CallFor(screen, status.TranscriptPath));
 
         private static PressOutcome OutcomeOf(string? code) => code switch
         {
@@ -503,7 +512,8 @@ namespace Orbweaver
                     .ConfigureAwait(false);
                 if (code is not null) return OutcomeOf(code);
                 _seams.Log($"press {requestId} {key}");
-                if (MirrorProtocol.PromptFromScreen(await _seams.Capture(status).ConfigureAwait(false)) is not { } after) return PressOutcome.Changed;
+                var next = await _seams.Capture(status).ConfigureAwait(false);
+                if (MirrorProtocol.PromptFromScreen(next, AskFormTranscript.CallFor(next, status.TranscriptPath)) is not { } after) return PressOutcome.Changed;
                 form = after;
             }
             if (!form.Checked!.OrderBy(k => k).SequenceEqual(wanted.OrderBy(k => k))) return PressOutcome.NoEffect;

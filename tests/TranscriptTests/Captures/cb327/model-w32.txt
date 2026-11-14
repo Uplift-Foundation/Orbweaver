@@ -1,0 +1,40 @@
+
+✻ Baked for 5s · done 1:18 PM
+▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔
+   Select model
+   Switch between Claude
+   models. Your pick becomes
+   the default for new
+   sessions. For
+   other/previous model
+   names, specify with
+   --model.
+
+     1.  Default (…  Opus 5.5
+                     · Best
+                     for ever
+                     yday,
+                     complex
+                     tasks
+     2.  Opus 5.5    For
+                     complex
+                     work and
+
+                     everyday
+                     tasks
+     3.  Fable 5.2   For your
+
+                     toughest
+                     challen
+                     ges
+     4.  Sonnet 5.5  Most eff
+                     icient
+                     for
+                     simpler
+                     tasks
+   ❯ 5.  Haiku 5… ✔  Fastest
+                     for
+                     quick
+                     answers
+     ▸   More mode…
+                              ↓

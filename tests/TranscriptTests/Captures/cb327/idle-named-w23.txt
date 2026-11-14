@@ -1,0 +1,40 @@
+
+           Claude Code
+ ▐▛███▛█   v2.1.325
+▝▜██████▀  Haiku 5.5
+ ▝▝   ▝▝   Claude Team
+           /…/proj
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+─── long-session-name ─
+❯ Try "fix lint errors"
+───────────────────────
+  Haiku 5.5 | ~/proj…
+  ⏵⏵ bypass       · …

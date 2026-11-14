@@ -1,0 +1,40 @@
+⏺ The team picked "Rent a
+  downtown hotel with private
+  breakout meeting rooms" for
+  the venue.
+
+✻ Baked for 5s · done 1:18 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Permissions
+    Recently blocked   Allow
+    Ask   Deny   Auto mode
+    Workspace
+
+   Claude Code won't ask
+   before using allowed
+   tools.
+   ╭────────────────────────╮
+   │ ⌕ Search…              │
+   ╰────────────────────────╯
+
+     1.  Add a new rule…
+     2.  Bash(glab mr
+         merge:*)
+     3.  Bash(mise exec --
+         glab mr merge:*)
+     4.  Bash(python3 -c ' *)
+     5.  Bash(python3 *)
+     6.  mcp__blender__get_sc
+         ene_info
+     7.  mcp__gitlab__accept_
+         merge_request
+     8.  mcp__gitlab__save_me
+         rge_request
+     9.  mcp__maton-google-ma
+         il__google-mail_chec
+         k_connection
+   ↓ 10. mcp__nocodb__add_col
+         umn
+
+   ←/→ to switch · ↓ to
+   select · Esc to cancel
