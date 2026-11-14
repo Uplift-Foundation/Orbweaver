@@ -141,13 +141,28 @@ public class VoicePreviewTests : IDisposable
         Assert.Same(Sapi, Assert.Single(_spoken).Voice);
     }
 
+    // The worker is held inside resolve until the Preparing assertion has run.
+    // Without the hold, the test thread racing the queued worker decides the
+    // answer: a loaded machine preempting it for long enough lets the worker
+    // finish first, and the snapshot reads Idle (CB-280).
     [Fact]
     public async Task NothingToSpeakWithEndsThePreviewWithoutSpeaking()
     {
-        VoicePreview.ResolveSavedForTests = () => null;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        VoicePreview.ResolveSavedForTests = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+            return null;
+        };
 
         var task = VoicePreview.Toggle(null);
-        Assert.Equal(Speak.Preparing, VoicePreview.Look);   // answered before the worker ran
+        Assert.Equal(Speak.Preparing, VoicePreview.Look);   // answered before any engine ran
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal(Speak.Preparing, VoicePreview.Look);   // and still so while the worker resolves
+
+        release.Set();
         await task;
 
         Assert.Empty(_spoken);
