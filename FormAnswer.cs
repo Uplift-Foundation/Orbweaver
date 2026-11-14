@@ -85,7 +85,7 @@ namespace Orbweaver
             try { screen = await capture(status).ConfigureAwait(false); }
             catch { screen = null; }
 
-            return MirrorProtocol.PromptFromScreen(screen);
+            return MirrorProtocol.PromptFromScreen(screen, AskFormTranscript.CallFor(screen, status.TranscriptPath));
         }
 
         private static async Task<string?> PressAsync(Func<SessionStatus, string, Task<bool>> press, SessionStatus status, string key)

@@ -1160,4 +1160,50 @@ public class PromptPipelineTests
         Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
         Assert.Contains(_log, l => l.StartsWith("press-no-effect", StringComparison.Ordinal));
     }
+
+    // ---- CB-327 item 5: a form taller than the pane, minted from the transcript --
+
+    // The session's real transcript rows, with the call still pending, beside a
+    // real 23x30 capture whose question and first two options scrolled away.
+    private static (string, SessionStatus)[] TallSnap() =>
+        [("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "orbweaver",
+            TranscriptPath = Cb327Captures.PathOf("ask-venue-pending.jsonl") })];
+
+    [Fact]
+    public async Task A_form_taller_than_the_pane_goes_out_with_the_transcripts_choices_and_its_digit_is_pressed()
+    {
+        _pane.Screen = Cb327Captures.Load("ask-venue-tall-w23h30");
+        await _p.OnScannedAsync(TallSnap());
+        var j = PromptJson(_sent);
+        Assert.Equal("question", j.GetProperty("kind").GetString());
+        Assert.Equal(["1", "2", "3", "4"], Keys(j));                      // never Type something or Chat about this
+        Assert.Equal("Modern downtown hotel conference suite near restaurants and nightlife",
+            j.GetProperty("options")[1].GetProperty("label").GetString());
+        Assert.Equal("Question 1 of 4\nWhich venue style should we book for the team offsite?", j.GetProperty("preview").GetString());
+
+        // Option 2 is off screen; the digit still selects it (measured, see AskFormTranscript.Tall).
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:2"));
+        Assert.Equal(["2"], _pane.Keys);
+        Assert.Empty(_sent.Refusals);
+        Assert.Single(_sent.Resolved);
+    }
+
+    [Fact]
+    public async Task Without_its_transcript_a_form_taller_than_the_pane_sends_nothing()
+    {
+        _pane.Screen = Cb327Captures.Load("ask-venue-tall-w23h30");
+        await _p.OnScannedAsync(Snap());
+        Assert.Empty(_sent.Prompts);
+    }
+
+    [Fact]
+    public async Task A_tall_form_that_moved_on_to_the_next_question_refuses_the_answer()
+    {
+        _pane.Screen = Cb327Captures.Load("ask-venue-tall-w23h30");
+        await _p.OnScannedAsync(TallSnap());
+        _pane.Screen = Cb327Captures.Load("ask-catering-tall-w23h30");
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:2"));
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+    }
 }

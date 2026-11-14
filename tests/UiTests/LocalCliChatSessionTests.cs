@@ -1750,11 +1750,11 @@ public class LocalCliChatSessionTests : IDisposable
     }
 
     // A session waiting on the pane's screen, with the form read and on show.
-    private static async Task<LocalCliChatSession> WaitingOn(Pane pane)
+    private static async Task<LocalCliChatSession> WaitingOn(Pane pane, string transcriptPath = "")
     {
         var session = new LocalCliChatSession("s1", new SessionStatus
         {
-            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42", TranscriptPath = transcriptPath,
         })
         {
             Capture = pane.Capture,
@@ -1765,7 +1765,7 @@ public class LocalCliChatSessionTests : IDisposable
         // The scan's own update is what reads the prompt, once, off the pane.
         session.UpdateStatus(new SessionStatus
         {
-            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42", TranscriptPath = transcriptPath,
         });
 
         for (var i = 0; i < 200 && session.Prompt is null; i++)
@@ -1790,6 +1790,33 @@ public class LocalCliChatSessionTests : IDisposable
         {
             OrbweaverSettings.ClaudeCodeReplyEnabled = before;
         }
+    }
+
+    // CB-327 item 5: a real form taller than its 23x30 pane, beside the real
+    // transcript rows of the call it draws. The panel shows every option, the
+    // ones scrolled off the pane included, in the transcript's words, and a
+    // click on one of those presses its digit.
+    private static string Cb327(string file) => Path.Combine(
+        Path.GetDirectoryName(SourceFile())!, "..", "TranscriptTests", "Captures", "cb327", file);
+
+    private static string SourceFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+    [AvaloniaFact]
+    public async Task AFormTallerThanThePaneIsShownFromTheTranscriptAndAnOffScreenOptionIsPressed()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(File.ReadAllText(Cb327("ask-venue-tall-w23h30.txt")));
+            var session = await WaitingOn(pane, Cb327("ask-venue-pending.jsonl"));
+
+            Assert.Equal("Which venue style should we book for the team offsite?", session.Prompt!.Title);
+            Assert.Equal("Question 1 of 4", session.Prompt.Progress);
+            Assert.Equal("Rustic mountain lodge with large meeting room and hiking trails", session.Prompt.Options[0].Label);
+
+            await session.AnswerAsync(session.Prompt.Options[0]);
+
+            Assert.Equal(new[] { "1" }, pane.Pressed);
+        });
     }
 
     [AvaloniaFact]

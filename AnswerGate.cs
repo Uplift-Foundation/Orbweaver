@@ -164,7 +164,10 @@ namespace Orbweaver
         // watchPublic: that phone's watch key as this desktop last accepted it,
         // or null when it holds none (CB-323).
         internal static Decision Decide(PendingPrompt? pending, PhoneAnswer answer, string? freshCapture,
-            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces, byte[]? watchPublic = null)
+            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces, byte[]? watchPublic = null,
+            // CB-327: the transcript's pending AskUserQuestion, for the fresh
+            // capture's form (AskFormTranscript.CallFor), or null.
+            AskFormTranscript.Call? call = null)
         {
             // 1. signature, under the key the answer names
             var verifier = answer.Key switch
@@ -203,13 +206,13 @@ namespace Orbweaver
             if (answer.ScreenHash != pending.ScreenHash) return Refuse(5, StalePrompt);
 
             // 6. fresh capture
-            var fresh = PromptFingerprint.Of(freshCapture);
+            var fresh = PromptFingerprint.Of(freshCapture, call);
             if (fresh is null || fresh.Hash != pending.ScreenHash) return Refuse(6, StalePrompt);
 
             // 7. option, off the fresh parse — never on a first-run screen,
             // whether the prompt was minted desk-only or the screen became one.
             if (pending.DeskOnly || FirstRunDialogs.Is(freshCapture)) return Refuse(7, ForbiddenOption);
-            var form = ChatTranscript.ParseAskForm(freshCapture!);
+            var form = AskFormTranscript.ReadForm(freshCapture!, call);
             var typeRow = form is { MultiSelect: false } ? form.FreeTextKey : null;
             return Rule7(pending, answer, Classified(fresh, pending.Kind), typeRow);
         }
@@ -308,7 +311,7 @@ namespace Orbweaver
         // same dialog is still there the press did nothing, and the answer is
         // refused stale_prompt with no retry — a second press could land on
         // whatever the first one eventually opens.
-        internal static bool PressTookEffect(PendingPrompt pending, string? recapture) =>
-            PromptFingerprint.Of(recapture)?.Hash != pending.ScreenHash;
+        internal static bool PressTookEffect(PendingPrompt pending, string? recapture, AskFormTranscript.Call? call = null) =>
+            PromptFingerprint.Of(recapture, call)?.Hash != pending.ScreenHash;
     }
 }

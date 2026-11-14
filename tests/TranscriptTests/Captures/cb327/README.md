@@ -54,3 +54,21 @@ Produced by `dotnet run --project tests/TranscriptTests -- <file>`, which prints
 `form4-w23` is a different case from the other failing forms: at 23 columns by 49 rows the form is taller than the pane, so its tab bar, question and option 1 are not on the screen at all (the pane is on the alternate screen, and `capture-pane -S -80` returned nothing above the visible rows). No screen parser can read what was not drawn.
 
 The `modelswitch-*` captures hold the user's own echoed `❯ hi` and `❯ /model` lines in scrollback above a real "Switch model?" dialog. They are the narrow-pane version of the case CB-307's addendum was written against, and a loosened box-top rule must keep reading them as a dialog, never a prompt.
+
+## Paired with transcript rows (items 4 and 5)
+
+The `ask-*` files come from a second scratch session (same Claude Code 2.1.325, same scratch tmux 3.7c server, `claude -n long-session-name` in `/private/tmp`), taken by Juno Abernathy for plan items 4 and 5. Each screen is byte-for-byte `capture-pane -p`; each `.jsonl` is that session's own transcript, captured while the form was still on screen and filtered to its `user`, `assistant` and `custom-title` rows (the request, attachment and account rows were dropped, as they carry system prompt text and account ids, not the form). Thinking rows were dropped too.
+
+| file | what it is |
+| --- | --- |
+| `ask-venue-pending.jsonl` | the four-question offsite call, pending (the tool_use row is the last row) |
+| `ask-venue-answered.jsonl` | the same, after Submit: the tool_result naming the call, then the reply |
+| `ask-mixed-pending.jsonl` | the venue call answered, then a pending call with Colour (single), Suites (multiSelect) and Ship |
+| `ask-venue-tall-w23h30` | the venue question in a 23x30 pane: options 1 and 2, the question and the tab bar scrolled away |
+| `ask-catering-tall-w23h30` | the next question, same pane, after `2` was pressed |
+| `ask-mixed-colour-w32` | Colour at 32 columns: the tab names are cut to `Colo…` and `S…` |
+| `ask-mixed-suites-w32` | Suites at 32 columns, after `3` was pressed on Colour |
+| `ask-mixed-suites-tall-w23h22` | Suites in a 23x22 pane, taller than it |
+
+Measured on the venue form in the 23x30 pane: with options 1 and 2 off screen and the cursor on option 1, pressing `2` answered Venue with option 2, and on Catering (1 and 2 off screen again) pressing `1` answered option 1. The review screen and the tool_result both said so. A digit selects its option whether or not the option is drawn.
+

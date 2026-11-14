@@ -24,6 +24,10 @@ namespace Orbweaver.Tests
 
         internal static string Load(string name) => File.ReadAllText(Path.Combine(Dir, name + ".txt"));
 
+        // A capture by its full file name, for the transcript rows (.jsonl) that
+        // pair with the ask-* screens (CB-327 items 4 and 5).
+        internal static string PathOf(string file) => Path.Combine(Dir, file);
+
         private const string Question = "Which venue style should the team offsite use?";
 
         internal static void Run(CheckFn check)
