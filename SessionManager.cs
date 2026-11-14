@@ -4756,11 +4756,14 @@ namespace Orbweaver
         }
 
         // The three remote listings pruning asks, each null when its source
-        // cannot say. Null until the seams land (CB-276, engineer C): nothing
-        // remote is pruned meanwhile, which is the safe direction.
-        private static IReadOnlySet<string>? HiddenOpenClawListing() => null;
-        private static IReadOnlySet<string>? HiddenCloudListing() => null;
-        private static IReadOnlyDictionary<string, IReadOnlySet<string>>? HiddenRemoteListing() => null;
+        // cannot say: OpenClaw off, disconnected or not yet listed on this
+        // connection; any cloud account not authoritative. Remote Control has
+        // no null of its own; a peer that lists nothing is absent from the
+        // map, and HiddenOrbs.Listed reads an absent peer as "cannot say".
+        private static IReadOnlySet<string>? HiddenOpenClawListing() => OpenClawSessions.ListedKeys();
+        private static IReadOnlySet<string>? HiddenCloudListing() => ClaudeCloudSessions.ListedIds();
+        private static IReadOnlyDictionary<string, IReadOnlySet<string>>? HiddenRemoteListing() =>
+            RemoteControlSessions.ListedByPeer();
 
         // Unlike Dismiss, which is a statement about the screen that the next
         // hook event overrides, a hide is a setting: it lasts until it is
