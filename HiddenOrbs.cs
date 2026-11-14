@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 
 namespace Orbweaver
@@ -206,10 +205,76 @@ namespace Orbweaver
             return due;
         }
 
+        // Whether a hidden session's own source still lists it: the `listed`
+        // that DuePrunes is handed, with every source's listing passed in so
+        // the rule can be tested without one of them running.
+        //
+        // Each listing is null when that source cannot say right now — the
+        // status folder could not be read, OpenClaw is off or has not listed
+        // on this connection, a cloud account is not authoritative, a peer is
+        // not answering — and a null listing answers null, never false. The
+        // id's own prefix decides which source is asked, and an id whose
+        // prefix this does not know answers null: an unrecognised entry is
+        // never pruned.
+        //
+        // OpenClaw keys are the gateway's own, without this app's
+        // "openclaw:" prefix; cloud ids are the account API's own, without
+        // "cloud:"; Remote Control keys are the orb keys, "rc:…", grouped by
+        // the peer ref that lists them.
+        internal static bool? Listed(
+            string id,
+            string? peer,
+            IReadOnlySet<string>? localIds,
+            IReadOnlySet<string>? openClawKeys,
+            IReadOnlySet<string>? cloudIds,
+            IReadOnlyDictionary<string, IReadOnlySet<string>>? remoteByPeer)
+        {
+            const string room = "openclaw:room:";
+            const string openClaw = "openclaw:";
+            const string cloud = "cloud:";
+            const string remote = "rc:";
+
+            if (id.StartsWith(room, StringComparison.Ordinal))
+            {
+                if (openClawKeys is null) return null;
+                var roomKey = id.Substring(room.Length);
+                return openClawKeys.Any(k => OpenClawSessionKind.RoomOf(k) == roomKey);
+            }
+
+            if (id.StartsWith(openClaw, StringComparison.Ordinal))
+            {
+                return openClawKeys?.Contains(id.Substring(openClaw.Length));
+            }
+
+            if (id.StartsWith(cloud, StringComparison.Ordinal))
+            {
+                return cloudIds?.Contains(id.Substring(cloud.Length));
+            }
+
+            if (id.StartsWith(remote, StringComparison.Ordinal))
+            {
+                // A peer that lists nothing is a peer that is off, asleep or
+                // disconnected as far as this can tell — not one that has
+                // positively said the session ended.
+                if (string.IsNullOrEmpty(peer) || remoteByPeer is null) return null;
+                if (!remoteByPeer.TryGetValue(peer, out var keys) || keys.Count == 0) return null;
+                return keys.Contains(id);
+            }
+
+            // Anything else with a colon in it is a source this rule does not
+            // know; a bare id is a local status file.
+            if (id.Contains(':')) return null;
+            return localIds?.Contains(id);
+        }
+
         private static string FolderName(string cwd)
         {
+            // Both separators on every platform rather than Path.GetFileName,
+            // which splits on '\\' only on Windows: a row's name must not
+            // depend on which machine reads the settings file.
             if (string.IsNullOrWhiteSpace(cwd)) return "";
-            return Path.GetFileName(cwd.TrimEnd('/', '\\'));
+            var trimmed = cwd.TrimEnd('/', '\\');
+            return trimmed[(trimmed.LastIndexOfAny(new[] { '/', '\\' }) + 1)..];
         }
     }
 }

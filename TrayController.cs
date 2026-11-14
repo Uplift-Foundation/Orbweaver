@@ -109,7 +109,11 @@ namespace Orbweaver
             Rebuild(Array.Empty<SessionEntry>());
         }
 
-        public readonly record struct SessionEntry(string SessionId, SessionStatus Status);
+        // Hidden is CB-276's: a session the user hid with "Hide this orb". It
+        // is still listed, after the visible ones and marked, because hiding
+        // is about the screen and the menu is where you go to find something
+        // that is not on it — but it does not count towards the icon.
+        public readonly record struct SessionEntry(string SessionId, SessionStatus Status, bool Hidden = false);
 
         public void Update(IReadOnlyList<SessionEntry> sessions)
         {
@@ -138,7 +142,7 @@ namespace Orbweaver
         private void Apply(IReadOnlyList<SessionEntry> sessions)
         {
             var signature = string.Join("|",
-                                sessions.Select(s => $"{s.SessionId}:{s.Status.State}:{s.Status.Cwd}:{s.Status.Title}"))
+                                sessions.Select(s => $"{s.SessionId}:{s.Status.State}:{s.Status.Cwd}:{s.Status.Title}:{s.Hidden}"))
                             + $"|orbs={SessionManager.Instance?.OrbsVisible}"
                             + $"|usage={SessionManager.Instance?.UsageOrbsVisible}"
                             + $"|muted={AudioMute.IsMuted}"
@@ -169,12 +173,24 @@ namespace Orbweaver
 
         private void UpdateIcon(IReadOnlyList<SessionEntry> sessions)
         {
-            var waiting = sessions.Count(s => s.Status.State == "waiting");
-            var generating = sessions.Count(s => s.Status.State == "generating");
+            var (total, waiting, generating) = IconCounts(sessions);
 
             var muted = AudioMute.IsMuted;
             _tray.Icon = LoadIcon(TrayIconLook.State(waiting, generating), muted);
-            _tray.ToolTipText = Summary(sessions.Count, waiting, generating, muted);
+            _tray.ToolTipText = Summary(total, waiting, generating, muted);
+        }
+
+        // What the icon and its tooltip count: the visible sessions only.
+        // CB-276: amber is an attention signal, and a session the user hid
+        // has been told not to ask for attention on this screen, so a hidden
+        // one waiting on you leaves the icon where a visible idle one would.
+        internal static (int Total, int Waiting, int Generating) IconCounts(
+            IReadOnlyList<SessionEntry> sessions)
+        {
+            var visible = sessions.Where(s => !s.Hidden).ToList();
+            return (visible.Count,
+                    visible.Count(s => s.Status.State == "waiting"),
+                    visible.Count(s => s.Status.State == "generating"));
         }
 
         // A colour change doesn't change the session list, so Apply's signature is
@@ -473,7 +489,7 @@ namespace Orbweaver
                 "generating" => "working",
                 _ => "idle"
             };
-            return $"{folder} — {state}";
+            return session.Hidden ? $"{folder} — {state} (hidden)" : $"{folder} — {state}";
         }
 
         private WindowIcon LoadIcon(string state, bool muted)

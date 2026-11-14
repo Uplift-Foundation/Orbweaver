@@ -1038,6 +1038,16 @@ namespace Orbweaver
             return membership.Lead == entry.SessionId ? "" : membership.Lead;
         }
 
+        // CB-276: the lead a hide propagates through, as the pass can read it
+        // before its main loop assigns status.Lead. A Claude Code session's is
+        // the probe's team read (the duplicate rule's own reading); a Remote
+        // Control session's is already the lead's own orb key; nothing else
+        // has a lead that propagates — see HiddenOrbs.PropagatingLead.
+        private static string HideRuleLead(ScanEntry entry, ScanProbes probes) =>
+            entry.Status.Source == SessionSource.ClaudeCode
+                ? DuplicateRuleLead(entry, probes)
+                : HiddenOrbs.PropagatingLead(entry.Status.Source, entry.Status.Lead);
+
         internal static bool WantsIdentityFromTranscript(SessionStatus status) =>
             status.Source == SessionSource.ClaudeCode
             && !string.IsNullOrEmpty(status.TranscriptPath)
@@ -2314,8 +2324,15 @@ namespace Orbweaver
             // Both folders while the legacy one is watched, one file per
             // session — see NewestPerSession for which one and why the other
             // is left alone.
+            var primary = ReadStatusDirectory(_statusDir);
+
+            // CB-276: whether the primary folder answered at all. An unreadable
+            // folder lists nothing, and pruning must read that as "cannot say"
+            // rather than as every local session having ended.
+            _statusDirReadable = primary is not null;
+
             var reads = NewestPerSession(
-                ReadStatusDirectory(_statusDir) ?? new(),
+                primary ?? new(),
                 _legacyStatusDir is null ? new() : ReadStatusDirectory(_legacyStatusDir) ?? new());
 
             _statusFiles = reads.ToDictionary(r => r.SessionId, r => r.Path, StringComparer.Ordinal);
@@ -2837,6 +2854,16 @@ namespace Orbweaver
                     .Select(e => (e.SessionId, e.Status.Title, SessionLiveness.IsParked(
                         e.Status.State, e.Status.LastTurnUtc, now))));
 
+            // CB-276: every session hidden this pass — the settings entries,
+            // plus every member of a hidden agent-team lead. Asked once and
+            // over all of `found`, not over what survives the loop below, so a
+            // hidden lead that has outlived "Keep orbs for" but still has a
+            // file keeps its team hidden. See HiddenOrbs.Effective.
+            var hidden = HiddenOrbs.Effective(
+                OrbweaverSettings.HiddenOrbIds(),
+                found.Select(e => (e.SessionId, (string?)HideRuleLead(e, probes))));
+            var hiddenNow = new List<(string SessionId, SessionStatus Status)>();
+
             // Sessions that live agents name as their lead. Used for two things
             // below, and for nothing else — in particular *not* to excuse a
             // lead from the lifetime timer, which is the user's setting to make.
@@ -3010,8 +3037,6 @@ namespace Orbweaver
                     continue;   // removed in the pass below
                 }
 
-                seen.Add(sessionId);
-
                 // Whether this session is an agent-team member, and whose. Read
                 // from its process rather than its status file — see AgentTeam
                 // — by the background half, which asked about every pid in the
@@ -3030,6 +3055,35 @@ namespace Orbweaver
                 {
                     status.Lead = membership.Lead == sessionId ? "" : membership.Lead;
                     status.Agent = string.IsNullOrEmpty(status.Lead) ? "" : membership.Name;
+                }
+
+                // CB-276: a hidden session leaves here, after every check that
+                // would have dropped it anyway — so the tray only lists one
+                // that would otherwise have had an orb — and after the team
+                // block above, so the tray's label has the agent's name. From
+                // here it takes the path an ended session takes: never in
+                // `seen`, so the removal pass below closes its window, disposes
+                // its chat, drops its status and reflows; and never observed by
+                // the turn-sound tracker, so it cannot chime.
+                if (hidden.Contains(sessionId))
+                {
+                    hiddenNow.Add((sessionId, status));
+                    continue;   // removed in the pass below
+                }
+
+                seen.Add(sessionId);
+
+                // A room member whose room is hidden stands alone. The room is
+                // not a team lead for hiding (HiddenOrbs.PropagatingLead), so
+                // the member stays; but its Lead still names the room, and an
+                // orb whose lead is not on screen would draw itself as a member
+                // of nothing. Cleared before the reflow check below, so the
+                // change of lead moves it.
+                if (status.Source == SessionSource.OpenClaw
+                    && !string.IsNullOrEmpty(status.Lead)
+                    && hidden.Contains(status.Lead))
+                {
+                    status.Lead = "";
                 }
 
                 // What shape of session this is, and whether anything is on the
@@ -3237,6 +3291,11 @@ namespace Orbweaver
             // directory and the same dictionary.
             SweepDeadFiles(found, dead, now);
 
+            // CB-276: the sessions this pass kept off the screen, for the tray
+            // and the phone; and the hides of any that have since ended.
+            _hidden = hiddenNow;
+            PruneHiddenOrbs(now);
+
             // Before the reflow, so an orb that just arrived is arranged in the
             // group its team is already in.
             SyncOrbGroups();
@@ -3259,7 +3318,10 @@ namespace Orbweaver
             // _statuses itself, but the SessionStatus objects are the scan's own
             // and are mutated by the next pass — a subscriber projects what it
             // needs before returning (RelayRoster.Project) and keeps nothing.
-            SessionsScanned?.Invoke(_statuses.Select(kv => (kv.Key, kv.Value)).ToList());
+            //
+            // CB-276: plus the hidden sessions. Hiding is a statement about
+            // this screen; the PM decided the phone keeps listing them.
+            SessionsScanned?.Invoke(_statuses.Select(kv => (kv.Key, kv.Value)).Concat(_hidden).ToList());
         }
 
         // Raised on the scan's thread at the end of every pass. See the call
@@ -3351,8 +3413,12 @@ namespace Orbweaver
         {
             // Feed the tray in stacking order so the menu reads top-to-bottom
             // like the orbs do on screen.
+            //
+            // CB-276: then the hidden sessions, marked, in the order the scan
+            // met them.
             _tray?.Update(DisplayOrder()
                 .Select(id => new TrayController.SessionEntry(id, _statuses[id]))
+                .Concat(_hidden.Select(h => new TrayController.SessionEntry(h.SessionId, h.Status, Hidden: true)))
                 .ToList());
         }
 
@@ -4641,6 +4707,60 @@ namespace Orbweaver
         // which the PM decided keeps showing it. Never in _statuses, so nothing
         // that draws, arranges, links or chimes ever sees one.
         private List<(string SessionId, SessionStatus Status)> _hidden = new();
+
+        // When each hidden session's source first said it no longer lists it.
+        // In memory on purpose: a restart starts every clock again, which
+        // errs toward keeping a hide. See HiddenOrbs.DuePrunes.
+        private readonly Dictionary<string, DateTime> _hiddenAbsentSince =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // HiddenOrbs.PruneGrace, settable for the reason SweepGrace is: a test
+        // that wants to see a prune should not have to wait two minutes.
+        internal TimeSpan HiddenPruneGrace { get; set; } = HiddenOrbs.PruneGrace;
+
+        // Whether the last read of the primary status folder succeeded. See
+        // ReadStatusFiles.
+        private bool _statusDirReadable = true;
+
+        // Forgets the hides of sessions known to have ended. Once per pass,
+        // after the removal pass, beside SweepDeadFiles and for the same
+        // reason: it is a judgement about what this scan found.
+        //
+        // The remote listings are read through seams so a test can stand each
+        // source up without a gateway, an account or another machine.
+        private void PruneHiddenOrbs(DateTime now)
+        {
+            var entries = OrbweaverSettings.HiddenOrbList();
+            if (entries.Count == 0)
+            {
+                _hiddenAbsentSince.Clear();
+                return;
+            }
+
+            var peers = entries.ToDictionary(e => e.SessionId, e => e.Peer, StringComparer.OrdinalIgnoreCase);
+            var localIds = _statusDirReadable
+                ? new HashSet<string>(_statusFiles.Keys, StringComparer.Ordinal)
+                : null;
+            var openClawKeys = HiddenOpenClawListing();
+            var cloudIds = HiddenCloudListing();
+            var remoteByPeer = HiddenRemoteListing();
+
+            var due = HiddenOrbs.DuePrunes(
+                peers.Keys,
+                id => HiddenOrbs.Listed(id, peers[id], localIds, openClawKeys, cloudIds, remoteByPeer),
+                _hiddenAbsentSince,
+                now,
+                HiddenPruneGrace);
+
+            if (due.Count > 0) OrbweaverSettings.PruneHiddenOrbs(due);
+        }
+
+        // The three remote listings pruning asks, each null when its source
+        // cannot say. Null until the seams land (CB-276, engineer C): nothing
+        // remote is pruned meanwhile, which is the safe direction.
+        private static IReadOnlySet<string>? HiddenOpenClawListing() => null;
+        private static IReadOnlySet<string>? HiddenCloudListing() => null;
+        private static IReadOnlyDictionary<string, IReadOnlySet<string>>? HiddenRemoteListing() => null;
 
         // Unlike Dismiss, which is a statement about the screen that the next
         // hook event overrides, a hide is a setting: it lasts until it is
