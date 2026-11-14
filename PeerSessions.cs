@@ -149,6 +149,11 @@ namespace Orbweaver
                 _discovery = discovery = new PeerDiscovery();
             }
 
+            // The certificate load starts now, off every lock, so the first
+            // handshake finds it done and a stalled one says so in the log
+            // rather than in a frozen dial loop (CB-301).
+            PeerIdentity.Warm();
+
             // Both halves, before anything connects. A machine that is dialled
             // must be able to answer immediately, and a panel opened the moment
             // the app starts must find a client rather than a null.

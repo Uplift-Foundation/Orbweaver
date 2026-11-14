@@ -36,7 +36,10 @@ namespace Orbweaver
         internal sealed record Seams(
             Func<string, PeerProtocol.PeerMessage, Task> Deliver,
             Func<string, PeerIdentity.Peer?> KnownPeer,
-            Func<X509Certificate2> OwnCertificate);
+            // Awaited, and allowed to time out (CB-301): the certificate is
+            // loaded once and shared, and a load stuck on a keychain prompt
+            // must fail this handshake rather than hold the thread.
+            Func<CancellationToken, Task<X509Certificate2>> OwnCertificate);
 
         // Chosen from the unassigned range and fixed rather than negotiated: a
         // port that moved would have to be discovered before it could be
@@ -425,11 +428,12 @@ namespace Orbweaver
                 // No callback on the constructor: setting one here *and* in the
                 // authentication options below is refused by .NET outright, and
                 // the options are where the client certificate is judged.
+                var own = await _seams.OwnCertificate(ct).ConfigureAwait(false);
                 var tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
 
                 await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 {
-                    ServerCertificate = _seams.OwnCertificate(),
+                    ServerCertificate = own,
                     ClientCertificateRequired = true,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
@@ -460,6 +464,12 @@ namespace Orbweaver
 
             try
             {
+                // Before the socket, not after: a certificate that is still
+                // loading should cost this dial nothing, rather than a TCP
+                // connection the far side has already accepted and will hold
+                // half-open until it times out (CB-301).
+                var own = await _seams.OwnCertificate(ct).ConfigureAwait(false);
+
                 var client = new TcpClient();
                 await client.ConnectAsync(host, port, ct).ConfigureAwait(false);
 
@@ -468,7 +478,7 @@ namespace Orbweaver
                 await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                 {
                     TargetHost = machine,
-                    ClientCertificates = new X509Certificate2Collection(_seams.OwnCertificate()),
+                    ClientCertificates = new X509Certificate2Collection(own),
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
 
                     // The certificate is self-signed and has no meaningful name

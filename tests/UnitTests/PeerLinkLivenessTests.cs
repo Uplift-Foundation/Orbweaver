@@ -25,7 +25,7 @@ public class PeerLinkLivenessTests
                 return onDeliver?.Invoke(message) ?? Task.CompletedTask;
             },
             KnownPeer: _ => null,
-            OwnCertificate: () => throw new InvalidOperationException("no certificate needed here")));
+            OwnCertificate: _ => throw new InvalidOperationException("no certificate needed here")));
 
     // --- the read loop ---------------------------------------------------------
 

@@ -23,7 +23,7 @@ public class PeerLinkTests
                 return onDeliver?.Invoke(message.Type) ?? Task.CompletedTask;
             },
             KnownPeer: _ => null,
-            OwnCertificate: () => throw new InvalidOperationException(
+            OwnCertificate: _ => throw new InvalidOperationException(
                 "no test here should need a certificate")));
 
     private static async Task<MemoryStream> StreamOf(params PeerProtocol.PeerMessage[] messages)

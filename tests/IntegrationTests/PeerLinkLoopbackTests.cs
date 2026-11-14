@@ -56,7 +56,7 @@ public class PeerLinkLoopbackTests
             // Both ends present the same certificate here, so each is the peer
             // the other paired with.
             KnownPeer: machine => new PeerIdentity.Peer(pin, machine),
-            OwnCertificate: () => Cert.Value));
+            OwnCertificate: _ => Task.FromResult(Cert.Value)));
 
     [Fact]
     public async Task TwoLinksCompleteATlsHandshakeAndExchangeAMessage()
@@ -288,7 +288,7 @@ public class PeerLinkLoopbackTests
         using var client = new PeerLink(new PeerLink.Seams(
             Deliver: (_, _) => Task.CompletedTask,
             KnownPeer: machine => new PeerIdentity.Peer(new string('0', 64), machine),
-            OwnCertificate: () => Cert.Value));
+            OwnCertificate: _ => Task.FromResult(Cert.Value)));
 
         // Port 0: the OS picks, and the listener reports what it chose. Probing
         // for a free port and then asking for it has a race between the probe
@@ -378,7 +378,7 @@ public class PeerLinkLoopbackTests
                     got.TrySetResult(message.Body!.Value.GetString()!);
             },
             KnownPeer: machine => new PeerIdentity.Peer(pin, machine),
-            OwnCertificate: () => Cert.Value);
+            OwnCertificate: _ => Task.FromResult(Cert.Value));
 
         server = new PeerLink(Answering(() => server!, serverGot));
         client = new PeerLink(Answering(() => client!, clientGot));
