@@ -242,6 +242,12 @@ public class NarrowPaneTests
         Assert.NotNull(ChatTranscript.ParseDialog("                    ↑\n" + list));
     }
 
+    [Theory]
+    [InlineData("  1. Default\n  2. Opus\n")]                 // option 1 on the first line: nothing above it
+    [InlineData("\n\n  1. Default\n  2. Opus\n")]             // only blank lines above it
+    public void AListWithNothingAboveItsFirstOptionIsNotClipped(string screen) =>
+        Assert.NotNull(ChatTranscript.ParseDialog(screen));
+
     // Scrollback with an arrow in it, above a real dialog and above a real form,
     // is the assistant's prose and changes nothing.
     [Theory]

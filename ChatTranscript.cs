@@ -691,7 +691,8 @@ namespace Orbweaver
         private static int CrossColumn(string line)
         {
             var at = ContentColumn(line);
-            if (at >= line.Length || line[at] != '❯') return at;
+            // Only called for a line with something on it, so `at` is on a character.
+            if (line[at] != '❯') return at;
             return at + 1 + ContentColumn(line[(at + 1)..]);
         }
 
@@ -924,7 +925,8 @@ namespace Orbweaver
         {
             var last = cleaned.Length - 1;
             while (last >= 0 && cleaned[last].Length == 0) last--;
-            if (last >= 0 && IsClipped(cleaned[last])) return true;
+            // An option line is on screen, so there is a last drawn line.
+            if (IsClipped(cleaned[last])) return true;
 
             var above = firstOption - 1;
             while (above >= 0 && cleaned[above].Length == 0) above--;
