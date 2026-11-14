@@ -81,4 +81,107 @@ public class CloudSessionLinkTests
         Assert.Equal(expected?.FileName, actual?.FileName);
         Assert.Equal(expected?.UseShellExecute, actual?.UseShellExecute);
     }
+
+    // --- IsOpenable (CB-284) ------------------------------------------------
+    //
+    // The rule every chat link goes through before a click can launch
+    // anything. On Windows the launch is a ShellExecute, which resolves any
+    // scheme an installed program registered, so this is an allowlist and
+    // each refusal is its own case. Accepted controls first: a rule that
+    // refused everything would pass every refusal on its own.
+
+    [Theory]
+    [InlineData("https://example.com/a_b?q=1#f")]
+    [InlineData("http://example.com")]
+    [InlineData("HTTPS://Example.com/x")]
+    [InlineData("https://en.wikipedia.org/wiki/A_(b)")]
+    [InlineData("https://claude.ai/code/session_01abc")]
+    [InlineData("https://example.com:8443/x")]
+    [InlineData("https://example.com/a@b")]          // @ in the path is not userinfo
+    [InlineData("https://example.com/?to=a@b")]      // nor in the query
+    [InlineData("https://example.com#a@b")]          // nor in the fragment
+    public void AnHttpUrlWithAHostIsOpenable(string url)
+    {
+        Assert.True(CloudSessionLink.IsOpenable(url));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("file:///etc/hosts")]
+    [InlineData("file:///C:/Windows/System32/calc.exe")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("ms-settings:privacy")]
+    [InlineData("vscode://file/x")]
+    [InlineData("myapp://x")]
+    [InlineData("ftp://example.com")]
+    [InlineData("httpx://example.com")]
+    [InlineData("\\\\server\\share")]
+    [InlineData("//server/share")]
+    [InlineData("/etc/hosts")]
+    [InlineData("docs/x.md")]
+    [InlineData("https://exa mple.com")]
+    [InlineData("https://example.com\n")]
+    [InlineData(" https://example.com")]
+    [InlineData("https://example.com\t")]
+    [InlineData("https://example.com\0")]
+    [InlineData("https://example.com\\@evil.com")]
+    [InlineData("http://")]
+    [InlineData("https://")]
+    [InlineData("https:///path")]
+    [InlineData("http:example.com")]
+    [InlineData("https://exa_mple:99999/")]
+    public void AnythingElseIsNot(string? url)
+    {
+        Assert.False(CloudSessionLink.IsOpenable(url));
+    }
+
+    // Userinfo is refused (PM decision on CB-284, Q4): the part a person reads
+    // first is the part the browser ignores. Each refusal beside a control
+    // that is the same string without the "@".
+    [Theory]
+    [InlineData("https://google.com@evil.example", "https://google.com.evil.example")]
+    [InlineData("https://user@example.com/", "https://user.example.com/")]
+    [InlineData("https://user:pass@example.com/", "https://example.com/user:pass")]
+    [InlineData("https://@example.com", "https://example.com")]
+    [InlineData("http://a@b", "http://a.b")]
+    [InlineData("https://google.com@evil.example?q", "https://google.com.evil.example?q")]
+    [InlineData("https://google.com@evil.example#f", "https://google.com.evil.example#f")]
+    public void AUrlCarryingUserinfoIsNotOpenable(string withUserinfo, string control)
+    {
+        Assert.False(CloudSessionLink.IsOpenable(withUserinfo));
+        Assert.True(CloudSessionLink.IsOpenable(control));
+    }
+
+    // Nothing reaches Process.Start without the rule: every refusal is null on
+    // both platform shapes, and the control is not.
+    [Theory]
+    [InlineData("file:///etc/hosts")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("ms-settings:privacy")]
+    [InlineData("vscode://file/x")]
+    [InlineData("\\\\server\\share")]
+    [InlineData("docs/x.md")]
+    [InlineData("https://google.com@evil.example")]
+    [InlineData("https://example.com\n")]
+    public void StartInfoRefusesWhatIsOpenableRefusesOnBothShapes(string url)
+    {
+        Assert.Null(CloudSessionLink.StartInfoFor(url, isMacOs: true, isWindows: false));
+        Assert.Null(CloudSessionLink.StartInfoFor(url, isMacOs: false, isWindows: true));
+
+        Assert.NotNull(CloudSessionLink.StartInfoFor(Url, isMacOs: true, isWindows: false));
+        Assert.NotNull(CloudSessionLink.StartInfoFor(Url, isMacOs: false, isWindows: true));
+    }
+
+    // A link out of a chat message takes the same macOS path as the cloud
+    // link: the URL is an argument to `open`, never the program.
+    [Fact]
+    public void AChatLinkOnMacOsIsStillAnArgumentNotTheProgram()
+    {
+        const string chat = "https://en.wikipedia.org/wiki/A_(b)";
+        var info = CloudSessionLink.StartInfoFor(chat, isMacOs: true, isWindows: false);
+
+        Assert.Equal("open", info!.FileName);
+        Assert.Equal(new[] { chat }, info.ArgumentList);
+    }
 }

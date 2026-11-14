@@ -53,6 +53,18 @@ namespace Orbweaver
                 return false;
             }
 
+            // No userinfo. "https://google.com@evil.example" goes to
+            // evil.example, and the part a person reads first is the part
+            // the browser ignores — the tooltip showing the whole string does
+            // not help someone who reads it left to right and stops at ".com".
+            // Nothing a chat link legitimately needs is behind a login in the
+            // URL itself, so the authority is refused outright if it has an @
+            // anywhere in it, before Uri gets to decide what it means.
+            var schemeEnd = url.IndexOf("://", StringComparison.Ordinal) + 3;
+            var authorityEnd = url.IndexOfAny(['/', '?', '#'], schemeEnd);
+            var authority = authorityEnd < 0 ? url[schemeEnd..] : url[schemeEnd..authorityEnd];
+            if (authority.Contains('@')) return false;
+
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
 
             return (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
