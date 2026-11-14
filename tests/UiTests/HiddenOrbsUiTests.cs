@@ -139,6 +139,42 @@ public class HiddenOrbsUiTests : IDisposable
         Assert.Empty(OrbweaverSettings.HiddenOrbList());
     }
 
+    // The whole round trip a user makes, through the real controls: a scanned
+    // orb, its own menu item, the scan taking it away, Settings' Restore button,
+    // the scan bringing it back. HiddenOrbCoreScanTests covers the manager's half
+    // by calling it; this is the half that proves the clicks reach it.
+    [AvaloniaFact]
+    public void HideFromTheOrbMenuThenRestoreFromSettingsRoundTripsThroughTheScan()
+    {
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        File.WriteAllText(Path.Combine(_dir, "rt1.txt"), System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+        {
+            State = "idle",
+            Title = "round trip",
+            Cwd = "/Users/user/project",
+            SessionPid = Environment.ProcessId,
+            TermProgram = "iTerm.app",
+            Tty = "/dev/ttys004",
+        }));
+        var manager = new SessionManager(_dir);
+        InstanceProperty.SetValue(null, manager);
+        var windows = (System.Collections.IDictionary)typeof(SessionManager)
+            .GetField("_windows", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(manager)!;
+
+        manager.ScanAndUpdate();
+        Assert.True(windows.Contains("rt1"));
+        var orb = (OrbWindow)windows["rt1"]!;
+
+        orb.FindControl<MenuItem>("HideItem")!.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        manager.ScanAndUpdate();
+        Assert.False(windows.Contains("rt1"));
+
+        var settings = NewSettings();
+        Click(Named<Button>(settings.HiddenOrbsRows(), "RestoreHiddenOrb:rt1"));
+        manager.ScanAndUpdate();
+        Assert.True(windows.Contains("rt1"));
+    }
+
     // --- Settings → Hidden orbs ---
 
     [AvaloniaFact]

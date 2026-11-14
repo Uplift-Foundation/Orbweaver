@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text.Json;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -131,6 +132,64 @@ public class HiddenOrbsScreenshots
         finally
         {
             InstanceProperty.SetValue(null, null);
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+        }
+    }
+
+    // A room is not a team lead for hiding, so hiding the room takes only the
+    // room: its members stay, and wear no lead, so they draw as ordinary orbs
+    // rather than as members of a room that is not on screen. Captured before
+    // and after, because the difference is the whole claim.
+    [AvaloniaFact]
+    public void AnOpenClawMemberStandsAloneAfterItsRoomIsHidden()
+    {
+        var dir = Directory.CreateTempSubdirectory("hidden-room-").FullName;
+        var wasEnabled = OrbweaverSettings.OpenClawEnabled;
+        var wasMode = OrbweaverSettings.OpenClawHeartbeatMode;
+        var wasWithin = OrbweaverSettings.OpenClawActiveWithinMinutes;
+        OrbweaverSettings.RestoreAllHiddenOrbs();
+        try
+        {
+            OrbweaverSettings.OpenClawEnabled = true;
+            OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+            OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+
+            var now = DateTimeOffset.UtcNow.AddSeconds(-5).ToUnixTimeMilliseconds();
+            var (sessions, _) = OpenClawSessions.Parse(JsonDocument.Parse($$"""
+                {"sessions":[
+                  {"key":"agent:aurora:discord:channel:1474","chatType":"channel","groupChannel":"#general","lastActivityAt":{{now}}},
+                  {"key":"agent:nova:discord:channel:1474","chatType":"channel","groupChannel":"#general","lastActivityAt":{{now}}}
+                ]}
+                """).RootElement, DateTime.UtcNow);
+            OpenClawSessions.SetSnapshotForTests(sessions);
+
+            var manager = (SessionManager)typeof(SessionManager).GetConstructor(
+                BindingFlags.NonPublic | BindingFlags.Instance, new[] { typeof(string) })!.Invoke(new object[] { dir });
+            var windows = (Dictionary<string, OrbWindow>)typeof(SessionManager)
+                .GetField("_windows", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(manager)!;
+            var room = SessionManager.RoomId("discord:1474");
+            var member = "openclaw:agent:aurora:discord:channel:1474";
+
+            manager.ScanAndUpdate();
+            Assert.Contains(room, windows.Keys);
+            Assert.Equal(room, manager.StatusFor(member)!.Lead);
+            ScreenshotHelper.Capture(windows[member], "orb-openclaw-member-room-visible.png");
+
+            manager.HideSession(room);
+            manager.ScanAndUpdate();
+
+            Assert.DoesNotContain(room, windows.Keys);
+            Assert.Contains(member, windows.Keys);
+            Assert.True(string.IsNullOrEmpty(manager.StatusFor(member)!.Lead));
+            ScreenshotHelper.Capture(windows[member], "orb-openclaw-member-room-hidden.png");
+        }
+        finally
+        {
+            OpenClawSessions.SetSnapshotForTests(Array.Empty<OpenClawSessions.Session>());
+            OrbweaverSettings.RestoreAllHiddenOrbs();
+            OrbweaverSettings.OpenClawActiveWithinMinutes = wasWithin;
+            OrbweaverSettings.OpenClawHeartbeatMode = wasMode;
+            OrbweaverSettings.OpenClawEnabled = wasEnabled;
             try { Directory.Delete(dir, true); } catch (IOException) { }
         }
     }
