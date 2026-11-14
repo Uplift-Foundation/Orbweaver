@@ -40,6 +40,8 @@ namespace Orbweaver.Tests
                 failures.Add(detail.Length > 0 ? $"{name}\n      {detail}" : name);
             }
 
+            Cb327Captures.Run(Check);
+
             // --- the transcript ---
 
             // Real row shapes, trimmed of the fields none of this reads.
@@ -1305,7 +1307,9 @@ namespace Orbweaver.Tests
                           a description
                        4. No
                     """) is null);
-            Check("a gap longer than a description is not crossed",
+            // CB-327: the gap is structural now. A narrow pane wraps a description over
+            // as many rows as it needs, so any run of indented lines is crossed, up to a cap.
+            Check("a description of any wrapped length is crossed to the right number",
                 ChatTranscript.ParseDialog("""
                      Pick one
                      ❯ 1. Yes
@@ -1314,7 +1318,23 @@ namespace Orbweaver.Tests
                           three
                           four
                        2. No
-                    """) is null);
+                    """) is { } wrapped && wrapped.Options.Count == 2);
+            Check("a gap past the cap is not crossed",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n"
+                    + string.Concat(Enumerable.Range(0, 17).Select(i => "     line " + i + "\n"))
+                    + "  2. No\n") is null);
+            Check("a gap of exactly the cap is crossed",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n"
+                    + string.Concat(Enumerable.Range(0, 16).Select(i => "     line " + i + "\n"))
+                    + "  2. No\n") is { } atCap && atCap.Options.Count == 2);
+            Check("a line at the margin ends the run even between the right numbers",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n     one\nprose at the margin\n     two\n  2. No\n") is null);
+            Check("blank lines and rules between options are crossed",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n\n  2. Maybe\n──────────────────────\n  3. No\n") is { } ruled
+                && ruled.Options.Count == 3);
+            Check("a cursor mark on a row between options is padding, not a margin",
+                ChatTranscript.ParseDialog("Pick one\n  1. Yes\n❯    Submit\n  2. No\n") is { } cursored
+                && cursored.Options.Count == 2);
             Check("a numbered list with descriptions above the input box is still prose",
                 ChatTranscript.ParseDialog("""
                     ⏺ Two options:

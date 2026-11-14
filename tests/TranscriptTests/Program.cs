@@ -92,6 +92,12 @@ if (args.Length > 0)
         ? "form: none"
         : $"form: {form.Tabs.Count} tab(s), {form.Prompt.Options.Count} option(s), free text [{form.FreeTextKey ?? "-"}]");
 
+    if (form is not null)
+    {
+        Console.WriteLine($"form question: {form.Prompt.Title}");
+        Console.WriteLine($"form tabs: {string.Join(" | ", form.Tabs.Select(t => $"{t.State}:{t.Name}"))}");
+    }
+
     var dialog = ChatTranscript.ParseDialog(screen);
 
     if (dialog is null)

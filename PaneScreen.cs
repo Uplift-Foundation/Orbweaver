@@ -72,6 +72,14 @@ namespace Orbweaver
             if (GrokPrompt(lines, from) is { } grok) return grok;
             if (CodexPrompt(lines, from) is { } codex) return codex;
 
+            return ClaudePrompt(lines, from);
+        }
+
+        // Claude's ruled input box. Its own method, as GrokPrompt and CodexPrompt are,
+        // so a test can put a screen straight to this rule without ParseDialog
+        // answering first (CB-327).
+        internal static (PaneReading Reading, string Check) ClaudePrompt(string[] lines, int from)
+        {
             var mark = -1;
             for (var i = lines.Length - 1; i >= from && mark < 0; i--)
                 if (IsPromptMark(lines[i]) && !ChatTranscript.OptionLine.IsMatch(lines[i])) mark = i;
@@ -187,9 +195,47 @@ namespace Orbweaver
         private static bool IsPromptMark(string line) =>
             line.StartsWith('❯') || line == ">" || (line.Length > 1 && line[0] == '>' && char.IsWhiteSpace(line[1]));
 
-        // A box's top edge: a long run of rule characters at its start, with
-        // anything (a session name) allowed after it.
-        private static bool IsBoxTop(string line) =>
-            line.Length >= 10 && line.Take(10).All(c => c is '─' or '━' or '═');
+        private static bool IsRuleChar(char c) => c is '─' or '━' or '═';
+
+        // A box's top edge, in either of the two shapes Claude Code draws (CB-327):
+        //
+        //  (a) a leading run of 10 or more rule characters, anything after it
+        //      (a session name) allowed — the shape this always accepted;
+        //  (b) a titled edge, for a pane too narrow to keep ten rule characters
+        //      beside the name. Measured at 23 columns it is `─── name ─`, at 20
+        //      `name ─` with no leading rule at all, and from 18 down the name is
+        //      cut with an ellipsis (`name… ─`). What every one of them keeps is
+        //      its ending: a space and then rule characters. So (b) is: the line
+        //      ends with a space and one or more rule characters, whatever is
+        //      before that is a run of rule characters (possibly none) and then
+        //      the title, and the title holds a letter or digit, is not a prompt
+        //      mark and holds no rule character of its own. A line with text
+        //      *before* the leading run (`foo ─── x ─`) is refused: the run must
+        //      start the line.
+        //
+        // The edge is deliberately not required to be as long as the bottom rule:
+        // a name with wide characters would draw a shorter line and re-create
+        // this bug. What stops a stray line from passing is everything else the
+        // caller checks (a pure rule below, no options or hint after it).
+        internal static bool IsBoxTop(string line)
+        {
+            if (line.Length >= 10 && line.Take(10).All(IsRuleChar)) return true;
+
+            var end = line.Length;
+            while (end > 0 && IsRuleChar(line[end - 1])) end--;
+            if (end == line.Length || end == 0 || line[end - 1] != ' ') return false;
+
+            var title = line[..(end - 1)];
+            var lead = 0;
+            while (lead < title.Length && IsRuleChar(title[lead])) lead++;
+            if (lead == title.Length) return false;
+            if (lead > 0)
+            {
+                if (title[lead] != ' ') return false;
+                title = title[lead..].TrimStart();
+            }
+
+            return title.Length > 0 && !IsPromptMark(title) && !title.Any(IsRuleChar) && title.Any(char.IsLetterOrDigit);
+        }
     }
 }

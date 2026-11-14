@@ -405,9 +405,20 @@ namespace Orbweaver
         // is only enough room for the longest option list plus its trailer.
         internal const int DialogWindow = 30;
 
-        // The most non-option lines crossed between two options: a three-line
-        // description, or one separating rule, in the real captures.
-        private const int MaxOptionGap = 3;
+        // The most non-option lines crossed between two options (CB-327). It was
+        // 3 — "a three-line description or one separating rule" — until a form on
+        // a narrow pane wrapped every label and every description across several
+        // rows: measured at 40 columns a gap of 10. The gap is now structural
+        // (see the walk in ParseDialogCore) and this is only its ceiling, so a
+        // run of indented prose cannot be crossed without end.
+        private const int MaxOptionGap = 16;
+
+        // How far above the options a form's tab bar may be looked for. The
+        // option walk is no longer held to the DialogWindow, since a narrow
+        // pane wraps one form over far more than 30 rows; the head search has
+        // to follow it, but not into scrollback, where an old form's bar would
+        // turn an ordinary dialog into a form.
+        private const int HeadWithin = 40;
 
         // The numbered dialog at the bottom of the pane, or null.
         //
@@ -501,6 +512,15 @@ namespace Orbweaver
 
             if (runEnd < 0) return null;
 
+            // Between option n-1 and option n the walk crosses a line that is
+            // blank, a rule, or indented past the number (CB-327). That is the
+            // structure of a real form: a description sits under its option at
+            // the label column, a rule separates "Type something." from "Chat
+            // about this", and on a narrow pane both wrap over as many rows as
+            // they need. A line at the margin — the question, the assistant's
+            // prose — ends the run, a skipped number still stops it, and the
+            // walk is capped at MaxOptionGap lines. It reads above `from`: the
+            // window finds the last option, it does not bound the form.
             var picked = new List<int> { runEnd };
             var at = runEnd;
             while (true)
@@ -508,12 +528,23 @@ namespace Orbweaver
                 var want = int.Parse(OptionLine.Match(cleaned[at]).Groups[1].Value) - 1;
                 if (want < 1) break;
 
+                // Past the "N." of this option's own line: a description is at
+                // the label column, the question and the prose are not.
+                var numberColumn = lines[at].IndexOf(OptionLine.Match(cleaned[at]).Groups[1].Value, StringComparison.Ordinal);
+                var indentFloor = numberColumn + 2;
+
                 var above = -1;
-                for (var j = at - 1; j >= Math.Max(from, at - 1 - MaxOptionGap); j--)
+                var crossed = 0;
+                for (var j = at - 1; j >= 0 && crossed <= MaxOptionGap; j--)
                 {
-                    if (!OptionLine.IsMatch(cleaned[j])) continue;
-                    if (OptionLine.Match(cleaned[j]).Groups[1].Value == want.ToString()) above = j;
-                    break;
+                    if (OptionLine.IsMatch(cleaned[j]))
+                    {
+                        if (OptionLine.Match(cleaned[j]).Groups[1].Value == want.ToString()) above = j;
+                        break;
+                    }
+
+                    if (cleaned[j].Length > 0 && !IsHorizontalRule(cleaned[j]) && CrossColumn(lines[j]) < indentFloor) break;
+                    crossed++;
                 }
 
                 if (above < 0) break;
@@ -635,6 +666,16 @@ namespace Orbweaver
             return rules.Count > 0 ? rules.Max(l => l.Length) : null;
         }
 
+        // ContentColumn, but a leading cursor mark is padding too: the terminal
+        // draws ❯ at the margin on the row the cursor is on, and a description
+        // or the unnumbered Submit row does not leave the form by being selected.
+        private static int CrossColumn(string line)
+        {
+            var at = ContentColumn(line);
+            if (at >= line.Length || line[at] != '❯') return at;
+            return at + 1 + ContentColumn(line[(at + 1)..]);
+        }
+
         // The column of a line's first character that is not padding or a frame.
         private static int ContentColumn(string line)
         {
@@ -675,7 +716,7 @@ namespace Orbweaver
             // The bar or the single-question header: the nearest one above the
             // options, inside the window.
             var head = -1;
-            for (var i = first - 1; i >= from && head < 0; i--)
+            for (var i = first - 1; i >= Math.Max(0, first - HeadWithin) && head < 0; i--)
                 if (IsTabBar(cleaned[i]) || cleaned[i].StartsWith("☐ ", StringComparison.Ordinal)) head = i;
 
             // Multi-select options are drawn "[ ] Cheese" / "[✔] Cheese", and a
@@ -706,7 +747,7 @@ namespace Orbweaver
             // "● question" / "→ answer" pairs, then Submit answers / Cancel.
             var isReview = false;
             var review = new List<AskReviewItem>();
-            for (var i = from; i < first; i++)
+            for (var i = Math.Max(0, first - HeadWithin); i < first; i++)
             {
                 if (cleaned[i] == ReviewHeading) isReview = true;
                 if (cleaned[i].StartsWith("● ", StringComparison.Ordinal) && i + 1 < first
@@ -716,15 +757,32 @@ namespace Orbweaver
 
             if (head < 0 && freeText is null && !isReview) return null;
 
+            // A bar too wide for the pane wraps onto a second row that carries the
+            // names the first row had no room for (CB-327, measured at 32 columns).
+            var nameRow = head >= 0 && IsTabBar(cleaned[head]) && BarNeedsNames(cleaned[head]) && head + 1 < first
+                && cleaned[head + 1].Length > 0 && !raw[head + 1].StartsWith('│')
+                && cleaned[head + 1].IndexOfAny(TabMarks) < 0
+                ? head + 1 : -1;
+
             var tabs = head < 0 ? new List<AskTab>()
-                : IsTabBar(cleaned[head]) ? TabsOf(cleaned[head])
+                : IsTabBar(cleaned[head]) ? TabsOf(cleaned[head], nameRow < 0 ? null : cleaned[nameRow])
                 : new List<AskTab> { new(cleaned[head][2..].Trim(), AskTabState.Open) };
 
             // The question is the │-framed block between the head and option 1,
-            // which wraps; ParseDialog's title is only its last line.
+            // which wraps; ParseDialog's title is only its last line. Claude Code
+            // 2.1.325 no longer frames it, so with no │ line at all the question
+            // is every line there is between the head (and its name row) and
+            // option 1, joined as the terminal broke them (CB-327).
             var question = new List<string>();
-            for (var i = Math.Max(head + 1, from); i < first; i++)
+            var questionFrom = Math.Max(Math.Max(head + 1, nameRow + 1), 0);
+            for (var i = questionFrom; i < first; i++)
                 if (raw[i].StartsWith('│')) question.Add(cleaned[i]);
+
+            // Not on the review screen, whose lines between the bar and the options
+            // are the answers being reviewed: its title stays ParseDialog's.
+            if (question.Count == 0 && !isReview)
+                for (var i = questionFrom; i < first; i++)
+                    if (cleaned[i].Length > 0 && !IsHorizontalRule(cleaned[i])) question.Add(cleaned[i]);
 
             var title = question.Count > 0 ? string.Join(" ", question) : prompt.Title;
 
@@ -781,34 +839,67 @@ namespace Orbweaver
         private static bool IsTabBar(string line) =>
             line.StartsWith('←') && line.EndsWith('→') && line.IndexOfAny(new[] { '☐', '☒', '✔' }) >= 0;
 
-        private static List<AskTab> TabsOf(string bar)
+        private static readonly char[] TabMarks = { '☐', '☒', '✔' };
+
+        // A mark with nothing after it before the next mark (or the end) has had
+        // its name moved to the bar's second row. A bar whose every mark carries
+        // its name has no second row, and the line under it is the question.
+        private static bool BarNeedsNames(string bar) =>
+            Regex.IsMatch(bar.Trim('←', '→'), @"[☐☒✔]\s*(?=[☐☒✔]|$)");
+
+        // The tabs of a bar, counted by their marks rather than parsed as
+        // "mark, space, name": a bar that ran out of room draws marks with no
+        // name beside them (`☐      ☐   ☐ S… ☐ T… ✔`). A mark's name is the text
+        // after it up to the next mark. Where that is empty, the names come, in
+        // order, from the bar's second row (`Venue  C…   Submit`), whose cells
+        // are separated by two or more spaces; a cell it has no name for is left
+        // empty, and the Submit tab is only ever called Submit.
+        private static List<AskTab> TabsOf(string bar, string? nameRow = null)
         {
             var inner = bar.Trim('←', '→').Trim();
+            var names = nameRow is null ? new Queue<string>()
+                : new Queue<string>(Regex.Split(nameRow.Trim(), @"\s{2,}").Where(n => n.Length > 0));
             var tabs = new List<AskTab>();
 
-            foreach (Match m in TabCell.Matches(inner))
+            var marks = new List<int>();
+            for (var i = 0; i < inner.Length; i++)
+                if (Array.IndexOf(TabMarks, inner[i]) >= 0) marks.Add(i);
+
+            for (var m = 0; m < marks.Count; m++)
             {
-                var state = m.Groups[1].Value switch
+                var end = m + 1 < marks.Count ? marks[m + 1] : inner.Length;
+                var name = inner[(marks[m] + 1)..end].Trim();
+                var state = inner[marks[m]] switch
                 {
-                    "☒" => AskTabState.Answered,
-                    "✔" => AskTabState.Submit,
+                    '☒' => AskTabState.Answered,
+                    '✔' => AskTabState.Submit,
                     _ => AskTabState.Open,
                 };
-                tabs.Add(new AskTab(m.Groups[2].Value.Trim(), state));
+                if (name.Length == 0 && names.Count > 0) name = names.Dequeue();
+                if (name.Length == 0 && state == AskTabState.Submit) name = SubmitRowLabel;
+                tabs.Add(new AskTab(name, state));
             }
 
             return tabs;
         }
 
-        private static readonly Regex TabCell = new(@"([☐☒✔])\s+(.*?)(?=\s+[☐☒✔]\s|$)", RegexOptions.Compiled);
-
         // (4) above: whether these trimmed, frame-stripped lines are a
         // navigated list such as `/permissions` rather than a question.
         internal const string PermissionsTabBar = "Permissions  Recently blocked";
 
+        // The `/model` picker's own heading (CB-327). Its options are numbered
+        // and have no input box under them, so once a gap could span a narrow
+        // pane's wrapped descriptions it read as a five-option dialog whose
+        // digits would pick a model — a list that is navigated, like
+        // /permissions, not a question that is answered. Matched whole: the
+        // picker is the only screen that draws the line on its own. Measured
+        // at 23 and 32 columns (model-w23, model-w32); other widths assumed.
+        internal const string ModelPickerHeading = "Select model";
+
         internal static bool IsNavigatedList(IEnumerable<string> cleanedLines) =>
             cleanedLines.Any(l =>
                 l.StartsWith(PermissionsTabBar, StringComparison.Ordinal)
+                || l == ModelPickerHeading
                 || l.Contains("←/→ to switch", StringComparison.Ordinal)
                 || l.StartsWith('⌕'));
 
