@@ -774,13 +774,15 @@ namespace Orbweaver
             // is every line there is between the head (and its name row) and
             // option 1, joined as the terminal broke them (CB-327).
             var question = new List<string>();
-            var questionFrom = Math.Max(Math.Max(head + 1, nameRow + 1), 0);
+            var questionFrom = head < 0 ? from : Math.Max(head + 1, nameRow + 1);
             for (var i = questionFrom; i < first; i++)
                 if (raw[i].StartsWith('│')) question.Add(cleaned[i]);
 
             // Not on the review screen, whose lines between the bar and the options
-            // are the answers being reviewed: its title stays ParseDialog's.
-            if (question.Count == 0 && !isReview)
+            // are the answers being reviewed: its title stays ParseDialog's. And not
+            // without a head: a form known only by its "Type something" row has no
+            // top to join from, and everything above would become the question.
+            if (question.Count == 0 && !isReview && head >= 0)
                 for (var i = questionFrom; i < first; i++)
                     if (cleaned[i].Length > 0 && !IsHorizontalRule(cleaned[i])) question.Add(cleaned[i]);
 

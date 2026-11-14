@@ -180,6 +180,14 @@ public class NarrowPaneTests
     }
 
     [Fact]
+    public void AFormKnownOnlyByItsTypeSomethingRowKeepsTheDialogTitle()
+    {
+        var form = ChatTranscript.ParseAskForm("earlier prose\nmore prose\nWhich?\n\n❯ 1. a\n  2. b\n" + Tail)!;
+        Assert.Empty(form.Tabs);
+        Assert.Equal("Which?", form.Prompt.Title);
+    }
+
+    [Fact]
     public void AFormWithNothingBetweenItsHeadAndOptionOneKeepsTheDialogTitle()
     {
         var form = ChatTranscript.ParseAskForm("☐ Venue\n❯ 1. a\n  2. b\n" + Tail)!;
