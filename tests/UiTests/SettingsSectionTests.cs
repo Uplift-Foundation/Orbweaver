@@ -25,7 +25,7 @@ public class SettingsSectionTests
     // means nothing in the window can be trusted to confirm it.
     private static readonly string[] ExpectedIds =
     {
-        "orbs", "orb-click", "auto-organize", "group-outlines", "orb-colours", "chat-panel",
+        "orbs", "hidden-orbs", "orb-click", "auto-organize", "group-outlines", "orb-colours", "chat-panel",
         "voice", "sounds", "claude-code", "codex", "grok", "openclaw", "claude-cloud",
         "bridge-commands", "peer-link", "paired-phones", "updates", "claude-desktop"
     };

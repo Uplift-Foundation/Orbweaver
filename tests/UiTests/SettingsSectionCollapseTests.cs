@@ -28,7 +28,7 @@ public class SettingsSectionCollapseTests
 {
     private static readonly string[] AllIds =
     {
-        "orbs", "orb-click", "auto-organize", "orb-colours", "chat-panel",
+        "orbs", "hidden-orbs", "orb-click", "auto-organize", "orb-colours", "chat-panel",
         "voice", "sounds", "claude-code", "codex", "grok", "openclaw", "claude-cloud",
         "bridge-commands", "peer-link", "claude-desktop"
     };
