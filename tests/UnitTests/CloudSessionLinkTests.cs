@@ -129,6 +129,7 @@ public class CloudSessionLinkTests
     [InlineData("http://")]
     [InlineData("https://")]
     [InlineData("https:///path")]
+    [InlineData("https://.")]
     [InlineData("http:example.com")]
     [InlineData("https://exa_mple:99999/")]
     public void AnythingElseIsNot(string? url)
@@ -183,5 +184,70 @@ public class CloudSessionLinkTests
 
         Assert.Equal("open", info!.FileName);
         Assert.Equal(new[] { chat }, info.ArgumentList);
+    }
+
+    // --- QA's adversarial list (CB-284) -------------------------------------
+
+    // Invisible and reordering characters: the tooltip and the browser could
+    // disagree about the address. Refused whether they sit in the host, the
+    // path or the query. U+00A0, U+2028 and U+0085 are already whitespace or
+    // control; U+200B, U+202E and U+FEFF are Format, which is the new rule.
+    [Theory]
+    [InlineData("https://a.b/\u202E")]
+    [InlineData("https://a.b/\u200B")]
+    [InlineData("https://ex\u200Bample.com/")]
+    [InlineData("https://a.b/?q=\uFEFF")]
+    [InlineData("https://a.b/\u2066x\u2069")]
+    [InlineData("https://a.b/\u00A0")]
+    [InlineData("https://a.b/\u2028")]
+    [InlineData("https://a.b/\u0085")]
+    public void InvisibleAndBidiCharactersAreRefused(string url)
+    {
+        Assert.False(CloudSessionLink.IsOpenable(url));
+
+        // Control: a non-ASCII letter is not one of them.
+        Assert.True(CloudSessionLink.IsOpenable("https://bücher.example/"));
+    }
+
+    [Theory]
+    [InlineData("http:/x")]
+    [InlineData("https:/example.com")]
+    [InlineData("HTTPS:\\\\evil")]
+    [InlineData("JaVaScRiPt:alert(1)")]
+    [InlineData("data:text/html,x")]
+    [InlineData("mailto:a@b.c")]
+    [InlineData("https://example.com\n")]
+    [InlineData("  https://example.com  ")]
+    [InlineData("https://user:pw@host/")]
+    public void QasRefusalsAreRefused(string url)
+    {
+        Assert.False(CloudSessionLink.IsOpenable(url));
+        Assert.Null(CloudSessionLink.StartInfoFor(url, isMacOs: true, isWindows: false));
+        Assert.Null(CloudSessionLink.StartInfoFor(url, isMacOs: false, isWindows: true));
+    }
+
+    // Percent-encoded bytes are text in a URL, not the characters they name,
+    // and a browser sends them as written. Accepted deliberately.
+    [Theory]
+    [InlineData("https://a.b/x%0d%0ay")]
+    [InlineData("https://a.b/x%00")]
+    [InlineData("https://a.b/%E2%80%AE")]
+    [InlineData("http://[::1]:8080/a")]
+    [InlineData("https://bücher.example/")]
+    [InlineData("https://a.b/x_y*z")]
+    public void QasAcceptsAreAccepted(string url)
+    {
+        Assert.True(CloudSessionLink.IsOpenable(url));
+
+        var mac = CloudSessionLink.StartInfoFor(url, isMacOs: true, isWindows: false)!;
+        Assert.Equal("open", mac.FileName);
+        Assert.Equal(new[] { url }, mac.ArgumentList);
+    }
+
+    [Fact]
+    public void AVeryLongUrlIsAcceptedWithoutThrowing()
+    {
+        var url = "https://example.com/" + new string('a', 4000);
+        Assert.True(CloudSessionLink.IsOpenable(url));
     }
 }

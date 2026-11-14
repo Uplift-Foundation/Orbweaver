@@ -45,6 +45,13 @@ namespace Orbweaver
             foreach (var c in url)
             {
                 if (char.IsControl(c) || char.IsWhiteSpace(c) || c == '\\') return false;
+
+                // Format characters draw nothing or reorder what is around
+                // them — U+202E RIGHT-TO-LEFT OVERRIDE, U+200B ZERO WIDTH
+                // SPACE, U+FEFF — so a tooltip can show one address while the
+                // browser is handed another. None of them belongs in a URL a
+                // person typed; a real one percent-encodes them.
+                if (char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format) return false;
             }
 
             if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
@@ -67,8 +74,10 @@ namespace Orbweaver
 
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
 
-            return (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-                && uri.Host.Length > 0;
+            // The prefix check above has already pinned the scheme to http or
+            // https, so all that is left for Uri to say is whether there is a
+            // host to go to.
+            return uri.Host.Length > 0;
         }
 
         // What to hand Process.Start for this URL on this platform.

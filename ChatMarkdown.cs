@@ -413,24 +413,21 @@ namespace Orbweaver
 
             var url = text[start..end];
 
-            while (url.Length > 0)
-            {
-                var last = url[^1];
-
-                if (last is '.' or ',' or ';' or ':' or '!' or '?' or '\'' or '"' or '\u2019' or '\u201D'
-                    || (last == ')' && Unmatched(url, '(', ')'))
-                    || (last == ']' && Unmatched(url, '[', ']'))
-                    || (last == '}' && Unmatched(url, '{', '}')))
-                {
-                    url = url[..^1];
-                    continue;
-                }
-
-                break;
-            }
+            // Never runs dry: the caller only gets here at "http://" or
+            // "https://", and a '/' is never trimmed, so url[^1] always exists.
+            while (BelongsToTheSentence(url)) url = url[..^1];
 
             return url;
         }
+
+        private static bool BelongsToTheSentence(string url) => url[^1] switch
+        {
+            '.' or ',' or ';' or ':' or '!' or '?' or '\'' or '"' or '\u2019' or '\u201D' => true,
+            ')' => Unmatched(url, '(', ')'),
+            ']' => Unmatched(url, '[', ']'),
+            '}' => Unmatched(url, '{', '}'),
+            _ => false
+        };
 
         private static bool Unmatched(string url, char open, char close) =>
             url.Count(c => c == close) > url.Count(c => c == open);

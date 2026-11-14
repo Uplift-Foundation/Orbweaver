@@ -296,4 +296,113 @@ public class ChatMarkdownLinkTests
     {
         Assert.Equal("Bold:https://example.com/a", Render("**https://example.com/a**"));
     }
+
+    // --- QA's adversarial list (CB-284) -------------------------------------
+
+    // The label is not reparsed, so a label that is itself a URL is not a
+    // second link.
+    [Fact]
+    public void ALabelThatIsAUrlIsOneLinkToTheDestination()
+    {
+        Assert.Equal("Link:https://a.b->https://c.d", Render("[https://a.b](https://c.d)"));
+    }
+
+    [Fact]
+    public void ANestedParenDestinationThatIsRefusedIsTheLabelOnly()
+    {
+        Assert.Equal("Normal:x", Render("[x](javascript:alert(1))"));
+    }
+
+    // Balanced to the end of the text and still one short: not a Markdown
+    // link, so the bare URL inside it is found instead.
+    [Fact]
+    public void AnUnclosedNestedParenIsNotAMarkdownLink()
+    {
+        Assert.Equal("Normal:[x]( | Link:https://a.b/(c->https://a.b/(c", Render("[x](https://a.b/(c"));
+    }
+
+    // A space inside <…> would be legal CommonMark, but the URL it names has
+    // whitespace in it and the launcher refuses that, so the label is text.
+    [Fact]
+    public void ASpaceInsideAnAngleDestinationIsTheLabelOnly()
+    {
+        Assert.Equal("Normal:x", Render("[x](<https://a.b/c d>)"));
+    }
+
+    // Spans do not nest: emphasis wins over the link inside it. No text lost.
+    [Fact]
+    public void ALinkInsideBoldIsBoldText()
+    {
+        Assert.Equal("Bold:[x](https://a.b)", Render("**[x](https://a.b)**"));
+    }
+
+    [Fact]
+    public void AStarInsideABareUrlDoesNotPairUp()
+    {
+        Assert.Equal("Link:http://a.b/x*y*z->http://a.b/x*y*z", Render("http://a.b/x*y*z"));
+    }
+
+    [Fact]
+    public void TwoUrlsSeparatedByACommaAreTwoLinks()
+    {
+        Assert.Equal("Link:https://a.b/x->https://a.b/x | Normal:,  | Link:https://c.d/y->https://c.d/y",
+            Render("https://a.b/x, https://c.d/y"));
+    }
+
+    [Fact]
+    public void ATrailingFullStopAtTheEndOfTheTextIsTrimmed()
+    {
+        Assert.Equal("Link:https://a.b->https://a.b | Normal:.", Render("https://a.b."));
+    }
+
+    // An empty label is not a Markdown link, so what is left is a bare URL
+    // with a ")" the URL never opened.
+    [Fact]
+    public void AnEmptyLabelLeavesTheBareUrl()
+    {
+        Assert.Equal("Normal:[]( | Link:https://a.b->https://a.b | Normal:)", Render("[](https://a.b)"));
+    }
+
+    // An autolink with no closing bracket is a "<" and a bare URL.
+    [Fact]
+    public void AnUnclosedAutolinkIsABareUrl()
+    {
+        Assert.Equal("Normal:< | Link:https://a.b->https://a.b", Render("<https://a.b"));
+    }
+
+    // A reply read while it is still being written. None of these may throw,
+    // and none may lose a character. The first one does produce a link to
+    // "https://exa" for as long as that is all there is — accepted (PM, CB-284):
+    // it is a valid http URL, and the next rebuild of the bubble corrects it.
+    [Theory]
+    [InlineData("[label](https://exa")]
+    [InlineData("[label](")]
+    [InlineData("[label]")]
+    [InlineData("[label")]
+    [InlineData("<https://")]
+    [InlineData("https:/")]
+    [InlineData("h")]
+    public void AStreamedPartialNeverThrowsOrLosesText(string text)
+    {
+        Assert.Equal(text, string.Concat(ChatMarkdown.Inline(text).Select(s => s.Text)));
+    }
+
+    // Where no Markdown delimiter is consumed, the spans put back together
+    // are exactly the input: the trim boundary neither drops nor duplicates.
+    [Theory]
+    [InlineData("see https://a.b/x.")]
+    [InlineData("(https://a.b/x)")]
+    [InlineData("\"https://a.b/x\"")]
+    [InlineData("https://a.b/x).")]
+    [InlineData("https://a.b/x,")]
+    [InlineData("https://a.b/x!?")]
+    [InlineData("(see https://en.wikipedia.org/wiki/A_(b)).")]
+    [InlineData("a https://a.b, b https://c.d; c")]
+    public void BareUrlTextRoundTrips(string text)
+    {
+        var spans = ChatMarkdown.Inline(text);
+
+        Assert.Equal(text, string.Concat(spans.Select(s => s.Text)));
+        Assert.Contains(spans, s => s.Style == ChatMarkdown.MdStyle.Link);
+    }
 }
