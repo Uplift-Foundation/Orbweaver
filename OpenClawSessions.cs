@@ -1055,6 +1055,91 @@ namespace Orbweaver
             _snapshot = sessions;
         }
 
+        // CB-276: whether the last thing the poll published is still a live
+        // answer. Set where the poll publishes a listing, cleared where the
+        // snapshot is cleared on a disconnect and on a restart: a listing that
+        // outlived its connection says nothing about what the gateway lists now.
+        private static volatile bool _listingCurrent;
+
+        // Test seam for the flag above; the three places that move it are inside
+        // [ExcludeFromCodeCoverage] poll and restart methods.
+        internal static void SetListingCurrentForTests(bool current)
+        {
+            _listingCurrent = current;
+        }
+
+        // Every key the gateway listed on its last poll, or null when this source
+        // cannot say right now (OpenClaw switched off, or no sessions.list parsed
+        // on the current connection).
+        //
+        // Not the snapshot, and not a view of it. Parse drops a session that has
+        // been quiet for longer than the "active within" window, so a hidden
+        // conversation that went quiet would read as ended here and come back
+        // visible on its next message. _natives is filled for every row the
+        // gateway listed before that filter, and Parse leaves out only an
+        // archived row, which the gateway itself calls over. Null is the answer
+        // for "I do not know", never an empty set: an empty set says the gateway
+        // answered and lists nothing, which is a claim a hide gets pruned on.
+        internal static IReadOnlySet<string>? ListedKeys()
+        {
+            if (!OrbweaverSettings.OpenClawEnabled || !_listingCurrent) return null;
+
+            lock (Gate)
+            {
+                // A page the gateway cut short lists fewer sessions than exist, and
+                // every key past the cut would read as ended.
+                if (!_listingComplete) return null;
+
+                return new HashSet<string>(_natives.Keys, StringComparer.Ordinal);
+            }
+        }
+
+        // Whether the last Parse saw the whole roster, set beside _natives.
+        private static bool _listingComplete;
+
+        // The gateway's page size when a sessions.list request carries no limit.
+        // Read from the installed gateway (openclaw 2026.11.2) at
+        // dist/session-utils-list-*.mjs, where the handler passes defaultLimit: 100
+        // to selectSessionEntries; the schema's own comment says omitted Gateway
+        // RPC calls "use a bounded default". PollAsync sends no limit, so this is
+        // the page size every poll gets. Not read from a live gateway, and another
+        // version may differ, which is why the explicit fields below come first.
+        internal const int DefaultPageSize = 100;
+
+        // Whether a sessions.list payload is the whole roster (CB-276).
+        //
+        // The same response carries hasMore, totalCount, limitApplied and
+        // nextOffset (read from the same handler's result object), and any one of
+        // them saying "more" makes the page partial. A gateway that sends none of
+        // them cannot be asked, so a page as long as the default is read as
+        // possibly cut: that errs toward "cannot say", the only direction that
+        // cannot delete a hide. A payload that states hasMore: false is believed
+        // even at exactly the default length, since that is the gateway
+        // declaring it.
+        internal static bool ListingIsComplete(JsonElement payload, int rows)
+        {
+            var declared = false;
+
+            if (payload.ValueKind == JsonValueKind.Object)
+            {
+                if (payload.TryGetProperty("hasMore", out var more)
+                    && more.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    if (more.ValueKind == JsonValueKind.True) return false;
+                    declared = true;
+                }
+
+                if (payload.TryGetProperty("totalCount", out var total)
+                    && total.ValueKind == JsonValueKind.Number && total.TryGetInt64(out var n))
+                {
+                    if (n > rows) return false;
+                    declared = true;
+                }
+            }
+
+            return declared || rows < DefaultPageSize;
+        }
+
         // Accept whatever certificate the gateway is now serving.
         //
         // Clearing the pin *and* the rejection together, rather than letting the
@@ -1098,6 +1183,7 @@ namespace Orbweaver
                 _cts = null;
                 _supervisor = null;
                 _snapshot = Array.Empty<Session>();
+                _listingCurrent = false;
                 Running.Clear();
                 ClearPendingLocked();
 
@@ -1273,6 +1359,7 @@ namespace Orbweaver
                 // Orbs go the moment the connection does: an orb for a session
                 // we can no longer see the state of is a lie that pulses.
                 _snapshot = Array.Empty<Session>();
+                _listingCurrent = false;
 
                 try { await Task.Delay(backoff, ct); } catch { break; }
                 backoff = TimeSpan.FromSeconds(Math.Min(60, backoff.TotalSeconds * 2));
@@ -1457,6 +1544,7 @@ namespace Orbweaver
                 PurgeUnlistedApprovals();
 
                 _snapshot = sessions;
+                _listingCurrent = true;
                 Report(total == sessions.Count
                     ? $"Connected — {sessions.Count} session{(sessions.Count == 1 ? "" : "s")}."
                     : $"Connected — showing {sessions.Count} of {total}. The rest have been quiet "
@@ -1729,6 +1817,7 @@ namespace Orbweaver
                 _roomColours = roomColours;
                 _deliveries = deliveries;
                 _natives = natives;
+                _listingComplete = ListingIsComplete(payload, list.GetArrayLength());
                 _runStates = runStates;
                 _runStatuses = runStatuses;
                 _hiddenByCluster = hiddenByCluster;

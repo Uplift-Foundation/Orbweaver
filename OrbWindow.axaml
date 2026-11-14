@@ -203,8 +203,17 @@
                      next hook event; End is the one that is not, which is why
                      it is worded as what it does to the session rather than to
                      the orb. -->
+                <!-- CB-276: unlike Dismiss, always offered and never undone by
+                     the session's next event. Every source can be hidden,
+                     rooms included, because a hide is a settings entry keyed
+                     on the session id and needs no file or pid. The header is
+                     rewritten on Opening for a lead ("...and its team"). -->
+                <MenuItem x:Name="HideItem"
+                          Header="Hide this orb"
+                          ToolTip.Tip="Stays hidden until you restore it in Settings → Hidden orbs. The session keeps running."
+                          Click="Hide_Click"/>
                 <MenuItem x:Name="DismissItem"
-                          Header="Dismiss this orb"
+                          Header="Dismiss until next activity"
                           IsVisible="False"
                           Click="Dismiss_Click"/>
                 <!-- Header, tooltip and IsEnabled are all rewritten on Opening

@@ -63,6 +63,8 @@ the stack.
 
 The slider lives in `orbSize` in `settings.json` as a multiplier over the shipped orb, and each orb's own size in `orbSizes`, keyed by the same per-agent key the right-click **Sound** menu uses, so two teammates in one directory can be sized apart. A hand-edited value outside the range is pinned back into it, the same as `chatTextScale`. An orb that had a size chosen before Claude Code named its session keeps that size when the name arrives.
 
+**You can hide an orb without ending its session.** Right-click an orb → **Hide this orb** (a team lead's says **Hide this orb and its team**, and hides its members with it) takes it off the screen and out of the sounds, whichever kind of session it is: a local CLI, a background job, an OpenClaw session or room, a session on another machine, or one in the cloud. The session keeps running and still appears in the tray menu, marked *(hidden)*. This is not the same as **Dismiss until next activity**, which clears the orb only until the session's next event; a hidden orb stays hidden until you bring it back. Settings → **Hidden orbs** lists each one with its title, kind, agent or folder and when it was hidden, and has **Restore** per row and **Restore all**; an orb comes back where it was left. An entry goes by itself once its source reports that the session has ended, but never because a source is off, asleep or unreachable. The list lives in `hiddenOrbs` in `settings.json`, keyed by session id.
+
 When orbs of different sizes are arranged, the shape is laid out for the largest one present and each orb is centred in its slot. Nothing can overlap that way, at the cost of small orbs sitting as far apart as the biggest one does. The size is the orb's alone: team members are still drawn smaller than their lead at every size, and the account usage orbs are not sized by this setting at all.
 
 **Why Windows stops at 70%.** Windows will not let a top-level window be shorter than 39 pixels at 100% scaling, and the strip that floor adds below a smaller orb is not click-through: measured on a real Windows 11 machine, it took clicks, right-clicks and hover itself and passed none of them to whatever was behind it. 70% is the smallest size whose window clears the floor, so the slider and the menu simply do not offer anything below it there.
@@ -838,7 +840,7 @@ An orb goes away when any of six things happens.
    is what keeps a Ctrl+C'd prompt — or a `/clear`ed one — from sitting on
    screen forever.
 
-5. **You dismissed it** — right-click → "Dismiss this orb", which deletes the
+5. **You dismissed it** — right-click → "Dismiss until next activity", which deletes the
    status file the way rule 1 does. Not permanent by nature: the session is
    untouched, so its next hook event writes the file again and the orb comes
    back. That is the point of it being separate from "End this session", which

@@ -690,6 +690,9 @@ namespace Orbweaver
 
             root.Children.Add(Group("orbs", "Orbs", Card(OrbsRows())));
 
+            // CB-276: sessions the user hid from an orb's menu, with the way back.
+            root.Children.Add(Group("hidden-orbs", "Hidden orbs", Card(HiddenOrbsRows())));
+
             root.Children.Add(Group("orb-click", "Clicking an orb", Card(ClickRows())));
 
             root.Children.Add(Group("auto-organize", "Auto-organize", Card(AutoOrganizeRows())));
@@ -2154,6 +2157,10 @@ namespace Orbweaver
         // timer serving at most two labels rather than a timer each.
         internal void OnStatusTick(object? sender, EventArgs e)
         {
+            // CB-276: independent of which sections are expanded, because a
+            // collapsed group still has to be right when it is opened.
+            if (HiddenOrbsKey() != _hiddenOrbsKey) Rebuild();
+
             if (_openClawStatus is not null)
             {
                 var gateway = OpenClawSessions.StatusText;
@@ -2595,6 +2602,97 @@ namespace Orbweaver
         private readonly List<(string PhoneId, TextBlock Label)> _phoneStatus = new();
 
         internal TextBlock? RelayStatusLabel => _relayStatus;
+
+        // CB-276: the ids this window last drew, joined. OnStatusTick compares
+        // it with what settings holds now, so a hide from an orb menu or a prune
+        // shows up in an open window without the user reopening it. A joined
+        // string rather than a count: restoring one and hiding another between
+        // two ticks leaves the count unchanged and the list wrong.
+        private string _hiddenOrbsKey = HiddenOrbsKey();
+
+        private static string HiddenOrbsKey() =>
+            string.Join("\n", OrbweaverSettings.HiddenOrbList().Select(o => o.SessionId));
+
+        internal Control[] HiddenOrbsRows()
+        {
+            _hiddenOrbsKey = HiddenOrbsKey();
+            var list = OrbweaverSettings.HiddenOrbList();
+            var rows = new List<Control>();
+
+            if (list.Count == 0)
+            {
+                rows.Add(NoteRow(new TextBlock
+                {
+                    Text = "No hidden orbs",
+                    FontSize = 11,
+                    Opacity = 0.55,
+                    TextWrapping = TextWrapping.Wrap
+                }));
+                return rows.ToArray();
+            }
+
+            var now = DateTime.UtcNow;
+            foreach (var orb in list) rows.Add(HiddenOrbRow(orb, now));
+
+            var all = new Button { Content = "Restore all", Name = "RestoreAllHiddenOrbs" };
+            all.Click += (_, _) => OnRestoreAllHiddenOrbsClicked();
+            rows.Add(Row("Restore every hidden orb", all));
+            return rows.ToArray();
+        }
+
+        internal Control HiddenOrbRow(HiddenOrb orb, DateTime nowUtc)
+        {
+            var right = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                Spacing = 8,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            right.Children.Add(new TextBlock
+            {
+                Text = orb.Source,
+                Name = "HiddenOrbSource:" + orb.SessionId,
+                FontSize = 11,
+                FontWeight = FontWeight.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            var when = HiddenOrbs.WhenText(orb.HiddenAtUtc, nowUtc);
+            var detail = string.IsNullOrEmpty(when) ? orb.Detail
+                : string.IsNullOrEmpty(orb.Detail) ? when : $"{orb.Detail} · {when}";
+            right.Children.Add(new TextBlock
+            {
+                Text = detail,
+                Name = "HiddenOrbDetail:" + orb.SessionId,
+                FontSize = 11,
+                Opacity = 0.55,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            var restore = new Button { Content = "Restore", Name = "RestoreHiddenOrb:" + orb.SessionId };
+            var id = orb.SessionId;
+            restore.Click += (_, _) => OnRestoreHiddenOrbClicked(id);
+            right.Children.Add(restore);
+
+            var row = Row(orb.Title, right);
+            ((SettingsRow)row).SearchText = SettingsFilter.TextOf(
+                $"hidden {orb.Title} {orb.Source} {orb.Detail}", null);
+            return row;
+        }
+
+        // Through the manager when there is one, so the rescan that brings the
+        // orb back is scheduled; settings alone when there is not.
+        internal void OnRestoreHiddenOrbClicked(string sessionId)
+        {
+            if (SessionManager.Instance is { } manager) manager.RestoreHiddenOrb(sessionId);
+            else OrbweaverSettings.RestoreHiddenOrb(sessionId);
+            Rebuild();
+        }
+
+        internal void OnRestoreAllHiddenOrbsClicked()
+        {
+            if (SessionManager.Instance is { } manager) manager.RestoreAllHiddenOrbs();
+            else OrbweaverSettings.RestoreAllHiddenOrbs();
+            Rebuild();
+        }
 
         internal Control[] PairedPhonesRows()
         {
