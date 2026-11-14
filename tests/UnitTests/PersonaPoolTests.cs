@@ -81,6 +81,12 @@ public class PersonaPoolTests
     [InlineData("atlas-", new[] { "atlas-" })]
     [InlineData("-2", new[] { "-2" })]                       // nothing before the suffix
     [InlineData("juno-abernathy", new[] { "juno-abernathy" })]
+    [InlineData("atlas-2-3", new[] { "atlas-2-3", "atlas-2" })]  // strips once, never recursively
+    [InlineData("atlas-02", new[] { "atlas-02", "atlas" })]      // leading zeros are still digits
+    [InlineData("2", new[] { "2" })]                              // all digits: no name before a separator
+    [InlineData("12", new[] { "12" })]
+    [InlineData("atlas-٢", new[] { "atlas-٢" })]        // only ASCII digits count
+    [InlineData("Atlas-2", new[] { "Atlas-2", "Atlas" })]         // case is kept; the filesystem decides matching
     [InlineData("atlas_", new[] { "atlas_" })]
     [InlineData("atlas_x", new[] { "atlas_x" })]
     [InlineData("_2", new[] { "_2" })]                       // nothing before the suffix to be an instance of
