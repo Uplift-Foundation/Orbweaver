@@ -133,6 +133,89 @@ public class HiddenOrbSeamsTests : IDisposable
         Assert.Empty(listed!);
     }
 
+    // A roster of `rows` live sessions with whatever else the gateway put on the
+    // response (hasMore, totalCount, ...) written verbatim after the array.
+    private static string Page(int rows, string extra = "")
+    {
+        var recent = Ms(Now.AddSeconds(-5));
+        var items = string.Join(",", Enumerable.Range(0, rows).Select(i =>
+            "{\"key\":\"agent:alpha:discord:direct:" + i + "\",\"chatType\":\"direct\",\"lastActivityAt\":" + recent + "}"));
+        return "{\"sessions\":[" + items + "]" + (extra.Length == 0 ? "" : "," + extra) + "}";
+    }
+
+    private static IReadOnlySet<string>? ListedAfter(string json)
+    {
+        OrbweaverSettings.OpenClawEnabled = true;
+        ParseListing(json);
+        OpenClawSessions.SetListingCurrentForTests(true);
+        return OpenClawSessions.ListedKeys();
+    }
+
+    // The gateway's default page is 100 rows when a request carries no limit,
+    // and PollAsync sends none. Every key past a cut page would read as ended and
+    // a hide on it would be pruned.
+    [Fact]
+    public void OpenClawCannotSayWhenTheGatewayReportsMoreRowsThanItSent()
+    {
+        Assert.Null(ListedAfter(Page(100, "\"hasMore\":true,\"totalCount\":140,\"limitApplied\":100,\"nextOffset\":100")));
+    }
+
+    [Fact]
+    public void OpenClawCannotSayOnHasMoreAloneOrOnATotalCountAloneAboveTheRowCount()
+    {
+        Assert.Null(ListedAfter(Page(3, "\"hasMore\":true")));
+        Assert.Null(ListedAfter(Page(3, "\"totalCount\":4")));
+        // Any one signal of truncation wins over a reassuring one beside it.
+        Assert.Null(ListedAfter(Page(3, "\"hasMore\":false,\"totalCount\":4")));
+        Assert.Null(ListedAfter(Page(3, "\"hasMore\":true,\"totalCount\":3")));
+    }
+
+    [Fact]
+    public void OpenClawCannotSayWhenAnOlderGatewayDeclaresNothingAndTheRowCountReachesTheDefaultPage()
+    {
+        Assert.Null(ListedAfter(Page(OpenClawSessions.DefaultPageSize)));
+    }
+
+    [Fact]
+    public void OpenClawControlsTheSamePageBelowTheCapOrDeclaredCompleteIsListed()
+    {
+        // These are the cases the three above must differ from: if the seam
+        // answered cannot-say for every page, these would fail.
+        Assert.Equal(OpenClawSessions.DefaultPageSize - 1,
+            ListedAfter(Page(OpenClawSessions.DefaultPageSize - 1))!.Count);
+        Assert.Equal(OpenClawSessions.DefaultPageSize,
+            ListedAfter(Page(OpenClawSessions.DefaultPageSize, "\"hasMore\":false,\"totalCount\":100"))!.Count);
+        Assert.Equal(3, ListedAfter(Page(3, "\"hasMore\":false,\"totalCount\":3"))!.Count);
+        Assert.Equal(3, ListedAfter(Page(3, "\"totalCount\":3"))!.Count);
+    }
+
+    [Fact]
+    public void OpenClawCompletenessIgnoresFieldsOfTheWrongType()
+    {
+        // A hasMore that is not a boolean and a totalCount that is not a number
+        // declare nothing, so the row count decides.
+        Assert.Equal(3, ListedAfter(Page(3, "\"hasMore\":\"yes\",\"totalCount\":\"many\""))!.Count);
+        Assert.Null(ListedAfter(Page(OpenClawSessions.DefaultPageSize, "\"hasMore\":\"no\",\"totalCount\":\"many\"")));
+        // A totalCount too large for a long is not a number the seam can compare.
+        Assert.Null(ListedAfter(Page(OpenClawSessions.DefaultPageSize, "\"totalCount\":1e30")));
+    }
+
+    [Fact]
+    public void OpenClawAnArrayPayloadDeclaresNothingSoOnlyTheRowCountDecides()
+    {
+        Assert.True(OpenClawSessions.ListingIsComplete(JsonDocument.Parse("[]").RootElement, 3));
+        Assert.False(OpenClawSessions.ListingIsComplete(JsonDocument.Parse("[]").RootElement,
+            OpenClawSessions.DefaultPageSize));
+    }
+
+    [Fact]
+    public void OpenClawAPartialPageIsNotForgivenByTheNextCompleteOneLeavingNothingBehind()
+    {
+        Assert.Null(ListedAfter(Page(100, "\"hasMore\":true")));
+        // The next poll is whole: the answer follows the latest page, not the worst.
+        Assert.NotNull(ListedAfter(Page(5, "\"hasMore\":false")));
+    }
+
     // --- cloud ---------------------------------------------------------------
 
     private const string RootA = "/Users/x/.claude";
