@@ -220,15 +220,22 @@ namespace Orbweaver
 
         // --- who may ask -------------------------------------------------------------
 
-        // The PeerAllowed seam. Over this transport the question is already
-        // answered by the time a message arrives: nothing reaches DeliverAsync
-        // that did not complete a TLS handshake presenting a certificate we
-        // pinned when somebody typed a pairing code.
+        // The PeerAllowed seam. Over this transport the question is mostly
+        // answered by the time a message arrives: a connection we dialled
+        // checked the far certificate against its pin before it was adopted.
         //
-        // So this is a connection check rather than a name check — which is the
-        // whole difference between a guard and a boundary, and the reason the
-        // hard-coded prefix test was worth replacing rather than porting.
-        internal bool MayAsk(string machine) => _link.IsConnected(machine);
+        // An inbound one did not. Its TLS handshake accepts any certificate,
+        // and the pin is judged only when its hello arrives — until then it is
+        // listed as connected under an "(inbound …)" name. Reading this as
+        // "connected means pinned" was CB-344: anything that completed TLS
+        // could ask. PeerLink now discards a stranger's frames before they get
+        // here, and this refuses the unnamed entry as well, so the one
+        // assumption is not the whole defence.
+        //
+        // Otherwise it stays a connection check rather than a name check —
+        // the difference between a guard and a boundary.
+        internal bool MayAsk(string machine) =>
+            !PeerLink.IsUnnamed(machine) && _link.IsConnected(machine);
 
         public void Dispose() => _link.Dispose();
     }
