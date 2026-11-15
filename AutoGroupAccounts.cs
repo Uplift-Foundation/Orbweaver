@@ -24,9 +24,11 @@ namespace Orbweaver
             _read = read ?? ReadFile;
         }
 
-        private static string? ReadFile(string path)
+        // `readAll` is a seam so the failure path is a test with a reader that throws,
+        // rather than a permission trick that behaves differently per platform.
+        internal static string? ReadFile(string path, Func<string, string>? readAll = null)
         {
-            try { return File.Exists(path) ? File.ReadAllText(path) : null; }
+            try { return File.Exists(path) ? (readAll ?? File.ReadAllText)(path) : null; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
         }
 

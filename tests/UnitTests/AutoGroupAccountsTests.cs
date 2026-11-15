@@ -156,31 +156,23 @@ public class AutoGroupAccountsTests
         Assert.Equal("C:/Users/ann/.codex", AutoGroupAccounts.HomeOf(SessionSource.Codex,
             @"C:\Users\ann/.codex\sessions\2026\11\14\rollout-1-x.jsonl"));
 
-    // File.Exists is true and the read throws: the default reader's catch. Needs a
-    // permission bit, so it cannot run on Windows (named in the PR body).
-    [Fact]
-    public void AnExistingButUnreadableIdentityFileIsUnknownNotAThrow()
+    // The default reader's catch, reached through its seam: the file exists and the read throws.
+    [Theory]
+    [InlineData("io")]
+    [InlineData("denied")]
+    public void AnExistingFileWhoseReadThrowsIsUnknownNotAThrow(string kind)
     {
-        if (OperatingSystem.IsWindows()) return;
-
-        var home = Path.Combine(Path.GetTempPath(), "cb281-acct-" + Guid.NewGuid());
-        var dir = Directory.CreateDirectory(Path.Combine(home, ".claude-u")).FullName;
-        var file = Path.Combine(dir, ".claude.json");
-        File.WriteAllText(file, Claude("u@example.org"));
+        var file = Path.Combine(Path.GetTempPath(), "cb281-read-" + Guid.NewGuid());
+        File.WriteAllText(file, "x");
         try
         {
-            File.SetUnixFileMode(file, UnixFileMode.None);
-            if (new FileInfo(file).OpenRead() is { } probe) { probe.Dispose(); return; } // running as root: cannot make it unreadable
+            Assert.Null(AutoGroupAccounts.ReadFile(file, _ => kind == "io"
+                ? throw new IOException("busy")
+                : throw new UnauthorizedAccessException("no")));
+            Assert.Equal("x", AutoGroupAccounts.ReadFile(file));
+            Assert.Null(AutoGroupAccounts.ReadFile(file + ".missing"));
         }
-        catch (UnauthorizedAccessException)
-        {
-            Assert.Null(new AutoGroupAccounts(home).Of(SessionSource.ClaudeCode, dir));
-        }
-        finally
-        {
-            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            Directory.Delete(home, true);
-        }
+        finally { File.Delete(file); }
     }
 
     [Fact]
