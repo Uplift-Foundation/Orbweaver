@@ -433,14 +433,19 @@ namespace Orbweaver.Tests
         [Fact]
         public void PinningAHiddenHeartbeatListsItBeforeTheNextPoll()
         {
-            var (_, listed) = Poll("""{"key":"agent:a:main","classification":"main","isMain":true,"lastActivityAt":1}""", hb: H);
+            var (_, listed) = Poll("""
+                {"key":"agent:a:main","classification":"main","isMain":true,"lastActivityAt":1},
+                {"key":"agent:b:main","classification":"main","isMain":true,"lastActivityAt":1}
+                """, hb: H);
             OpenClawSessions.SetSnapshotForTests(listed);
             Assert.Empty(Build(listed, H, W, W));
 
             OpenClawSessions.ApplyPinned("agent:a:main", true);
 
-            Assert.Single(Build(OpenClawSessions.ListedSnapshot()!, H, W, W));
-            Assert.True(OpenClawSessions.Snapshot().Single().GatewayPinned);
+            // Only the pinned key is listed; its unpinned neighbour is not.
+            Assert.Equal("openclaw:agent:a:main", Assert.Single(Build(OpenClawSessions.ListedSnapshot()!, H, W, W)).OrbSessionId);
+            Assert.True(OpenClawSessions.Snapshot().Single(s => s.Key == "agent:a:main").GatewayPinned);
+            Assert.False(OpenClawSessions.Snapshot().Single(s => s.Key == "agent:b:main").GatewayPinned);
         }
 
         [Fact]
@@ -513,6 +518,27 @@ namespace Orbweaver.Tests
 
             Assert.Null(OpenClawSessions.LastConnectFailure());
             Assert.NotNull(OpenClawSessions.ListedSnapshot());
+        }
+
+        // The control: a listing landing with no failure ever recorded leaves it null.
+        [Fact]
+        public void ALandedListingWithNoFailureRecordedLeavesItNull()
+        {
+            OpenClawSessions.SetLastConnectFailureForTests(null);
+            OpenClawSessions.ListingLanded();
+
+            Assert.Null(OpenClawSessions.LastConnectFailure());
+        }
+
+        // A key with no agent segment (hand-built; the gateway always sends one)
+        // still gets a row, named by the key.
+        [Fact]
+        public void AKeyWithNoAgentSegmentIsItsOwnAgent()
+        {
+            var odd = new OpenClawSessions.Session("loose-key", "Loose", "", "idle", Now, null, SessionKind.Unknown, false);
+            var row = Assert.Single(Build(new[] { odd }));
+
+            Assert.Equal(new[] { "loose-key" }, row.AgentIds);
         }
 
         [Fact]
@@ -671,6 +697,26 @@ namespace Orbweaver.Tests
             Assert.DoesNotContain(mine.OrbSessionId, effective);
             Assert.All(mine.MemberKeys, k => Assert.DoesNotContain("openclaw:" + k, effective));
             Assert.Contains(other.OrbSessionId, OrbweaverSettings.HiddenOrbIds());
+        }
+
+        // The manager arm of the restore: SessionManager.RestoreHiddenOrb removes the
+        // entry (and schedules a scan, which a scratch manager with no Start() never runs).
+        [Fact]
+        public void RestoreHiddenViaAManagerRemovesTheEntry()
+        {
+            OrbweaverSettings.RestoreAllHiddenOrbs();
+            var dir = Path.Combine(Path.GetTempPath(), "cb329-mgr-" + Guid.NewGuid());
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var manager = new SessionManager(dir);
+                OrbweaverSettings.HideOrb(new HiddenOrb("openclaw:agent:a:main", Now, "A", "OpenClaw", ""));
+
+                OpenClawSessions.RestoreHiddenVia(manager, "openclaw:agent:a:main");
+
+                Assert.DoesNotContain("openclaw:agent:a:main", OrbweaverSettings.HiddenOrbIds());
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
         }
 
         [Fact]
