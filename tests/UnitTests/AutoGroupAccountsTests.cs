@@ -166,9 +166,13 @@ public class AutoGroupAccountsTests
         File.WriteAllText(file, "x");
         try
         {
-            Assert.Null(AutoGroupAccounts.ReadFile(file, _ => kind == "io"
-                ? throw new IOException("busy")
-                : throw new UnauthorizedAccessException("no")));
+            var calls = 0;
+            Assert.Null(AutoGroupAccounts.ReadFile(file, _ =>
+            {
+                calls++;
+                return kind == "io" ? throw new IOException("busy") : throw new UnauthorizedAccessException("no");
+            }));
+            Assert.Equal(1, calls);   // the throw happened inside the try; remove the catch and this test fails
             Assert.Equal("x", AutoGroupAccounts.ReadFile(file));
             Assert.Null(AutoGroupAccounts.ReadFile(file + ".missing"));
         }
