@@ -61,8 +61,19 @@ public class ChatMarkdownTableTests
     [InlineData(@"| a \|", 1)]
     [InlineData("| a |  | c |", 3)]
     [InlineData("plain", 1)]
+    [InlineData("||a", 2)]
     public void CellCount(string row, int expected) =>
         Assert.Equal(expected, ChatMarkdown.CellCount(row));
+
+    [Theory]
+    [InlineData("| a", true)]
+    [InlineData("a | b", true)]
+    [InlineData(@"a \| b", false)]
+    [InlineData(@"\|", false)]
+    [InlineData("plain", false)]
+    [InlineData("", false)]
+    public void HasUnescapedPipe(string line, bool expected) =>
+        Assert.Equal(expected, ChatMarkdown.HasUnescapedPipe(line));
 
     // --- box-drawn --------------------------------------------------------
 

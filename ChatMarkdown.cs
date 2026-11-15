@@ -269,7 +269,7 @@ namespace Orbweaver
             return cells;
         }
 
-        private static bool HasUnescapedPipe(string line)
+        internal static bool HasUnescapedPipe(string line)
         {
             for (var k = 0; k < line.Length; k++)
                 if (line[k] == '|' && (k == 0 || line[k - 1] != '\\')) return true;
