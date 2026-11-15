@@ -11,6 +11,8 @@ namespace Orbweaver.Tests;
 // ComputeGroups), drawn beside one hand-made group so the two read as the same
 // kind of thing. Same technique as GroupBackdropScreenshots: each backdrop is a
 // window, a circle stands in for each orb at its real radius.
+// COMPOSED, NOT LIVE: this is not SessionManager regrouping real sessions
+// (SessionManagerAutoGroupTests covers that); it shows how the groups look.
 [Collection("Settings")]
 public class AutoGroupOrbScreenshots : IDisposable
 {

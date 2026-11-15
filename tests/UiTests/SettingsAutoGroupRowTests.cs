@@ -13,8 +13,13 @@ namespace Orbweaver.Tests;
 public class SettingsAutoGroupRowTests : IDisposable
 {
     private readonly AutoGroupBy _saved = OrbweaverSettings.AutoGroupBy;
+    private readonly Action _reapply = SettingsWindow.ReapplyAutoGroups;
 
-    public void Dispose() => OrbweaverSettings.AutoGroupBy = _saved;
+    public void Dispose()
+    {
+        OrbweaverSettings.AutoGroupBy = _saved;
+        SettingsWindow.ReapplyAutoGroups = _reapply;
+    }
 
     private static SettingsWindow NewWindow() =>
         (SettingsWindow)typeof(SettingsWindow).GetConstructor(
@@ -98,5 +103,31 @@ public class SettingsAutoGroupRowTests : IDisposable
 
         foreach (var word in new[] { "group", "directory", "repo", "CLI", "profile", "account" })
             Assert.True(SettingsFilter.Matches(word, row.SearchText), word);
+    }
+
+    [AvaloniaFact]
+    public void AChangeReachesTheManagerOnceAndAReselectDoesNot()
+    {
+        OrbweaverSettings.AutoGroupBy = AutoGroupBy.Off;
+        var calls = 0;
+        SettingsWindow.ReapplyAutoGroups = () => calls++;
+        var combo = (ComboBox)NewWindow().AutoGroupPicker();
+        Assert.Equal(0, calls);
+
+        combo.SelectedIndex = 2;
+        Assert.Equal(1, calls);
+
+        NewWindow().OnAutoGroupByChanged(AutoGroupBy.Cli);
+        Assert.Equal(1, calls);
+    }
+
+    [AvaloniaFact]
+    public void TheDefaultHookIsSafeWithNoManager()
+    {
+        OrbweaverSettings.AutoGroupBy = AutoGroupBy.Off;
+
+        NewWindow().OnAutoGroupByChanged(AutoGroupBy.Directory);
+
+        Assert.Equal(AutoGroupBy.Directory, OrbweaverSettings.AutoGroupBy);
     }
 }

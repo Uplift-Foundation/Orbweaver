@@ -1055,8 +1055,14 @@ namespace Orbweaver
         {
             if (by == OrbweaverSettings.AutoGroupBy) return;
             OrbweaverSettings.AutoGroupBy = by;
-            SessionManager.Instance?.ReapplyAutoGroups();
+            ReapplyAutoGroups();
         }
+
+        // The seam a test replaces to see that a change reaches the manager
+        // exactly once: SessionManager.Instance is null headless, so the real
+        // call proves nothing there.
+        internal static Action ReapplyAutoGroups { get; set; } =
+            () => SessionManager.Instance?.ReapplyAutoGroups();
 
         private Control[] AutoOrganizeRows()
         {
