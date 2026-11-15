@@ -252,8 +252,8 @@ namespace Orbweaver
         // same way the status line is a set number of lines. Sized so the
         // dialog with everything available still fits a 720 px work area
         // (NewChatWindowHeightTests pins the bound).
-        internal const double ExistingListHeight = 220;
-        internal const double ExistingRowHeight = 44;
+        internal const double ExistingListHeight = 124;
+        internal const double ExistingRowHeight = 40;
         private const double ModeReasonHeight = 16;
 
         private readonly RadioButton _newModeRadio = new()
