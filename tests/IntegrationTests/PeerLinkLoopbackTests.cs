@@ -578,9 +578,10 @@ public class PeerLinkLoopbackTests
     // code FAIL here with a TimeoutException instead of hanging the run.
 
     private PeerLink BoundedServer(
-        List<PeerProtocol.PeerMessage> got, TimeSpan bound, Func<CancellationToken, Task<X509Certificate2>>? cert = null) =>
+        List<PeerProtocol.PeerMessage> got, TimeSpan bound, Func<CancellationToken, Task<X509Certificate2>>? cert = null,
+        Action<PeerProtocol.PeerMessage>? seen = null) =>
         new(new PeerLink.Seams(
-            Deliver: (_, m) => { got.Add(m); return Task.CompletedTask; },
+            Deliver: (_, m) => { lock (got) got.Add(m); seen?.Invoke(m); return Task.CompletedTask; },
             KnownPeer: machine => new PeerIdentity.Peer(PeerIdentity.PinOf(Cert.Value), machine),
             OwnCertificate: cert ?? (_ => Task.FromResult(Cert.Value))))
         {
@@ -646,8 +647,10 @@ public class PeerLinkLoopbackTests
         var pin = PeerIdentity.PinOf(Cert.Value);
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        var reachedServer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var server = BoundedServer(new(), TimeSpan.FromSeconds(3),
-            _ => Task.Delay(1000).ContinueWith(_ => Cert.Value));
+            _ => Task.Delay(1000).ContinueWith(_ => Cert.Value),
+            m => { if (m.Id == "from-client") reachedServer.TrySetResult(); });
 
         // Matched by id: the link may deliver other frames of its own first.
         using var client = new PeerLink(new PeerLink.Seams(
@@ -670,6 +673,10 @@ public class PeerLinkLoopbackTests
         Assert.True(server.IsConnected(MachineNames.Mine()));
         Assert.True(await server.SendAsync(MachineNames.Mine(), PeerProtocol.Message(PeerProtocol.Window, "from-server")));
         await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // And the other way: the server's pump is still reading.
+        Assert.True(await client.SendAsync("loopback", PeerProtocol.Message(PeerProtocol.Window, "from-client")));
+        await reachedServer.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     // Bound shorter than the server's own setup delay: must fail to pair, so
