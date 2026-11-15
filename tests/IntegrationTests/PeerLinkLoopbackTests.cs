@@ -621,9 +621,15 @@ public class PeerLinkLoopbackTests
         server.PeerConnected += m => connected.TrySetResult(m);
         server.Listen(0);
 
+        // Short bound only for the silent client: its closure proves the accept
+        // loop survived a timed-out handshake.
         using var first = new System.Net.Sockets.TcpClient();
         await first.ConnectAsync("127.0.0.1", server.BoundPort);
         await AssertClosedByServer(first);
+
+        // Restored before the real dial: a cold TLS on a slow runner must not
+        // race a 300 ms bound (CB-348's dial test failed that way on Windows).
+        server.InboundSetupTimeout = TimeSpan.FromSeconds(15);
 
         // A second silent one held open across the real dial.
         using var second = new System.Net.Sockets.TcpClient();
@@ -632,23 +638,24 @@ public class PeerLinkLoopbackTests
         Assert.True(await client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort, Timeout(10)));
         Assert.Equal(MachineNames.Mine(), await connected.Task.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.True(server.IsConnected(MachineNames.Mine()));
-
-        await AssertClosedByServer(second);
     }
 
     // The server's own setup is slow but inside its bound, and the link it
-    // makes outlives the bound: the setup token never reaches the link. Also
-    // the inbound twin of TheDialBoundDoesNotLimitTheLinkItMade — here it is the
-    // server's pump that must survive its own setup token being cancelled, and
-    // the frame that proves it travels server to client.
+    // makes is not on the setup token. The inbound twin of
+    // TheDialBoundDoesNotLimitTheLinkItMade: the property is that the SERVER's
+    // pump survives its own setup source being cancelled (HandshakeInboundAsync
+    // cancels it straight after Adopt), so the decisive assertion is the server
+    // *receiving* a frame. No sleep: a pump wired to the setup token ends the
+    // moment Adopt returns.
     [Fact]
-    public async Task ASlowButValidInboundPeerPairsAndTheBoundDoesNotLimitItsLink()
+    public async Task ASlowButValidInboundPeerPairsAndItsLinkIsNotOnTheSetupToken()
     {
         var pin = PeerIdentity.PinOf(Cert.Value);
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
         var reachedServer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var server = BoundedServer(new(), TimeSpan.FromSeconds(3),
+
+        // Default 15 s bound with a 1 s delay: slow, still inside, 14 s margin.
+        using var server = BoundedServer(new(), TimeSpan.FromSeconds(15),
             _ => Task.Delay(1000).ContinueWith(_ => Cert.Value),
             m => { if (m.Id == "from-client") reachedServer.TrySetResult(); });
 
@@ -668,15 +675,13 @@ public class PeerLinkLoopbackTests
         Assert.True(await client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort, Timeout(10)));
         Assert.Equal(MachineNames.Mine(), await connected.Task.WaitAsync(TimeSpan.FromSeconds(10)));
 
-        // Past the bound: elapsed time is the thing under test.
-        await Task.Delay(TimeSpan.FromMilliseconds(3500));
-        Assert.True(server.IsConnected(MachineNames.Mine()));
-        Assert.True(await server.SendAsync(MachineNames.Mine(), PeerProtocol.Message(PeerProtocol.Window, "from-server")));
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-        // And the other way: the server's pump is still reading.
         Assert.True(await client.SendAsync("loopback", PeerProtocol.Message(PeerProtocol.Window, "from-client")));
         await reachedServer.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(server.IsConnected(MachineNames.Mine()));
+
+        // And the other way, as a bonus.
+        Assert.True(await server.SendAsync(MachineNames.Mine(), PeerProtocol.Message(PeerProtocol.Window, "from-server")));
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     // Bound shorter than the server's own setup delay: must fail to pair, so

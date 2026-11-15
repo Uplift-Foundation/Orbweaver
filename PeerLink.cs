@@ -514,7 +514,7 @@ namespace Orbweaver
                 // every so often, instead of evicting the log's history.
                 if (!adopted) { tls?.Dispose(); client.Dispose(); }
 
-                var why = !adopted && setup.IsCancellationRequested
+                var why = !adopted && setup.IsCancellationRequested && !ct.IsCancellationRequested
                     ? $"no handshake within {InboundSetupTimeout.TotalSeconds:0.#}s"
                     : $"{ex.GetType().Name}: {ex.Message}";
 
@@ -696,12 +696,20 @@ namespace Orbweaver
         // Per link so a test can shorten it without touching any other.
         internal TimeSpan DialTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-        // How long an inbound connection may take to become a named link:
-        // certificate, TLS and hello together (CB-342). Sibling of DialTimeout
-        // and the same 15 s, for the same reason. The hello half is enforced by
-        // CheckLiveness, so the effective bound is this plus up to one
-        // WatchEvery. Per link so a test can shorten it.
-        internal TimeSpan InboundSetupTimeout { get; init; } = TimeSpan.FromSeconds(15);
+        // How long an inbound connection may spend on each of its two pre-link
+        // steps (CB-342): certificate and TLS, then the hello that names it.
+        // Sibling of DialTimeout and the same 15 s. The two bounds are counted
+        // separately — the setup token bounds TLS, and CheckLiveness counts the
+        // hello from Adopt — so the worst case from accept to eviction is twice
+        // this plus up to one WatchEvery (about 35 s), not once. Counting from
+        // accept would need a timestamp plumbed through Adopt, which is not
+        // worth it for a bound whose job is to be finite.
+        //
+        // Settable rather than init so a test can shorten it on one live server
+        // to time out a silent client, then restore it before dialling a real
+        // peer whose cold TLS must not race the shortened bound. A TimeSpan
+        // write is atomic on 64-bit, and nothing here needs more.
+        internal TimeSpan InboundSetupTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
         // Pure: connected wins over in-flight, because a connected machine is
         // the answer the caller wanted either way.
