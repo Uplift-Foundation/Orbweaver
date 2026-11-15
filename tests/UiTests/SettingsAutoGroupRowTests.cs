@@ -41,26 +41,27 @@ public class SettingsAutoGroupRowTests : IDisposable
     }
 
     [AvaloniaTheory]
-    [InlineData(AutoGroupBy.Off, 0)]
-    [InlineData(AutoGroupBy.Directory, 1)]
-    [InlineData(AutoGroupBy.Cli, 2)]
-    [InlineData(AutoGroupBy.Profile, 3)]
-    [InlineData(AutoGroupBy.Account, 4)]
-    public void ThePickerShowsTheSavedValue(AutoGroupBy saved, int index)
+    [InlineData(0, 0)]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 3)]
+    [InlineData(4, 4)]
+    public void ThePickerShowsTheSavedValue(int saved, int index)
     {
-        OrbweaverSettings.AutoGroupBy = saved;
+        OrbweaverSettings.AutoGroupBy = (AutoGroupBy)saved;
 
         Assert.Equal(index, ((ComboBox)NewWindow().AutoGroupPicker()).SelectedIndex);
     }
 
     [AvaloniaTheory]
-    [InlineData(1, AutoGroupBy.Directory)]
-    [InlineData(2, AutoGroupBy.Cli)]
-    [InlineData(3, AutoGroupBy.Profile)]
-    [InlineData(4, AutoGroupBy.Account)]
-    [InlineData(0, AutoGroupBy.Off)]
-    public void ChoosingAnItemWritesTheSetting(int index, AutoGroupBy expected)
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 3)]
+    [InlineData(4, 4)]
+    [InlineData(0, 0)]
+    public void ChoosingAnItemWritesTheSetting(int index, int expectedValue)
     {
+        var expected = (AutoGroupBy)expectedValue;
         OrbweaverSettings.AutoGroupBy = expected == AutoGroupBy.Off ? AutoGroupBy.Cli : AutoGroupBy.Off;
         var combo = (ComboBox)NewWindow().AutoGroupPicker();
 
