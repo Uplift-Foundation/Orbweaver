@@ -595,8 +595,12 @@ namespace Orbweaver
         // used to fall back to a name test — anything called `claude-buddy-rc-…`
         // was another Buddy's relay — which was a guess dressed as a check: a
         // name is not a credential, and anyone on the account could pick one.
-        // The transport answers this properly now, because a peer has completed
-        // a TLS handshake with a certificate somebody pinned by typing a code.
+        // The transport answers this properly now: a peer is one whose
+        // certificate somebody pinned by typing a code. For a connection we
+        // dialled that is checked at TLS; for one that dialled us it is checked
+        // only at its hello, so PeerLink holds back everything sent before an
+        // accepted hello and PeerMirrorHost.MayAsk refuses the unnamed entry
+        // (CB-344).
         //
         // A server built with no PeerAllowed serves nothing, which is what a
         // half-wired server should do.
