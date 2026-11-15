@@ -101,22 +101,25 @@ public class GroupLiveManagerTests : IDisposable
     public void EverySettingsControlTellsTheManager()
     {
         var window = NewSettings();
-        var rows = window.GroupOutlineRows();
+        var all = window.GroupOutlineRows();
+        // By label, not position: a row added to the card must not break this.
+        Control Row(string label) => all.Single(r =>
+            r.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == label));
 
-        var toggle = In<Avalonia.Controls.Primitives.ToggleButton>(rows[1]);
+        var toggle = In<Avalonia.Controls.Primitives.ToggleButton>(Row("Outline groups"));
         toggle.IsChecked = !(toggle.IsChecked ?? false);
 
-        var stroke = In<ColorPicker>(rows[2]);
+        var stroke = In<ColorPicker>(Row("Stroke colour"));
         Arm(stroke);
         stroke.Color = Color.FromRgb(1, 2, 3);
-        In<Slider>(rows[3]).Value = 0.5;
+        In<Slider>(Row("Stroke opacity")).Value = 0.5;
 
-        var fill = In<ColorPicker>(rows[4]);
+        var fill = In<ColorPicker>(Row("Fill colour"));
         Arm(fill);
         fill.Color = Color.FromRgb(4, 5, 6);
-        In<Slider>(rows[5]).Value = 0.5;
+        In<Slider>(Row("Fill opacity")).Value = 0.5;
 
-        var names = In<Avalonia.Controls.Primitives.ToggleButton>(rows[6]);
+        var names = In<Avalonia.Controls.Primitives.ToggleButton>(Row("Show group names"));
         names.IsChecked = !(names.IsChecked ?? false);
         names.IsChecked = false;
 
