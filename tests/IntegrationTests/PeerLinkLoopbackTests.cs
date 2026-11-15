@@ -393,6 +393,74 @@ public class PeerLinkLoopbackTests
         return (server, client, serverGot, clientGot);
     }
 
+    // CB-301's second defect, in the shape it happened. Twenty-five dials to
+    // one machine queue up behind a certificate that is not ready — which is
+    // what the frozen identity import did to the dial loop — and then it is
+    // released all at once. Before the fix each dial had already passed the
+    // connected check and every one made its own TCP and TLS connection: the
+    // far side ended up holding 44 to the MacBook. Now one dial goes out and
+    // the rest return at once.
+    //
+    // Counted on both sides of the wire: how often the dialler asked for its
+    // certificate (one per outbound attempt) and how many handshakes the
+    // listener ran (one per inbound socket).
+    [Fact]
+    public async Task ABacklogOfDialsToOneMachineMakesOneConnection()
+    {
+        var pin = PeerIdentity.PinOf(Cert.Value);
+
+        var inbound = 0;
+        using var server = new PeerLink(new PeerLink.Seams(
+            Deliver: (_, _) => Task.CompletedTask,
+            KnownPeer: machine => new PeerIdentity.Peer(pin, machine),
+            OwnCertificate: _ =>
+            {
+                Interlocked.Increment(ref inbound);
+                return Task.FromResult(Cert.Value);
+            }));
+
+        var held = new TaskCompletionSource<X509Certificate2>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var outbound = 0;
+        using var client = new PeerLink(new PeerLink.Seams(
+            Deliver: (_, _) => Task.CompletedTask,
+            KnownPeer: machine => new PeerIdentity.Peer(pin, machine),
+            OwnCertificate: _ =>
+            {
+                Interlocked.Increment(ref outbound);
+                return held.Task;
+            }));
+
+        var named = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.PeerConnected += _ => named.TrySetResult();
+
+        server.Listen(0);
+
+        var dials = Enumerable.Range(0, 25)
+            .Select(_ => Task.Run(() => client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort, Timeout(20))))
+            .ToArray();
+
+        // Every dial has either returned or is the one waiting on the
+        // certificate before it is released — the backlog is fully formed.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (dials.Count(d => d.IsCompleted) < dials.Length - 1 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
+        held.SetResult(Cert.Value);
+
+        var results = await Task.WhenAll(dials).WaitAsync(TimeSpan.FromSeconds(20));
+        await named.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(results, ok => ok);
+        Assert.Equal(1, outbound);
+        Assert.Equal(1, inbound);
+        Assert.Single(client.ConnectedMachines());
+        Assert.Single(server.ConnectedMachines());
+
+        // And once connected, a further dial is answered without dialling.
+        Assert.True(await client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort, Timeout(10)));
+        Assert.Equal(1, outbound);
+    }
+
     private static CancellationToken Timeout(int seconds) =>
         new CancellationTokenSource(TimeSpan.FromSeconds(seconds)).Token;
 

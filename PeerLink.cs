@@ -460,7 +460,15 @@ namespace Orbweaver
             string machine, string host, int port = DefaultPort, CancellationToken ct = default,
             string? pairingCode = null, bool nameIsProvisional = false)
         {
-            if (IsConnected(machine)) return true;
+            switch (BeginDial(machine))
+            {
+                case DialStart.AlreadyConnected:
+                    return true;
+
+                case DialStart.InFlight:
+                    MirrorLog.SayOnce($"peer-dial-in-flight:{machine}", $"to={machine} already dialling");
+                    return false;
+            }
 
             try
             {
@@ -551,6 +559,55 @@ namespace Orbweaver
                     $"to={machine} {OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS())}");
                 return false;
             }
+            finally
+            {
+                EndDial(machine);
+            }
+        }
+
+        // --- one dial per machine at a time (CB-301) ------------------------------
+
+        // **The connected check alone let a backlog of dials all complete.**
+        // ConnectAsync used to ask IsConnected only on entry, before any await.
+        // When the identity import froze the dial loop on 2026-10-30, about
+        // twenty-five ticks queued up, every one of them having already passed
+        // that check; when the freeze released, each made its own TCP and TLS
+        // connection. This side kept the last one Adopt was handed, but the
+        // far side had accepted all of them — 44 ESTABLISHED to the mini, and
+        // over two hundred FIN_WAIT_1 behind them. Any slow handshake opens the
+        // same window, the awaited certificate load included.
+        //
+        // So a machine being dialled is remembered until the dial ends, and a
+        // second dial to it returns at once. Outbound only, and only in this
+        // process: an inbound connection is never refused here, and Adopt and
+        // Rename keep their replace-the-old-link semantics, which is what
+        // tools/peer-probe --evict relies on (CB-306).
+        private readonly HashSet<string> _dialling = new(StringComparer.OrdinalIgnoreCase);
+
+        internal enum DialStart { Dial, AlreadyConnected, InFlight }
+
+        // Pure: connected wins over in-flight, because a connected machine is
+        // the answer the caller wanted either way.
+        internal static DialStart Admit(bool connected, bool inFlight) =>
+            connected ? DialStart.AlreadyConnected
+            : inFlight ? DialStart.InFlight
+            : DialStart.Dial;
+
+        // Decides and, on Dial, claims the machine — one step under the lock,
+        // so two callers cannot both see it free.
+        internal DialStart BeginDial(string machine)
+        {
+            lock (_gate)
+            {
+                var start = Admit(_peers.ContainsKey(machine), _dialling.Contains(machine));
+                if (start == DialStart.Dial) _dialling.Add(machine);
+                return start;
+            }
+        }
+
+        internal void EndDial(string machine)
+        {
+            lock (_gate) _dialling.Remove(machine);
         }
 
         // Registers the connection and starts reading it.

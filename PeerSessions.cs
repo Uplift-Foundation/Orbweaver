@@ -244,12 +244,17 @@ namespace Orbweaver
         // That is the same lesson CB-61 already paid for on the serve path, and
         // it arrived here because this code was written after that one and did
         // not copy it.
+        // One tick at a time (CB-301): a tick still running when the timer fires
+        // again is left to finish, and the new one is skipped and said so.
+        private static readonly SingleFlight DialTick = new();
+
         [ExcludeFromCodeCoverage]
         private static async Task DialAsync()
         {
             try
             {
-                await DialOnceAsync().ConfigureAwait(false);
+                if (!await DialTick.RunAsync(DialOnceAsync).ConfigureAwait(false))
+                    MirrorLog.SayOnce("peer-dial-tick-skipped", "previous tick still running");
             }
             catch (Exception ex)
             {
