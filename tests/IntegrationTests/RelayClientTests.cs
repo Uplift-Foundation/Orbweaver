@@ -38,11 +38,17 @@ public class RelayClientTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (_client is not null) await _client.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));   // bounded: a hang here names itself (CB-337)
-        _client?.Dispose();
-        await _stub.DisposeAsync();
+        try { if (_client is not null) await StopBounded(_client); }   // bounded: a hang here names itself (CB-337)
+        finally
+        {
+            _client?.Dispose();
+            await _stub.DisposeAsync();
+        }
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
+
+    internal static Task StopBounded(RelayClient client) =>
+        RelayStub.Bounded("RelayClient.StopAsync", TimeSpan.FromSeconds(10), ct => client.StopAsync().WaitAsync(ct));
 
     private RelayIdentity Identity() => new(_dir, _store);
 
@@ -1027,7 +1033,7 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => _client.State == RelayClient.Status.Connected);
         _client.Remove(phone.Id);
         await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        await _client.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await StopBounded(_client);
         Assert.Equal([phone.Id], identity.PendingUnlinks);                               // still owed, for the next run
     }
 
@@ -1108,6 +1114,33 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => client.State == RelayClient.Status.Connected);
         await _stub.Send("""{"t":"resync","peer_id":"ph_nobody"}""");
         await Until(() => notes.Contains("resync for ph_nobody ignored: not an online paired phone (not paired)"));
+    }
+
+    // CB-337 (R4): the next hang has to fail naming the await it was stuck in.
+    [Fact]
+    public async Task A_bounded_await_that_never_completes_fails_naming_itself()
+    {
+        var ex = await Assert.ThrowsAsync<TimeoutException>(() =>
+            RelayStub.Bounded("a stuck thing", TimeSpan.FromMilliseconds(100), ct => Task.Delay(Timeout.Infinite, ct)));
+        Assert.Contains("a stuck thing", ex.Message);
+        await RelayStub.Bounded("a quick thing", TimeSpan.FromSeconds(10), _ => Task.CompletedTask);   // control: an await that completes is untouched
+    }
+
+    // CB-337 (R4): a reply stuck inside a session used to end that session in
+    // Handle's catch, and the test failed later at a bare timeout that never
+    // mentioned the stub. It is now recorded and rethrown, named, on dispose.
+    [Fact]
+    public async Task A_reply_stuck_inside_a_session_surfaces_naming_the_await()
+    {
+        await using var stub = new RelayStub { IoDeadline = TimeSpan.FromMilliseconds(200) };
+        stub.BeforeReply = ct => Task.Delay(Timeout.Infinite, ct);
+        lock (stub.ValidTokens) stub.ValidTokens.Add("tok");
+        using var bare = new ClientWebSocket();
+        await bare.ConnectAsync(new Uri($"ws://127.0.0.1:{stub.Base.Port}/v1/socket"), CancellationToken.None);
+        await bare.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","token":"tok"}"""), WebSocketMessageType.Text, true, CancellationToken.None);
+        await Until(() => !stub.Faults.IsEmpty);
+        var ex = await Assert.ThrowsAsync<TimeoutException>(async () => await stub.DisposeAsync());
+        Assert.Contains("reply welcome", ex.Message);
     }
 
     // CB-337: pins the event's signature. A handler that runs late is handed
@@ -1471,7 +1504,7 @@ public class RelayClientHttpTests : IDisposable
         client.Start();
         await backingOff.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("unreachable in this test", client.LastError);
-        await client.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await RelayClientTests.StopBounded(client);
         Assert.Equal(RelayClient.Status.Off, client.State);
         client.Dispose();
     }
