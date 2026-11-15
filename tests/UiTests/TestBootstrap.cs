@@ -73,6 +73,16 @@ internal static class TestBootstrap
         // before any static constructor can run.
         Environment.SetEnvironmentVariable("ORBWEAVER_NO_CREDENTIAL_STORE", "1");
 
+        // The floor under CrashLog.Directory (CB-285). Every ClaudeCloudChatSession
+        // writes its decisions to cloud-chat.log there unless a test hands it its
+        // own Log, and this assembly builds sessions that do not — so, left unset,
+        // a run wrote into the developer's real ~/Library/Logs/Orbweaver. Only
+        // IntegrationTests pointed it at scratch before; see its TestBootstrap for
+        // why one assembly-wide directory rather than one per class.
+        Environment.SetEnvironmentVariable(
+            "ORBWEAVER_LOG_DIR",
+            Path.Combine(Path.GetTempPath(), "cb-uitests-log-" + Guid.NewGuid()));
+
         // Where StatusDirectory.Path() puts settings-errors.log — left unset,
         // every suite run appends failure traces to the developer's real
         // $TMPDIR/orbweaver/settings-errors.log (CB-17).

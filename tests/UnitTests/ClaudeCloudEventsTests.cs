@@ -496,8 +496,11 @@ public partial class ClaudeCloudEventsTests
         }
 
         // What the live loop's status read answers. Idle by default, so a loop a
-        // send starts sees the turn end at its first tick and every test that
-        // is not about the loop is over quickly.
+        // send starts is over quickly in every test that is not about the loop.
+        // Since CB-285 an idle read ends a *sent* turn only once the transcript
+        // shows its reply, so over the default empty transcript that loop runs
+        // to the turn-start grace rather than one tick; a test that counts the
+        // loop's reads builds its api with Replying().
         internal Func<CloudApiResult> Status { get; set; } = () => new CloudApiResult(
             CloudOutcomes.OutcomeFor(200, ""), "{\"status_bucket\":\"idle\"}");
 
@@ -584,8 +587,43 @@ public partial class ClaudeCloudEventsTests
         // state a send leaves before the live loop's first tick.
         internal bool Hold { get; set; }
 
+        // The send watch's wait (CB-285) is parked by default, so every test
+        // written before it existed still sees a trusted stream left alone after
+        // a send rather than polled beside ten "seconds" later. A test about the
+        // watch releases it with ReleaseEchoGrace. Kept out of Waits for the
+        // same reason: the cadence assertions there are about the loop and the
+        // stream, and predate it. No other wait in the session is ten seconds —
+        // the live loop's are two and five, the stream's back-off doubles from
+        // two to a sixty-second cap — so matching on the span is unambiguous.
+        internal bool HoldEchoGrace { get; set; } = true;
+
+        private readonly List<TaskCompletionSource> _echoWaits = new();
+
+        internal int EchoGraceWaits
+        {
+            get { lock (_echoWaits) return _echoWaits.Count; }
+        }
+
+        // Lets every parked echo-grace wait return, as though the grace ran out.
+        internal void ReleaseEchoGrace()
+        {
+            lock (_echoWaits)
+            {
+                foreach (var held in _echoWaits) held.TrySetResult();
+            }
+        }
+
         internal Task Delay(TimeSpan wait, CancellationToken ct)
         {
+            if (wait == ClaudeCloudChatSession.UnmeasuredStreamEchoGrace)
+            {
+                var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                ct.Register(() => held.TrySetCanceled(ct));
+                lock (_echoWaits) _echoWaits.Add(held);
+                if (!HoldEchoGrace) held.TrySetResult();
+                return held.Task;
+            }
+
             int count;
             lock (_waits)
             {
@@ -612,6 +650,7 @@ public partial class ClaudeCloudEventsTests
         bool enabled = true, ICloudEventStream? stream = null, CredentialBudget? budget = null)
     {
         var tick = clock ?? new FakeClock();
+        var lines = new List<string>();
         var chat = new ClaudeCloudChatSession(session ?? Row(), api, creds ?? new CountingCredentials(),
             action => action())
         {
@@ -619,12 +658,25 @@ public partial class ClaudeCloudEventsTests
             Delay = tick.Delay,
             Enabled = () => enabled,
             Stream = stream,
+            Log = line => { lock (lines) lines.Add(line); },
         };
+        Logs.Add(chat, lines);
 
         // So a wait for the next open can tell "not yet" from "never" by the
         // run itself rather than by a clock (CB-230).
         if (stream is FakeStream fake) fake.Run = () => chat.StreamTask;
         return chat;
+    }
+
+    // What each session built by Sender wrote to its decision log (CB-285).
+    // Never the real cloud-chat.log: a test that wants the lines reads them here.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ClaudeCloudChatSession, List<string>>
+        Logs = new();
+
+    private static List<string> LogOf(ClaudeCloudChatSession chat)
+    {
+        var lines = Logs.TryGetValue(chat, out var found) ? found : new List<string>();
+        lock (lines) return lines.ToList();
     }
 
     private static string PayloadUuid(CloudRequestContext context)
@@ -980,7 +1032,7 @@ public partial class ClaudeCloudEventsTests
     public async Task WhenTheTurnEndsStopGoesTheReplyIsReadAndTheLoopStops()
     {
         var clock = new FakeClock();
-        var api = new RoutingApi(Answer(200, Receipt));
+        var api = Replying();
         var calls = 0;
         api.Status = () => Status(++calls < 3 ? "working" : "idle");
         var chat = Sender(api, clock);
@@ -1004,7 +1056,7 @@ public partial class ClaudeCloudEventsTests
     public async Task WhileTheTurnRunsTheTranscriptIsReadOnItsOwnInterval()
     {
         var clock = new FakeClock();
-        var api = new RoutingApi(Answer(200, Receipt));
+        var api = Replying();
         var calls = 0;
         api.Status = () => Status(++calls < 7 ? "working" : "idle");
         var chat = Sender(api, clock);
@@ -1096,7 +1148,7 @@ public partial class ClaudeCloudEventsTests
     public async Task NoNewsIsAskedAgainAndNeverReadAsIdle()
     {
         var clock = new FakeClock();
-        var api = new RoutingApi(Answer(200, Receipt));
+        var api = Replying();
         var calls = 0;
         api.Status = () => ++calls switch
         {
@@ -1180,7 +1232,7 @@ public partial class ClaudeCloudEventsTests
     public async Task AStaleRosterRowDoesNotPutStopBack()
     {
         var clock = new FakeClock();
-        var api = new RoutingApi(Answer(200, Receipt));
+        var api = Replying();
         var chat = Sender(api, clock);
 
         await chat.SendAsync("hello");
@@ -1359,7 +1411,7 @@ public partial class ClaudeCloudEventsTests
     {
         var clock = new FakeClock();
         var creds = new CountingCredentials();
-        var api = new RoutingApi(Answer(200, Receipt));
+        var api = Replying();
         var chat = Sender(api, clock, creds);
 
         await chat.SendAsync("hello");
@@ -1390,7 +1442,7 @@ public partial class ClaudeCloudEventsTests
     public async Task ASecondSendReplacesTheFirstSendsLoop()
     {
         var clock = new FakeClock();
-        var chat = Sender(new RoutingApi(Answer(200, Receipt)), clock);
+        var chat = Sender(Replying(), clock);
 
         await chat.SendAsync("one");
         var first = chat.LiveTask!;
