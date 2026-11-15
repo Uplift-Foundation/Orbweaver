@@ -48,7 +48,16 @@ public class LoopbackHttpTests
         using var http = new HttpClient();
         using var res = await http.GetAsync(root + "/x");
         Assert.Equal(HttpStatusCode.NoContent, res.StatusCode);
-        Assert.True(holder.IsListening);
+
+        // ...and the holder of the skipped port still answers its own request.
+        _ = Task.Run(async () =>
+        {
+            var ctx = await holder.GetContextAsync();
+            ctx.Response.StatusCode = 200;
+            ctx.Response.Close();
+        });
+        using var held = await http.GetAsync($"http://127.0.0.1:{heldPort}/y");
+        Assert.Equal(HttpStatusCode.OK, held.StatusCode);
     }
 
     [Fact]
