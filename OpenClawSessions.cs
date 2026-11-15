@@ -1055,6 +1055,11 @@ namespace Orbweaver
             _snapshot = sessions;
         }
 
+        // CB-329 stubs: bodies follow.
+        internal static IReadOnlyList<Session> ListedSnapshot() => Array.Empty<Session>();
+
+        internal static IRemoteChatSession? Reopen(OpenClawReopenRow row) => throw new NotImplementedException();
+
         // CB-276: whether the last thing the poll published is still a live
         // answer. Set where the poll publishes a listing, cleared where the
         // snapshot is cleared on a disconnect and on a restart: a listing that
