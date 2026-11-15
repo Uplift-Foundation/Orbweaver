@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -303,23 +304,14 @@ public partial class ClaudeCloudEventsTests
     public async Task AStopDeliveredAfterTheLoopEndedStartsNoSecondLoop()
     {
         var clock = new FakeClock();
-        ClaudeCloudChatSession? chat = null;
-        var api = new RoutingApi(c =>
-        {
-            if (c.Method == HttpMethod.Post && c.Body!.Contains("\"interrupt\"", StringComparison.Ordinal))
-            {
-                Assert.True(chat!.LiveTask!.Wait(TimeSpan.FromSeconds(5)), "the loop never ended");
-            }
-
-            return c.Method == HttpMethod.Post
-                ? Answer(200, Receipt)
-                : new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""), Envelope(Array.Empty<string>()));
-        });
-        chat = Sender(api, clock);
+        var api = new RoutingApi(Answer(200, Receipt));
+        var held = new InterruptHeldUntil(api);
+        var chat = Sender(held, clock);
         var firstTick = clock.ParkNextWait();
 
         await chat.SendAsync("hello");
         var loop = chat.LiveTask;
+        held.Until = loop;
         chat.Cancel();
         firstTick.TrySetResult();
         await Bounded(loop, "the live loop");
@@ -330,6 +322,27 @@ public partial class ClaudeCloudEventsTests
         Assert.False(chat.CanInterrupt);
         Assert.Equal(1, Lines(chat, "turn over after 2s (interrupt)"));
         Assert.Equal(0, Lines(chat, "(joined)"));
+    }
+
+    // Answers the interrupt's POST only once Until has finished, by awaiting
+    // it rather than blocking a pool thread on it: a blocked thread is one the
+    // loop it waits for may need, and under the full parallel suite the pool
+    // was busy enough that the loop's own credential read could not start
+    // inside the five-second bound. Every other request passes straight on.
+    private sealed class InterruptHeldUntil(RoutingApi inner) : ICloudApi
+    {
+        internal Task? Until { get; set; }
+
+        public async Task<CloudApiResult> SendAsync(CloudRequestContext context, CancellationToken token)
+        {
+            if (context.Method == HttpMethod.Post
+                && context.Body!.Contains("\"interrupt\"", StringComparison.Ordinal))
+            {
+                await Bounded(Until, "the loop the interrupt is held behind");
+            }
+
+            return await inner.SendAsync(context, token);
+        }
     }
 
     // Case 7. A 429 on the read that checks whether the turn has started is a
