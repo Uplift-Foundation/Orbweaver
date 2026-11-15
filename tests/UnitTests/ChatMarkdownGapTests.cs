@@ -116,17 +116,17 @@ public class ChatMarkdownGapTests
         Assert.Equal("--", block.Text);
     }
 
-    // A table is kept verbatim in one code block — the file's stated reason is
+    // A table is kept verbatim in one Table block — the file's stated reason is
     // that reflowing one into a paragraph destroys it. The row after the table
     // has to survive too: the loop steps i past the last row and then backs it
     // up by one, and an off-by-one there eats the next line.
     [Fact]
-    public void ATableCollapsesToOneCodeBlockAndDoesNotEatTheLineAfterIt()
+    public void ATableCollapsesToOneTableBlockAndDoesNotEatTheLineAfterIt()
     {
         var blocks = Blocks("| a | b |\n|---|---|\n| 1 | 2 |\nafter the table");
 
         Assert.Equal(2, blocks.Length);
-        Assert.Equal(ChatMarkdown.MdKind.Code, blocks[0].Kind);
+        Assert.Equal(ChatMarkdown.MdKind.Table, blocks[0].Kind);
         Assert.Equal("| a | b |\n|---|---|\n| 1 | 2 |", blocks[0].Text);
         Assert.Equal("after the table", blocks[1].Text);
     }
@@ -138,7 +138,7 @@ public class ChatMarkdownGapTests
 
         Assert.Equal(2, blocks.Length);
         Assert.Equal("intro", blocks[0].Text);
-        Assert.Equal(ChatMarkdown.MdKind.Code, blocks[1].Kind);
+        Assert.Equal(ChatMarkdown.MdKind.Table, blocks[1].Kind);
     }
 
     // An unterminated fence is what a reply looks like *while it is being

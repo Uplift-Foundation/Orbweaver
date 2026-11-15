@@ -490,8 +490,32 @@ namespace Orbweaver.Tests
 
             // Reflowing a table destroys it; monospace at least keeps the columns.
             var table = Blocks("| a | b |\n| - | - |\n| 1 | 2 |");
-            Check("a table is kept verbatim as code",
-                table.Single().Kind == ChatMarkdown.MdKind.Code && table.Single().Text.Split('\n').Length == 3);
+            Check("a table is kept verbatim as a table block",
+                table.Single().Kind == ChatMarkdown.MdKind.Table && table.Single().Text.Split('\n').Length == 3);
+
+            var box = Blocks("┌───┬───┐\n│ a │ b │\n└───┴───┘");
+            Check("a box-drawn table is one verbatim table block",
+                box.Single().Kind == ChatMarkdown.MdKind.Table && box.Single().Text.Split('\n').Length == 3);
+
+            var ascii = Blocks("+----+----+\n| id | n  |\n+----+----+\n|  1 | a  |\n+----+----+");
+            Check("an ASCII +---+ table is one verbatim table block, borders included",
+                ascii.Single().Kind == ChatMarkdown.MdKind.Table && ascii.Single().Text.Split('\n').Length == 5);
+
+            // The GFM spec's own example: no real pipe-less sample exists on the
+            // machine this was written on.
+            var pipeless = Blocks("foo | bar\n--- | ---\nbaz | bim");
+            Check("a pipe table without a leading pipe is a table when a delimiter row follows",
+                pipeless.Single().Kind == ChatMarkdown.MdKind.Table && pipeless.Single().Text.Split('\n').Length == 3);
+
+            Check("a lone pipe in prose is not a table",
+                Blocks("a | b\nand more prose").Single().Kind == ChatMarkdown.MdKind.Paragraph);
+
+            var fencedBox = Blocks("```text\n┌─┐\n│a│\n└─┘\n```");
+            Check("a fenced box table is a table block",
+                fencedBox.Single().Kind == ChatMarkdown.MdKind.Table && fencedBox.Single().Marker == "text");
+
+            Check("a fence with any other line stays code",
+                Blocks("```\n┌─┐\nplain\n└─┘\n```").Single().Kind == ChatMarkdown.MdKind.Code);
 
             Check("a rule draws nothing", Blocks("one\n\n---\n\ntwo").All(b => b.Text != "---"));
 

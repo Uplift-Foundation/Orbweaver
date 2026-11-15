@@ -16,9 +16,20 @@ namespace Orbweaver
     //  * Underscores are never emphasis. `file_path` and `snake_case_name` are
     //    far more common in this app's conversations than _emphasis_, and
     //    treating `_` as a delimiter mangles them. Only `*` emphasises.
-    //  * Tables become code blocks. Reflowing one into a paragraph destroys it,
-    //    and a real table renderer inside a 244pt bubble would be illegible
-    //    anyway; monospace at least keeps the columns in line.
+    //  * Tables become Table blocks: verbatim, which ChatPanel draws in
+    //    monospace, unwrapped, inside a horizontal scroller. Reflowing one
+    //    into a paragraph destroys it, a real table renderer inside a 244pt
+    //    bubble would be illegible anyway, and wrapping a row that is wider
+    //    than the bubble moves every later column onto the next line — so a
+    //    table scrolls where ordinary code wraps. Four shapes are tables:
+    //    a pipe table with a leading `|`, a pipe table without one (only when
+    //    a GFM delimiter row of the same width follows the header, which is
+    //    what keeps `a | b` in prose), a box-drawn table (┌─┬─┐ │ ├─┼─┤)
+    //    and an ASCII one (+---+). A fence whose every line is one of those
+    //    is a table too, since a model pasting terminal output fences it.
+    //    Tree output (├── src) is box-drawn as far as this is concerned and
+    //    becomes a Table block: harmless, because it is monospace and
+    //    unwrapped, which is what a tree wants as well.
     //  * No nested lists, no reference links, no HTML, no images. None of it
     //    turns up, and every rule here is a rule that can mis-fire.
     //  * Links are http and https only. An inline link, an <autolink> and a
@@ -31,7 +42,7 @@ namespace Orbweaver
     //    of the emphasis and is not a link.
     public static class ChatMarkdown
     {
-        public enum MdKind { Paragraph, Heading, Bullet, Ordered, Code, Quote }
+        public enum MdKind { Paragraph, Heading, Bullet, Ordered, Code, Quote, Table }
 
         // Marker is the bullet glyph or "3." for an ordered item — kept as
         // written so a list that starts at 4 still says 4.
@@ -91,21 +102,59 @@ namespace Orbweaver
                     // An unterminated fence still becomes a code block: a reply
                     // read while it is still being written is the normal case,
                     // not a malformed document.
-                    blocks.Add(new MdBlock(MdKind.Code, Dedent(body), language));
+                    var code = Dedent(body);
+                    blocks.Add(new MdBlock(IsAllTable(code) ? MdKind.Table : MdKind.Code, code, language));
                     continue;
                 }
 
-                // A table, kept verbatim. See the note at the top.
-                if (trimmed.StartsWith("|", StringComparison.Ordinal))
+                // Tables, kept verbatim. See the note at the top.
+                if (IsBoxLine(trimmed))
                 {
                     FlushParagraph();
 
                     var rows = new List<string>();
-                    while (i < lines.Length && lines[i].TrimStart().StartsWith("|", StringComparison.Ordinal))
+                    while (i < lines.Length && IsBoxLine(lines[i].TrimStart()))
                         rows.Add(lines[i++].Trim());
 
                     i--;
-                    blocks.Add(new MdBlock(MdKind.Code, string.Join("\n", rows)));
+                    blocks.Add(new MdBlock(MdKind.Table, string.Join("\n", rows)));
+                    continue;
+                }
+
+                if (trimmed.StartsWith('|') || IsAsciiBorder(trimmed))
+                {
+                    FlushParagraph();
+
+                    var rows = new List<string>();
+                    while (i < lines.Length)
+                    {
+                        var t = lines[i].Trim();
+                        if (!t.StartsWith('|') && !IsAsciiBorder(t)) break;
+
+                        rows.Add(t);
+                        i++;
+                    }
+
+                    i--;
+                    blocks.Add(new MdBlock(MdKind.Table, string.Join("\n", rows)));
+                    continue;
+                }
+
+                if (HasUnescapedPipe(trimmed)
+                    && i + 1 < lines.Length
+                    && IsDelimiterRow(lines[i + 1].Trim())
+                    && CellCount(trimmed) == CellCount(lines[i + 1].Trim()))
+                {
+                    FlushParagraph();
+
+                    var rows = new List<string> { trimmed.TrimEnd(), lines[i + 1].Trim() };
+                    i += 2;
+
+                    while (i < lines.Length && HasUnescapedPipe(lines[i]))
+                        rows.Add(lines[i++].Trim());
+
+                    i--;
+                    blocks.Add(new MdBlock(MdKind.Table, string.Join("\n", rows)));
                     continue;
                 }
 
@@ -152,6 +201,83 @@ namespace Orbweaver
 
             FlushParagraph();
             return blocks;
+        }
+
+        // A line a box-drawn table is made of: it starts with a glyph from the
+        // Box Drawing block. A line that starts with a horizontal-only glyph is
+        // not one — a lone "────────" is a separator somebody typed, not a
+        // table, and stays prose as it always was. Corners, verticals and tees
+        // all qualify, so a table with no closing border (streamed, or cut off)
+        // is still recognised from its first line.
+        internal static bool IsBoxLine(string trimmed) =>
+            trimmed.Length > 0
+            && trimmed[0] is >= '\u2500' and <= '\u257F'
+            && !HorizontalOnly.Contains(trimmed[0]);
+
+        private const string HorizontalOnly = "─━┄┅┈┉╌╍═╴╶╸╺╼╾";
+
+        // "+----+------+": the rule line of a sqlite or MySQL table.
+        internal static bool IsAsciiBorder(string trimmed)
+        {
+            if (trimmed.Length < 3 || trimmed[0] != '+' || trimmed[^1] != '+') return false;
+
+            var dashes = false;
+            foreach (var c in trimmed)
+            {
+                if (c is not ('+' or '-' or '=' or ':')) return false;
+                if (c is '-' or '=') dashes = true;
+            }
+
+            return dashes;
+        }
+
+        // GFM's delimiter row, "---|:---:|---". It needs an internal pipe, so
+        // a bare "---" — a rule — never matches.
+        internal static bool IsDelimiterRow(string trimmed) =>
+            DelimiterRow.IsMatch(trimmed);
+
+        private static readonly System.Text.RegularExpressions.Regex DelimiterRow = new(
+            @"^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // Cells in a pipe row: one leading and one trailing pipe are framing,
+        // and a pipe preceded by a backslash is text.
+        internal static int CellCount(string row)
+        {
+            var t = row.Trim();
+            if (t.StartsWith('|')) t = t[1..];
+            if (t.EndsWith('|') && !t.EndsWith("\\|", StringComparison.Ordinal)) t = t[..^1];
+
+            var cells = 1;
+            for (var k = 0; k < t.Length; k++)
+                if (t[k] == '|' && (k == 0 || t[k - 1] != '\\')) cells++;
+
+            return cells;
+        }
+
+        private static bool HasUnescapedPipe(string line)
+        {
+            for (var k = 0; k < line.Length; k++)
+                if (line[k] == '|' && (k == 0 || line[k - 1] != '\\')) return true;
+
+            return false;
+        }
+
+        // A fence whose every non-blank line is table material. One other
+        // line and it is code, which keeps wrapping.
+        private static bool IsAllTable(string code)
+        {
+            var any = false;
+            foreach (var raw in code.Split('\n'))
+            {
+                var t = raw.Trim();
+                if (t.Length == 0) continue;
+                if (!IsBoxLine(t) && !IsAsciiBorder(t) && !t.StartsWith('|')) return false;
+
+                any = true;
+            }
+
+            return any;
         }
 
         private static MdBlock? Heading(string trimmed)

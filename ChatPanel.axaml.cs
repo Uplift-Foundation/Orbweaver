@@ -3733,6 +3733,10 @@ namespace Orbweaver
         // The row's own view. Exists so the template can bind colour, shape and
         // alignment per role without the transport's ChatTurn knowing what a
         // brush is — and so the three roles share one template instead of three.
+        // The one source for the chat's monospace stack, so a test can
+        // measure the family the panel actually draws with.
+        internal static FontFamily MonoFamily => TurnView.Mono;
+
         private sealed class TurnView : System.ComponentModel.INotifyPropertyChanged
         {
             private readonly ChatTurn _turn;
@@ -3947,10 +3951,36 @@ namespace Orbweaver
             {
                 switch (block.Kind)
                 {
+                    case ChatMarkdown.MdKind.Table:
+                    {
+                        // Scrolled, not wrapped. A row wider than the bubble
+                        // that wraps puts every later column on the next line
+                        // and the grid is gone, which is the one thing a table
+                        // is for. Set after Selectable() returns rather than
+                        // passed in, so no other caller's wrapping changes.
+                        var table = Selectable(block.Text, Mono, Size - Points(1), CodeInk);
+                        table.TextWrapping = TextWrapping.NoWrap;
+
+                        return new Border
+                        {
+                            Background = CodeBackground,
+                            CornerRadius = new CornerRadius(4),
+                            Padding = new Thickness(6, 4),
+                            Margin = new Thickness(0, 1),
+                            Child = new ScrollViewer
+                            {
+                                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                                Content = table
+                            }
+                        };
+                    }
+
                     case ChatMarkdown.MdKind.Code:
                         // Wrapped rather than scrolled: the bubble is 244pt and
                         // a horizontal scrollbar per code block in a column of
-                        // them is worse than a wrapped line.
+                        // them is worse than a wrapped line. Tables are the
+                        // exception, above, because wrapping one destroys it.
                         return new Border
                         {
                             Background = CodeBackground,
@@ -4092,7 +4122,8 @@ namespace Orbweaver
             private static readonly IBrush SelectionFill =
                 new SolidColorBrush(Color.Parse("#59FFFFFF"));
 
-            private static readonly FontFamily Mono = new("Menlo,SF Mono,Consolas,monospace");
+            internal static readonly FontFamily Mono = new("Menlo,SF Mono,Consolas,monospace");
+
             private static readonly IBrush CodeBackground = new SolidColorBrush(Color.Parse("#33000000"));
             private static readonly IBrush CodeInk = new SolidColorBrush(Color.Parse("#FFD9A0"));
             private static readonly IBrush LinkInk = new SolidColorBrush(Color.Parse("#9FD0FF"));
