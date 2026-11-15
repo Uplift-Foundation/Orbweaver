@@ -560,6 +560,15 @@ namespace Orbweaver
                 Adopt(machine, tls, offered, ct, endpoint: host + ":" + port);
                 adopted = true;
 
+                // The setup bound ends here, explicitly (CB-348). Everything it
+                // covered (certificate, TCP, TLS) is done, so it is spent.
+                // Cancelled rather than left to `using`, because disposing a
+                // CancellationTokenSource stops its timer: a link that had been
+                // handed setup.Token by mistake would then never be cancelled at
+                // all, and no test could tell. Cancelling here makes that mistake
+                // kill the link at once, in every test that makes one.
+                setup.Cancel();
+
                 // Said immediately rather than lazily, because until this
                 // arrives the far side has a connection it cannot name — and an
                 // unnamed connection is one the mirror would attribute every
@@ -598,7 +607,7 @@ namespace Orbweaver
                     client?.Dispose();
                 }
 
-                var why = setup.IsCancellationRequested && !ct.IsCancellationRequested
+                var why = !adopted && setup.IsCancellationRequested && !ct.IsCancellationRequested
                     ? $"no answer within {DialTimeout.TotalSeconds:0.#}s"
                     : OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS());
 

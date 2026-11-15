@@ -511,34 +511,45 @@ public class PeerLinkLoopbackTests
         }
     }
 
-    // The bound is on the setup only. A link that took most of its bound to
-    // come up must not be torn down when the bound expires.
+    // The bound is on the setup only, and the link a dial made outlives it
+    // (CB-301, rewritten under CB-348). The first version set a 500 ms bound and
+    // waited 1.5 s, which was both timing-dependent (a cold TLS setup on a busy
+    // runner can exceed 500 ms) and vacuous: ConnectAsync's `using` disposed the
+    // setup token source on return, which stops its timer, so a link wrongly
+    // handed the setup token was never cancelled and the test still passed.
+    // ConnectAsync now cancels the setup bound explicitly once the link is
+    // adopted, so by the time the dial returns that token is already dead. If the
+    // link were bound to it, its read loop would exit and the server's frame
+    // below would never arrive. Nothing here depends on how long anything takes;
+    // the WaitAsync calls are hang guards only.
     [Fact]
     public async Task TheDialBoundDoesNotLimitTheLinkItMade()
     {
         var pin = PeerIdentity.PinOf(Cert.Value);
-        var onServer = new List<PeerProtocol.PeerMessage>();
-        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var serverNamed = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clientGot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var server = Link(onServer, pin, reached);
+        using var server = Link(new List<PeerProtocol.PeerMessage>(), pin);
+        server.PeerConnected += name => serverNamed.TrySetResult(name);
         using var client = new PeerLink(new PeerLink.Seams(
-            Deliver: (_, _) => Task.CompletedTask,
+            Deliver: (_, message) =>
+            {
+                if (message.Type == PeerProtocol.Window && message.Id == "after-bound")
+                    clientGot.TrySetResult();
+                return Task.CompletedTask;
+            },
             KnownPeer: machine => new PeerIdentity.Peer(pin, machine),
-            OwnCertificate: _ => Task.FromResult(Cert.Value)))
-        {
-            DialTimeout = TimeSpan.FromMilliseconds(500)
-        };
+            OwnCertificate: _ => Task.FromResult(Cert.Value)));
 
         server.Listen(0);
         Assert.True(await client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort));
 
-        // Past the bound, the link is still there and still carries a frame.
-        // A delay rather than an event on purpose: elapsed time past the
-        // bound is the thing under test.
-        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+        // Server to client, so it is the client's read loop that has to still be
+        // alive after its setup token was cancelled.
+        var name = await serverNamed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(await server.SendAsync(name, PeerProtocol.Message(PeerProtocol.Window, "after-bound")));
+        await clientGot.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(client.IsConnected("loopback"));
-        Assert.True(await client.SendAsync("loopback", PeerProtocol.Message(PeerProtocol.Window, "after-bound")));
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     // A dial that fails gives the machine back at once (from QA's attack).
