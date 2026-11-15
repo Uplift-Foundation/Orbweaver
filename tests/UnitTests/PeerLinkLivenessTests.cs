@@ -178,6 +178,84 @@ public class PeerLinkLivenessTests
         Assert.True(link.IsConnected("mini"));
     }
 
+    // --- the hello bound (CB-342) ----------------------------------------------
+
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(15);
+
+    [Fact]
+    public void AnUnnamedConnectionPastTheBoundIsUnannounced() =>
+        Assert.True(PeerLink.Unannounced(PeerLink.Unnamed(), T0, T0 + Bound + TimeSpan.FromTicks(1), Bound));
+
+    // Pins > against >=: exactly at the bound is still inside it.
+    [Fact]
+    public void AnUnnamedConnectionAtOrInsideTheBoundIsNot()
+    {
+        Assert.False(PeerLink.Unannounced(PeerLink.Unnamed(), T0, T0 + Bound, Bound));
+        Assert.False(PeerLink.Unannounced(PeerLink.Unnamed(), T0, T0, Bound));
+    }
+
+    [Fact]
+    public void ANamedConnectionIsNeverUnannounced()
+    {
+        Assert.False(PeerLink.Unannounced("mini", T0, T0 + TimeSpan.FromHours(1), Bound));
+        Assert.False(PeerLink.Unannounced("x(inbound ", T0, T0 + TimeSpan.FromHours(1), Bound));
+    }
+
+    // The case the 60 s watchdog never catches: anything but a hello moves
+    // LastRead on, so the connection is never quiet. A ping is read and never
+    // delivered, which is why the pump's idleness is the signal.
+    [Fact]
+    public async Task AnUnnamedConnectionThatKeepsTalkingButNeverSaysHelloIsDropped()
+    {
+        var now = T0;
+        using var link = Link(new List<PeerProtocol.PeerMessage>());
+        link.Now = () => now;
+
+        using var wire = new Parked();
+        link.Adopt(PeerLink.Unnamed(), wire, "pin", CancellationToken.None);
+
+        now = T0 + Bound + TimeSpan.FromSeconds(1);
+        wire.Feed(PeerProtocol.Encode(PeerProtocol.Message(PeerProtocol.Ping, "p")));
+        await wire.Idle.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Not quiet at all, so the stalled rule cannot be what removes it.
+        link.CheckLiveness();
+
+        Assert.Empty(link.ConnectedMachines());
+    }
+
+    [Fact]
+    public void ANamedConnectionIsNotSubjectToTheHelloBound()
+    {
+        var now = T0;
+        using var link = Link(new List<PeerProtocol.PeerMessage>());
+        link.Now = () => now;
+
+        using var wire = new Parked();
+        link.Adopt("mini", wire, "pin", CancellationToken.None);
+
+        now = T0 + Bound + TimeSpan.FromSeconds(5);
+        link.CheckLiveness();
+
+        Assert.True(link.IsConnected("mini"));
+    }
+
+    [Fact]
+    public void AnUnnamedConnectionInsideTheBoundIsKept()
+    {
+        var now = T0;
+        using var link = Link(new List<PeerProtocol.PeerMessage>());
+        link.Now = () => now;
+
+        using var wire = new Parked();
+        link.Adopt(PeerLink.Unnamed(), wire, "pin", CancellationToken.None);
+
+        now = T0 + Bound - TimeSpan.FromSeconds(1);
+        link.CheckLiveness();
+
+        Assert.Single(link.ConnectedMachines());
+    }
+
     // --- helpers ---------------------------------------------------------------
 
     private static async Task<MemoryStream> StreamOf(params PeerProtocol.PeerMessage[] messages)
@@ -227,10 +305,17 @@ public class PeerLinkLivenessTests
         {
             lock (_gate)
             {
+                _idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 foreach (var b in bytes) _pending.Enqueue(b);
                 _more.TrySetResult();
             }
         }
+
+        // Completes once the pump has consumed everything fed since the last
+        // Feed and is waiting for more: the signal that a frame which is read
+        // but never delivered (a ping) has been read at all.
+        private TaskCompletionSource _idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Idle { get { lock (_gate) return _idle.Task; } }
 
         private readonly TaskCompletionSource _firstWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -265,6 +350,7 @@ public class PeerLinkLivenessTests
 
                     if (_disposed) return 0;
 
+                    _idle.TrySetResult();
                     _more = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     wait = _more.Task;
                 }

@@ -570,6 +570,123 @@ public class PeerLinkLoopbackTests
         Assert.True(await client.ConnectAsync("m", "127.0.0.1", server.BoundPort, Timeout(10)));
     }
 
+    // --- the inbound bound (CB-342) ---------------------------------------------
+    //
+    // An inbound connection that never completes TLS used to hold a task and a
+    // socket forever, because the handshake ran on the listener's own token,
+    // which fires only at Dispose. A test-side WaitAsync is what makes the old
+    // code FAIL here with a TimeoutException instead of hanging the run.
+
+    private PeerLink BoundedServer(
+        List<PeerProtocol.PeerMessage> got, TimeSpan bound, Func<CancellationToken, Task<X509Certificate2>>? cert = null) =>
+        new(new PeerLink.Seams(
+            Deliver: (_, m) => { got.Add(m); return Task.CompletedTask; },
+            KnownPeer: machine => new PeerIdentity.Peer(PeerIdentity.PinOf(Cert.Value), machine),
+            OwnCertificate: cert ?? (_ => Task.FromResult(Cert.Value))))
+        {
+            InboundSetupTimeout = bound
+        };
+
+    // Closed within the bound: EOF, or a reset, both mean "the server hung up".
+    private static async Task AssertClosedByServer(System.Net.Sockets.TcpClient silent)
+    {
+        try
+        {
+            var read = await silent.GetStream().ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, read);
+        }
+        catch (IOException) { }
+        catch (System.Net.Sockets.SocketException) { }
+    }
+
+    [Fact]
+    public async Task ASilentInboundClientIsClosedWithinItsBound()
+    {
+        using var server = BoundedServer(new(), TimeSpan.FromMilliseconds(300));
+        server.Listen(0);
+
+        using var silent = new System.Net.Sockets.TcpClient();
+        await silent.ConnectAsync("127.0.0.1", server.BoundPort);
+
+        await AssertClosedByServer(silent);
+    }
+
+    [Fact]
+    public async Task ARealPeerStillPairsAlongsideSilentOnes()
+    {
+        using var server = BoundedServer(new(), TimeSpan.FromMilliseconds(300));
+        using var client = Link(new(), PeerIdentity.PinOf(Cert.Value));
+        var connected = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.PeerConnected += m => connected.TrySetResult(m);
+        server.Listen(0);
+
+        using var first = new System.Net.Sockets.TcpClient();
+        await first.ConnectAsync("127.0.0.1", server.BoundPort);
+        await AssertClosedByServer(first);
+
+        // A second silent one held open across the real dial.
+        using var second = new System.Net.Sockets.TcpClient();
+        await second.ConnectAsync("127.0.0.1", server.BoundPort);
+
+        Assert.True(await client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort, Timeout(10)));
+        Assert.Equal(MachineNames.Mine(), await connected.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.True(server.IsConnected(MachineNames.Mine()));
+
+        await AssertClosedByServer(second);
+    }
+
+    // The server's own setup is slow but inside its bound, and the link it
+    // makes outlives the bound: the setup token never reaches the link. Also
+    // the inbound twin of TheDialBoundDoesNotLimitTheLinkItMade — here it is the
+    // server's pump that must survive its own setup token being cancelled, and
+    // the frame that proves it travels server to client.
+    [Fact]
+    public async Task ASlowButValidInboundPeerPairsAndTheBoundDoesNotLimitItsLink()
+    {
+        var pin = PeerIdentity.PinOf(Cert.Value);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var server = BoundedServer(new(), TimeSpan.FromSeconds(3),
+            _ => Task.Delay(1000).ContinueWith(_ => Cert.Value));
+
+        // Matched by id: the link may deliver other frames of its own first.
+        using var client = new PeerLink(new PeerLink.Seams(
+            Deliver: (_, m) =>
+            {
+                if (m.Id == "from-server") reached.TrySetResult();
+                return Task.CompletedTask;
+            },
+            KnownPeer: machine => new PeerIdentity.Peer(pin, machine),
+            OwnCertificate: _ => Task.FromResult(Cert.Value)));
+        var connected = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.PeerConnected += m => connected.TrySetResult(m);
+        server.Listen(0);
+
+        Assert.True(await client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort, Timeout(10)));
+        Assert.Equal(MachineNames.Mine(), await connected.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // Past the bound: elapsed time is the thing under test.
+        await Task.Delay(TimeSpan.FromMilliseconds(3500));
+        Assert.True(server.IsConnected(MachineNames.Mine()));
+        Assert.True(await server.SendAsync(MachineNames.Mine(), PeerProtocol.Message(PeerProtocol.Window, "from-server")));
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    // Bound shorter than the server's own setup delay: must fail to pair, so
+    // the slow-peer test above cannot pass trivially.
+    [Fact]
+    public async Task AnInboundSetupSlowerThanItsBoundDoesNotPair()
+    {
+        using var server = BoundedServer(new(), TimeSpan.FromMilliseconds(300),
+            ct => Task.Delay(1500, ct).ContinueWith(_ => Cert.Value, CancellationToken.None));
+        using var client = Link(new(), PeerIdentity.PinOf(Cert.Value));
+        server.Listen(0);
+
+        var dial = client.ConnectAsync("loopback", "127.0.0.1", server.BoundPort, Timeout(5));
+        Assert.False(await dial.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.False(server.IsConnected(MachineNames.Mine()));
+    }
+
     private static CancellationToken Timeout(int seconds) =>
         new CancellationTokenSource(TimeSpan.FromSeconds(seconds)).Token;
 
