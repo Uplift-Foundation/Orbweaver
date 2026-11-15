@@ -21,7 +21,7 @@ namespace Orbweaver
         {
             _home = home;
             _now = now ?? (() => DateTime.UtcNow);
-            _read = read ?? ReadFile;
+            _read = read ?? (path => ReadFile(path));
         }
 
         // `readAll` is a seam so the failure path is a test with a reader that throws,
