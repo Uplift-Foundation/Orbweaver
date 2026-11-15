@@ -34,6 +34,11 @@ namespace Orbweaver.Tests
             new(key, title, "discord", "idle", activity, null, kind, heartbeat,
                 Native: native, GatewayPinned: pinned);
 
+        private static IReadOnlyList<OpenClawReopenRow> B(
+            IReadOnlyList<OpenClawSessions.Session> listed,
+            ClusterMode h, ClusterMode c, ClusterMode n, bool approve = false) =>
+            OpenClawReopenList.Build(listed, h, c, n, approve);
+
         private static string Name(string id) => char.ToUpperInvariant(id[0]) + id[1..];
 
         // ---- Build: rooms --------------------------------------------------
@@ -41,7 +46,7 @@ namespace Orbweaver.Tests
         [Fact]
         public void CollapsesRoomMembersIntoOneRoomRow()
         {
-            var rows = OpenClawReopenList.Build(new[]
+            var rows = B(new[]
             {
                 S(Aurora, "Aurora — general", Now.AddHours(-5), SessionKind.Channel),
                 S(Nova, "Nova — general", Now.AddHours(-2), SessionKind.Channel),
@@ -67,7 +72,7 @@ namespace Orbweaver.Tests
             const string trap = "agent:main:discord:channel:agent:ea-hope:discord:channel:900100";
             Assert.Null(OpenClawSessionKind.RoomOf(trap));
 
-            var rows = OpenClawReopenList.Build(new[]
+            var rows = B(new[]
             {
                 S(Aurora, "Aurora — general", Now.AddHours(-5), SessionKind.Channel),
                 S(Nova, "Nova — general", Now.AddHours(-4), SessionKind.Channel),
@@ -84,7 +89,7 @@ namespace Orbweaver.Tests
         [Fact]
         public void ARoomWithOneAgentIsASessionRow()
         {
-            var rows = OpenClawReopenList.Build(new[]
+            var rows = B(new[]
             {
                 S(Aurora, "Aurora — general", Now.AddHours(-5), SessionKind.Channel),
             }, W, W, W);
@@ -106,7 +111,7 @@ namespace Orbweaver.Tests
 
             // Same room key needed: use a key whose RoomOf matches the other's.
             const string second = "agent:aurora:discord:channel:900100";
-            var rows = OpenClawReopenList.Build(new[]
+            var rows = B(new[]
             {
                 S(second, "Aurora — general", Now.AddHours(-9), SessionKind.Channel),
                 S("agent:aurora:discord:channel:900100", "Aurora — general (newer)", Now.AddHours(-1), SessionKind.Channel),
@@ -130,29 +135,29 @@ namespace Orbweaver.Tests
         [Fact]
         public void HiddenHeartbeatsAreExcluded()
         {
-            Assert.Empty(OpenClawReopenList.Build(new[] { Heartbeat }, H, W, W));
+            Assert.Empty(B(new[] { Heartbeat }, H, W, W));
         }
 
         // The control: the same heartbeat is listed when only crons are hidden.
         [Fact]
         public void AHeartbeatIsListedWhenOnlyCronsAreHidden()
         {
-            Assert.Single(OpenClawReopenList.Build(new[] { Heartbeat }, W, H, W));
+            Assert.Single(B(new[] { Heartbeat }, W, H, W));
         }
 
         [Fact]
         public void HiddenCronsAreExcluded()
         {
-            Assert.Empty(OpenClawReopenList.Build(new[] { Cron }, W, H, W));
-            Assert.Single(OpenClawReopenList.Build(new[] { Cron }, H, W, W));
+            Assert.Empty(B(new[] { Cron }, W, H, W));
+            Assert.Single(B(new[] { Cron }, H, W, W));
         }
 
         [Fact]
         public void HiddenNativeIsExcludedAndOtherModesAreListed()
         {
-            Assert.Empty(OpenClawReopenList.Build(new[] { NativeDash }, W, W, H));
-            Assert.Single(OpenClawReopenList.Build(new[] { NativeDash }, W, W, W));
-            Assert.Single(OpenClawReopenList.Build(new[] { NativeDash }, W, W, O));
+            Assert.Empty(B(new[] { NativeDash }, W, W, H));
+            Assert.Single(B(new[] { NativeDash }, W, W, W));
+            Assert.Single(B(new[] { NativeDash }, W, W, O));
         }
 
         [Theory]
@@ -160,15 +165,15 @@ namespace Orbweaver.Tests
         [InlineData(ClusterMode.OwnShape)]
         public void WithChatsAndOwnShapeAreListed(ClusterMode mode)
         {
-            Assert.Equal(3, OpenClawReopenList.Build(new[] { Heartbeat, Cron, NativeDash }, mode, mode, mode).Count);
+            Assert.Equal(3, B(new[] { Heartbeat, Cron, NativeDash }, mode, mode, mode).Count);
         }
 
         [Fact]
         public void APinnedHeartbeatIsListedEvenWhenHidden()
         {
             var pinned = Heartbeat with { GatewayPinned = true };
-            Assert.Single(OpenClawReopenList.Build(new[] { pinned }, H, H, H));
-            Assert.Empty(OpenClawReopenList.Build(new[] { Heartbeat }, H, H, H));
+            Assert.Single(B(new[] { pinned }, H, H, H));
+            Assert.Empty(B(new[] { Heartbeat }, H, H, H));
         }
 
         // ---- Build: order ---------------------------------------------------
@@ -177,7 +182,7 @@ namespace Orbweaver.Tests
         public void SortsByActivityDescendingThenId()
         {
             var tie = Now.AddHours(-4);
-            var rows = OpenClawReopenList.Build(new[]
+            var rows = B(new[]
             {
                 S("agent:a:discord:direct:2", "b", tie, SessionKind.Direct),
                 S("agent:a:discord:direct:1", "a", tie, SessionKind.Direct),
@@ -193,7 +198,7 @@ namespace Orbweaver.Tests
 
         // ---- Filter ---------------------------------------------------------
 
-        private static IReadOnlyList<OpenClawReopenRow> Sample() => OpenClawReopenList.Build(new[]
+        private static IReadOnlyList<OpenClawReopenRow> Sample() => B(new[]
         {
             S(Aurora, "Aurora — general", Now.AddHours(-5), SessionKind.Channel),
             S(Nova, "Nova — general", Now.AddHours(-2), SessionKind.Channel),
@@ -266,16 +271,20 @@ namespace Orbweaver.Tests
             new(OpenClawReopenTarget.Session, "openclaw:k", "t", "t", kind, native, heartbeat,
                 new[] { "a" }, new[] { "k" }, Now);
 
+        // Native dashboard, then Main, then Heartbeat, Cron, DM, Channel, then
+        // an unknown kind that is native, then nothing (plan: QA G3).
         [Theory]
-        [InlineData(SessionKind.Main, true, OpenClawNativeKind.None, "Heartbeat")]
+        [InlineData(SessionKind.Main, true, OpenClawNativeKind.None, "Main")]
+        [InlineData(SessionKind.Main, false, OpenClawNativeKind.None, "Main")]
+        [InlineData(SessionKind.Main, false, OpenClawNativeKind.Main, "Main")]
+        [InlineData(SessionKind.Main, false, OpenClawNativeKind.Dashboard, "Native")]
+        [InlineData(SessionKind.Direct, false, OpenClawNativeKind.Dashboard, "Native")]
         [InlineData(SessionKind.Cron, true, OpenClawNativeKind.None, "Heartbeat")]
+        [InlineData(SessionKind.Direct, true, OpenClawNativeKind.None, "Heartbeat")]
         [InlineData(SessionKind.Cron, false, OpenClawNativeKind.None, "Cron")]
         [InlineData(SessionKind.Direct, false, OpenClawNativeKind.None, "DM")]
         [InlineData(SessionKind.Channel, false, OpenClawNativeKind.None, "Channel")]
-        [InlineData(SessionKind.Main, false, OpenClawNativeKind.Main, "Native")]
-        [InlineData(SessionKind.Main, false, OpenClawNativeKind.Dashboard, "Native")]
-        [InlineData(SessionKind.Main, false, OpenClawNativeKind.None, "Main")]
-        [InlineData(SessionKind.Unknown, false, OpenClawNativeKind.Dashboard, "Native")]
+        [InlineData(SessionKind.Unknown, false, OpenClawNativeKind.Main, "Native")]
         [InlineData(SessionKind.Unknown, false, OpenClawNativeKind.None, "")]
         public void BadgeForEveryKind(SessionKind kind, bool heartbeat, OpenClawNativeKind native, string expected)
         {
@@ -296,7 +305,7 @@ namespace Orbweaver.Tests
                 ]}
                 """);
 
-            var solo = Assert.Single(OpenClawReopenList.Build(sessions, W, W, W));
+            var solo = Assert.Single(B(sessions, W, W, W));
             Assert.Equal("Channel", OpenClawReopenList.Badge(solo));
             Assert.Equal(OpenClawReopenTarget.Session, solo.Target);
 
@@ -306,23 +315,24 @@ namespace Orbweaver.Tests
                   {"key":"{{beta}}","classification":"group","chatType":"group","lastActivityAt":{{TwoDaysAgo}}}
                 ]}
                 """);
-            var room = Assert.Single(OpenClawReopenList.Build(both, W, W, W));
+            var room = Assert.Single(B(both, W, W, W));
             Assert.Equal(OpenClawReopenTarget.Room, room.Target);
             Assert.Equal("Channel", OpenClawReopenList.Badge(room));
             Assert.Equal("openclaw:room:whatsapp:120000000000000001@g.us", room.OrbSessionId);
         }
 
-        // A WhatsApp *main* carries the heartbeat key (agent:<id>:main), so it
-        // is badged Heartbeat, as the scan clusters it.
+        // A WhatsApp *main* carries the heartbeat key (agent:<id>:main): it is a
+        // heartbeat to the scan (so Hidden excludes it) and a Main to the badge.
         [Fact]
-        public void AWhatsAppMainIsAHeartbeatByItsKey()
+        public void AWhatsAppMainIsAHeartbeatToTheScanAndMainToTheBadge()
         {
             var (sessions, _) = ParseAll(WhatsAppMain());
-            var row = Assert.Single(OpenClawReopenList.Build(sessions, W, W, W));
+            var row = Assert.Single(B(sessions, W, W, W));
 
             Assert.Equal(OpenClawNativeKind.None, row.Native);
-            Assert.Equal("Heartbeat", OpenClawReopenList.Badge(row));
-            Assert.Empty(OpenClawReopenList.Build(sessions, H, W, W));
+            Assert.True(row.Heartbeat);
+            Assert.Equal("Main", OpenClawReopenList.Badge(row));
+            Assert.Empty(B(sessions, H, W, W));
         }
 
         // ---- Through the real Parse ------------------------------------------
@@ -346,7 +356,10 @@ namespace Orbweaver.Tests
             OrbweaverSettings.OpenClawActiveWithinMinutes = withinMinutes;
 
             var (shown, _) = OpenClawSessions.Parse(JsonDocument.Parse(json).RootElement, now ?? Now);
-            return (OpenClawSessions.ListedSnapshot(), shown);
+
+            // A poll that landed: ListedSnapshot is null (loading) until one has.
+            OpenClawSessions.SetListingCurrentForTests(true);
+            return (OpenClawSessions.ListedSnapshot()!, shown);
         }
 
         private static string Rows(string keyStale, string keyFresh, string extra = "") => $$"""
@@ -366,7 +379,7 @@ namespace Orbweaver.Tests
             Assert.DoesNotContain(shown, s => s.Key.EndsWith(":1"));
             Assert.Contains(listed, s => s.Key.EndsWith(":1"));
 
-            var rows = OpenClawReopenList.Build(listed, W, W, W);
+            var rows = B(listed, W, W, W);
             Assert.Contains(rows, r => r.OrbSessionId.EndsWith(":1"));
             Assert.Contains(rows, r => r.OrbSessionId.EndsWith(":2"));
         }
@@ -380,7 +393,7 @@ namespace Orbweaver.Tests
                 """));
 
             Assert.DoesNotContain(listed, s => s.Key.EndsWith(":3"));
-            Assert.DoesNotContain(OpenClawReopenList.Build(listed, W, W, W), r => r.OrbSessionId.EndsWith(":3"));
+            Assert.DoesNotContain(B(listed, W, W, W), r => r.OrbSessionId.EndsWith(":3"));
             Assert.DoesNotContain(shown, s => s.Key.EndsWith(":3"));
         }
 
@@ -388,10 +401,10 @@ namespace Orbweaver.Tests
         public void ListedSnapshotIsEmptyWhenOpenClawIsOff()
         {
             ParseAll(Rows("agent:a:discord:direct:1", "agent:a:discord:direct:2"));
-            Assert.NotEmpty(OpenClawSessions.ListedSnapshot());
+            Assert.NotEmpty(OpenClawSessions.ListedSnapshot()!);
 
             OrbweaverSettings.OpenClawEnabled = false;
-            Assert.Empty(OpenClawSessions.ListedSnapshot());
+            Assert.Null(OpenClawSessions.ListedSnapshot());
             OrbweaverSettings.OpenClawEnabled = true;
         }
 
@@ -400,9 +413,10 @@ namespace Orbweaver.Tests
         {
             OrbweaverSettings.OpenClawEnabled = true;
             var one = S(Dm, "Aurora — wtvamp", Now, SessionKind.Direct);
+            OpenClawSessions.SetListingCurrentForTests(true);
             OpenClawSessions.SetListedForTests(new[] { one });
 
-            Assert.Same(one, Assert.Single(OpenClawSessions.ListedSnapshot()));
+            Assert.Same(one, Assert.Single(OpenClawSessions.ListedSnapshot()!));
         }
 
         // The settled answer: a picked row counts as fresh activity for exactly
@@ -462,7 +476,7 @@ namespace Orbweaver.Tests
                 var (listed, shown) = ParseAll(Rows(key, "agent:a:discord:direct:2"));
                 Assert.DoesNotContain(shown, s => s.Key == key);
 
-                var row = OpenClawReopenList.Build(listed, W, W, W).Single(r => r.OrbSessionId == "openclaw:" + key);
+                var row = B(listed, W, W, W).Single(r => r.OrbSessionId == "openclaw:" + key);
                 var chat = Assert.IsType<OpenClawChatSession>(OpenClawSessions.Reopen(row));
                 Assert.Equal("openclaw:" + key, chat.SessionId);
 
@@ -483,7 +497,7 @@ namespace Orbweaver.Tests
                 var (listed, shown) = ParseAll(RoomRows());
                 Assert.Empty(shown);
 
-                var row = Assert.Single(OpenClawReopenList.Build(listed, W, W, W));
+                var row = Assert.Single(B(listed, W, W, W));
                 Assert.Equal(OpenClawReopenTarget.Room, row.Target);
 
                 var room = Assert.IsType<OpenClawRoomChatSession>(OpenClawSessions.Reopen(row));
@@ -499,7 +513,7 @@ namespace Orbweaver.Tests
         public void ReopenReturnsNullWhenOpenClawIsOff()
         {
             var (listed, _) = ParseAll(Rows("agent:a:discord:direct:1", "agent:a:discord:direct:2"));
-            var row = OpenClawReopenList.Build(listed, W, W, W)[0];
+            var row = B(listed, W, W, W)[0];
 
             OrbweaverSettings.OpenClawEnabled = false;
             try { Assert.Null(OpenClawSessions.Reopen(row)); }
@@ -521,7 +535,7 @@ namespace Orbweaver.Tests
             try
             {
                 var (listed, _) = ParseAll(RoomRows());
-                var row = Assert.Single(OpenClawReopenList.Build(listed, W, W, W));
+                var row = Assert.Single(B(listed, W, W, W));
 
                 foreach (var id in new[] { "openclaw:" + Aurora, "openclaw:" + Nova, row.OrbSessionId, "openclaw:" + Ember })
                     OrbweaverSettings.HideOrb(new HiddenOrb(id, Now, id, "OpenClaw", ""));
@@ -545,14 +559,14 @@ namespace Orbweaver.Tests
         public void ReopenHiddenIdsAreTheRoomOrbThenEveryMember()
         {
             var (listed, _) = ParseAll(RoomRows());
-            var room = Assert.Single(OpenClawReopenList.Build(listed, W, W, W));
+            var room = Assert.Single(B(listed, W, W, W));
 
             Assert.Equal(
                 new[] { "openclaw:room:discord:900100", "openclaw:" + Nova, "openclaw:" + Aurora }.OrderBy(x => x),
                 OpenClawSessions.ReopenHiddenIds(room).OrderBy(x => x));
             Assert.Equal("openclaw:room:discord:900100", OpenClawSessions.ReopenHiddenIds(room)[0]);
 
-            var dm = OpenClawReopenList.Build(new[] { S(Dm, "Aurora — wtvamp", Now, SessionKind.Direct) }, W, W, W)[0];
+            var dm = B(new[] { S(Dm, "Aurora — wtvamp", Now, SessionKind.Direct) }, W, W, W)[0];
             Assert.Equal(new[] { "openclaw:" + Dm }, OpenClawSessions.ReopenHiddenIds(dm));
         }
 
@@ -566,7 +580,7 @@ namespace Orbweaver.Tests
             try
             {
                 var (listed, _) = ParseAll(Rows("agent:a:discord:direct:1", "agent:a:discord:direct:2"));
-                var row = OpenClawReopenList.Build(listed, W, W, W).Single(r => r.OrbSessionId.EndsWith(":1"));
+                var row = B(listed, W, W, W).Single(r => r.OrbSessionId.EndsWith(":1"));
 
                 OpenClawSessions.Reopen(row);
 

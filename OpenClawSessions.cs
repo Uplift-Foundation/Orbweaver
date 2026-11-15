@@ -1060,11 +1060,54 @@ namespace Orbweaver
             _snapshot = sessions;
         }
 
+        // CB-329: everything the poll published about the list, dropped together
+        // when the connection goes: the orbs' snapshot, the picker's, and the flag
+        // that says either is current.
+        internal static void ClearListing()
+        {
+            _snapshot = Array.Empty<Session>();
+            _listed = Array.Empty<Session>();
+            _listingCurrent = false;
+        }
+
+        // CB-329: the last reason a connect failed, kept on its own because it only
+        // otherwise survives inside the status sentence. The picker shows it when
+        // the gateway never answers: on a Mac that text is the Local Network hint,
+        // which breaks on every upgrade and is the likeliest cause of a gateway
+        // that is down right after an install. Cleared when a listing lands.
+        private static volatile string? _lastConnectFailure;
+
+        internal static void RecordConnectFailure(OpenClawGateway.ConnectResult result)
+        {
+            if (result.Outcome != OpenClawGateway.Outcome.Connected) _lastConnectFailure = result.Detail;
+        }
+
+        internal static string? LastConnectFailure() =>
+            OrbweaverSettings.OpenClawEnabled ? _lastConnectFailure : null;
+
+        internal static void SetLastConnectFailureForTests(string? detail) => _lastConnectFailure = detail;
+
+        // CB-329: whether the cluster rule takes this row's orb away. The three
+        // exemptions, in the order Parse always applied them: a pinned row is
+        // kept, a row waiting on an approval is kept while approving is on, and
+        // otherwise the cluster's own visibility decides. Called by Parse and by
+        // the picker's Build, so what the picker lists is exactly what has an orb.
+        internal static bool ClusterHides(
+            Session s, ClusterMode heartbeats, ClusterMode crons, ClusterMode native, bool approveEnabled) =>
+            !s.GatewayPinned
+            && !(s.State == "waiting" && approveEnabled)
+            && !OrbClusters.Visible(
+                OrbClusters.Of(s.Heartbeat, s.Kind, s.Native != OpenClawNativeKind.None),
+                heartbeats, crons, native);
+
         // CB-329: the picker's rows come from here — what the last poll listed,
         // minus archived conversations, with the recency and cluster filters not
         // yet applied (OpenClawReopenList applies the cluster one itself).
-        internal static IReadOnlyList<Session> ListedSnapshot() =>
-            OrbweaverSettings.OpenClawEnabled ? _listed : Array.Empty<Session>();
+        // Null while no poll has completed on this connection or OpenClaw is off:
+        // null means "loading", never "empty" (an empty list is a poll that
+        // answered with nothing).
+        internal static IReadOnlyList<Session>? ListedSnapshot() =>
+            OrbweaverSettings.OpenClawEnabled && _listingCurrent ? _listed : null;
 
         // A test seam in the shape of SetSnapshotForTests.
         internal static void SetListedForTests(IReadOnlyList<Session> sessions)
@@ -1270,9 +1313,7 @@ namespace Orbweaver
                 _cts?.Cancel();
                 _cts = null;
                 _supervisor = null;
-                _snapshot = Array.Empty<Session>();
-                _listed = Array.Empty<Session>();
-                _listingCurrent = false;
+                ClearListing();
                 Running.Clear();
                 ClearPendingLocked();
 
@@ -1327,6 +1368,7 @@ namespace Orbweaver
                     if (result.Outcome != OpenClawGateway.Outcome.Connected)
                     {
                         Report(Describe(result));
+                        RecordConnectFailure(result);
 
                         // Recorded as a flag as well as a sentence, because the
                         // settings window has to *offer something* for this one
@@ -1447,9 +1489,7 @@ namespace Orbweaver
 
                 // Orbs go the moment the connection does: an orb for a session
                 // we can no longer see the state of is a lie that pulses.
-                _snapshot = Array.Empty<Session>();
-                _listed = Array.Empty<Session>();
-                _listingCurrent = false;
+                ClearListing();
 
                 try { await Task.Delay(backoff, ct); } catch { break; }
                 backoff = TimeSpan.FromSeconds(Math.Min(60, backoff.TotalSeconds * 2));
@@ -1635,6 +1675,7 @@ namespace Orbweaver
 
                 _snapshot = sessions;
                 _listingCurrent = true;
+                _lastConnectFailure = null;
                 Report(total == sessions.Count
                     ? $"Connected — {sessions.Count} session{(sessions.Count == 1 ? "" : "s")}."
                     : $"Connected — showing {sessions.Count} of {total}. The rest have been quiet "
@@ -1842,12 +1883,14 @@ namespace Orbweaver
                 // the moment the approval ends and a pinned row, which was never
                 // kept by it, does not. An archived row was dropped at the top of the
                 // loop and never gets here.
-                if (!pinned
-                    && !OrbClusters.Visible(
-                        OrbClusters.Of(heartbeat, kind, native != OpenClawNativeKind.None),
-                        HeartbeatMode, CronMode, NativeMode))
+                // CB-329: the predicate is shared with the picker (ClusterHides), so the
+                // list and the scan cannot drift apart. Asked first without the
+                // approval exemption to find a row the cluster would hide at all,
+                // then with it to learn whether an approval is what keeps it.
+                if (ClusterHides(session, HeartbeatMode, CronMode, NativeMode, approveEnabled: false))
                 {
-                    if (state == "waiting" && OrbweaverSettings.OpenClawApproveEnabled)
+                    if (!ClusterHides(session, HeartbeatMode, CronMode, NativeMode,
+                            OrbweaverSettings.OpenClawApproveEnabled))
                     {
                         keptByApproval.Add(key);
                     }
@@ -2471,11 +2514,7 @@ namespace Orbweaver
 
             // The list catching up with a fact, as Forget puts it: the checkbox
             // and the age exemption hold before the next poll says the same.
-            if (result.Outcome == OpenClawActionOutcome.Done)
-            {
-                _snapshot = _snapshot.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
-                _listed = _listed.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
-            }
+            if (result.Outcome == OpenClawActionOutcome.Done) ApplyPinned(key, pinned);
 
             return result;
         }
@@ -2634,7 +2673,16 @@ namespace Orbweaver
         // leaving its orb up for as long as five seconds until the next poll says
         // the same thing. Only ever after the gateway confirmed the archive, so
         // this is the list catching up with a fact rather than predicting one.
-        private static void Forget(string key)
+        // CB-329: the state change of a confirmed pin, on both views of the list
+        // (the orbs' snapshot and the picker's). Its own method so it is covered
+        // without a network await in front of it.
+        internal static void ApplyPinned(string key, bool pinned)
+        {
+            _snapshot = _snapshot.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
+            _listed = _listed.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
+        }
+
+        internal static void Forget(string key)
         {
             _snapshot = _snapshot.Where(s => s.Key != key).ToList();
             _listed = _listed.Where(s => s.Key != key).ToList();
