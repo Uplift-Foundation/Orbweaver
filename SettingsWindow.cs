@@ -1025,6 +1025,39 @@ namespace Orbweaver
             return combo;
         }
 
+        // CB-281's one row. A plain combo over the AutoGroupBy choices; it does
+        // not Rebuild() like ClusterModePicker, because nothing else in the
+        // card appears or disappears with the answer.
+        internal Control AutoGroupPicker()
+        {
+            var choices = SettingsFilter.AutoGroupChoices;
+            var current = OrbweaverSettings.AutoGroupBy;
+
+            var combo = new ComboBox
+            {
+                ItemsSource = choices.Select(c => c.Label).ToList(),
+                SelectedIndex = Array.FindIndex(choices, c => c.Value == current),
+                MinWidth = 132
+            };
+            combo.SelectionChanged += (_, _) =>
+            {
+                var index = combo.SelectedIndex;
+                if (index < 0) return;
+                OnAutoGroupByChanged(choices[index].Value);
+            };
+            return combo;
+        }
+
+        // Writes the setting, then asks the manager to regroup what is on
+        // screen now rather than at the next restart. A no-op when the value
+        // is already the saved one, so building the picker never regroups.
+        internal void OnAutoGroupByChanged(AutoGroupBy by)
+        {
+            if (by == OrbweaverSettings.AutoGroupBy) return;
+            OrbweaverSettings.AutoGroupBy = by;
+            SessionManager.Instance?.ReapplyAutoGroups();
+        }
+
         private Control[] AutoOrganizeRows()
         {
             return new Control[]
@@ -1043,6 +1076,7 @@ namespace Orbweaver
         // backdrop already on screen repaints.
         internal Control[] GroupOutlineRows() => new[]
         {
+            Row("Auto-group orbs by", AutoGroupPicker(), SettingsFilter.AutoGroupHelp),
             Row("Outline groups", Switch(OrbweaverSettings.GroupOutlinesEnabled, on =>
                 {
                     OrbweaverSettings.GroupOutlinesEnabled = on;

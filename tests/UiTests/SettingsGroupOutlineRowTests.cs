@@ -63,11 +63,11 @@ public class SettingsGroupOutlineRowTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void TheCardHasFiveRowsEachWithHelp()
+    public void TheCardHasSevenRowsEachWithHelp()
     {
         var rows = NewWindow().GroupOutlineRows();
 
-        Assert.Equal(6, rows.Length);
+        Assert.Equal(7, rows.Length);
         Assert.All(rows, row =>
             Assert.True(row.GetLogicalDescendants().OfType<TextBlock>().Count() >= 2, "label plus help"));
     }
@@ -76,7 +76,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     public void TheSwitchWritesTheEnabledSetting()
     {
         OrbweaverSettings.GroupOutlinesEnabled = false;
-        var row = NewWindow().GroupOutlineRows()[0];
+        var row = NewWindow().GroupOutlineRows()[1];
         var toggle = In<ToggleButton>(row);
 
         toggle.IsChecked = true;
@@ -97,11 +97,11 @@ public class SettingsGroupOutlineRowTests : IDisposable
 
         var rows = NewWindow().GroupOutlineRows();
 
-        Assert.True(In<ToggleButton>(rows[0]).IsChecked);
-        Assert.Equal(Color.Parse("#102030"), In<ColorPicker>(rows[1]).Color);
-        Assert.Equal(0.4, In<Slider>(rows[2]).Value, 3);
-        Assert.Equal(Color.Parse("#A0B0C0"), In<ColorPicker>(rows[3]).Color);
-        Assert.Equal(0.2, In<Slider>(rows[4]).Value, 3);
+        Assert.True(In<ToggleButton>(rows[1]).IsChecked);
+        Assert.Equal(Color.Parse("#102030"), In<ColorPicker>(rows[2]).Color);
+        Assert.Equal(0.4, In<Slider>(rows[3]).Value, 3);
+        Assert.Equal(Color.Parse("#A0B0C0"), In<ColorPicker>(rows[4]).Color);
+        Assert.Equal(0.2, In<Slider>(rows[5]).Value, 3);
     }
 
     [AvaloniaFact]
@@ -109,15 +109,15 @@ public class SettingsGroupOutlineRowTests : IDisposable
     {
         var rows = NewWindow().GroupOutlineRows();
 
-        var stroke = In<Slider>(rows[2]);
+        var stroke = In<Slider>(rows[3]);
         stroke.Value = 0.75;
         Assert.Equal(0.75, OrbweaverSettings.GroupOutlineStrokeOpacity, 3);
-        Assert.Contains(rows[2].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "75%");
+        Assert.Contains(rows[3].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "75%");
 
-        var fill = In<Slider>(rows[4]);
+        var fill = In<Slider>(rows[5]);
         fill.Value = 0.1;
         Assert.Equal(0.1, OrbweaverSettings.GroupOutlineFillOpacity, 3);
-        Assert.Contains(rows[4].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "10%");
+        Assert.Contains(rows[5].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "10%");
 
         Assert.Equal(0, stroke.Minimum);
         Assert.Equal(1, stroke.Maximum);
@@ -128,12 +128,12 @@ public class SettingsGroupOutlineRowTests : IDisposable
     {
         var rows = NewWindow().GroupOutlineRows();
 
-        var stroke = In<ColorPicker>(rows[1]);
+        var stroke = In<ColorPicker>(rows[2]);
         Arm(stroke);
         stroke.Color = Color.FromRgb(0x12, 0x34, 0x56);
         Assert.Equal("#123456", OrbweaverSettings.GroupOutlineStroke);
 
-        var fill = In<ColorPicker>(rows[3]);
+        var fill = In<ColorPicker>(rows[4]);
         Arm(fill);
         fill.Color = Color.FromRgb(0xAB, 0xCD, 0xEF);
         Assert.Equal("#ABCDEF", OrbweaverSettings.GroupOutlineFill);
@@ -143,7 +143,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     public void AColourTheTemplateChoosesIsNotWritten()
     {
         OrbweaverSettings.GroupOutlineStroke = "#102030";
-        var picker = In<ColorPicker>(NewWindow().GroupOutlineRows()[1]);
+        var picker = In<ColorPicker>(NewWindow().GroupOutlineRows()[2]);
 
         picker.Color = Color.FromRgb(0x2C, 0x27, 0x3C);
 
@@ -175,7 +175,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     public void TheShowGroupNamesSwitchIsOffByDefaultAndWritesItsSetting()
     {
         OrbweaverSettings.GroupNamesVisible = false;
-        var row = NewWindow().GroupOutlineRows()[5];
+        var row = NewWindow().GroupOutlineRows()[6];
         Assert.Contains(row.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "Show group names");
         var toggle = In<ToggleButton>(row);
         Assert.False(toggle.IsChecked);
