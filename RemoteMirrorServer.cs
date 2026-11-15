@@ -30,7 +30,9 @@ namespace Orbweaver
     //  * **Requests are only served to a peer the link allows** — see
     //    Seams.PeerAllowed below. Over the relay this was a name-prefix match, a
     //    weak check since the account is shared; the relay is gone (937de9ec)
-    //    and the link's answer is a pinned TLS certificate.
+    //    and the link's answer is a certificate somebody pinned with a pairing
+    //    code — checked at TLS for a connection we dialled, and at its hello
+    //    for one that dialled us, which sends nothing here before then (CB-344).
     internal sealed class RemoteMirrorServer
     {
         // Everything this needs from the world outside itself.
@@ -68,12 +70,13 @@ namespace Orbweaver
             // it meant "the name starts with the relay prefix" (MachineNames)
             // — a guard rather than a boundary, since the account is
             // shared and anything on it could wear that name. Over a direct link
-            // it means something much stronger: this peer completed a TLS
-            // handshake presenting a certificate we pinned when a person typed a
-            // pairing code.
+            // it means something much stronger: this peer presented a
+            // certificate we pinned when a person typed a pairing code. That is
+            // judged at TLS when we dialled, and at the hello when they did; an
+            // inbound connection is never asked about before its hello is
+            // accepted (CB-344).
             //
-            // Null keeps the old prefix test, so nothing that has not been moved
-            // across yet changes behaviour.
+            // Null means nobody may ask; see MayAsk below.
             Func<string, bool>? PeerAllowed = null,
 
             // CB-252: the user-level config dirs (the ones holding a persona's
@@ -643,8 +646,9 @@ namespace Orbweaver
             // without this there is nothing to put an orb on and no way to
             // learn a name to ask about — the question would have no first
             // answer. And the peer is not any process that happens to share an
-            // account: it completed a TLS handshake presenting a certificate
-            // pinned when a person typed a pairing code. Telling a machine the
+            // account: it presented a certificate pinned when a person typed a
+            // pairing code, and was let in only once that was checked — at TLS
+            // or, for one that dialled us, at its hello (CB-344). Telling a machine the
             // user deliberately paired what sessions are here is the feature.
             //
             // Still only what this machine would show anyway: the same
