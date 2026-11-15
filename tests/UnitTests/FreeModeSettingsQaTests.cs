@@ -113,7 +113,7 @@ public class FreeModeSettingsQaTests : IDisposable
         Assert.Equal(
             OrbGroups.Heartbeats,
             OrbGroups.GroupIdFor(
-                null, OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats));
+                null, OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats, null));
     }
 
     [Fact]

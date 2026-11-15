@@ -13,6 +13,25 @@ namespace Orbweaver
     // without either of them being a special case in the caller.
     internal static class SettingsFilter
     {
+        // CB-281's "Auto-group orbs by" row: its choices in display order, and
+        // its help. The help doubles as the row's search text (Row builds
+        // SearchText from label + help), so the words a person would type to
+        // find it -- group, directory, repo, CLI, profile, account -- live here.
+        internal static readonly (string Label, AutoGroupBy Value)[] AutoGroupChoices =
+        {
+            ("Off", AutoGroupBy.Off),
+            ("Directory", AutoGroupBy.Directory),
+            ("CLI", AutoGroupBy.Cli),
+            ("Claude profile", AutoGroupBy.Profile),
+            ("Account", AutoGroupBy.Account)
+        };
+
+        internal const string AutoGroupHelp =
+            "Gather orbs into one group per directory (the git repo they are in), CLI, "
+            + "Claude profile or account, live as sessions come and go. A group you make by "
+            + "hand is never changed, and orbs with no value for the choice stay ungrouped. "
+            + "Turn on Outline groups and Show group names below to see the groups.";
+
         internal static bool IsActive(string? query) => !string.IsNullOrWhiteSpace(query);
 
         // Whitespace-split, empty entries dropped. Order isn't meaningful —

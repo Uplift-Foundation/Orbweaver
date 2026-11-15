@@ -351,13 +351,17 @@ namespace Orbweaver
 
         // The caption text for a group, read from the table on every Refresh so a
         // rename shows up on the next one without anything being told.
-        private static string CaptionFor(string groupId)
+        // CB-281: a nameless group's number counts hand-made groups only. Auto
+        // groups sort first in the table, so counting them shifted a manual
+        // group's caption ("Group 1" to "Group 3") just because auto-grouping
+        // was on; and an auto group is always named for its value.
+        internal static string CaptionFor(string groupId)
         {
             var groups = OrbweaverSettings.OrbGroupList();
             var ordinal = 0;
             foreach (var g in groups)
             {
-                if (!OrbGroups.IsPredefined(g.Id)) ordinal++;
+                if (!OrbGroups.IsPredefined(g.Id) && !OrbAutoGroups.IsAuto(g.Id)) ordinal++;
                 if (g.Id == groupId) return GroupCaption.TextFor(g.Name, ordinal);
             }
 

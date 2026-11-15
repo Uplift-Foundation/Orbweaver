@@ -36,7 +36,7 @@ namespace Orbweaver
         // the only "none" this needs to recognise.
         internal static string GroupIdFor(
             string? membership, OrbCluster cluster,
-            ClusterMode heartbeats, ClusterMode crons, ClusterMode native)
+            ClusterMode heartbeats, ClusterMode crons, ClusterMode native, string? autoGroupId)
         {
             if (!string.IsNullOrWhiteSpace(membership)) return membership;
 
@@ -45,7 +45,11 @@ namespace Orbweaver
                 1 => Heartbeats,
                 2 => Crons,
                 3 => Native,
-                _ => Main
+                // CB-281: a cluster with its own shape has already answered above;
+                // everything else is auto-grouped when the classifier gave an id.
+                // Only an "a-" id can arrive here, so a manual group is reachable
+                // through explicit membership alone.
+                _ => OrbAutoGroups.IsAuto(autoGroupId) ? autoGroupId! : Main
             };
         }
 
@@ -339,7 +343,10 @@ namespace Orbweaver
         // The predefined three are slots, not collections of members, and stay.
         private void PruneIfEmpty(string id)
         {
-            if (OrbGroups.IsPredefined(id) || !_groups.ContainsKey(id) || MemberCount(id) > 0) return;
+            // An auto group (CB-281) has no explicit members by design, and
+            // pruning it would throw away the anchor, shape and name it keeps.
+            if (OrbGroups.IsPredefined(id) || OrbAutoGroups.IsAuto(id)
+                || !_groups.ContainsKey(id) || MemberCount(id) > 0) return;
             _groups.Remove(id);
         }
 
@@ -365,6 +372,43 @@ namespace Orbweaver
                 null);
             _groups[id] = made;
             return made;
+        }
+
+        // CB-281: the most auto groups kept. Only a dormant one (no explicit
+        // member, not on screen now) is ever evicted to stay under it.
+        internal const int MaxAutoGroups = 64;
+
+        // Creates the auto group for a derived id if it is missing: the given
+        // name, Main's shape, no anchor. An existing group is never renamed or
+        // reshaped, so a rename the user made sticks. A name another group
+        // already wears gets " (2)", " (3)"... so the menu never lists two
+        // identical "In: ..." lines. Returns true when a group was created.
+        //
+        // Over the cap, dormant auto groups go first in ordinal id order. If none
+        // is dormant the group is created anyway, so the cap can be exceeded while
+        // every auto group is on screen; a visible group is never evicted: every live orb gets its group,
+        // and the table is bounded by the orbs on screen.
+        internal bool EnsureAuto(string id, string name, IReadOnlySet<string> live)
+        {
+            if (!OrbAutoGroups.IsAuto(id) || _groups.ContainsKey(id)) return false;
+
+            var autoCount = _groups.Keys.Count(OrbAutoGroups.IsAuto);
+            foreach (var old in _groups.Keys.Where(OrbAutoGroups.IsAuto).OrderBy(k => k, StringComparer.Ordinal).ToList())
+            {
+                if (autoCount < MaxAutoGroups) break;
+                if (live.Contains(old) || MemberCount(old) > 0) continue;
+                _groups.Remove(old);
+                autoCount--;
+            }
+
+            var label = string.IsNullOrWhiteSpace(name) ? "Group" : name.Trim();
+            var taken = new HashSet<string>(_groups.Values.Select(g => g.Name), StringComparer.OrdinalIgnoreCase);
+            var unique = label;
+            for (var n = 2; taken.Contains(unique); n++)
+                unique = label + " (" + n.ToString(CultureInfo.InvariantCulture) + ")";
+
+            _groups[id] = new OrbGroup(id, unique, _groups[OrbGroups.Main].Shape, null, null);
+            return true;
         }
 
         private string NextName()
