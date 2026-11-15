@@ -83,8 +83,10 @@ namespace Orbweaver
                 var agents = new List<string>();
                 foreach (var m in members)
                 {
-                    var agent = OpenClawSessions.AgentIdOf(m.Key);
-                    if (agent is null || agents.Contains(agent, StringComparer.OrdinalIgnoreCase)) continue;
+                    // RoomOf only accepts "agent:<id>:…" keys, so AgentIdOf cannot be null
+                    // for a room member (pinned by RoomOfOnlyAcceptsKeysWithAnAgent).
+                    var agent = OpenClawSessions.AgentIdOf(m.Key)!;
+                    if (agents.Contains(agent, StringComparer.OrdinalIgnoreCase)) continue;
                     agents.Add(agent);
                 }
 

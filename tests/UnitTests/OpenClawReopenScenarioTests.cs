@@ -280,6 +280,27 @@ namespace Orbweaver.Tests
             Assert.DoesNotContain(rows, r => r.OrbSessionId.StartsWith("openclaw:room:agent:", StringComparison.Ordinal));
         }
 
+        // The guarantee Build leans on when it names a room's agents: any key RoomOf
+        // accepts has an agent segment. The trap key is refused by RoomOf outright.
+        [Theory]
+        [InlineData("agent:main:discord:channel:1900000000000000001", "main")]
+        [InlineData("agent:nova:whatsapp:group:120000000000000001@g.us", "nova")]
+        [InlineData("agent:aurora:discord:channel:900:thread:7", "aurora")]
+        [InlineData("agent:main:discord:channel:agent:ea-hope:discord:channel:1538900000000000001", null)]
+        [InlineData("main", null)]
+        [InlineData("discord:channel:900", null)]
+        public void RoomOfOnlyAcceptsKeysWithAnAgent(string key, string? agent)
+        {
+            var room = OpenClawSessionKind.RoomOf(key);
+
+            if (agent is null) Assert.Null(room);
+            else
+            {
+                Assert.NotNull(room);
+                Assert.Equal(agent, OpenClawSessions.AgentIdOf(key));
+            }
+        }
+
         [Fact]
         public void TwoDmsOfOneAgentAreTwoRowsAndTwoChannelsOfTwoAgentsAreTwoRooms()
         {
