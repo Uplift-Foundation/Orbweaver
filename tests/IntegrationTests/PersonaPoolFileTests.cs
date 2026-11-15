@@ -68,6 +68,39 @@ public class PersonaPoolFileTests : IDisposable
             cwd);
 
     [Fact]
+    public void ASuffixedMembersOwnFileDoesNotBorrowTheBasePersonasVoice()
+    {
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno", "Juno", voice: "base-voice");
+        WriteProfile(pool, "juno-2", "Juno Two");
+        var p = Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-2");
+        Assert.Equal("Juno Two", p.Name);
+        Assert.Null(p.Voice);
+        Assert.Equal("base-voice", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-3").Voice);
+    }
+
+    [Theory]
+    [InlineData("juno-2x")]
+    [InlineData("juno-v2")]
+    [InlineData("juno-")]
+    public void ANonDigitSuffixIsNotARespawnAndGetsNoPersona(string agent)
+    {
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno", "Juno");
+        Assert.True(Resolve(Dir("work"), Array.Empty<string>(), pool, agent).IsEmpty);
+    }
+
+    [Fact]
+    public void TheBasePersonasSlugInPersonaMdIsOfferedToARespawnedMemberButNotAVersion()
+    {
+        var pool = Dir("pool");
+        var dir = Dir("pool", "persona");
+        File.WriteAllText(Path.Combine(dir, "persona.md"), "---\nname: \"Juno\"\nslug: \"juno\"\n---\n");
+        Assert.Equal("Juno", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-2").Name);
+        Assert.True(Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-v2").IsEmpty);
+    }
+
+    [Fact]
     public void ATeamMemberIsFoundInTheSharedPoolFromAnyProject()
     {
         var pool = Dir("pool");
@@ -104,6 +137,82 @@ public class PersonaPoolFileTests : IDisposable
 
         Assert.Equal("Atlas", persona.Name);
         Assert.NotNull(persona.AvatarPath);
+    }
+
+    [Fact]
+    public void ARespawnedMemberWithAHyphenSuffixWearsItsOriginalPersona()
+    {
+        // CB-288: `juno-abernathy-2` has no directory under .profiles-assets,
+        // but `juno-abernathy` does, and it must not fall back to the lead.
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno-abernathy", "Juno Abernathy");
+
+        var persona = Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-abernathy-2");
+
+        Assert.Equal("Juno Abernathy", persona.Name);
+        Assert.NotNull(persona.AvatarPath);
+    }
+
+    // profile-gen's gitignored layout: .profiles-assets/<name>/<name>.md, the
+    // picture relative to the root the folder sits in.
+    private void WriteAssetsProfile(string root, string name, string display)
+    {
+        var dir = Dir(Path.GetRelativePath(_root, root), ".profiles-assets", name);
+        File.WriteAllText(Path.Combine(dir, name + ".md"),
+            $"---\nschema_version: 1\nname: \"{display}\"\nslug: \"{name}\"\n"
+            + $"image: \".profiles-assets/{name}/{name}.png\"\n---\n\n# {display}\n");
+        File.WriteAllBytes(Path.Combine(dir, name + ".png"), Png());
+    }
+
+    // The lead: a project CLAUDE.md that imports a main-session persona.
+    private string WriteLeadProject()
+    {
+        var project = Dir("work", "project");
+        var lead = Dir("work", "project", "persona");
+        File.WriteAllText(Path.Combine(project, "CLAUDE.md"), "@persona/persona.md\n");
+        File.WriteAllText(Path.Combine(lead, "persona.md"),
+            "---\nname: \"Jennifer Voss\"\nslug: \"jennifer-voss\"\nimage: \"persona/lead.png\"\n---\n");
+        File.WriteAllBytes(Path.Combine(lead, "lead.png"), Png());
+        return project;
+    }
+
+    [Fact]
+    public void ARespawnedTeammateInAProjectWearsItsOwnPersonaNotTheLeads()
+    {
+        // CB-288 as it happened: the project's .profiles-assets holds
+        // juno-abernathy, the member came up as juno-abernathy-2, and it drew
+        // the lead's face because the lead's CLAUDE.md was all that matched.
+        var project = WriteLeadProject();
+        WriteAssetsProfile(project, "juno-abernathy", "Juno Abernathy");
+
+        var persona = Resolve(project, Array.Empty<string>(), null, "juno-abernathy-2");
+
+        Assert.Equal("Juno Abernathy", persona.Name);
+        Assert.Contains("juno-abernathy", persona.AvatarPath);
+        Assert.DoesNotContain("lead.png", persona.AvatarPath);
+    }
+
+    [Fact]
+    public void ARespawnedTeammatesOwnAssetsFileStillWinsAndAVersionFallsToTheLead()
+    {
+        var project = WriteLeadProject();
+        WriteAssetsProfile(project, "juno", "Juno");
+        WriteAssetsProfile(project, "juno-2", "Juno Two");
+
+        Assert.Equal("Juno Two", Resolve(project, Array.Empty<string>(), null, "juno-2").Name);
+        Assert.Equal("Jennifer Voss", Resolve(project, Array.Empty<string>(), null, "juno-v2").Name);
+    }
+
+    [Fact]
+    public void AHyphenSuffixedMembersOwnFileWinsAndAVersionIsNotStripped()
+    {
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno", "Juno");
+        WriteProfile(pool, "juno-2", "Juno Two");
+
+        Assert.Equal("Juno Two", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-2").Name);
+        Assert.Equal("Juno", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-12").Name);
+        Assert.True(Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-v2").IsEmpty);
     }
 
     [Fact]
