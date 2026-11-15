@@ -841,6 +841,82 @@ public class SessionManagerAutoGroupTests : IDisposable
         Assert.DoesNotContain(OrbweaverSettings.OrbGroupList(), g => OrbAutoGroups.IsAuto(g.Id));
     });
 
+    // CB-306's fixture (SessionScanTests): a local Claude Code session that
+    // OpenClaw spawned to run a heartbeat, beside an ordinary Codex session.
+    // A different route to a heartbeat orb from the gateway's, and the one a
+    // CLI classifier would otherwise call "claude".
+    private SessionManager ScanHeartbeatSpawn(ClusterMode heartbeats)
+    {
+        OrbweaverSettings.OpenClawHeartbeatMode = heartbeats;
+        OrbweaverSettings.OpenClawEnabled = false;
+        OpenClawSessions.SetAgentWorkspacesForTests(new Dictionary<string, string>());
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        OrbweaverSettings.CodexEnabled = true;
+
+        var workspace = Path.Combine(_dir, ".openclaw", "workspace-sample-zara");
+        var transcript = Path.Combine(_dir, "spawn.jsonl");
+        File.WriteAllText(transcript,
+            "{\"type\":\"user\",\"message\":{\"content\":\"A scheduled reminder has been triggered. HEARTBEAT: run the routine.\"}}\n");
+        void Status(string id, string cli, string cwd, string path) =>
+            File.WriteAllText(Path.Combine(_dir, id + ".txt"), System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+            {
+                Cli = cli, Cwd = cwd, SessionPid = Environment.ProcessId, TermProgram = "iTerm.app",
+                Tty = "/dev/ttys004", TranscriptPath = path, Entrypoint = "sdk-cli",
+            }));
+        Status("spawn", "", workspace, transcript);
+        Status("ordinary", "codex", "/Users/user/Source/project", "");
+
+        var m = new SessionManager(_dir) { AutoGroupRepoRootOf = _ => null };
+        m.ScanAndUpdate();
+        foreach (var id in m.AllStatuses.Keys) KeyOf(m, id);
+        return m;
+    }
+
+    private void WithHeartbeatSpawn(Action body)
+    {
+        var before = (OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawEnabled);
+        try { body(); }
+        finally
+        {
+            OrbweaverSettings.OpenClawHeartbeatMode = before.OpenClawHeartbeatMode;
+            OrbweaverSettings.OpenClawEnabled = before.OpenClawEnabled;
+            OpenClawSessions.SetAgentWorkspacesForTests(new Dictionary<string, string>());
+            OpenClawCliSession.ForgetForTests();
+        }
+    }
+
+    // What this pins is today's behaviour, not the precedence rule (the
+    // gateway heartbeat test above pins that). A spawned heartbeat's cluster
+    // decides only whether it is shown (OpenClawCliSession.Show); its orb's
+    // Heartbeat flag is never set, so it has always been drawn as a chat, in
+    // main, even with heartbeats in their own shape (CB-306, unchanged here).
+    // Under CLI it is therefore grouped like the chat it is drawn as.
+    [AvaloniaFact]
+    public void ASpawnedHeartbeatIsDrawnAsAChatSoCliGroupsItLikeOne() => WithHeartbeatSpawn(() =>
+    {
+        var m = ScanHeartbeatSpawn(ClusterMode.OwnShape);
+        Assert.Contains("spawn", Windows(m).Keys);
+        Assert.Equal(OrbGroups.Main, GroupOf(m, "spawn"));            // Off: main, not heartbeats
+
+        Set(m, AutoGroupBy.Cli);
+
+        Assert.Equal(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude"), GroupOf(m, "spawn"));
+        Assert.Equal(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "codex"), GroupOf(m, "ordinary"));
+    });
+
+    [AvaloniaFact]
+    public void AHiddenSpawnedHeartbeatLeavesNoPhantomAutoGroup() => WithHeartbeatSpawn(() =>
+    {
+        var m = ScanHeartbeatSpawn(ClusterMode.Hidden);
+        Assert.DoesNotContain("spawn", Windows(m).Keys);
+
+        Set(m, AutoGroupBy.Cli);
+
+        Assert.Null(OrbweaverSettings.OrbGroupFor(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude")));
+        Assert.Equal(new[] { OrbAutoGroups.IdFor(AutoGroupBy.Cli, "codex") },
+            OrbweaverSettings.OrbGroupList().Where(g => OrbAutoGroups.IsAuto(g.Id)).Select(g => g.Id));
+    });
+
     [AvaloniaFact]
     public void AGrokAccountThatArrivesWithTheTranscriptMovesTheOrbExactlyOnce()
     {
