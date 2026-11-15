@@ -547,4 +547,194 @@ public class SessionManagerAutoGroupTests : IDisposable
         // The repo default is RepoRoots.Cached: a directory with no .git above it has none.
         Assert.Null(m.AutoGroupRepoRootOf(_dir));
     }
+
+    // --- guards on giving a pin back (architect's review) -----------------------
+
+    // Pins an orb at a spot, saves it, and turns grouping on so the orb is
+    // drawn in its group somewhere else. Returns the saved spot.
+    private PixelPoint SavedPinThenCli(SessionManager m, string id, AutoGroupBy by = AutoGroupBy.Cli)
+    {
+        var w = Windows(m)[id];
+        var pin = new PixelPoint(w.Position.X - 300, w.Position.Y + 40);
+        w.PinAt(pin);
+        m.RememberOrbPosition(w);
+        m.ReapplyArrangement();
+        Set(m, by);
+        Assert.NotEqual(pin, w.Position);
+        return pin;
+    }
+
+    [AvaloniaFact]
+    public void ADragOutOfAnAutoGroupStaysWhereItWasDroppedThroughTheNextScan()
+    {
+        // Directory: all three share one group, so there is a group to leave
+        // (a lone orb dragged away is moving its own group, not leaving it).
+        var m = Scan();
+        var oldPin = SavedPinThenCli(m, "s1", AutoGroupBy.Directory);
+        var w = Windows(m)["s1"];
+
+        // Carry it far from everything and let go: LeaveToFree, which writes an
+        // explicit main. `landed` pins it where it is, as OrbDragSession does,
+        // but deliberately does not save the spot, so only the guard can keep
+        // the next scan from sending it back to the old saved pin.
+        w.Position = new PixelPoint(w.Position.X - 700, w.Position.Y + 300);
+        var outcome = OrbDragCommit.Release(m, "s1", false, -700, 300, 1, landed: () => w.PinAt(w.Position));
+        Glide(m);
+        Assert.IsType<SnapOutcome.LeaveToFree>(outcome);
+        Assert.Equal(OrbGroups.Main, OrbweaverSettings.OrbGroupMembershipFor(KeyOf(m, "s1")));
+        var dropped = w.Position;
+
+        m.ScanAndUpdate();
+        Glide(m);
+
+        Assert.Equal(dropped, w.Position);
+        Assert.NotEqual(oldPin, w.Position);
+        Assert.True(w.IsPinned);
+    }
+
+    [AvaloniaFact]
+    public void TheMenusLeaveGroupFromAnAutoGroupDoesNotYankTheOrbToItsOldPin()
+    {
+        var m = Scan();
+        var oldPin = SavedPinThenCli(m, "s1");
+        var w = Windows(m)["s1"];
+        w.CurrentManager = () => m;
+        w.RebuildGroupSubmenu();
+
+        Click(w.GroupMenuItem.Items.OfType<Avalonia.Controls.MenuItem>().Single(i => Equals(i.Header, "Leave group")));
+        Glide(m);
+        var left = w.Position;
+        m.ScanAndUpdate();
+        Glide(m);
+
+        Assert.Equal(OrbGroups.Main, GroupOf(m, "s1"));
+        Assert.Equal(left, w.Position);
+        Assert.NotEqual(oldPin, w.Position);
+    }
+
+    [AvaloniaFact]
+    public void OffWhileArrangedHandsUnarrangingTheSavedPinNotTheGroupsSpot()
+    {
+        var m = Scan();
+        var pin = SavedPinThenCli(m, "s0");
+        var w = Windows(m);
+        m.ArrangeOrbsInPattern();
+        Glide(m);
+        Assert.True(m.IsArranged);
+
+        Set(m, AutoGroupBy.Off);
+        Assert.True(m.IsArranged);                         // nothing moved out of the arrangement
+
+        m.ArrangeOrbsInPattern();                          // un-arrange
+        Glide(m);
+
+        Assert.False(m.IsArranged);
+        Assert.True(w["s0"].IsPinned);
+        Assert.Equal(pin, w["s0"].Position);
+        Assert.False(w["s1"].IsPinned);                    // no saved spot: the stack
+    }
+
+    [AvaloniaFact]
+    public void GivingAPinBackLeavesTheOrbsPositionKeyAlone()
+    {
+        var m = Scan();
+        SavedPinThenCli(m, "s0");
+        var w = Windows(m)["s0"];
+        w.PositionKey = KeyOf(m, "s0") + "-as-made";       // what the orb was made with, if the key moved since
+        OrbweaverSettings.SetOrbPosition(w.PositionKey, w.Position.X, w.Position.Y);
+
+        Set(m, AutoGroupBy.Off);
+
+        Assert.Equal(KeyOf(m, "s0") + "-as-made", w.PositionKey);
+        OrbweaverSettings.ClearOrbPosition(w.PositionKey);
+    }
+
+    // --- the menu's Move to -----------------------------------------------------
+
+    private static void Click(Avalonia.Controls.MenuItem item) =>
+        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
+
+    private static Avalonia.Controls.MenuItem MoveTo(OrbWindow w, string header) =>
+        w.GroupMenuItem.Items.OfType<Avalonia.Controls.MenuItem>()
+            .Single(i => Equals(i.Header, "Move to"))
+            .Items.OfType<Avalonia.Controls.MenuItem>()
+            .Single(i => Equals(i.Header, header));
+
+    [AvaloniaFact]
+    public void MovingAnOrbOntoItsOwnAutoGroupFromTheMenuMakesItAutomaticAgain()
+    {
+        // Move to offers only groups with an orb on screen, so the group s1
+        // classifies into needs the other two in it: Directory.
+        var m = Scan();
+        OrbweaverSettings.MoveOrbToGroup(KeyOf(m, "s1"), OrbGroups.Main);
+        Set(m, AutoGroupBy.Directory);
+        var dir = OrbAutoGroups.IdFor(AutoGroupBy.Directory, "/users/user/cb281auto");
+        Assert.Equal(OrbGroups.Main, GroupOf(m, "s1"));
+        var w = Windows(m)["s1"];
+        w.CurrentManager = () => m;
+        w.RebuildGroupSubmenu();
+
+        Click(MoveTo(w, "cb281auto"));
+
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor(KeyOf(m, "s1")));
+        Assert.Equal(dir, GroupOf(m, "s1"));
+    }
+
+    [AvaloniaFact]
+    public void MovingAnOrbOntoAnotherAutoGroupFromTheMenuWritesIt()
+    {
+        var m = Scan();
+        Set(m, AutoGroupBy.Cli);
+        var w = Windows(m)["s1"];
+        w.CurrentManager = () => m;
+        w.RebuildGroupSubmenu();
+
+        Click(MoveTo(w, "Claude"));
+
+        Assert.Equal(CliGroup(0), OrbweaverSettings.OrbGroupMembershipFor(KeyOf(m, "s1")));
+        Assert.Equal(CliGroup(0), GroupOf(m, "s1"));
+    }
+
+    // --- paths and accounts the lead and QA named ------------------------------
+
+    [AvaloniaFact]
+    public void AWindowsCwdGroupsWithTheSamePathInAnyCaseAndSeparator()
+    {
+        var m = Scan(2);
+        Write(0, @"C:\Users\x\Repo\");
+        Write(1, "c:/users/x/repo");
+        m.ScanAndUpdate();
+        KeyOf(m, "s0");
+        KeyOf(m, "s1");
+
+        Set(m, AutoGroupBy.Directory);
+
+        Assert.True(OrbAutoGroups.IsAuto(GroupOf(m, "s0")));
+        Assert.Equal(GroupOf(m, "s0"), GroupOf(m, "s1"));
+    }
+
+    [AvaloniaFact]
+    public void CodexFindsItsAccountThroughItsRolloutAndANullTranscriptIsUnknown()
+    {
+        var accounts = new AutoGroupAccounts("/Users/user", read: path =>
+            path.Replace('\\', '/') == "/Users/user/.codex/auth.json" ? "{\"email\":\"Cody@example.org\"}" : null);
+
+        var codex = SessionManager.AccountOf(accounts, new SessionStatus
+        {
+            Source = SessionSource.Codex,
+            TranscriptPath = "/Users/user/.codex/sessions/2026/11/14/rollout-1-x.jsonl",
+        });
+        Assert.NotNull(codex);
+        Assert.StartsWith("codex\n", codex!.Value.Key);
+
+        // OrbweaverHook.sh can write a null transcript_path for Codex.
+        var none = new SessionStatus { Source = SessionSource.Codex, TranscriptPath = null! };
+        Assert.Null(SessionManager.AccountOf(accounts, none));
+        var m = new SessionManager(_dir) { AutoGroupAccountOf = s => SessionManager.AccountOf(accounts, s) };
+        var facts = m.AutoGroupFactsFor(AutoGroupBy.Account, none);
+        Assert.Null(facts.AccountKey);
+        Assert.Null(OrbAutoGroups.Classify(AutoGroupBy.Account, facts, "/Users/user"));
+        Assert.Null(m.AutoGroupFactsFor(AutoGroupBy.Profile,
+            new SessionStatus { Source = SessionSource.ClaudeCode, TranscriptPath = null! }).ConfigRoot);
+    }
 }

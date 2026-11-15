@@ -3734,7 +3734,20 @@ namespace Orbweaver
 
         private void MoveTeamToGroup(GroupMenuContext context, string groupId)
         {
-            OrbweaverSettings.AssignTeamToGroup(context.LeadKey, context.MemberKeys, groupId);
+            // CB-281: moving the team onto the auto group it classifies into
+            // makes it automatic again rather than writing it in by hand — the
+            // drag's rule (OrbDragCommit.Release) — so a later change of
+            // attribute still moves it.
+            if (groupId == CurrentManager()?.AutoGroupIdFor(SessionId))
+            {
+                OrbweaverSettings.UnassignOrbGroup(context.LeadKey);
+                foreach (var key in context.MemberKeys) OrbweaverSettings.UnassignOrbGroup(key);
+            }
+            else
+            {
+                OrbweaverSettings.AssignTeamToGroup(context.LeadKey, context.MemberKeys, groupId);
+            }
+
             CurrentManager()?.ReapplyArrangement();
         }
 

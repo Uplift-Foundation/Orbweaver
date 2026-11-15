@@ -4481,7 +4481,18 @@ namespace Orbweaver
             // so window.SoundKey is already correct by the time execution
             // gets here.
 
-            if (string.IsNullOrEmpty(key)) return;
+            if (SavedPinFor(window, status, key) is { } pin) window.PinAt(pin);
+        }
+
+        // Where an orb's saved pin puts it now, or null for none: no key, a
+        // sibling already pinned there, nothing saved, or a saved spot on a
+        // screen that is gone. Split out of RestoreOrbPosition for CB-281, so
+        // an orb leaving an auto group can be given its pin back (or have it
+        // recorded for un-arranging) without RestoreOrbPosition's first job,
+        // reassigning PositionKey, which is set once when the orb is made.
+        private PixelPoint? SavedPinFor(OrbWindow window, SessionStatus status, string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
 
             // A sibling session in the same directory already sits there;
             // stacking a second orb on top of it would just hide one.
@@ -4489,7 +4500,7 @@ namespace Orbweaver
                                              && other.IsPinned
                                              && other.PositionKey == key))
             {
-                return;
+                return null;
             }
 
             var saved = OrbweaverSettings.OrbPositionFor(key);
@@ -4514,7 +4525,7 @@ namespace Orbweaver
                 }
             }
 
-            if (saved is null) return;
+            if (saved is null) return null;
 
             // The monitor it was dragged onto may be gone, or its layout
             // changed. Anything that no longer lands on a screen falls back to
@@ -4523,10 +4534,10 @@ namespace Orbweaver
             // is at most half a 2x orb and should not decide which screen this
             // was.
             var screen = window.Screens.ScreenFromPoint(new PixelPoint(saved.X, saved.Y));
-            if (screen is null) return;
+            if (screen is null) return null;
 
             var point = RestoredTopLeft(saved, window.OrbSize, screen.Scaling);
-            window.PinAt(ClampIntoWork(point, screen.WorkingArea, OrbPixels(window, screen.Scaling)));
+            return ClampIntoWork(point, screen.WorkingArea, OrbPixels(window, screen.Scaling));
         }
 
         // CB-111: bring back a chat panel that was pinned before the app last
@@ -5796,24 +5807,43 @@ namespace Orbweaver
             var changes = _autoGroupTracker.Observe(
                 tree.Present.Select(id => (id, GroupIdOf(tree, id))).ToList());
 
-            foreach (var (id, old, now) in changes) ReleaseFromAutoGroup(id, old, now);
+            foreach (var (id, old, now) in changes) ReleaseFromAutoGroup(tree, id, old, now);
 
             return changes.Count > 0;
         }
 
-        // An orb that leaves an auto group in free mode goes back to where it
-        // was last left by hand, as it would at launch: joining a group never
-        // clears an orb's pin flag or its saved spot, so without this it would
-        // freeze wherever the group last drew it. No saved spot means the
-        // stack. Arranged, the arrangement places it and un-arranging restores
-        // it, so there is nothing to do.
-        private void ReleaseFromAutoGroup(string id, string oldGroup, string newGroup)
+        // An orb the classifier stopped claiming — the setting went Off or to
+        // another attribute, or its value became unknown — goes back to where
+        // it was last left by hand, as it would at launch. Joining a group
+        // never clears an orb's pin flag or its saved spot, so without this it
+        // would freeze wherever the group last drew it. No saved spot means
+        // the stack.
+        //
+        // Not when the team's root has an explicit membership: that move was
+        // the user's (a drag out of the group writes main and leaves the orb
+        // pinned where it was dropped; so does the menu's Leave group), and
+        // the orb is already where they put it.
+        //
+        // Arranged, the arrangement owns positions, so nothing moves now; the
+        // orb's un-arrange entry is rewritten instead. AbsorbIntoArrangement
+        // recorded where its group had drawn it, and RestoreFromPattern, which
+        // only skips orbs still in a user group, would put it back there.
+        private void ReleaseFromAutoGroup(TeamTree tree, string id, string oldGroup, string newGroup)
         {
-            if (_isArranged || !OrbAutoGroups.IsAuto(oldGroup) || !OrbGroups.IsPredefined(newGroup)) return;
+            if (!OrbAutoGroups.IsAuto(oldGroup) || !OrbGroups.IsPredefined(newGroup)) return;
             if (!_windows.TryGetValue(id, out var window) || !_statuses.TryGetValue(id, out var status)) return;
+            if (OrbGroupMenu.MembershipOf(tree.RootOf(id), _statuses) is not null) return;
+
+            var pin = SavedPinFor(window, status, window.PositionKey);
+
+            if (_isArranged)
+            {
+                _preArrangeState[id] = pin is { } at ? (at, true) : (window.Position, false);
+                return;
+            }
 
             window.Unpin();
-            RestoreOrbPosition(window, status);
+            if (pin is { } spot) window.PinAt(spot);
         }
 
         // A regroup with no drop behind it: the settle a drop ends with, with
@@ -5907,7 +5937,11 @@ namespace Orbweaver
 
         // CB-281: the auto group the orb's root classifies into, whatever its
         // explicit membership says — what a drop onto that group compares with.
-        string? IOrbDragHost.AutoGroupIdOf(string sessionId) =>
+        string? IOrbDragHost.AutoGroupIdOf(string sessionId) => AutoGroupIdFor(sessionId);
+
+        // The same for the orb's Group menu, so "Move to" follows the drag's
+        // rule.
+        internal string? AutoGroupIdFor(string sessionId) =>
             _statuses.TryGetValue(VisibleTeams().RootOf(sessionId), out var root) ? AutoGroupOf()(root) : null;
 
         string IOrbDragHost.PositionKeyOf(string sessionId) => OrbGroupMenu.KeyOf(sessionId, _statuses);
