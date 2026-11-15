@@ -1011,6 +1011,14 @@ namespace Orbweaver
                 _morph = null;
                 _finalOutline = null;
 
+                // A parked window forgets what it was fitted to as well. Mid-morph the
+                // discs are the target while the drawn polygon is an in-between frame,
+                // and Fit's translation shortcut trusts the two to agree: a window reused
+                // for discs that are a whole-pixel translation of the old ones (the same
+                // group coming back after ParkAll, d = 0) would keep drawing the stale
+                // frame, and snap would measure against it (CB-341).
+                _discs = null;
+
                 // A window that comes back later starts its highlight, and its breath,
                 // from scratch rather than from wherever the last one left off.
                 _highlighted = false;

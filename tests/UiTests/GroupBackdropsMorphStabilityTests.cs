@@ -265,6 +265,57 @@ public class GroupBackdropsMorphStabilityTests : IDisposable
         AssertOutlineIs(orbs);
     }
 
+    // CB-341, the product case: the app hidden (ParkAll) while a member's leave is
+    // still morphing, then shown again. Park used to keep the discs the window was
+    // fitted to, so the reshow took Fit's translation shortcut (d = 0) and kept the
+    // in-between frame it had been drawing: the pre-leave outline, frozen, and read
+    // by snap as the group's silhouette.
+    [AvaloniaFact]
+    public void AWindowParkedMidMorphComesBackDrawingTheTrueOutline()
+    {
+        var orbs = Ring();
+        orbs.Add(Orb("d", 300, 420));
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        GroupBackdrops.Update(new[] { Spec(orbs.Take(7).ToList()) });     // a member leaves
+        Assert.True(State().Morphing);
+
+        GroupBackdrops.ParkAll();
+        GroupBackdrops.Refresh();
+
+        var target = GroupOutline.Silhouette("line", Discs(orbs.Take(7)), GroupBackdrops.PaddingDip);
+        foreach (var drawn in new[] { GroupBackdrops.DisplayedOf("g-m"), GroupBackdrops.OutlineOf("g-m") })
+        {
+            Assert.Equal(target.Length, drawn.Length);
+            for (var i = 0; i < target.Length; i++)
+            {
+                Assert.Equal(target[i].X, drawn[i].X, 6);
+                Assert.Equal(target[i].Y, drawn[i].Y, 6);
+            }
+        }
+        Assert.False(State().Morphing);
+    }
+
+    // The same leak from the pool's side, and independent of test order: a pooled
+    // window parked mid-morph and handed to discs that are a pure translation of its
+    // old ones (here d = 0) must still spring when its new group loses a member.
+    // This is what made DraggingAMemberAround... fail only after
+    // LeavingContracts... had run, because xunit v3 orders by path.
+    [AvaloniaFact]
+    public void AReusedWindowStillSpringsWhenItsNewGroupLosesAMember()
+    {
+        var orbs = Ring();
+        orbs.Add(Orb("d", 300, 420));
+        GroupBackdrops.Update(new[] { Spec(orbs) });
+        GroupBackdrops.Update(new[] { Spec(orbs.Take(7).ToList()) });
+        Assert.True(State().Morphing);
+        GroupBackdrops.Update(Array.Empty<BackdropSpec>());               // parked mid-morph
+        Assert.True(GroupBackdrops.ParkedCount > 0);                      // so the next fit reuses it
+
+        GroupBackdrops.Update(new[] { Spec(orbs) });                      // same discs: d = 0
+        GroupBackdrops.Update(new[] { Spec(orbs.Take(7).ToList()) });
+        Assert.True(State().Morphing);
+    }
+
     [AvaloniaFact]
     public void TheLayoutAfterADropSpringsOnceEvenWhenNoMembershipChanged()
     {
