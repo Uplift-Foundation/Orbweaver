@@ -130,4 +130,34 @@ public class SettingsAutoGroupRowTests : IDisposable
 
         Assert.Equal(AutoGroupBy.Directory, OrbweaverSettings.AutoGroupBy);
     }
+
+    // The default hook's other arm: with a manager registered, it reaches it.
+    // Start() is the only thing that sets Instance and it opens the tray, the
+    // watcher and the gateway, so the test sets the auto-property's backing
+    // field instead and puts it back. The manager sees an empty scratch
+    // directory, so nothing changes on screen; the assertion is that the call
+    // goes through to a live manager without throwing and leaves the setting alone.
+    [AvaloniaFact]
+    public void TheDefaultHookReachesALiveManager()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb281-hook-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var field = typeof(SessionManager).GetField(
+            "<Instance>k__BackingField", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var before = field.GetValue(null);
+        OrbweaverSettings.AutoGroupBy = AutoGroupBy.Cli;
+        try
+        {
+            field.SetValue(null, new SessionManager(dir));
+
+            _reapply();
+
+            Assert.Equal(AutoGroupBy.Cli, OrbweaverSettings.AutoGroupBy);
+        }
+        finally
+        {
+            field.SetValue(null, before);
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
 }
