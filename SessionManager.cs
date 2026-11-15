@@ -61,6 +61,16 @@ namespace Orbweaver
         [JsonIgnore]
         public string AgentColor { get; set; } = "";
 
+        // CB-281: the Claude config root that owns a cloud session — the row's
+        // OwnerRoot, the account ClaudeCloudSessions listed it under. Filled
+        // where the cloud status is built, so auto-grouping by Claude profile
+        // or account never has to look the row up again. Null everywhere else:
+        // a local Claude Code session's root comes from its transcript path
+        // (ClaudeConfigRoots.RootOfTranscript), which the hook already writes.
+        // App-derived, so not serialized, for the reason Lead is not.
+        [JsonIgnore]
+        public string? ConfigRoot { get; set; }
+
         // Which CLI wrote this file, in its own words: "codex", or absent for
         // Claude Code.
         //
@@ -2712,6 +2722,7 @@ namespace Orbweaver
                         Color = OpenClawSessions.ColourForAgent(session.Id),
 
                         Url = session.Url,
+                        ConfigRoot = session.OwnerRoot,
                         ContextPercent = session.ContextPercent,
                         StatusDetail = session.StatusDetail,
                         RecentAction = session.RecentAction,
@@ -3324,11 +3335,17 @@ namespace Orbweaver
 
             // Before the reflow, so an orb that just arrived is arranged in the
             // group its team is already in.
-            SyncOrbGroups();
+            var regroup = SyncOrbGroups();
 
             if (setChanged)
             {
                 ReflowPositions();
+            }
+            else if (regroup)
+            {
+                // CB-281: nobody arrived or left, but an orb's auto group
+                // changed under it.
+                Regroup();
             }
 
             RescueOffscreenOrbs();
@@ -4023,12 +4040,21 @@ namespace Orbweaver
             return OrbGroupMenu.ContextFor(
                 tree.RootOf(sessionId), tree.TeamOf(sessionId), AllStatuses,
                 OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
-                OrbweaverSettings.OpenClawNativeMode);
+                OrbweaverSettings.OpenClawNativeMode, AutoGroupOf());
         }
 
-        // CB-281: the Settings row changed the auto-group attribute; ensure the
-        // groups and re-lay the current mode. Stub in the contracts commit.
-        public void ReapplyAutoGroups() { }
+        // CB-281: the Settings row lands here when "Auto-group orbs by" changes.
+        // Every scan would get there on its own (SyncOrbGroups notices orbs
+        // whose group moved), but a setting the user just flipped should not
+        // wait for one. Ensures the new attribute's groups exist, gives an orb
+        // that just fell out of an auto group back its saved spot, and settles
+        // the current mode with the drop's spring, so only orbs whose slot
+        // changed move. Manual groups are untouched: nothing here writes
+        // membership.
+        public void ReapplyAutoGroups()
+        {
+            if (SyncAutoGroups(Teams())) Regroup();
+        }
 
         // CB-287: an override was written elsewhere (the editor, a Settings
         // row); redraw the usage orbs and cards without waiting for a poll.
@@ -5663,7 +5689,113 @@ namespace Orbweaver
             OrbGroupMenu.ContextFor(
                 tree.RootOf(id), Array.Empty<string>(), _statuses,
                 OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
-                OrbweaverSettings.OpenClawNativeMode).GroupId;
+                OrbweaverSettings.OpenClawNativeMode, AutoGroupOf()).GroupId;
+
+        // --- CB-281: auto groups ------------------------------------------------
+
+        // The seams the classifier's facts come from, so a test hands in a
+        // dictionary instead of reading .claude.json or walking up to a .git.
+        // Account: (config root, source) to a stable key and a label, null for
+        // unknown. Repo root: a cwd to its repository's root, null for none.
+        internal Func<string?, SessionSource, (string Key, string Label)?> AutoGroupAccountOf { get; set; } =
+            (_, _) => null;
+
+        internal Func<string, string?> AutoGroupRepoRootOf { get; set; } = _ => null;
+
+        internal string AutoGroupHome { get; set; } =
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        // Each orb's last resolved group, to notice one that moved between
+        // scans: a setting flipped, a cwd that changed, an account that
+        // logged in.
+        private readonly OrbGroupSync.GroupTracker _autoGroupTracker = new();
+
+        // What the classifier may know about one orb. Only the fact the
+        // attribute needs is looked up, so grouping by CLI never reads an
+        // account file and grouping by account never walks a directory.
+        internal AutoGroupFacts AutoGroupFactsFor(AutoGroupBy by, SessionStatus status)
+        {
+            var configRoot = status.ConfigRoot
+                             ?? (status.Source == SessionSource.ClaudeCode
+                                 ? ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)
+                                 : null);
+
+            var account = by == AutoGroupBy.Account ? AutoGroupAccountOf(configRoot, status.Source) : null;
+            var repo = by == AutoGroupBy.Directory && status.Cwd.Length > 0 ? AutoGroupRepoRootOf(status.Cwd) : null;
+
+            return new AutoGroupFacts(
+                status.Source, status.RemoteCli, status.Cwd, configRoot,
+                account?.Key, account?.Label, repo);
+        }
+
+        // The auto group an orb classifies into, as (id, name), whether or not
+        // the group exists yet; null when the setting is Off or the orb has no
+        // value for the attribute.
+        private (string Id, string Name)? AutoGroupValueOf(AutoGroupBy by, SessionStatus status)
+        {
+            if (by == AutoGroupBy.Off) return null;
+            if (OrbAutoGroups.Classify(by, AutoGroupFactsFor(by, status), AutoGroupHome) is not { } value) return null;
+            return (OrbAutoGroups.IdFor(by, value.Key), value.Name);
+        }
+
+        // The function ContextFor asks for a root's auto group. Only a group
+        // that exists in the table is answered: the layout's slot lookup reads
+        // a missing id as main's slot, so naming one SyncAutoGroups has not
+        // created yet would draw the orb in the wrong place rather than none.
+        private Func<SessionStatus, string?> AutoGroupOf()
+        {
+            var by = OrbweaverSettings.AutoGroupBy;
+            return status => AutoGroupValueOf(by, status) is { } value
+                             && OrbweaverSettings.OrbGroupFor(value.Id) is not null
+                ? value.Id
+                : null;
+        }
+
+        // Ensures the groups every on-screen root classifies into exist, then
+        // compares each orb's group with the last time it was asked. An orb
+        // that left an auto group for a predefined one in free mode is loose
+        // again and gets its pin back (ReleaseFromAutoGroup). True when any
+        // orb's group changed, which is the caller's cue to regroup — arranged
+        // mode's reflow only re-lays out for an arrival, so a group change with
+        // nobody arriving would otherwise wait for one.
+        private bool SyncAutoGroups(TeamTree tree)
+        {
+            var by = OrbweaverSettings.AutoGroupBy;
+            var wanted = tree.Present
+                .Select(tree.RootOf)
+                .Distinct(StringComparer.Ordinal)
+                .Select(root => _statuses.TryGetValue(root, out var status) ? AutoGroupValueOf(by, status) : null)
+                .OfType<(string Id, string Name)>()
+                .DistinctBy(value => value.Id, StringComparer.Ordinal)
+                .ToList();
+            if (wanted.Count > 0) OrbweaverSettings.EnsureAutoOrbGroups(wanted);
+
+            var changes = _autoGroupTracker.Observe(
+                tree.Present.Select(id => (id, GroupIdOf(tree, id))).ToList());
+
+            foreach (var (id, old, now) in changes) ReleaseFromAutoGroup(id, old, now);
+
+            return changes.Count > 0;
+        }
+
+        // An orb that leaves an auto group in free mode goes back to where it
+        // was last left by hand, as it would at launch: joining a group never
+        // clears an orb's pin flag or its saved spot, so without this it would
+        // freeze wherever the group last drew it. No saved spot means the
+        // stack. Arranged, the arrangement places it and un-arranging restores
+        // it, so there is nothing to do.
+        private void ReleaseFromAutoGroup(string id, string oldGroup, string newGroup)
+        {
+            if (_isArranged || !OrbAutoGroups.IsAuto(oldGroup) || !OrbGroups.IsPredefined(newGroup)) return;
+            if (!_windows.TryGetValue(id, out var window) || !_statuses.TryGetValue(id, out var status)) return;
+
+            window.Unpin();
+            RestoreOrbPosition(window, status);
+        }
+
+        // A regroup with no drop behind it: the settle a drop ends with, with
+        // nobody arriving, so orbs spring to their new slots.
+        private void Regroup() => ((IOrbDragHost)this).SettleAfterDrop(Array.Empty<string>());
 
         // What every scan does for groups, before it lays anything out:
         //  - remembers this scan's leads and forgets ones nothing descends from;
@@ -5671,8 +5803,12 @@ namespace Orbweaver
         //    every known session rather than every orb on screen;
         //  - gives a team member with no group of its own its root's (T3), so a
         //    member that outlives its lead keeps the group.
-        // None of these moves an orb, so none of them breaks CB-161.
-        private void SyncOrbGroups()
+        //  - CB-281: ensures the auto groups exist and notices orbs whose group
+        //    changed. That is the one step here that can move orbs, and only
+        //    orbs whose group really changed; it returns true when the caller
+        //    has to regroup.
+        // The first three move no orb, so none of them breaks CB-161.
+        private bool SyncOrbGroups()
         {
             foreach (var (id, status) in _statuses)
             {
@@ -5710,6 +5846,8 @@ namespace Orbweaver
                     team.Skip(1).Select(id => OrbGroupMenu.KeyOf(id, _statuses)),
                     OrbGroupMenu.FallbackKeyOf(root, _statuses));
             }
+
+            return SyncAutoGroups(tree);
         }
 
         // --- IOrbDragHost: what the drag (S4) asks of the roster ----------------
@@ -5743,6 +5881,11 @@ namespace Orbweaver
             _windows.TryGetValue(sessionId, out var window) ? window : null;
 
         string IOrbDragHost.GroupIdOf(string sessionId) => GroupIdOf(VisibleTeams(), sessionId);
+
+        // CB-281: the auto group the orb's root classifies into, whatever its
+        // explicit membership says — what a drop onto that group compares with.
+        string? IOrbDragHost.AutoGroupIdOf(string sessionId) =>
+            _statuses.TryGetValue(VisibleTeams().RootOf(sessionId), out var root) ? AutoGroupOf()(root) : null;
 
         string IOrbDragHost.PositionKeyOf(string sessionId) => OrbGroupMenu.KeyOf(sessionId, _statuses);
 

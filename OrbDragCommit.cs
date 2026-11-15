@@ -38,6 +38,9 @@ namespace Orbweaver
 
         string GroupIdOf(string sessionId);
 
+        /// <summary>CB-281: the auto group the orb's root classifies into, ignoring its explicit membership; null when auto-grouping is off or the orb has no value. Null until the roster implements it.</summary>
+        string? AutoGroupIdOf(string sessionId) => null;
+
         /// <summary>Position key (membership key) of an orb; empty when it has none.</summary>
         string PositionKeyOf(string sessionId);
 
@@ -177,6 +180,7 @@ namespace Orbweaver
             }
 
             var outcome = Decide(host, pressedId, unitsPerDip);
+            var left = host.GroupIdOf(pressedId);
             var team = host.TeamIdsOf(pressedId);
             var keys = team.Select(host.PositionKeyOf).ToList();
 
@@ -197,6 +201,13 @@ namespace Orbweaver
 
             switch (outcome)
             {
+                // CB-281: dropped onto the auto group it classifies into, the
+                // team is made automatic again rather than written in by hand,
+                // so a later change of attribute still moves it.
+                case SnapOutcome.Join join when join.GroupId == host.AutoGroupIdOf(pressedId):
+                    foreach (var key in keys) OrbweaverSettings.UnassignOrbGroup(key);
+                    break;
+
                 case SnapOutcome.Join join:
                     OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1), join.GroupId);
                     break;
@@ -212,6 +223,15 @@ namespace Orbweaver
                         paired.Id,
                         new OrbweaverSettings.OrbPlacement(
                             (int)Math.Round((mine.X + theirs.X) / 2), (int)Math.Round((mine.Y + theirs.Y) / 2)));
+                    break;
+
+                // CB-281: forgetting the membership of an orb dragged out of an
+                // auto group would let the classifier put it straight back.
+                // An explicit main is "explicit beats auto" applied to the
+                // gesture — the menu's Leave group writes the same — and the
+                // orb stays loose where it was dropped.
+                case SnapOutcome.LeaveToFree when OrbAutoGroups.IsAuto(left):
+                    OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1), OrbGroups.Main);
                     break;
 
                 case SnapOutcome.LeaveToFree:

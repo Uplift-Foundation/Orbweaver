@@ -37,4 +37,29 @@ public class OrbGroupSyncTests
         Assert.Empty(tracker.Observe(Array.Empty<(string, string)>()));
         Assert.Empty(tracker.Observe(new[] { ("a", "third") }));
     }
+
+    // CB-281: an orb's group changing with nobody arriving.
+    [Fact]
+    public void TheGroupTrackerReportsAMovedOrbWithBothGroupsAndNothingOnFirstSight()
+    {
+        var tracker = new OrbGroupSync.GroupTracker();
+
+        Assert.Empty(tracker.Observe(new[] { ("a", "main"), ("b", "g-1") }));
+
+        Assert.Equal(new[] { ("a", "main", "a-cli-000000000001") },
+            tracker.Observe(new[] { ("a", "a-cli-000000000001"), ("b", "g-1") }));
+
+        // Ids compare exactly: unchanged is no change.
+        Assert.Empty(tracker.Observe(new[] { ("a", "a-cli-000000000001"), ("b", "g-1") }));
+    }
+
+    [Fact]
+    public void TheGroupTrackerForgetsAnOrbThatLeftSoItsReturnIsAFirstSighting()
+    {
+        var tracker = new OrbGroupSync.GroupTracker();
+        tracker.Observe(new[] { ("a", "main") });
+
+        Assert.Empty(tracker.Observe(Array.Empty<(string, string)>()));
+        Assert.Empty(tracker.Observe(new[] { ("a", "a-dir-000000000002") }));
+    }
 }

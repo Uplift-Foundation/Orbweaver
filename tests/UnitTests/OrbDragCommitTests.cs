@@ -42,6 +42,8 @@ public class OrbDragCommitTests
             Groups.Where(g => g.Value == groupId).Select(g => g.Key).ToList();
         public OrbWindow? WindowOf(string id) => null;
         public string GroupIdOf(string id) => Groups.GetValueOrDefault(id) ?? OrbGroups.Main;
+        public Dictionary<string, string> AutoGroups { get; } = new();
+        public string? AutoGroupIdOf(string id) => AutoGroups.GetValueOrDefault(id);
         public HashSet<string> KeylessIds { get; } = new();
         public string PositionKeyOf(string id) => KeylessIds.Contains(id) ? "" : "key:" + id;
         public (double X, double Y, double R) DiscOf(string id) => Discs[id];
@@ -693,6 +695,115 @@ public class OrbDragCommitTests
         OrbDragCommit.Release(host, orb, false, 5, 5, 1);
 
         Assert.Single(host.Settles);
+    }
+
+    // --- CB-281: auto groups -----------------------------------------------
+
+    private static string AutoId() => OrbAutoGroups.IdFor(AutoGroupBy.Cli, "drag-" + UniqueId());
+
+    // A team of two (lead, a) in free mode whose own auto group sits at
+    // `autoX`, and a second auto group it does not classify into at `otherX`.
+    private static (FakeHost Host, string Lead, string A, string Auto, string Other) AutoScene(
+        double autoX, double otherX)
+    {
+        var lead = "lead-" + UniqueId();
+        var a = "a-" + UniqueId();
+        var auto = AutoId();
+        var other = AutoId();
+        var host = new FakeHost { IsArranged = false };
+        host.Teams[lead] = new[] { lead, a };
+        host.Discs[lead] = (0, 0, 18);
+        host.Discs[a] = (0, 0, 10);
+        host.AutoGroups[lead] = auto;
+        host.Candidates.Add(new SnapCandidate(auto, Array.Empty<Point>(), new[] { (autoX, 0.0, 18.0) }));
+        host.Candidates.Add(new SnapCandidate(other, Array.Empty<Point>(), new[] { (otherX, 0.0, 18.0) }));
+        return (host, lead, a, auto, other);
+    }
+
+    [Fact]
+    public void DraggingATeamOutOfItsAutoGroupPutsItInMainExplicitlySoTheClassifierCannotPullItBack()
+    {
+        var (host, lead, a, auto, _) = AutoScene(500, 5000);
+        host.Groups[lead] = auto;
+        host.Groups[a] = auto;
+
+        var outcome = OrbDragCommit.Release(host, lead, false, 5, 5, 1);
+
+        Assert.IsType<SnapOutcome.LeaveToFree>(outcome);
+        Assert.Equal(OrbGroups.Main, OrbweaverSettings.OrbGroupMembershipFor("key:" + lead));
+        Assert.Equal(OrbGroups.Main, OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+        Assert.Single(host.Settles);
+        Assert.Empty(host.Settles[0]);
+    }
+
+    [Fact]
+    public void DraggingOutOfAManualGroupStillJustForgetsTheMembershipWhenAutoGroupingIsOn()
+    {
+        // Control for the test above: the main write is for an auto group only.
+        var (host, lead, a, _, _) = AutoScene(5000, 5000);
+        var manual = OrbweaverSettings.CreateOrbGroup().Id;
+        host.Groups[lead] = manual;
+        host.Groups[a] = manual;
+        host.Candidates.Add(new SnapCandidate(manual, Array.Empty<Point>(), new[] { (500.0, 0.0, 18.0) }));
+        OrbweaverSettings.AssignTeamToGroup("key:" + lead, new[] { "key:" + a }, manual);
+
+        Assert.IsType<SnapOutcome.LeaveToFree>(OrbDragCommit.Release(host, lead, false, 5, 5, 1));
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + lead));
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+    }
+
+    [Fact]
+    public void DroppingATeamBackOnItsOwnAutoGroupMakesItAutomaticAgainInsteadOfWritingIt()
+    {
+        var (host, lead, a, auto, _) = AutoScene(50, 5000);
+        OrbweaverSettings.AssignTeamToGroup("key:" + lead, new[] { "key:" + a }, OrbGroups.Main);
+
+        var outcome = OrbDragCommit.Release(host, lead, false, 5, 5, 1);
+
+        Assert.Equal(new SnapOutcome.Join(auto), outcome);
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + lead));
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+        // Still an arrival: the team pops into the group.
+        Assert.Equal(new[] { lead, a }, host.Settles.Single());
+    }
+
+    [Fact]
+    public void DroppingATeamOnSomeOtherAutoGroupWritesThatMembershipByHand()
+    {
+        var (host, lead, a, _, other) = AutoScene(5000, 50);
+        var otherGroup = OrbweaverSettings.CreateOrbGroup().Id;   // a real table entry to write into
+        host.Candidates[1] = new SnapCandidate(otherGroup, Array.Empty<Point>(), new[] { (50.0, 0.0, 18.0) });
+
+        var outcome = OrbDragCommit.Release(host, lead, false, 5, 5, 1);
+
+        Assert.Equal(new SnapOutcome.Join(otherGroup), outcome);
+        Assert.NotEqual(other, otherGroup);
+        Assert.Equal(otherGroup, OrbweaverSettings.OrbGroupMembershipFor("key:" + lead));
+        Assert.Equal(otherGroup, OrbweaverSettings.OrbGroupMembershipFor("key:" + a));
+    }
+
+    [Fact]
+    public void AHostThatKnowsNothingOfAutoGroupsAnswersNone()
+    {
+        IOrbDragHost bare = new BareHost();
+        Assert.Null(bare.AutoGroupIdOf("x"));
+    }
+
+    // The interface's own default, with nothing overridden.
+    private sealed class BareHost : IOrbDragHost
+    {
+        public bool IsArranged => false;
+        public IReadOnlyList<string> TeamIdsOf(string id) => new[] { id };
+        public IReadOnlyList<string> OrbIdsInGroup(string groupId) => Array.Empty<string>();
+        public OrbWindow? WindowOf(string id) => null;
+        public string GroupIdOf(string id) => OrbGroups.Main;
+        public string PositionKeyOf(string id) => "";
+        public (double X, double Y, double R) DiscOf(string id) => (0, 0, 0);
+        public IReadOnlyList<SnapCandidate> CandidatesFor(IReadOnlyCollection<string> excludedIds) =>
+            Array.Empty<SnapCandidate>();
+        public void HighlightGroup(string? groupId) { }
+        public void ShiftGroupAnchor(string groupId, int dx, int dy) { }
+        public void ReapplyArrangement() { }
     }
 }
 
