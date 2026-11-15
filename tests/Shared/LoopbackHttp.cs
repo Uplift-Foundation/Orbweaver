@@ -34,9 +34,11 @@ internal static class LoopbackHttp
                 listener.Start();
                 return (listener, $"http://127.0.0.1:{port}");
             }
-            catch (HttpListenerException) when (attempt < 50)
+            catch (HttpListenerException)
             {
+                // Close on the final failure too, so giving up leaks nothing.
                 listener.Close();
+                if (attempt >= 50) throw;
             }
         }
     }
