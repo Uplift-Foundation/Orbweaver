@@ -4026,6 +4026,10 @@ namespace Orbweaver
                 OrbweaverSettings.OpenClawNativeMode);
         }
 
+        // CB-281: the Settings row changed the auto-group attribute; ensure the
+        // groups and re-lay the current mode. Stub in the contracts commit.
+        public void ReapplyAutoGroups() { }
+
         // CB-287: an override was written elsewhere (the editor, a Settings
         // row); redraw the usage orbs and cards without waiting for a poll.
         internal void RefreshAccountOrbLooks() => _accountOrbs.RefreshLooks();

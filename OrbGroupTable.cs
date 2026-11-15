@@ -36,7 +36,7 @@ namespace Orbweaver
         // the only "none" this needs to recognise.
         internal static string GroupIdFor(
             string? membership, OrbCluster cluster,
-            ClusterMode heartbeats, ClusterMode crons, ClusterMode native)
+            ClusterMode heartbeats, ClusterMode crons, ClusterMode native, string? autoGroupId)
         {
             if (!string.IsNullOrWhiteSpace(membership)) return membership;
 

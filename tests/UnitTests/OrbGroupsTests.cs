@@ -23,7 +23,7 @@ public class OrbGroupsTests
         // OrbClusters would put it in the heartbeats slot.
         var id = OrbGroups.GroupIdFor(
             OrbGroups.Main, OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape,
-            ClusterMode.WithChats);
+            ClusterMode.WithChats, null);
 
         Assert.Equal(OrbGroups.Main, id);
     }
@@ -33,7 +33,7 @@ public class OrbGroupsTests
     {
         Assert.Equal(
             "g-0a1b2c3d",
-            OrbGroups.GroupIdFor("g-0a1b2c3d", OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats));
+            OrbGroups.GroupIdFor("g-0a1b2c3d", OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.WithChats, null));
     }
 
     [Theory]
@@ -45,7 +45,7 @@ public class OrbGroupsTests
     public void WithoutAMembershipTheClusterClassificationDecides(
         OrbCluster cluster, ClusterMode heartbeats, ClusterMode crons, string expected)
     {
-        Assert.Equal(expected, OrbGroups.GroupIdFor(null, cluster, heartbeats, crons, ClusterMode.WithChats));
+        Assert.Equal(expected, OrbGroups.GroupIdFor(null, cluster, heartbeats, crons, ClusterMode.WithChats, null));
     }
 
     // CB-270: native is the fourth predefined group, slot 3, and only Own shape
@@ -55,11 +55,11 @@ public class OrbGroupsTests
     public void ANativeOrbIsInTheNativeGroupOnlyUnderOwnShape()
     {
         Assert.Equal(OrbGroups.Native, OrbGroups.GroupIdFor(
-            null, OrbCluster.Native, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape));
+            null, OrbCluster.Native, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape, null));
         Assert.Equal(OrbGroups.Main, OrbGroups.GroupIdFor(
-            null, OrbCluster.Native, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats));
+            null, OrbCluster.Native, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats, null));
         Assert.Equal(OrbGroups.Main, OrbGroups.GroupIdFor(
-            OrbGroups.Main, OrbCluster.Native, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape));
+            OrbGroups.Main, OrbCluster.Native, ClusterMode.WithChats, ClusterMode.WithChats, ClusterMode.OwnShape, null));
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class OrbGroupsTests
     {
         Assert.Equal(
             OrbGroups.Crons,
-            OrbGroups.GroupIdFor(blank, OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats));
+            OrbGroups.GroupIdFor(blank, OrbCluster.Crons, ClusterMode.OwnShape, ClusterMode.OwnShape, ClusterMode.WithChats, null));
     }
 
     // ---- slot order and ids ---------------------------------------------------
@@ -372,7 +372,7 @@ public class OrbGroupsTests
 
         var id = OrbGroups.GroupIdFor(
             table.MembershipFor("hb"), OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape,
-            ClusterMode.WithChats);
+            ClusterMode.WithChats, null);
 
         Assert.Equal(OrbGroups.Main, id);
     }
@@ -392,7 +392,7 @@ public class OrbGroupsTests
             OrbGroups.Heartbeats,
             OrbGroups.GroupIdFor(
                 table.MembershipFor("hb"), OrbCluster.Heartbeats, ClusterMode.OwnShape, ClusterMode.OwnShape,
-                ClusterMode.WithChats));
+                ClusterMode.WithChats, null));
     }
 
     // ---- last-member removal --------------------------------------------------

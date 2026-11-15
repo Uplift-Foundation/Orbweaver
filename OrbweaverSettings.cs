@@ -76,7 +76,7 @@ namespace Orbweaver
         {
             "version", "showOrbs", "showUsageOrbs", "tintActiveWindow", "orbLifetimeMinutes",
             "voiceInputEnabled", "twoLetterGlyphs", "accountUsageEnabled",
-            "arrangeShape", "arrangeSpacing",
+            "arrangeShape", "arrangeSpacing", "autoGroupBy",
             "speakVoice", "neuralVoiceEnabled", "neuralVoice",
             "speakCommand", "speakCommandArgs",
             "speakVoicesCommand", "speakVoicesCommandArgs", "speakCommandVoice", "speakEngine",
@@ -480,6 +480,9 @@ namespace Orbweaver
             // the first and second of the three. Load migrates a saved one; Save
             // keeps writing it, so a downgrade still hides what the user hid.
             public ClusterMode OpenClawHeartbeatMode { get; set; } = ClusterMode.WithChats;
+
+            // CB-281.
+            public AutoGroupBy AutoGroupBy { get; set; } = AutoGroupBy.Off;
 
             // CB-268: these four are no longer fields of their own. They are
             // views over the predefined groups in Groups below, so every caller
@@ -1368,6 +1371,19 @@ namespace Orbweaver
             get { Load(); lock (Gate) return _model.OpenClawHeartbeatMode; }
             set { Load(); lock (Gate) _model.OpenClawHeartbeatMode = value; Save(); }
         }
+
+        // CB-281: what orbs are auto-grouped by. Off by default; one deliberate
+        // change, so it saves at once like the cluster modes.
+        public static AutoGroupBy AutoGroupBy
+        {
+            get { Load(); lock (Gate) return _model.AutoGroupBy; }
+            set { Load(); lock (Gate) _model.AutoGroupBy = value; Save(); }
+        }
+
+        // CB-281: makes sure each wanted auto group exists in the table (stub in
+        // the contracts commit; the real body follows).
+        internal static void EnsureAutoOrbGroups(IReadOnlyList<(string Id, string Name)> wanted) =>
+            throw new NotImplementedException("CB-281: lands in the implementation commit");
 
         public static string OpenClawHeartbeatShape
         {
@@ -2998,6 +3014,7 @@ namespace Orbweaver
                     model.GroupOutlineStrokeOpacity =
                         OrbGroups.ClampOpacity(Number(root["groupOutlineStrokeOpacity"]))
                         ?? DefaultGroupOutlineStrokeOpacity;
+                    model.AutoGroupBy = OrbAutoGroups.Parse(Text(root["autoGroupBy"]));
                     model.GroupOutlineFill =
                         OrbGroups.NormalizeColor(Text(root["groupOutlineFill"]))
                         ?? DefaultGroupOutlineFill;
@@ -3312,6 +3329,7 @@ namespace Orbweaver
                         // does for one it has.
                         ["openclawShowHeartbeats"] =
                             _model.OpenClawHeartbeatMode != ClusterMode.Hidden,
+                        ["autoGroupBy"] = OrbAutoGroups.Name(_model.AutoGroupBy),
                         ["openclawHeartbeatMode"] = OrbClusters.Name(_model.OpenClawHeartbeatMode),
                         ["openclawHeartbeatShape"] = _model.OpenClawHeartbeatShape,
                         ["openclawCronMode"] = OrbClusters.Name(_model.OpenClawCronMode),

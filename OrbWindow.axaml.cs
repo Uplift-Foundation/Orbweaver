@@ -3728,7 +3728,7 @@ namespace Orbweaver
             var membership = OrbweaverSettings.OrbGroupMembershipFor(key);
             return new GroupMenuContext(
                 OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats,
-                    ClusterMode.WithChats),
+                    ClusterMode.WithChats, null),
                 key, Array.Empty<string>());
         }
 
