@@ -58,6 +58,10 @@ public class PeerPreHelloLoopbackTests
         // A mirror request with no greeting in front of it, then a greeting the
         // server must refuse. The refusal is the end signal: the server answers
         // err and drops the connection, so the client's read reaches it or EOF.
+        // Drop runs before the pump has drained its delivery queue, which is why
+        // this is enough: with the fix nothing is ever queued, and without it the
+        // frame is queued before the hello is even read, so its synchronous
+        // delivery beats the err across TLS. It failed that way on origin/main.
         await PeerProtocol.WriteAsync(tls, PeerProtocol.Message(
             PeerProtocol.Window, PeerProtocol.NewId(),
             body: PeerProtocol.BodyOf("CB-MIRROR: v1 FETCH (test)")));

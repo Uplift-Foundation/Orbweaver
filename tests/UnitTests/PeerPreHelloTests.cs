@@ -37,10 +37,11 @@ public class PeerPreHelloTests
     }
 
     // Adopts the bytes under a fresh unnamed name, as the accept loop does, and
-    // waits for the connection to be forgotten. Forget runs only after the pump
-    // has awaited every delivery it queued, so once nothing is connected,
-    // nothing more can be delivered. Bounded so a regression fails rather than
-    // hangs.
+    // waits for the connection to be forgotten. At a clean end Forget runs only
+    // after the pump has awaited every delivery it queued, so once nothing is
+    // connected, nothing more can be delivered. (A refused hello is unlisted by
+    // Drop before the pump finishes; nothing is queued there, so the same
+    // holds.) Bounded so a regression fails rather than hangs.
     private static async Task<Duplex> PumpUnnamedAsync(PeerLink link, byte[] bytes)
     {
         var stream = new Duplex(bytes);
