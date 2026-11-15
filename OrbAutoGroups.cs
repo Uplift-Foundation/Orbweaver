@@ -98,7 +98,10 @@ namespace Orbweaver
 
         // One spelling per place: forward slashes, no trailing separator, lower
         // case. The membership map is OrdinalIgnoreCase for the same reason, and
-        // Windows paths arrive with either slash.
+        // Windows paths arrive with either slash. Folding case is right because
+        // both shipping platforms (Windows, macOS) default to case-insensitive
+        // filesystems; on a case-sensitive one (Linux/WSL) /Repo and /repo would
+        // wrongly share a group.
         internal static string NormalizePath(string? path) => Tidy(path).ToLowerInvariant();
 
         // Same without the case fold, for a name that is shown to the user.

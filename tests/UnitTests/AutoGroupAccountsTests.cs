@@ -98,8 +98,8 @@ public class AutoGroupAccountsTests
         disk.Files["/Users/ann/.grok/auth.json"] = "{\"x\":{\"email\":\"grace@example.org\"}}";
         var accounts = new AutoGroupAccounts(Home, read: disk.Read);
 
-        Assert.Equal(("codex\ncody", "Cody"), accounts.Of(SessionSource.Codex, "/Users/ann/.codex"));
-        Assert.Equal(("grok\ngrace", "grace"), accounts.Of(SessionSource.Grok, "/Users/ann/.grok"));
+        Assert.Equal(("codex\ncody@example.org", "Cody"), accounts.Of(SessionSource.Codex, "/Users/ann/.codex"));
+        Assert.Equal(("grok\ngrace@example.org", "grace"), accounts.Of(SessionSource.Grok, "/Users/ann/.grok"));
     }
 
     [Fact]
@@ -172,4 +172,49 @@ public class AutoGroupAccountsTests
         }
         finally { Directory.Delete(home, true); }
     }
+
+    // Two accounts whose emails share a local part are different accounts: different keys,
+    // and the second is shown by its full email so the two groups are told apart.
+    [Fact]
+    public void SameLocalPartAtTwoDomainsAreTwoAccountsAndTheAmbiguousOneShowsItsEmail()
+    {
+        var disk = new Disk();
+        disk.Files["/Users/ann/.codex/auth.json"] = "{\"email\":\"a@x.com\"}";
+        disk.Files["/Users/ann/.codex-b/auth.json"] = "{\"email\":\"a@y.com\"}";
+        var accounts = new AutoGroupAccounts(Home, read: disk.Read);
+
+        var first = accounts.Of(SessionSource.Codex, "/Users/ann/.codex")!.Value;
+        var second = accounts.Of(SessionSource.Codex, "/Users/ann/.codex-b")!.Value;
+
+        Assert.NotEqual(first.Key, second.Key);
+        Assert.Equal("a", first.Label);
+        Assert.Equal("a@y.com", second.Label);
+    }
+
+    [Fact]
+    public void TheSameEmailInTwoHomesIsOneAccountAndStaysShort()
+    {
+        var disk = new Disk();
+        disk.Files["/h/.claude-1/.claude.json"] = Claude("a@x.com");
+        disk.Files["/h/.claude-2/.claude.json"] = Claude("A@X.com");
+        var accounts = new AutoGroupAccounts("/h", read: disk.Read);
+
+        var one = accounts.Of(SessionSource.ClaudeCode, "/h/.claude-1")!.Value;
+        var two = accounts.Of(SessionSource.ClaudeCode, "/h/.claude-2")!.Value;
+
+        Assert.Equal(one.Key, two.Key);
+        Assert.Equal("A", two.Label);   // short, not the email: one account
+    }
+
+    [Theory]
+    [InlineData("{\"email\":\"a@x.com\"}", "a@x.com")]
+    [InlineData("{\"user\":{\"email\":\" a@x.com \"}}", "a@x.com")]
+    [InlineData("{\"tokens\":{\"email\":\"t@x.com\"},\"OPENAI_API_KEY\":\"k\"}", null)]
+    [InlineData("{\"email\":5,\"o\":{\"email\":\"\"},\"s\":\"x\"}", null)]
+    [InlineData("[1]", null)]
+    [InlineData("not json", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void AuthEmailIsReadFromTheTopLevelOrOneObjectDownAndNeverFromTokens(string? json, string? expected) =>
+        Assert.Equal(expected, AutoGroupAccounts.AuthEmailFrom(json));
 }

@@ -65,8 +65,8 @@ namespace Orbweaver
         /// The account's identity and the name to show, or null when it cannot be told: no home,
         /// a CLI with no account of its own (OpenClaw, remote), or a Claude profile that has never
         /// logged in. The key holds the full email for Claude (it only ever goes into a hash); Codex
-        /// and Grok key on the label their auth file gives, which is the email's local part, so two
-        /// accounts sharing a local part would share a group (named in the PR).
+        /// and Grok too, from their auth file. The name shown is the email's local part unless two
+        /// accounts seen by this reader share it, when the full email is shown.
         /// </summary>
         internal (string Key, string Label)? Of(SessionSource source, string? home)
         {
@@ -84,8 +84,14 @@ namespace Orbweaver
             return account;
         }
 
+        // Which full emails have been seen under each short label, so a label two
+        // accounts share ("a" for a@x.com and a@y.com) is shown as the full email.
+        private readonly Dictionary<string, HashSet<string>> _byLabel = new(StringComparer.OrdinalIgnoreCase);
+
         private (string Key, string Label)? Read(SessionSource source, string home)
         {
+            string? email, label;
+            string cli;
             switch (source)
             {
                 case SessionSource.ClaudeCode:
@@ -94,23 +100,71 @@ namespace Orbweaver
                     // ~/.claude.json, a sibling (CB-42), not one inside it.
                     var isDefault = OrbAutoGroups.NormalizePath(home) == OrbAutoGroups.NormalizePath(_home + "/.claude");
                     var json = _read(UsageAccounts.AccountFilePath(_home, isDefault ? null : home));
-                    return UsageAccounts.EmailFrom(json) is { } email
-                        ? ("claude\n" + email.ToLowerInvariant(), UsageAccounts.LabelFrom(json, home))
-                        : null;
+                    cli = "claude";
+                    email = UsageAccounts.EmailFrom(json);
+                    label = UsageAccounts.LabelFrom(json, home);
+                    break;
                 }
                 case SessionSource.Codex:
                 {
                     var json = _read(CodexUsageAccounts.AuthFilePath(home));
-                    return json is null ? null : ("codex\n" + CodexUsageAccounts.LabelFrom(json, home).ToLowerInvariant(),
-                                                  CodexUsageAccounts.LabelFrom(json, home));
+                    cli = "codex";
+                    email = AuthEmailFrom(json);
+                    label = CodexUsageAccounts.LabelFrom(json, home);
+                    break;
                 }
                 default:
                 {
                     var json = _read(GrokUsageAccounts.AuthFilePath(home));
-                    return json is null ? null : ("grok\n" + GrokUsageAccounts.LabelFrom(json, home).ToLowerInvariant(),
-                                                  GrokUsageAccounts.LabelFrom(json, home));
+                    cli = "grok";
+                    email = AuthEmailFrom(json);
+                    label = GrokUsageAccounts.LabelFrom(json, home);
+                    break;
                 }
             }
+
+            if (email is null) return null;
+
+            // The key is the full, lower-cased email: a@x.com and a@y.com are
+            // different accounts. It only ever goes into the id hash.
+            var key = cli + "\n" + email.ToLowerInvariant();
+            lock (_gate)
+            {
+                if (!_byLabel.TryGetValue(label, out var keys)) _byLabel[label] = keys = new(StringComparer.Ordinal);
+                keys.Add(key);
+                return (key, keys.Count > 1 ? email : label);
+            }
+        }
+
+        // The email in a Codex or Grok auth.json: a top-level "email", or one inside a
+        // top-level object (Grok keeps it there). Never the tokens or the API key.
+        internal static string? AuthEmailFrom(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            try
+            {
+                using var document = System.Text.Json.JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    if (property.NameEquals("tokens") || property.NameEquals("OPENAI_API_KEY")) continue;
+
+                    var holder = property.Value;
+                    string? text = null;
+                    if (property.NameEquals("email") && holder.ValueKind == System.Text.Json.JsonValueKind.String)
+                        text = holder.GetString();
+                    else if (holder.ValueKind == System.Text.Json.JsonValueKind.Object
+                             && holder.TryGetProperty("email", out var inner)
+                             && inner.ValueKind == System.Text.Json.JsonValueKind.String)
+                        text = inner.GetString();
+
+                    if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
+                }
+            }
+            catch (System.Text.Json.JsonException) { }
+
+            return null;
         }
     }
 }

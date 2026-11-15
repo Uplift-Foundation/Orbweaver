@@ -385,7 +385,8 @@ namespace Orbweaver
         // identical "In: ..." lines. Returns true when a group was created.
         //
         // Over the cap, dormant auto groups go first in ordinal id order. If none
-        // is dormant the group is created anyway: every live orb gets its group,
+        // is dormant the group is created anyway, so the cap can be exceeded while
+        // every auto group is on screen; a visible group is never evicted: every live orb gets its group,
         // and the table is bounded by the orbs on screen.
         internal bool EnsureAuto(string id, string name, IReadOnlySet<string> live)
         {
