@@ -847,10 +847,15 @@ public class SessionManagerAutoGroupTests : IDisposable
     // OpenClaw spawned to run a heartbeat, beside an ordinary Codex session.
     // A different route to a heartbeat orb from the gateway's, and the one a
     // CLI classifier would otherwise call "claude".
+    private static string SpawnTurn(string prompt) =>
+        System.Text.Json.JsonSerializer.Serialize(new { type = "user", message = new { content = prompt } }) + "\n";
+
     private const string HeartbeatPrompt = "A scheduled reminder has been triggered. HEARTBEAT: run the routine.";
 
+    // A null prompt writes an empty transcript: a spawn whose first prompt
+    // has not landed yet.
     private SessionManager ScanHeartbeatSpawn(
-        ClusterMode heartbeats, string prompt = HeartbeatPrompt, ClusterMode crons = ClusterMode.WithChats)
+        ClusterMode heartbeats, string? prompt = HeartbeatPrompt, ClusterMode crons = ClusterMode.WithChats)
     {
         OrbweaverSettings.OpenClawHeartbeatMode = heartbeats;
         OrbweaverSettings.OpenClawCronMode = crons;
@@ -861,8 +866,7 @@ public class SessionManagerAutoGroupTests : IDisposable
 
         var workspace = Path.Combine(_dir, ".openclaw", "workspace-sample-zara");
         var transcript = Path.Combine(_dir, "spawn.jsonl");
-        File.WriteAllText(transcript, System.Text.Json.JsonSerializer.Serialize(
-            new { type = "user", message = new { content = prompt } }) + "\n");
+        File.WriteAllText(transcript, prompt is null ? "" : SpawnTurn(prompt));
         void Status(string id, string cli, string cwd, string path) =>
             File.WriteAllText(Path.Combine(_dir, id + ".txt"), System.Text.Json.JsonSerializer.Serialize(new SessionStatus
             {
@@ -924,6 +928,33 @@ public class SessionManagerAutoGroupTests : IDisposable
         Set(m, AutoGroupBy.Cli);
 
         Assert.Equal(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude"), GroupOf(m, "spawn"));
+    });
+
+    [AvaloniaFact]
+    public void ASpawnWhoseHeartbeatPromptArrivesLateMovesToHeartbeatsExactlyOnce() => WithHeartbeatSpawn(() =>
+    {
+        // No user turn yet: unsettled, so it is drawn as a chat and read again
+        // once the file grows (OpenClawCliSession.ReadCluster).
+        var m = ScanHeartbeatSpawn(ClusterMode.OwnShape, prompt: null);
+        Set(m, AutoGroupBy.Cli);
+        Assert.False(m.AllStatuses["spawn"].Heartbeat);
+        Assert.Equal(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude"), GroupOf(m, "spawn"));
+
+        File.AppendAllText(Path.Combine(_dir, "spawn.jsonl"), SpawnTurn(HeartbeatPrompt));
+        m.ScanAndUpdate();
+        Assert.True(Gliding(m));                                   // the one regroup
+        Glide(m);
+        Assert.True(m.AllStatuses["spawn"].Heartbeat);
+        Assert.Equal(OrbGroups.Heartbeats, GroupOf(m, "spawn"));
+        var settled = Windows(m).ToDictionary(p => p.Key, p => p.Value.Position);
+
+        for (var scan = 0; scan < 3; scan++)
+        {
+            m.ScanAndUpdate();
+            Assert.False(Gliding(m));                              // nothing changed, nothing moves
+            Assert.Equal(settled, Windows(m).ToDictionary(p => p.Key, p => p.Value.Position));
+        }
+        Assert.Equal(OrbGroups.Heartbeats, GroupOf(m, "spawn"));
     });
 
     [AvaloniaFact]
