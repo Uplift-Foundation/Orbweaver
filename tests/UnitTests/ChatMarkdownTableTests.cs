@@ -90,14 +90,18 @@ public class ChatMarkdownTableTests
         Assert.Equal(table, block.Text);
     }
 
-    // Streaming: every prefix of the table, one line at a time, is one table
-    // block from the first line on — never a paragraph that flashes first.
+    // Streaming: from the second line on, every prefix of the table is one
+    // table block. The first line alone is a paragraph, which is the price of
+    // the two-line rule (a lone box glyph in prose is not a table); it is one
+    // frame, and the table block replaces it on the next delta.
     [Fact]
-    public void EveryPrefixOfAStreamedBoxTableIsOneTableBlock()
+    public void EveryPrefixOfAStreamedBoxTableFromTwoLinesOnIsOneTableBlock()
     {
         var lines = ChatTableFixtures.BoxUpdateStatus;
 
-        for (var n = 1; n <= lines.Length; n++)
+        Assert.Equal(ChatMarkdown.MdKind.Paragraph, Assert.Single(Blocks(lines[0])).Kind);
+
+        for (var n = 2; n <= lines.Length; n++)
         {
             var block = Assert.Single(Blocks(string.Join("\n", lines.Take(n))));
             Assert.Equal(ChatMarkdown.MdKind.Table, block.Kind);
@@ -261,5 +265,71 @@ public class ChatMarkdownTableTests
 
         Assert.Equal(ChatMarkdown.MdKind.Code, block.Kind);
         Assert.Equal("csharp", block.Marker);
+    }
+
+    // --- lone box lines and block starts (QA, amended plan) ----------------
+
+    [Theory]
+    [InlineData("prose\n│ lone\nprose")]
+    [InlineData("prose\n├── lone\nprose")]
+    [InlineData("│ only")]
+    [InlineData("prose\n└── last line of a tree\n")]
+    public void ALoneBoxLineInProseIsAParagraphNotATable(string source)
+    {
+        Assert.DoesNotContain(Blocks(source), b => b.Kind == ChatMarkdown.MdKind.Table);
+        Assert.All(Blocks(source), b => Assert.Equal(ChatMarkdown.MdKind.Paragraph, b.Kind));
+    }
+
+    [Fact]
+    public void ALoneBoxLineInAFenceIsStillATable()
+    {
+        var block = Assert.Single(Blocks("```\n│ x\n```"));
+
+        Assert.Equal(ChatMarkdown.MdKind.Table, block.Kind);
+    }
+
+    [Fact]
+    public void TwoBoxLinesAreEnoughForATable()
+    {
+        var block = Assert.Single(Blocks("├── a\n└── b"));
+
+        Assert.Equal(ChatMarkdown.MdKind.Table, block.Kind);
+    }
+
+    [Fact]
+    public void AHeadingWithAPipeOverADelimiterRowStaysAHeading()
+    {
+        var blocks = Blocks("# a | b\n--- | ---\n1 | 2");
+
+        Assert.Equal(ChatMarkdown.MdKind.Heading, blocks[0].Kind);
+        Assert.Equal("a | b", blocks[0].Text);
+        Assert.DoesNotContain(blocks, b => b.Kind == ChatMarkdown.MdKind.Table);
+    }
+
+    [Fact]
+    public void ABulletWithAPipeOverADelimiterRowStaysABullet()
+    {
+        var blocks = Blocks("- a | b\n--- | ---\n1 | 2");
+
+        Assert.Equal(ChatMarkdown.MdKind.Bullet, blocks[0].Kind);
+        Assert.DoesNotContain(blocks, b => b.Kind == ChatMarkdown.MdKind.Table);
+    }
+
+    [Fact]
+    public void AnOrderedItemWithAPipeOverADelimiterRowStaysOrdered()
+    {
+        var blocks = Blocks("1. a | b\n--- | ---\n1 | 2");
+
+        Assert.Equal(ChatMarkdown.MdKind.Ordered, blocks[0].Kind);
+        Assert.DoesNotContain(blocks, b => b.Kind == ChatMarkdown.MdKind.Table);
+    }
+
+    [Fact]
+    public void AQuoteWithAPipeOverADelimiterRowStaysAQuote()
+    {
+        var blocks = Blocks("> a | b\n--- | ---");
+
+        Assert.Equal(ChatMarkdown.MdKind.Quote, blocks[0].Kind);
+        Assert.DoesNotContain(blocks, b => b.Kind == ChatMarkdown.MdKind.Table);
     }
 }

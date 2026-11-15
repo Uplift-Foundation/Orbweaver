@@ -108,7 +108,11 @@ namespace Orbweaver
                 }
 
                 // Tables, kept verbatim. See the note at the top.
-                if (IsBoxLine(trimmed))
+                // Two consecutive lines at least: a lone "│ x" or "├── a" in
+                // prose is a character somebody typed, not a table, and falls
+                // through to be paragraph text. (A fence is another matter —
+                // see IsAllTable — since there the author said it was code.)
+                if (IsBoxLine(trimmed) && i + 1 < lines.Length && IsBoxLine(lines[i + 1].TrimStart()))
                 {
                     FlushParagraph();
 
@@ -140,7 +144,12 @@ namespace Orbweaver
                     continue;
                 }
 
+                // Not on a line that starts something else: "# a | b" over a
+                // delimiter row is a heading, and a bullet or a quote likewise.
                 if (HasUnescapedPipe(trimmed)
+                    && Heading(trimmed) is null
+                    && ListItem(line) is null
+                    && !trimmed.StartsWith("> ", StringComparison.Ordinal)
                     && i + 1 < lines.Length
                     && IsDelimiterRow(lines[i + 1].Trim())
                     && CellCount(trimmed) == CellCount(lines[i + 1].Trim()))

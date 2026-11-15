@@ -510,6 +510,12 @@ namespace Orbweaver.Tests
             Check("a lone pipe in prose is not a table",
                 Blocks("a | b\nand more prose").Single().Kind == ChatMarkdown.MdKind.Paragraph);
 
+            Check("a lone box glyph line in prose is a paragraph, not a table",
+                Blocks("prose\n│ lone\nprose").All(b => b.Kind == ChatMarkdown.MdKind.Paragraph));
+
+            Check("a heading with a pipe over a delimiter row stays a heading",
+                Blocks("# a | b\n--- | ---\n1 | 2")[0].Kind == ChatMarkdown.MdKind.Heading);
+
             var fencedBox = Blocks("```text\n┌─┐\n│a│\n└─┘\n```");
             Check("a fenced box table is a table block",
                 fencedBox.Single().Kind == ChatMarkdown.MdKind.Table && fencedBox.Single().Marker == "text");
