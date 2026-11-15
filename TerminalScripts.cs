@@ -25,6 +25,21 @@ namespace Orbweaver
     // reasoning, moved with the code it explains.
     internal static class TerminalScripts
     {
+        // tmux 3.6a sanitises -F / display -p output for a client whose locale
+        // is not UTF-8: a TAB becomes "_" and "café" becomes "caf_". A GUI app
+        // started by launchd has no LANG or LC_*, so every client listing the
+        // app parsed on tabs found no client (measured, CB-335). `-u` tells
+        // tmux the terminal is UTF-8 whatever the environment says; it is a
+        // global client flag that predates tmux 1.x, and unlike injecting
+        // LC_CTYPE it does not leak into a server or panes the app starts.
+        //
+        // Keyed on the executable's file name so the generic TryRun helpers,
+        // which also run ps, id and osascript, can apply it without every call
+        // site having to remember. It goes first: -u is a global flag and must
+        // precede -S and the command.
+        internal static string[] TmuxProcessArgs(string exe, string[] args) =>
+            Path.GetFileName(exe) == "tmux" ? ["-u", .. args] : args;
+
         // The tmux argument list, with the socket pinned when the status file
         // recorded one.
         //
@@ -555,6 +570,8 @@ namespace Orbweaver
             // and a deferred Select/Prepend puts a compiler-generated state
             // machine on the line, which reads in a coverage report as a branch
             // nothing took while the line itself is plainly executed.
+            // No -u here (CB-335): this line runs inside a terminal, which has its
+            // own locale, and the attach is interactive rather than parsed.
             var parts = new List<string> { ShellQuote(tmuxBinary) };
             foreach (var arg in TmuxArgs(socket, "attach", "-t", "=" + session))
             {

@@ -33,14 +33,35 @@ public sealed class TmuxPlacementTests : IDisposable
     private readonly string _tmux = TerminalLauncher.ResolveTmux() ?? "tmux";
     private readonly string? _savedTmux = Environment.GetEnvironmentVariable("TMUX");
     private readonly string? _savedTmpDir = Environment.GetEnvironmentVariable("TMUX_TMPDIR");
+
+    // Pinned rather than inherited (CB-335). tmux 3.6a rewrites a TAB in -F
+    // output to "_" for a client whose locale is not UTF-8, which is exactly
+    // the installed app's situation (launchd hands a GUI app no LANG or LC_*)
+    // and was a developer pane's too. A CI image that exports a UTF-8 LANG
+    // hid that, so this suite cleared nothing and passed on broken code there.
+    // Clearing all three makes every machine run these tests in the locale the
+    // bug needs, which is what turns them into a real negative control.
+    private static readonly string[] LocaleVars = ["LANG", "LC_ALL", "LC_CTYPE"];
+    private readonly Dictionary<string, string?> _savedEnv = new[] { "LANG", "LC_ALL", "LC_CTYPE", "TMUX_PANE" }
+        .ToDictionary(k => k, Environment.GetEnvironmentVariable);
     private Process? _client;
 
     public TmuxPlacementTests()
     {
         Directory.CreateDirectory(_dir);
         Environment.SetEnvironmentVariable("TMUX", null);
+        foreach (var v in LocaleVars) Environment.SetEnvironmentVariable(v, null);
+
+        // Not the cause of CB-335 (measured: the same four failed with it
+        // unset), but a tmux run from inside a pane follows it the way it
+        // follows TMUX, so it is cleared with it.
+        Environment.SetEnvironmentVariable("TMUX_PANE", null);
         Environment.SetEnvironmentVariable("TMUX_TMPDIR", _dir);
-        Tmux("new-session", "-d", "-s", Session, "-x", "200", "-y", "50", "-c", "/tmp");
+
+        // -f /dev/null so a developer's ~/.tmux.conf (base-index, a
+        // default-command, plugins) cannot move window indices or placement.
+        // Hardening only: nobody here has one.
+        Tmux("-f", "/dev/null", "new-session", "-d", "-s", Session, "-x", "200", "-y", "50", "-c", "/tmp");
     }
 
     public void Dispose()
@@ -51,6 +72,7 @@ public sealed class TmuxPlacementTests : IDisposable
         _client?.Dispose();
 
         Environment.SetEnvironmentVariable("TMUX", _savedTmux);
+        foreach (var (k, v) in _savedEnv) Environment.SetEnvironmentVariable(k, v);
         Environment.SetEnvironmentVariable("TMUX_TMPDIR", _savedTmpDir);
         try { Directory.Delete(_dir, true); } catch (IOException) { }
     }
@@ -89,7 +111,9 @@ public sealed class TmuxPlacementTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (var a in args) psi.ArgumentList.Add(a);
+        // -u for symmetry with the app's own calls: this helper's formats are
+        // single-field today, but a later tab format would be eaten the same way.
+        foreach (var a in TerminalScripts.TmuxProcessArgs(_tmux, args)) psi.ArgumentList.Add(a);
 
         using var p = Process.Start(psi)!;
         var stdout = p.StandardOutput.ReadToEnd();
@@ -255,6 +279,37 @@ public sealed class TmuxPlacementTests : IDisposable
         new DirectoryInfo(path).FullName.StartsWith("/tmp/", StringComparison.Ordinal)
             ? "/private" + new DirectoryInfo(path).FullName
             : new DirectoryInfo(path).FullName;
+
+    // The CB-335 regression itself, through TerminalFocuser's helper (the one
+    // click-to-focus and phone placement use), with the locale cleared by the
+    // constructor: one client, on this session, with its tty. Before the fix
+    // the tab came back as "_", the listing was one field, and ParseClients
+    // skipped it — "nobody is attached".
+    [MacTmuxFact]
+    public void TheClientListingSurvivesANonUtf8Locale()
+    {
+        AttachClient();
+
+        Assert.True(TerminalFocuser.TryRun(_tmux, out var listing, "list-clients", "-F", TerminalScripts.ClientListFormat));
+        var clients = TerminalScripts.ParseClients(listing);
+
+        var client = Assert.Single(clients);
+        Assert.Equal(Session, client.Session);
+        Assert.False(string.IsNullOrEmpty(client.Tty));
+    }
+
+    // The other half of the same sanitising: a non-ASCII session name came
+    // back as "caf_".
+    [MacTmuxFact]
+    public void ANonAsciiSessionNameRoundTrips()
+    {
+        Tmux("new-session", "-d", "-s", "café", "-x", "80", "-y", "24", "-c", "/tmp");
+
+        Assert.True(TerminalFocuser.TryRun(_tmux, out var listing, "list-sessions", "-F", "#{session_name}"));
+
+        Assert.Contains("café", listing.Split('\n'));
+        Assert.DoesNotContain("caf_", listing.Split('\n'));
+    }
 
     // A server with no client is nowhere the user is looking, so New chat
     // declines it — the caller then opens a terminal window — and creates
