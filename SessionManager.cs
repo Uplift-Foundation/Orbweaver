@@ -5785,7 +5785,8 @@ namespace Orbweaver
                 : null;
         }
 
-        // Ensures the groups every on-screen root classifies into exist, then
+        // Ensures the groups every on-screen root classifies into exist (a root
+        // is a windowed orb, and a window never outlives its status), then
         // compares each orb's group with the last time it was asked. An orb
         // that left an auto group for a predefined one in free mode is loose
         // again and gets its pin back (ReleaseFromAutoGroup). True when any
@@ -5798,7 +5799,7 @@ namespace Orbweaver
             var wanted = tree.Present
                 .Select(tree.RootOf)
                 .Distinct(StringComparer.Ordinal)
-                .Select(root => _statuses.TryGetValue(root, out var status) ? AutoGroupValueOf(by, status) : null)
+                .Select(root => AutoGroupValueOf(by, _statuses[root]))
                 .OfType<(string Id, string Name)>()
                 .DistinctBy(value => value.Id, StringComparer.Ordinal)
                 .ToList();
@@ -5831,10 +5832,13 @@ namespace Orbweaver
         private void ReleaseFromAutoGroup(TeamTree tree, string id, string oldGroup, string newGroup)
         {
             if (!OrbAutoGroups.IsAuto(oldGroup) || !OrbGroups.IsPredefined(newGroup)) return;
-            if (!_windows.TryGetValue(id, out var window) || !_statuses.TryGetValue(id, out var status)) return;
             if (OrbGroupMenu.MembershipOf(tree.RootOf(id), _statuses) is not null) return;
 
-            var pin = SavedPinFor(window, status, window.PositionKey);
+            // Every id the tree holds has a window, and every window a status:
+            // the scan stores a status just before it makes the window and
+            // removes the two together.
+            var window = _windows[id];
+            var pin = SavedPinFor(window, _statuses[id], window.PositionKey);
 
             if (_isArranged)
             {

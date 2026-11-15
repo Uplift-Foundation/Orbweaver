@@ -75,17 +75,27 @@ public class SessionManagerAutoGroupTests : IDisposable
 
     private static string CliGroup(int i) => OrbAutoGroups.IdFor(AutoGroupBy.Cli, Cli(i));
 
-    private void Write(int i, string cwd = "/Users/user/cb281auto") =>
-        File.WriteAllText(Path.Combine(_dir, "s" + i + ".txt"),
-            System.Text.Json.JsonSerializer.Serialize(new SessionStatus
-            {
-                Cli = Clis[i],
-                Cwd = cwd,
-                Title = "t" + i,
-                SessionPid = Environment.ProcessId,
-                TermProgram = "iTerm.app",
-                Tty = "/dev/ttys004",
-            }));
+    // `transcript` null writes `"transcript_path":null`, which the Codex hook
+    // can send (OrbweaverHook.sh).
+    private void Write(int i, string cwd = "/Users/user/cb281auto", string? transcript = "")
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+        {
+            Cli = Clis[i],
+            Cwd = cwd,
+            Title = "t" + i,
+            SessionPid = Environment.ProcessId,
+            TermProgram = "iTerm.app",
+            Tty = "/dev/ttys004",
+            TranscriptPath = transcript ?? "",
+        });
+        if (transcript is null)
+        {
+            Assert.Contains("\"transcript_path\":\"\"", json);
+            json = json.Replace("\"transcript_path\":\"\"", "\"transcript_path\":null");
+        }
+        File.WriteAllText(Path.Combine(_dir, "s" + i + ".txt"), json);
+    }
 
     private SessionManager Scan(int count = 3)
     {
@@ -736,5 +746,159 @@ public class SessionManagerAutoGroupTests : IDisposable
         Assert.Null(OrbAutoGroups.Classify(AutoGroupBy.Account, facts, "/Users/user"));
         Assert.Null(m.AutoGroupFactsFor(AutoGroupBy.Profile,
             new SessionStatus { Source = SessionSource.ClaudeCode, TranscriptPath = null! }).ConfigRoot);
+    }
+
+    // --- round 3: precedence end to end, accounts that arrive late ---------------
+
+    private static bool Gliding(SessionManager m) =>
+        typeof(SessionManager).GetField("_arrangeAnimTargets", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(m) is not null;
+
+    private static long JustNow => DateTimeOffset.UtcNow.AddSeconds(-5).ToUnixTimeMilliseconds();
+
+    // A heartbeat, a cron and an ordinary chat on the gateway, through the
+    // parser a real poll uses.
+    private static void PublishGateway(params string[] keys)
+    {
+        OrbweaverSettings.OpenClawEnabled = true;
+        OrbweaverSettings.OpenClawActiveWithinMinutes = OrbweaverSettings.OpenClawActiveWithinAll;
+        var rows = string.Join(",", keys.Select(k => $$"""{"key":"{{k}}","lastActivityAt":{{JustNow}}}"""));
+        var (sessions, _) = OpenClawSessions.Parse(
+            System.Text.Json.JsonDocument.Parse("{\"sessions\":[" + rows + "]}").RootElement, DateTime.UtcNow);
+        OpenClawSessions.SetSnapshotForTests(sessions);
+    }
+
+    private const string Heartbeat = "agent:main:main";
+    private const string Cron = "agent:aurora:cron:5d1f0c2e-0000-4000-8000-000000000001";
+    private const string Chat = "agent:aurora:discord:direct:2467";
+
+    private void WithGateway(Action body)
+    {
+        var enabled = OrbweaverSettings.OpenClawEnabled;
+        var within = OrbweaverSettings.OpenClawActiveWithinMinutes;
+        var heartbeats = OrbweaverSettings.OpenClawHeartbeatMode;
+        var crons = OrbweaverSettings.OpenClawCronMode;
+        try { body(); }
+        finally
+        {
+            OpenClawSessions.SetSnapshotForTests(Array.Empty<OpenClawSessions.Session>());
+            OrbweaverSettings.OpenClawEnabled = enabled;
+            OrbweaverSettings.OpenClawActiveWithinMinutes = within;
+            OrbweaverSettings.OpenClawHeartbeatMode = heartbeats;
+            OrbweaverSettings.OpenClawCronMode = crons;
+        }
+    }
+
+    [AvaloniaFact]
+    public void AHeartbeatAndACronInTheirOwnShapeStayInTheirClustersUnderCli() => WithGateway(() =>
+    {
+        PublishGateway(Heartbeat, Cron, Chat);
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.OwnShape;
+        OrbweaverSettings.OpenClawCronMode = ClusterMode.OwnShape;
+        var m = new SessionManager(_dir);
+        m.ScanAndUpdate();
+        Assert.Contains("openclaw:" + Heartbeat, m.AllStatuses.Keys);
+        Assert.Contains("openclaw:" + Cron, m.AllStatuses.Keys);
+
+        Set(m, AutoGroupBy.Cli);
+
+        var openclaw = OrbAutoGroups.IdFor(AutoGroupBy.Cli, "openclaw");
+        Assert.Equal(OrbGroups.Heartbeats, GroupOf(m, "openclaw:" + Heartbeat));
+        Assert.Equal(OrbGroups.Crons, GroupOf(m, "openclaw:" + Cron));
+        // Control: the chat beside them is auto-grouped, so CLI really is on.
+        Assert.Equal(openclaw, GroupOf(m, "openclaw:" + Chat));
+    });
+
+    [AvaloniaFact]
+    public void AHeartbeatAndACronGatheredWithTheChatsAreAutoGroupedLikeAChat() => WithGateway(() =>
+    {
+        PublishGateway(Heartbeat, Cron, Chat);
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.WithChats;
+        OrbweaverSettings.OpenClawCronMode = ClusterMode.WithChats;
+        var m = new SessionManager(_dir);
+        m.ScanAndUpdate();
+
+        Set(m, AutoGroupBy.Cli);
+
+        var openclaw = OrbAutoGroups.IdFor(AutoGroupBy.Cli, "openclaw");
+        Assert.Equal(openclaw, GroupOf(m, "openclaw:" + Heartbeat));
+        Assert.Equal(openclaw, GroupOf(m, "openclaw:" + Cron));
+    });
+
+    [AvaloniaFact]
+    public void AHiddenHeartbeatHasNoOrbAndMakesNoGroup() => WithGateway(() =>
+    {
+        // Before the parse: Hidden drops the row there (OpenClawSessions.Parse).
+        OrbweaverSettings.OpenClawHeartbeatMode = ClusterMode.Hidden;
+        PublishGateway(Heartbeat);
+        var m = new SessionManager(_dir);
+        m.ScanAndUpdate();
+        Assert.Empty(Windows(m));
+
+        Set(m, AutoGroupBy.Cli);
+
+        Assert.Null(OrbweaverSettings.OrbGroupFor(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "openclaw")));
+        Assert.DoesNotContain(OrbweaverSettings.OrbGroupList(), g => OrbAutoGroups.IsAuto(g.Id));
+    });
+
+    [AvaloniaFact]
+    public void AGrokAccountThatArrivesWithTheTranscriptMovesTheOrbExactlyOnce()
+    {
+        // Measured on a real Grok session: transcript_path is empty at
+        // SessionStart and filled seconds later.
+        var m = Scan();
+        m.AutoGroupAccountOf = status =>
+            status.Source == SessionSource.Grok && !string.IsNullOrEmpty(status.TranscriptPath)
+                ? ("grok\nme@example.org", "me")
+                : null;
+        Set(m, AutoGroupBy.Account);
+        Assert.Equal(OrbGroups.Main, GroupOf(m, "s2"));
+
+        Write(2, transcript: "/Users/user/.grok/sessions/%2FUsers%2Fuser%2Fcb281auto/s2/updates.jsonl");
+        m.ScanAndUpdate();
+        Assert.True(Gliding(m));                                // the one regroup
+        Glide(m);
+        var account = OrbAutoGroups.IdFor(AutoGroupBy.Account, "grok\nme@example.org");
+        Assert.Equal(account, GroupOf(m, "s2"));
+        var settled = Windows(m).ToDictionary(p => p.Key, p => p.Value.Position);
+
+        for (var scan = 0; scan < 3; scan++)
+        {
+            m.ScanAndUpdate();
+            Assert.False(Gliding(m));                           // nothing changed, nothing moves
+            Assert.Equal(settled, Windows(m).ToDictionary(p => p.Key, p => p.Value.Position));
+        }
+        Assert.Equal(account, GroupOf(m, "s2"));
+    }
+
+    [AvaloniaFact]
+    public void ACodexStatusWithANullTranscriptPathScansAndStaysUngroupedUnderAccount()
+    {
+        var m = Scan();
+        Write(1, transcript: null);
+        m.ScanAndUpdate();
+        Assert.True(string.IsNullOrEmpty(m.AllStatuses["s1"].TranscriptPath));
+
+        // The real default seam, not an injected one: HomeOf answers null and
+        // nothing is read.
+        Set(m, AutoGroupBy.Account);
+
+        Assert.Equal(OrbGroups.Main, GroupOf(m, "s1"));
+        Assert.Null(((IOrbDragHost)m).AutoGroupIdOf("s1"));
+    }
+
+    [AvaloniaFact]
+    public void ANamelessGroupsCaptionNumberIgnoresAutoGroups()
+    {
+        var m = Scan();
+        Group();
+        var unknown = "g-" + Guid.NewGuid().ToString("N")[..8];
+        var before = GroupBackdrops.CaptionFor(unknown);
+
+        Set(m, AutoGroupBy.Cli);
+        Assert.Contains(OrbweaverSettings.OrbGroupList(), g => OrbAutoGroups.IsAuto(g.Id));
+
+        Assert.Equal(before, GroupBackdrops.CaptionFor(unknown));
+        Assert.Equal("Codex", GroupBackdrops.CaptionFor(CliGroup(1)));    // an auto group wears its name
     }
 }
