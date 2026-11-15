@@ -102,22 +102,42 @@ New unit cases (A), all through the real `Parse`, then `ListedSnapshot`, then
 - **U-G3c.** A WhatsApp group whose `chatType` is "direct" and whose
   `classification` is "group" → `Kind == Channel` on the row, `Badge == "Channel"`.
 
-**Badge decision (deliberate).** The ticket's "main or native" both appear,
-with distinct meanings. Order:
+**Badge decision (deliberate; revised after reviewing 351a95d7).** The
+ticket's "main or native" both appear, with distinct meanings.
 
-1. Heartbeat → "Heartbeat"
-2. Cron → "Cron"
-3. `Native == Dashboard` (a New Chat conversation, with no surface) → "Native"
-4. Direct → "DM"
-5. Channel → "Channel"
-6. `Kind == Main` (including a classification-main / `Native == Main` row,
-   i.e. the agent's own TUI session) → "Main"
+**Read in code at d8b3aa48.** `OpenClawHeartbeat.Is` returns true for
+**every** `agent:<id>:main` key (`OpenClawHeartbeat.cs` ~L61). An agent's main
+session is the heartbeat's default target. hana hit this while writing her
+WhatsApp case.
+
+So "Heartbeat first" would badge every agent's main session "Heartbeat", and
+the "Main" badge would never appear.
+
+The `Session` record's own comment draws the line this needs: *"a heartbeat is
+how a session gets woken, not what kind of conversation it is."* The badge
+says what kind of conversation a row is. The cluster *filter* (`ClusterHides`)
+still uses `Heartbeat` exactly as the scan does, so under Heartbeats = Hidden
+an unpinned main is still excluded (ruling 1).
+
+Order:
+
+1. `Native == Dashboard` (a New Chat conversation, with no surface) → "Native"
+2. `Kind == Main` (the agent's own session, classification-main included) → "Main"
+3. Heartbeat → "Heartbeat" (a cron labelled as the heartbeat beats Cron, as
+   in `OrbClusters.Of`)
+4. Cron → "Cron"
+5. Direct → "DM"
+6. Channel → "Channel"
 7. Unknown with `Native != None` → "Native"
 8. Otherwise ""
 
-This **replaces** §1's earlier order. That order called a native Main
-"Native", which would have hidden every agent's own main session behind a word
-users do not use for it.
+This **replaces** §1's order and the first G3 order.
+
+- **U-G3e.** Through the real `Parse`: `agent:nova:main` → `Heartbeat == true`
+  **and** `Badge == "Main"`.
+  - Under Heartbeats Hidden it is not listed unless pinned. Pinned, it is
+    listed with "Main".
+  - A cron row labelled "Cron: Heartbeat (main)" → "Heartbeat".
 
 - **U-G3d.** Through the real `Parse`: one dashboard row, one
   classification-main row and one `agent:x:main` row → "Native", "Main" and
