@@ -83,5 +83,6 @@
     <!-- CB-306: real commands.list and a /status card, as constants. -->
     <Compile Include="..\UnitTests\OpenClawSlashFixtures.cs" Link="OpenClawSlashFixtures.cs" />
     <Compile Include="..\UnitTests\UpdateReleaseNotesFixture.cs" Link="UpdateReleaseNotesFixture.cs" />
+    <Compile Include="..\UnitTests\ChatTableFixtures.cs" Link="ChatTableFixtures.cs" />
   </ItemGroup>
 </Project>
