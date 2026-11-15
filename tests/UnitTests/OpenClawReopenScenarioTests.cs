@@ -493,6 +493,28 @@ namespace Orbweaver.Tests
             Assert.Equal("Check Settings → OpenClaw.", OpenClawReopenList.UnreachableDetail(failure));
         }
 
+        // The only road the Local Network hint takes to the picker: a failure stores
+        // its detail, a success never stores anything, and a listing that lands
+        // clears it so the picker stops blaming a connection that works.
+        [Fact]
+        public void AFailureIsStoredAndALandedListingClearsIt()
+        {
+            OpenClawSessions.SetLastConnectFailureForTests(null);
+            OpenClawSessions.RecordConnectFailure(new OpenClawGateway.ConnectResult(OpenClawGateway.Outcome.Connected));
+            Assert.Null(OpenClawSessions.LastConnectFailure()); // control: success stores nothing
+
+            var hint = OpenClawGateway.ExplainConnectFailure(
+                new SocketException((int)SocketError.HostUnreachable), onMacOS: true);
+            OpenClawSessions.RecordConnectFailure(new OpenClawGateway.ConnectResult(OpenClawGateway.Outcome.Unreachable, hint));
+            Assert.Equal(hint, OpenClawSessions.LastConnectFailure());
+
+            OpenClawSessions.SetListingCurrentForTests(false);
+            OpenClawSessions.ListingLanded();
+
+            Assert.Null(OpenClawSessions.LastConnectFailure());
+            Assert.NotNull(OpenClawSessions.ListedSnapshot());
+        }
+
         [Fact]
         public void ConnectFailuresAreRecordedAndOnlyFailuresAre()
         {
@@ -549,10 +571,8 @@ namespace Orbweaver.Tests
             Assert.Equal(before, SettingsDirHash());
 
             // Negative control: the hash check can fail, so C means something.
-            OrbweaverSettings.OpenClawActiveWithinMinutes = within(37);
+            OrbweaverSettings.OpenClawActiveWithinMinutes = 37;
             Assert.NotEqual(before, SettingsDirHash());
-
-            static int within(int n) => n;
         }
 
         // A key that left the gateway between the poll and the click: measured, not
@@ -572,20 +592,32 @@ namespace Orbweaver.Tests
             Assert.Empty(chat.History);
         }
 
+        // With OpenClaw off Reopen does nothing at all: a hidden row stays hidden
+        // (no settings write) and nothing is marked, so the next Parse still drops
+        // it. The toggle's own write is the control that the hash check can fail.
         [Fact]
-        public void ReopenWithOpenClawOffReturnsNullAndWritesNothing()
+        public void ReopenWithOpenClawOffReturnsNullAndTouchesNothing()
         {
-            var (_, listed) = Poll(Direct(1, 1));
+            const string key = "agent:a:discord:direct:1";
+            var rows = Direct(1, TwoDaysAgo);
+            var (_, listed) = Poll(rows, within: 5);
             var row = Build(listed).Single();
             OrbweaverSettings.RestoreAllHiddenOrbs();
+            OrbweaverSettings.HideOrb(new HiddenOrb("openclaw:" + key, Now, key, "OpenClaw", ""));
             var before = SettingsDirHash();
 
             OrbweaverSettings.OpenClawEnabled = false;
-            var after = SettingsDirHash();
+            var afterToggle = SettingsDirHash();
+            Assert.NotEqual(before, afterToggle);
+
             Assert.Null(OpenClawSessions.Reopen(row));
 
-            Assert.Equal(after, SettingsDirHash());
-            Assert.NotEqual(before, after); // the toggle itself wrote, so the check can fail
+            Assert.Equal(afterToggle, SettingsDirHash());
+            Assert.Contains("openclaw:" + key, OrbweaverSettings.HiddenOrbIds());
+
+            OrbweaverSettings.OpenClawEnabled = true;
+            var (shown, _) = Poll(rows, within: 5, now: DateTime.UtcNow.AddMinutes(1));
+            Assert.DoesNotContain(shown, s => s.Key == key); // nothing was marked
         }
 
         // ---- CB-276: un-hiding ------------------------------------------------------------

@@ -1082,6 +1082,15 @@ namespace Orbweaver
             if (result.Outcome != OpenClawGateway.Outcome.Connected) _lastConnectFailure = result.Detail;
         }
 
+        // CB-329: a listing landed, so this connection is live and whatever failed
+        // before is history. Its own method so the clear is covered and only the
+        // call sits inside the excluded poll.
+        internal static void ListingLanded()
+        {
+            _listingCurrent = true;
+            _lastConnectFailure = null;
+        }
+
         internal static string? LastConnectFailure() =>
             OrbweaverSettings.OpenClawEnabled ? _lastConnectFailure : null;
 
@@ -1177,6 +1186,11 @@ namespace Orbweaver
         // off (both callees already answer null then).
         public static IRemoteChatSession? Reopen(OpenClawReopenRow row)
         {
+            // Before the un-hide and the mark: with OpenClaw off both callees answer
+            // null, but by then a hidden row would already have been restored (a
+            // settings write) by a method that returns nothing.
+            if (!OrbweaverSettings.OpenClawEnabled) return null;
+
             foreach (var id in ReopenHiddenIds(row)) RestoreHidden(id);
             MarkActive(row.MemberKeys, DateTime.UtcNow);
 
@@ -1674,8 +1688,7 @@ namespace Orbweaver
                 PurgeUnlistedApprovals();
 
                 _snapshot = sessions;
-                _listingCurrent = true;
-                _lastConnectFailure = null;
+                ListingLanded();
                 Report(total == sessions.Count
                     ? $"Connected — {sessions.Count} session{(sessions.Count == 1 ? "" : "s")}."
                     : $"Connected — showing {sessions.Count} of {total}. The rest have been quiet "
