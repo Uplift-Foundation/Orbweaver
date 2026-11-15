@@ -152,6 +152,38 @@ public class AutoGroupAccountsTests
     }
 
     [Fact]
+    public void APathMixingBothSeparatorsIsJoinedWithAForwardSlash() =>
+        Assert.Equal("C:/Users/ann/.codex", AutoGroupAccounts.HomeOf(SessionSource.Codex,
+            @"C:\Users\ann/.codex\sessions\2026\11\14\rollout-1-x.jsonl"));
+
+    // File.Exists is true and the read throws: the default reader's catch. Needs a
+    // permission bit, so it cannot run on Windows (named in the PR body).
+    [Fact]
+    public void AnExistingButUnreadableIdentityFileIsUnknownNotAThrow()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var home = Path.Combine(Path.GetTempPath(), "cb281-acct-" + Guid.NewGuid());
+        var dir = Directory.CreateDirectory(Path.Combine(home, ".claude-u")).FullName;
+        var file = Path.Combine(dir, ".claude.json");
+        File.WriteAllText(file, Claude("u@example.org"));
+        try
+        {
+            File.SetUnixFileMode(file, UnixFileMode.None);
+            if (new FileInfo(file).OpenRead() is { } probe) { probe.Dispose(); return; } // running as root: cannot make it unreadable
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Assert.Null(new AutoGroupAccounts(home).Of(SessionSource.ClaudeCode, dir));
+        }
+        finally
+        {
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            Directory.Delete(home, true);
+        }
+    }
+
+    [Fact]
     public void TheRealReaderReadsAFileAndShrugsOffAMissingOrUnreadableOne()
     {
         var home = Path.Combine(Path.GetTempPath(), "cb281-acct-" + Guid.NewGuid());

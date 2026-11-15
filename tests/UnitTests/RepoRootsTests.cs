@@ -110,6 +110,10 @@ public class RepoRootsTests
     }
 
     [Fact]
+    public void APathMixingBothSeparatorsIsJoinedWithAForwardSlash() =>
+        Assert.Equal(@"C:\a/b", RepoRoots.Find(@"C:\a/b/c", Tree(new[] { @"C:\a/b/.git" })));
+
+    [Fact]
     public void ARelativeCwdWithNoSeparatorEndsTheWalk() =>
         Assert.Null(RepoRoots.Find("rel", Tree(Array.Empty<string>())));
 

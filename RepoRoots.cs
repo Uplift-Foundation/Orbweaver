@@ -41,16 +41,13 @@ namespace Orbweaver
         {
             if (string.IsNullOrWhiteSpace(cwd)) return null;
 
-            var dir = Trim(cwd.Trim());
-            while (dir.Length > 0)
+            // The loop ends when ParentOf runs out of parents (the root), which is the
+            // one way out besides a hit.
+            for (string? dir = Trim(cwd.Trim()); dir is not null; dir = ParentOf(dir))
             {
                 var dotGit = dir.EndsWith('/') || dir.EndsWith('\\') ? dir + ".git" : dir + Separator(dir) + ".git";
                 if (fs.DirectoryExists(dotGit)) return dir;
                 if (fs.FileExists(dotGit)) return MainRootOfPointer(dir, fs.ReadText(dotGit)) ?? dir;
-
-                var parent = ParentOf(dir);
-                if (parent is null) return null;
-                dir = parent;
             }
 
             return null;
