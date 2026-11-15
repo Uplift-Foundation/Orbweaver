@@ -243,6 +243,69 @@ namespace Orbweaver
                 : null;
     }
 
+    // What an idle status read means for a turn this panel sent (CB-285).
+    internal enum IdleVerdict
+    {
+        // The turn is over: end it, and trust that over a roster still saying
+        // "working".
+        TurnOver,
+
+        // The session has not started the turn yet. Keep watching.
+        NotStartedYet,
+
+        // Waited long enough that whatever is happening, this loop is not going
+        // to see it. Stop watching, and hand busy back to the roster *without*
+        // claiming the turn ended, so a roster "working" can still put Stop back.
+        GaveUp,
+    }
+
+    // Whether a sent turn has actually happened yet. Pure, so each rule is a case.
+    //
+    // **Why an idle read is not enough on its own.** Measured against a real cold
+    // session (CB-285): its status read working, then idle, then working again,
+    // all before the turn produced anything. The idle sample sat at about two
+    // seconds after the send, which is exactly where the live loop's first read
+    // lands. Believing it ended a turn that had not begun, and the reply was
+    // never fetched. So a "has seen working once" rule is not safe either. The
+    // transcript is the only witness that cannot flap: once our echo is followed
+    // by an assistant row, the turn has happened.
+    internal static class CloudTurnProgress
+    {
+        // True when a row carries sentUuid and a later row is an assistant turn.
+        // An assistant row *before* the echo is the previous turn's reply and
+        // says nothing about this one.
+        internal static bool ReplyFollows(IReadOnlyList<ChatTranscript.Row> rows, string sentUuid)
+        {
+            var echoed = false;
+
+            foreach (var row in rows)
+            {
+                if (!echoed)
+                {
+                    echoed = string.Equals(row.Uuid, sentUuid, StringComparison.Ordinal);
+                    continue;
+                }
+
+                if (row.Turn.Role == ChatRole.Assistant) return true;
+            }
+
+            return false;
+        }
+
+        // The rules, in order. A loop that is not watching a send (one joined
+        // from the roster, a panel open, a Stop) has no turn of its own to wait
+        // for, so idle ends it as it always did. A reply in the transcript or a
+        // Stop already pressed is an ending nobody can argue with. Past the grace
+        // the loop stops waiting, and before it the idle read is noise.
+        internal static IdleVerdict OnIdle(bool watchingASend, bool replyFollows, bool interruptSent,
+            TimeSpan sinceSend, TimeSpan grace)
+        {
+            if (!watchingASend) return IdleVerdict.TurnOver;
+            if (replyFollows || interruptSent) return IdleVerdict.TurnOver;
+            return sinceSend >= grace ? IdleVerdict.GaveUp : IdleVerdict.NotStartedYet;
+        }
+    }
+
     // The pure half of reading the stream that is the panel's rather than the
     // transport's: a durable event's payload as the transcript rows the history
     // already uses.
@@ -375,9 +438,43 @@ namespace Orbweaver
         // the two; the cap bounds a panel left open on a runaway turn. Past it,
         // the roster push owns the busy state again, and still fetches the
         // finished reply when it sees the turn end.
+        //
+        // **An idle status read does not end a turn this panel sent until the
+        // turn is seen to have happened (CB-285).** The two-second first read
+        // lands inside the window where a waking session briefly reads idle with
+        // no echo yet. That was measured once on a cold session, at about +2 s.
+        // See CloudTurnProgress and UnmeasuredTurnStartGrace.
         internal static readonly TimeSpan UnmeasuredLiveStatusInterval = TimeSpan.FromSeconds(2);
         internal static readonly TimeSpan UnmeasuredLiveTranscriptInterval = TimeSpan.FromSeconds(5);
         internal static readonly TimeSpan UnmeasuredLiveCap = TimeSpan.FromMinutes(2);
+
+        // How long after a send an idle read is taken as "not started yet" rather
+        // than "over", while the transcript shows no reply after our echo.
+        //
+        // **Not a measurement; a margin over one.** One cold send was measured
+        // (CB-285) at about 2.6 s from the POST to the turn starting. CB-199
+        // documented the echo at about 10 s after a send on a session waking from
+        // idle, which is the slowest figure on record. Thirty seconds is margin
+        // over that documented figure. A session cold for hours rather than
+        // minutes has never been measured. Past the grace, the loop hands busy
+        // back to the roster without claiming the turn ended, so a slower wake
+        // still gets Stop and its reply. It only stops being watched every two
+        // seconds. Costs one transcript read per idle tick inside the grace: one
+        // to three in the measured cold case, at most fifteen for a turn that
+        // never starts.
+        internal static readonly TimeSpan UnmeasuredTurnStartGrace = TimeSpan.FromSeconds(30);
+
+        // How long a trusted stream may say nothing about a send before polling
+        // starts beside it (CB-285).
+        //
+        // **Not measured as a limit.** An attached stream echoed the user row
+        // within 0.02 s on all three measured sends, warm and cold, so ten
+        // seconds is margin and nothing more. What it guards against is not the
+        // server being slow but the socket being dead without knowing it:
+        // HttpCloudEventStream has no read timeout by design, and a network
+        // change or a sleep can leave it "open" with nothing coming down it.
+        // That case is reasoned about, not reproduced.
+        internal static readonly TimeSpan UnmeasuredStreamEchoGrace = TimeSpan.FromSeconds(10);
 
         internal const string LivePausedNote =
             "Live updates paused: the endpoint is rate limiting us. The reply will still appear once the turn ends.";
@@ -400,10 +497,38 @@ namespace Orbweaver
         private bool _interruptSent;
         private bool _panelOpen;
 
-        // Set when the live loop saw the turn end, and cleared once the roster
-        // agrees. Between the two, a roster row still saying "working" is older
-        // news than the live read and is not allowed to put Stop back.
+        // Set when the live loop or the stream saw the turn end, and cleared once
+        // the roster agrees. Between the two, a roster row still saying "working"
+        // is older news than the live read and is not allowed to put Stop back.
+        //
+        // **Only set on evidence the turn ended (CB-285).** It used to be set by
+        // the first idle read after a send. On a cold session that read can land
+        // before the turn starts, and then the mask hid the whole real turn from
+        // the roster: Stop never came back and the reply was never read. Now the
+        // live loop sets it only when the transcript shows a reply, Stop was
+        // pressed, or it joined a turn it did not send. A loop that gives up
+        // waiting leaves it clear.
         private bool _liveSaidIdle;
+
+        // The roster said "working" while _liveSaidIdle was masking it. If the
+        // roster then says idle, that turn ran and ended without anybody reading
+        // its reply, so it earns one transcript read (CB-285). It is the belt to
+        // the live loop's braces: even a wrongly trusted idle cannot leave a
+        // reply unread for good.
+        private bool _rosterBusyWhileMasked;
+
+        // Stream events that count toward health (not keepalives), for the send
+        // watch to tell "the stream said something since the send" from
+        // "silence". Incremented on the stream's thread.
+        private int _streamTurnEvents;
+        private CancellationTokenSource? _sendWatch;
+
+        // The uuid of the last send whose turn nobody has yet seen end. A stream
+        // that falls back mid-turn hands it to the loop it starts, so that loop
+        // waits for the reply as the send's own loop would have — rather than
+        // joining as though the turn were someone else's and believing the very
+        // idle read CB-285 is about. Cleared by whoever sees that turn end.
+        private string? _awaitingReply;
 
         private Task<LoadResult>? _inFlight;
 
@@ -457,6 +582,10 @@ namespace Orbweaver
         // session falls back to when the stream cannot be kept open.
         internal ICloudEventStream? Stream { get; init; }
 
+        // Where a decision about a turn is written: cloud-chat.log in the app, a
+        // list in a test, so a case can assert which path a send took without
+        // touching a disk. See CloudChatLog for what may and may not go in a line.
+        internal Action<string> Log { get; init; } = CloudChatLog.Record;
 
 
         // The seam that keeps this class testable without an Avalonia app.
@@ -528,6 +657,9 @@ namespace Orbweaver
         // What the live loop and the interrupt are doing, for a test to await.
         // Never awaited by the app: both are fire and forget by design.
         internal Task? LiveTask { get; private set; }
+
+        // The wait that decides whether a trusted stream was silent about a send.
+        internal Task? SendWatchTask { get; private set; }
 
         // While the live loop runs it owns the busy state; the roster push only
         // updates the row. One owner at a time is what keeps a thirty-second-old
@@ -670,6 +802,7 @@ namespace Orbweaver
                 _busy = true;
                 _interruptSent = false;
                 _liveSaidIdle = false;
+                _rosterBusyWhileMasked = false;
                 Announce(before);
             });
 
@@ -677,11 +810,69 @@ namespace Orbweaver
             // has just worked, so say so again if it fails again, and bring the
             // stream back if an open panel lost it. The stream, when it is up,
             // reports this turn's start and end itself; polling is for when it
-            // is not.
+            // is not. And because "up" is the stream's own opinion of itself, a
+            // send it then says nothing about falls to polling too (CB-285).
             _notedLivePause = false;
+            Volatile.Write(ref _awaitingReply, uuid);
             if (_panelOpen) StartStream();
-            if (!StreamLive) StartLive();
+
+            if (StreamLive)
+            {
+                Log($"send {SessionId}: sent, watching by stream");
+                WatchSend(uuid);
+            }
+            else
+            {
+                Log($"send {SessionId}: sent, watching by poll");
+                StartLive(uuid);
+            }
+
             return ChatSendOutcome.Sent;
+        }
+
+        // Give a trusted stream UnmeasuredStreamEchoGrace to say anything at all
+        // about a send, and poll beside it if it does not.
+        //
+        // **Why the stream's own word is not enough.** While it is trusted,
+        // nothing else reads the transcript and the roster is not allowed to
+        // touch busy (LiveOwnsBusy). A stream that is connected and silent, such
+        // as a dead socket nobody has noticed, therefore left Stop up forever and
+        // the reply unread. That was reproduced against the fakes (CB-285), not
+        // provoked from the real server, which delivered every event on every
+        // measured send.
+        private void WatchSend(string uuid)
+        {
+            var cts = new CancellationTokenSource();
+            Interlocked.Exchange(ref _sendWatch, cts)?.Cancel();
+            SendWatchTask = WatchSendAsync(uuid, Volatile.Read(ref _streamTurnEvents), cts.Token);
+        }
+
+        private async Task WatchSendAsync(string uuid, int eventsAtSend, CancellationToken ct)
+        {
+            try
+            {
+                await Delay(UnmeasuredStreamEchoGrace, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            // Nothing to do if the panel closed or the session stopped taking
+            // input, if the turn is already over, or if the stream has already
+            // fallen back, which started polling itself.
+            if (ct.IsCancellationRequested || !_panelOpen || IsReadOnly || !_busy || !StreamLive) return;
+
+            // The stream said something since the send. It is alive, and it owns
+            // this turn.
+            if (Volatile.Read(ref _streamTurnEvents) != eventsAtSend) return;
+
+            Log($"stream {SessionId}: silent {CloudChatLog.Seconds(UnmeasuredStreamEchoGrace)} after a send, polling beside it");
+
+            // Fallen back, as a failed connection would be: the loop owns busy
+            // from here, and the stream's next counted event trusts it again.
+            _streamFellBack = true;
+            StartLive(uuid, UnmeasuredStreamEchoGrace);
         }
 
         // Say why a send did not go, and take the box away if the reason is
@@ -782,10 +973,17 @@ namespace Orbweaver
             var before = Affordances();
             _interruptSent = true;
             Announce(before);
-            InterruptTask = InterruptAsync();
+            InterruptTask = InterruptAsync(watched: LiveOwnsBusy);
         }
 
-        private async Task InterruptAsync()
+        // watched is whether a loop or the stream was watching at the press,
+        // decided here on the UI thread rather than after the POST (CB-285).
+        // Whatever was watching then is what sees the Stop land. The POST and a
+        // running loop each start with a credential read on the pool, so the
+        // loop can see idle and end the turn before the POST returns; asking
+        // "is a loop running?" at that point said no, and started a second one
+        // that read the status and the transcript again for a turn already over.
+        private async Task InterruptAsync(bool watched)
         {
             var failure = await CloudTurnSender.PostControlAsync(
                 _api, _credentials, ReadBudget, SessionId,
@@ -796,7 +994,7 @@ namespace Orbweaver
             // right, and if a loop is not already watching, that is this one.
             if (failure is null)
             {
-                if (!StreamLive) EnsureLive();
+                if (!watched && !StreamLive) EnsureLive();
                 return;
             }
 
@@ -831,9 +1029,25 @@ namespace Orbweaver
             // except that a roster still saying "working" after the live read saw
             // idle is the older of two observations, and waits until the roster
             // itself catches up.
+            //
+            // **The mask is never allowed to hide a turn for good (CB-285).** A
+            // "working" it hid is remembered, and when the roster then says idle
+            // that turn has run and ended with nobody reading it. That earns one
+            // transcript read, the same one an unmasked working-to-idle gets.
+            var catchUp = false;
             if (!LiveOwnsBusy)
             {
-                if (!rosterBusy) _liveSaidIdle = false;
+                if (!rosterBusy)
+                {
+                    catchUp = _rosterBusyWhileMasked;
+                    _rosterBusyWhileMasked = false;
+                    _liveSaidIdle = false;
+                }
+                else if (_liveSaidIdle)
+                {
+                    _rosterBusyWhileMasked = true;
+                }
+
                 _busy = rosterBusy && !_liveSaidIdle;
             }
 
@@ -849,6 +1063,11 @@ namespace Orbweaver
             // read. Or one has just started somewhere else — claude.ai, another
             // machine — and a panel someone is looking at should watch it live.
             if (wasBusy && !_busy) _ = RefreshAsync();
+            else if (catchUp)
+            {
+                Log($"roster {SessionId}: caught up after a masked working, reading transcript");
+                _ = RefreshAsync();
+            }
             else if (!wasBusy && _busy && !StreamLive) EnsureLive();
         }
 
@@ -884,6 +1103,7 @@ namespace Orbweaver
             _panelOpen = false;
             _live?.Cancel();
             _streamCts?.Cancel();
+            _sendWatch?.Cancel();
         }
 
         // Every change to what the panel offers is bracketed by these two: read
@@ -995,6 +1215,7 @@ namespace Orbweaver
                             {
                                 deliveredEvent = true;
                                 _streamFellBack = false;
+                                Interlocked.Increment(ref _streamTurnEvents);
                             }
 
                             resumeFrom = ClaudeCloudStreamPolicy.ResumeFrom(resumeFrom, e);
@@ -1066,7 +1287,7 @@ namespace Orbweaver
         private void FallBack()
         {
             _streamFellBack = true;
-            if (_busy && !IsReadOnly) EnsureLive();
+            if (_busy && !IsReadOnly && !LiveRunning) StartLive(Volatile.Read(ref _awaitingReply));
         }
 
         // Live updates have stopped because the login could not be read. Said
@@ -1147,6 +1368,7 @@ namespace Orbweaver
                 // The turn is over, whatever the subtype — success, or
                 // error_during_execution after an interrupt.
                 case "result":
+                    Log($"stream {SessionId}: turn over (result)");
                     _post(EndTurn);
                     break;
 
@@ -1183,6 +1405,7 @@ namespace Orbweaver
 
         private void EndTurn()
         {
+            Volatile.Write(ref _awaitingReply, null);
             _liveSaidIdle = true;
             _deltasSuperseded = false;
 
@@ -1253,11 +1476,18 @@ namespace Orbweaver
         // transcript interval while it runs, one last read when it ends. A send
         // replaces a running loop (the cap starts again for the new turn); every
         // other caller joins the one that is running.
-        private void StartLive()
+        //
+        // sentUuid is the turn this loop was started to watch, for a send. A loop
+        // with one does not believe an idle read until the transcript shows that
+        // turn's reply (CB-285); a loop without one (joined from the roster, a
+        // panel open, a Stop) has no turn of its own and ends on idle as before.
+        // sentAgo is how long before the loop started the send went, when that
+        // is not zero: a loop the send watch starts begins ten seconds late.
+        private void StartLive(string? sentUuid = null, TimeSpan sentAgo = default)
         {
             var cts = new CancellationTokenSource();
             Interlocked.Exchange(ref _live, cts)?.Cancel();
-            LiveTask = LiveAsync(cts.Token);
+            LiveTask = LiveAsync(sentUuid, sentAgo, cts.Token);
         }
 
         private void EnsureLive()
@@ -1265,10 +1495,14 @@ namespace Orbweaver
             if (!LiveRunning) StartLive();
         }
 
-        private async Task LiveAsync(CancellationToken ct)
+        private async Task LiveAsync(string? sentUuid, TimeSpan sentAgo, CancellationToken ct)
         {
             var elapsed = TimeSpan.Zero;
             var sinceTranscript = TimeSpan.Zero;
+
+            // One line each per loop, never per tick.
+            var saidStarted = false;
+            var saidIgnoredIdle = false;
 
             while (elapsed < UnmeasuredLiveCap)
             {
@@ -1309,7 +1543,7 @@ namespace Orbweaver
                 // end, which is what the note promises.
                 if (outcome.Kind == CloudOutcomeKind.RateLimited)
                 {
-                    Note(LivePausedNote);
+                    Paused();
                     return;
                 }
 
@@ -1340,17 +1574,81 @@ namespace Orbweaver
 
                 if (!working)
                 {
-                    _post(() =>
-                    {
-                        var before = Affordances();
-                        _busy = false;
-                        _interruptSent = false;
-                        _liveSaidIdle = true;
-                        Announce(before);
-                    });
+                    var sinceSend = sentAgo + elapsed;
 
-                    await RefreshAsync().ConfigureAwait(false);
-                    return;
+                    // For a turn this loop sent, read the transcript first: it is
+                    // the evidence the verdict needs, and when the turn is over it
+                    // is also the end-of-turn read, so a fast turn still costs
+                    // exactly one. The rows come back with the result rather than
+                    // out of _history, which only the UI thread may touch.
+                    LoadResult? load = null;
+                    if (sentUuid is not null)
+                    {
+                        load = await RefreshAsync().ConfigureAwait(false);
+                        if (load.Value.Kind == CloudOutcomeKind.RateLimited)
+                        {
+                            Paused();
+                            return;
+                        }
+                    }
+
+                    var replied = sentUuid is not null && load is { Rows: { } rows }
+                                                       && CloudTurnProgress.ReplyFollows(rows, sentUuid);
+                    var stopped = _interruptSent;
+
+                    switch (CloudTurnProgress.OnIdle(sentUuid is not null, replied, stopped,
+                                sinceSend, UnmeasuredTurnStartGrace))
+                    {
+                        case IdleVerdict.NotStartedYet:
+                            if (!saidIgnoredIdle)
+                            {
+                                saidIgnoredIdle = true;
+                                Log($"live {SessionId}: idle ignored, sent turn not started");
+                            }
+
+                            // Just read; the next one is a transcript interval away.
+                            sinceTranscript = TimeSpan.Zero;
+                            continue;
+
+                        case IdleVerdict.GaveUp:
+                            Interlocked.CompareExchange(ref _awaitingReply, null, sentUuid);
+                            Log($"live {SessionId}: gave up after {CloudChatLog.Seconds(sinceSend)}, no reply seen, roster owns busy");
+
+                            // Not _liveSaidIdle: nothing showed the turn ended,
+                            // so a roster "working" is allowed to put Stop back
+                            // and start a loop that watches it.
+                            _post(() =>
+                            {
+                                var before = Affordances();
+                                _busy = false;
+                                _interruptSent = false;
+                                Announce(before);
+                            });
+                            return;
+
+                        default:
+                            if (sentUuid is not null) Interlocked.CompareExchange(ref _awaitingReply, null, sentUuid);
+                            var why = sentUuid is null ? "joined" : replied ? "reply in transcript" : "interrupt";
+                            Log($"live {SessionId}: turn over after {CloudChatLog.Seconds(sinceSend)} ({why})");
+
+                            _post(() =>
+                            {
+                                var before = Affordances();
+                                _busy = false;
+                                _interruptSent = false;
+                                _liveSaidIdle = true;
+                                Announce(before);
+                            });
+
+                            if (load is null) await RefreshAsync().ConfigureAwait(false);
+                            return;
+                    }
+                }
+
+                if (!saidStarted)
+                {
+                    saidStarted = true;
+                    Log($"live {SessionId}: turn started after {CloudChatLog.Seconds(sentAgo + elapsed)}");
                 }
 
                 if (sinceTranscript >= UnmeasuredLiveTranscriptInterval)
@@ -1359,11 +1657,22 @@ namespace Orbweaver
 
                     if ((await RefreshAsync().ConfigureAwait(false)).Kind == CloudOutcomeKind.RateLimited)
                     {
-                        Note(LivePausedNote);
+                        Paused();
                         return;
                     }
                 }
             }
+
+            // A runaway turn: still working at the cap. Busy stays as it is, and
+            // the roster's own working-to-idle reads the reply when it ends.
+            Log($"live {SessionId}: stopped watching at the {CloudChatLog.Seconds(UnmeasuredLiveCap)} cap, roster owns busy");
+        }
+
+        // The loop is ending on a 429. Said in the panel and in the log.
+        private void Paused()
+        {
+            Log($"live {SessionId}: paused, rate limited");
+            Note(LivePausedNote);
         }
 
         // Read the transcript and reconcile it against what is already shown.
@@ -1384,7 +1693,11 @@ namespace Orbweaver
         internal async Task<bool> LoadAsync(CancellationToken ct) =>
             (await RefreshAsync().ConfigureAwait(false)).Kind == CloudOutcomeKind.Ok;
 
-        private readonly record struct LoadResult(CloudOutcomeKind Kind);
+        // Rows is what an Ok read kept, so the live loop can ask whether a reply
+        // follows its echo without touching _history off the UI thread. Null on
+        // anything but Ok.
+        private readonly record struct LoadResult(CloudOutcomeKind Kind,
+            IReadOnlyList<ChatTranscript.Row>? Rows = null);
 
         private Task<LoadResult> RefreshAsync()
         {
@@ -1447,7 +1760,7 @@ namespace Orbweaver
                 : rows;
 
             _post(() => Reconcile(kept));
-            return new LoadResult(CloudOutcomeKind.Ok);
+            return new LoadResult(CloudOutcomeKind.Ok, kept);
         }
 
         // Fold a freshly-read transcript into the one on screen.

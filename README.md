@@ -2622,6 +2622,15 @@ Mac mini, identifying the exception took two crash reports, a read of Avalonia's
 source and a purpose-built probe. It is not telemetry — nothing is sent
 anywhere, and deleting the file is always safe.
 
+Two other files live beside it, and neither holds crashes. `persona.log` says
+why a persona picture was not drawn. `cloud-chat.log` records what a cloud
+session's chat panel decided about each turn: that a message was sent and
+whether the live stream or polling is watching it, when the turn started,
+whether an early idle reading was ignored, and why the turn was taken to be
+over. It holds session ids and durations only, never message text or a login.
+It rolls over to `cloud-chat.log.1` at 256 KB. If a reply ever fails to appear
+in an open panel, this is the file to attach.
+
 If Buddy vanished and that file is empty, the process did not die of a managed
 exception: look at Console.app's crash reports instead, and at whether something
 outside the app (a launchd agent, an installer replacing the bundle) stopped it.
