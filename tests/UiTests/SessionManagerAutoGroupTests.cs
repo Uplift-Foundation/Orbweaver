@@ -263,6 +263,25 @@ public class SessionManagerAutoGroupTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void TurningOffSendsAnOrbWhoseSavedSpotIsOnNoScreenToTheStack()
+    {
+        // A pin saved on a monitor that has since gone: the release must not
+        // strand the orb off-canvas, the same rule as at launch.
+        var m = Scan();
+        var w = Windows(m);
+        Assert.Null(w["s0"].Screens.ScreenFromPoint(new PixelPoint(-100000, -100000)));   // the control
+        OrbweaverSettings.SetOrbPosition(KeyOf(m, "s0"), -100000, -100000);
+        w["s0"].PinAt(w["s0"].Position);
+        Set(m, AutoGroupBy.Cli);
+
+        Set(m, AutoGroupBy.Off);
+
+        Assert.False(w["s0"].IsPinned);
+        Assert.NotEqual(new PixelPoint(-100000, -100000), w["s0"].Position);
+        Assert.Null(w["s0"].Screens.ScreenFromPoint(new PixelPoint(-100000, -100000)));
+    }
+
+    [AvaloniaFact]
     public void AnAutoGroupsAnchorSurvivesOffAndOnAgain()
     {
         var m = Scan();
@@ -689,6 +708,30 @@ public class SessionManagerAutoGroupTests : IDisposable
         Click(MoveTo(w, "cb281auto"));
 
         Assert.Null(OrbweaverSettings.OrbGroupMembershipFor(KeyOf(m, "s1")));
+        Assert.Equal(dir, GroupOf(m, "s1"));
+    }
+
+    [AvaloniaFact]
+    public void MovingATeamOntoItsOwnAutoGroupFromTheMenuClearsEveryMembersKeyToo()
+    {
+        var m = Scan();
+        OrbweaverSettings.MoveOrbToGroup(KeyOf(m, "s1"), OrbGroups.Main);
+        Set(m, AutoGroupBy.Directory);
+        var dir = OrbAutoGroups.IdFor(AutoGroupBy.Directory, "/users/user/cb281auto");
+        var member = "cb281-member-" + Guid.NewGuid().ToString("N")[..8];
+        _keys.Add(member);
+        OrbweaverSettings.MoveOrbToGroup(member, OrbGroups.Main);
+        var w = Windows(m)["s1"];
+        w.CurrentManager = () => m;
+        // The scan harness cannot make a real team (one orb per pid and CLI),
+        // so the menu is handed the team's keys the way the manager would.
+        w.GroupContextOverride = () => new GroupMenuContext(OrbGroups.Main, KeyOf(m, "s1"), new[] { member });
+        w.RebuildGroupSubmenu();
+
+        Click(MoveTo(w, "cb281auto"));
+
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor(KeyOf(m, "s1")));
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor(member));
         Assert.Equal(dir, GroupOf(m, "s1"));
     }
 
