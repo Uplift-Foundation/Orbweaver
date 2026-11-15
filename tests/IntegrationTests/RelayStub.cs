@@ -20,8 +20,18 @@ internal sealed class RelayStub : IAsyncDisposable
     private readonly HttpListener _listener;
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _accept;
-    private WebSocket? _socket;
-    private HttpListenerContext? _socketContext;
+    // CB-337: one accepted socket and the request it came in on. Every reply
+    // goes out on the socket whose frame it answers; nothing is addressed to
+    // "the newest socket", which is what let a socket accepted mid-handshake
+    // take another desktop's welcome.
+    private sealed record Session(WebSocket Ws, HttpListenerContext Ctx);
+
+    // "The desktop": whichever session was last welcomed, set when its hello is
+    // answered and never on accept, so a socket that has not said hello cannot
+    // be the target of a frame a test sends. Read through Volatile, cleared
+    // only by compare-exchange against the session that set it.
+    private Session? _current;
+    private static readonly TimeSpan IoDeadline = TimeSpan.FromSeconds(10);
 
     public Uri Base { get; }
     public string DeviceId { get; set; } = "dsk_stub000000000001";
@@ -69,9 +79,8 @@ internal sealed class RelayStub : IAsyncDisposable
             {
                 if (!AcceptSockets) { ctx.Response.StatusCode = 503; ctx.Response.Close(); return; }
                 var ws = (await ctx.AcceptWebSocketAsync(null)).WebSocket;
-                _socketContext = ctx;
                 Interlocked.Increment(ref Connections);
-                await SocketSession(ws);
+                await SocketSession(new Session(ws, ctx));
                 return;
             }
 
@@ -132,9 +141,17 @@ internal sealed class RelayStub : IAsyncDisposable
         ctx.Response.Close();
     }
 
-    private async Task SocketSession(WebSocket ws)
+    private static async Task SendOn(Session me, string frame)
     {
-        _socket = ws;
+        // A deadline, because a send with none that never completes hangs the
+        // whole suite with no stack (CB-337); it bounds a failure, never a pass.
+        using var cts = new CancellationTokenSource(IoDeadline);
+        await me.Ws.SendAsync(Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, true, cts.Token);
+    }
+
+    private async Task SocketSession(Session me)
+    {
+        var ws = me.Ws;
         var buffer = new byte[8192];
         while (ws.State == WebSocketState.Open)
         {
@@ -160,7 +177,7 @@ internal sealed class RelayStub : IAsyncDisposable
             if (tooBig)
             {
                 Interlocked.Increment(ref TooBigCloses);
-                try { await ws.CloseAsync(WebSocketCloseStatus.MessageTooBig, "frame too large", CancellationToken.None); } catch { }
+                try { using var cts = new CancellationTokenSource(IoDeadline); await ws.CloseAsync(WebSocketCloseStatus.MessageTooBig, "frame too large", cts.Token); } catch { }
                 break;
             }
             var text = Encoding.UTF8.GetString(message.ToArray());
@@ -170,42 +187,50 @@ internal sealed class RelayStub : IAsyncDisposable
             if (tName == "unlink" && RefuseUnlinks > 0)
             {
                 RefuseUnlinks--;
-                await Send(JsonSerializer.Serialize(new { t = "err", @ref = "unlink", code = "rate_limited" }));
+                await SendOn(me, JsonSerializer.Serialize(new { t = "err", @ref = "unlink", code = "rate_limited" }));
                 continue;
             }
             if (tName == "unlink" && AckUnlinks)
-                await Send(JsonSerializer.Serialize(new { t = "ok", @ref = "unlink", code = "unlinked" }));
+                await SendOn(me, JsonSerializer.Serialize(new { t = "ok", @ref = "unlink", code = "unlinked" }));
             if (tName == "link")
-                await Send(JsonSerializer.Serialize(new { t = "ok", @ref = "link", code = "linked" }));
+                await SendOn(me, JsonSerializer.Serialize(new { t = "ok", @ref = "link", code = "linked" }));
             if (JsonDocument.Parse(text).RootElement.TryGetProperty("t", out var t) && t.GetString() == "hello")
             {
                 var token = JsonDocument.Parse(text).RootElement.GetProperty("token").GetString() ?? "";
                 bool valid;
                 lock (ValidTokens) valid = ValidTokens.Contains(token);
                 if (HelloCode == "welcome" && valid)
-                    await Send(JsonSerializer.Serialize(new { t = "ok", @ref = "hello", code = "welcome", links = Array.Empty<string>() }));
+                {
+                    // Before the welcome goes out, so a test that sees the
+                    // desktop connected can already address it.
+                    Volatile.Write(ref _current, me);
+                    await SendOn(me, JsonSerializer.Serialize(new { t = "ok", @ref = "hello", code = "welcome", links = Array.Empty<string>() }));
+                }
                 else
                 {
                     var code = HelloCode == "welcome" ? "unauthorized" : HelloCode;
-                    await Send(JsonSerializer.Serialize(new { t = "err", @ref = "hello", code }));
-                    await ws.CloseAsync(code == "version" ? (WebSocketCloseStatus)4002 : (WebSocketCloseStatus)4001, code, CancellationToken.None);
+                    await SendOn(me, JsonSerializer.Serialize(new { t = "err", @ref = "hello", code }));
+                    using var cts = new CancellationTokenSource(IoDeadline);
+                    await ws.CloseAsync(code == "version" ? (WebSocketCloseStatus)4002 : (WebSocketCloseStatus)4001, code, cts.Token);
                     break;
                 }
             }
         }
-        if (ReferenceEquals(_socket, ws)) _socket = null;
+        Interlocked.CompareExchange(ref _current, null, me);
     }
+
+    private Session Desktop() => Volatile.Read(ref _current) ?? throw new InvalidOperationException("no desktop connected");
 
     public async Task Send(string frame)
     {
-        var ws = _socket ?? throw new InvalidOperationException("no desktop connected");
-        await ws.SendAsync(Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, true, CancellationToken.None);
+        using var cts = new CancellationTokenSource(IoDeadline);
+        await Desktop().Ws.SendAsync(Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, true, cts.Token);
     }
 
     public async Task SendRaw(byte[] payload, WebSocketMessageType type)
     {
-        var ws = _socket ?? throw new InvalidOperationException("no desktop connected");
-        await ws.SendAsync(payload, type, true, CancellationToken.None);
+        using var cts = new CancellationTokenSource(IoDeadline);
+        await Desktop().Ws.SendAsync(payload, type, true, cts.Token);
     }
 
     public async Task DropConnection()
@@ -214,16 +239,24 @@ internal sealed class RelayStub : IAsyncDisposable
         // client then only notices through its silence limit, which is the
         // half-open case and a different test); aborting the response under
         // it is what a dropped network looks like from the desktop.
-        if (_socket is { } ws) ws.Abort();
-        _socketContext?.Response.Abort();
-        _socket = null;
+        // One snapshot, and only that session is cleared, by compare-exchange: a
+        // reconnect that lands between the abort and the clear keeps its own.
+        if (Volatile.Read(ref _current) is { } me)
+        {
+            me.Ws.Abort();
+            me.Ctx.Response.Abort();
+            Interlocked.CompareExchange(ref _current, null, me);
+        }
         await Task.Yield();
     }
 
     public async Task CloseConnection()
     {
-        if (_socket is { } ws && ws.State == WebSocketState.Open)
-            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+        if (Volatile.Read(ref _current) is { } me && me.Ws.State == WebSocketState.Open)
+        {
+            using var cts = new CancellationTokenSource(IoDeadline);
+            await me.Ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", cts.Token);
+        }
     }
 
     // The next frame the desktop sent whose `t` (or, for an envelope, class)
@@ -245,10 +278,11 @@ internal sealed class RelayStub : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel();
-        _socket?.Abort();
+        Volatile.Read(ref _current)?.Ws.Abort();
         // Close alone: QA's stack traces were on the Close() after a Stop(),
         // and Close already stops and releases the prefix.
         _listener.Close();
-        try { await _accept; } catch { }
+        // Bounded, and a timeout is not swallowed: it names this await (CB-337).
+        try { await _accept.WaitAsync(IoDeadline); } catch (TimeoutException) { throw; } catch { }
     }
 }

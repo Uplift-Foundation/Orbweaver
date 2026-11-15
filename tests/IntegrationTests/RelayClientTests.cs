@@ -38,7 +38,7 @@ public class RelayClientTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (_client is not null) await _client.StopAsync();
+        if (_client is not null) await _client.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));   // bounded: a hang here names itself (CB-337)
         _client?.Dispose();
         await _stub.DisposeAsync();
         try { Directory.Delete(_dir, recursive: true); } catch { }
@@ -100,7 +100,12 @@ public class RelayClientTests : IAsyncLifetime
         var identity = Identity();
         var client = Client(identity);
         var states = new List<RelayClient.Status>();
-        client.StateChanged += () => { lock (states) states.Add(client.State); };
+        // The pump is held behind this gate for the first state, so the later
+        // two are always raised while it lags: the recorded value is the one
+        // raised, not whatever State reads when the handler finally runs.
+        using var gate = new ManualResetEventSlim();
+        client.StateChanged += _ => gate.Wait(TimeSpan.FromSeconds(10));
+        client.StateChanged += s => { lock (states) states.Add(s); };
         client.Start();
         client.Start();                                            // idempotent
 
@@ -108,7 +113,13 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Equal(("token-1", "dsk_stub000000000001", "mac", "9.9.9", 2),
             (hello.GetProperty("token").GetString(), hello.GetProperty("device_id").GetString(),
              hello.GetProperty("platform").GetString(), hello.GetProperty("app_version").GetString(), hello.GetProperty("proto").GetInt32()));
+        // The welcome is applied on the pump too, so with the pump held the
+        // client cannot reach Connected: the hello having arrived shows the
+        // client is past Registering while nothing has been recorded.
+        lock (states) Assert.Empty(states);                        // the pump is behind, by construction
+        gate.Set();
         await Until(() => client.State == RelayClient.Status.Connected);
+        await Until(() => { lock (states) return states.Count >= 3; });
         Assert.Equal(Hex(identity.Keys().Identity.Public), _stub.LastIdPub);
         Assert.Equal("dsk_stub000000000001", identity.DeviceId);
         lock (states) Assert.Equal([RelayClient.Status.Registering, RelayClient.Status.Connecting, RelayClient.Status.Connected], states);
@@ -870,13 +881,23 @@ public class RelayClientTests : IAsyncLifetime
         await _stub.NextT("hello");
         await Until(() => client.State == RelayClient.Status.Connected);
 
+        // Events run on the client's own pump, never on the read loop, so
+        // IsOnline can be true before PhonesChanged has run. Hold the pump
+        // behind a gate so that ordering is the one this test always sees.
+        using var gate = new ManualResetEventSlim();
+        client.PhonesChanged += () => gate.Wait(TimeSpan.FromSeconds(10));
         var changed = 0;
         client.PhonesChanged += () => Interlocked.Increment(ref changed);
-        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1794111792 }));
-        var roster = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
-        Assert.Equal(("roster", "s1"), (roster.GetProperty("t").GetString(), roster.GetProperty("sessions")[0].GetProperty("session_id").GetString()));
-        await Until(() => client.IsOnline(phone.Id));
-        Assert.True(changed > 0);
+        try
+        {
+            await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1794111792 }));
+            var roster = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
+            Assert.Equal(("roster", "s1"), (roster.GetProperty("t").GetString(), roster.GetProperty("sessions")[0].GetProperty("session_id").GetString()));
+            await Until(() => client.IsOnline(phone.Id));
+            Assert.Equal(0, Volatile.Read(ref changed));          // the pump is behind, by construction
+        }
+        finally { gate.Set(); }
+        await Until(() => Volatile.Read(ref changed) > 0);
 
         client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", "generating", null, null)]);
         var delta = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
@@ -1089,6 +1110,81 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => notes.Contains("resync for ph_nobody ignored: not an online paired phone (not paired)"));
     }
 
+    // CB-337: pins the event's signature. A handler that runs late is handed
+    // the state that was raised, not whatever State has become by then.
+    [Fact]
+    public async Task StateChanged_carries_the_state_that_was_raised_even_when_the_pump_is_behind()
+    {
+        var client = Client(Identity());
+        var states = new List<RelayClient.Status>();
+        using var gate = new ManualResetEventSlim();
+        client.StateChanged += _ => gate.Wait(TimeSpan.FromSeconds(10));
+        client.StateChanged += s => { lock (states) states.Add(s); };
+        client.Start();
+        await _stub.NextT("hello");                                 // past Registering; the welcome waits on the held pump
+        lock (states) Assert.Empty(states);
+        gate.Set();
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await Until(() => { lock (states) return states.Count >= 3; });
+        lock (states) Assert.Equal([RelayClient.Status.Registering, RelayClient.Status.Connecting, RelayClient.Status.Connected], states);
+    }
+
+    // CB-337: a socket accepted while the desktop's hello is in flight used to
+    // take the desktop's welcome, because the stub answered on its newest
+    // socket instead of the one the hello came in on.
+    [Fact]
+    public async Task A_second_socket_that_never_says_hello_does_not_take_the_welcome()
+    {
+        var release = new TaskCompletionSource();
+        var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
+        {
+            PingInterval = TimeSpan.FromMinutes(5), Silence = TimeSpan.FromMinutes(5),
+            MinBackoff = TimeSpan.FromMilliseconds(20), MaxBackoff = TimeSpan.FromMilliseconds(100),
+        };
+        _client = new RelayClient(Identity(), options, new HeldHello(new WebSocketRelayTransport(), release.Task));
+        _client.Start();
+        // Open for the whole test: closing it early would clear the old stub's
+        // idea of the newest socket and hide the bug this pins.
+        using var other = new ClientWebSocket();
+        try
+        {
+            await Until(() => Volatile.Read(ref _stub.Connections) == 1);   // the desktop's socket, its hello held back
+            await other.ConnectAsync(new Uri($"ws://127.0.0.1:{_stub.Base.Port}/v1/socket"), CancellationToken.None);
+            await Until(() => Volatile.Read(ref _stub.Connections) == 2);   // a second socket, newest now
+        }
+        finally { release.TrySetResult(); }
+        await _stub.NextT("hello");
+        await Until(() => _client.State == RelayClient.Status.Connected);
+    }
+
+    // CB-337: frames a test sends go to the desktop that said hello, however
+    // many sockets have been accepted since.
+    [Fact]
+    public async Task Frames_the_test_sends_go_to_the_desktop_that_said_hello()
+    {
+        var client = Client(Identity());
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        using var other = new ClientWebSocket();
+        await other.ConnectAsync(new Uri($"ws://127.0.0.1:{_stub.Base.Port}/v1/socket"), CancellationToken.None);
+        await Until(() => Volatile.Read(ref _stub.Connections) == 2);
+        await _stub.Send("""{"t":"ping"}""");
+        await _stub.NextT("pong");
+    }
+
+    private sealed class HeldHello(IRelayTransport inner, Task release) : IRelayTransport
+    {
+        public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token) => new Held(await inner.ConnectAsync(uri, token), release);
+
+        private sealed class Held(IRelaySocket inner, Task release) : IRelaySocket
+        {
+            public async Task SendAsync(string frame, CancellationToken token) { await release.WaitAsync(token); await inner.SendAsync(frame, token); }
+            public Task<string?> ReceiveAsync(CancellationToken token) => inner.ReceiveAsync(token);
+            public ValueTask DisposeAsync() => inner.DisposeAsync();
+        }
+    }
+
     [Fact]
     public async Task A_handler_that_throws_does_not_end_later_events()
     {
@@ -1097,7 +1193,7 @@ public class RelayClientTests : IAsyncLifetime
         // One handler that throws on its first call and counts after that:
         // the pump has to survive the throw for the later calls to happen.
         var calls = 0;
-        client.StateChanged += () =>
+        client.StateChanged += _ =>
         {
             if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("a handler bug");
         };
