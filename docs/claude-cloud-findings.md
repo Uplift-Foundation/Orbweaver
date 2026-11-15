@@ -83,7 +83,7 @@ Measured 2026-09-28 from a real Mac against a throwaway session made with `claud
 
 No beta header and no `x-organization-uuid` are needed for either the send or the interrupt, so the app has no organisation-uuid reader to grow.
 
-**Where the sent turn lands.** It appears in the `/v2/ccr-sessions/<id>/events` history as one `user` row carrying our uuid about 10 s after the send. At 3 s it was not there yet. So history stays on `/v2`, and the panel reconciles its own bubble against the echo by uuid rather than drawing a second one.
+**Where the sent turn lands.** It appears in the `/v2/ccr-sessions/<id>/events` history as one `user` row carrying our uuid about 10 s after the send. At 3 s it was not there yet. So history stays on `/v2`, and the panel reconciles its own bubble against the echo by uuid rather than drawing a second one. **That 10 s is one regime, not the figure**: CB-285 measured the echo at +0.6 s warm and between +2.6 and +3.3 s cold (below).
 
 **Sending while a turn is running** → 200, queued; it lands after the current turn. So a busy session is sendable.
 
@@ -97,6 +97,24 @@ No beta header and no `x-organization-uuid` are needed for either the send or th
 | `/v1/code/sessions/<id>` | `status_bucket` "working", `worker_status` "running" **or** "WORKER_STATUS_UNSPECIFIED" | — |
 
 So busy is `status_bucket == "working"`. `worker_status` is not a reliable busy signal even where it exists.
+
+**Turn timing, warm and cold (CB-285, 2026-11-14).** One throwaway session made for the purpose (`claude --cloud` in an empty, non-git folder, default account), driven through `tools/claude-cloud-probe` with the app's own request builders and parsers, then deleted (`DELETE` 200, a following `GET` 404). Four one-word probe turns; no other session was written to. Offsets are from the POST's 2xx, sampled every 0.3–0.7 s.
+
+| | warm (previous turn ended under a minute before), 2 sends | cold (`connection_status` "disconnected"), 1 send |
+| --- | --- | --- |
+| status first reads `working` | first sample, by +0.3 s | +1.3 to +1.9 s |
+| **status reads idle again before the turn runs** | not seen | **yes: one sample, +1.96 to +2.60 s** |
+| status `working` for the turn itself | until +2.2 s and +4.7 s | +2.6 to +5.5 s |
+| echo of our uuid in `/v2` history | by +0.6 s | between +2.6 and +3.3 s |
+| assistant row in `/v2` history | by about +3 s | between +4.0 and +4.7 s |
+| stream (attached before the send) | echo +0.00 s, init +0.24 s, assistant +1.14 s, result +2.36 s | echo +0.02 s, init +2.96 s, deltas +3.9 s, assistant +4.00 s, result +5.43 s |
+
+- **The flap is the defect CB-285 fixed.** The cold session read working, then idle, then working again, all before its turn had produced anything. The live loop's first read lands about 2 s after the send, inside that window, and used to take the idle for the end of the turn; the reply was then never read. "Has seen working once" is not a safe rule either, for the same reason. The panel now ends a turn it sent only when the transcript shows a reply after its echo, Stop was pressed, or a 30 s grace has passed. That grace is margin over the 10 s above, not a measurement.
+- **The idle bucket here was `completed`**, not the `idle`/`blocked` recorded elsewhere in this file. Busy is still exactly `working`, so nothing reads the idle bucket's name.
+- **The environment disconnected about 5 minutes after its last turn** (sampled every 30 s). Any session left alone that long is cold — the ordinary case for a panel somebody comes back to.
+- **Stream keepalives arrived 9–15 s apart.**
+- **Limits.** One cold send and two warm, one session, one account, one afternoon, one-word replies; the flap was seen once. A session cold for hours rather than minutes is unmeasured. The stream delivered every event in both regimes, so the "trusted stream says nothing" case the fix also covers was reproduced against the fakes, not provoked from the server.
+- **What a panel decided is now on disk**: `cloud-chat.log`, beside `crash.log`, one line per decision (sent and by which path, turn started, idle ignored, turn over and why, gave up, rate limited, stream silent, roster catch-up). Session id and durations only.
 
 **A deleted session.** `GET /v1/code/sessions/<id>` answers 404 `not_found_error`, and `GET /v2/ccr-sessions/<id>/events` answers 404 too.
 

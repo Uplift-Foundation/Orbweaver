@@ -546,11 +546,10 @@ public class UpdateCheckerTests
         {
             // Create's checker reads the system clock when it records a check; drive one
             // against a loopback feed so that path (not a fake) is what runs.
-            using var listener = new System.Net.HttpListener();
-            var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-            probe.Start(); var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port; probe.Stop();
-            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            listener.Start();
+            // LoopbackHttp binds the port itself (CB-292: the probe-and-release this
+            // used to do left a window for another test to take the port).
+            var (listener, root) = LoopbackHttp.Start();
+            using var _listener = listener;
             _ = Task.Run(async () =>
             {
                 var ctx = await listener.GetContextAsync();
@@ -558,7 +557,7 @@ public class UpdateCheckerTests
                 await ctx.Response.OutputStream.WriteAsync(body);
                 ctx.Response.Close();
             });
-            var env = new Dictionary<string, string> { ["ORBWEAVER_UPDATE_FEED_URL"] = $"http://127.0.0.1:{port}" };
+            var env = new Dictionary<string, string> { ["ORBWEAVER_UPDATE_FEED_URL"] = root };
             using var c = UpdateChecker.Create(_ => { }, k => env.GetValueOrDefault(k));
 
             var before = DateTimeOffset.UtcNow;

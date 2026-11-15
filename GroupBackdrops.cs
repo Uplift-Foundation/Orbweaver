@@ -351,13 +351,17 @@ namespace Orbweaver
 
         // The caption text for a group, read from the table on every Refresh so a
         // rename shows up on the next one without anything being told.
-        private static string CaptionFor(string groupId)
+        // CB-281: a nameless group's number counts hand-made groups only. Auto
+        // groups sort first in the table, so counting them shifted a manual
+        // group's caption ("Group 1" to "Group 3") just because auto-grouping
+        // was on; and an auto group is always named for its value.
+        internal static string CaptionFor(string groupId)
         {
             var groups = OrbweaverSettings.OrbGroupList();
             var ordinal = 0;
             foreach (var g in groups)
             {
-                if (!OrbGroups.IsPredefined(g.Id)) ordinal++;
+                if (!OrbGroups.IsPredefined(g.Id) && !OrbAutoGroups.IsAuto(g.Id)) ordinal++;
                 if (g.Id == groupId) return GroupCaption.TextFor(g.Name, ordinal);
             }
 
@@ -1010,6 +1014,14 @@ namespace Orbweaver
                 _captionWindow?.Park();
                 _morph = null;
                 _finalOutline = null;
+
+                // A parked window forgets what it was fitted to as well. Mid-morph the
+                // discs are the target while the drawn polygon is an in-between frame,
+                // and Fit's translation shortcut trusts the two to agree: a window reused
+                // for discs that are a whole-pixel translation of the old ones (the same
+                // group coming back after ParkAll, d = 0) would keep drawing the stale
+                // frame, and snap would measure against it (CB-341).
+                _discs = null;
 
                 // A window that comes back later starts its highlight, and its breath,
                 // from scratch rather than from wherever the last one left off.

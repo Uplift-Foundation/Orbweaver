@@ -1,0 +1,49 @@
+    lunch and afternoon snacks.
+  - Schedule: three relaxed days
+    with a light agenda and
+    plenty of downtime.
+  - Transport: flights and
+    airport shuttles, booked by
+    an assistant.
+
+✻ Brewed for 18s · done 1:26 PM
+
+❯ 1Call AskUserQuestion once
+  with three questions: (1)
+  single-select "Which colour
+  should the orb be?" header
+  "Colour", options Red, Green,
+  Blue each with a short
+  description; (2) multiSelect
+  true "Which suites should run
+  before the release is cut?"
+  header "Suites", options
+  "Unit tests across every
+  project", "Integration tests
+  over real subprocesses",
+  "Headless UI tests in
+  Release" each with a
+  one-sentence description; (3)
+  single-select "Ship it?"
+  header "Ship", options Yes,
+  No. No other text.
+────────────────────────────────
+←  ☐ Colo… ☐ S…  ☐ S… ✔ Submit →
+
+
+Which colour should the orb be?
+
+❯ 1. Red
+     Warm and
+     attention-grabbing.
+  2. Green
+     Calm and signals success.
+  3. Blue
+     Cool and neutral.
+  4. Type something.
+────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys
+to navigate · Esc to cancel
+──────────── long-session-name ─

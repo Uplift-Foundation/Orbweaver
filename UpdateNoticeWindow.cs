@@ -417,6 +417,7 @@ namespace Orbweaver
             switch (block.Kind)
             {
                 case ChatMarkdown.MdKind.Code:
+                case ChatMarkdown.MdKind.Table:
                     return new Border
                     {
                         Background = new SolidColorBrush(Color.FromArgb(40, 128, 128, 128)),
@@ -504,9 +505,9 @@ namespace Orbweaver
                     case ChatMarkdown.MdStyle.Code:
                         run.FontFamily = new FontFamily("Menlo, Consolas, monospace");
                         break;
-                    case ChatMarkdown.MdStyle.Link:
-                        run.TextDecorations = TextDecorations.Underline;
-                        break;
+                    // No MdStyle.Link arm, deliberately (CB-284): a link here
+                    // opens nothing, so it is drawn as the plain text it is
+                    // rather than underlined like a link that would.
                 }
 
                 block.Inlines!.Add(run);

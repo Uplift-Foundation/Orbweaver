@@ -74,7 +74,24 @@ public class PersonaPoolTests
     [InlineData("atlas_2", new[] { "atlas_2", "atlas" })]
     [InlineData("atlas_17", new[] { "atlas_17", "atlas" })]
     [InlineData("a_b_12", new[] { "a_b_12", "a_b" })]
-    [InlineData("atlas-2", new[] { "atlas-2" })]            // a hyphen is part of a name, not an instance
+    [InlineData("atlas-2", new[] { "atlas-2", "atlas" })]   // Claude Code's collision suffix (CB-288)
+    [InlineData("juno-abernathy-2", new[] { "juno-abernathy-2", "juno-abernathy" })]
+    [InlineData("juno-abernathy-12", new[] { "juno-abernathy-12", "juno-abernathy" })]
+    [InlineData("atlas-v2", new[] { "atlas-v2" })]          // not digits only: a version, not an instance
+    [InlineData("atlas-", new[] { "atlas-" })]
+    [InlineData("-2", new[] { "-2" })]                       // nothing before the suffix
+    [InlineData("juno-abernathy", new[] { "juno-abernathy" })]
+    [InlineData("a-b-12", new[] { "a-b-12", "a-b" })]
+    [InlineData("atlas-2x", new[] { "atlas-2x" })]
+    // One level only, deliberately: a name that really ends in `-2` keeps
+    // that as its base rather than being walked down to nothing.
+    [InlineData("atlas-2-3", new[] { "atlas-2-3", "atlas-2" })]
+    [InlineData("Juno-Abernathy-2", new[] { "Juno-Abernathy-2", "Juno-Abernathy" })]
+    [InlineData("atlas-02", new[] { "atlas-02", "atlas" })]      // leading zeros are still digits
+    [InlineData("2", new[] { "2" })]                              // all digits: no name before a separator
+    [InlineData("12", new[] { "12" })]
+    [InlineData("atlas-٢", new[] { "atlas-٢" })]        // only ASCII digits count
+    [InlineData("Atlas-2", new[] { "Atlas-2", "Atlas" })]         // case is kept; the filesystem decides matching
     [InlineData("atlas_", new[] { "atlas_" })]
     [InlineData("atlas_x", new[] { "atlas_x" })]
     [InlineData("_2", new[] { "_2" })]                       // nothing before the suffix to be an instance of
@@ -123,6 +140,21 @@ public class PersonaPoolTests
         string agent, IEnumerable<string> configDirs, string? pool, SessionSource source = SessionSource.ClaudeCode) =>
         LocalPersona.CandidatesBelow(
             Path.Combine(Home, "work", "project"), configDirs, source, agent, ceiling: Path.Combine(Home, "work", "project"), pool);
+
+    [Fact]
+    public void ARespawnedMembersOwnFileIsOfferedBeforeTheOneItWasRespawnedFrom()
+    {
+        // CB-288: `ines-harrow-2` is looked up under its own name first, then
+        // `ines-harrow`, in both layouts at the same level.
+        var paths = Candidates("ines-harrow-2", Array.Empty<string>(), null).Select(c => c.Path).ToList();
+        var work = Path.Combine(Home, "work", "project");
+
+        var own = paths.IndexOf(Path.Combine(work, ".profiles-assets", "ines-harrow-2", "ines-harrow-2.md"));
+        var original = paths.IndexOf(Path.Combine(work, ".profiles-assets", "ines-harrow", "ines-harrow.md"));
+
+        Assert.True(own >= 0, "its own file is offered");
+        Assert.True(original > own, "the original persona's file is offered, after its own");
+    }
 
     [Fact]
     public void AnAccountsPoolIsOfferedBeforeThatAccountsClaudeMdAndTheSharedPoolLast()

@@ -116,17 +116,17 @@ public class ChatMarkdownGapTests
         Assert.Equal("--", block.Text);
     }
 
-    // A table is kept verbatim in one code block — the file's stated reason is
+    // A table is kept verbatim in one Table block — the file's stated reason is
     // that reflowing one into a paragraph destroys it. The row after the table
     // has to survive too: the loop steps i past the last row and then backs it
     // up by one, and an off-by-one there eats the next line.
     [Fact]
-    public void ATableCollapsesToOneCodeBlockAndDoesNotEatTheLineAfterIt()
+    public void ATableCollapsesToOneTableBlockAndDoesNotEatTheLineAfterIt()
     {
         var blocks = Blocks("| a | b |\n|---|---|\n| 1 | 2 |\nafter the table");
 
         Assert.Equal(2, blocks.Length);
-        Assert.Equal(ChatMarkdown.MdKind.Code, blocks[0].Kind);
+        Assert.Equal(ChatMarkdown.MdKind.Table, blocks[0].Kind);
         Assert.Equal("| a | b |\n|---|---|\n| 1 | 2 |", blocks[0].Text);
         Assert.Equal("after the table", blocks[1].Text);
     }
@@ -138,7 +138,7 @@ public class ChatMarkdownGapTests
 
         Assert.Equal(2, blocks.Length);
         Assert.Equal("intro", blocks[0].Text);
-        Assert.Equal(ChatMarkdown.MdKind.Code, blocks[1].Kind);
+        Assert.Equal(ChatMarkdown.MdKind.Table, blocks[1].Kind);
     }
 
     // An unterminated fence is what a reply looks like *while it is being
@@ -309,10 +309,10 @@ public class ChatMarkdownGapTests
         Assert.Equal(text, span.Text);
     }
 
-    // The url is deliberately dropped — nothing in a panel-sized bubble opens
-    // links, and the label is the part that reads.
+    // The url is kept on the span now (CB-284) — the panel opens it. Every
+    // other shape of link is in ChatMarkdownLinkTests.
     [Fact]
-    public void AWellFormedLinkKeepsTheLabelAndDropsTheUrl()
+    public void AWellFormedLinkKeepsTheLabelAndTheUrl()
     {
         var spans = Spans("read [the findings](https://example.com/x) first");
 
@@ -320,7 +320,9 @@ public class ChatMarkdownGapTests
         Assert.Equal("read ", spans[0].Text);
         Assert.Equal(ChatMarkdown.MdStyle.Link, spans[1].Style);
         Assert.Equal("the findings", spans[1].Text);
+        Assert.Equal("https://example.com/x", spans[1].Url);
         Assert.Equal(" first", spans[2].Text);
+        Assert.Null(spans[2].Url);
     }
 
     // Half-written emphasis is the normal state of a streaming reply, and the

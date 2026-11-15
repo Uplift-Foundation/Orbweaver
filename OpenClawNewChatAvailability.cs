@@ -39,6 +39,15 @@ namespace Orbweaver
                 : OpenClawNewChatAvailability.ReplyDisabled;
         }
 
+        // CB-329: starting a conversation needs the reply switch (sessions.create
+        // is operator.write); reopening one only reads, so it needs a gateway and
+        // nothing more. ReplyDisabled is the one state where the two differ.
+        public static bool CanStartNew(OpenClawNewChatAvailability availability) =>
+            availability == OpenClawNewChatAvailability.Ready;
+
+        public static bool CanOpenExisting(OpenClawNewChatAvailability availability) =>
+            availability != OpenClawNewChatAvailability.NoGateway;
+
         // What the disabled radio item's subtitle says. Null for Ready, since
         // a live entry has nothing to explain. Sentence case with a closing
         // full stop, the same as the three local CLIs' own disabled reasons

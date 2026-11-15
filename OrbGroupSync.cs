@@ -51,5 +51,41 @@ namespace Orbweaver
                 return carries;
             }
         }
+
+        // CB-281: an orb's group can change with no orb arriving or leaving —
+        // the auto-group setting flipped, a session's cwd moved, an account
+        // logged in — and arranged mode's reflow only re-lays out for an
+        // arrival. So the scan remembers each orb's last resolved group and
+        // asks what changed, the same shape as KeyTracker.
+        internal sealed class GroupTracker
+        {
+            private readonly Dictionary<string, string> _last = new(StringComparer.Ordinal);
+
+            // Every orb on screen with the group it resolves to now. Returns
+            // (id, old, new) for each whose group differs from last time; an
+            // orb seen for the first time has nothing to differ from and is
+            // not a change (its arrival is already a reflow). An orb no longer
+            // passed in is forgotten, so one that comes back is new again.
+            internal IReadOnlyList<(string Id, string Old, string New)> Observe(
+                IEnumerable<(string Id, string GroupId)> current)
+            {
+                var changes = new List<(string, string, string)>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+
+                foreach (var (id, group) in current)
+                {
+                    seen.Add(id);
+                    if (_last.TryGetValue(id, out var before) && !string.Equals(before, group, StringComparison.Ordinal))
+                        changes.Add((id, before, group));
+
+                    _last[id] = group;
+                }
+
+                foreach (var gone in _last.Keys.Where(id => !seen.Contains(id)).ToList())
+                    _last.Remove(gone);
+
+                return changes;
+            }
+        }
     }
 }

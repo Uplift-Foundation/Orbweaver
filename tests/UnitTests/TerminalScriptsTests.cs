@@ -17,6 +17,47 @@ namespace Orbweaver.Tests
     // the clauses that were bought with real bug reports.
     public class TerminalScriptsTests
     {
+        // --- TmuxProcessArgs: tmux -u (CB-335) ---
+
+        [Theory]
+        [InlineData("/opt/homebrew/bin/tmux")]
+        [InlineData("tmux")]
+        [InlineData("/usr/local/bin/tmux")]
+        public void TmuxIsToldItsTerminalIsUtf8(string exe)
+        {
+            Assert.Equal(new[] { "-u", "list-clients" }, TerminalScripts.TmuxProcessArgs(exe, ["list-clients"]));
+        }
+
+        // -u is a global flag, so it has to come before -S and the command.
+        [Fact]
+        public void TheUtf8FlagPrecedesThePinnedSocket()
+        {
+            var args = TerminalScripts.TmuxProcessArgs("/opt/homebrew/bin/tmux",
+                TerminalScripts.TmuxArgs("/tmp/tmux-501/default", "list-clients"));
+
+            Assert.Equal(new[] { "-u", "-S", "/tmp/tmux-501/default", "list-clients" }, args);
+        }
+
+        [Fact]
+        public void NoArgumentsStillGetTheFlag()
+        {
+            Assert.Equal(new[] { "-u" }, TerminalScripts.TmuxProcessArgs("tmux", []));
+        }
+
+        // The same helpers run ps, id, osascript and powershell, which do not
+        // take -u and must be handed exactly what they were.
+        [Theory]
+        [InlineData("/bin/ps")]
+        [InlineData("/usr/bin/osascript")]
+        [InlineData("powershell.exe")]
+        [InlineData("/usr/local/bin/tmux-wrapper")]
+        public void OtherToolsAreLeftAlone(string exe)
+        {
+            var args = new[] { "-eo", "args=" };
+
+            Assert.Equal(args, TerminalScripts.TmuxProcessArgs(exe, args));
+        }
+
         // --- TmuxArgs: pinning the server ---
 
         // Several tmux servers can coexist (plain tmux, tmuxinator, a -L named

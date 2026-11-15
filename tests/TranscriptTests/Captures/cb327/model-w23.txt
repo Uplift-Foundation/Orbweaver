@@ -1,0 +1,40 @@
+✻ Baked for 5s · done
+  1:18 PM
+▔▔ ◐ medium · /effort ▔
+   Select model
+   Switch between
+   Claude models.
+   Your pick becomes
+   the default for
+   new sessions. For
+   other/previous
+   model names,
+   specify with
+   --model.
+
+     1.  Defa…  Opus
+                5.5
+                ·
+                Best
+                for
+                eve
+                ryda
+                y,
+                comp
+                lex
+                task
+                s
+     2.  Opus…  For
+                comp
+                lex
+                work
+                and
+
+                ever
+                yday
+                tas
+                ks
+     3.  Fabl…  For
+                your
+
+                toug ↓

@@ -3006,6 +3006,14 @@ namespace Orbweaver
         // does: the orb knows which session was right-clicked and nothing else,
         // and every rule about what may be done to a session lives with the
         // manager that owns its file and its pid.
+        // CB-276. Hide is a different thing from Dismiss: Dismiss clears the
+        // orb until the session's next event, Hide keeps it away until the user
+        // restores it in Settings.
+        internal void Hide_Click(object? sender, RoutedEventArgs e)
+        {
+            SessionManager.Instance?.HideSession(SessionId);
+        }
+
         internal void Dismiss_Click(object? sender, RoutedEventArgs e)
         {
             SessionManager.Instance?.DismissSession(SessionId);
@@ -3445,6 +3453,7 @@ namespace Orbweaver
             ResetPositionItem.IsVisible = IsPinned || OrbweaverSettings.OrbMemberOffsetFor(SoundKey) is not null;
 
             var manager = CurrentManager();
+            HideItem.Header = HiddenOrbs.MenuHeader(manager?.LeadsATeam(SessionId) == true);
             if (manager is null) return;
 
             _ = RefreshEndSessionGuardAsync(manager.DependentsOfAsync);
@@ -3719,13 +3728,26 @@ namespace Orbweaver
             var membership = OrbweaverSettings.OrbGroupMembershipFor(key);
             return new GroupMenuContext(
                 OrbGroups.GroupIdFor(membership, OrbCluster.Chats, ClusterMode.WithChats, ClusterMode.WithChats,
-                    ClusterMode.WithChats),
+                    ClusterMode.WithChats, null),
                 key, Array.Empty<string>());
         }
 
         private void MoveTeamToGroup(GroupMenuContext context, string groupId)
         {
-            OrbweaverSettings.AssignTeamToGroup(context.LeadKey, context.MemberKeys, groupId);
+            // CB-281: moving the team onto the auto group it classifies into
+            // makes it automatic again rather than writing it in by hand — the
+            // drag's rule (OrbDragCommit.Release) — so a later change of
+            // attribute still moves it.
+            if (groupId == CurrentManager()?.AutoGroupIdFor(SessionId))
+            {
+                OrbweaverSettings.UnassignOrbGroup(context.LeadKey);
+                foreach (var key in context.MemberKeys) OrbweaverSettings.UnassignOrbGroup(key);
+            }
+            else
+            {
+                OrbweaverSettings.AssignTeamToGroup(context.LeadKey, context.MemberKeys, groupId);
+            }
+
             CurrentManager()?.ReapplyArrangement();
         }
 

@@ -299,7 +299,7 @@ namespace Orbweaver
         internal Status State { get; private set; } = Status.Off;
         internal string? LastError { get; private set; }
 
-        internal event Action StateChanged = delegate { };
+        internal event Action<Status> StateChanged = delegate { };
         internal event Action PhonesChanged = delegate { };
         public event Action<RelayLink.PairRequest> PairRequested = delegate { };
 
@@ -626,7 +626,7 @@ namespace Orbweaver
         {
             if (State == status) return;
             State = status;
-            Raise(() => StateChanged());
+            Raise(() => StateChanged(status));
         }
 
         // ---- registration (§2.1) -------------------------------------------------

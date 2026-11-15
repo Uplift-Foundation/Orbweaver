@@ -76,7 +76,7 @@ namespace Orbweaver
         {
             "version", "showOrbs", "showUsageOrbs", "tintActiveWindow", "orbLifetimeMinutes",
             "voiceInputEnabled", "twoLetterGlyphs", "accountUsageEnabled",
-            "arrangeShape", "arrangeSpacing",
+            "arrangeShape", "arrangeSpacing", "autoGroupBy",
             "speakVoice", "neuralVoiceEnabled", "neuralVoice",
             "speakCommand", "speakCommandArgs",
             "speakVoicesCommand", "speakVoicesCommandArgs", "speakCommandVoice", "speakEngine",
@@ -128,7 +128,11 @@ namespace Orbweaver
             // list from CB-155 until the new-chat hotkey was added beside it;
             // Save's ContainsKey guard kept that from throwing, but it meant
             // the value was carried in _unknownKeys as well as the model.
-            "toggleOrbsHotkey", "newChatHotkey", "toggleUsageOrbsHotkey", "toggleMuteHotkey"
+            "toggleOrbsHotkey", "newChatHotkey", "toggleUsageOrbsHotkey", "toggleMuteHotkey",
+            // CB-276. Listed here as well as read and written, for the reason
+            // the comment above gives: a key Save writes that is missing here
+            // is also carried in _unknownKeys.
+            "hiddenOrbs"
         };
 
         // JsonNode.ToJsonString(options) needs a TypeInfoResolver on the
@@ -477,6 +481,9 @@ namespace Orbweaver
             // keeps writing it, so a downgrade still hides what the user hid.
             public ClusterMode OpenClawHeartbeatMode { get; set; } = ClusterMode.WithChats;
 
+            // CB-281.
+            public AutoGroupBy AutoGroupBy { get; set; } = AutoGroupBy.Off;
+
             // CB-268: these four are no longer fields of their own. They are
             // views over the predefined groups in Groups below, so every caller
             // that read or wrote them keeps working and the group table stays
@@ -765,6 +772,15 @@ namespace Orbweaver
             // Case-insensitive because Windows paths are, and the same repo
             // shouldn't get two entries over a capitalization difference.
             public Dictionary<string, OrbPlacement> OrbPositions { get; init; } =
+                new(StringComparer.OrdinalIgnoreCase);
+
+            // CB-276: sessions the user hid with "Hide this orb", keyed by
+            // session id. A session id, unlike the position key above, is the
+            // right key here: a hide is about one conversation, and a new
+            // conversation in the same folder is a new orb the user has not
+            // said anything about. Case-insensitive so a hand edit that
+            // changes the case of an id cannot make two entries for one orb.
+            public Dictionary<string, HiddenOrb> HiddenOrbs { get; init; } =
                 new(StringComparer.OrdinalIgnoreCase);
 
             // Keyed exactly the way OrbPositions above is — by the orb's
@@ -1354,6 +1370,31 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.OpenClawHeartbeatMode; }
             set { Load(); lock (Gate) _model.OpenClawHeartbeatMode = value; Save(); }
+        }
+
+        // CB-281: what orbs are auto-grouped by. Off by default; one deliberate
+        // change, so it saves at once like the cluster modes.
+        public static AutoGroupBy AutoGroupBy
+        {
+            get { Load(); lock (Gate) return _model.AutoGroupBy; }
+            set { Load(); lock (Gate) _model.AutoGroupBy = value; Save(); }
+        }
+
+        // CB-281: makes sure each wanted auto group exists in the table, in one
+        // lock and one Save (only when something was created). The wanted ids are
+        // also the live set that protects a group from cap eviction.
+        internal static void EnsureAutoOrbGroups(IReadOnlyList<(string Id, string Name)> wanted)
+        {
+            if (wanted.Count == 0) return;
+            Load();
+
+            var live = new HashSet<string>(wanted.Select(w => w.Id), StringComparer.Ordinal);
+            var created = false;
+            lock (Gate)
+                foreach (var (id, name) in wanted)
+                    created |= _model.Groups.EnsureAuto(id, name, live);
+
+            if (created) Save();
         }
 
         public static string OpenClawHeartbeatShape
@@ -2160,6 +2201,84 @@ namespace Orbweaver
             Save();
         }
 
+        // ---- hidden orbs (CB-276) -------------------------------------------
+
+        // Newest hidden first, then by title, so the list does not reshuffle
+        // between two entries hidden in the same instant. A copy: the caller
+        // can hold it across a Save.
+        internal static IReadOnlyList<HiddenOrb> HiddenOrbList()
+        {
+            Load();
+            lock (Gate)
+                return _model.HiddenOrbs.Values
+                    .OrderByDescending(o => o.HiddenAtUtc)
+                    .ThenBy(o => o.Title, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
+        }
+
+        // The ids alone, case-insensitive, as the scan's predicate wants them.
+        // A copy, for the same reason as above.
+        public static IReadOnlyCollection<string> HiddenOrbIds()
+        {
+            Load();
+            lock (Gate)
+                return new HashSet<string>(_model.HiddenOrbs.Keys, StringComparer.OrdinalIgnoreCase);
+        }
+
+        // Adds or replaces the entry for orb.SessionId. Replacing keeps the
+        // original key's spelling, so hiding an already-hidden orb under a
+        // different case does not leave two entries in the file.
+        internal static void HideOrb(HiddenOrb orb)
+        {
+            Load();
+            lock (Gate)
+            {
+                if (_model.HiddenOrbs.GetValueOrDefault(orb.SessionId) == orb) return;
+                _model.HiddenOrbs[orb.SessionId] = orb;
+            }
+
+            Save();
+        }
+
+        // False, and no write, when the id was not hidden.
+        public static bool RestoreHiddenOrb(string sessionId)
+        {
+            Load();
+            lock (Gate)
+            {
+                if (!_model.HiddenOrbs.Remove(sessionId)) return false;
+            }
+
+            Save();
+            return true;
+        }
+
+        public static void RestoreAllHiddenOrbs()
+        {
+            Load();
+            lock (Gate)
+            {
+                if (_model.HiddenOrbs.Count == 0) return;
+                _model.HiddenOrbs.Clear();
+            }
+
+            Save();
+        }
+
+        // Forgets the entries for sessions known to have ended (see
+        // HiddenOrbs.DuePrunes), in one write for the whole batch.
+        internal static void PruneHiddenOrbs(IReadOnlyCollection<string> ids)
+        {
+            Load();
+            var changed = false;
+            lock (Gate)
+            {
+                foreach (var id in ids) changed |= _model.HiddenOrbs.Remove(id);
+            }
+
+            if (changed) Save();
+        }
+
         // ---- chat panel sizes -----------------------------------------------
 
         // Null means "never resized", which is what leaves the panel at the
@@ -2745,6 +2864,37 @@ namespace Orbweaver
                         }
                     }
 
+                    // CB-276. An entry that is not an object is skipped; one
+                    // whose hiddenAt is missing or unreadable is kept with
+                    // MinValue, because a bad timestamp must never un-hide an
+                    // orb. Unknown fields inside an entry are not carried, the
+                    // same as orbPositions.
+                    if (root["hiddenOrbs"] is JsonObject hiddenOrbs)
+                    {
+                        foreach (var (id, node) in hiddenOrbs)
+                        {
+                            if (node is not JsonObject entry || string.IsNullOrWhiteSpace(id)) continue;
+
+                            var hiddenAt = DateTime.MinValue;
+                            if (Text(entry["hiddenAt"]) is string at
+                                && DateTime.TryParse(at, System.Globalization.CultureInfo.InvariantCulture,
+                                    System.Globalization.DateTimeStyles.AdjustToUniversal
+                                    | System.Globalization.DateTimeStyles.AssumeUniversal,
+                                    out var parsed))
+                            {
+                                hiddenAt = parsed;
+                            }
+
+                            model.HiddenOrbs[id] = new HiddenOrb(
+                                id,
+                                hiddenAt,
+                                Text(entry["title"]) ?? "",
+                                Text(entry["source"]) ?? "",
+                                Text(entry["detail"]) ?? "",
+                                Text(entry["peer"]));
+                        }
+                    }
+
                     if (root["chatPanelSizes"] is JsonObject panelSizes)
                     {
                         foreach (var (key, node) in panelSizes)
@@ -2876,6 +3026,7 @@ namespace Orbweaver
                     model.GroupOutlineStrokeOpacity =
                         OrbGroups.ClampOpacity(Number(root["groupOutlineStrokeOpacity"]))
                         ?? DefaultGroupOutlineStrokeOpacity;
+                    model.AutoGroupBy = OrbAutoGroups.Parse(Text(root["autoGroupBy"]));
                     model.GroupOutlineFill =
                         OrbGroups.NormalizeColor(Text(root["groupOutlineFill"]))
                         ?? DefaultGroupOutlineFill;
@@ -3067,6 +3218,24 @@ namespace Orbweaver
                         positions[key] = entry;
                     }
 
+                    var hiddenOrbs = new JsonObject();
+                    foreach (var (id, orb) in _model.HiddenOrbs)
+                    {
+                        var entry = new JsonObject
+                        {
+                            ["hiddenAt"] = orb.HiddenAtUtc == DateTime.MinValue
+                                ? null
+                                : orb.HiddenAtUtc.ToString("yyyy-MM-ddTHH:mm:ssZ",
+                                    System.Globalization.CultureInfo.InvariantCulture),
+                            ["title"] = orb.Title,
+                            ["source"] = orb.Source,
+                            ["detail"] = orb.Detail
+                        };
+
+                        if (orb.Peer is string peer) entry["peer"] = peer;
+                        hiddenOrbs[id] = entry;
+                    }
+
                     var panelSizes = new JsonObject();
                     foreach (var (key, size) in _model.ChatPanelSizes)
                     {
@@ -3172,6 +3341,7 @@ namespace Orbweaver
                         // does for one it has.
                         ["openclawShowHeartbeats"] =
                             _model.OpenClawHeartbeatMode != ClusterMode.Hidden,
+                        ["autoGroupBy"] = OrbAutoGroups.Name(_model.AutoGroupBy),
                         ["openclawHeartbeatMode"] = OrbClusters.Name(_model.OpenClawHeartbeatMode),
                         ["openclawHeartbeatShape"] = _model.OpenClawHeartbeatShape,
                         ["openclawCronMode"] = OrbClusters.Name(_model.OpenClawCronMode),
@@ -3269,6 +3439,7 @@ namespace Orbweaver
                         ["grokHomes"] = grokHomeDirs,
                         ["profiles"] = profiles,
                         ["orbPositions"] = positions,
+                        ["hiddenOrbs"] = hiddenOrbs,
                         ["chatPanelSizes"] = panelSizes,
                         ["orbTurnSounds"] = turnSounds,
                         ["orbSizes"] = orbSizes,

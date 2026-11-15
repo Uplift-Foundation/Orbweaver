@@ -63,6 +63,10 @@ the stack.
 
 The slider lives in `orbSize` in `settings.json` as a multiplier over the shipped orb, and each orb's own size in `orbSizes`, keyed by the same per-agent key the right-click **Sound** menu uses, so two teammates in one directory can be sized apart. A hand-edited value outside the range is pinned back into it, the same as `chatTextScale`. An orb that had a size chosen before Claude Code named its session keeps that size when the name arrives.
 
+**Orbs can group themselves.** Settings → **Group outlines** → **Auto-group orbs by** gathers orbs into one group per **Directory** (the git repo a session is working in, so a Claude Code worktree joins its repo), **CLI**, **Claude profile** or **Account**, and keeps regrouping live as sessions start, end and move. It is **Off** by default, and Off sends every orb back to where it was. An orb with no value for the choice (a Codex session has no Claude profile, say) stays ungrouped. A group you make by hand is never touched, and an orb you snap into one stays there. Auto groups are ordinary groups: rename one, restyle it or drag it somewhere and it keeps that when the same value comes back. Turn on **Outline groups** and **Show group names** in the same card to see them. The choice is `autoGroupBy` in `settings.json` (`off`, `directory`, `cli`, `profile`, `account`).
+
+**You can hide an orb without ending its session.** Right-click an orb → **Hide this orb** (a team lead's says **Hide this orb and its team**, and hides its members with it) takes it off the screen and out of the sounds, whichever kind of session it is: a local CLI, a background job, an OpenClaw session or room, a session on another machine, or one in the cloud. The session keeps running and still appears in the tray menu, marked *(hidden)*. This is not the same as **Dismiss until next activity**, which clears the orb only until the session's next event; a hidden orb stays hidden until you bring it back. Settings → **Hidden orbs** lists each one with its title, kind, agent or folder and when it was hidden, and has **Restore** per row and **Restore all**; an orb comes back where it was left. An entry goes by itself once its source reports that the session has ended, but never because a source is off, asleep or unreachable. The list lives in `hiddenOrbs` in `settings.json`, keyed by session id.
+
 When orbs of different sizes are arranged, the shape is laid out for the largest one present and each orb is centred in its slot. Nothing can overlap that way, at the cost of small orbs sitting as far apart as the biggest one does. The size is the orb's alone: team members are still drawn smaller than their lead at every size, and the account usage orbs are not sized by this setting at all.
 
 **Why Windows stops at 70%.** Windows will not let a top-level window be shorter than 39 pixels at 100% scaling, and the strip that floor adds below a smaller orb is not click-through: measured on a real Windows 11 machine, it took clicks, right-clicks and hover itself and passed none of them to whatever was behind it. 70% is the smallest size whose window clears the floor, so the slider and the menu simply do not offer anything below it there.
@@ -838,7 +842,7 @@ An orb goes away when any of six things happens.
    is what keeps a Ctrl+C'd prompt — or a `/clear`ed one — from sitting on
    screen forever.
 
-5. **You dismissed it** — right-click → "Dismiss this orb", which deletes the
+5. **You dismissed it** — right-click → "Dismiss until next activity", which deletes the
    status file the way rule 1 does. Not permanent by nature: the session is
    untouched, so its next hook event writes the file again and the orb comes
    back. That is the point of it being separate from "End this session", which
@@ -1059,6 +1063,8 @@ from real captures.
 ## Starting a new chat
 
 Start a fresh conversation without opening a terminal by hand first, from the tray's **New chat…** item or an orb's right-click menu.
+
+The **OpenClaw** row has two modes. **New conversation** starts a fresh session with the agent you pick, as before. **Open existing** lists every conversation your gateway has — including ones whose orb has aged out or been hidden — with the agent, a DM / Channel / Main badge and roughly when it was last active, filterable by agent and searchable; choose one (double-click, Enter, or **Open**) and its orb comes back with the chat panel open on its history. A channel several agents share opens as one room. Reopening counts as fresh activity for the usual "Keep orbs for" window only, so the orb ages out again afterwards; it does not pin the conversation or change any setting, apart from un-hiding an orb you had hidden. With "Allow replying to agents" off, only Open existing is available and the panel stays read-only. The list is whatever the last 5-second poll saw, so it shows at most the 100 conversations the gateway returns by default.
 
 An orb's context menu offers **New chat here**, shown for a local CLI's orb (Claude Code, Codex or Grok) or an OpenClaw orb, and opens the dialog already pointed at that orb's own conversation: a local CLI's orb pre-fills its CLI and folder, and an OpenClaw orb pre-fills the OpenClaw row with that orb's own agent already selected in the picker. It's hidden for anything else — a remote-control orb's session lives on another machine, so there's nothing local or gateway-side to relaunch it from here.
 
@@ -2619,6 +2625,15 @@ frames are unsymbolicated addresses: when Buddy aborted twice on an unattended
 Mac mini, identifying the exception took two crash reports, a read of Avalonia's
 source and a purpose-built probe. It is not telemetry — nothing is sent
 anywhere, and deleting the file is always safe.
+
+Two other files live beside it, and neither holds crashes. `persona.log` says
+why a persona picture was not drawn. `cloud-chat.log` records what a cloud
+session's chat panel decided about each turn: that a message was sent and
+whether the live stream or polling is watching it, when the turn started,
+whether an early idle reading was ignored, and why the turn was taken to be
+over. It holds session ids and durations only, never message text or a login.
+It rolls over to `cloud-chat.log.1` at 256 KB. If a reply ever fails to appear
+in an open panel, this is the file to attach.
 
 If Buddy vanished and that file is empty, the process did not die of a managed
 exception: look at Console.app's crash reports instead, and at whether something

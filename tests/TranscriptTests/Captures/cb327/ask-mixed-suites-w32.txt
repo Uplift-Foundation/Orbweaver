@@ -1,0 +1,49 @@
+  should the orb be?" header
+  "Colour", options Red, Green,
+  Blue each with a short
+  description; (2) multiSelect
+  true "Which suites should run
+  before the release is cut?"
+  header "Suites", options
+  "Unit tests across every
+  project", "Integration tests
+  over real subprocesses",
+  "Headless UI tests in
+  Release" each with a
+  one-sentence description; (3)
+  single-select "Ship it?"
+  header "Ship", options Yes,
+  No. No other text.
+────────────────────────────────
+←  ☒ C… ☐ Suit…  ☐ S… ✔ Submit →
+
+
+Which suites should run before
+the release is cut?
+
+❯ 1. [ ] Unit tests across every
+         project
+         Runs the fast unit test
+         suite for every
+         project in the
+         solution.
+  2. [ ] Integration tests over
+         real subprocesses
+         Exercises end-to-end
+         behavior by spawning
+         real subprocesses
+         instead of mocks.
+  3. [ ] Headless UI tests in
+         Release
+         Runs the UI test suite
+         headlessly against a
+         Release build
+         configuration.
+  4. [ ] Type something
+     Next
+────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys
+to navigate · Esc to cancel
+──────────── long-session-name ─

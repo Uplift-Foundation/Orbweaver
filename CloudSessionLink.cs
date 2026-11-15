@@ -20,6 +20,66 @@ namespace Orbweaver
     // choice is a pure function and only the launch carries the exclusion.
     internal static class CloudSessionLink
     {
+        // Whether this string is something a browser should be handed at all.
+        //
+        // The text of a chat message is not ours. It comes from a model, a
+        // gateway, a room full of other people's agents — and on Windows the
+        // launch below is a ShellExecute, which will cheerfully resolve
+        // file:, ms-settings:, vscode: or any scheme some installed program
+        // has registered. So the rule is an allowlist of two schemes and
+        // nothing else, and it is pure so every refusal can be a unit case.
+        //
+        // The character checks come first and are on the raw string, because
+        // Uri.TryCreate is forgiving in exactly the wrong places: it trims
+        // surrounding whitespace, and on a Unix runner it reads "/etc/hosts"
+        // and "\\server\share" as absolute file: URIs. The scheme test would
+        // catch those two, but a rule that depends on which runner parsed the
+        // string is one half the CI matrix never reads. A backslash is refused
+        // outright for the same family of reason — browsers treat it as a
+        // slash and Uri does not, so the host a person reads in the tooltip
+        // and the host the browser goes to can differ.
+        internal static bool IsOpenable([NotNullWhen(true)] string? url)
+        {
+            if (string.IsNullOrEmpty(url)) return false;
+
+            foreach (var c in url)
+            {
+                if (char.IsControl(c) || char.IsWhiteSpace(c) || c == '\\') return false;
+
+                // Format characters draw nothing or reorder what is around
+                // them — U+202E RIGHT-TO-LEFT OVERRIDE, U+200B ZERO WIDTH
+                // SPACE, U+FEFF — so a tooltip can show one address while the
+                // browser is handed another. None of them belongs in a URL a
+                // person typed; a real one percent-encodes them.
+                if (char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format) return false;
+            }
+
+            if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // No userinfo. "https://google.com@evil.example" goes to
+            // evil.example, and the part a person reads first is the part
+            // the browser ignores — the tooltip showing the whole string does
+            // not help someone who reads it left to right and stops at ".com".
+            // Nothing a chat link legitimately needs is behind a login in the
+            // URL itself, so the authority is refused outright if it has an @
+            // anywhere in it, before Uri gets to decide what it means.
+            var schemeEnd = url.IndexOf("://", StringComparison.Ordinal) + 3;
+            var authorityEnd = url.IndexOfAny(['/', '?', '#'], schemeEnd);
+            var authority = authorityEnd < 0 ? url[schemeEnd..] : url[schemeEnd..authorityEnd];
+            if (authority.Contains('@')) return false;
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+
+            // The prefix check above has already pinned the scheme to http or
+            // https, so all that is left for Uri to say is whether there is a
+            // host to go to.
+            return uri.Host.Length > 0;
+        }
+
         // What to hand Process.Start for this URL on this platform.
         //
         // Null for anything that is neither macOS nor Windows, which is not
@@ -37,7 +97,11 @@ namespace Orbweaver
         internal static ProcessStartInfo? StartInfoFor(
             string? url, bool isMacOs, bool isWindows)
         {
-            if (string.IsNullOrWhiteSpace(url)) return null;
+            // Checked here rather than at each caller, so that nothing reaches
+            // Process.Start without having been through it — the cloud link,
+            // which is built by this app, and a link out of a chat message,
+            // which is written by whoever is on the other end.
+            if (!IsOpenable(url)) return null;
 
             if (isMacOs)
             {

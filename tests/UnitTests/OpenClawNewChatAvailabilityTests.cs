@@ -85,4 +85,17 @@ public class OpenClawNewChatAvailabilityTests
         var reason = OpenClawNewChat.ReasonFor(availability);
         Assert.EndsWith(".", reason);
     }
+
+    // CB-329: reading a conversation needs only a gateway; starting one still
+    // needs the reply switch. ReplyDisabled is the one row where they differ.
+    [Theory]
+    [InlineData(OpenClawNewChatAvailability.Ready, true, true)]
+    [InlineData(OpenClawNewChatAvailability.ReplyDisabled, false, true)]
+    [InlineData(OpenClawNewChatAvailability.NoGateway, false, false)]
+    public void StartingNeedsReplyAndOpeningNeedsOnlyAGateway(
+        OpenClawNewChatAvailability availability, bool canStart, bool canOpen)
+    {
+        Assert.Equal(canStart, OpenClawNewChat.CanStartNew(availability));
+        Assert.Equal(canOpen, OpenClawNewChat.CanOpenExisting(availability));
+    }
 }

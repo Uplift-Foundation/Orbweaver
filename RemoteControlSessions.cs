@@ -29,6 +29,17 @@ namespace Orbweaver
         // Republish turns them into _snapshot.
         private static IReadOnlyList<Remote> _peerRows = Array.Empty<Remote>();
 
+        // CB-276: what each connected peer's roster listed on the last republish,
+        // before the viewer's OpenClaw cluster settings filter anything, so a
+        // setting never reads as "ended". Replaced whole alongside _peerRows.
+        // Declared first: static initialisers run in textual order, and the field
+        // below reads this one.
+        private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> EmptyListedByPeer =
+            new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        private static IReadOnlyDictionary<string, IReadOnlySet<string>> _listedByPeer =
+            EmptyListedByPeer;
+
         // This machine's own sessions, for the mirror server to answer about.
         //
         // Named rather than written as a lambda where the server is built,
@@ -337,6 +348,7 @@ namespace Orbweaver
             {
                 _snapshot = Array.Empty<Remote>();
                 _peerRows = Array.Empty<Remote>();
+                _listedByPeer = EmptyListedByPeer;
 
                 // The memoised local-session scan, or one test's answer is
                 // still being served two seconds into the next one.
@@ -453,6 +465,39 @@ namespace Orbweaver
                     k.Entry.Parked == true))
                 .ToList();
 
+        // CB-276: the session keys each peer's roster lists, as the keys the scan
+        // uses (rc:<account>:<route>), taken from RemotesFromRoster so the two can
+        // never disagree about what a key is. A peer that lists nothing has no
+        // entry at all, which is the point: an empty roster is a machine that is
+        // off, asleep or mid-reconnect as often as one with no sessions, and
+        // "cannot say" is the only honest reading of it. RemoteMirrorClient drops
+        // a peer's rows when it disconnects and replaces them whole per roster,
+        // so a peer that is present here was answering when the roster was read.
+        internal static IReadOnlyDictionary<string, IReadOnlySet<string>> ListedByPeerFromRoster(
+            string account,
+            IReadOnlyList<(string Peer, MirrorProtocol.MirrorRosterEntry Entry)> known,
+            DateTime now) =>
+            RemotesFromRoster(account, known, now)
+                .GroupBy(row => row.Ref, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlySet<string>)group.Select(row => row.Key)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
+
+        // The last roster's listing per peer; empty when remote control is off or
+        // no link is up. Each value is non-empty. See ListedByPeerFromRoster.
+        internal static IReadOnlyDictionary<string, IReadOnlySet<string>> ListedByPeer() =>
+            OrbweaverSettings.PeerLinkEnabled ? _listedByPeer : EmptyListedByPeer;
+
+        // Test seam, matching SetSnapshotForTests: RepublishFromLink is the only
+        // production writer and reads a live link.
+        internal static void SetListedByPeerForTests(
+            IReadOnlyDictionary<string, IReadOnlySet<string>> listed)
+        {
+            _listedByPeer = listed;
+        }
+
         // CB-306: the roster entries this machine's own settings let through.
         // An entry the far Buddy marked as a session OpenClaw spawned is judged
         // by OpenClawCliSession.Show with the viewer's three cluster settings,
@@ -480,6 +525,11 @@ namespace Orbweaver
         {
             var client = PeerSessions.Host?.Client;
 
+            var listed = client is null
+                ? EmptyListedByPeer
+                : ListedByPeerFromRoster(
+                    OrbweaverSettings.DefaultRemoteControlProfileDir, client.Known(), Now());
+
             var rows = client is null
                 ? Array.Empty<Remote>()
                 : RemotesFromRoster(
@@ -492,7 +542,11 @@ namespace Orbweaver
                         OrbweaverSettings.OpenClawNativeMode),
                     Now());
 
-            lock (Gate) _peerRows = rows;
+            lock (Gate)
+            {
+                _peerRows = rows;
+                _listedByPeer = listed;
+            }
 
             Republish();
         }

@@ -1,0 +1,40 @@
+✻ Baked for 5s · done
+  1:18 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Permissions
+    Recently blocked
+
+    Allow   Ask
+    Deny
+    Auto mode
+    Workspace
+
+   Claude Code won't
+   ask before using
+   allowed tools.
+   ╭───────────────╮
+   │ ⌕ Search…     │
+   ╰───────────────╯
+
+     1.  Add a new
+         rule…
+     2.  Bash(glab
+         mr merge:*)
+     3.  Bash(mise
+         exec --
+         glab mr
+         merge:*)
+     4.  Bash(python
+         3 -c ' *)
+     5.  Bash(python
+         3 *)
+     6.  mcp__blende
+         r__get_scen
+         e_info
+     7.  mcp__gitlab
+         __accept_me
+         rge_request
+     8.  mcp__gitlab
+         __save_merg
+         e_request
+     9.  mcp__maton- ↓

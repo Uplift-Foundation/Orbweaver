@@ -995,11 +995,13 @@ namespace Orbweaver
 
         // What a screen offers, read the one way both sides agree on: a form if
         // it is one, otherwise a plain dialog, otherwise nothing.
-        public static WirePrompt? PromptFromScreen(string? screen)
+        // call: the transcript's pending AskUserQuestion (CB-327), which supplies a
+        // form's words where the screen could not, or null for the screen alone.
+        internal static WirePrompt? PromptFromScreen(string? screen, AskFormTranscript.Call? call = null)
         {
             if (string.IsNullOrWhiteSpace(screen)) return null;
 
-            if (ChatTranscript.ParseAskForm(screen) is { } form) return Bounded(form);
+            if (AskFormTranscript.ReadForm(screen, call) is { } form) return Bounded(form);
 
             return ChatTranscript.ParseDialog(screen) is { } dialog
                 ? Bounded(new AskForm(dialog, Array.Empty<AskTab>(), -1, null, null))

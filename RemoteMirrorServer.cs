@@ -1048,7 +1048,7 @@ namespace Orbweaver
             try { screen = await _seams.CapturePane!(status).ConfigureAwait(false); }
             catch { screen = null; }
 
-            return MirrorProtocol.PromptFromScreen(screen);
+            return MirrorProtocol.PromptFromScreen(screen, AskFormTranscript.CallFor(screen, status.TranscriptPath));
         }
 
         // The sink for prompt and answer outcomes: the route, the key and the

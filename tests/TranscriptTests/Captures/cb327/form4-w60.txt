@@ -1,0 +1,49 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Haiku 5.5 · Claude Team
+ ▝▝   ▝▝   /private/tmp/cb327-scratch/proj · /rc
+
+
+❯ this is a draft Call the AskUserQuestion tool right now,
+  once, with exactly 4 questions about planning a team
+  offsite (headers: Venue, Catering, Schedule, Transport).
+  Each question must have 4 options, and every option label
+  must be a long phrase of 8 to 12 words, each with a
+  one-sentence description. Do not write any other text.
+────────────────────────────────────────────────────────────
+←  ☐ Venue  ☐ Catering  ☐ Schedule  ☐ Transport  ✔ Submit  →
+
+Which venue style should the team offsite use?
+
+❯ 1. Book a lakeside retreat center with overnight lodging
+     for the whole team
+     Everyone stays on site, which keeps the group together
+     and makes informal time easy.
+  2. Rent a downtown conference hotel with private breakout
+     meeting rooms
+     Easy access for commuters, with separate rooms for
+     workshops and small-group sessions.
+  3. Hold the offsite at a mountain cabin resort two hours
+     away
+     A change of scenery with a quieter setting, but it
+     requires more travel time.
+  4. Use a restored historic venue in the city center for
+     day trips
+     A distinctive space that is close to town, so attendees
+     can head home each evening.
+  5. Type something.
+────────────────────────────────────────────────────────────
+  6. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────── long-session-name ─

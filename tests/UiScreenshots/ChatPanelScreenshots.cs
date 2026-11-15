@@ -331,6 +331,43 @@ public class ChatPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-tool-lines.png");
     }
 
+    // CB-284: a reply with each kind of link in it, and the URL in inline code
+    // that must stay code. What a reviewer is judging is that the two links
+    // read as links (blue, underlined) on the agent's tint, and that the code
+    // span does not.
+    //
+    // Capture only. A real window-level click was tried here, since this suite
+    // draws through Skia: it reached the opener when the test ran alone, and
+    // missed when run after the rest of this class — the window's hit test
+    // stopped at the transcript's ScrollContentPresenter with the geometry
+    // correct, on the singleton panel earlier tests had already used. A test
+    // that passes or fails by suite order is a flake, not evidence, so the
+    // click path is covered in tests/UiTests (events raised on the block) and
+    // the window route is left to a person on a real machine.
+    [AvaloniaFact]
+    public void AReplyWithAMarkdownLinkABareUrlAndAUrlInCode()
+    {
+        const string docs = "https://example.com/docs/getting_started";
+        const string bare = "https://en.wikipedia.org/wiki/Markdown_(language)";
+
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Where are the setup docs?" },
+            new ChatTurn
+            {
+                Role = ChatRole.Assistant,
+                IsComplete = true,
+                Text = $"Start with [the getting-started guide]({docs}).\n\n"
+                     + $"Background reading: {bare}.\n\n"
+                     + $"Or fetch it raw with `curl {docs}`.",
+            },
+        }, displayName: "main");
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, "chat-panel-links.png");
+    }
+
     // CB-270 Stage 4: the run controls of a native conversation. The chip in the
     // header says what it is running on; the flyout, drawn here in a window of
     // its own because a popup is not part of the panel's visual tree, is what a

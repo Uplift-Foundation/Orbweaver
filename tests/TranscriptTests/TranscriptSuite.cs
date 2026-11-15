@@ -40,6 +40,8 @@ namespace Orbweaver.Tests
                 failures.Add(detail.Length > 0 ? $"{name}\n      {detail}" : name);
             }
 
+            Cb327Captures.Run(Check);
+
             // --- the transcript ---
 
             // Real row shapes, trimmed of the fields none of this reads.
@@ -391,11 +393,47 @@ namespace Orbweaver.Tests
             Check("bold-italic is three stars",
                 Spans("***very***").Single().Style == ChatMarkdown.MdStyle.BoldItalic);
 
-            var link = Spans("see [the findings](docs/openclaw-findings.md) for more");
-            Check("a link keeps its label and drops its url",
-                link.Any(s => s.Style == ChatMarkdown.MdStyle.Link && s.Text == "the findings")
-                && link.All(s => !s.Text.Contains(".md")),
-                string.Join(" | ", link.Select(s => s.Style + ":" + s.Text)));
+            // Links (CB-284). A link keeps its destination when the launcher
+            // would open it; anything else keeps only its label, as plain text.
+            static string Show(ChatMarkdown.MdSpan[] s) =>
+                string.Join(" | ", s.Select(x => x.Style + ":" + x.Text + (x.Url is null ? "" : "->" + x.Url)));
+
+            var link = Spans("see [the findings](https://example.com/findings) for more");
+            Check("a link keeps its label and its url",
+                link.Any(s => s.Style == ChatMarkdown.MdStyle.Link && s.Text == "the findings"
+                              && s.Url == "https://example.com/findings"),
+                Show(link));
+
+            var relative = Spans("see [the findings](docs/openclaw-findings.md) for more");
+            Check("a relative link is its label as plain text",
+                relative.Length == 1 && relative[0].Style == ChatMarkdown.MdStyle.Normal
+                && relative[0].Text == "see the findings for more",
+                Show(relative));
+
+            var scheme = Spans("[open](file:///etc/hosts)");
+            Check("a non-http scheme is plain text",
+                scheme.Length == 1 && scheme[0].Style == ChatMarkdown.MdStyle.Normal && scheme[0].Url is null,
+                Show(scheme));
+
+            var bareUrl = Spans("go to https://example.com/a now");
+            Check("a bare url is a link",
+                bareUrl.Length == 3 && bareUrl[1].Url == "https://example.com/a",
+                Show(bareUrl));
+
+            var trailing = Spans("see https://example.com/a.");
+            Check("trailing punctuation is outside the link",
+                trailing.Any(s => s.Url == "https://example.com/a") && trailing[^1].Text == ".",
+                Show(trailing));
+
+            var parens = Spans("(see https://en.wikipedia.org/wiki/A_(b))");
+            Check("balanced parens stay inside the link",
+                parens.Any(s => s.Url == "https://en.wikipedia.org/wiki/A_(b)") && parens[^1].Text == ")",
+                Show(parens));
+
+            var code = Spans("run `curl https://example.com/a` first");
+            Check("a url in code is not a link",
+                code.All(s => s.Style != ChatMarkdown.MdStyle.Link),
+                Show(code));
 
             // Blocks.
             var fenced = Blocks("""
@@ -452,8 +490,38 @@ namespace Orbweaver.Tests
 
             // Reflowing a table destroys it; monospace at least keeps the columns.
             var table = Blocks("| a | b |\n| - | - |\n| 1 | 2 |");
-            Check("a table is kept verbatim as code",
-                table.Single().Kind == ChatMarkdown.MdKind.Code && table.Single().Text.Split('\n').Length == 3);
+            Check("a table is kept verbatim as a table block",
+                table.Single().Kind == ChatMarkdown.MdKind.Table && table.Single().Text.Split('\n').Length == 3);
+
+            var box = Blocks("┌───┬───┐\n│ a │ b │\n└───┴───┘");
+            Check("a box-drawn table is one verbatim table block",
+                box.Single().Kind == ChatMarkdown.MdKind.Table && box.Single().Text.Split('\n').Length == 3);
+
+            var ascii = Blocks("+----+----+\n| id | n  |\n+----+----+\n|  1 | a  |\n+----+----+");
+            Check("an ASCII +---+ table is one verbatim table block, borders included",
+                ascii.Single().Kind == ChatMarkdown.MdKind.Table && ascii.Single().Text.Split('\n').Length == 5);
+
+            // The GFM spec's own example: no real pipe-less sample exists on the
+            // machine this was written on.
+            var pipeless = Blocks("foo | bar\n--- | ---\nbaz | bim");
+            Check("a pipe table without a leading pipe is a table when a delimiter row follows",
+                pipeless.Single().Kind == ChatMarkdown.MdKind.Table && pipeless.Single().Text.Split('\n').Length == 3);
+
+            Check("a lone pipe in prose is not a table",
+                Blocks("a | b\nand more prose").Single().Kind == ChatMarkdown.MdKind.Paragraph);
+
+            Check("a lone box glyph line in prose is a paragraph, not a table",
+                Blocks("prose\n│ lone\nprose").All(b => b.Kind == ChatMarkdown.MdKind.Paragraph));
+
+            Check("a heading with a pipe over a delimiter row stays a heading",
+                Blocks("# a | b\n--- | ---\n1 | 2")[0].Kind == ChatMarkdown.MdKind.Heading);
+
+            var fencedBox = Blocks("```text\n┌─┐\n│a│\n└─┘\n```");
+            Check("a fenced box table is a table block",
+                fencedBox.Single().Kind == ChatMarkdown.MdKind.Table && fencedBox.Single().Marker == "text");
+
+            Check("a fence with any other line stays code",
+                Blocks("```\n┌─┐\nplain\n└─┘\n```").Single().Kind == ChatMarkdown.MdKind.Code);
 
             Check("a rule draws nothing", Blocks("one\n\n---\n\ntwo").All(b => b.Text != "---"));
 
@@ -1305,7 +1373,9 @@ namespace Orbweaver.Tests
                           a description
                        4. No
                     """) is null);
-            Check("a gap longer than a description is not crossed",
+            // CB-327: the gap is structural now. A narrow pane wraps a description over
+            // as many rows as it needs, so any run of indented lines is crossed, up to a cap.
+            Check("a description of any wrapped length is crossed to the right number",
                 ChatTranscript.ParseDialog("""
                      Pick one
                      ❯ 1. Yes
@@ -1314,7 +1384,28 @@ namespace Orbweaver.Tests
                           three
                           four
                        2. No
-                    """) is null);
+                    """) is { } wrapped && wrapped.Options.Count == 2);
+            Check("a gap past the cap is not crossed",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n"
+                    + string.Concat(Enumerable.Range(0, 17).Select(i => "     line " + i + "\n"))
+                    + "  2. No\n") is null);
+            Check("a gap of exactly the cap is crossed",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n"
+                    + string.Concat(Enumerable.Range(0, 16).Select(i => "     line " + i + "\n"))
+                    + "  2. No\n") is { } atCap && atCap.Options.Count == 2);
+            Check("a margin note between the right numbers is crossed, as on develop",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\nRemaining output is hidden\n  2. No\n") is { } noted
+                && noted.Options.Count == 2);
+            Check("a run of margin lines past the old gap ends the run",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\nprose\nprose\nprose\nprose\n  2. No\n") is null);
+            Check("indented lines then a margin line then the right number past the old gap end the run",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n     one\n     two\nprose at the margin\n     three\n  2. No\n") is null);
+            Check("blank lines and rules between options are crossed",
+                ChatTranscript.ParseDialog("Pick one\n❯ 1. Yes\n\n  2. Maybe\n──────────────────────\n  3. No\n") is { } ruled
+                && ruled.Options.Count == 3);
+            Check("a cursor mark on a row between options is padding, not a margin",
+                ChatTranscript.ParseDialog("Pick one\n  1. Yes\n❯    Submit\n  2. No\n") is { } cursored
+                && cursored.Options.Count == 2);
             Check("a numbered list with descriptions above the input box is still prose",
                 ChatTranscript.ParseDialog("""
                     ⏺ Two options:

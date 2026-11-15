@@ -41,11 +41,15 @@ namespace Orbweaver
     // and so change the hash. That fails safe — stale_prompt — and is accepted.
     internal sealed record PromptFingerprint(ChatPrompt Prompt, IReadOnlyList<string> Preview, string Canonical, string Hash)
     {
-        internal static PromptFingerprint? Of(string? screen)
+        // call: the transcript's pending AskUserQuestion (AskFormTranscript.CallFor),
+        // or null. It changes nothing for a screen ParseDialogCore can read; it only
+        // gives a form taller than the pane (CB-327 item 5) a fingerprint at all.
+        internal static PromptFingerprint? Of(string? screen, AskFormTranscript.Call? call = null)
         {
             if (string.IsNullOrEmpty(screen)) return null;
             var prompt = ChatTranscript.ParseDialogCore(screen, out var cleaned, out var firstOption);
-            if (prompt is null || firstOption < 0) return null;
+            if (prompt is null || firstOption < 0)
+                return call is not null && AskFormTranscript.Tall(screen, call) is { } tall ? OfTall(tall) : null;
 
             var start = DialogStart(ChatTranscript.ScreenLines(screen), cleaned, firstOption);
 
@@ -55,6 +59,18 @@ namespace Orbweaver
 
             var canonical = CanonicalText(preview, prompt.Options);
             return new PromptFingerprint(prompt, preview, canonical, HashOf(canonical));
+        }
+
+        // A form taller than the pane has no dialog block on screen to hash: its
+        // question and first options scrolled away. Its canonical text is the
+        // question and every option as the transcript gives them, in the same
+        // shape as a drawn dialog's, so the same question hashes the same on every
+        // look and the next question (or the review) hashes differently.
+        private static PromptFingerprint OfTall(AskForm form)
+        {
+            var preview = new List<string> { form.Prompt.Title };
+            var canonical = CanonicalText(preview, form.Prompt.Options);
+            return new PromptFingerprint(form.Prompt, preview, canonical, HashOf(canonical));
         }
 
         // The first line of the dialog block above option 1: the line after the

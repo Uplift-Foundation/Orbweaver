@@ -60,7 +60,7 @@ public class PeerLinkShutdownTests
         new(new PeerLink.Seams(
             Deliver: (_, _) => Task.CompletedTask,
             KnownPeer: _ => null,
-            OwnCertificate: () => throw new InvalidOperationException("no certificate needed")));
+            OwnCertificate: _ => throw new InvalidOperationException("no certificate needed")));
 
     private static bool IsDisposedSemaphore(Exception e) => e switch
     {

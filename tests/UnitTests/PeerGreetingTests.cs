@@ -99,7 +99,7 @@ public class PeerGreetingTests
     private static PeerLink Link() => new(new PeerLink.Seams(
         Deliver: (_, _) => Task.CompletedTask,
         KnownPeer: _ => null,
-        OwnCertificate: () => throw new InvalidOperationException("no socket in this test")));
+        OwnCertificate: _ => throw new InvalidOperationException("no socket in this test")));
 
     [Fact]
     public void AWindowIsShutUntilItIsOpened()

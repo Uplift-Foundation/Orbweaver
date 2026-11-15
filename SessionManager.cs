@@ -61,6 +61,16 @@ namespace Orbweaver
         [JsonIgnore]
         public string AgentColor { get; set; } = "";
 
+        // CB-281: the Claude config root that owns a cloud session — the row's
+        // OwnerRoot, the account ClaudeCloudSessions listed it under. Filled
+        // where the cloud status is built, so auto-grouping by Claude profile
+        // or account never has to look the row up again. Null everywhere else:
+        // a local Claude Code session's root comes from its transcript path
+        // (ClaudeConfigRoots.RootOfTranscript), which the hook already writes.
+        // App-derived, so not serialized, for the reason Lead is not.
+        [JsonIgnore]
+        public string? ConfigRoot { get; set; }
+
         // Which CLI wrote this file, in its own words: "codex", or absent for
         // Claude Code.
         //
@@ -513,6 +523,11 @@ namespace Orbweaver
         {
             _statusDir = statusDir;
             _legacyStatusDir = legacyStatusDir;
+
+            // CB-281: one account reader per manager, so its 30 s hold is
+            // shared by every orb a scan asks about.
+            var accounts = new AutoGroupAccounts(AutoGroupHome);
+            AutoGroupAccountOf = status => AccountOf(accounts, status);
             _jobListing = jobListing ?? BackgroundJobs.SnapshotForScan;
             // Wrapped rather than handed over as a method group: AttachedJobIds
             // grew an optional `fresh` parameter for the click path, and an
@@ -1037,6 +1052,16 @@ namespace Orbweaver
             var membership = probes.TeamOf(entry.SessionId, entry.Status.SessionPid);
             return membership.Lead == entry.SessionId ? "" : membership.Lead;
         }
+
+        // CB-276: the lead a hide propagates through, as the pass can read it
+        // before its main loop assigns status.Lead. A Claude Code session's is
+        // the probe's team read (the duplicate rule's own reading); a Remote
+        // Control session's is already the lead's own orb key; nothing else
+        // has a lead that propagates — see HiddenOrbs.PropagatingLead.
+        private static string HideRuleLead(ScanEntry entry, ScanProbes probes) =>
+            entry.Status.Source == SessionSource.ClaudeCode
+                ? DuplicateRuleLead(entry, probes)
+                : HiddenOrbs.PropagatingLead(entry.Status.Source, entry.Status.Lead);
 
         internal static bool WantsIdentityFromTranscript(SessionStatus status) =>
             status.Source == SessionSource.ClaudeCode
@@ -2314,8 +2339,15 @@ namespace Orbweaver
             // Both folders while the legacy one is watched, one file per
             // session — see NewestPerSession for which one and why the other
             // is left alone.
+            var primary = ReadStatusDirectory(_statusDir);
+
+            // CB-276: whether the primary folder answered at all. An unreadable
+            // folder lists nothing, and pruning must read that as "cannot say"
+            // rather than as every local session having ended.
+            _statusDirReadable = primary is not null;
+
             var reads = NewestPerSession(
-                ReadStatusDirectory(_statusDir) ?? new(),
+                primary ?? new(),
                 _legacyStatusDir is null ? new() : ReadStatusDirectory(_legacyStatusDir) ?? new());
 
             _statusFiles = reads.ToDictionary(r => r.SessionId, r => r.Path, StringComparer.Ordinal);
@@ -2695,6 +2727,7 @@ namespace Orbweaver
                         Color = OpenClawSessions.ColourForAgent(session.Id),
 
                         Url = session.Url,
+                        ConfigRoot = session.OwnerRoot,
                         ContextPercent = session.ContextPercent,
                         StatusDetail = session.StatusDetail,
                         RecentAction = session.RecentAction,
@@ -2836,6 +2869,16 @@ namespace Orbweaver
                             || BackgroundJobs.Phase(jobs, e.SessionId) is JobPhase.NotAJob or JobPhase.Unknown))
                     .Select(e => (e.SessionId, e.Status.Title, SessionLiveness.IsParked(
                         e.Status.State, e.Status.LastTurnUtc, now))));
+
+            // CB-276: every session hidden this pass — the settings entries,
+            // plus every member of a hidden agent-team lead. Asked once and
+            // over all of `found`, not over what survives the loop below, so a
+            // hidden lead that has outlived "Keep orbs for" but still has a
+            // file keeps its team hidden. See HiddenOrbs.Effective.
+            var hidden = HiddenOrbs.Effective(
+                OrbweaverSettings.HiddenOrbIds(),
+                found.Select(e => (e.SessionId, (string?)HideRuleLead(e, probes))));
+            var hiddenNow = new List<(string SessionId, SessionStatus Status)>();
 
             // Sessions that live agents name as their lead. Used for two things
             // below, and for nothing else — in particular *not* to excuse a
@@ -3010,8 +3053,6 @@ namespace Orbweaver
                     continue;   // removed in the pass below
                 }
 
-                seen.Add(sessionId);
-
                 // Whether this session is an agent-team member, and whose. Read
                 // from its process rather than its status file — see AgentTeam
                 // — by the background half, which asked about every pid in the
@@ -3030,6 +3071,19 @@ namespace Orbweaver
                 {
                     status.Lead = membership.Lead == sessionId ? "" : membership.Lead;
                     status.Agent = string.IsNullOrEmpty(status.Lead) ? "" : membership.Name;
+                }
+
+                // A room member whose room is hidden stands alone. The room is
+                // not a team lead for hiding (HiddenOrbs.PropagatingLead), so
+                // the member stays; but its Lead still names the room, and an
+                // orb whose lead is not on screen would draw itself as a member
+                // of nothing. Cleared before the reflow check below, so the
+                // change of lead moves it.
+                if (status.Source == SessionSource.OpenClaw
+                    && !string.IsNullOrEmpty(status.Lead)
+                    && hidden.Contains(status.Lead))
+                {
+                    status.Lead = "";
                 }
 
                 // What shape of session this is, and whether anything is on the
@@ -3078,6 +3132,16 @@ namespace Orbweaver
                 // its command line and is what Claude Code's own team UI shows.
                 if (string.IsNullOrEmpty(status.Color)) status.Color = membership.Color;
 
+                // CB-281 (a CB-306 gap): a session OpenClaw spawned to run a
+                // heartbeat or a cron is drawn as one. Its cluster used to
+                // decide only whether it was shown (ShowHere, above), so with
+                // heartbeats in their own shape it still sat with the chats —
+                // and auto-grouping, which yields only to a predefined cluster,
+                // grouped it as a chat. After the Background badge above, which
+                // would otherwise overwrite a cron's Kind.
+                MarkSpawnCluster(status, OpenClawCliSession.ClusterOf(
+                    status, OpenClawSessions.OwnerIndexSnapshot().AgentWorkspaces.Values.ToList()));
+
                 // Joining or leaving a team changes where this orb belongs in
                 // the stack, not just what it looks like, so it has to reflow.
                 // It isn't a set change and would otherwise go unnoticed — a
@@ -3094,6 +3158,28 @@ namespace Orbweaver
                 // after would draw one tick of the old answer every time a
                 // persona changed.
                 ApplyPersona(sessionId, status, candidatesByCwd);
+
+                // CB-276: a hidden session leaves here. After every check that
+                // would have dropped it anyway, so the tray only lists one that
+                // would otherwise have had an orb; and after everything that
+                // finishes describing it — the team block, the shape, kind and
+                // presence block, and ApplyPersona — because the tray and the
+                // phone still show it, and the phone's row reads its persona
+                // from the registry ApplyPersona fills. Leaving any earlier
+                // handed the phone a bare status: no persona, and a background
+                // job reading as a terminal session (QA, wren-asare).
+                //
+                // From here it takes the path an ended session takes: never in
+                // `seen`, so the removal pass below closes its window, disposes
+                // its chat, drops its status and reflows; and never observed by
+                // the turn-sound tracker, so it cannot chime.
+                if (hidden.Contains(sessionId))
+                {
+                    hiddenNow.Add((sessionId, status));
+                    continue;   // removed in the pass below
+                }
+
+                seen.Add(sessionId);
 
                 // Immediately before the dictionary is overwritten, so the
                 // tracker is comparing against exactly the state this
@@ -3171,6 +3257,12 @@ namespace Orbweaver
                 // is a Bitmap per frame, held by a process-wide cache that has
                 // no other reason to ever let one go. The registry entry is
                 // small; the picture behind it is not, and Forget drops both.
+                //
+                // CB-276: except for a session that left because it was hidden.
+                // The phone still lists it, and forgetting here would hand the
+                // phone a row with no persona for the pass it was hidden on.
+                if (hiddenNow.Any(h => h.SessionId == id)) continue;
+
                 _personas.Remove(id);
                 LocalPersonas.Forget(id);
                 PeerPersonas.Forget(id);
@@ -3237,13 +3329,38 @@ namespace Orbweaver
             // directory and the same dictionary.
             SweepDeadFiles(found, dead, now);
 
+            // CB-276: the sessions this pass kept off the screen, for the tray
+            // and the phone; and the hides of any that have since ended.
+            // A hidden session's persona is kept for the phone (see the removal
+            // pass), so it is this pass's job to drop one whose session is no
+            // longer hidden and not on screen either — ended, or gone for any
+            // other reason. Otherwise a decoded portrait outlives its session
+            // for the life of the process, which is the leak the removal pass
+            // forgets personas to prevent.
+            foreach (var (id, _) in _hidden)
+            {
+                if (seen.Contains(id) || hiddenNow.Any(h => h.SessionId == id)) continue;
+                _personas.Remove(id);
+                LocalPersonas.Forget(id);
+                PeerPersonas.Forget(id);
+            }
+
+            _hidden = hiddenNow;
+            PruneHiddenOrbs(now);
+
             // Before the reflow, so an orb that just arrived is arranged in the
             // group its team is already in.
-            SyncOrbGroups();
+            var regroup = SyncOrbGroups();
 
             if (setChanged)
             {
                 ReflowPositions();
+            }
+            else if (regroup)
+            {
+                // CB-281: nobody arrived or left, but an orb's auto group
+                // changed under it.
+                Regroup();
             }
 
             RescueOffscreenOrbs();
@@ -3259,7 +3376,10 @@ namespace Orbweaver
             // _statuses itself, but the SessionStatus objects are the scan's own
             // and are mutated by the next pass — a subscriber projects what it
             // needs before returning (RelayRoster.Project) and keeps nothing.
-            SessionsScanned?.Invoke(_statuses.Select(kv => (kv.Key, kv.Value)).ToList());
+            //
+            // CB-276: plus the hidden sessions. Hiding is a statement about
+            // this screen; the PM decided the phone keeps listing them.
+            SessionsScanned?.Invoke(_statuses.Select(kv => (kv.Key, kv.Value)).Concat(_hidden).ToList());
         }
 
         // Raised on the scan's thread at the end of every pass. See the call
@@ -3351,10 +3471,19 @@ namespace Orbweaver
         {
             // Feed the tray in stacking order so the menu reads top-to-bottom
             // like the orbs do on screen.
-            _tray?.Update(DisplayOrder()
-                .Select(id => new TrayController.SessionEntry(id, _statuses[id]))
-                .ToList());
+            _tray?.Update(TrayEntries());
         }
+
+        // What the tray is handed: the visible orbs in stacking order, then
+        // (CB-276) the hidden sessions, marked, in the order the scan met
+        // them. Split out of UpdateTray because the tray itself only exists
+        // after Start(), which no headless test calls; this is the decision,
+        // and it needs no tray to be tested.
+        internal List<TrayController.SessionEntry> TrayEntries() =>
+            DisplayOrder()
+                .Select(id => new TrayController.SessionEntry(id, _statuses[id]))
+                .Concat(_hidden.Select(h => new TrayController.SessionEntry(h.SessionId, h.Status, Hidden: true)))
+                .ToList();
 
         // --- agent teams ------------------------------------------------------
 
@@ -3926,7 +4055,20 @@ namespace Orbweaver
             return OrbGroupMenu.ContextFor(
                 tree.RootOf(sessionId), tree.TeamOf(sessionId), AllStatuses,
                 OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
-                OrbweaverSettings.OpenClawNativeMode);
+                OrbweaverSettings.OpenClawNativeMode, AutoGroupOf());
+        }
+
+        // CB-281: the Settings row lands here when "Auto-group orbs by" changes.
+        // Every scan would get there on its own (SyncOrbGroups notices orbs
+        // whose group moved), but a setting the user just flipped should not
+        // wait for one. Ensures the new attribute's groups exist, gives an orb
+        // that just fell out of an auto group back its saved spot, and settles
+        // the current mode with the drop's spring, so only orbs whose slot
+        // changed move. Manual groups are untouched: nothing here writes
+        // membership.
+        public void ReapplyAutoGroups()
+        {
+            if (SyncAutoGroups(Teams())) Regroup();
         }
 
         // CB-287: an override was written elsewhere (the editor, a Settings
@@ -4349,7 +4491,18 @@ namespace Orbweaver
             // so window.SoundKey is already correct by the time execution
             // gets here.
 
-            if (string.IsNullOrEmpty(key)) return;
+            if (SavedPinFor(window, status, key) is { } pin) window.PinAt(pin);
+        }
+
+        // Where an orb's saved pin puts it now, or null for none: no key, a
+        // sibling already pinned there, nothing saved, or a saved spot on a
+        // screen that is gone. Split out of RestoreOrbPosition for CB-281, so
+        // an orb leaving an auto group can be given its pin back (or have it
+        // recorded for un-arranging) without RestoreOrbPosition's first job,
+        // reassigning PositionKey, which is set once when the orb is made.
+        private PixelPoint? SavedPinFor(OrbWindow window, SessionStatus status, string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
 
             // A sibling session in the same directory already sits there;
             // stacking a second orb on top of it would just hide one.
@@ -4357,7 +4510,7 @@ namespace Orbweaver
                                              && other.IsPinned
                                              && other.PositionKey == key))
             {
-                return;
+                return null;
             }
 
             var saved = OrbweaverSettings.OrbPositionFor(key);
@@ -4382,7 +4535,7 @@ namespace Orbweaver
                 }
             }
 
-            if (saved is null) return;
+            if (saved is null) return null;
 
             // The monitor it was dragged onto may be gone, or its layout
             // changed. Anything that no longer lands on a screen falls back to
@@ -4391,10 +4544,10 @@ namespace Orbweaver
             // is at most half a 2x orb and should not decide which screen this
             // was.
             var screen = window.Screens.ScreenFromPoint(new PixelPoint(saved.X, saved.Y));
-            if (screen is null) return;
+            if (screen is null) return null;
 
             var point = RestoredTopLeft(saved, window.OrbSize, screen.Scaling);
-            window.PinAt(ClampIntoWork(point, screen.WorkingArea, OrbPixels(window, screen.Scaling)));
+            return ClampIntoWork(point, screen.WorkingArea, OrbPixels(window, screen.Scaling));
         }
 
         // CB-111: bring back a chat panel that was pinned before the app last
@@ -4632,6 +4785,114 @@ namespace Orbweaver
 
             DeleteStatusFile(sessionId);
         }
+
+        // ---- "Hide this orb" (CB-276) ---------------------------------------
+
+        // The sessions the last scan found and would have drawn, but did not
+        // because they are hidden. Kept for two readers that still want them:
+        // the tray, which lists a hidden session with a marker, and the phone,
+        // which the PM decided keeps showing it. Never in _statuses, so nothing
+        // that draws, arranges, links or chimes ever sees one.
+        private List<(string SessionId, SessionStatus Status)> _hidden = new();
+
+        // When each hidden session's source first said it no longer lists it.
+        // In memory on purpose: a restart starts every clock again, which
+        // errs toward keeping a hide. See HiddenOrbs.DuePrunes.
+        private readonly Dictionary<string, DateTime> _hiddenAbsentSince =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // HiddenOrbs.PruneGrace, settable for the reason SweepGrace is: a test
+        // that wants to see a prune should not have to wait two minutes.
+        internal TimeSpan HiddenPruneGrace { get; set; } = HiddenOrbs.PruneGrace;
+
+        // Whether the last read of the primary status folder succeeded. See
+        // ReadStatusFiles.
+        private bool _statusDirReadable = true;
+
+        // Forgets the hides of sessions known to have ended. Once per pass,
+        // after the removal pass, beside SweepDeadFiles and for the same
+        // reason: it is a judgement about what this scan found.
+        //
+        // The remote listings are read through seams so a test can stand each
+        // source up without a gateway, an account or another machine.
+        private void PruneHiddenOrbs(DateTime now)
+        {
+            var entries = OrbweaverSettings.HiddenOrbList();
+            if (entries.Count == 0)
+            {
+                _hiddenAbsentSince.Clear();
+                return;
+            }
+
+            var peers = entries.ToDictionary(e => e.SessionId, e => e.Peer, StringComparer.OrdinalIgnoreCase);
+            var localIds = _statusDirReadable
+                ? new HashSet<string>(_statusFiles.Keys, StringComparer.Ordinal)
+                : null;
+            var openClawKeys = HiddenOpenClawListing();
+            var cloudIds = HiddenCloudListing();
+            var remoteByPeer = HiddenRemoteListing();
+
+            var due = HiddenOrbs.DuePrunes(
+                peers.Keys,
+                id => HiddenOrbs.Listed(id, peers[id], localIds, openClawKeys, cloudIds, remoteByPeer),
+                _hiddenAbsentSince,
+                now,
+                HiddenPruneGrace);
+
+            if (due.Count > 0) OrbweaverSettings.PruneHiddenOrbs(due);
+        }
+
+        // The three remote listings pruning asks, each null when its source
+        // cannot say: OpenClaw off, disconnected or not yet listed on this
+        // connection; any cloud account not authoritative. Remote Control has
+        // no null of its own; a peer that lists nothing is absent from the
+        // map, and HiddenOrbs.Listed reads an absent peer as "cannot say".
+        private static IReadOnlySet<string>? HiddenOpenClawListing() => OpenClawSessions.ListedKeys();
+        private static IReadOnlySet<string>? HiddenCloudListing() => ClaudeCloudSessions.ListedIds();
+        private static IReadOnlyDictionary<string, IReadOnlySet<string>>? HiddenRemoteListing() =>
+            RemoteControlSessions.ListedByPeer();
+
+        // Unlike Dismiss, which is a statement about the screen that the next
+        // hook event overrides, a hide is a setting: it lasts until it is
+        // restored in Settings or its session is known to have ended. Writing
+        // the entry is the whole of it; the scan reads the setting and takes
+        // the orb away through the path an ended session takes.
+        //
+        // A no-op for an id with no orb, because there is nothing to describe:
+        // the entry's title, badge and detail are read off the orb's status.
+        public void HideSession(string sessionId)
+        {
+            if (!_statuses.TryGetValue(sessionId, out var status)) return;
+
+            var peer = status.Source == SessionSource.RemoteControl
+                ? RemoteControlSessions.Snapshot().FirstOrDefault(r => r.Key == sessionId)?.Ref
+                : null;
+
+            OrbweaverSettings.HideOrb(HiddenOrbs.Describe(sessionId, status, DateTime.UtcNow, peer));
+            _ = ScheduleScan();
+        }
+
+        public void RestoreHiddenOrb(string sessionId)
+        {
+            if (OrbweaverSettings.RestoreHiddenOrb(sessionId)) _ = ScheduleScan();
+        }
+
+        public void RestoreAllHiddenOrbs()
+        {
+            OrbweaverSettings.RestoreAllHiddenOrbs();
+            _ = ScheduleScan();
+        }
+
+        // Whether hiding this orb takes others with it: any orb on screen
+        // whose propagating lead is this one. Read off _statuses, which holds
+        // each orb's lead as the scan last assigned it.
+        internal bool LeadsATeam(string sessionId) =>
+            _statuses.Any(pair =>
+                !string.Equals(pair.Key, sessionId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    HiddenOrbs.PropagatingLead(pair.Value.Source, pair.Value.Lead),
+                    sessionId,
+                    StringComparison.OrdinalIgnoreCase));
 
         // One place that knows how a status file is removed, and the only place
         // that swallows the failure. Both callers want exactly the same thing:
@@ -4977,7 +5238,16 @@ namespace Orbweaver
             var tree = new TeamTree(orbs.Select(o => o.SessionId).ToList(), KnownLeads());
             var leadOf = tree.LeadIndices();
 
-            var groups = OrbweaverSettings.OrbGroupList();
+            // CB-281: hand-made groups before auto groups. Free mode places
+            // groups in slot order, each clear of the ones before it, and saves
+            // where each landed (CB-211) — so with `a-` ids sorting first, a
+            // new auto group took the space and pushed a manual group off its
+            // anchor for good. Placed last, auto groups go around the groups
+            // the user arranged. A stable sort, so the predefined four stay
+            // first and each kind keeps the table's order.
+            var groups = OrbweaverSettings.OrbGroupList()
+                .OrderBy(g => OrbAutoGroups.IsAuto(g.Id) ? 1 : 0)
+                .ToList();
             var slotOf = new Dictionary<string, int>(StringComparer.Ordinal);
             for (var i = 0; i < groups.Count; i++) slotOf[groups[i].Id] = i;
 
@@ -5454,7 +5724,168 @@ namespace Orbweaver
             OrbGroupMenu.ContextFor(
                 tree.RootOf(id), Array.Empty<string>(), _statuses,
                 OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
-                OrbweaverSettings.OpenClawNativeMode).GroupId;
+                OrbweaverSettings.OpenClawNativeMode, AutoGroupOf()).GroupId;
+
+        // --- CB-281: auto groups ------------------------------------------------
+
+        // What a spawn's cluster means for the orb: a heartbeat wears the heart
+        // and joins the heartbeats cluster, a cron the stopwatch and the crons
+        // cluster, the way a gateway heartbeat or cron does. Chats and Native
+        // change nothing; null is a session OpenClaw did not spawn.
+        internal static void MarkSpawnCluster(SessionStatus status, OrbCluster? cluster)
+        {
+            if (cluster == OrbCluster.Heartbeats) status.Heartbeat = true;
+            else if (cluster == OrbCluster.Crons) status.Kind = SessionKind.Cron;
+        }
+
+        // The seams the classifier's facts come from, so a test hands in a
+        // dictionary instead of reading .claude.json or walking up to a .git.
+        // Account: a session to a stable key and a label, null for unknown.
+        // Repo root: a cwd to its repository's root, null for none. Both
+        // defaults are E1's cached readers, held 30 s, because a scan asks
+        // for every orb.
+        internal Func<SessionStatus, (string Key, string Label)?> AutoGroupAccountOf { get; set; }
+
+        internal Func<string, string?> AutoGroupRepoRootOf { get; set; } = RepoRoots.Cached;
+
+        internal string AutoGroupHome { get; set; } =
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        // A cloud session's account is the Claude config root that listed it,
+        // read the way a local Claude Code session's is: the owner root is a
+        // Claude config root like any other. Without a root, unknown.
+        internal static (string Key, string Label)? AccountOf(AutoGroupAccounts accounts, SessionStatus status) =>
+            status.Source == SessionSource.ClaudeCloud
+                ? accounts.Of(SessionSource.ClaudeCode, status.ConfigRoot)
+                : accounts.Of(status.Source, AutoGroupAccounts.HomeOf(status.Source, status.TranscriptPath));
+
+        // Each orb's last resolved group, to notice one that moved between
+        // scans: a setting flipped, a cwd that changed, an account that
+        // logged in.
+        private readonly OrbGroupSync.GroupTracker _autoGroupTracker = new();
+
+        // What the classifier may know about one orb. Only the fact the
+        // attribute needs is looked up, so grouping by CLI never reads an
+        // account file and grouping by account never walks a directory.
+        internal AutoGroupFacts AutoGroupFactsFor(AutoGroupBy by, SessionStatus status)
+        {
+            var configRoot = status.ConfigRoot
+                             ?? (status.Source == SessionSource.ClaudeCode
+                                 ? ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)
+                                 : null);
+
+            var account = by == AutoGroupBy.Account ? AutoGroupAccountOf(status) : null;
+            var repo = by == AutoGroupBy.Directory && status.Cwd.Length > 0 ? AutoGroupRepoRootOf(status.Cwd) : null;
+
+            return new AutoGroupFacts(
+                status.Source, status.RemoteCli, status.Cwd, configRoot,
+                account?.Key, account?.Label, repo);
+        }
+
+        // The auto group an orb classifies into, as (id, name), whether or not
+        // the group exists yet; null when the setting is Off or the orb has no
+        // value for the attribute.
+        private (string Id, string Name)? AutoGroupValueOf(AutoGroupBy by, SessionStatus status)
+        {
+            if (by == AutoGroupBy.Off) return null;
+            if (OrbAutoGroups.Classify(by, AutoGroupFactsFor(by, status), AutoGroupHome) is not { } value) return null;
+            return (OrbAutoGroups.IdFor(by, value.Key), value.Name);
+        }
+
+        // The function ContextFor asks for a root's auto group. Only a group
+        // that exists in the table is answered: the layout's slot lookup reads
+        // a missing id as main's slot, so naming one SyncAutoGroups has not
+        // created yet would draw the orb in the wrong place rather than none.
+        private Func<SessionStatus, string?> AutoGroupOf()
+        {
+            var by = OrbweaverSettings.AutoGroupBy;
+            return status => AutoGroupValueOf(by, status) is { } value
+                             && OrbweaverSettings.OrbGroupFor(value.Id) is not null
+                ? value.Id
+                : null;
+        }
+
+        // Ensures the groups every on-screen root classifies into exist (a root
+        // is a windowed orb, and a window never outlives its status), then
+        // compares each orb's group with the last time it was asked. An orb
+        // that left an auto group for a predefined one in free mode is loose
+        // again and gets its pin back (ReleaseFromAutoGroup). True when any
+        // orb's group changed, which is the caller's cue to regroup — arranged
+        // mode's reflow only re-lays out for an arrival, so a group change with
+        // nobody arriving would otherwise wait for one.
+        private bool SyncAutoGroups(TeamTree tree)
+        {
+            var by = OrbweaverSettings.AutoGroupBy;
+            // Only a group some root will actually be drawn in: one that an
+            // explicit membership or a predefined cluster outranks would sit in
+            // the table unused, and count as live against the cap.
+            var wanted = tree.Present
+                .Select(tree.RootOf)
+                .Distinct(StringComparer.Ordinal)
+                .Select(root => AutoGroupValueOf(by, _statuses[root]) is { } value && WouldJoin(root, value.Id)
+                    ? value
+                    : ((string Id, string Name)?)null)
+                .OfType<(string Id, string Name)>()
+                .DistinctBy(value => value.Id, StringComparer.Ordinal)
+                .ToList();
+            if (wanted.Count > 0) OrbweaverSettings.EnsureAutoOrbGroups(wanted);
+
+            var changes = _autoGroupTracker.Observe(
+                tree.Present.Select(id => (id, GroupIdOf(tree, id))).ToList());
+
+            foreach (var (id, old, now) in changes) ReleaseFromAutoGroup(tree, id, old, now);
+
+            return changes.Count > 0;
+        }
+
+        // Whether a root would be drawn in `autoId` once it exists: GroupIdFor's
+        // precedence, asked with the auto id handed in unfiltered.
+        private bool WouldJoin(string rootId, string autoId) =>
+            OrbGroupMenu.ContextFor(
+                rootId, Array.Empty<string>(), _statuses,
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode, _ => autoId).GroupId == autoId;
+
+        // An orb the classifier stopped claiming — the setting went Off or to
+        // another attribute, or its value became unknown — goes back to where
+        // it was last left by hand, as it would at launch. Joining a group
+        // never clears an orb's pin flag or its saved spot, so without this it
+        // would freeze wherever the group last drew it. No saved spot means
+        // the stack.
+        //
+        // Not when the team's root has an explicit membership: that move was
+        // the user's (a drag out of the group writes main and leaves the orb
+        // pinned where it was dropped; so does the menu's Leave group), and
+        // the orb is already where they put it.
+        //
+        // Arranged, the arrangement owns positions, so nothing moves now; the
+        // orb's un-arrange entry is rewritten instead. AbsorbIntoArrangement
+        // recorded where its group had drawn it, and RestoreFromPattern, which
+        // only skips orbs still in a user group, would put it back there.
+        private void ReleaseFromAutoGroup(TeamTree tree, string id, string oldGroup, string newGroup)
+        {
+            if (!OrbAutoGroups.IsAuto(oldGroup) || !OrbGroups.IsPredefined(newGroup)) return;
+            if (OrbGroupMenu.MembershipOf(tree.RootOf(id), _statuses) is not null) return;
+
+            // Every id the tree holds has a window, and every window a status:
+            // the scan stores a status just before it makes the window and
+            // removes the two together.
+            var window = _windows[id];
+            var pin = SavedPinFor(window, _statuses[id], window.PositionKey);
+
+            if (_isArranged)
+            {
+                _preArrangeState[id] = pin is { } at ? (at, true) : (window.Position, false);
+                return;
+            }
+
+            window.Unpin();
+            if (pin is { } spot) window.PinAt(spot);
+        }
+
+        // A regroup with no drop behind it: the settle a drop ends with, with
+        // nobody arriving, so orbs spring to their new slots.
+        private void Regroup() => ((IOrbDragHost)this).SettleAfterDrop(Array.Empty<string>());
 
         // What every scan does for groups, before it lays anything out:
         //  - remembers this scan's leads and forgets ones nothing descends from;
@@ -5462,8 +5893,12 @@ namespace Orbweaver
         //    every known session rather than every orb on screen;
         //  - gives a team member with no group of its own its root's (T3), so a
         //    member that outlives its lead keeps the group.
-        // None of these moves an orb, so none of them breaks CB-161.
-        private void SyncOrbGroups()
+        //  - CB-281: ensures the auto groups exist and notices orbs whose group
+        //    changed. That is the one step here that can move orbs, and only
+        //    orbs whose group really changed; it returns true when the caller
+        //    has to regroup.
+        // The first three move no orb, so none of them breaks CB-161.
+        private bool SyncOrbGroups()
         {
             foreach (var (id, status) in _statuses)
             {
@@ -5501,6 +5936,8 @@ namespace Orbweaver
                     team.Skip(1).Select(id => OrbGroupMenu.KeyOf(id, _statuses)),
                     OrbGroupMenu.FallbackKeyOf(root, _statuses));
             }
+
+            return SyncAutoGroups(tree);
         }
 
         // --- IOrbDragHost: what the drag (S4) asks of the roster ----------------
@@ -5534,6 +5971,15 @@ namespace Orbweaver
             _windows.TryGetValue(sessionId, out var window) ? window : null;
 
         string IOrbDragHost.GroupIdOf(string sessionId) => GroupIdOf(VisibleTeams(), sessionId);
+
+        // CB-281: the auto group the orb's root classifies into, whatever its
+        // explicit membership says — what a drop onto that group compares with.
+        string? IOrbDragHost.AutoGroupIdOf(string sessionId) => AutoGroupIdFor(sessionId);
+
+        // The same for the orb's Group menu, so "Move to" follows the drag's
+        // rule.
+        internal string? AutoGroupIdFor(string sessionId) =>
+            _statuses.TryGetValue(VisibleTeams().RootOf(sessionId), out var root) ? AutoGroupOf()(root) : null;
 
         string IOrbDragHost.PositionKeyOf(string sessionId) => OrbGroupMenu.KeyOf(sessionId, _statuses);
 
