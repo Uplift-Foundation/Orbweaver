@@ -151,6 +151,15 @@ internal sealed class RelayStub : IAsyncDisposable
 
     private async Task SocketSession(Session me)
     {
+        // The clear runs however the loop ends: SendOn can throw now (its
+        // deadline, a socket that died), and a dead session must not stay the
+        // desktop for the next frame a test sends.
+        try { await SocketLoop(me); }
+        finally { Interlocked.CompareExchange(ref _current, null, me); }
+    }
+
+    private async Task SocketLoop(Session me)
+    {
         var ws = me.Ws;
         var buffer = new byte[8192];
         while (ws.State == WebSocketState.Open)
@@ -216,7 +225,6 @@ internal sealed class RelayStub : IAsyncDisposable
                 }
             }
         }
-        Interlocked.CompareExchange(ref _current, null, me);
     }
 
     private Session Desktop() => Volatile.Read(ref _current) ?? throw new InvalidOperationException("no desktop connected");

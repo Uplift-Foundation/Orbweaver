@@ -100,9 +100,9 @@ public class RelayClientTests : IAsyncLifetime
         var identity = Identity();
         var client = Client(identity);
         var states = new List<RelayClient.Status>();
-        // The pump is held behind this gate for the first state, so the later
-        // two are always raised while it lags: the recorded value is the one
-        // raised, not whatever State reads when the handler finally runs.
+        // The pump is held behind this gate for the first state, so the list
+        // can only be read correctly after the pump has delivered all three:
+        // the assert below waits for that rather than for State.
         using var gate = new ManualResetEventSlim();
         client.StateChanged += _ => gate.Wait(TimeSpan.FromSeconds(10));
         client.StateChanged += s => { lock (states) states.Add(s); };
@@ -116,8 +116,8 @@ public class RelayClientTests : IAsyncLifetime
         // The welcome is applied on the pump too, so with the pump held the
         // client cannot reach Connected: the hello having arrived shows the
         // client is past Registering while nothing has been recorded.
-        lock (states) Assert.Empty(states);                        // the pump is behind, by construction
-        gate.Set();
+        try { lock (states) Assert.Empty(states); }                // the pump is behind, by construction
+        finally { gate.Set(); }
         await Until(() => client.State == RelayClient.Status.Connected);
         await Until(() => { lock (states) return states.Count >= 3; });
         Assert.Equal(Hex(identity.Keys().Identity.Public), _stub.LastIdPub);
@@ -1111,22 +1111,34 @@ public class RelayClientTests : IAsyncLifetime
     }
 
     // CB-337: pins the event's signature. A handler that runs late is handed
-    // the state that was raised, not whatever State has become by then.
+    // the state that was raised, not whatever State has become by then. The
+    // welcome is applied on the event pump itself, so only changes made by the
+    // run loop can overtake a held pump; a refused token makes it change State
+    // twice more (Registering, then Connecting again) while the first event is
+    // still being held, so a handler that read State late would see Connecting
+    // for all of them.
     [Fact]
     public async Task StateChanged_carries_the_state_that_was_raised_even_when_the_pump_is_behind()
     {
-        var client = Client(Identity());
+        var identity = Identity();
+        identity.Keys();
+        identity.SetRegistration("dsk_stub000000000001", "stale");   // refused, re-registered, reconnected
+        var client = Client(identity);
         var states = new List<RelayClient.Status>();
         using var gate = new ManualResetEventSlim();
         client.StateChanged += _ => gate.Wait(TimeSpan.FromSeconds(10));
         client.StateChanged += s => { lock (states) states.Add(s); };
-        client.Start();
-        await _stub.NextT("hello");                                 // past Registering; the welcome waits on the held pump
-        lock (states) Assert.Empty(states);
-        gate.Set();
-        await Until(() => client.State == RelayClient.Status.Connected);
-        await Until(() => { lock (states) return states.Count >= 3; });
-        lock (states) Assert.Equal([RelayClient.Status.Registering, RelayClient.Status.Connecting, RelayClient.Status.Connected], states);
+        try
+        {
+            client.Start();
+            Assert.Equal("stale", (await _stub.NextT("hello")).GetProperty("token").GetString());
+            Assert.Equal("token-1", (await _stub.NextT("hello")).GetProperty("token").GetString());   // Connecting again; Registering still queued
+            lock (states) Assert.Empty(states);
+        }
+        finally { gate.Set(); }
+        await Until(() => { lock (states) return states.Count >= 4; });
+        lock (states) Assert.Equal(
+            [RelayClient.Status.Connecting, RelayClient.Status.Registering, RelayClient.Status.Connecting, RelayClient.Status.Connected], states);
     }
 
     // CB-337: a socket accepted while the desktop's hello is in flight used to
