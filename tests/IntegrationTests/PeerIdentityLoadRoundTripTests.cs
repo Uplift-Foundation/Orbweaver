@@ -40,25 +40,44 @@ public class PeerIdentityLoadRoundTripTests
     }
 
     // The pin is read without the OS key store. On macOS every import makes a
-    // temporary keychain file; taking the pin must make none.
+    // temporary keychain; the pin must make no import at all, so it must never
+    // reach the loader — asserted against the real identity file with a loader
+    // that fails the test if anything calls it.
+    //
+    // Process-local on purpose. Counting *.keychain files in the temp directory
+    // would also count every other process's imports, and on a machine running
+    // several suites that is a flake shipped knowingly. The on-machine delta is
+    // measured at install time instead and reported in the PR.
     [Fact]
-    public void TakingThePinCreatesNoTemporaryKeychain()
+    public void TakingThePinFromTheRealIdentityNeverImportsAKey()
     {
         PeerIdentity.ForgetForTests();
-        _ = PeerIdentity.OwnPin(); // the identity file exists before counting
-        PeerIdentity.ForgetForTests();
+        var expected = PeerIdentity.PinOf(
+            X509CertificateLoader.LoadPkcs12(StoredPkcs12(), null, X509KeyStorageFlags.Exportable));
 
-        var temp = Path.GetTempPath();
-        var before = Directory.GetFiles(temp, "*.keychain").Length;
-
-        for (var i = 0; i < 20; i++)
+        var calls = 0;
+        using (PeerIdentity.UseLoaderForTests(_ =>
         {
-            PeerIdentity.ForgetForTests();
-            _ = PeerIdentity.OwnPin();
+            Interlocked.Increment(ref calls);
+            throw new InvalidOperationException("the pin must not import a key");
+        }))
+        {
+            for (var i = 0; i < 20; i++)
+            {
+                PeerIdentity.ForgetForTests();
+                Assert.Equal(expected, PeerIdentity.OwnPin());
+            }
         }
 
-        // Other processes share this directory, so this is a ceiling rather
-        // than an exact count: twenty imports would be twenty files.
-        Assert.True(Directory.GetFiles(temp, "*.keychain").Length - before < 5);
+        Assert.Equal(0, calls);
+    }
+
+    // The identity file as written, read independently of PeerIdentity.
+    private static byte[] StoredPkcs12()
+    {
+        _ = PeerIdentity.OwnPin(); // makes sure the file exists
+        var path = Path.Combine(OrbweaverSettings.Directory, "peer-identity.json");
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+        return Convert.FromBase64String(doc.RootElement.GetProperty("pkcs12").GetString()!);
     }
 }
