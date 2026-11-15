@@ -91,6 +91,10 @@ namespace Orbweaver
             // at adoption, so a fresh link is not pinged the instant it opens.
             public DateTime LastPing { get; set; } = stream.LastRead;
 
+            // When this connection was adopted, on the same clock as LastRead
+            // (WatchedStream starts it at Now()). The hello bound counts from here.
+            public DateTime Since { get; } = stream.LastRead;
+
             // Where we dialled, as "host:port", when we dialled. Null on a
             // connection that came to us — the source port of an inbound socket
             // is not the port that machine listens on, so guessing one would
@@ -359,6 +363,20 @@ namespace Orbweaver
 
             foreach (var (name, peer) in peers)
             {
+                // Before the stalled check: a client that keeps sending anything
+                // but hello is never quiet, so the 60 s rule never reaches it
+                // (CB-342). Dropped by identity. Known tiny race: a hello that
+                // renames the connection between the snapshot above and Forget
+                // loses a just-named link at exactly the deadline; the cost is
+                // one redial, so it is documented rather than locked.
+                if (Unannounced(name, peer.Since, now, InboundSetupTimeout))
+                {
+                    MirrorLog.SayOnce("peer-inbound-unannounced",
+                        $"no hello within {InboundSetupTimeout.TotalSeconds:0.#}s");
+                    Forget(peer);
+                    continue;
+                }
+
                 var quiet = now - peer.Stream.LastRead;
 
                 if (quiet > StalledAfter)
@@ -442,13 +460,24 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         private async Task HandshakeInboundAsync(TcpClient client, CancellationToken ct)
         {
+            // Bounded, and only the setup (CB-342). This used to run on the
+            // listener's own token, which fires only at Dispose, so a client
+            // that connected and never sent a ClientHello held a task, a socket
+            // and a descriptor for the life of the process. Adopt below keeps
+            // `ct`: the link lives on the listener's token, never this one.
+            using var setup = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            setup.CancelAfter(InboundSetupTimeout);
+
+            SslStream? tls = null;
+            var adopted = false;
+
             try
             {
                 // No callback on the constructor: setting one here *and* in the
                 // authentication options below is refused by .NET outright, and
                 // the options are where the client certificate is judged.
-                var own = await _seams.OwnCertificate(ct).ConfigureAwait(false);
-                var tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+                var own = await _seams.OwnCertificate(setup.Token).ConfigureAwait(false);
+                tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
 
                 await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 {
@@ -456,7 +485,7 @@ namespace Orbweaver
                     ClientCertificateRequired = true,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
-                }, ct).ConfigureAwait(false);
+                }, setup.Token).ConfigureAwait(false);
 
                 var offered = tls.RemoteCertificate is null
                     ? null
@@ -466,11 +495,30 @@ namespace Orbweaver
                 // held unnamed until then; the pin is what will be checked
                 // against the name it claims.
                 Adopt(Unnamed(), tls, offered ?? "", ct);
+                adopted = true;
+
+                // Ended explicitly: a using-disposed source never cancels, so
+                // without this "the link is not on the setup token" cannot be
+                // tested (CB-348 found the same on the dial side).
+                setup.Cancel();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Shutdown, not a failure.
+                if (!adopted) { tls?.Dispose(); client.Dispose(); }
             }
             catch (Exception ex)
             {
-                MirrorLog.Say("peer-inbound-failed", $"{ex.GetType().Name}: {ex.Message}");
-                client.Dispose();
+                // SayOnce with a fixed key and no endpoint: a scanner or a flood
+                // of silent sockets collapses to one line and a restatement
+                // every so often, instead of evicting the log's history.
+                if (!adopted) { tls?.Dispose(); client.Dispose(); }
+
+                var why = !adopted && setup.IsCancellationRequested && !ct.IsCancellationRequested
+                    ? $"no handshake within {InboundSetupTimeout.TotalSeconds:0.#}s"
+                    : $"{ex.GetType().Name}: {ex.Message}";
+
+                MirrorLog.SayOnce("peer-inbound-failed", why);
             }
         }
 
@@ -648,6 +696,21 @@ namespace Orbweaver
         // Per link so a test can shorten it without touching any other.
         internal TimeSpan DialTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
+        // How long an inbound connection may spend on each of its two pre-link
+        // steps (CB-342): certificate and TLS, then the hello that names it.
+        // Sibling of DialTimeout and the same 15 s. The two bounds are counted
+        // separately — the setup token bounds TLS, and CheckLiveness counts the
+        // hello from Adopt — so the worst case from accept to eviction is twice
+        // this plus up to one WatchEvery (about 35 s), not once. Counting from
+        // accept would need a timestamp plumbed through Adopt, which is not
+        // worth it for a bound whose job is to be finite.
+        //
+        // Settable rather than init so a test can shorten it on one live server
+        // to time out a silent client, then restore it before dialling a real
+        // peer whose cold TLS must not race the shortened bound. A TimeSpan
+        // write is atomic on 64-bit, and nothing here needs more.
+        internal TimeSpan InboundSetupTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
         // Pure: connected wins over in-flight, because a connected machine is
         // the answer the caller wanted either way.
         internal static DialStart Admit(bool connected, bool inFlight) =>
@@ -757,6 +820,12 @@ namespace Orbweaver
         // (CB-344).
         internal static bool IsUnnamed(string machine) =>
             machine.StartsWith(UnnamedPrefix, StringComparison.Ordinal);
+
+        // Whether a connection that has not yet said who it is has had long
+        // enough (CB-342). Pure so the boundary is pinned: exactly at the bound
+        // is still inside it.
+        internal static bool Unannounced(string name, DateTime since, DateTime now, TimeSpan bound) =>
+            IsUnnamed(name) && now - since > bound;
 
         // --- the decision ------------------------------------------------------------
 
