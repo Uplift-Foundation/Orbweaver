@@ -221,6 +221,25 @@ namespace Orbweaver
                     // what moved this connection's last-read time on.
                     if (message.Type == PeerProtocol.Ping) continue;
 
+                    // CB-344: an inbound connection is unauthenticated until its
+                    // hello has been judged. TLS accepted whatever certificate it
+                    // offered, and the pin is checked only in GreetedAsync — so
+                    // until then nothing it sends may reach the mirror, whose own
+                    // gate asks only whether a connection exists.
+                    //
+                    // Discarded rather than dropped. A dial Adopts before it
+                    // writes its hello, so a legitimate peer can race a request
+                    // ahead of the greeting; that costs it a retry, where
+                    // dropping would cost a reconnect. A stranger gains nothing
+                    // either way. `machine` is reassigned only by an accepted
+                    // hello and a refused one breaks the loop, so "still
+                    // unnamed" is exactly "not yet accepted".
+                    if (IsUnnamed(machine) && message.Type != PeerProtocol.Hello)
+                    {
+                        MirrorLog.SayOnce("peer-before-hello", $"t={message.Type} dropped");
+                        continue;
+                    }
+
                     MirrorLog.Say("peer-in", $"from={machine} t={message.Type} id={message.Id}");
 
                     // The greeting is the link's own business and never reaches
@@ -719,7 +738,16 @@ namespace Orbweaver
         // at once, or one machine reconnecting before its old connection had
         // been reaped, silently disposed each other's stream. Rare, and
         // indistinguishable from a network drop when it happened.
-        internal static string Unnamed() => "(inbound " + PeerProtocol.NewId() + ")";
+        internal static string Unnamed() => UnnamedPrefix + PeerProtocol.NewId() + ")";
+
+        internal const string UnnamedPrefix = "(inbound ";
+
+        // Whether a connection is still under the name Unnamed() gave it, i.e.
+        // its hello has not been accepted. On an inbound connection that is the
+        // difference between a paired machine and anybody who completed TLS
+        // (CB-344).
+        internal static bool IsUnnamed(string machine) =>
+            machine.StartsWith(UnnamedPrefix, StringComparison.Ordinal);
 
         // --- the decision ------------------------------------------------------------
 
