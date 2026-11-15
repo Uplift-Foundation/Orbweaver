@@ -1087,20 +1087,55 @@ namespace Orbweaver
             lock (Gate) LastSeen.Clear();
         }
 
-        // CB-329: what choosing a picker row does. Marks every member active (a
-        // room orb needs more than one agent to pass recency, so marking only
-        // the newest would open the panel and draw no room orb), un-hides any
-        // the user hid with CB-276's "Hide this orb" (a hidden session is
-        // removed from the scan after every other check, so a mark alone would
-        // leave the orb absent), then returns the panel's session: RoomChatFor
-        // with the WIDE member list for a room, ChatFor otherwise. Null when
-        // OpenClaw is off (both callees already answer null then).
+        // CB-329 amendment 1: the ids a reopen takes out of the CB-276 hidden set.
+        // A session row is just its own orb. A room row is the room orb and every
+        // member: HiddenOrbs.Effective hides a member whose *lead* is hidden, and
+        // a room member's lead is the room orb (SessionManager sets
+        // status.Lead = RoomId(room)), so un-hiding the members alone would leave
+        // them hidden through their lead.
+        internal static IReadOnlyList<string> ReopenHiddenIds(OpenClawReopenRow row)
+        {
+            if (row.Target == OpenClawReopenTarget.Session) return new[] { row.OrbSessionId };
+
+            var ids = new List<string> { row.OrbSessionId };
+            ids.AddRange(row.MemberKeys.Select(key => "openclaw:" + key));
+            return ids;
+        }
+
+        // A test seam, so a unit test can see which ids are un-hidden without a
+        // SessionManager or a settings file behind them.
+        internal static Action<string>? RestoreHiddenForTests;
+
+        // Exactly what Settings > Hidden orbs does to restore one: through the
+        // manager when it exists (which also schedules a scan), otherwise the
+        // store. RestoreHiddenOrb returns false and writes nothing for an id that
+        // was not hidden, so reopening a row that was never hidden writes nothing.
+        private static void RestoreHidden(string id)
+        {
+            if (RestoreHiddenForTests is { } seam) { seam(id); return; }
+
+            RestoreHiddenVia(SessionManager.Instance, id);
+        }
+
+        // The manager is an argument so the choice can be tested: Instance is
+        // only set by Start(), which a test must not run.
+        internal static void RestoreHiddenVia(SessionManager? manager, string id)
+        {
+            if (manager is not null) manager.RestoreHiddenOrb(id);
+            else OrbweaverSettings.RestoreHiddenOrb(id);
+        }
+
+        // CB-329: what choosing a picker row does. Un-hides first, so the scan
+        // the restore schedules already sees the session as fresh, then marks
+        // every member active (a room orb needs more than one agent to pass
+        // recency, so marking only the newest would open the panel and draw no
+        // room orb), then returns the panel's session: RoomChatFor with the
+        // WIDE member list for a room, ChatFor otherwise. Null when OpenClaw is
+        // off (both callees already answer null then).
         public static IRemoteChatSession? Reopen(OpenClawReopenRow row)
         {
+            foreach (var id in ReopenHiddenIds(row)) RestoreHidden(id);
             MarkActive(row.MemberKeys, DateTime.UtcNow);
-
-            foreach (var key in row.MemberKeys) OrbweaverSettings.RestoreHiddenOrb("openclaw:" + key);
-            if (row.Target == OpenClawReopenTarget.Room) OrbweaverSettings.RestoreHiddenOrb(row.OrbSessionId);
 
             return row.Target == OpenClawReopenTarget.Room
                 ? RoomChatFor(row.OrbSessionId, row.PanelTitle,

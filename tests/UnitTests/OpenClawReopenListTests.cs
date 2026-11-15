@@ -541,6 +541,44 @@ namespace Orbweaver.Tests
             }
         }
 
+        [Fact]
+        public void ReopenHiddenIdsAreTheRoomOrbThenEveryMember()
+        {
+            var (listed, _) = ParseAll(RoomRows());
+            var room = Assert.Single(OpenClawReopenList.Build(listed, W, W, W));
+
+            Assert.Equal(
+                new[] { "openclaw:room:discord:900100", "openclaw:" + Nova, "openclaw:" + Aurora }.OrderBy(x => x),
+                OpenClawSessions.ReopenHiddenIds(room).OrderBy(x => x));
+            Assert.Equal("openclaw:room:discord:900100", OpenClawSessions.ReopenHiddenIds(room)[0]);
+
+            var dm = OpenClawReopenList.Build(new[] { S(Dm, "Aurora — wtvamp", Now, SessionKind.Direct) }, W, W, W)[0];
+            Assert.Equal(new[] { "openclaw:" + Dm }, OpenClawSessions.ReopenHiddenIds(dm));
+        }
+
+        // The seam sees exactly those ids, in order, and nothing else is written.
+        [Fact]
+        public void ReopenRestoresThroughTheSeam()
+        {
+            OpenClawSessions.ForgetLastSeenForTests();
+            var seen = new List<string>();
+            OpenClawSessions.RestoreHiddenForTests = seen.Add;
+            try
+            {
+                var (listed, _) = ParseAll(Rows("agent:a:discord:direct:1", "agent:a:discord:direct:2"));
+                var row = OpenClawReopenList.Build(listed, W, W, W).Single(r => r.OrbSessionId.EndsWith(":1"));
+
+                OpenClawSessions.Reopen(row);
+
+                Assert.Equal(new[] { "openclaw:agent:a:discord:direct:1" }, seen);
+            }
+            finally
+            {
+                OpenClawSessions.RestoreHiddenForTests = null;
+                OpenClawSessions.ForgetLastSeenForTests();
+            }
+        }
+
         // ---- The pinned write-through and the forget path ---------------------
 
         [Fact]
