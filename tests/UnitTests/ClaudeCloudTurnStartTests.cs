@@ -268,22 +268,68 @@ public partial class ClaudeCloudEventsTests
     }
 
     // Case 6. Stop was pressed: an idle read is the interrupt landing, reply or
-    // not, and ends the turn at once.
+    // not, and ends the turn at once. Whichever of the interrupt's POST and the
+    // loop's read finishes first, the loop watching at the press is the only
+    // one: the status is read once.
     [Fact]
     public async Task AfterStopAnIdleReadEndsTheTurnWithoutAReply()
     {
         var clock = new FakeClock();
         var (api, _) = Turn(new[] { "idle" }, ranFrom: int.MaxValue);
         var chat = Sender(api, clock);
-        clock.OnDelay = (n, _) => { if (n == 1) chat.Cancel(); };
+        var firstTick = clock.ParkNextWait();
 
         await chat.SendAsync("hello");
+        chat.Cancel();
+        firstTick.TrySetResult();
         await Bounded(chat.LiveTask, "the live loop");
         await Bounded(chat.InterruptTask, "the interrupt");
 
         Assert.Single(api.Statuses);
         Assert.False(chat.CanInterrupt);
         Assert.Equal(1, Lines(chat, "turn over after 2s (interrupt)"));
+        Assert.Equal(0, Lines(chat, "(joined)"));
+    }
+
+    // Case 6, the other ordering — the one Windows CI drew. The interrupt and
+    // the loop each start with a credential read on the thread pool, so which
+    // finishes first is up to the scheduler. Here the interrupt's POST is held
+    // until the loop has already seen idle and ended the turn on it. The loop
+    // that was watching at the press is what sees a Stop land, so a delivery
+    // arriving after it ends starts nothing: before this, it started a joined
+    // loop that read the status and the transcript again for a turn that was
+    // already over.
+    [Fact]
+    public async Task AStopDeliveredAfterTheLoopEndedStartsNoSecondLoop()
+    {
+        var clock = new FakeClock();
+        ClaudeCloudChatSession? chat = null;
+        var api = new RoutingApi(c =>
+        {
+            if (c.Method == HttpMethod.Post && c.Body!.Contains("\"interrupt\"", StringComparison.Ordinal))
+            {
+                Assert.True(chat!.LiveTask!.Wait(TimeSpan.FromSeconds(5)), "the loop never ended");
+            }
+
+            return c.Method == HttpMethod.Post
+                ? Answer(200, Receipt)
+                : new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""), Envelope(Array.Empty<string>()));
+        });
+        chat = Sender(api, clock);
+        var firstTick = clock.ParkNextWait();
+
+        await chat.SendAsync("hello");
+        var loop = chat.LiveTask;
+        chat.Cancel();
+        firstTick.TrySetResult();
+        await Bounded(loop, "the live loop");
+        await Bounded(chat.InterruptTask, "the interrupt");
+
+        Assert.Same(loop, chat.LiveTask);
+        Assert.Single(api.Statuses);
+        Assert.False(chat.CanInterrupt);
+        Assert.Equal(1, Lines(chat, "turn over after 2s (interrupt)"));
+        Assert.Equal(0, Lines(chat, "(joined)"));
     }
 
     // Case 7. A 429 on the read that checks whether the turn has started is a

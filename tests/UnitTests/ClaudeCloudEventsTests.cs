@@ -587,6 +587,21 @@ public partial class ClaudeCloudEventsTests
         // state a send leaves before the live loop's first tick.
         internal bool Hold { get; set; }
 
+        // Parks only the next wait, until Open. A press of Stop from OnDelay
+        // lands inside the loop's first, synchronous step — before StartLive
+        // has even stored the loop's task, where no click ever could — so a
+        // test that presses during a running loop parks its first tick with
+        // this, presses from the test thread, then completes what it returned
+        // to let the tick go (CB-285).
+        private TaskCompletionSource? _gate;
+
+        internal TaskCompletionSource ParkNextWait()
+        {
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _gate, gate);
+            return gate;
+        }
+
         // The send watch's wait (CB-285) is parked by default, so every test
         // written before it existed still sees a trusted stream left alone after
         // a send rather than polled beside ten "seconds" later. A test about the
@@ -633,6 +648,7 @@ public partial class ClaudeCloudEventsTests
             }
 
             OnDelay?.Invoke(count, ct);
+            if (Interlocked.Exchange(ref _gate, null) is { } gate) return gate.Task;
             return Hold ? Task.Delay(Timeout.Infinite, ct) : Task.CompletedTask;
         }
     }

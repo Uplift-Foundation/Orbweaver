@@ -973,10 +973,17 @@ namespace Orbweaver
             var before = Affordances();
             _interruptSent = true;
             Announce(before);
-            InterruptTask = InterruptAsync();
+            InterruptTask = InterruptAsync(watched: LiveOwnsBusy);
         }
 
-        private async Task InterruptAsync()
+        // watched is whether a loop or the stream was watching at the press,
+        // decided here on the UI thread rather than after the POST (CB-285).
+        // Whatever was watching then is what sees the Stop land. The POST and a
+        // running loop each start with a credential read on the pool, so the
+        // loop can see idle and end the turn before the POST returns; asking
+        // "is a loop running?" at that point said no, and started a second one
+        // that read the status and the transcript again for a turn already over.
+        private async Task InterruptAsync(bool watched)
         {
             var failure = await CloudTurnSender.PostControlAsync(
                 _api, _credentials, ReadBudget, SessionId,
@@ -987,7 +994,7 @@ namespace Orbweaver
             // right, and if a loop is not already watching, that is this one.
             if (failure is null)
             {
-                if (!StreamLive) EnsureLive();
+                if (!watched && !StreamLive) EnsureLive();
                 return;
             }
 
