@@ -16,11 +16,17 @@ namespace Orbweaver.Tests;
 // first moment anyone learns its number.
 internal static class LoopbackHttp
 {
-    internal static (HttpListener Listener, string Root) Start()
+    internal static (HttpListener Listener, string Root) Start() =>
+        Start(() => Random.Shared.Next(20000, 60000));
+
+    // The port source is a seam so the retry can be driven deterministically:
+    // a test hands it a port it already holds and then a free one, instead of
+    // hoping a collision happens. Production callers use the overload above.
+    internal static (HttpListener Listener, string Root) Start(Func<int> nextPort)
     {
         for (var attempt = 0; ; attempt++)
         {
-            var port = Random.Shared.Next(20000, 60000);
+            var port = nextPort();
             var listener = new HttpListener();
             listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             try
