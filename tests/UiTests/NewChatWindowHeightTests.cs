@@ -6,6 +6,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using Xunit;
@@ -42,6 +43,8 @@ public class NewChatWindowHeightTests : IDisposable
         NewChatWindow.KnownAgentsForTests = null;
         NewChatWindow.CurrentStatusesForTests = null;
         NewChatWindow.AccountDirectoryExistsForTests = null;
+        NewChatWindow.ReopenRowsForTests = null;
+        NewChatWindow.NowForTests = null;
     }
 
     private static void FreshSettings()
@@ -76,7 +79,13 @@ public class NewChatWindowHeightTests : IDisposable
     {
         Flush();
         var content = (Control)window.Content!;
+        // The whole tree, not only the root: a window that is never shown is
+        // not attached to a layout root, so invalidating a control that has
+        // just become visible does not reach its parents and a cached
+        // zero-size measure would stand. CB-329's Open existing pane, built
+        // hidden and measured before it was shown, was exactly that.
         content.InvalidateMeasure();
+        foreach (var child in content.GetLogicalDescendants().OfType<Layoutable>()) child.InvalidateMeasure();
         content.Measure(new Size(420, double.PositiveInfinity));
         return content.DesiredSize.Height;
     }
@@ -318,7 +327,7 @@ public class NewChatWindowHeightTests : IDisposable
         var window = EverythingAvailable();
         Flush();
 
-        foreach (var ghost in new[] { window.AccountGhost, window.FolderGhost, window.AgentGhost })
+        foreach (var ghost in new[] { window.AccountGhost, window.FolderGhost, window.AgentGhost, window.ExistingGhost })
         {
             Assert.Equal(0, ghost.Opacity);
             Assert.False(ghost.IsHitTestVisible);
@@ -426,5 +435,140 @@ public class NewChatWindowHeightTests : IDisposable
         Assert.False(window.FolderGhost.IsVisible);
         Assert.True(window.AgentGhost.IsVisible);
         Assert.True(window.OpenClawSelected);
+    }
+
+    // --- CB-329: Open existing --------------------------------------------
+
+    private static OpenClawReopenRow Row(string key, string title) =>
+        new(OpenClawReopenTarget.Session, "openclaw:" + key, title, title, SessionKind.Direct,
+            OpenClawNativeKind.None, false, new[] { "id-1" }, new[] { key }, DateTime.UtcNow.AddHours(-2));
+
+    private static void OpenExisting(NewChatWindow window)
+    {
+        Select(window, NewChatWindow.OpenClawTag);
+        window.OpenExistingRadio.IsChecked = true;
+        Flush();
+    }
+
+    // The ceiling the PM set: a work area as short as 720 px must hold the
+    // dialog. Measured here as the content height SizeToContent follows, in
+    // the three configurations that reserve the most: everything on, every
+    // extra account missing a directory (the CB-203 warning lines reserved),
+    // and ReplyDisabled (the mode reason line reserved). If this fails, shrink
+    // NewChatWindow.ExistingListHeight; do not raise the bound.
+    // Before CB-329 the same windows measured 378 and 429 (develop d8b3aa48).
+    [AvaloniaTheory]
+    [InlineData("everything")]
+    [InlineData("missing-homes")]
+    [InlineData("reply-disabled")]
+    public void WithAGatewayTheDialogFitsA720WorkArea(string configuration)
+    {
+        var window = configuration == "missing-homes" ? EverythingAvailableWithMissingHomes() : EverythingAvailable();
+        if (configuration == "reply-disabled")
+        {
+            NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.ReplyDisabled;
+            window = NewWindow();
+        }
+
+        var height = ContentHeight(window);
+
+        Assert.True(window.ExistingGhost.IsVisible);
+        Assert.True(height > 400, $"content measured {height}");
+        Assert.True(height <= 700, $"content measured {height}, over the 700 dip bound");
+    }
+
+    [AvaloniaFact]
+    public void TheHeightHoldsAcrossEveryModeAndListState()
+    {
+        var window = EverythingAvailable();
+        var opened = ContentHeight(window);
+        var rows = (IReadOnlyList<OpenClawReopenRow>?)null;
+        NewChatWindow.ReopenRowsForTests = () => rows;
+
+        var states = new IReadOnlyList<OpenClawReopenRow>?[]
+        {
+            null,                                   // Loading
+            Array.Empty<OpenClawReopenRow>(),       // No conversations
+            new[] { Row("a", "One"), Row("b", "Two"), Row("c", "Three"), Row("d", "Four"),
+                    Row("e", "Five"), Row("f", "Six"), Row("g", "Seven") },   // more than fit
+            new[] { Row("a", "One") }
+        };
+
+        foreach (var state in states)
+        {
+            rows = state;
+            OpenExisting(window);
+            Assert.Equal(opened, ContentHeight(window));
+
+            // Narrowing to nothing swaps the list for the empty text.
+            window.ExistingSearch.Text = "zzz-nothing";
+            Flush();
+            Assert.Equal(opened, ContentHeight(window));
+            window.ExistingSearch.Text = "";
+
+            window.NewConversationRadio.IsChecked = true;
+            Flush();
+            Assert.Equal(opened, ContentHeight(window));
+
+            Select(window, NewChatCli.Codex);
+            Assert.Equal(opened, ContentHeight(window));
+        }
+    }
+
+    [AvaloniaFact]
+    public void TheExistingGhostMeasuresLikeTheOpenExistingSection()
+    {
+        var window = EverythingAvailable();
+        NewChatWindow.ReopenRowsForTests = () => new[] { Row("a", "One") };
+
+        Select(window, NewChatWindow.OpenClawTag);
+        ContentHeight(window);
+        Assert.Equal(window.AgentSection.DesiredSize.Height, window.AgentGhost.DesiredSize.Height);
+
+        OpenExisting(window);
+        ContentHeight(window);
+        Assert.Equal(window.AgentSection.DesiredSize.Height, window.ExistingGhost.DesiredSize.Height);
+    }
+
+    // ReplyDisabled's one extra line is reserved by the ghosts too, so the
+    // section shown still measures like the ghost that stands in for it.
+    [AvaloniaFact]
+    public void TheReplyDisabledReasonLineIsReservedInBothGhosts()
+    {
+        var window = EverythingAvailable();
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.ReplyDisabled;
+        NewChatWindow.ReopenRowsForTests = () => new[] { Row("a", "One") };
+        window = NewWindow();
+
+        Select(window, NewChatWindow.OpenClawTag);
+        ContentHeight(window);
+        Assert.True(window.ModeReason.IsVisible);
+        Assert.Equal(window.AgentSection.DesiredSize.Height, window.ExistingGhost.DesiredSize.Height);
+        Assert.True(window.AgentSection.DesiredSize.Height >= window.AgentGhost.DesiredSize.Height);
+    }
+
+    // No gateway: nothing is reserved for a pane that can never appear, so
+    // the dialog is as tall as the same dialog with the OpenClaw ghosts
+    // switched off — which is how it read before CB-329 (378 on develop
+    // d8b3aa48 in this configuration) — plus the one thing NoGateway always
+    // added: the reason line under the disabled OpenClaw row and its spacing.
+    [AvaloniaFact]
+    public void NoGatewayReservesNothingForTheExistingPane()
+    {
+        var withGateway = EverythingAvailable();
+        withGateway.AgentGhost.IsVisible = false;
+        withGateway.ExistingGhost.IsVisible = false;
+        var expected = ContentHeight(withGateway);
+
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
+        var window = NewWindow();
+
+        Assert.False(window.ExistingGhost.IsVisible);
+        Assert.False(window.AgentGhost.IsVisible);
+        var reason = window.ReasonTextFor(NewChatWindow.OpenClawTag)!;
+        var actual = ContentHeight(window);
+        // 6 is _cliList's Spacing, between the OpenClaw row and its reason.
+        Assert.Equal(expected + 6 + reason.DesiredSize.Height, actual);
+        Assert.True(actual < ContentHeight(EverythingAvailable()));
     }
 }

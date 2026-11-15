@@ -295,7 +295,7 @@ public class NewChatWindowScreenshots : IDisposable
     // actually has. The row itself (greyed, unselectable) is what this
     // captures; the reason text is a tooltip, which only a real hover shows
     // and which NewChatWindowTests already asserts directly
-    // (TheOpenClawRowIsDisabledWithItsReasonWhenNotReady) — a static capture
+    // (TheOpenClawRowIsDisabledWithItsReasonWhenThereIsNoGateway) — a static capture
     // can't demonstrate a hover state any more usefully than describing it.
     [AvaloniaFact]
     public void OpenClawRowDisabledWithReason()
@@ -304,12 +304,107 @@ public class NewChatWindowScreenshots : IDisposable
         {
             Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
         };
-        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.ReplyDisabled;
+        // NoGateway since CB-329: that is the one state that still disables the
+        // row. ReplyDisabled keeps it live for Open existing, and has its own
+        // capture below.
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
         NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>();
 
         var window = NewWindow();
 
         ScreenshotHelper.Capture(window, "new-chat-window-openclaw-disabled.png");
+    }
+
+    // --- CB-329: Open existing ------------------------------------------
+
+    // A fixed clock so "2 h ago" reads the same in every capture, and rows
+    // anchored to it. Three shapes, one of each the picker has to tell apart:
+    // a DM, a channel room (two agents wearing one row) and an agent's Main.
+    private static readonly DateTime Now = new(2026, 11, 14, 12, 0, 0, DateTimeKind.Utc);
+
+    private static OpenClawReopenRow[] PickerRows() => new[]
+    {
+        new OpenClawReopenRow(OpenClawReopenTarget.Session, "openclaw:agent:aurora:discord:direct:1",
+            "wtvamp", "wtvamp", SessionKind.Direct, OpenClawNativeKind.None, false,
+            new[] { "aurora" }, new[] { "agent:aurora:discord:direct:1" }, Now.AddHours(-2)),
+        new OpenClawReopenRow(OpenClawReopenTarget.Room, "openclaw:room:discord:900",
+            "#general", "#general", SessionKind.Channel, OpenClawNativeKind.None, false,
+            new[] { "aurora", "nova" },
+            new[] { "agent:aurora:discord:channel:900", "agent:nova:discord:channel:900" }, Now.AddHours(-24)),
+        new OpenClawReopenRow(OpenClawReopenTarget.Session, "openclaw:agent:nova:main",
+            "Nova", "Nova", SessionKind.Main, OpenClawNativeKind.None, false,
+            new[] { "nova" }, new[] { "agent:nova:main" }, Now.AddDays(-3))
+    };
+
+    private static NewChatWindow OpenExistingWindow(
+        OpenClawNewChatAvailability availability, Func<IReadOnlyList<OpenClawReopenRow>?> rows)
+    {
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
+        };
+        NewChatWindow.OpenClawAvailabilityForTests = () => availability;
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>();
+        NewChatWindow.KnownAgentsForTests = () => new[] { ("aurora", "Aurora"), ("nova", "Nova") };
+        NewChatWindow.NowForTests = () => Now;
+        NewChatWindow.ReopenRowsForTests = rows;
+
+        var window = NewWindow();
+        window.CliList.Children.OfType<RadioButton>()
+            .Single(r => Equals(r.Tag, NewChatWindow.OpenClawTag)).IsChecked = true;
+        window.OpenExistingRadio.IsChecked = true;
+        return window;
+    }
+
+    // The picker with a DM, a channel room and a Main row, and the first row
+    // chosen so the selection colour is on the capture too.
+    [AvaloniaFact]
+    public void NewChatOpenExistingPicker()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, PickerRows);
+        window.ExistingList.SelectedIndex = 0;
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing.png");
+
+        Assert.True(window.ExistingList.IsVisible);
+        Assert.Equal(3, window.ExistingList.ItemCount);
+    }
+
+    // Before the first poll has completed: "Loading conversations…", not
+    // "No conversations".
+    [AvaloniaFact]
+    public void NewChatOpenExistingLoading()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, () => null);
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-loading.png");
+
+        Assert.Equal("Loading conversations…", window.ExistingEmpty.Text);
+    }
+
+    // A completed poll that listed nothing.
+    [AvaloniaFact]
+    public void NewChatOpenExistingEmpty()
+    {
+        var window = OpenExistingWindow(
+            OpenClawNewChatAvailability.Ready, () => Array.Empty<OpenClawReopenRow>());
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-empty.png");
+
+        Assert.Equal("No conversations", window.ExistingEmpty.Text);
+    }
+
+    // The reply switch off: Open existing is the one live mode, with the
+    // reason sitting under the disabled "New conversation".
+    [AvaloniaFact]
+    public void NewChatOpenExistingReplyDisabled()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.ReplyDisabled, PickerRows);
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-reply-off.png");
+
+        Assert.False(window.NewConversationRadio.IsEnabled);
+        Assert.True(window.OpenExistingRadio.IsChecked);
     }
 
     private static void ClearSeams()
@@ -323,5 +418,8 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.StartOpenClawConversationForTests = null;
         NewChatWindow.OrbForTests = null;
         NewChatWindow.AccountDirectoryExistsForTests = null;
+        NewChatWindow.ReopenRowsForTests = null;
+        NewChatWindow.ReopenOpenClawForTests = null;
+        NewChatWindow.NowForTests = null;
     }
 }

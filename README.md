@@ -1062,6 +1062,8 @@ from real captures.
 
 Start a fresh conversation without opening a terminal by hand first, from the tray's **New chat…** item or an orb's right-click menu.
 
+The **OpenClaw** row has two modes. **New conversation** starts a fresh session with the agent you pick, as before. **Open existing** lists every conversation your gateway has — including ones whose orb has aged out or been hidden — with the agent, a DM / Channel / Main badge and roughly when it was last active, filterable by agent and searchable; choose one (double-click, Enter, or **Open**) and its orb comes back with the chat panel open on its history. A channel several agents share opens as one room. Reopening counts as fresh activity for the usual "Keep orbs for" window only, so the orb ages out again afterwards; it does not pin the conversation or change any setting, apart from un-hiding an orb you had hidden. With "Allow replying to agents" off, only Open existing is available and the panel stays read-only. The list is whatever the last 5-second poll saw, so it shows at most the 100 conversations the gateway returns by default.
+
 An orb's context menu offers **New chat here**, shown for a local CLI's orb (Claude Code, Codex or Grok) or an OpenClaw orb, and opens the dialog already pointed at that orb's own conversation: a local CLI's orb pre-fills its CLI and folder, and an OpenClaw orb pre-fills the OpenClaw row with that orb's own agent already selected in the picker. It's hidden for anything else — a remote-control orb's session lives on another machine, so there's nothing local or gateway-side to relaunch it from here.
 
 The dialog lists four entries: Claude Code, Codex, Grok, and OpenClaw.
