@@ -119,7 +119,7 @@ if (args.Contains("--prompt-desktop"))
     pd.PushAcked += (phone, id, at) => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} push-ack {id} from {phone} at_ms={at}");
     // Say every connection change: a probe that goes quiet after the relay
     // closed its socket must show whether it reconnected.
-    pd.StateChanged += () => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} relay {pd.State}{(pd.LastError is { } le ? " (" + le + ")" : "")}");
+    pd.StateChanged += state => Console.WriteLine($"{DateTimeOffset.UtcNow:HH:mm:ss.fff} relay {state}{(pd.LastError is { } le ? " (" + le + ")" : "")}");
     pd.Start();
     while (pd.State != RelayClient.Status.Connected) await Task.Delay(50);
     var pdOffer = await pd.BeginPairingAsync();

@@ -38,11 +38,17 @@ public class RelayClientTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (_client is not null) await _client.StopAsync();
-        _client?.Dispose();
-        await _stub.DisposeAsync();
+        try { if (_client is not null) await StopBounded(_client); }   // bounded: a hang here names itself (CB-337)
+        finally
+        {
+            _client?.Dispose();
+            await _stub.DisposeAsync();
+        }
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
+
+    internal static Task StopBounded(RelayClient client) =>
+        RelayStub.Bounded("RelayClient.StopAsync", TimeSpan.FromSeconds(10), ct => client.StopAsync().WaitAsync(ct));
 
     private RelayIdentity Identity() => new(_dir, _store);
 
@@ -100,7 +106,12 @@ public class RelayClientTests : IAsyncLifetime
         var identity = Identity();
         var client = Client(identity);
         var states = new List<RelayClient.Status>();
-        client.StateChanged += () => { lock (states) states.Add(client.State); };
+        // The pump is held behind this gate for the first state, so the list
+        // can only be read correctly after the pump has delivered all three:
+        // the assert below waits for that rather than for State.
+        using var gate = new ManualResetEventSlim();
+        client.StateChanged += _ => gate.Wait(TimeSpan.FromSeconds(10));
+        client.StateChanged += s => { lock (states) states.Add(s); };
         client.Start();
         client.Start();                                            // idempotent
 
@@ -108,7 +119,13 @@ public class RelayClientTests : IAsyncLifetime
         Assert.Equal(("token-1", "dsk_stub000000000001", "mac", "9.9.9", 2),
             (hello.GetProperty("token").GetString(), hello.GetProperty("device_id").GetString(),
              hello.GetProperty("platform").GetString(), hello.GetProperty("app_version").GetString(), hello.GetProperty("proto").GetInt32()));
+        // The welcome is applied on the pump too, so with the pump held the
+        // client cannot reach Connected: the hello having arrived shows the
+        // client is past Registering while nothing has been recorded.
+        try { lock (states) Assert.Empty(states); }                // the pump is behind, by construction
+        finally { gate.Set(); }
         await Until(() => client.State == RelayClient.Status.Connected);
+        await Until(() => { lock (states) return states.Count >= 3; });
         Assert.Equal(Hex(identity.Keys().Identity.Public), _stub.LastIdPub);
         Assert.Equal("dsk_stub000000000001", identity.DeviceId);
         lock (states) Assert.Equal([RelayClient.Status.Registering, RelayClient.Status.Connecting, RelayClient.Status.Connected], states);
@@ -870,13 +887,23 @@ public class RelayClientTests : IAsyncLifetime
         await _stub.NextT("hello");
         await Until(() => client.State == RelayClient.Status.Connected);
 
+        // Events run on the client's own pump, never on the read loop, so
+        // IsOnline can be true before PhonesChanged has run. Hold the pump
+        // behind a gate so that ordering is the one this test always sees.
+        using var gate = new ManualResetEventSlim();
+        client.PhonesChanged += () => gate.Wait(TimeSpan.FromSeconds(10));
         var changed = 0;
         client.PhonesChanged += () => Interlocked.Increment(ref changed);
-        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1794111792 }));
-        var roster = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
-        Assert.Equal(("roster", "s1"), (roster.GetProperty("t").GetString(), roster.GetProperty("sessions")[0].GetProperty("session_id").GetString()));
-        await Until(() => client.IsOnline(phone.Id));
-        Assert.True(changed > 0);
+        try
+        {
+            await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1794111792 }));
+            var roster = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
+            Assert.Equal(("roster", "s1"), (roster.GetProperty("t").GetString(), roster.GetProperty("sessions")[0].GetProperty("session_id").GetString()));
+            await Until(() => client.IsOnline(phone.Id));
+            Assert.Equal(0, Volatile.Read(ref changed));          // the pump is behind, by construction
+        }
+        finally { gate.Set(); }
+        await Until(() => Volatile.Read(ref changed) > 0);
 
         client.OnScanned([new RelaySession("s1", "claude", "proj", "/c", "generating", null, null)]);
         var delta = OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity);
@@ -1006,7 +1033,7 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => _client.State == RelayClient.Status.Connected);
         _client.Remove(phone.Id);
         await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        await _client.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await StopBounded(_client);
         Assert.Equal([phone.Id], identity.PendingUnlinks);                               // still owed, for the next run
     }
 
@@ -1089,6 +1116,120 @@ public class RelayClientTests : IAsyncLifetime
         await Until(() => notes.Contains("resync for ph_nobody ignored: not an online paired phone (not paired)"));
     }
 
+    // CB-337 (R4): the next hang has to fail naming the await it was stuck in.
+    [Fact]
+    public async Task A_bounded_await_that_never_completes_fails_naming_itself()
+    {
+        var ex = await Assert.ThrowsAsync<TimeoutException>(() =>
+            RelayStub.Bounded("a stuck thing", TimeSpan.FromMilliseconds(100), ct => Task.Delay(Timeout.Infinite, ct)));
+        Assert.Contains("a stuck thing", ex.Message);
+        await RelayStub.Bounded("a quick thing", TimeSpan.FromSeconds(10), _ => Task.CompletedTask);   // control: an await that completes is untouched
+    }
+
+    // CB-337 (R4): a reply stuck inside a session used to end that session in
+    // Handle's catch, and the test failed later at a bare timeout that never
+    // mentioned the stub. It is now recorded and rethrown, named, on dispose.
+    [Fact]
+    public async Task A_reply_stuck_inside_a_session_surfaces_naming_the_await()
+    {
+        await using var stub = new RelayStub { IoDeadline = TimeSpan.FromMilliseconds(200) };
+        stub.BeforeReply = ct => Task.Delay(Timeout.Infinite, ct);
+        lock (stub.ValidTokens) stub.ValidTokens.Add("tok");
+        using var bare = new ClientWebSocket();
+        await bare.ConnectAsync(new Uri($"ws://127.0.0.1:{stub.Base.Port}/v1/socket"), CancellationToken.None);
+        await bare.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","token":"tok"}"""), WebSocketMessageType.Text, true, CancellationToken.None);
+        await Until(() => !stub.Faults.IsEmpty);
+        var ex = await Assert.ThrowsAsync<TimeoutException>(async () => await stub.DisposeAsync());
+        Assert.Contains("reply welcome", ex.Message);
+    }
+
+    // CB-337: pins the event's signature. A handler that runs late is handed
+    // the state that was raised, not whatever State has become by then. The
+    // welcome is applied on the event pump itself, so only changes made by the
+    // run loop can overtake a held pump; a refused token makes it change State
+    // twice more (Registering, then Connecting again) while the first event is
+    // still being held, so a handler that read State late would see Connecting
+    // for all of them.
+    [Fact]
+    public async Task StateChanged_carries_the_state_that_was_raised_even_when_the_pump_is_behind()
+    {
+        var identity = Identity();
+        identity.Keys();
+        identity.SetRegistration("dsk_stub000000000001", "stale");   // refused, re-registered, reconnected
+        var client = Client(identity);
+        var states = new List<RelayClient.Status>();
+        using var gate = new ManualResetEventSlim();
+        client.StateChanged += _ => gate.Wait(TimeSpan.FromSeconds(10));
+        client.StateChanged += s => { lock (states) states.Add(s); };
+        try
+        {
+            client.Start();
+            Assert.Equal("stale", (await _stub.NextT("hello")).GetProperty("token").GetString());
+            Assert.Equal("token-1", (await _stub.NextT("hello")).GetProperty("token").GetString());   // Connecting again; Registering still queued
+            lock (states) Assert.Empty(states);
+        }
+        finally { gate.Set(); }
+        await Until(() => { lock (states) return states.Count >= 4; });
+        lock (states) Assert.Equal(
+            [RelayClient.Status.Connecting, RelayClient.Status.Registering, RelayClient.Status.Connecting, RelayClient.Status.Connected], states);
+    }
+
+    // CB-337: a socket accepted while the desktop's hello is in flight used to
+    // take the desktop's welcome, because the stub answered on its newest
+    // socket instead of the one the hello came in on.
+    [Fact]
+    public async Task A_second_socket_that_never_says_hello_does_not_take_the_welcome()
+    {
+        var release = new TaskCompletionSource();
+        var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
+        {
+            PingInterval = TimeSpan.FromMinutes(5), Silence = TimeSpan.FromMinutes(5),
+            MinBackoff = TimeSpan.FromMilliseconds(20), MaxBackoff = TimeSpan.FromMilliseconds(100),
+        };
+        _client = new RelayClient(Identity(), options, new HeldHello(new WebSocketRelayTransport(), release.Task));
+        _client.Start();
+        // Open for the whole test: closing it early would clear the old stub's
+        // idea of the newest socket and hide the bug this pins.
+        using var other = new ClientWebSocket();
+        try
+        {
+            await Until(() => Volatile.Read(ref _stub.Connections) == 1);   // the desktop's socket, its hello held back
+            await other.ConnectAsync(new Uri($"ws://127.0.0.1:{_stub.Base.Port}/v1/socket"), CancellationToken.None);
+            await Until(() => Volatile.Read(ref _stub.Connections) == 2);   // a second socket, newest now
+        }
+        finally { release.TrySetResult(); }
+        await _stub.NextT("hello");
+        await Until(() => _client.State == RelayClient.Status.Connected);
+    }
+
+    // CB-337: frames a test sends go to the desktop that said hello, however
+    // many sockets have been accepted since.
+    [Fact]
+    public async Task Frames_the_test_sends_go_to_the_desktop_that_said_hello()
+    {
+        var client = Client(Identity());
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        using var other = new ClientWebSocket();
+        await other.ConnectAsync(new Uri($"ws://127.0.0.1:{_stub.Base.Port}/v1/socket"), CancellationToken.None);
+        await Until(() => Volatile.Read(ref _stub.Connections) == 2);
+        await _stub.Send("""{"t":"ping"}""");
+        await _stub.NextT("pong");
+    }
+
+    private sealed class HeldHello(IRelayTransport inner, Task release) : IRelayTransport
+    {
+        public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token) => new Held(await inner.ConnectAsync(uri, token), release);
+
+        private sealed class Held(IRelaySocket inner, Task release) : IRelaySocket
+        {
+            public async Task SendAsync(string frame, CancellationToken token) { await release.WaitAsync(token); await inner.SendAsync(frame, token); }
+            public Task<string?> ReceiveAsync(CancellationToken token) => inner.ReceiveAsync(token);
+            public ValueTask DisposeAsync() => inner.DisposeAsync();
+        }
+    }
+
     [Fact]
     public async Task A_handler_that_throws_does_not_end_later_events()
     {
@@ -1097,7 +1238,7 @@ public class RelayClientTests : IAsyncLifetime
         // One handler that throws on its first call and counts after that:
         // the pump has to survive the throw for the later calls to happen.
         var calls = 0;
-        client.StateChanged += () =>
+        client.StateChanged += _ =>
         {
             if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("a handler bug");
         };
@@ -1363,7 +1504,7 @@ public class RelayClientHttpTests : IDisposable
         client.Start();
         await backingOff.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("unreachable in this test", client.LastError);
-        await client.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await RelayClientTests.StopBounded(client);
         Assert.Equal(RelayClient.Status.Off, client.State);
         client.Dispose();
     }
