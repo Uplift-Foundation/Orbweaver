@@ -147,9 +147,7 @@ namespace Orbweaver
                 // Not on a line that starts something else: "# a | b" over a
                 // delimiter row is a heading, and a bullet or a quote likewise.
                 if (HasUnescapedPipe(trimmed)
-                    && Heading(trimmed) is null
-                    && ListItem(line) is null
-                    && !trimmed.StartsWith("> ", StringComparison.Ordinal)
+                    && !StartsOtherBlock(lines[i])
                     && i + 1 < lines.Length
                     && IsDelimiterRow(lines[i + 1].Trim())
                     && CellCount(trimmed) == CellCount(lines[i + 1].Trim()))
@@ -159,7 +157,9 @@ namespace Orbweaver
                     var rows = new List<string> { trimmed.TrimEnd(), lines[i + 1].Trim() };
                     i += 2;
 
-                    while (i < lines.Length && HasUnescapedPipe(lines[i]))
+                    // A body row that starts a heading, list item or quote
+                    // ends the table too, with no blank line needed.
+                    while (i < lines.Length && HasUnescapedPipe(lines[i]) && !StartsOtherBlock(lines[i]))
                         rows.Add(lines[i++].Trim());
 
                     i--;
@@ -211,6 +211,11 @@ namespace Orbweaver
             FlushParagraph();
             return blocks;
         }
+
+        private static bool StartsOtherBlock(string line) =>
+            Heading(line.TrimStart()) is not null
+            || ListItem(line) is not null
+            || line.TrimStart().StartsWith("> ", StringComparison.Ordinal);
 
         // A line a box-drawn table is made of: it starts with a glyph from the
         // Box Drawing block. A line that starts with a horizontal-only glyph is

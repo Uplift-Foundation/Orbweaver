@@ -3,7 +3,7 @@ namespace Orbweaver.Tests;
 // Real table output, for the CB-289 tests, copied byte for byte.
 //
 // BoxUpdateStatus is the seven lines of `openclaw update status`, as they sit
-// in a Claude Code tool result under ~/.claude/projects/*/-.openclaw on the
+// in a Claude Code project transcript for ~/.openclaw (a tool result) on the
 // Mac mini: 120 columns wide, with a U+00B7 in a cell. BoxTruncated is rows of
 // a real `openclaw status` table that was cut off with no bottom border (rows
 // that carry an address, hostname or pid are left out; every row kept is

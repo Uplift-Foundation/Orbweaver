@@ -3730,13 +3730,13 @@ namespace Orbweaver
             Hide();
         }
 
-        // The row's own view. Exists so the template can bind colour, shape and
-        // alignment per role without the transport's ChatTurn knowing what a
-        // brush is — and so the three roles share one template instead of three.
         // The one source for the chat's monospace stack, so a test can
         // measure the family the panel actually draws with.
         internal static FontFamily MonoFamily => TurnView.Mono;
 
+        // The row's own view. Exists so the template can bind colour, shape and
+        // alignment per role without the transport's ChatTurn knowing what a
+        // brush is — and so the three roles share one template instead of three.
         private sealed class TurnView : System.ComponentModel.INotifyPropertyChanged
         {
             private readonly ChatTurn _turn;

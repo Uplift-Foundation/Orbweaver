@@ -332,4 +332,21 @@ public class ChatMarkdownTableTests
         Assert.Equal(ChatMarkdown.MdKind.Quote, blocks[0].Kind);
         Assert.DoesNotContain(blocks, b => b.Kind == ChatMarkdown.MdKind.Table);
     }
+
+    // A table that runs straight into a line starting another block, with no
+    // blank line between, ends there instead of eating it.
+    [Theory]
+    [InlineData("- note | x", ChatMarkdown.MdKind.Bullet)]
+    [InlineData("# a | b", ChatMarkdown.MdKind.Heading)]
+    [InlineData("> a | b", ChatMarkdown.MdKind.Quote)]
+    [InlineData("1. a | b", ChatMarkdown.MdKind.Ordered)]
+    public void APipelessTableStopsAtALineThatStartsAnotherBlock(string next, ChatMarkdown.MdKind kind)
+    {
+        var blocks = Blocks("foo | bar\n--- | ---\nbaz | bim\n" + next);
+
+        Assert.Equal(2, blocks.Length);
+        Assert.Equal(ChatMarkdown.MdKind.Table, blocks[0].Kind);
+        Assert.Equal("foo | bar\n--- | ---\nbaz | bim", blocks[0].Text);
+        Assert.Equal(kind, blocks[1].Kind);
+    }
 }
