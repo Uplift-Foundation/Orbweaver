@@ -45,6 +45,7 @@ public class NewChatWindowHeightTests : IDisposable
         NewChatWindow.AccountDirectoryExistsForTests = null;
         NewChatWindow.ReopenRowsForTests = null;
         NewChatWindow.NowForTests = null;
+        NewChatWindow.LastConnectFailureForTests = null;
     }
 
     private static void FreshSettings()
@@ -513,6 +514,31 @@ public class NewChatWindowHeightTests : IDisposable
             Select(window, NewChatCli.Codex);
             Assert.Equal(opened, ContentHeight(window));
         }
+    }
+
+    // The unreachable state, with a failure long enough to want more than
+    // three lines, holds the height too: the detail is trimmed inside the
+    // list's fixed cell, not grown.
+    [AvaloniaFact]
+    public void TheHeightHoldsWhenTheGatewayIsUnreachable()
+    {
+        var window = EverythingAvailable();
+        var opened = ContentHeight(window);
+        var start = new DateTime(2026, 11, 14, 12, 0, 0, DateTimeKind.Utc);
+        var now = start;
+        NewChatWindow.NowForTests = () => now;
+        NewChatWindow.ReopenRowsForTests = () => null;
+        NewChatWindow.LastConnectFailureForTests = () => string.Join(" ",
+            Enumerable.Repeat("Couldn't connect to the gateway at the address in Settings; check Local Network access.", 6));
+        OpenExisting(window);
+
+        now = start.AddSeconds(21);
+        window.OnReopenLoadTick(null, EventArgs.Empty);
+
+        Assert.True(window.ExistingEmptyDetail.IsVisible);
+        Assert.Equal(opened, ContentHeight(window));
+        NewChatWindow.NowForTests = null;
+        NewChatWindow.LastConnectFailureForTests = null;
     }
 
     [AvaloniaFact]

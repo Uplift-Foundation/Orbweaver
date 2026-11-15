@@ -394,6 +394,22 @@ public class NewChatWindowScreenshots : IDisposable
         Assert.Equal("No conversations", window.ExistingEmpty.Text);
     }
 
+    // The gateway never answered inside the budget: the headline and the
+    // known failure, in the list's own cell.
+    [AvaloniaFact]
+    public void NewChatOpenExistingUnreachable()
+    {
+        var now = Now;
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, () => null);
+        NewChatWindow.NowForTests = () => now.AddSeconds(30);
+        NewChatWindow.LastConnectFailureForTests = () => null;
+        window.OnReopenLoadTick(null, EventArgs.Empty);
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-unreachable.png");
+
+        Assert.Equal("Can't reach the OpenClaw gateway", window.ExistingEmpty.Text);
+    }
+
     // The reply switch off: Open existing is the one live mode, with the
     // reason sitting under the disabled "New conversation".
     [AvaloniaFact]
@@ -421,5 +437,6 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.ReopenRowsForTests = null;
         NewChatWindow.ReopenOpenClawForTests = null;
         NewChatWindow.NowForTests = null;
+        NewChatWindow.LastConnectFailureForTests = null;
     }
 }

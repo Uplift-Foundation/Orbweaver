@@ -150,6 +150,14 @@ namespace Orbweaver
         internal static Func<OpenClawReopenRow, IRemoteChatSession?>? ReopenOpenClawForTests;
         internal static Func<DateTime>? NowForTests;
 
+        // The last connect failure the gateway reported, for the detail line
+        // under "Can't reach the OpenClaw gateway".
+        internal static Func<string?>? LastConnectFailureForTests;
+
+        // How long the picker waits for a first poll before it says the
+        // gateway is unreachable. It keeps polling afterwards.
+        internal static readonly TimeSpan ReopenLoadBudget = TimeSpan.FromSeconds(20);
+
         private static IReadOnlyDictionary<string, SessionStatus> CurrentStatuses() =>
             CurrentStatusesForTests?.Invoke()
             ?? SessionManager.Instance?.AllStatuses
@@ -267,9 +275,26 @@ namespace Orbweaver
         private readonly TextBlock _existingEmpty = new()
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
             Opacity = 0.7
         };
+        // Under the unreachable headline: the known connect failure, or where
+        // to look. Three lines at most, full text in the ToolTip, inside the
+        // list's fixed-height cell so the window height does not move.
+        private readonly TextBlock _existingEmptyDetail = new()
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 3,
+            FontSize = 11,
+            Opacity = 0.7,
+            Margin = new Avalonia.Thickness(16, 6, 16, 0),
+            IsVisible = false
+        };
+        private readonly StackPanel _existingEmptyBox = new() { VerticalAlignment = VerticalAlignment.Center };
+        private bool _reopenTimedOut;
+        private DateTime _reopenLoadStartedUtc;
         private bool _existingMode;
         private bool _canStartNew;
         private IReadOnlyList<OpenClawReopenRow>? _reopenRows;
@@ -538,6 +563,7 @@ namespace Orbweaver
         internal ComboBox ExistingAgentFilter => _existingAgentFilter;
         internal TextBox ExistingSearch => _existingSearch;
         internal TextBlock ExistingEmpty => _existingEmpty;
+        internal TextBlock ExistingEmptyDetail => _existingEmptyDetail;
         internal bool OpenExistingSelected => _existingMode;
         internal bool ReopenLoadTimerRunning => _reopenLoadTimer?.IsEnabled == true;
         internal StackPanel CliList => _cliList;
@@ -884,8 +910,10 @@ namespace Orbweaver
 
         private void UpdateModeVisibility()
         {
-            _newPane.IsVisible = !_existingMode;
-            _existingPane.IsVisible = _existingMode;
+            // Follows the CLI too: with a local CLI chosen neither pane is on
+            // screen, whatever mode OpenClaw was last left in.
+            _newPane.IsVisible = _openClawSelected && !_existingMode;
+            _existingPane.IsVisible = _openClawSelected && _existingMode;
             _startButton.Content = _openClawSelected && _existingMode ? "Open" : "Start";
             if (!_openClawSelected) _reopenLoadTimer?.Stop();
         }
@@ -909,6 +937,8 @@ namespace Orbweaver
         {
             _reopenLoadTimer?.Stop();
             _reopenRows = CurrentReopenRows();
+            _reopenTimedOut = false;
+            _reopenLoadStartedUtc = ReopenNow();
             BuildExistingFilter();
             RefreshExistingList();
 
@@ -927,9 +957,21 @@ namespace Orbweaver
         internal void OnReopenLoadTick(object? sender, EventArgs e)
         {
             var rows = CurrentReopenRows();
-            if (rows is null) return;
+            if (rows is null)
+            {
+                // Give up *saying* Loading after the budget, not polling: the
+                // gateway may come up later and the list then replaces this.
+                if (!_reopenTimedOut && ReopenNow() - _reopenLoadStartedUtc >= ReopenLoadBudget)
+                {
+                    _reopenTimedOut = true;
+                    RefreshExistingList();
+                }
+
+                return;
+            }
 
             _reopenLoadTimer?.Stop();
+            _reopenTimedOut = false;
             _reopenRows = rows;
             BuildExistingFilter();
             RefreshExistingList();
@@ -947,8 +989,10 @@ namespace Orbweaver
             _existingList.ItemTemplate = new FuncDataTemplate<OpenClawReopenRow>(
                 (row, _) => ExistingRowView(row));
             var box = new Grid { Height = ExistingListHeight };
+            _existingEmptyBox.Children.Add(_existingEmpty);
+            _existingEmptyBox.Children.Add(_existingEmptyDetail);
             box.Children.Add(_existingList);
-            box.Children.Add(_existingEmpty);
+            box.Children.Add(_existingEmptyBox);
             _existingPane.Children.Add(box);
 
             _existingAgentFilter.SelectionChanged += (_, _) => RefreshExistingList();
@@ -992,13 +1036,27 @@ namespace Orbweaver
         private void RefreshExistingList()
         {
             var shown = FilteredRows();
-            var text = OpenClawReopenList.EmptyText(_reopenRows is not null, _reopenRows?.Count ?? 0, shown.Count);
+            var loaded = _reopenRows is not null;
+            var text = OpenClawReopenList.EmptyText(
+                loaded, _reopenTimedOut, _reopenRows?.Count ?? 0, shown.Count);
+            var unreachable = !loaded && _reopenTimedOut;
 
             _existingList.ItemsSource = shown;
             _existingList.IsVisible = text is null;
             _existingEmpty.Text = text;
             _existingEmpty.IsVisible = text is not null;
+            _existingEmptyBox.IsVisible = text is not null;
+
+            var detail = unreachable
+                ? OpenClawReopenList.UnreachableDetail(
+                    LastConnectFailureForTests is { } seam ? seam() : OpenClawSessions.LastConnectFailure())
+                : null;
+            _existingEmptyDetail.Text = detail;
+            _existingEmptyDetail.IsVisible = detail is not null;
+            ToolTip.SetTip(_existingEmptyDetail, detail);
         }
+
+        private static DateTime ReopenNow() => (NowForTests ?? (() => DateTime.UtcNow))();
 
         private Control ExistingRowView(OpenClawReopenRow row)
         {
