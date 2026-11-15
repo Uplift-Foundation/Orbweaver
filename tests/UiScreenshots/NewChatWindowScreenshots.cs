@@ -2,6 +2,7 @@ using System.Linq;
 using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Xunit;
 
 namespace Orbweaver.Tests;
@@ -392,6 +393,41 @@ public class NewChatWindowScreenshots : IDisposable
         ScreenshotHelper.Capture(window, "new-chat-window-open-existing-empty.png");
 
         Assert.Equal("No conversations", window.ExistingEmpty.Text);
+    }
+
+    // Fluent's ListBoxItem drew rows about 54 dip tall on Windows, so the
+    // fixed-height list showed two and a half and the third row was cut off.
+    // This suite is the one that shows windows (the headless UiTests never
+    // apply control templates to a window that is not shown), and CI runs it
+    // on both rids, so each theme checks itself: every realized row is exactly
+    // ExistingRowHeight, and three rows fit without scrolling.
+    [AvaloniaFact]
+    public void EveryRealizedRowIsTheFixedHeightAndThreeFitWithoutScrolling()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, PickerRows);
+        window.Show();
+        ScreenshotHelper.Flush();
+
+        var items = window.ExistingList.GetVisualDescendants().OfType<ListBoxItem>().ToList();
+        Assert.Equal(3, items.Count);
+        Assert.All(items, i => Assert.Equal(NewChatWindow.ExistingRowHeight, i.Bounds.Height));
+
+        var scroll = window.ExistingList.GetVisualDescendants().OfType<ScrollViewer>().First();
+        Assert.True(scroll.Extent.Height <= scroll.Viewport.Height,
+            $"extent {scroll.Extent.Height} > viewport {scroll.Viewport.Height}");
+    }
+
+    // Control: with a fourth row the same list does scroll, so the check above can fail.
+    [AvaloniaFact]
+    public void AFourthRowScrollsTheList()
+    {
+        var four = PickerRows().Append(PickerRows()[0] with { OrbSessionId = "openclaw:agent:x:4", Title = "fourth" }).ToArray();
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, () => four);
+        window.Show();
+        ScreenshotHelper.Flush();
+
+        var scroll = window.ExistingList.GetVisualDescendants().OfType<ScrollViewer>().First();
+        Assert.True(scroll.Extent.Height > scroll.Viewport.Height);
     }
 
     // The gateway never answered inside the budget: the headline and the

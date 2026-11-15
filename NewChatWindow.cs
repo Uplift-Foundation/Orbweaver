@@ -2,11 +2,13 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Styling;
 using Avalonia.Threading;
 
 namespace Orbweaver
@@ -986,6 +988,21 @@ namespace Orbweaver
             filterRow.Children.Add(_existingSearch);
             _existingPane.Children.Add(filterRow);
 
+            // Every realized item is exactly ExistingRowHeight on both themes.
+            // Fluent's ListBoxItem brings its own padding and minimum height
+            // (about 54 dip on Windows), which ignores a height set on the row
+            // template, so the container itself is styled: no padding, a
+            // fixed height. The row template then fills it.
+            _existingList.Padding = new Avalonia.Thickness(0);
+            _existingList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
+            {
+                Setters =
+                {
+                    new Setter(Layoutable.MinHeightProperty, ExistingRowHeight),
+                    new Setter(Layoutable.HeightProperty, ExistingRowHeight),
+                    new Setter(TemplatedControl.PaddingProperty, new Avalonia.Thickness(8, 0))
+                }
+            });
             _existingList.ItemTemplate = new FuncDataTemplate<OpenClawReopenRow>(
                 (row, _) => ExistingRowView(row));
             var box = new Grid { Height = ExistingListHeight };
@@ -1113,7 +1130,7 @@ namespace Orbweaver
                 Margin = new Avalonia.Thickness(8, 0, 0, 0)
             };
 
-            var dock = new DockPanel { Height = ExistingRowHeight - 8 };
+            var dock = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(avatar, Dock.Left);
             avatar.Margin = new Avalonia.Thickness(0, 0, 8, 0);
             avatar.VerticalAlignment = VerticalAlignment.Center;
