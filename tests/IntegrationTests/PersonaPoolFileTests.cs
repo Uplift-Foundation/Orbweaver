@@ -68,6 +68,39 @@ public class PersonaPoolFileTests : IDisposable
             cwd);
 
     [Fact]
+    public void ASuffixedMembersOwnFileDoesNotBorrowTheBasePersonasVoice()
+    {
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno", "Juno", voice: "base-voice");
+        WriteProfile(pool, "juno-2", "Juno Two");
+        var p = Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-2");
+        Assert.Equal("Juno Two", p.Name);
+        Assert.Null(p.Voice);
+        Assert.Equal("base-voice", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-3").Voice);
+    }
+
+    [Theory]
+    [InlineData("juno-2x")]
+    [InlineData("juno-v2")]
+    [InlineData("juno-")]
+    public void ANonDigitSuffixIsNotARespawnAndGetsNoPersona(string agent)
+    {
+        var pool = Dir("pool");
+        WriteProfile(pool, "juno", "Juno");
+        Assert.True(Resolve(Dir("work"), Array.Empty<string>(), pool, agent).IsEmpty);
+    }
+
+    [Fact]
+    public void TheBasePersonasSlugInPersonaMdIsOfferedToARespawnedMemberButNotAVersion()
+    {
+        var pool = Dir("pool");
+        var dir = Dir("pool", "persona");
+        File.WriteAllText(Path.Combine(dir, "persona.md"), "---\nname: \"Juno\"\nslug: \"juno\"\n---\n");
+        Assert.Equal("Juno", Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-2").Name);
+        Assert.True(Resolve(Dir("work"), Array.Empty<string>(), pool, "juno-v2").IsEmpty);
+    }
+
+    [Fact]
     public void ATeamMemberIsFoundInTheSharedPoolFromAnyProject()
     {
         var pool = Dir("pool");
