@@ -27,7 +27,7 @@ public class PeerPreHelloTests
                 return Task.CompletedTask;
             },
             KnownPeer: knownPeer,
-            OwnCertificate: () => throw new InvalidOperationException("no socket in this test")));
+            OwnCertificate: _ => throw new InvalidOperationException("no socket in this test")));
 
     private static async Task<byte[]> BytesOf(params PeerProtocol.PeerMessage[] messages)
     {

@@ -40,7 +40,7 @@ public class PeerPreHelloLoopbackTests
                 return Task.CompletedTask;
             },
             KnownPeer: _ => null,                       // nobody is paired
-            OwnCertificate: () => serverCert));
+            OwnCertificate: _ => Task.FromResult(serverCert)));
 
         server.Listen(0);
 
