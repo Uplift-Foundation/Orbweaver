@@ -11,11 +11,20 @@ public class AutoGroupAccountsTests
     private static string Claude(string email) =>
         "{\"oauthAccount\":{\"emailAddress\":\"" + email + "\"}}";
 
+    // The code builds identity-file paths with Path.Combine, which is "\\" on Windows, so the
+    // fake disk matches paths with either separator rather than only the spelling a test wrote.
+    private sealed class SlashInsensitive : IEqualityComparer<string>
+    {
+        public bool Equals(string? a, string? b) => Norm(a) == Norm(b);
+        public int GetHashCode(string s) => Norm(s).GetHashCode();
+        private static string Norm(string? s) => (s ?? "").Replace('\\', '/');
+    }
+
     private sealed class Disk
     {
-        public Dictionary<string, string> Files { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, string> Files { get; } = new(new SlashInsensitive());
         public List<string> Reads { get; } = new();
-        public string? Read(string path) { Reads.Add(path); return Files.GetValueOrDefault(path); }
+        public string? Read(string path) { Reads.Add(path.Replace('\\', '/')); return Files.GetValueOrDefault(path); }
     }
 
     // ---- HomeOf ---------------------------------------------------------------
