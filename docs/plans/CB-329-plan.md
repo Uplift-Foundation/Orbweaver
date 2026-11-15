@@ -43,6 +43,85 @@ refinement comment of 2026-11-14 is final and is not reopened here.
 not read there is under "Assumed", and engineers should check it before
 building on it.
 
+## PM rulings on QA G1 and G2 (team lead, final; supersede the G1/G2 text below where they differ)
+
+### G1: the unreachable state
+
+**Text and timing.**
+- Loading lasts at most the start watch's 20 s budget.
+- If no poll has completed by then, show the headline **"Can't reach the
+  OpenClaw gateway"**.
+- When a connect failure is known, show its detail beneath the headline. The
+  detail is the text `OpenClawGateway.ExplainConnectFailure` produced, which is
+  what carries the macOS Local Network hint.
+- Keep polling, so the list replaces the message when the gateway comes back.
+
+**Interface (hana).** `EmptyText(bool loaded, bool timedOut, int total, int shown)`.
+The argument is renamed from `gaveUp` to `timedOut`; the order is unchanged.
+It has four states:
+
+| loaded | timedOut | result |
+| --- | --- | --- |
+| false | true | "Can't reach the OpenClaw gateway" |
+| false | false | "Loading conversations…" |
+| true | — | total==0 → "No conversations"; shown==0 → "No conversations match"; otherwise null |
+
+**Where the detail comes from (hana).** Read at d8b3aa48:
+`ExplainConnectFailure`'s text reaches the poll as `ConnectResult.Detail`
+(`OpenClawGateway.cs` ~L306), and only as part of `Describe(result)` in
+`_state` (`OpenClawSessions.cs` ~L1294). Nothing keeps it on its own.
+
+- Add `private static string? _lastConnectFailure`.
+  - Set it to `result.Detail` beside that `Report(Describe(result))`, for a
+    non-`Connected` outcome.
+  - Clear it to null where `_listingCurrent` is set true.
+- Add `internal static string? LastConnectFailure()`, which returns null when
+  OpenClaw is off.
+- Add the seam `SetLastConnectFailureForTests(string?)`.
+- The set site is inside the excluded poll. If you factor it, factor it into a
+  covered `RecordConnectFailure(ConnectResult)`. Otherwise name the line in the
+  PR body.
+
+**The UI (juno).**
+- **Detail line.** A second `TextBlock`, `ExistingEmptyDetail`, sits under the
+  empty text. It is visible only in the unreachable state, and only with a
+  non-empty `LastConnectFailure()`. It is wrapped and at most 3 lines.
+- **Height.** It sits inside the list's fixed-height cell, so CB-207 is
+  untouched.
+- **Seam.** `LastConnectFailureForTests: Func<string?>?`.
+- **Clock.** The timer is driven by `NowForTests` and `OnReopenLoadTick`; no
+  real sleeps.
+
+**Tests.**
+- **U-G1** (hana): `EmptyText` in all four states, plus each `shown`/`total`
+  edge.
+- **UI-G1a** (juno): rows null, then a tick at +21 s. The headline shows, and
+  the detail shows the seam's failure text.
+  - A variant with a null failure shows the headline and hides the detail.
+- **UI-G1b** (juno): the control. After that, rows arrive and the next tick
+  shows the list. The unreachable text is gone and the timer is stopped.
+- Plus the existing control: rows arriving at +5 s never show the unreachable
+  text.
+
+### G2: A1 becomes a tested claim (hana owns it)
+
+**U-G2 / UI-13b** moves to WP A and is owned by hana. Run it wherever a real
+`SessionManager` can be scanned without a window: UnitTests if it can,
+otherwise UiTests.
+
+- **Setup.** Two stale, non-hidden DMs. Publish them through the real `Parse`
+  with `withinMinutes: 5`.
+- **Act.** `MarkActive` one of them only, then `Parse`, then a real
+  `SessionManager` scan.
+- **Assert.** `OrbFor` / `StatusFor("openclaw:" + marked)` is non-null.
+- **Control.** The unmarked twin yields none.
+
+If `SessionManager` cannot be driven through one scan without a window, **add
+the seam in WP A**: a scan entry point that returns the scan's statuses. That
+is not a reason to skip the test.
+
+UI 13 (the hidden variant) stays with juno, but it reuses hana's scan seam.
+
 ## QA review resolutions (wren-asare, against 43f689d9)
 
 All nine gaps are accepted. G1 and G3 needed a decision, made here. The rest
@@ -338,11 +417,11 @@ internal static class OpenClawReopenList
 
     // The text shown in place of the list, or null when the list has rows to show
     // (ruling 4, QA G1).
-    // !loaded && gaveUp  → "Can't reach the gateway. Check Settings → OpenClaw."
-    // !loaded && !gaveUp → "Loading conversations…"
+    // !loaded && timedOut  → "Can't reach the OpenClaw gateway" (detail: LastConnectFailure())
+    // !loaded && !timedOut → "Loading conversations…"
     // total==0           → "No conversations"
     // shown==0           → "No conversations match"
-    internal static string? EmptyText(bool loaded, bool gaveUp, int total, int shown);
+    internal static string? EmptyText(bool loaded, bool timedOut, int total, int shown);
 
     // agentId null = all agents. search null/blank = no text filter.
     // A room matches an agent filter if any of its AgentIds does.
@@ -843,7 +922,7 @@ OpenClawReopenRow / OpenClawReopenTarget                      // §1, exactly as
 OpenClawReopenList.Build(listed, heartbeats, crons, native, approveEnabled)  // §1
 OpenClawReopenList.Filter(rows, agentId, search, agentName)    // §1
 OpenClawReopenList.Badge(row) / Ago(activityUtc, nowUtc)       // §1
-OpenClawReopenList.EmptyText(loaded, gaveUp, total, shown) : string?  // §1, ruling 4, QA G1
+OpenClawReopenList.EmptyText(loaded, timedOut, total, shown) : string?  // §1, ruling 4, PM G1
 OpenClawSessions.ListedSnapshot() : IReadOnlyList<Session>?    // §2 — null = Loading
 OpenClawSessions.Reopen(row) : IRemoteChatSession?             // §3
 ```
