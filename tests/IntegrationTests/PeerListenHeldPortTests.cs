@@ -25,7 +25,7 @@ public class PeerListenHeldPortTests
         new(new PeerLink.Seams(
             Deliver: (_, _) => Task.CompletedTask,
             KnownPeer: _ => null,
-            OwnCertificate: () => throw new InvalidOperationException("not used")));
+            OwnCertificate: _ => throw new InvalidOperationException("not used")));
 
     [Fact]
     public async Task ListenFailsWhileThePortIsHeldThenBindsOnceItIsReleased()

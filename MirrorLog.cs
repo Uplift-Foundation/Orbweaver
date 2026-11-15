@@ -163,9 +163,20 @@ namespace Orbweaver
             File.Move(path, path + ".1", overwrite: true);
         }
 
+        // Every line as it is said, whether or not a file is being written.
+        //
+        // A test seam: the file is off unless asked for and resolved once per
+        // process, so without this a line that is the whole of a fix's
+        // observable behaviour (CB-301's "peer-identity-stalled", say) could
+        // only be asserted by reading a log nobody turned on. Raised before
+        // the path check for exactly that reason.
+        internal static event Action<string, string>? Heard;
+
         [ExcludeFromCodeCoverage]
         internal static void Say(string what, string detail = "")
         {
+            try { Heard?.Invoke(what, detail); } catch { /* a listener never breaks the log */ }
+
             var path = Path.Value;
             if (path is null) return;
 
