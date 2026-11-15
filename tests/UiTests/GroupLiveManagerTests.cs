@@ -103,20 +103,20 @@ public class GroupLiveManagerTests : IDisposable
         var window = NewSettings();
         var rows = window.GroupOutlineRows();
 
-        var toggle = In<Avalonia.Controls.Primitives.ToggleButton>(rows[0]);
+        var toggle = In<Avalonia.Controls.Primitives.ToggleButton>(rows[1]);
         toggle.IsChecked = !(toggle.IsChecked ?? false);
 
-        var stroke = In<ColorPicker>(rows[1]);
+        var stroke = In<ColorPicker>(rows[2]);
         Arm(stroke);
         stroke.Color = Color.FromRgb(1, 2, 3);
-        In<Slider>(rows[2]).Value = 0.5;
+        In<Slider>(rows[3]).Value = 0.5;
 
-        var fill = In<ColorPicker>(rows[3]);
+        var fill = In<ColorPicker>(rows[4]);
         Arm(fill);
         fill.Color = Color.FromRgb(4, 5, 6);
-        In<Slider>(rows[4]).Value = 0.5;
+        In<Slider>(rows[5]).Value = 0.5;
 
-        var names = In<Avalonia.Controls.Primitives.ToggleButton>(rows[5]);
+        var names = In<Avalonia.Controls.Primitives.ToggleButton>(rows[6]);
         names.IsChecked = !(names.IsChecked ?? false);
         names.IsChecked = false;
 
