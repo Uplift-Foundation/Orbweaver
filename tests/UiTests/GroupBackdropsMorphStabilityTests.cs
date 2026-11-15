@@ -296,17 +296,19 @@ public class GroupBackdropsMorphStabilityTests : IDisposable
     }
 
     // The same leak from the pool's side, and independent of test order: a pooled
-    // window parked mid-morph and handed to discs that are a pure translation of its
-    // old ones (here d = 0) must still spring when its new group loses a member.
-    // This is what made DraggingAMemberAround... fail only after
-    // LeavingContracts... had run, because xunit v3 orders by path.
+    // window parked mid-JOIN (its discs are the 8, its drawn frame still the 7) and
+    // reused for the same 8 discs (d = 0) must still spring when its new group loses
+    // a member. Parked mid-leave it would not do: the disc count changes on reuse,
+    // the translation shortcut never fires and the bug is not exercised. This is what
+    // made DraggingAMemberAround... fail only after LeavingContracts... had run,
+    // because xunit v3 orders by path.
     [AvaloniaFact]
     public void AReusedWindowStillSpringsWhenItsNewGroupLosesAMember()
     {
         var orbs = Ring();
         orbs.Add(Orb("d", 300, 420));
-        GroupBackdrops.Update(new[] { Spec(orbs) });
         GroupBackdrops.Update(new[] { Spec(orbs.Take(7).ToList()) });
+        GroupBackdrops.Update(new[] { Spec(orbs) });                      // a member joins
         Assert.True(State().Morphing);
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());               // parked mid-morph
         Assert.True(GroupBackdrops.ParkedCount > 0);                      // so the next fit reuses it
