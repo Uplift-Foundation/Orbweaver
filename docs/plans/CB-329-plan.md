@@ -20,6 +20,23 @@ refinement comment of 2026-11-14 is final and is not reopened here.
    A reopened stale session survives the next `Parse`, then drops once the
    window lapses. It is not pinned, and nothing is written to settings or
    disk.
+   - **Amended (approval):** the one write allowed is removing an existing
+     CB-276 hide (amendment 1 below).
+
+## Approval amendments (team lead, final)
+
+1. **Re-opening un-hides.** `Reopen(row)` removes the row's ids from the
+   CB-276 hidden set, through the same store that "Hide this orb" and the
+   Settings → Hidden orbs restore use. The orb then appears, and the watch
+   opens the panel as usual.
+   - For a room, every member *and* the room orb id are un-hidden.
+   - This is the user's explicit action on existing state, not new persisted
+     state.
+2. **Height guard.** With a gateway configured, the dialog's fixed height must
+   be **≤ 700 dip**, so it fits a 720 px work area.
+   - If it doesn't fit, shrink the list (aim for about 6 rows); don't raise
+     the bound.
+   - The PR body states the measured heights before and after.
 
 **Everything under "Read in code" was read at `origin/develop` = `d8b3aa48`**
 (the merge of PR #252) in a dedicated worktree, never the main clone. Anything
@@ -264,6 +281,9 @@ internal static void MarkActive(IEnumerable<string> keys, DateTime now)
 // Null when OpenClaw is off (both callees already answer null then).
 public static IRemoteChatSession? Reopen(OpenClawReopenRow row)
 {
+    // Amendment 1: un-hide before marking, so the scan the restore schedules
+    // already sees the session as fresh.
+    foreach (var id in ReopenHiddenIds(row)) RestoreHidden(id);
     MarkActive(row.MemberKeys, DateTime.UtcNow);
     return row.Target == OpenClawReopenTarget.Room
         ? RoomChatFor(row.OrbSessionId, row.PanelTitle,
@@ -277,24 +297,50 @@ public static IRemoteChatSession? Reopen(OpenClawReopenRow row)
 most recent member would open the room panel and draw one agent's orb, with
 no room orb at all.
 
+**The un-hide ids, pure** (amendment 1):
+
+```csharp
+// Session row: ["openclaw:<key>"].
+// Room row: "openclaw:room:<roomKey>", then "openclaw:" + each MemberKey.
+// The room id is included because HiddenOrbs.Effective hides a member whose
+// *lead* is hidden, and a room member's lead is the room orb (SessionManager
+// sets status.Lead = RoomId(room)). Un-hiding the members alone would leave
+// them hidden through their lead.
+internal static IReadOnlyList<string> ReopenHiddenIds(OpenClawReopenRow row);
+
+// Exactly SettingsWindow's restore (SettingsWindow.cs ~L2685, read at d8b3aa48):
+// SessionManager.RestoreHiddenOrb when the manager exists (it also schedules a
+// scan), otherwise OrbweaverSettings.RestoreHiddenOrb.
+// RestoreHiddenOrb returns false and writes nothing for an id that was not
+// hidden, so re-opening a non-hidden row still writes nothing.
+internal static Action<string>? RestoreHiddenForTests;
+private static void RestoreHidden(string id)
+{
+    if (RestoreHiddenForTests is { } seam) { seam(id); return; }
+    if (SessionManager.Instance is { } manager) manager.RestoreHiddenOrb(id);
+    else OrbweaverSettings.RestoreHiddenOrb(id);
+}
+```
+
 **Latency.** The orb appears at the next poll's `Parse` (≤ 5 s) plus the next
 `SessionManager` scan. That is inside the watch's existing 20 s budget, so I
 deliberately do **not** inject into `_snapshot` synchronously the way
 `RefreshSnapshotState` does for approvals.
 
-**What the seam does not do (PM ruling 5).**
+**What the seam does not do (PM ruling 5, with amendment 1).**
 
 - It does not touch `Running`, so the orb is idle rather than working.
 - It does not call `sessions.patch`, so the session is not pinned on the
   gateway.
-- It does not touch `OrbweaverSettings` or `HiddenOrbs`, and writes no file.
+- It does not write to `OrbweaverSettings`, with one exception: removing a
+  CB-276 hide entry that already exists for one of the row's ids. A row with
+  no hide entry writes no file at all.
 - `LastSeen` is a process-memory dictionary. It survives a reconnect (as real
   activity does) but not an app restart, which matches "ordinary orb, no new
   persisted state".
 
-**Known limit.** A session whose orb the user hid with CB-276 "Hide this orb"
-opens no panel, because the watch never finds an orb. The watch times out with
-its existing message. This is out of scope; name it in the PR body.
+**Hidden orbs (amendment 1).** These are no longer a limit, because
+`Reopen` un-hides them (see above).
 
 ## 4. NewChatWindow UI changes
 
@@ -370,6 +416,8 @@ All the changes are in `NewChatWindow.cs`. The availability helper comes in
     `OrbForSession(session.SessionId)`, which is the room id for a room panel,
     and calls `ChatPanel.OpenFor(orb, session)`. The existing timeout text
     still applies.
+- **The list height** starts at 220 px but answers to amendment 2's ≤ 700 dip
+  bound. Shrink it (aim for about 6 rows) if the dialog doesn't fit.
 - **CB-207.** Add an `_existingGhost`: a ghost of the whole Existing pane,
   meaning the radio row, the filter row, a 220 px block and the empty text.
   - Put it in the same `ReservedSlot` as the Folder and Agent ghosts.
@@ -445,7 +493,9 @@ takes.
       exists.
 11. `MarkActiveDoesNotMakeItWorking`: after `MarkActive`, `StateFor(key)` is
     still "idle".
-12. **`ReopenedSessionIsNotPinnedAndWritesNothing`** (PM ruling 5). Run it
+12. **`ReopenedSessionIsNotPinnedAndWritesNothing`** (PM ruling 5). This
+    covers rows with **no** hide entry, which is why the hash check holds
+    after amendment 1. Run it
     against a scratch `ORBWEAVER_SETTINGS_DIR`; it belongs in `IntegrationTests`
     if the unit bootstrap has no real dir.
     - **Setup.** Snapshot the directory: every file's name, length and SHA-256.
@@ -468,6 +518,23 @@ takes.
       `withinMinutes: All` keeps it in its snapshot.
     - This is the property behind ruling 2 ("the picker never hides something
       that has an orb") and its converse.
+15. **`ReopenUnhidesAHiddenStaleDm`** (amendment 1). Use the real path, with
+    no `RestoreHiddenForTests` seam: a scratch settings dir, `SessionManager`
+    absent, and `withinMinutes: 5`.
+    - **Setup.** Two stale DMs, A and B, are both hidden with
+      `OrbweaverSettings.HideOrb`.
+    - **Act.** `Reopen(rowA)`, then `Parse`.
+    - **Assert.**
+      - `"openclaw:" + A` is gone from `HiddenOrbIds()`, and A is in the parsed
+        snapshot.
+      - **Control:** B is still in `HiddenOrbIds()`, and still out of the
+        snapshot.
+    - **Orb appears.** Covered in UiTests (UI case 13), where a
+      `SessionManager` can be scanned.
+16. `ReopenHiddenIdsForRoomIncludesTheRoomAndEveryMember`: the session-row and
+    room-row shapes. Plus `ReopenUnhidesAHiddenRoomLead`: hide only the room
+    id; after `Reopen`, the room id and all members are absent from the
+    effective hidden set (`HiddenOrbs.Effective` with the room as lead).
 14. `EmptyTextStates`:
     - `(loaded:false, …)` gives "Loading conversations…".
     - `(true, 0, 0)` gives "No conversations".
@@ -518,6 +585,20 @@ Join `[Collection("Settings")]` and drive everything through the seams.
       `SessionId == "openclaw:" + key`.
     - The key passes `Parse`'s recency rule at `now`.
     - The room variant returns an `OpenClawRoomChatSession` with all members.
+13. **`ReopenedHiddenOrbAppears`** (amendment 1). Use whatever `SessionManager`
+    seam the existing HiddenOrbs UI tests scan with; find it, don't invent
+    one.
+    - **Setup.** A stale DM is hidden.
+    - **Act.** Reopen through the real `OpenClawSessions.Reopen`.
+    - **Assert.** After the scan, `OrbFor("openclaw:" + key)` is non-null and
+      the id is no longer hidden.
+    - **Control:** an un-reopened hidden twin has no orb.
+14. **`DialogFitsA720WorkArea`** (amendment 2).
+    - **Setup.** `Ready`, with the Existing ghost reserved.
+    - **Assert.** The measured fixed height is ≤ 700 dip.
+    - If it fails, shrink the list's `Height` (about 6 rows), never the bound.
+    - Report the before (develop) and after heights in the PR body, measured
+      on both rids if CI prints them.
 12. `NewChatWindowHeightTests`: extend it. The height stays constant across
     every combination of local CLI ↔ OpenClaw ↔ New ↔ Existing ↔ empty ↔
     filled. With `NoGateway`, the height equals today's.
@@ -589,8 +670,10 @@ OpenClawSessions.Reopen(row) : IRemoteChatSession?             // §3
 - **Who calls what.** B calls `Build` with
   `OrbweaverSettings.OpenClawHeartbeatMode/CronMode/NativeMode` and
   `OpenClawApproveEnabled`. A must not read settings inside `Build`.
-- **A also owns `ClusterHides`**, the predicate shared with `Parse`, and cases
-  10–14.
+- **A also owns `ClusterHides`**, the predicate shared with `Parse`, plus
+  `ReopenHiddenIds`, `RestoreHidden` (amendment 1) and unit cases 10–16.
+- **B owns** UI cases 13 and 14 (the hidden orb appears; the dialog fits a
+  720 px work area).
 
 ## 9. Windows vs macOS
 
