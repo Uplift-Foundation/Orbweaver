@@ -43,6 +43,175 @@ refinement comment of 2026-11-14 is final and is not reopened here.
 not read there is under "Assumed", and engineers should check it before
 building on it.
 
+## QA review resolutions (wren-asare, against 43f689d9)
+
+All nine gaps are accepted. G1 and G3 needed a decision, made here. The rest
+add cases to §6, numbered as below. Each one is owned by the WP that owns the
+code it exercises.
+
+### G1: a dead gateway must not show "Loading" forever
+
+**Decision: (b).**
+
+- **The bound.** The load timer gives up after the same 20 s budget the orb
+  watch uses.
+- **Giving up.** The list then shows "Can't reach the gateway. Check
+  Settings → OpenClaw."
+- **Recovery.** The timer **keeps polling** after giving up, so a gateway that
+  comes back still fills the list without reopening the dialog.
+- **Why not (c)?** The NoGateway reason is for "not configured". A configured
+  but unreachable gateway is a different fact, and only (b) can say so.
+
+**Interface change (A).** The empty-state helper gains one argument:
+`EmptyText(bool loaded, bool gaveUp, int total, int shown)`.
+- `!loaded && gaveUp` → the can't-reach text.
+- `!loaded && !gaveUp` → "Loading conversations…".
+- Everything else is unchanged.
+
+**Seam (B).** `NowForTests` already drives `OnReopenLoadTick`'s deadline.
+
+**Cases.**
+- **U-G1** (unit, A): `EmptyText` with `gaveUp` both ways.
+- **UI-G1a:** null rows, tick at +21 s → can't-reach text.
+  - Control: rows that arrive at +5 s show the list, and the can't-reach text
+    never appears.
+- **UI-G1b (recovery):** after giving up, the seam returns rows, then a tick →
+  the list shows, then the timer stops.
+
+### G2: A1 measured on the plain path
+
+**UI-13b** (B). A stale, **non-hidden** DM.
+- **Act.** Reopen it through the real `Reopen` and run a real `SessionManager`
+  scan, using the same scan seam as UI 13.
+- **Assert.** `OrbFor("openclaw:" + key)` is non-null.
+- **Control.** An un-reopened stale twin has no orb.
+
+This is what turns A1 from an assumption into a measurement. If it fails,
+`SessionManager`'s lifetime is a second filter and the plan needs revising.
+Tell me before working around it.
+
+### G3: room traps and badge truth through the real Parse
+
+New unit cases (A), all through the real `Parse`, then `ListedSnapshot`, then
+`Build`:
+
+- **U-G3a.** The trap key `agent:main:discord:channel:agent:ea-hope:discord:channel:1538…`
+  becomes its own Session row. No `openclaw:room:` row exists.
+- **U-G3b.** Two DMs with one agent → two rows. Two different channels, each
+  with two agents → two Room rows (the control against over-merging).
+- **U-G3c.** A WhatsApp group whose `chatType` is "direct" and whose
+  `classification` is "group" → `Kind == Channel` on the row, `Badge == "Channel"`.
+
+**Badge decision (deliberate).** The ticket's "main or native" both appear,
+with distinct meanings. Order:
+
+1. Heartbeat → "Heartbeat"
+2. Cron → "Cron"
+3. `Native == Dashboard` (a New Chat conversation, with no surface) → "Native"
+4. Direct → "DM"
+5. Channel → "Channel"
+6. `Kind == Main` (including a classification-main / `Native == Main` row,
+   i.e. the agent's own TUI session) → "Main"
+7. Unknown with `Native != None` → "Native"
+8. Otherwise ""
+
+This **replaces** §1's earlier order. That order called a native Main
+"Native", which would have hidden every agent's own main session behind a word
+users do not use for it.
+
+- **U-G3d.** Through the real `Parse`: one dashboard row, one
+  classification-main row and one `agent:x:main` row → "Native", "Main" and
+  "Main".
+
+### G4: no second sessions.list, and the snapshot's lifecycle
+
+**U-G4a** (A, in UiTests or IntegrationTests where the fake-socket gateway
+already lives).
+- **Setup.** Build an `OpenClawGateway` with the fake `Connector` pattern in
+  `tests/UiTests/ChatPanelApprovalAdversarialTests.cs:48`, counting the frames
+  written, and pass it to `SetGatewayForTests`.
+- **Act.** `Parse` once. Then call `ListedSnapshot()`, `Build`, and the
+  window's open-existing path 5 times.
+- **Assert.** Zero frames were written.
+- **Control.** `StartConversationAsync` writes one frame through the same
+  counter, which proves the counter can count.
+
+**U-G4b.** A second `Parse` with a different payload replaces
+`ListedSnapshot()` wholesale.
+
+**U-G4c.** The `Restart` path and the disconnect path each leave
+`ListedSnapshot()` null.
+- Both clears live in excluded methods. Either call the excluded method with
+  no gateway, as the existing CB-276 `_listingCurrent` tests do (find them), or
+  factor the clear into one covered `ClearListingLocked()` that both call.
+  Prefer the factoring.
+
+### G5: every added line in §2 gets a case
+
+- **U-G5a.** Pin a cluster-hidden row (heartbeat under Hidden) through the
+  `_listed` edit in `SetGatewayPinnedAsync`. It becomes listed by `Build`
+  before any poll.
+  - If the edit sits behind the excluded network await, factor the
+    state-change half into a covered helper shared with the `_snapshot` edit.
+- **U-G5b.** End removes the key from `ListedSnapshot()` before the next poll.
+  Same factoring rule.
+- **U-G5c.** Clearing on `Restart` and on disconnect is covered by U-G4c.
+- **`RestoreHidden`'s three arms.**
+  - The seam arm: unit 16 sets `RestoreHiddenForTests`.
+  - The `SessionManager.Instance` arm: UI 13 and 13b. Say so in a comment on
+    those tests.
+  - The `OrbweaverSettings` arm: unit 15.
+
+### G6: Reopen returning null, and a key that has vanished
+
+- **UI-G6a** (B). `ReopenOpenClawForTests` returns null → "Couldn't open that
+  conversation.", and no watch is armed.
+  - Control: a non-null result → "Opening <Title>. Waiting for its orb…".
+- **U-G6b** (A). Real `Reopen` on a key absent from `_deliveries`, meaning it
+  vanished between the poll and the click.
+  - It must not throw.
+  - The result is a chat with `Delivery == null`, because `ChatFor` reads
+    the key from the snapshot and creates a chat for any key; `SetGatewayForTests(null)`
+    makes `LoadHistoryAsync` fail quietly.
+  - **Open question, checked by the test:** what does that panel show? If it
+    is an empty panel with no error, that is acceptable for a key the gateway
+    no longer lists. The next poll will not list it, so its orb never appears
+    and the watch times out with its existing message.
+  - Measure all of this; don't assume it.
+- **U-G6c.** `Reopen` with OpenClaw off returns null and writes nothing.
+
+### G7: A2 measured on the real session, not a fake
+
+**U-G7** (A, beside the existing `OpenClawChatSendTests`, using the
+counting fake gateway from U-G4a).
+- **Act.** Turn `OpenClawReplyEnabled` off. Then `Reopen` returns a real
+  `OpenClawChatSession`, and `SendAsync("hi")` is called on it.
+- **Assert.** A System turn is added, and zero frames are written. This is the
+  gate at `OpenClawChatSession.cs` ~L466, read at d8b3aa48.
+- **Room variant.** Same assertions on the `OpenClawRoomChatSession` that
+  `Reopen` returns for a room. If the room does **not** gate, that is a
+  pre-existing defect: report it to me, don't fix it inside CB-329.
+- **Control.** Reply on → one frame written.
+
+UI 4b stays as written for the window half.
+
+### G8: mode visibility follows the CLI
+
+**UI-G8** (B). Two checks:
+- With each local CLI selected, the Open existing radio and pane are not
+  visible.
+- Select OpenClaw, then Open existing, then a local CLI: the Existing pane is
+  hidden, the Start label reads "Start", and the height is unchanged.
+  Selecting OpenClaw again restores Open existing as it was left.
+
+### G9: sort uses the real activity signal
+
+- **U-G9a** (A, through the real `Parse`). A row with a stale `lastActivityAt`
+  and a fresh `updatedAt` sorts by the fresh one, because `Activity` takes the
+  max.
+- **U-G9b.** `MarkActive` on the oldest row, then `Parse`, then `Build` → that
+  row comes first.
+
 ## Read in code (at d8b3aa48)
 
 1. **The recency rule** is in `OpenClawSessions.Parse` (`OpenClawSessions.cs`
@@ -147,10 +316,13 @@ internal static class OpenClawReopenList
         ClusterMode heartbeats, ClusterMode crons, ClusterMode native,
         bool approveEnabled);
 
-    // The text shown in place of the list, or null when the list has rows to show (ruling 4).
-    // loaded=false → "Loading conversations…"; total==0 → "No conversations";
-    // shown==0 → "No conversations match".
-    internal static string? EmptyText(bool loaded, int total, int shown);
+    // The text shown in place of the list, or null when the list has rows to show
+    // (ruling 4, QA G1).
+    // !loaded && gaveUp  → "Can't reach the gateway. Check Settings → OpenClaw."
+    // !loaded && !gaveUp → "Loading conversations…"
+    // total==0           → "No conversations"
+    // shown==0           → "No conversations match"
+    internal static string? EmptyText(bool loaded, bool gaveUp, int total, int shown);
 
     // agentId null = all agents. search null/blank = no text filter.
     // A room matches an agent filter if any of its AgentIds does.
@@ -210,9 +382,7 @@ internal static class OpenClawReopenList
    key keeps the order stable across polls, for the same reason as `Ordered`
    in `Parse`.
 
-`Badge` order: `Heartbeat` → "Heartbeat". `Kind == Cron` → "Cron".
-`Direct` → "DM". `Channel` → "Channel". `Main` or `Unknown` with
-`Native != None` → "Native". `Main` → "Main". `Unknown` → "".
+`Badge` order: **superseded by the QA G3 badge decision above.**
 
 ## 2. Where the unfiltered snapshot lives
 
@@ -653,7 +823,7 @@ OpenClawReopenRow / OpenClawReopenTarget                      // §1, exactly as
 OpenClawReopenList.Build(listed, heartbeats, crons, native, approveEnabled)  // §1
 OpenClawReopenList.Filter(rows, agentId, search, agentName)    // §1
 OpenClawReopenList.Badge(row) / Ago(activityUtc, nowUtc)       // §1
-OpenClawReopenList.EmptyText(loaded, total, shown) : string?   // §1, ruling 4
+OpenClawReopenList.EmptyText(loaded, gaveUp, total, shown) : string?  // §1, ruling 4, QA G1
 OpenClawSessions.ListedSnapshot() : IReadOnlyList<Session>?    // §2 — null = Loading
 OpenClawSessions.Reopen(row) : IRemoteChatSession?             // §3
 ```
