@@ -72,6 +72,25 @@ public partial class ClaudeCloudEventsTests
     private static int Lines(ClaudeCloudChatSession chat, string containing) =>
         LogOf(chat).Count(l => l.Contains(containing, StringComparison.Ordinal));
 
+    // Every wait on a loop or a watch in this file is bounded (CB-285 review).
+    // QA's mutation of WatchSend — the previous watch never cancelled — made an
+    // unbounded `await first` hang the run forever rather than fail, and a hung
+    // test is how a CI leg dies with no message (CB-269, CB-336). With the fake
+    // clock nothing here legitimately takes more than milliseconds, so five
+    // seconds fails a regression fast and names what it was waiting for.
+    private static async Task Bounded(Task? task, string what)
+    {
+        Assert.True(task is not null, what + " was never started");
+        try
+        {
+            await task!.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(what + " did not finish within five seconds");
+        }
+    }
+
     private static readonly int GraceTicks =
         (int)(ClaudeCloudChatSession.UnmeasuredTurnStartGrace / Tick);
 
@@ -90,7 +109,7 @@ public partial class ClaudeCloudEventsTests
         clock.OnDelay = (n, _) => { if (n > 1) stopAtEachTick.Add(chat.CanInterrupt); };
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
 
         Assert.True(HasReply(chat));
         Assert.Equal(5, api.Statuses.Count);
@@ -114,7 +133,7 @@ public partial class ClaudeCloudEventsTests
         var chat = Sender(api, clock);
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
 
         Assert.True(HasReply(chat));
         Assert.Equal(6, api.Statuses.Count);
@@ -138,7 +157,7 @@ public partial class ClaudeCloudEventsTests
 
         await chat.SendAsync("hello");
         var loop = chat.LiveTask!;
-        await loop;
+        await Bounded(loop, "the live loop");
 
         Assert.True(stopAtSecondTick);
         Assert.Equal(GraceTicks, api.Statuses.Count);
@@ -152,7 +171,7 @@ public partial class ClaudeCloudEventsTests
         chat.UpdateStatus(BusyRow());
         Assert.True(chat.CanInterrupt);
         Assert.NotSame(loop, chat.LiveTask);
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
         Assert.Equal(1, Lines(chat, "turn over after 2s (joined)"));
     }
 
@@ -173,7 +192,7 @@ public partial class ClaudeCloudEventsTests
         chat.PanelOpened();
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
         var reads = lateApi.Transcripts.Count;
 
         late = true;
@@ -182,7 +201,7 @@ public partial class ClaudeCloudEventsTests
         Assert.Equal(reads, lateApi.Transcripts.Count);
 
         chat.UpdateStatus(Row());
-        await chat.LoadTask!;
+        await Bounded(chat.LoadTask, "the transcript read");
 
         Assert.Equal(reads + 1, lateApi.Transcripts.Count);
         Assert.Contains(chat.History, t => t.Text == "a late reply");
@@ -199,7 +218,7 @@ public partial class ClaudeCloudEventsTests
         chat.PanelOpened();
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
         var reads = api.Transcripts.Count;
 
         chat.UpdateStatus(Row());
@@ -219,7 +238,7 @@ public partial class ClaudeCloudEventsTests
         var chat = Sender(api, clock);
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
         var reads = api.Transcripts.Count;
 
         chat.UpdateStatus(BusyRow());
@@ -238,7 +257,7 @@ public partial class ClaudeCloudEventsTests
         var chat = Sender(api, clock);
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
 
         Assert.Single(api.Statuses);
         Assert.Single(api.Transcripts);
@@ -259,8 +278,8 @@ public partial class ClaudeCloudEventsTests
         clock.OnDelay = (n, _) => { if (n == 1) chat.Cancel(); };
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
-        await chat.InterruptTask!;
+        await Bounded(chat.LiveTask, "the live loop");
+        await Bounded(chat.InterruptTask, "the interrupt");
 
         Assert.Single(api.Statuses);
         Assert.False(chat.CanInterrupt);
@@ -277,7 +296,7 @@ public partial class ClaudeCloudEventsTests
         var chat = Sender(api, clock);
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
 
         Assert.Single(api.Statuses);
         Assert.Equal(ClaudeCloudChatSession.LivePausedNote, chat.History.Last().Text);
@@ -298,7 +317,7 @@ public partial class ClaudeCloudEventsTests
         var chat = Sender(api, clock);
 
         await chat.SendAsync("hello");
-        await chat.LiveTask!;
+        await Bounded(chat.LiveTask, "the live loop");
 
         Assert.Equal(2, api.Statuses.Count);
         Assert.True(HasReply(chat));
@@ -315,8 +334,8 @@ public partial class ClaudeCloudEventsTests
         chat.PanelOpened();
 
         chat.UpdateStatus(BusyRow());
-        await chat.LiveTask!;
-        await chat.LoadTask!;
+        await Bounded(chat.LiveTask, "the live loop");
+        await Bounded(chat.LoadTask, "the transcript read");
 
         Assert.Single(api.Statuses);
         Assert.Single(api.Transcripts);
@@ -394,8 +413,8 @@ public partial class ClaudeCloudEventsTests
         Assert.Equal(1, Lines(chat, "watching by stream"));
 
         clock.ReleaseEchoGrace();
-        await chat.SendWatchTask!;
-        await chat.LiveTask!;
+        await Bounded(chat.SendWatchTask, "the send watch");
+        await Bounded(chat.LiveTask, "the live loop");
 
         Assert.True(HasReply(chat));
         Assert.False(chat.CanInterrupt);
@@ -420,7 +439,7 @@ public partial class ClaudeCloudEventsTests
         await Until(() => chat.StreamEventsSeen == 1);
 
         clock.ReleaseEchoGrace();
-        await chat.SendWatchTask!;
+        await Bounded(chat.SendWatchTask, "the send watch");
 
         Assert.Null(chat.LiveTask);
         Assert.Empty(api.Statuses);
@@ -442,7 +461,7 @@ public partial class ClaudeCloudEventsTests
         await Until(() => !chat.CanInterrupt);
 
         clock.ReleaseEchoGrace();
-        await chat.SendWatchTask!;
+        await Bounded(chat.SendWatchTask, "the send watch");
 
         Assert.Null(chat.LiveTask);
         Assert.Equal(1, Lines(chat, "stream session_a: turn over (result)"));
@@ -462,14 +481,14 @@ public partial class ClaudeCloudEventsTests
         await chat.SendAsync("one");
         var first = chat.SendWatchTask!;
         await chat.SendAsync("two");
-        await first;
+        await Bounded(first, "the first send's watch");
 
         Assert.NotSame(first, chat.SendWatchTask);
         Assert.Null(chat.LiveTask);
 
         clock.ReleaseEchoGrace();
-        await chat.SendWatchTask!;
-        await chat.LiveTask!;
+        await Bounded(chat.SendWatchTask, "the send watch");
+        await Bounded(chat.LiveTask, "the live loop");
 
         Assert.Equal(1, Lines(chat, "polling beside it"));
         Assert.True(HasReply(chat));
@@ -487,7 +506,7 @@ public partial class ClaudeCloudEventsTests
 
         await chat.SendAsync("hello");
         await Close(chat);
-        await chat.SendWatchTask!;
+        await Bounded(chat.SendWatchTask, "the send watch");
 
         Assert.Null(chat.LiveTask);
         Assert.Empty(api.Statuses);
@@ -520,14 +539,14 @@ public partial class ClaudeCloudEventsTests
 
         await Until(() => !chat.StreamTrusted && chat.LiveTask is not null);
         var loop = chat.LiveTask!;
-        await loop;
+        await Bounded(loop, "the live loop");
 
         Assert.True(HasReply(chat));
         Assert.Equal(3, api.Statuses.Count);
         Assert.Equal(1, Lines(chat, "idle ignored"));
 
         clock.ReleaseEchoGrace();
-        await chat.SendWatchTask!;
+        await Bounded(chat.SendWatchTask, "the send watch");
 
         Assert.Same(loop, chat.LiveTask);
         Assert.Equal(0, Lines(chat, "silent"));

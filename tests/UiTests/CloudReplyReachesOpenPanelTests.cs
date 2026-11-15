@@ -211,7 +211,7 @@ public class CloudReplyReachesOpenPanelTests : IDisposable
 
         ChatPanel.HideFor(chat.SessionId);
         FlushRender();
-        await chat.LiveTask!;
+        await chat.LiveTask!.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     // Case 17. The stream connects, is trusted, and says nothing about the send.
@@ -247,6 +247,6 @@ public class CloudReplyReachesOpenPanelTests : IDisposable
 
         ChatPanel.HideFor(chat.SessionId);
         FlushRender();
-        await chat.StreamTask!;
+        await chat.StreamTask!.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }
