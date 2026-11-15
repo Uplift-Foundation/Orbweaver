@@ -2,6 +2,7 @@ using System.Linq;
 using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Xunit;
 
 namespace Orbweaver.Tests;
@@ -295,7 +296,7 @@ public class NewChatWindowScreenshots : IDisposable
     // actually has. The row itself (greyed, unselectable) is what this
     // captures; the reason text is a tooltip, which only a real hover shows
     // and which NewChatWindowTests already asserts directly
-    // (TheOpenClawRowIsDisabledWithItsReasonWhenNotReady) — a static capture
+    // (TheOpenClawRowIsDisabledWithItsReasonWhenThereIsNoGateway) — a static capture
     // can't demonstrate a hover state any more usefully than describing it.
     [AvaloniaFact]
     public void OpenClawRowDisabledWithReason()
@@ -304,12 +305,158 @@ public class NewChatWindowScreenshots : IDisposable
         {
             Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
         };
-        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.ReplyDisabled;
+        // NoGateway since CB-329: that is the one state that still disables the
+        // row. ReplyDisabled keeps it live for Open existing, and has its own
+        // capture below.
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
         NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>();
 
         var window = NewWindow();
 
         ScreenshotHelper.Capture(window, "new-chat-window-openclaw-disabled.png");
+    }
+
+    // --- CB-329: Open existing ------------------------------------------
+
+    // A fixed clock so "2 h ago" reads the same in every capture, and rows
+    // anchored to it. Three shapes, one of each the picker has to tell apart:
+    // a DM, a channel room (two agents wearing one row) and an agent's Main.
+    private static readonly DateTime Now = new(2026, 11, 14, 12, 0, 0, DateTimeKind.Utc);
+
+    private static OpenClawReopenRow[] PickerRows() => new[]
+    {
+        new OpenClawReopenRow(OpenClawReopenTarget.Session, "openclaw:agent:aurora:discord:direct:1",
+            "wtvamp", "wtvamp", SessionKind.Direct, OpenClawNativeKind.None, false,
+            new[] { "aurora" }, new[] { "agent:aurora:discord:direct:1" }, Now.AddHours(-2)),
+        new OpenClawReopenRow(OpenClawReopenTarget.Room, "openclaw:room:discord:900",
+            "#general", "#general", SessionKind.Channel, OpenClawNativeKind.None, false,
+            new[] { "aurora", "nova" },
+            new[] { "agent:aurora:discord:channel:900", "agent:nova:discord:channel:900" }, Now.AddHours(-24)),
+        new OpenClawReopenRow(OpenClawReopenTarget.Session, "openclaw:agent:nova:main",
+            "Nova", "Nova", SessionKind.Main, OpenClawNativeKind.None, false,
+            new[] { "nova" }, new[] { "agent:nova:main" }, Now.AddDays(-3))
+    };
+
+    private static NewChatWindow OpenExistingWindow(
+        OpenClawNewChatAvailability availability, Func<IReadOnlyList<OpenClawReopenRow>?> rows)
+    {
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
+        };
+        NewChatWindow.OpenClawAvailabilityForTests = () => availability;
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>();
+        NewChatWindow.KnownAgentsForTests = () => new[] { ("aurora", "Aurora"), ("nova", "Nova") };
+        NewChatWindow.NowForTests = () => Now;
+        NewChatWindow.ReopenRowsForTests = rows;
+
+        var window = NewWindow();
+        window.CliList.Children.OfType<RadioButton>()
+            .Single(r => Equals(r.Tag, NewChatWindow.OpenClawTag)).IsChecked = true;
+        window.OpenExistingRadio.IsChecked = true;
+        return window;
+    }
+
+    // The picker with a DM, a channel room and a Main row, and the first row
+    // chosen so the selection colour is on the capture too.
+    [AvaloniaFact]
+    public void NewChatOpenExistingPicker()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, PickerRows);
+        window.ExistingList.SelectedIndex = 0;
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing.png");
+
+        Assert.True(window.ExistingList.IsVisible);
+        Assert.Equal(3, window.ExistingList.ItemCount);
+    }
+
+    // Before the first poll has completed: "Loading conversations…", not
+    // "No conversations".
+    [AvaloniaFact]
+    public void NewChatOpenExistingLoading()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, () => null);
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-loading.png");
+
+        Assert.Equal("Loading conversations…", window.ExistingEmpty.Text);
+    }
+
+    // A completed poll that listed nothing.
+    [AvaloniaFact]
+    public void NewChatOpenExistingEmpty()
+    {
+        var window = OpenExistingWindow(
+            OpenClawNewChatAvailability.Ready, () => Array.Empty<OpenClawReopenRow>());
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-empty.png");
+
+        Assert.Equal("No conversations", window.ExistingEmpty.Text);
+    }
+
+    // Fluent's ListBoxItem drew rows about 54 dip tall on Windows, so the
+    // fixed-height list showed two and a half and the third row was cut off.
+    // This suite is the one that shows windows (the headless UiTests never
+    // apply control templates to a window that is not shown), and CI runs it
+    // on both rids, so each theme checks itself: every realized row is exactly
+    // ExistingRowHeight, and three rows fit without scrolling.
+    [AvaloniaFact]
+    public void EveryRealizedRowIsTheFixedHeightAndThreeFitWithoutScrolling()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, PickerRows);
+        window.Show();
+        ScreenshotHelper.Flush();
+
+        var items = window.ExistingList.GetVisualDescendants().OfType<ListBoxItem>().ToList();
+        Assert.Equal(3, items.Count);
+        Assert.All(items, i => Assert.Equal(NewChatWindow.ExistingRowHeight, i.Bounds.Height));
+
+        var scroll = window.ExistingList.GetVisualDescendants().OfType<ScrollViewer>().First();
+        Assert.True(scroll.Extent.Height <= scroll.Viewport.Height,
+            $"extent {scroll.Extent.Height} > viewport {scroll.Viewport.Height}");
+    }
+
+    // Control: with a fourth row the same list does scroll, so the check above can fail.
+    [AvaloniaFact]
+    public void AFourthRowScrollsTheList()
+    {
+        var four = PickerRows().Append(PickerRows()[0] with { OrbSessionId = "openclaw:agent:x:4", Title = "fourth" }).ToArray();
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, () => four);
+        window.Show();
+        ScreenshotHelper.Flush();
+
+        var scroll = window.ExistingList.GetVisualDescendants().OfType<ScrollViewer>().First();
+        Assert.True(scroll.Extent.Height > scroll.Viewport.Height);
+    }
+
+    // The gateway never answered inside the budget: the headline and the
+    // known failure, in the list's own cell.
+    [AvaloniaFact]
+    public void NewChatOpenExistingUnreachable()
+    {
+        var now = Now;
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.Ready, () => null);
+        NewChatWindow.NowForTests = () => now.AddSeconds(30);
+        NewChatWindow.LastConnectFailureForTests = () => null;
+        window.OnReopenLoadTick(null, EventArgs.Empty);
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-unreachable.png");
+
+        Assert.Equal("Can't reach the OpenClaw gateway", window.ExistingEmpty.Text);
+    }
+
+    // The reply switch off: Open existing is the one live mode, with the
+    // reason sitting under the disabled "New conversation".
+    [AvaloniaFact]
+    public void NewChatOpenExistingReplyDisabled()
+    {
+        var window = OpenExistingWindow(OpenClawNewChatAvailability.ReplyDisabled, PickerRows);
+
+        ScreenshotHelper.Capture(window, "new-chat-window-open-existing-reply-off.png");
+
+        Assert.False(window.NewConversationRadio.IsEnabled);
+        Assert.True(window.OpenExistingRadio.IsChecked);
     }
 
     private static void ClearSeams()
@@ -323,5 +470,9 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.StartOpenClawConversationForTests = null;
         NewChatWindow.OrbForTests = null;
         NewChatWindow.AccountDirectoryExistsForTests = null;
+        NewChatWindow.ReopenRowsForTests = null;
+        NewChatWindow.ReopenOpenClawForTests = null;
+        NewChatWindow.NowForTests = null;
+        NewChatWindow.LastConnectFailureForTests = null;
     }
 }

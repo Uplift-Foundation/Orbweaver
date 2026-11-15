@@ -24,6 +24,11 @@ namespace Orbweaver
         // that true.
         private static volatile IReadOnlyList<Session> _snapshot = Array.Empty<Session>();
 
+        // CB-329: every non-archived row of the last poll, before the recency and
+        // cluster filters, for the "Open existing" picker. Kept beside _snapshot
+        // and replaced whole, never mutated, so a read needs no lock.
+        private static volatile IReadOnlyList<Session> _listed = Array.Empty<Session>();
+
         private static Task? _supervisor;
         private static CancellationTokenSource? _cts;
 
@@ -1055,6 +1060,146 @@ namespace Orbweaver
             _snapshot = sessions;
         }
 
+        // CB-329: everything the poll published about the list, dropped together
+        // when the connection goes: the orbs' snapshot, the picker's, and the flag
+        // that says either is current.
+        internal static void ClearListing()
+        {
+            _snapshot = Array.Empty<Session>();
+            _listed = Array.Empty<Session>();
+            _listingCurrent = false;
+        }
+
+        // CB-329: the last reason a connect failed, kept on its own because it only
+        // otherwise survives inside the status sentence. The picker shows it when
+        // the gateway never answers: on a Mac that text is the Local Network hint,
+        // which breaks on every upgrade and is the likeliest cause of a gateway
+        // that is down right after an install. Cleared when a listing lands.
+        private static volatile string? _lastConnectFailure;
+
+        internal static void RecordConnectFailure(OpenClawGateway.ConnectResult result)
+        {
+            if (result.Outcome != OpenClawGateway.Outcome.Connected) _lastConnectFailure = result.Detail;
+        }
+
+        // CB-329: a listing landed, so this connection is live and whatever failed
+        // before is history. Its own method so the clear is covered and only the
+        // call sits inside the excluded poll.
+        internal static void ListingLanded()
+        {
+            _listingCurrent = true;
+            _lastConnectFailure = null;
+        }
+
+        internal static string? LastConnectFailure() =>
+            OrbweaverSettings.OpenClawEnabled ? _lastConnectFailure : null;
+
+        internal static void SetLastConnectFailureForTests(string? detail) => _lastConnectFailure = detail;
+
+        // CB-329: whether the cluster rule takes this row's orb away. The three
+        // exemptions, in the order Parse always applied them: a pinned row is
+        // kept, a row waiting on an approval is kept while approving is on, and
+        // otherwise the cluster's own visibility decides. Called by Parse and by
+        // the picker's Build, so what the picker lists is exactly what has an orb.
+        internal static bool ClusterHides(
+            Session s, ClusterMode heartbeats, ClusterMode crons, ClusterMode native, bool approveEnabled) =>
+            !s.GatewayPinned
+            && !(s.State == "waiting" && approveEnabled)
+            && !OrbClusters.Visible(
+                OrbClusters.Of(s.Heartbeat, s.Kind, s.Native != OpenClawNativeKind.None),
+                heartbeats, crons, native);
+
+        // CB-329: the picker's rows come from here — what the last poll listed,
+        // minus archived conversations, with the recency and cluster filters not
+        // yet applied (OpenClawReopenList applies the cluster one itself).
+        // Null while no poll has completed on this connection or OpenClaw is off:
+        // null means "loading", never "empty" (an empty list is a poll that
+        // answered with nothing).
+        internal static IReadOnlyList<Session>? ListedSnapshot() =>
+            OrbweaverSettings.OpenClawEnabled && _listingCurrent ? _listed : null;
+
+        // A test seam in the shape of SetSnapshotForTests.
+        internal static void SetListedForTests(IReadOnlyList<Session> sessions)
+        {
+            _listed = sessions;
+        }
+
+        // CB-329: the picker's "counts as fresh activity". Exactly what an event does
+        // to LastSeen and nothing else — no Running entry, so the orb is idle, not working.
+        internal static void MarkActive(IEnumerable<string> keys, DateTime now)
+        {
+            lock (Gate)
+                foreach (var key in keys) LastSeen[key] = now;
+        }
+
+        // A test seam: LastSeen is process-wide, so a test that marks a key must
+        // be able to give it back.
+        internal static void ForgetLastSeenForTests()
+        {
+            lock (Gate) LastSeen.Clear();
+        }
+
+        // CB-329 amendment 1: the ids a reopen takes out of the CB-276 hidden set.
+        // A session row is just its own orb. A room row is the room orb and every
+        // member: HiddenOrbs.Effective hides a member whose *lead* is hidden, and
+        // a room member's lead is the room orb (SessionManager sets
+        // status.Lead = RoomId(room)), so un-hiding the members alone would leave
+        // them hidden through their lead.
+        internal static IReadOnlyList<string> ReopenHiddenIds(OpenClawReopenRow row)
+        {
+            if (row.Target == OpenClawReopenTarget.Session) return new[] { row.OrbSessionId };
+
+            var ids = new List<string> { row.OrbSessionId };
+            ids.AddRange(row.MemberKeys.Select(key => "openclaw:" + key));
+            return ids;
+        }
+
+        // A test seam, so a unit test can see which ids are un-hidden without a
+        // SessionManager or a settings file behind them.
+        internal static Action<string>? RestoreHiddenForTests;
+
+        // Exactly what Settings > Hidden orbs does to restore one: through the
+        // manager when it exists (which also schedules a scan), otherwise the
+        // store. RestoreHiddenOrb returns false and writes nothing for an id that
+        // was not hidden, so reopening a row that was never hidden writes nothing.
+        private static void RestoreHidden(string id)
+        {
+            if (RestoreHiddenForTests is { } seam) { seam(id); return; }
+
+            RestoreHiddenVia(SessionManager.Instance, id);
+        }
+
+        // The manager is an argument so the choice can be tested: Instance is
+        // only set by Start(), which a test must not run.
+        internal static void RestoreHiddenVia(SessionManager? manager, string id)
+        {
+            if (manager is not null) manager.RestoreHiddenOrb(id);
+            else OrbweaverSettings.RestoreHiddenOrb(id);
+        }
+
+        // CB-329: what choosing a picker row does. Un-hides first, so the scan
+        // the restore schedules already sees the session as fresh, then marks
+        // every member active (a room orb needs more than one agent to pass
+        // recency, so marking only the newest would open the panel and draw no
+        // room orb), then returns the panel's session: RoomChatFor with the
+        // WIDE member list for a room, ChatFor otherwise. Null when OpenClaw is
+        // off (both callees already answer null then).
+        public static IRemoteChatSession? Reopen(OpenClawReopenRow row)
+        {
+            // Before the un-hide and the mark: with OpenClaw off both callees answer
+            // null, but by then a hidden row would already have been restored (a
+            // settings write) by a method that returns nothing.
+            if (!OrbweaverSettings.OpenClawEnabled) return null;
+
+            foreach (var id in ReopenHiddenIds(row)) RestoreHidden(id);
+            MarkActive(row.MemberKeys, DateTime.UtcNow);
+
+            return row.Target == OpenClawReopenTarget.Room
+                ? RoomChatFor(row.OrbSessionId, row.PanelTitle,
+                    MembersOfRoom(row.OrbSessionId["openclaw:room:".Length..]))
+                : ChatFor(row.OrbSessionId, row.PanelTitle);
+        }
+
         // CB-276: whether the last thing the poll published is still a live
         // answer. Set where the poll publishes a listing, cleared where the
         // snapshot is cleared on a disconnect and on a restart: a listing that
@@ -1182,8 +1327,7 @@ namespace Orbweaver
                 _cts?.Cancel();
                 _cts = null;
                 _supervisor = null;
-                _snapshot = Array.Empty<Session>();
-                _listingCurrent = false;
+                ClearListing();
                 Running.Clear();
                 ClearPendingLocked();
 
@@ -1238,6 +1382,7 @@ namespace Orbweaver
                     if (result.Outcome != OpenClawGateway.Outcome.Connected)
                     {
                         Report(Describe(result));
+                        RecordConnectFailure(result);
 
                         // Recorded as a flag as well as a sentence, because the
                         // settings window has to *offer something* for this one
@@ -1358,8 +1503,7 @@ namespace Orbweaver
 
                 // Orbs go the moment the connection does: an orb for a session
                 // we can no longer see the state of is a lie that pulses.
-                _snapshot = Array.Empty<Session>();
-                _listingCurrent = false;
+                ClearListing();
 
                 try { await Task.Delay(backoff, ct); } catch { break; }
                 backoff = TimeSpan.FromSeconds(Math.Min(60, backoff.TotalSeconds * 2));
@@ -1544,7 +1688,7 @@ namespace Orbweaver
                 PurgeUnlistedApprovals();
 
                 _snapshot = sessions;
-                _listingCurrent = true;
+                ListingLanded();
                 Report(total == sessions.Count
                     ? $"Connected — {sessions.Count} session{(sessions.Count == 1 ? "" : "s")}."
                     : $"Connected — showing {sessions.Count} of {total}. The rest have been quiet "
@@ -1602,6 +1746,9 @@ namespace Orbweaver
             // pending approval kept (CB-270): see the filter below.
             var hiddenByCluster = new Dictionary<string, Session>(StringComparer.Ordinal);
             var keptByApproval = new HashSet<string>(StringComparer.Ordinal);
+
+            // CB-329: every non-archived row, before the recency and cluster filters.
+            var listed = new List<Session>();
 
             // Every agent the gateway knows of, filtered or not, so that a
             // colour is reserved for one whose orb isn't drawn — their messages
@@ -1676,13 +1823,36 @@ namespace Orbweaver
 
                 everyAgent.Add(AgentIdOf(key) ?? key);
 
+                // CB-329: the row is built once, before any filter, so the
+                // "Open existing" picker can list what the recency rule below is
+                // about to drop. Nothing here reads what the filters change, and
+                // the filters then judge this same record, so the result holds
+                // the identical object it always did.
+                var pinned = Bool(s, "pinned") == true;
+                var heartbeat = OpenClawHeartbeat.Is(key, Str(s, "label"));
+                var kind = KindFor(s, origin, key);
+                var session = new Session(
+                    key,
+                    TitleFor(s, origin, key),
+                    channel,
+                    state,
+                    activity,
+                    DeliveryFor(s),
+                    kind,
+                    heartbeat,
+                    Str(s, "sessionId"),
+                    Bool(s, "isMain") == true,
+                    native,
+                    pinned,
+                    Str(s, "label"));
+                listed.Add(session);
+
                 // A session mid-run is current whatever its timestamps say —
                 // it is the one thing an orb is most worth showing.
                 var within = ActiveWithin;
                 //
                 // CB-270: a pinned session or a dashboard one is exempt, however
                 // quiet. See OpenClawRetention for why those two and no others.
-                var pinned = Bool(s, "pinned") == true;
                 // CB-270 Stage 6: a session waiting on an approval is exempt like one
                 // mid-run, however quiet the gateway says it is: the orb that is
                 // asking for a person is the one that must not vanish.
@@ -1711,9 +1881,6 @@ namespace Orbweaver
                 // detectors, and it has to count as *one* of them in both
                 // places or an orb gets kept here and then drawn in a shape the
                 // user hid — or the reverse.
-                var heartbeat = OpenClawHeartbeat.Is(key, Str(s, "label"));
-                var kind = KindFor(s, origin, key);
-
                 // A pinned session is shown even when its cluster is Hidden,
                 // heartbeat or cron. Pinning is the person's own explicit "keep
                 // this" (OpenClawRetention), and it is how an agent's main
@@ -1729,27 +1896,14 @@ namespace Orbweaver
                 // the moment the approval ends and a pinned row, which was never
                 // kept by it, does not. An archived row was dropped at the top of the
                 // loop and never gets here.
-                var session = new Session(
-                    key,
-                    TitleFor(s, origin, key),
-                    channel,
-                    state,
-                    activity,
-                    DeliveryFor(s),
-                    kind,
-                    heartbeat,
-                    Str(s, "sessionId"),
-                    Bool(s, "isMain") == true,
-                    native,
-                    pinned,
-                    Str(s, "label"));
-
-                if (!pinned
-                    && !OrbClusters.Visible(
-                        OrbClusters.Of(heartbeat, kind, native != OpenClawNativeKind.None),
-                        HeartbeatMode, CronMode, NativeMode))
+                // CB-329: the predicate is shared with the picker (ClusterHides), so the
+                // list and the scan cannot drift apart. Asked first without the
+                // approval exemption to find a row the cluster would hide at all,
+                // then with it to learn whether an approval is what keeps it.
+                if (ClusterHides(session, HeartbeatMode, CronMode, NativeMode, approveEnabled: false))
                 {
-                    if (state == "waiting" && OrbweaverSettings.OpenClawApproveEnabled)
+                    if (!ClusterHides(session, HeartbeatMode, CronMode, NativeMode,
+                            OrbweaverSettings.OpenClawApproveEnabled))
                     {
                         keptByApproval.Add(key);
                     }
@@ -1822,6 +1976,7 @@ namespace Orbweaver
                 _runStatuses = runStatuses;
                 _hiddenByCluster = hiddenByCluster;
                 _keptByApproval = keptByApproval;
+                _listed = listed;
             }
 
             return (result, list.GetArrayLength());
@@ -2372,8 +2527,7 @@ namespace Orbweaver
 
             // The list catching up with a fact, as Forget puts it: the checkbox
             // and the age exemption hold before the next poll says the same.
-            if (result.Outcome == OpenClawActionOutcome.Done)
-                _snapshot = _snapshot.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
+            if (result.Outcome == OpenClawActionOutcome.Done) ApplyPinned(key, pinned);
 
             return result;
         }
@@ -2532,8 +2686,20 @@ namespace Orbweaver
         // leaving its orb up for as long as five seconds until the next poll says
         // the same thing. Only ever after the gateway confirmed the archive, so
         // this is the list catching up with a fact rather than predicting one.
-        private static void Forget(string key) =>
+        // CB-329: the state change of a confirmed pin, on both views of the list
+        // (the orbs' snapshot and the picker's). Its own method so it is covered
+        // without a network await in front of it.
+        internal static void ApplyPinned(string key, bool pinned)
+        {
+            _snapshot = _snapshot.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
+            _listed = _listed.Select(s => s.Key == key ? s with { GatewayPinned = pinned } : s).ToList();
+        }
+
+        internal static void Forget(string key)
+        {
             _snapshot = _snapshot.Where(s => s.Key != key).ToList();
+            _listed = _listed.Where(s => s.Key != key).ToList();
+        }
 
         // Sends a reply into a session. Fails loudly rather than silently: the
         // panel puts whatever comes back in front of the person who typed it,

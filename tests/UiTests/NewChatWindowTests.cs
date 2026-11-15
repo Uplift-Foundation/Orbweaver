@@ -40,6 +40,7 @@ public class NewChatWindowTests : IDisposable
         NewChatWindow.KnownAgentsForTests = null;
         NewChatWindow.StartOpenClawConversationForTests = null;
         NewChatWindow.OrbForTests = null;
+        NewChatWindow.ReopenRowsForTests = null;
     }
 
     private static void FreshSettings()
@@ -872,23 +873,47 @@ public class NewChatWindowTests : IDisposable
     private static FakeChatSession OpenClawFake(string sessionId = "openclaw:abc123") =>
         new(null) { SessionId = sessionId, DisplayName = "Fake OpenClaw" };
 
+    // CB-329: only NoGateway shuts the row now. ReplyDisabled used to as well;
+    // it keeps the row live for Open existing and disables just "New
+    // conversation", with the reason under it (NewChatWindowReopenTests has the
+    // full ReplyDisabled cases).
     [AvaloniaFact]
-    public void TheOpenClawRowIsDisabledWithItsReasonWhenNotReady()
+    public void TheOpenClawRowIsDisabledWithItsReasonWhenThereIsNoGateway()
     {
         FreshSettings();
         NewChatAvailability.CurrentForTests = () => Array.Empty<NewChatOption>();
-        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.ReplyDisabled;
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
 
         var window = NewWindow();
 
         var row = window.CliList.Children.OfType<RadioButton>().Single(r => (string)r.Content! == "OpenClaw");
         Assert.False(row.IsEnabled);
-        Assert.Equal("Turn on \"Allow replying to agents\" in Settings.", ToolTip.GetTip(row));
+        Assert.Equal("No gateway configured.", ToolTip.GetTip(row));
 
         var reasonText = window.ReasonTextFor(NewChatWindow.OpenClawTag);
         Assert.NotNull(reasonText);
-        Assert.Equal("Turn on \"Allow replying to agents\" in Settings.", reasonText!.Text);
+        Assert.Equal("No gateway configured.", reasonText!.Text);
         Assert.True(reasonText.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void TheOpenClawRowStaysEnabledWhenOnlyReplyIsOff()
+    {
+        FreshSettings();
+        NewChatAvailability.CurrentForTests = () => Array.Empty<NewChatOption>();
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.ReplyDisabled;
+        NewChatWindow.ReopenRowsForTests = () => Array.Empty<OpenClawReopenRow>();
+
+        var window = NewWindow();
+
+        var row = window.CliList.Children.OfType<RadioButton>().Single(r => (string)r.Content! == "OpenClaw");
+        Assert.True(row.IsEnabled);
+        Assert.Null(ToolTip.GetTip(row));
+        Assert.Null(window.ReasonTextFor(NewChatWindow.OpenClawTag));
+        Assert.False(window.NewConversationRadio.IsEnabled);
+        Assert.Equal("Turn on \"Allow replying to agents\" in Settings.", window.ModeReason.Text);
+
+        NewChatWindow.ReopenRowsForTests = null;
     }
 
     [AvaloniaFact]

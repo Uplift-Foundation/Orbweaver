@@ -225,6 +225,15 @@ internal static class ScreenshotHelper
         foreach (var block in root.GetSelfAndVisualDescendants().OfType<TextBlock>())
         {
             if (!block.IsVisible || string.IsNullOrWhiteSpace(block.Text)) continue;
+
+            // Text under an Opacity-0 ancestor draws nothing by design — the
+            // New chat dialog's CB-207 ghosts are exactly that, invisible
+            // copies of a section that hold its height — so it has no ink to
+            // measure. Without this a ghost label that happens to sit over a
+            // control the real section draws (CB-329's Open existing filter
+            // row sits where the Agent ghost's label is) reads as a bi-level
+            // glyph mask: two levels, the background and the border behind it.
+            if (block.GetVisualAncestors().TakeWhile(a => !ReferenceEquals(a, root)).OfType<Visual>().Any(a => a.Opacity == 0)) continue;
             if (block.Bounds.Width < 8 || block.Bounds.Height < 6) continue;
 
             if (!VisibleRect(block, root, out var visible)) continue;
