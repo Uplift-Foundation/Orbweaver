@@ -450,6 +450,33 @@ public partial class ClaudeCloudEventsTests
         await Close(chat);
     }
 
+    // A second send on a trusted stream replaces the first send's watch: one
+    // grace per turn, from that turn's own send.
+    [Fact]
+    public async Task ASecondSendReplacesTheFirstSendsWatch()
+    {
+        var (chat, api, stream, clock) = ReplyingStream();
+        chat.PanelOpened();
+        await stream.NextOpenAsync();
+
+        await chat.SendAsync("one");
+        var first = chat.SendWatchTask!;
+        await chat.SendAsync("two");
+        await first;
+
+        Assert.NotSame(first, chat.SendWatchTask);
+        Assert.Null(chat.LiveTask);
+
+        clock.ReleaseEchoGrace();
+        await chat.SendWatchTask!;
+        await chat.LiveTask!;
+
+        Assert.Equal(1, Lines(chat, "polling beside it"));
+        Assert.True(HasReply(chat));
+
+        await Close(chat);
+    }
+
     // Case 13. Closing the panel during the grace ends the watch with it.
     [Fact]
     public async Task ClosingThePanelDuringTheGraceStartsNoPolling()

@@ -1087,6 +1087,7 @@ public partial class ClaudeCloudEventsTests
 
         // Still busy: the roster owns the answer from here.
         Assert.True(chat.CanInterrupt);
+        Assert.Single(LogOf(chat), l => l == "live session_a: stopped watching at the 120s cap, roster owns busy");
     }
 
     [Theory]

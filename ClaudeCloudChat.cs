@@ -1655,6 +1655,10 @@ namespace Orbweaver
                     }
                 }
             }
+
+            // A runaway turn: still working at the cap. Busy stays as it is, and
+            // the roster's own working-to-idle reads the reply when it ends.
+            Log($"live {SessionId}: stopped watching at the {CloudChatLog.Seconds(UnmeasuredLiveCap)} cap, roster owns busy");
         }
 
         // The loop is ending on a 429. Said in the panel and in the log.
