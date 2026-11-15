@@ -1082,7 +1082,7 @@ namespace Orbweaver
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
-                foreach (var arg in args) psi.ArgumentList.Add(arg);
+                foreach (var arg in TerminalScripts.TmuxProcessArgs(exe, args)) psi.ArgumentList.Add(arg);
 
                 using var process = Process.Start(psi);
                 if (process is null) return false;

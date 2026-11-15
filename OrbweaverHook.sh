@@ -633,6 +633,7 @@ if [ -n "$CODEX_DAEMON" ]; then
         [ -n "$T" ] && [ "$T" != "??" ] && TTY="$T"
         TMUX_CMD=$(command -v tmux 2>/dev/null)
         if [ -n "$TMUX_CMD" ]; then
+            # Space-separated on purpose: a tab here would be rewritten to "_" for a non-UTF-8 client (CB-335), a space is not.
             PANES=$("$TMUX_CMD" list-panes -a -F '#{pane_pid} #{pane_id} #{socket_path}' 2>/dev/null)
             A="$FOUND"
             for _ in 1 2 3 4 5 6 7 8; do
