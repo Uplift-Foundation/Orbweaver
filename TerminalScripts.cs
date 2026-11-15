@@ -25,18 +25,20 @@ namespace Orbweaver
     // reasoning, moved with the code it explains.
     internal static class TerminalScripts
     {
-        // tmux 3.6a sanitises -F / display -p output for a client whose locale
-        // is not UTF-8: a TAB becomes "_" and "café" becomes "caf_". A GUI app
-        // started by launchd has no LANG or LC_*, so every client listing the
-        // app parsed on tabs found no client (measured, CB-335). `-u` tells
-        // tmux the terminal is UTF-8 whatever the environment says; it is a
-        // global client flag that predates tmux 1.x, and unlike injecting
-        // LC_CTYPE it does not leak into a server or panes the app starts.
+        // Measured on tmux 3.6a (other versions not checked): tmux sanitises
+        // -F / display -p output for a client whose locale is not UTF-8. A TAB
+        // becomes "_" and "café" becomes "caf_". The installed app on the mini
+        // had no LANG or LC_* (measured), so every client listing the app
+        // parsed on tabs found no client (CB-335). `-u` tells tmux the
+        // terminal is UTF-8 whatever the environment says; it is a
+        // long-standing global client flag, and unlike injecting LC_CTYPE it
+        // does not leak into a server or panes the app starts.
         //
         // Keyed on the executable's file name so the generic TryRun helpers,
         // which also run ps, id and osascript, can apply it without every call
         // site having to remember. It goes first: -u is a global flag and must
-        // precede -S and the command.
+        // precede -S and the command. "tmux.exe" would not match; nothing in
+        // the repo runs tmux that way (it is a Unix tool, run directly or in WSL).
         internal static string[] TmuxProcessArgs(string exe, string[] args) =>
             Path.GetFileName(exe) == "tmux" ? ["-u", .. args] : args;
 

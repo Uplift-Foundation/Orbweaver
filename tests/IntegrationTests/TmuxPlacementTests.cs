@@ -37,8 +37,9 @@ public sealed class TmuxPlacementTests : IDisposable
     // Pinned rather than inherited (CB-335). tmux 3.6a rewrites a TAB in -F
     // output to "_" for a client whose locale is not UTF-8, which is exactly
     // the installed app's situation (launchd hands a GUI app no LANG or LC_*)
-    // and was a developer pane's too. A CI image that exports a UTF-8 LANG
-    // hid that, so this suite cleared nothing and passed on broken code there.
+    // and was a developer pane's too. Assumed, not measured: the CI runner
+    // likely exports a UTF-8 LANG, which would have let this suite pass on
+    // broken code there, since it cleared nothing.
     // Clearing all three makes every machine run these tests in the locale the
     // bug needs, which is what turns them into a real negative control.
     private static readonly string[] LocaleVars = ["LANG", "LC_ALL", "LC_CTYPE"];
@@ -52,9 +53,8 @@ public sealed class TmuxPlacementTests : IDisposable
         Environment.SetEnvironmentVariable("TMUX", null);
         foreach (var v in LocaleVars) Environment.SetEnvironmentVariable(v, null);
 
-        // Not the cause of CB-335 (measured: the same four failed with it
-        // unset), but a tmux run from inside a pane follows it the way it
-        // follows TMUX, so it is cleared with it.
+        // Cleared alongside TMUX as hardening, not the cause (measured: the
+        // same four failed with it unset).
         Environment.SetEnvironmentVariable("TMUX_PANE", null);
         Environment.SetEnvironmentVariable("TMUX_TMPDIR", _dir);
 
