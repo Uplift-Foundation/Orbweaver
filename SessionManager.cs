@@ -3132,6 +3132,16 @@ namespace Orbweaver
                 // its command line and is what Claude Code's own team UI shows.
                 if (string.IsNullOrEmpty(status.Color)) status.Color = membership.Color;
 
+                // CB-281 (a CB-306 gap): a session OpenClaw spawned to run a
+                // heartbeat or a cron is drawn as one. Its cluster used to
+                // decide only whether it was shown (ShowHere, above), so with
+                // heartbeats in their own shape it still sat with the chats —
+                // and auto-grouping, which yields only to a predefined cluster,
+                // grouped it as a chat. After the Background badge above, which
+                // would otherwise overwrite a cron's Kind.
+                MarkSpawnCluster(status, OpenClawCliSession.ClusterOf(
+                    status, OpenClawSessions.OwnerIndexSnapshot().AgentWorkspaces.Values.ToList()));
+
                 // Joining or leaving a team changes where this orb belongs in
                 // the stack, not just what it looks like, so it has to reflow.
                 // It isn't a set change and would otherwise go unnoticed — a
@@ -5718,6 +5728,16 @@ namespace Orbweaver
 
         // --- CB-281: auto groups ------------------------------------------------
 
+        // What a spawn's cluster means for the orb: a heartbeat wears the heart
+        // and joins the heartbeats cluster, a cron the stopwatch and the crons
+        // cluster, the way a gateway heartbeat or cron does. Chats and Native
+        // change nothing; null is a session OpenClaw did not spawn.
+        internal static void MarkSpawnCluster(SessionStatus status, OrbCluster? cluster)
+        {
+            if (cluster == OrbCluster.Heartbeats) status.Heartbeat = true;
+            else if (cluster == OrbCluster.Crons) status.Kind = SessionKind.Cron;
+        }
+
         // The seams the classifier's facts come from, so a test hands in a
         // dictionary instead of reading .claude.json or walking up to a .git.
         // Account: a session to a stable key and a label, null for unknown.
@@ -5796,10 +5816,15 @@ namespace Orbweaver
         private bool SyncAutoGroups(TeamTree tree)
         {
             var by = OrbweaverSettings.AutoGroupBy;
+            // Only a group some root will actually be drawn in: one that an
+            // explicit membership or a predefined cluster outranks would sit in
+            // the table unused, and count as live against the cap.
             var wanted = tree.Present
                 .Select(tree.RootOf)
                 .Distinct(StringComparer.Ordinal)
-                .Select(root => AutoGroupValueOf(by, _statuses[root]))
+                .Select(root => AutoGroupValueOf(by, _statuses[root]) is { } value && WouldJoin(root, value.Id)
+                    ? value
+                    : ((string Id, string Name)?)null)
                 .OfType<(string Id, string Name)>()
                 .DistinctBy(value => value.Id, StringComparer.Ordinal)
                 .ToList();
@@ -5812,6 +5837,14 @@ namespace Orbweaver
 
             return changes.Count > 0;
         }
+
+        // Whether a root would be drawn in `autoId` once it exists: GroupIdFor's
+        // precedence, asked with the auto id handed in unfiltered.
+        private bool WouldJoin(string rootId, string autoId) =>
+            OrbGroupMenu.ContextFor(
+                rootId, Array.Empty<string>(), _statuses,
+                OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                OrbweaverSettings.OpenClawNativeMode, _ => autoId).GroupId == autoId;
 
         // An orb the classifier stopped claiming — the setting went Off or to
         // another attribute, or its value became unknown — goes back to where

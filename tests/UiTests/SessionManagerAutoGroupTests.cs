@@ -370,8 +370,10 @@ public class SessionManagerAutoGroupTests : IDisposable
 
         Assert.Equal(OrbGroups.Main, GroupOf(m, "s1"));
         Assert.Equal(CliGroup(0), GroupOf(m, "s0"));
-        // The drag still knows which group it would classify into.
-        Assert.Equal(CliGroup(1), ((IOrbDragHost)m).AutoGroupIdOf("s1"));
+        // s1 is the only Codex orb and is held out, so no Codex group is made
+        // for nobody: nothing would be drawn in it.
+        Assert.Null(OrbweaverSettings.OrbGroupFor(CliGroup(1)));
+        Assert.Null(((IOrbDragHost)m).AutoGroupIdOf("s1"));
     }
 
     [AvaloniaFact]
@@ -845,9 +847,13 @@ public class SessionManagerAutoGroupTests : IDisposable
     // OpenClaw spawned to run a heartbeat, beside an ordinary Codex session.
     // A different route to a heartbeat orb from the gateway's, and the one a
     // CLI classifier would otherwise call "claude".
-    private SessionManager ScanHeartbeatSpawn(ClusterMode heartbeats)
+    private const string HeartbeatPrompt = "A scheduled reminder has been triggered. HEARTBEAT: run the routine.";
+
+    private SessionManager ScanHeartbeatSpawn(
+        ClusterMode heartbeats, string prompt = HeartbeatPrompt, ClusterMode crons = ClusterMode.WithChats)
     {
         OrbweaverSettings.OpenClawHeartbeatMode = heartbeats;
+        OrbweaverSettings.OpenClawCronMode = crons;
         OrbweaverSettings.OpenClawEnabled = false;
         OpenClawSessions.SetAgentWorkspacesForTests(new Dictionary<string, string>());
         OrbweaverSettings.ClaudeCodeEnabled = true;
@@ -855,8 +861,8 @@ public class SessionManagerAutoGroupTests : IDisposable
 
         var workspace = Path.Combine(_dir, ".openclaw", "workspace-sample-zara");
         var transcript = Path.Combine(_dir, "spawn.jsonl");
-        File.WriteAllText(transcript,
-            "{\"type\":\"user\",\"message\":{\"content\":\"A scheduled reminder has been triggered. HEARTBEAT: run the routine.\"}}\n");
+        File.WriteAllText(transcript, System.Text.Json.JsonSerializer.Serialize(
+            new { type = "user", message = new { content = prompt } }) + "\n");
         void Status(string id, string cli, string cwd, string path) =>
             File.WriteAllText(Path.Combine(_dir, id + ".txt"), System.Text.Json.JsonSerializer.Serialize(new SessionStatus
             {
@@ -874,34 +880,64 @@ public class SessionManagerAutoGroupTests : IDisposable
 
     private void WithHeartbeatSpawn(Action body)
     {
-        var before = (OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawEnabled);
+        var before = (OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawEnabled,
+            OrbweaverSettings.OpenClawCronMode);
         try { body(); }
         finally
         {
             OrbweaverSettings.OpenClawHeartbeatMode = before.OpenClawHeartbeatMode;
+            OrbweaverSettings.OpenClawCronMode = before.OpenClawCronMode;
             OrbweaverSettings.OpenClawEnabled = before.OpenClawEnabled;
             OpenClawSessions.SetAgentWorkspacesForTests(new Dictionary<string, string>());
             OpenClawCliSession.ForgetForTests();
         }
     }
 
-    // What this pins is today's behaviour, not the precedence rule (the
-    // gateway heartbeat test above pins that). A spawned heartbeat's cluster
-    // decides only whether it is shown (OpenClawCliSession.Show); its orb's
-    // Heartbeat flag is never set, so it has always been drawn as a chat, in
-    // main, even with heartbeats in their own shape (CB-306, unchanged here).
-    // Under CLI it is therefore grouped like the chat it is drawn as.
+    // CB-306 gap fixed under CB-281: a spawned heartbeat used to be drawn as
+    // a chat, in main, even with heartbeats in their own shape, because its
+    // cluster decided only whether it was shown. The scan now marks it
+    // (SessionManager.MarkSpawnCluster), so it joins the heartbeats cluster —
+    // which auto-grouping yields to.
     [AvaloniaFact]
-    public void ASpawnedHeartbeatIsDrawnAsAChatSoCliGroupsItLikeOne() => WithHeartbeatSpawn(() =>
+    public void ASpawnedHeartbeatInItsOwnShapeDrawsInHeartbeatsWithAutoGroupOffOrOn() => WithHeartbeatSpawn(() =>
     {
         var m = ScanHeartbeatSpawn(ClusterMode.OwnShape);
-        Assert.Contains("spawn", Windows(m).Keys);
-        Assert.Equal(OrbGroups.Main, GroupOf(m, "spawn"));            // Off: main, not heartbeats
+        Assert.True(m.AllStatuses["spawn"].Heartbeat);
+        Assert.Equal(OrbGroups.Heartbeats, GroupOf(m, "spawn"));      // Off: the control
+
+        Set(m, AutoGroupBy.Cli);
+
+        Assert.Equal(OrbGroups.Heartbeats, GroupOf(m, "spawn"));
+        Assert.Null(OrbweaverSettings.OrbGroupFor(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude")));
+        // Control: the Codex session beside it is grouped, so CLI really is on.
+        Assert.Equal(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "codex"), GroupOf(m, "ordinary"));
+        Assert.False(m.AllStatuses["ordinary"].Heartbeat);
+    });
+
+    [AvaloniaFact]
+    public void ASpawnedHeartbeatGatheredWithTheChatsIsStillDrawnAsAChat() => WithHeartbeatSpawn(() =>
+    {
+        var m = ScanHeartbeatSpawn(ClusterMode.WithChats);
+        Assert.True(m.AllStatuses["spawn"].Heartbeat);                 // it wears the heart
+        Assert.Equal(OrbGroups.Main, GroupOf(m, "spawn"));             // but sits with the chats
 
         Set(m, AutoGroupBy.Cli);
 
         Assert.Equal(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude"), GroupOf(m, "spawn"));
-        Assert.Equal(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "codex"), GroupOf(m, "ordinary"));
+    });
+
+    [AvaloniaFact]
+    public void ASpawnedCronInItsOwnShapeDrawsInCronsUnderCli() => WithHeartbeatSpawn(() =>
+    {
+        var m = ScanHeartbeatSpawn(ClusterMode.WithChats, "[cron:nightly] run the report", ClusterMode.OwnShape);
+        Assert.Equal(SessionKind.Cron, m.AllStatuses["spawn"].Kind);
+        Assert.False(m.AllStatuses["spawn"].Heartbeat);
+        Assert.Equal(OrbGroups.Crons, GroupOf(m, "spawn"));
+
+        Set(m, AutoGroupBy.Cli);
+
+        Assert.Equal(OrbGroups.Crons, GroupOf(m, "spawn"));
+        Assert.Null(OrbweaverSettings.OrbGroupFor(OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude")));
     });
 
     [AvaloniaFact]

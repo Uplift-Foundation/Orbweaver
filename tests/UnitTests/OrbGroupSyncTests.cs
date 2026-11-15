@@ -38,6 +38,23 @@ public class OrbGroupSyncTests
         Assert.Empty(tracker.Observe(new[] { ("a", "third") }));
     }
 
+    // CB-281 (a CB-306 gap): what a spawn's cluster marks on its status.
+    [Theory]
+    [InlineData(OrbCluster.Heartbeats, true, SessionKind.Unknown)]
+    [InlineData(OrbCluster.Crons, false, SessionKind.Cron)]
+    [InlineData(OrbCluster.Chats, false, SessionKind.Unknown)]
+    [InlineData(OrbCluster.Native, false, SessionKind.Unknown)]
+    [InlineData(null, false, SessionKind.Unknown)]
+    public void ASpawnsClusterMarksOnlyAHeartbeatOrACron(OrbCluster? cluster, bool heartbeat, SessionKind kind)
+    {
+        var status = new SessionStatus();
+
+        SessionManager.MarkSpawnCluster(status, cluster);
+
+        Assert.Equal(heartbeat, status.Heartbeat);
+        Assert.Equal(kind, status.Kind);
+    }
+
     // CB-281: an orb's group changing with nobody arriving.
     [Fact]
     public void TheGroupTrackerReportsAMovedOrbWithBothGroupsAndNothingOnFirstSight()
