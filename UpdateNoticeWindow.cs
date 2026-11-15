@@ -417,6 +417,7 @@ namespace Orbweaver
             switch (block.Kind)
             {
                 case ChatMarkdown.MdKind.Code:
+                case ChatMarkdown.MdKind.Table:
                     return new Border
                     {
                         Background = new SolidColorBrush(Color.FromArgb(40, 128, 128, 128)),

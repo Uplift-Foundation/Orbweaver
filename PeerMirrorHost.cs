@@ -46,7 +46,7 @@ namespace Orbweaver
             _link = new PeerLink(new PeerLink.Seams(
                 Deliver: DeliverAsync,
                 KnownPeer: PeerIdentity.PeerFor,
-                OwnCertificate: PeerIdentity.Certificate));
+                OwnCertificate: PeerIdentity.HandshakeCertificateAsync));
             _link.PeerDisconnected += OpenClawSessions.ForgetPeerProfileVoices;
             _link.PeerConnected += _ => OpenClawSessions.RequestPeerProfileVoices();
         }

@@ -729,7 +729,7 @@ namespace Orbweaver
                     CreateNoWindow = true,
                 };
 
-                foreach (var a in args) psi.ArgumentList.Add(a);
+                foreach (var a in TerminalScripts.TmuxProcessArgs(exe, args)) psi.ArgumentList.Add(a);
 
                 using var p = Process.Start(psi);
                 if (p is null) return false;
@@ -1494,7 +1494,7 @@ namespace Orbweaver
                     // on macOS, where every other TryRun caller lives.
                     CreateNoWindow = true
                 };
-                foreach (var arg in args) psi.ArgumentList.Add(arg);
+                foreach (var arg in TerminalScripts.TmuxProcessArgs(exe, args)) psi.ArgumentList.Add(arg);
 
                 using var process = Process.Start(psi);
                 if (process is null) return false;

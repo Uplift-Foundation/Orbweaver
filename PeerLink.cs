@@ -36,7 +36,10 @@ namespace Orbweaver
         internal sealed record Seams(
             Func<string, PeerProtocol.PeerMessage, Task> Deliver,
             Func<string, PeerIdentity.Peer?> KnownPeer,
-            Func<X509Certificate2> OwnCertificate);
+            // Awaited, and allowed to time out (CB-301): the certificate is
+            // loaded once and shared, and a load stuck on a keychain prompt
+            // must fail this handshake rather than hold the thread.
+            Func<CancellationToken, Task<X509Certificate2>> OwnCertificate);
 
         // Chosen from the unassigned range and fixed rather than negotiated: a
         // port that moved would have to be discovered before it could be
@@ -425,11 +428,12 @@ namespace Orbweaver
                 // No callback on the constructor: setting one here *and* in the
                 // authentication options below is refused by .NET outright, and
                 // the options are where the client certificate is judged.
+                var own = await _seams.OwnCertificate(ct).ConfigureAwait(false);
                 var tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
 
                 await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 {
-                    ServerCertificate = _seams.OwnCertificate(),
+                    ServerCertificate = own,
                     ClientCertificateRequired = true,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
@@ -456,19 +460,47 @@ namespace Orbweaver
             string machine, string host, int port = DefaultPort, CancellationToken ct = default,
             string? pairingCode = null, bool nameIsProvisional = false)
         {
-            if (IsConnected(machine)) return true;
+            switch (BeginDial(machine))
+            {
+                case DialStart.AlreadyConnected:
+                    return true;
+
+                case DialStart.InFlight:
+                    MirrorLog.SayOnce($"peer-dial-in-flight:{machine}", $"to={machine} already dialling");
+                    return false;
+            }
+
+            // Bounded, and only the setup (CB-301). A far side that accepts
+            // the TCP connection and then never speaks — a frozen app, which
+            // is exactly the 2026-10-30 shape — used to hang this dial with no
+            // end, and with one dial per machine and one tick at a time that
+            // would hold the machine, and the whole dial loop, forever. The
+            // link itself is not bound by this: Adopt below keeps the caller's
+            // token, which is what the connection lives on.
+            using var setup = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            setup.CancelAfter(DialTimeout);
+
+            TcpClient? client = null;
+            SslStream? tls = null;
+            var adopted = false;
 
             try
             {
-                var client = new TcpClient();
-                await client.ConnectAsync(host, port, ct).ConfigureAwait(false);
+                // Before the socket, not after: a certificate that is still
+                // loading should cost this dial nothing, rather than a TCP
+                // connection the far side has already accepted and will hold
+                // half-open until it times out (CB-301).
+                var own = await _seams.OwnCertificate(setup.Token).ConfigureAwait(false);
 
-                var tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+                client = new TcpClient();
+                await client.ConnectAsync(host, port, setup.Token).ConfigureAwait(false);
+
+                tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
 
                 await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                 {
                     TargetHost = machine,
-                    ClientCertificates = new X509Certificate2Collection(_seams.OwnCertificate()),
+                    ClientCertificates = new X509Certificate2Collection(own),
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
 
                     // The certificate is self-signed and has no meaningful name
@@ -477,7 +509,7 @@ namespace Orbweaver
                     // against what we paired with rather than here against a
                     // chain that was never going to verify.
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
-                }, ct).ConfigureAwait(false);
+                }, setup.Token).ConfigureAwait(false);
 
                 var offered = tls.RemoteCertificate is null
                     ? ""
@@ -507,6 +539,7 @@ namespace Orbweaver
                 }
 
                 Adopt(machine, tls, offered, ct, endpoint: host + ":" + port);
+                adopted = true;
 
                 // Said immediately rather than lazily, because until this
                 // arrives the far side has a connection it cannot name — and an
@@ -537,10 +570,78 @@ namespace Orbweaver
                 // SayOnce, not Say: a machine that cannot be dialled cannot be
                 // dialled every ten seconds either, and the identical line
                 // repeated forever is what evicts the history worth reading.
-                MirrorLog.SayOnce($"peer-connect-failed:{machine}",
-                    $"to={machine} {OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS())}");
+                // A socket that never became a link is closed here rather than
+                // left to a finalizer — a silent far side would otherwise cost
+                // one open connection per tick.
+                if (!adopted)
+                {
+                    tls?.Dispose();
+                    client?.Dispose();
+                }
+
+                var why = setup.IsCancellationRequested && !ct.IsCancellationRequested
+                    ? $"no answer within {DialTimeout.TotalSeconds:0.#}s"
+                    : OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS());
+
+                MirrorLog.SayOnce($"peer-connect-failed:{machine}", $"to={machine} {why}");
                 return false;
             }
+            finally
+            {
+                EndDial(machine);
+            }
+        }
+
+        // --- one dial per machine at a time (CB-301) ------------------------------
+
+        // **The connected check alone let a backlog of dials all complete.**
+        // ConnectAsync used to ask IsConnected only on entry, before any await.
+        // When the identity import froze the dial loop on 2026-10-30, about
+        // twenty-five ticks queued up, every one of them having already passed
+        // that check; when the freeze released, each made its own TCP and TLS
+        // connection. This side kept the last one Adopt was handed, but the
+        // far side had accepted all of them — 44 ESTABLISHED to the mini, and
+        // over two hundred FIN_WAIT_1 behind them. Any slow handshake opens the
+        // same window, the awaited certificate load included.
+        //
+        // So a machine being dialled is remembered until the dial ends, and a
+        // second dial to it returns at once. Outbound only, and only in this
+        // process: an inbound connection is never refused here, and Adopt and
+        // Rename keep their replace-the-old-link semantics, which is what
+        // tools/peer-probe --evict relies on (CB-306).
+        private readonly HashSet<string> _dialling = new(StringComparer.OrdinalIgnoreCase);
+
+        internal enum DialStart { Dial, AlreadyConnected, InFlight }
+
+        // How long a dial may take to become a link: certificate, TCP and TLS
+        // together. Longer than the certificate wait (PeerIdentity.HandshakeWait)
+        // so a slow load fails as a stall rather than as a dial timeout; short
+        // enough that a silent machine costs one tick or two, not the loop.
+        // Per link so a test can shorten it without touching any other.
+        internal TimeSpan DialTimeout { get; init; } = TimeSpan.FromSeconds(15);
+
+        // Pure: connected wins over in-flight, because a connected machine is
+        // the answer the caller wanted either way.
+        internal static DialStart Admit(bool connected, bool inFlight) =>
+            connected ? DialStart.AlreadyConnected
+            : inFlight ? DialStart.InFlight
+            : DialStart.Dial;
+
+        // Decides and, on Dial, claims the machine — one step under the lock,
+        // so two callers cannot both see it free.
+        internal DialStart BeginDial(string machine)
+        {
+            lock (_gate)
+            {
+                var start = Admit(_peers.ContainsKey(machine), _dialling.Contains(machine));
+                if (start == DialStart.Dial) _dialling.Add(machine);
+                return start;
+            }
+        }
+
+        internal void EndDial(string machine)
+        {
+            lock (_gate) _dialling.Remove(machine);
         }
 
         // Registers the connection and starts reading it.
