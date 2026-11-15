@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -108,6 +109,7 @@ namespace Orbweaver
         internal static void Forget()
         {
             _open?._watchTimer?.Stop();
+            _open?._reopenLoadTimer?.Stop();
             _open = null;
         }
 
@@ -137,6 +139,16 @@ namespace Orbweaver
             StartOpenClawConversationForTests;
 
         internal static Func<string, OrbWindow?>? OrbForTests;
+
+        // CB-329's three seams. ReopenRowsForTests replaces the whole
+        // ListedSnapshot + Build call (null means "no poll has completed yet",
+        // the Loading state, exactly as ListedSnapshot's own null does);
+        // ReopenOpenClawForTests replaces OpenClawSessions.Reopen, which
+        // marks the row active and builds the chat session; NowForTests pins
+        // the clock the "2 h ago" text is read against.
+        internal static Func<IReadOnlyList<OpenClawReopenRow>?>? ReopenRowsForTests;
+        internal static Func<OpenClawReopenRow, IRemoteChatSession?>? ReopenOpenClawForTests;
+        internal static Func<DateTime>? NowForTests;
 
         private static IReadOnlyDictionary<string, SessionStatus> CurrentStatuses() =>
             CurrentStatusesForTests?.Invoke()
@@ -216,7 +228,53 @@ namespace Orbweaver
         private readonly TextBlock _accountWarning = AccountWarningLine(opacity: 0.7);
         private readonly TextBlock _accountWarningGhost = AccountWarningLine(opacity: 0);
         private readonly Control _folderGhost = Ghost("Folder", withBrowse: true);
-        private readonly Control _agentGhost = Ghost("Agent", withBrowse: false);
+
+        // CB-329: the OpenClaw section is now a mode row over two panes, "New
+        // conversation" (the old Agent picker) and "Open existing" (filter,
+        // search, list). Each pane has its own ghost, built in the
+        // constructor because the reason-line ghosts they carry are instance
+        // state. See ReservedSlot.
+        private readonly Control _agentGhost;
+        private readonly Control _existingGhost;
+        private readonly List<TextBlock> _modeReasonGhosts = new();
+
+        // Fixed, never measured from content: the list is the one part of the
+        // dialog whose contents arrive after show (the first poll) and change
+        // with every filter keystroke, so it is a box of a set height, the
+        // same way the status line is a set number of lines. Sized so the
+        // dialog with everything available still fits a 720 px work area
+        // (NewChatWindowHeightTests pins the bound).
+        internal const double ExistingListHeight = 180;
+        internal const double ExistingRowHeight = 44;
+        private const double ModeReasonHeight = 16;
+
+        private readonly RadioButton _newModeRadio = new()
+        {
+            GroupName = "openclaw-mode",
+            Content = "New conversation"
+        };
+        private readonly RadioButton _existingModeRadio = new()
+        {
+            GroupName = "openclaw-mode",
+            Content = "Open existing"
+        };
+        private readonly TextBlock _modeReason = ModeReasonLine(opacity: 0.7);
+        private readonly StackPanel _newPane = new() { Spacing = 6 };
+        private readonly StackPanel _existingPane = new() { Spacing = 6, IsVisible = false };
+        private readonly ComboBox _existingAgentFilter = new() { Width = 150 };
+        private readonly TextBox _existingSearch = new() { Watermark = "Search" };
+        private readonly ListBox _existingList = new();
+        private readonly TextBlock _existingEmpty = new()
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Opacity = 0.7
+        };
+        private bool _existingMode;
+        private bool _canStartNew;
+        private IReadOnlyList<OpenClawReopenRow>? _reopenRows;
+        private IReadOnlyDictionary<string, string> _agentNames = new Dictionary<string, string>();
+        private DispatcherTimer? _reopenLoadTimer;
         private Grid? _accountSlot;
         private readonly NewChatCli? _prefillCli;
         private readonly string? _prefillCwd;
@@ -243,6 +301,22 @@ namespace Orbweaver
             _prefillCli = prefillCli;
             _prefillCwd = prefillCwd;
             _prefillAgentId = prefillAgentId;
+
+            _agentGhost = ModeGhost(Ghost("Agent", withBrowse: false));
+            _existingGhost = ExistingPaneGhost();
+            BuildExistingPane();
+            _newModeRadio.IsCheckedChanged += (_, _) =>
+            {
+                if (_newModeRadio.IsChecked != true) return;
+                _existingMode = false;
+                ApplyMode();
+            };
+            _existingModeRadio.IsCheckedChanged += (_, _) =>
+            {
+                if (_existingModeRadio.IsChecked != true) return;
+                _existingMode = true;
+                ApplyMode();
+            };
 
             Title = "New chat";
             Width = 420;
@@ -327,9 +401,23 @@ namespace Orbweaver
             folderRow.Children.Add(_folderCombo);
             _folderSection.Children.Add(folderRow);
 
-            _agentSection.Children.Add(new TextBlock { Text = "Agent", FontWeight = FontWeight.SemiBold });
-            _agentSection.Children.Add(_agentCombo);
-            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _folderSection, _agentSection));
+            // CB-329: the mode row, then whichever pane the mode shows. The
+            // reason line is the "New conversation" disabled-because text for
+            // ReplyDisabled; it has a fixed height and is reserved in both
+            // ghosts only then (BuildCliList decides once).
+            var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+            modeRow.Children.Add(_newModeRadio);
+            modeRow.Children.Add(_existingModeRadio);
+            _agentSection.Children.Add(modeRow);
+            _agentSection.Children.Add(_modeReason);
+
+            _newPane.Children.Add(new TextBlock { Text = "Agent", FontWeight = FontWeight.SemiBold });
+            _newPane.Children.Add(_agentCombo);
+            _agentSection.Children.Add(_newPane);
+
+            _agentSection.Children.Add(_existingPane);
+
+            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _existingGhost, _folderSection, _agentSection));
 
             _startButton.Click += async (_, _) => await StartClicked();
             root.Children.Add(_startButton);
@@ -440,6 +528,18 @@ namespace Orbweaver
         internal Control AccountGhost => _accountGhost;
         internal Control FolderGhost => _folderGhost;
         internal Control AgentGhost => _agentGhost;
+        internal Control ExistingGhost => _existingGhost;
+        internal RadioButton NewConversationRadio => _newModeRadio;
+        internal RadioButton OpenExistingRadio => _existingModeRadio;
+        internal TextBlock ModeReason => _modeReason;
+        internal StackPanel NewPane => _newPane;
+        internal StackPanel ExistingPane => _existingPane;
+        internal ListBox ExistingList => _existingList;
+        internal ComboBox ExistingAgentFilter => _existingAgentFilter;
+        internal TextBox ExistingSearch => _existingSearch;
+        internal TextBlock ExistingEmpty => _existingEmpty;
+        internal bool OpenExistingSelected => _existingMode;
+        internal bool ReopenLoadTimerRunning => _reopenLoadTimer?.IsEnabled == true;
         internal StackPanel CliList => _cliList;
         internal StackPanel AccountSection => _accountSection;
         internal ComboBox AccountCombo => _accountCombo;
@@ -509,7 +609,11 @@ namespace Orbweaver
             var openClawAvailability = OpenClawAvailabilityForTests?.Invoke() ?? OpenClawNewChat.AvailabilityFor(
                 OrbweaverSettings.OpenClawEnabled, OrbweaverSettings.OpenClawHost,
                 OrbweaverSettings.OpenClawReplyEnabled);
-            var openClawReady = openClawAvailability == OpenClawNewChatAvailability.Ready;
+            // CB-329: "ready" is two questions now. The radio is live when a
+            // conversation can be reopened (needs only a gateway); starting a
+            // new one still needs the reply switch.
+            var openClawUsable = OpenClawNewChat.CanOpenExisting(openClawAvailability);
+            _canStartNew = OpenClawNewChat.CanStartNew(openClawAvailability);
 
             // Which shapes each slot can ever hold for this window's lifetime
             // (CB-207, see ReservedSlot) — decided once here from the same
@@ -526,17 +630,29 @@ namespace Orbweaver
             _accountWarningGhost.IsVisible = _accountGhost.IsVisible && options.Any(o =>
                 o.Enabled && AccountChoices(o.Cli).Any(c => AccountWarningFor(o.Cli, c) is not null));
             _folderGhost.IsVisible = options.Any(o => o.Enabled);
-            _agentGhost.IsVisible = openClawReady;
+            _agentGhost.IsVisible = openClawUsable;
+            _existingGhost.IsVisible = openClawUsable;
+            var replyDisabled = openClawAvailability == OpenClawNewChatAvailability.ReplyDisabled;
+            foreach (var g in _modeReasonGhosts) g.IsVisible = replyDisabled;
+
+            _newModeRadio.IsEnabled = _canStartNew;
+            _modeReason.IsVisible = replyDisabled;
+            _modeReason.Text = replyDisabled ? OpenClawNewChat.ReasonFor(openClawAvailability) : null;
+            ToolTip.SetTip(_modeReason, _modeReason.Text);
+            ToolTip.SetTip(_newModeRadio, replyDisabled ? _modeReason.Text : null);
 
             var openClawRadio = new RadioButton
             {
                 GroupName = "NewChatCli",
                 Content = "OpenClaw",
-                IsEnabled = openClawReady,
+                IsEnabled = openClawUsable,
                 Tag = OpenClawTag
             };
 
-            var openClawReasonText = openClawReady ? null : OpenClawNewChat.ReasonFor(openClawAvailability);
+            // Only NoGateway explains itself under the row. ReplyDisabled
+            // leaves the row live and says its piece under the disabled
+            // "New conversation" radio instead.
+            var openClawReasonText = openClawUsable ? null : OpenClawNewChat.ReasonFor(openClawAvailability);
             if (openClawReasonText is { Length: > 0 } openClawTip) ToolTip.SetTip(openClawRadio, openClawTip);
 
             openClawRadio.IsCheckedChanged += (_, _) =>
@@ -546,6 +662,7 @@ namespace Orbweaver
                 _openClawSelected = true;
                 BuildAgentCombo();
                 BuildAccountCombo();
+                ChooseDefaultMode();
                 UpdateTargetSectionVisibility();
             };
 
@@ -565,11 +682,12 @@ namespace Orbweaver
             // local row, then OpenClaw if it's the only usable option — so
             // the dialog never opens with nothing selected when at least one
             // entry is available.
-            if (_prefillAgentId is { Length: > 0 } wantedAgent && openClawReady)
+            if (_prefillAgentId is { Length: > 0 } wantedAgent && _canStartNew)
             {
                 _openClawSelected = true;
                 openClawRadio.IsChecked = true;
                 BuildAgentCombo(wantedAgent);
+                ChooseDefaultMode();
                 BuildAccountCombo();
                 UpdateTargetSectionVisibility();
                 return;
@@ -588,11 +706,12 @@ namespace Orbweaver
                     if (child is RadioButton { Tag: NewChatCli cli } rb && cli == chosen) rb.IsChecked = true;
                 }
             }
-            else if (openClawReady)
+            else if (openClawUsable)
             {
                 _openClawSelected = true;
                 openClawRadio.IsChecked = true;
                 BuildAgentCombo();
+                ChooseDefaultMode();
             }
 
             UpdateTargetSectionVisibility();
@@ -602,6 +721,7 @@ namespace Orbweaver
         {
             _folderSection.IsVisible = !_openClawSelected;
             _agentSection.IsVisible = _openClawSelected;
+            UpdateModeVisibility();
 
             // Any of the three local CLIs (CB-203 extended CB-201's Claude
             // Code-only picker to Codex and Grok), never alongside OpenClaw,
@@ -742,6 +862,292 @@ namespace Orbweaver
             _agentCombo.SelectedIndex = preferredIndex >= 0 ? preferredIndex : (items.Count > 0 ? 0 : -1);
         }
 
+        // --- CB-329: Open existing ---------------------------------------
+
+        // New conversation or Open existing, decided each time OpenClaw is
+        // selected: whatever the user last chose, and the first time New when
+        // it is possible (the long-standing default) or Existing when it is
+        // the only choice left (ReplyDisabled).
+        private void ChooseDefaultMode()
+        {
+            _existingMode = !_canStartNew || _existingMode;
+            (_existingMode ? _existingModeRadio : _newModeRadio).IsChecked = true;
+            ApplyMode();
+        }
+
+        private void ApplyMode()
+        {
+            UpdateModeVisibility();
+            if (_openClawSelected && _existingMode) LoadReopenRows();
+            else _reopenLoadTimer?.Stop();
+        }
+
+        private void UpdateModeVisibility()
+        {
+            _newPane.IsVisible = !_existingMode;
+            _existingPane.IsVisible = _existingMode;
+            _startButton.Content = _openClawSelected && _existingMode ? "Open" : "Start";
+            if (!_openClawSelected) _reopenLoadTimer?.Stop();
+        }
+
+        private static IReadOnlyList<OpenClawReopenRow>? CurrentReopenRows() =>
+            ReopenRowsForTests is { } seam
+                ? seam()
+                : OpenClawSessions.ListedSnapshot() is { } listed
+                    ? OpenClawReopenList.Build(
+                        listed,
+                        OrbweaverSettings.OpenClawHeartbeatMode,
+                        OrbweaverSettings.OpenClawCronMode,
+                        OrbweaverSettings.OpenClawNativeMode,
+                        OrbweaverSettings.OpenClawApproveEnabled)
+                    : null;
+
+        // Built when Open existing is selected and not again while the dialog
+        // sits open, as the plan has it: a list rearranging under the pointer
+        // is worse than a stale one. Filter and search re-run over these.
+        private void LoadReopenRows()
+        {
+            _reopenLoadTimer?.Stop();
+            _reopenRows = CurrentReopenRows();
+            BuildExistingFilter();
+            RefreshExistingList();
+
+            if (_reopenRows is not null) return;
+
+            // No poll has completed on this connection yet. Ask again once a
+            // second until one has, rather than showing "No conversations" for
+            // a gateway that has simply not answered.
+            _reopenLoadTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _reopenLoadTimer.Tick += OnReopenLoadTick;
+            _reopenLoadTimer.Start();
+        }
+
+        // Named and internal so a test drives it without waiting a second,
+        // the OnWatchTick pattern.
+        internal void OnReopenLoadTick(object? sender, EventArgs e)
+        {
+            var rows = CurrentReopenRows();
+            if (rows is null) return;
+
+            _reopenLoadTimer?.Stop();
+            _reopenRows = rows;
+            BuildExistingFilter();
+            RefreshExistingList();
+        }
+
+        private void BuildExistingPane()
+        {
+            var filterRow = new DockPanel();
+            DockPanel.SetDock(_existingAgentFilter, Dock.Left);
+            _existingAgentFilter.Margin = new Avalonia.Thickness(0, 0, 8, 0);
+            filterRow.Children.Add(_existingAgentFilter);
+            filterRow.Children.Add(_existingSearch);
+            _existingPane.Children.Add(filterRow);
+
+            _existingList.ItemTemplate = new FuncDataTemplate<OpenClawReopenRow>(
+                (row, _) => ExistingRowView(row));
+            var box = new Grid { Height = ExistingListHeight };
+            box.Children.Add(_existingList);
+            box.Children.Add(_existingEmpty);
+            _existingPane.Children.Add(box);
+
+            _existingAgentFilter.SelectionChanged += (_, _) => RefreshExistingList();
+            _existingSearch.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == TextBox.TextProperty) RefreshExistingList();
+            };
+            _existingList.DoubleTapped += (_, _) => OpenExistingClicked();
+            _existingList.KeyDown += (_, e) =>
+            {
+                if (e.Key != Key.Enter) return;
+                e.Handled = true;
+                OpenExistingClicked();
+            };
+        }
+
+        // "All agents", then every agent the gateway knows. Rebuilt with the
+        // rows, so an agent added since the dialog opened shows the next time
+        // Open existing is selected.
+        private void BuildExistingFilter()
+        {
+            var agents = KnownAgentsForTests?.Invoke() ?? OpenClawSessions.KnownAgents();
+            _agentNames = agents.ToDictionary(a => a.Id, a => a.Name, StringComparer.OrdinalIgnoreCase);
+
+            var items = new List<AgentItem> { new("", "All agents") };
+            items.AddRange(agents.Select(a => new AgentItem(a.Id, a.Name)));
+            _existingAgentFilter.ItemsSource = items;
+            _existingAgentFilter.SelectedIndex = 0;
+        }
+
+        private string AgentName(string id) => _agentNames.TryGetValue(id, out var name) ? name : id;
+
+        private IReadOnlyList<OpenClawReopenRow> FilteredRows()
+        {
+            if (_reopenRows is null) return Array.Empty<OpenClawReopenRow>();
+
+            var agentId = _existingAgentFilter.SelectedItem is AgentItem { Id: { Length: > 0 } id } ? id : null;
+            return OpenClawReopenList.Filter(_reopenRows, agentId, _existingSearch.Text, AgentName);
+        }
+
+        private void RefreshExistingList()
+        {
+            var shown = FilteredRows();
+            var text = OpenClawReopenList.EmptyText(_reopenRows is not null, _reopenRows?.Count ?? 0, shown.Count);
+
+            _existingList.ItemsSource = shown;
+            _existingList.IsVisible = text is null;
+            _existingEmpty.Text = text;
+            _existingEmpty.IsVisible = text is not null;
+        }
+
+        private Control ExistingRowView(OpenClawReopenRow row)
+        {
+            var badge = OpenClawReopenList.Badge(row);
+            var ago = OpenClawReopenList.Ago(row.LastActivity, (NowForTests ?? (() => DateTime.UtcNow))());
+            var agents = string.Join(", ", row.AgentIds.Select(AgentName));
+            var detail = badge.Length > 0 ? agents + " · " + badge : agents;
+
+            Control avatar;
+            if (OpenClawSessions.AvatarForSession(row.OrbSessionId)?.Frames is { Count: > 0 } frames)
+            {
+                avatar = new Image { Source = frames[0], Width = 24, Height = 24 };
+            }
+            else
+            {
+                avatar = new Border
+                {
+                    Width = 24,
+                    Height = 24,
+                    CornerRadius = new Avalonia.CornerRadius(12),
+                    Background = Brushes.Gray,
+                    Child = new TextBlock
+                    {
+                        Text = OrbGlyph.For(row.Title, OrbweaverSettings.TwoLetterGlyphs),
+                        FontSize = 10,
+                        Foreground = Brushes.White,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                };
+            }
+
+            var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            titles.Children.Add(new TextBlock
+            {
+                Text = row.Title,
+                FontWeight = FontWeight.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            titles.Children.Add(new TextBlock
+            {
+                Text = detail,
+                FontSize = 11,
+                Opacity = 0.7,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+
+            var when = new TextBlock
+            {
+                Text = ago,
+                FontSize = 11,
+                Opacity = 0.7,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Avalonia.Thickness(8, 0, 0, 0)
+            };
+
+            var dock = new DockPanel { Height = ExistingRowHeight - 8 };
+            DockPanel.SetDock(avatar, Dock.Left);
+            avatar.Margin = new Avalonia.Thickness(0, 0, 8, 0);
+            avatar.VerticalAlignment = VerticalAlignment.Center;
+            DockPanel.SetDock(when, Dock.Right);
+            dock.Children.Add(avatar);
+            dock.Children.Add(when);
+            dock.Children.Add(titles);
+
+            AutomationProperties.SetName(dock, row.Title + ", " + badge + ", " + ago);
+            return dock;
+        }
+
+        private void OpenExistingClicked()
+        {
+            if (_existingList.SelectedItem is not OpenClawReopenRow row)
+            {
+                _statusLine.Text = "Choose a conversation first.";
+                return;
+            }
+
+            var session = ReopenOpenClawForTests is { } seam ? seam(row) : OpenClawSessions.Reopen(row);
+            if (session is null)
+            {
+                _statusLine.Text = "Couldn't open that conversation.";
+                return;
+            }
+
+            _statusLine.Text = "Opening " + row.Title + ". Waiting for its orb…";
+            StartOpenClawWatch(session);
+        }
+
+        private static TextBlock ModeReasonLine(double opacity) => new()
+        {
+            FontSize = 11,
+            Opacity = opacity,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+            Height = ModeReasonHeight,
+            Margin = new Avalonia.Thickness(24, -2, 0, 0),
+            IsVisible = false
+        };
+
+        // The mode row's ghost: the same two radios (and the reason line when
+        // ReplyDisabled reserves it) at the head of a pane's ghost.
+        private StackPanel ModeGhost(StackPanel paneGhost)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+            foreach (var text in new[] { "New conversation", "Open existing" })
+            {
+                row.Children.Add(new RadioButton { Content = text, IsEnabled = false, Focusable = false });
+            }
+
+            var reason = ModeReasonLine(opacity: 0);
+            _modeReasonGhosts.Add(reason);
+            paneGhost.Children.Insert(0, reason);
+            paneGhost.Children.Insert(0, row);
+            return paneGhost;
+        }
+
+        // The whole Existing pane as an invisible shape: mode row, filter row
+        // and a box of the list's fixed height. Empty text lives inside that
+        // box, so it needs nothing of its own.
+        private StackPanel ExistingPaneGhost()
+        {
+            var filter = new DockPanel();
+            var combo = new ComboBox
+            {
+                Width = 150,
+                ItemsSource = new[] { "All agents" },
+                SelectedIndex = 0,
+                IsEnabled = false,
+                Focusable = false,
+                Margin = new Avalonia.Thickness(0, 0, 8, 0)
+            };
+            DockPanel.SetDock(combo, Dock.Left);
+            filter.Children.Add(combo);
+            filter.Children.Add(new TextBox { Watermark = "Search", IsEnabled = false, Focusable = false });
+
+            var ghost = new StackPanel
+            {
+                Spacing = 6,
+                Opacity = 0,
+                IsHitTestVisible = false,
+                IsEnabled = false,
+                IsVisible = false
+            };
+            ghost.Children.Add(filter);
+            ghost.Children.Add(new Border { Height = ExistingListHeight });
+            AutomationProperties.SetAccessibilityView(ghost, AccessibilityView.Raw);
+            return ModeGhost(ghost);
+        }
+
         private void BuildFolderCombo()
         {
             var live = CurrentStatuses().Values;
@@ -799,7 +1205,8 @@ namespace Orbweaver
         {
             if (_openClawSelected)
             {
-                await StartOpenClawClicked();
+                if (_existingMode) OpenExistingClicked();
+                else await StartOpenClawClicked();
                 return;
             }
 
