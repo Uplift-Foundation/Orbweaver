@@ -79,8 +79,15 @@ public class ChatPanelTableTests : IDisposable
 
         Assert.True(scroller.Extent.Width > scroller.Viewport.Width,
             $"extent {scroller.Extent.Width} should exceed viewport {scroller.Viewport.Width}");
-        Assert.True(scroller.Bounds.Width <= panel.Bounds.Width,
-            $"scroller {scroller.Bounds.Width} must fit the panel {panel.Bounds.Width}");
+
+        // The bubble's own cap, TurnView.MaxBubbleWidth: 80% of the transcript
+        // width, never under 140. Checked against the cap rather than against
+        // the panel, which a bubble stretched to the whole panel would also
+        // satisfy.
+        var chrome = Assert.IsType<Border>(scroller.GetVisualParent());
+        var turns = panel.FindControl<ItemsControl>("Turns")!.Bounds.Width;
+        Assert.True(chrome.Bounds.Width <= Math.Max(140, turns * 0.8) + 1,
+            $"table chrome {chrome.Bounds.Width} must fit the bubble cap of {Math.Max(140, turns * 0.8)}");
     }
 
     [AvaloniaFact]
@@ -103,6 +110,11 @@ public class ChatPanelTableTests : IDisposable
 
         var block = BlockWith(row, table);
 
+        // Not asserted: membership in TurnView.Blocks, which is what the panel
+        // searches for a selection. TurnView is private to ChatPanel, and the
+        // table block can only have been made by Selectable() — the one place
+        // that adds to that list — so the type and Focusable=false below are
+        // the observable half of the same fact.
         Assert.False(block.Focusable);
         Assert.Equal(table, block.Text);
     }
