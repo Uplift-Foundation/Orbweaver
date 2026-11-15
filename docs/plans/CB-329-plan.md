@@ -51,9 +51,14 @@ building on it.
 - Loading lasts at most the start watch's 20 s budget.
 - If no poll has completed by then, show the headline **"Can't reach the
   OpenClaw gateway"**.
-- When a connect failure is known, show its detail beneath the headline. The
-  detail is the text `OpenClawGateway.ExplainConnectFailure` produced, which is
-  what carries the macOS Local Network hint.
+- Beneath the headline goes a detail line:
+  - **When a connect failure is known**, it is the text
+    `OpenClawGateway.ExplainConnectFailure` produced.
+  - **When none is known**, it is the fallback "Check Settings → OpenClaw."
+- **Why the detail matters.** On a Mac this text is the Local Network hint
+  (CB-38, CLAUDE.md "Local Network consent"). That grant breaks on every
+  upgrade, so it is the likeliest cause of a down gateway right after an
+  install. A generic "check Settings" would send the user to the wrong place.
 - Keep polling, so the list replaces the message when the gateway comes back.
 
 **Interface (hana).** `EmptyText(bool loaded, bool timedOut, int total, int shown)`.
@@ -62,7 +67,7 @@ It has four states:
 
 | loaded | timedOut | result |
 | --- | --- | --- |
-| false | true | "Can't reach the OpenClaw gateway" |
+| false | true | "Can't reach the OpenClaw gateway" (headline; the detail comes from `UnreachableDetail`) |
 | false | false | "Loading conversations…" |
 | true | — | total==0 → "No conversations"; shown==0 → "No conversations match"; otherwise null |
 
@@ -78,14 +83,21 @@ It has four states:
 - Add `internal static string? LastConnectFailure()`, which returns null when
   OpenClaw is off.
 - Add the seam `SetLastConnectFailureForTests(string?)`.
+- Add the pure `OpenClawReopenList.UnreachableDetail(string? failure)`:
+  - a non-blank `failure` comes back verbatim;
+  - otherwise it returns "Check Settings → OpenClaw.".
+- That fallback string lives only in this function.
 - The set site is inside the excluded poll. If you factor it, factor it into a
   covered `RecordConnectFailure(ConnectResult)`. Otherwise name the line in the
   PR body.
 
 **The UI (juno).**
 - **Detail line.** A second `TextBlock`, `ExistingEmptyDetail`, sits under the
-  empty text. It is visible only in the unreachable state, and only with a
-  non-empty `LastConnectFailure()`. It is wrapped and at most 3 lines.
+  empty text.
+  - It is visible in the unreachable state, and only there.
+  - Its text is `UnreachableDetail(LastConnectFailure())`, so it is never empty
+    when visible.
+  - It wraps, at most 3 lines, with the full text in the ToolTip.
 - **Height.** It sits inside the list's fixed-height cell, so CB-207 is
   untouched.
 - **Seam.** `LastConnectFailureForTests: Func<string?>?`.
@@ -95,9 +107,18 @@ It has four states:
 **Tests.**
 - **U-G1** (hana): `EmptyText` in all four states, plus each `shown`/`total`
   edge.
-- **UI-G1a** (juno): rows null, then a tick at +21 s. The headline shows, and
-  the detail shows the seam's failure text.
-  - A variant with a null failure shows the headline and hides the detail.
+- **U-G1d** (hana): `UnreachableDetail`.
+  - A real `ExplainConnectFailure` output passes through verbatim. Produce it
+    with `onMacOS: true` and a `SocketException(EHOSTUNREACH)`, as its existing
+    tests do, and assert the Local Network hint is in the result.
+  - Null and blank inputs return "Check Settings → OpenClaw.".
+- **UI-G1a** (juno): rows null, then a tick at +21 s.
+  - **Setup.** `LastConnectFailureForTests` returns a real
+    `ExplainConnectFailure(..., onMacOS: true)` text.
+  - **Assert.** The headline shows, and `ExistingEmptyDetail` shows that exact
+    text, including the Local Network hint.
+- **UI-G1c** (juno): the same, with no known failure. The headline shows, and
+  the detail reads "Check Settings → OpenClaw.".
 - **UI-G1b** (juno): the control. After that, rows arrive and the next tick
   shows the list. The unreachable text is gone and the timer is stopped.
 - Plus the existing control: rows arriving at +5 s never show the unreachable
@@ -123,6 +144,10 @@ is not a reason to skip the test.
 UI 13 (the hidden variant) stays with juno, but it reuses hana's scan seam.
 
 ## QA review resolutions (wren-asare, against 43f689d9)
+
+> **The G1 wording below is superseded.** Its "Can't reach the gateway. Check
+> Settings → OpenClaw." and its `gaveUp` argument are replaced by the PM
+> rulings section above.
 
 All nine gaps are accepted. G1 and G3 needed a decision, made here. The rest
 add cases to §6, numbered as below. Each one is owned by the WP that owns the
