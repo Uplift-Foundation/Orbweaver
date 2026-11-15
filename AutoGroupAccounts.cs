@@ -35,24 +35,26 @@ namespace Orbweaver
         /// <c>projects</c>, via <see cref="ClaudeConfigRoots.RootOfTranscript"/>), or for Codex and
         /// Grok the home that owns the rollout. Both layouts are the documented ones
         /// (<c>~/.codex/sessions/yyyy/mm/dd/rollout-*.jsonl</c>,
-        /// <c>~/.grok/sessions/&lt;cwd&gt;/&lt;id&gt;/updates.jsonl</c>): the file is four folders under
-        /// the home. ASSUMED, not run: that a session's TranscriptPath is that file. A path of any
+        /// <c>~/.grok/sessions/&lt;cwd&gt;/&lt;id&gt;/updates.jsonl</c>): the file sits under the
+        /// home's <c>sessions</c> folder at a fixed depth. ASSUMED, not run: that a session's TranscriptPath is that file. A path of any
         /// other shape, or any other CLI, gives null, which reads as "unknown".
         /// </summary>
         internal static string? HomeOf(SessionSource source, string? transcriptPath) => source switch
         {
             SessionSource.ClaudeCode => ClaudeConfigRoots.RootOfTranscript(transcriptPath),
-            SessionSource.Codex or SessionSource.Grok => HomeUnderSessions(transcriptPath),
+            SessionSource.Codex => HomeUnderSessions(transcriptPath, 5),
+            SessionSource.Grok => HomeUnderSessions(transcriptPath, 4),
             _ => null
         };
 
-        private static string? HomeUnderSessions(string? transcriptPath)
+        // `fromEnd` is where the "sessions" segment sits counted from the file: Codex has
+        // yyyy/mm/dd between it and the file (5), Grok has <cwd>/<id> (4).
+        private static string? HomeUnderSessions(string? transcriptPath, int fromEnd)
         {
             if (string.IsNullOrWhiteSpace(transcriptPath)) return null;
 
             var parts = transcriptPath.Split('/', '\\');
-            // [... home..., "sessions", a, b, c, file]
-            var at = parts.Length - 5;
+            var at = parts.Length - fromEnd;
             if (at < 1 || parts[at] != "sessions") return null;
 
             var home = string.Join(transcriptPath.Contains('\\') && !transcriptPath.Contains('/') ? "\\" : "/", parts[..at]);

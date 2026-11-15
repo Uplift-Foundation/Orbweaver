@@ -45,7 +45,11 @@ namespace Orbweaver
                 1 => Heartbeats,
                 2 => Crons,
                 3 => Native,
-                _ => Main
+                // CB-281: a cluster with its own shape has already answered above;
+                // everything else is auto-grouped when the classifier gave an id.
+                // Only an "a-" id can arrive here, so a manual group is reachable
+                // through explicit membership alone.
+                _ => OrbAutoGroups.IsAuto(autoGroupId) ? autoGroupId! : Main
             };
         }
 
