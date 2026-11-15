@@ -1380,10 +1380,22 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.AutoGroupBy = value; Save(); }
         }
 
-        // CB-281: makes sure each wanted auto group exists in the table (stub in
-        // the contracts commit; the real body follows).
-        internal static void EnsureAutoOrbGroups(IReadOnlyList<(string Id, string Name)> wanted) =>
-            throw new NotImplementedException("CB-281: lands in the implementation commit");
+        // CB-281: makes sure each wanted auto group exists in the table, in one
+        // lock and one Save (only when something was created). The wanted ids are
+        // also the live set that protects a group from cap eviction.
+        internal static void EnsureAutoOrbGroups(IReadOnlyList<(string Id, string Name)> wanted)
+        {
+            if (wanted.Count == 0) return;
+            Load();
+
+            var live = new HashSet<string>(wanted.Select(w => w.Id), StringComparer.Ordinal);
+            var created = false;
+            lock (Gate)
+                foreach (var (id, name) in wanted)
+                    created |= _model.Groups.EnsureAuto(id, name, live);
+
+            if (created) Save();
+        }
 
         public static string OpenClawHeartbeatShape
         {
