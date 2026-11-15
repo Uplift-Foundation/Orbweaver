@@ -523,6 +523,11 @@ namespace Orbweaver
         {
             _statusDir = statusDir;
             _legacyStatusDir = legacyStatusDir;
+
+            // CB-281: one account reader per manager, so its 30 s hold is
+            // shared by every orb a scan asks about.
+            var accounts = new AutoGroupAccounts(AutoGroupHome);
+            AutoGroupAccountOf = status => AccountOf(accounts, status);
             _jobListing = jobListing ?? BackgroundJobs.SnapshotForScan;
             // Wrapped rather than handed over as a method group: AttachedJobIds
             // grew an optional `fresh` parameter for the click path, and an
@@ -5212,7 +5217,16 @@ namespace Orbweaver
             var tree = new TeamTree(orbs.Select(o => o.SessionId).ToList(), KnownLeads());
             var leadOf = tree.LeadIndices();
 
-            var groups = OrbweaverSettings.OrbGroupList();
+            // CB-281: hand-made groups before auto groups. Free mode places
+            // groups in slot order, each clear of the ones before it, and saves
+            // where each landed (CB-211) — so with `a-` ids sorting first, a
+            // new auto group took the space and pushed a manual group off its
+            // anchor for good. Placed last, auto groups go around the groups
+            // the user arranged. A stable sort, so the predefined four stay
+            // first and each kind keeps the table's order.
+            var groups = OrbweaverSettings.OrbGroupList()
+                .OrderBy(g => OrbAutoGroups.IsAuto(g.Id) ? 1 : 0)
+                .ToList();
             var slotOf = new Dictionary<string, int>(StringComparer.Ordinal);
             for (var i = 0; i < groups.Count; i++) slotOf[groups[i].Id] = i;
 
@@ -5695,15 +5709,24 @@ namespace Orbweaver
 
         // The seams the classifier's facts come from, so a test hands in a
         // dictionary instead of reading .claude.json or walking up to a .git.
-        // Account: (config root, source) to a stable key and a label, null for
-        // unknown. Repo root: a cwd to its repository's root, null for none.
-        internal Func<string?, SessionSource, (string Key, string Label)?> AutoGroupAccountOf { get; set; } =
-            (_, _) => null;
+        // Account: a session to a stable key and a label, null for unknown.
+        // Repo root: a cwd to its repository's root, null for none. Both
+        // defaults are E1's cached readers, held 30 s, because a scan asks
+        // for every orb.
+        internal Func<SessionStatus, (string Key, string Label)?> AutoGroupAccountOf { get; set; }
 
-        internal Func<string, string?> AutoGroupRepoRootOf { get; set; } = _ => null;
+        internal Func<string, string?> AutoGroupRepoRootOf { get; set; } = RepoRoots.Cached;
 
         internal string AutoGroupHome { get; set; } =
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        // A cloud session's account is the Claude config root that listed it,
+        // read the way a local Claude Code session's is: the owner root is a
+        // Claude config root like any other. Without a root, unknown.
+        internal static (string Key, string Label)? AccountOf(AutoGroupAccounts accounts, SessionStatus status) =>
+            status.Source == SessionSource.ClaudeCloud
+                ? accounts.Of(SessionSource.ClaudeCode, status.ConfigRoot)
+                : accounts.Of(status.Source, AutoGroupAccounts.HomeOf(status.Source, status.TranscriptPath));
 
         // Each orb's last resolved group, to notice one that moved between
         // scans: a setting flipped, a cwd that changed, an account that
@@ -5720,7 +5743,7 @@ namespace Orbweaver
                                  ? ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)
                                  : null);
 
-            var account = by == AutoGroupBy.Account ? AutoGroupAccountOf(configRoot, status.Source) : null;
+            var account = by == AutoGroupBy.Account ? AutoGroupAccountOf(status) : null;
             var repo = by == AutoGroupBy.Directory && status.Cwd.Length > 0 ? AutoGroupRepoRootOf(status.Cwd) : null;
 
             return new AutoGroupFacts(
