@@ -335,8 +335,11 @@ public sealed class BrowseAdversarialTests : IDisposable
         IsListing(upper);                            // NTFS is case-insensitive: the root by another spelling IS the root
         Assert.Equal(_src, Lst(upper).Path, ignoreCase: false);   // and the reply carries the filesystem's own spelling
         IsListing(Go(Path.Combine(_src, "PROJ-A"), s));
-        IsListing(Go(Path.Combine(_src, "proj-a") + ".", s));
-        IsListing(Go(Path.Combine(_src, "proj-a") + " ", s));
+        foreach (var trailing in new[] { ".", " " })      // Win32 strips these; refusing is safe, resolving inside is fine, listing anywhere else is not
+        {
+            var o = Go(Path.Combine(_src, "proj-a") + trailing, s);
+            if (o.Listing is { } l) Assert.Equal(Path.Combine(_src, "proj-a"), l.Path); else Assert.Equal("forbidden_path", Code(o));
+        }
         Assert.Equal("forbidden_path", Code(Go(_outside.ToUpperInvariant(), s)));   // a case change does not move a path inside
         Control(s);
     }
@@ -356,6 +359,22 @@ public sealed class BrowseAdversarialTests : IDisposable
         IsListing(o);
         Assert.Equal(longInside, Lst(o).Path);
         Control(s);
+    }
+
+    [QaWindowsFact]
+    public void An_8_3_alias_of_a_system_folder_does_not_get_round_the_system_list_when_a_drive_root_is_a_project_root()
+    {
+        var drive = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles))!;
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pfShort = GetShort(pf);
+        Assert.NotNull(pfShort);
+        Assert.NotEqual(pf, pfShort);                                    // the volume has short names, so the alias is a different spelling of the same folder
+        var s = Roots(drive);
+        Assert.Equal("forbidden_path", Code(Go(pf, s)));                 // control: the long name is refused as a system folder
+        Assert.Equal("forbidden_path", Code(Go(pfShort!, s)));          // the alias of the same folder must be refused too
+        Assert.Equal("forbidden_path", Code(Go(Path.Combine(pfShort!, "Common Files"), s)));
+        var o = Go(_src, Roots(drive));                                  // control: the drive root really admits ordinary folders under it
+        IsListing(o);
     }
 
     [QaWindowsFact]
