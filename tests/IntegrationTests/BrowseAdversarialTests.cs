@@ -356,7 +356,7 @@ public sealed class BrowseAdversarialTests : IDisposable
         var longInside = Path.Combine(_src, "inside-long-folder-name"); Directory.CreateDirectory(longInside);
         var shortInside = GetShort(longInside)!;
         var o = Go(shortInside, s);                                     // the short spelling of an INSIDE folder: the contract says it is that folder
-        if (o.Listing is { } l) Assert.Equal(longInside, l.Path); else Assert.True(o.Err is "unknown_path" or "forbidden_path");   // today: refused (the 8.3 gap), never a listing at another path
+        Assert.Equal(longInside, Lst(o).Path);                          // arrives at the long name, as the contract says
         Control(s);
     }
 
@@ -370,10 +370,8 @@ public sealed class BrowseAdversarialTests : IDisposable
         Assert.NotEqual(pf, pfShort);                                    // the volume has short names, so the alias is a different spelling of the same folder
         var s = Roots(drive);
         Assert.Equal("forbidden_path", Code(Go(pf, s)));                 // control: the long name is refused as a system folder
-        // The alias must never LIST. Today it answers unknown_path rather than forbidden_path (short names do not resolve at all: see the
-        // BrowseFileSystemTests 8.3 failure), which is fail-closed; a fix that resolves them must make it forbidden_path.
-        Assert.Null(Go(pfShort!, s).Listing);
-        Assert.Null(Go(Path.Combine(pfShort!, "Common Files"), s).Listing);
+        Assert.Equal("forbidden_path", Code(Go(pfShort!, s)));                                       // the alias resolves to the system folder and is refused as it
+        Assert.Equal("forbidden_path", Code(Go(Path.Combine(pfShort!, "Common Files"), s)));
         var o = Go(_src, Roots(drive));                                  // control: the drive root really admits ordinary folders under it
         IsListing(o);
     }
