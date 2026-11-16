@@ -1003,8 +1003,15 @@ namespace Orbweaver
                     new Setter(TemplatedControl.PaddingProperty, new Avalonia.Thickness(8, 0))
                 }
             });
-            _existingList.ItemTemplate = new FuncDataTemplate<OpenClawReopenRow>(
-                (row, _) => ExistingRowView(row));
+            // The null arm is not defensive padding. When the list's
+            // VirtualizingStackPanel recycles a row container, Avalonia clears
+            // its content and the ContentPresenter builds this template again
+            // with a null item — FuncDataTemplate<T> casts it through rather
+            // than refusing it. Handing that to ExistingRowView threw inside a
+            // layout pass and took the whole app down (1.0.6, the hotfix after
+            // CB-329). An empty Panel is what a recycled container shows anyway.
+            _existingList.ItemTemplate = new FuncDataTemplate<OpenClawReopenRow?>(
+                (row, _) => row is null ? new Panel() : ExistingRowView(row));
             var box = new Grid { Height = ExistingListHeight };
             _existingEmptyBox.Children.Add(_existingEmpty);
             _existingEmptyBox.Children.Add(_existingEmptyDetail);
