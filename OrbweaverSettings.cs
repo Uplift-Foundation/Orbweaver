@@ -124,6 +124,8 @@ namespace Orbweaver
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
             "phoneLaunchProfiles",
+            // CB-339: what a paired phone's folder picker may browse. See PhoneBrowseRoots.
+            "phoneBrowseRoots", "phoneBrowseHome",
             // Every hotkey override. toggleOrbsHotkey was missing from this
             // list from CB-155 until the new-chat hotkey was added beside it;
             // Save's ContainsKey guard kept that from throwing, but it meant
@@ -907,6 +909,16 @@ namespace Orbweaver
             // the CLI's own default directory. Saved as "phoneLaunchProfiles".
             public Dictionary<string, string> PhoneLaunchProfiles { get; init; } = new(StringComparer.Ordinal);
 
+            // CB-339: the project roots a paired phone's folder picker may browse. Null means
+            // automatic (derived on each request from the folders sessions recently ran in); a
+            // list, which may be empty, is the user's own. Saved as "phoneBrowseRoots".
+            public List<string>? PhoneBrowseRoots { get; set; }
+
+            // CB-339: "Let the phone browse my whole home folder". Off by default; a desk with no
+            // roots and this off answers the top level with an empty listing. Saved as
+            // "phoneBrowseHome".
+            public bool PhoneBrowseHome { get; set; }
+
             // Auto-organize: which shape and how much space between orbs.
             public string ArrangeShape
             {
@@ -1590,6 +1602,31 @@ namespace Orbweaver
                 else _model.PhoneLaunchProfiles[cli.ToString()] = value;
             }
             Save();
+        }
+
+        // CB-339: the folders a paired phone may browse. Null is automatic, "derived from recent
+        // sessions", and is what the file holds until the user edits the list; an empty list is a
+        // deliberate "none". Entries are stored as given, in order.
+        internal static IReadOnlyList<string>? PhoneBrowseRoots
+        {
+            get
+            {
+                Load();
+                lock (Gate) return _model.PhoneBrowseRoots?.ToList();
+            }
+        }
+
+        internal static void SetPhoneBrowseRoots(IEnumerable<string>? roots)
+        {
+            Load();
+            lock (Gate) _model.PhoneBrowseRoots = roots?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+            Save();
+        }
+
+        internal static bool PhoneBrowseHome
+        {
+            get { Load(); lock (Gate) return _model.PhoneBrowseHome; }
+            set { Load(); lock (Gate) _model.PhoneBrowseHome = value; Save(); }
         }
 
         internal static void SetNewChatLastProfile(NewChatCli cli, string? profileDir)
@@ -2620,6 +2657,7 @@ namespace Orbweaver
                             root["remoteControlServeOnLaunch"]?.GetValue<bool>() ?? false,
                         PeerLinkEnabled = root["peerLinkEnabled"]?.GetValue<bool>() ?? false,
                         RelayEnabled = root["relayEnabled"]?.GetValue<bool>() ?? false,
+                        PhoneBrowseHome = Bool(root["phoneBrowseHome"], false),
                         PeerLinkPort = root["peerLinkPort"]?.GetValue<int>() ?? 0,
                         AutoCheckForUpdates = Bool(root["autoCheckForUpdates"], true),
                         IncludePrereleaseUpdates = Bool(root["includePrereleaseUpdates"], false),
@@ -2711,6 +2749,13 @@ namespace Orbweaver
                                 model.NewChatLastProfiles[cliName] = profileDir;
                             }
                         }
+                    }
+
+                    if (root["phoneBrowseRoots"] is JsonArray browseRoots)
+                    {
+                        model.PhoneBrowseRoots = [];
+                        foreach (var node in browseRoots)
+                            if (Text(node) is { } browseRoot) model.PhoneBrowseRoots.Add(browseRoot);
                     }
 
                     if (root["phoneLaunchProfiles"] is JsonObject phoneProfiles)
@@ -3303,6 +3348,13 @@ namespace Orbweaver
                     var newChatRecentFolders = new JsonArray();
                     foreach (var folder in _model.NewChatRecentFolders) newChatRecentFolders.Add(folder);
 
+                    JsonArray? phoneBrowseRoots = null;
+                    if (_model.PhoneBrowseRoots is { } browseList)
+                    {
+                        phoneBrowseRoots = new JsonArray();
+                        foreach (var folder in browseList) phoneBrowseRoots.Add(folder);
+                    }
+
                     var speakArgs = new JsonArray();
                     foreach (var argument in _model.SpeakCommandArgs) speakArgs.Add(argument);
 
@@ -3422,6 +3474,8 @@ namespace Orbweaver
                             nameof(NewChatCli.ClaudeCode), out var claudeLastProfile) ? claudeLastProfile : null,
                         ["newChatLastProfiles"] = NewChatLastProfilesNode(_model.NewChatLastProfiles),
                         ["phoneLaunchProfiles"] = NewChatLastProfilesNode(_model.PhoneLaunchProfiles),
+                        ["phoneBrowseRoots"] = phoneBrowseRoots,
+                        ["phoneBrowseHome"] = _model.PhoneBrowseHome,
                         // Grouped rather than three top-level keys: it reads as
                         // one setting in the file the way it reads as one card in
                         // the window. A null entry — which is what a colour left

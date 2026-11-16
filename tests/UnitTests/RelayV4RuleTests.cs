@@ -37,8 +37,10 @@ public class RelayV4RuleTests
         Assert.Equal("""{"t":"err","ref":"r","code":"not_at_prompt","session_id":"s"}""",
             RelayReplies.Err("r", RelayReplies.NotAtPrompt, "s"));
         Assert.Equal(4, RelayReplies.OkCodes.Length);
-        // 18 from v4, plus v5's unknown_image (CB-321) and the launch account's unknown_account.
-        Assert.Equal(20, RelayReplies.ErrCodes.Length);
+        // 18 from v4, plus v5's unknown_image (CB-321), the launch account's unknown_account and
+        // frames-v11's four folder-picker codes (CB-339).
+        Assert.Equal(24, RelayReplies.ErrCodes.Length);
+        Assert.Contains(RelayReplies.ForbiddenPath, RelayReplies.ErrCodes);
         Assert.Contains(RelayReplies.UnknownAccount, RelayReplies.ErrCodes);
     }
 
