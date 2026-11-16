@@ -195,6 +195,10 @@ namespace Orbweaver
         // and what SendAccounts compares against so an unchanged one is not resent.
         private string? _latestAccounts;
 
+        // CB-339: the caps frame, after accounts. Constant today, but sent through the same
+        // changed-bytes gate so a later capability needs no new plumbing.
+        private string? _latestCaps;
+
         // A session this desktop saw go generating -> idle, by id.
         internal event Action<string> SessionFinished = delegate { };
 
@@ -803,6 +807,23 @@ namespace Orbweaver
             return frames;
         }
 
+        // frames-v11 caps: what this desk can do beyond frames-v10, so a phone never has to guess from a
+        // silence. class state, ck Ck("caps"), to every online phone when its bytes changed and to a phone
+        // coming online after the accounts frame.
+        internal IReadOnlyList<string> SendCaps(string plaintext)
+        {
+            if (plaintext == _latestCaps) return [];
+            _latestCaps = plaintext;
+            if (!Welcomed) return [];
+            var frames = new List<string>();
+            foreach (var c in _channels.Values.Where(c => c.Online))
+                frames.AddRange(Collect(CapsFor(c, plaintext)));
+            return frames;
+        }
+
+        private string? CapsFor(Channel c, string plaintext) =>
+            SealTo(c, "state", RelayCrypto.Ck(c.CkKey, BrowseFrames.CapsCk), Encoding.UTF8.GetBytes(plaintext));
+
         private string? AccountsFor(Channel c, string plaintext) =>
             SealTo(c, "state", RelayCrypto.Ck(c.CkKey, "accounts"), Encoding.UTF8.GetBytes(plaintext));
 
@@ -850,6 +871,7 @@ namespace Orbweaver
             // the usage frame).
             if (_latestPersonas is { } personas) frames.AddRange(Collect(PersonasFor(c, personas)));
             if (_latestAccounts is { } accounts) frames.AddRange(Collect(AccountsFor(c, accounts)));
+            if (_latestCaps is { } caps) frames.AddRange(Collect(CapsFor(c, caps)));
             return frames;
         }
 

@@ -1465,6 +1465,30 @@ public partial class RelayLinkTests : IDisposable
         Assert.Empty(link.SendAccounts(a));
     }
 
+    // CB-339 frames-v11: caps follows accounts on connect, on its own ck, and an unchanged one is not resent.
+    [Fact]
+    public void Caps_go_to_online_phones_only_when_their_bytes_change_and_follow_accounts_on_connect()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var accounts = """{"t":"accounts","accounts":[]}""";
+
+        var sent = link.SendCaps(BrowseFrames.Caps).Single();
+        Assert.Equal(("state", RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), "caps")), (J(sent).GetProperty("class").GetString(), CkOf(sent)));
+        Assert.Equal(BrowseFrames.Caps, phone.OpenFromDesktop(sent).GetRawText());
+        Assert.Empty(link.SendCaps(BrowseFrames.Caps));                         // unchanged: nothing
+
+        link.SendAccounts(accounts);
+        link.OnFrame(Presence(phone.Id, false));
+        var wider = """{"t":"caps","caps":["list_dir","later"]}""";
+        Assert.Empty(link.SendCaps(wider));                                     // offline: kept, not sent
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(["roster", "accounts", "caps"], back.Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()).ToArray());
+        Assert.Equal(wider, phone.OpenFromDesktop(back.Last()).GetRawText());   // the kept one, on connect
+
+        link.Disconnected();                                                    // before welcome nothing goes
+        Assert.Empty(link.SendCaps(BrowseFrames.Caps));
+    }
+
     [Fact]
     public void A_summary_goes_only_to_the_online_phones_named_under_the_sessions_summary_ck()
     {

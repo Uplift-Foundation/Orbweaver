@@ -131,6 +131,8 @@ namespace Orbweaver
             // The accounts a phone's launch may name, read off the settings at each scan.
             try { client.OnAccounts(RelayAccounts.Frame(RelayAccounts.From(RelayAccounts.Choices))); }
             catch (Exception e) { MirrorLog.Say("relay", $"accounts frame not built: {e.GetType().Name}"); }
+            // CB-339: what this desk can do (the folder picker), after accounts.
+            client.OnCaps(BrowseFrames.Caps);
             // CB-315: and the prompt watcher, off this thread — it captures panes.
             _ = client.OnStatuses(snapshot);
         }

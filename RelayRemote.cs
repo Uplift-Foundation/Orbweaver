@@ -66,7 +66,16 @@ namespace Orbweaver
 
             // Lets the transcript settle after a turn ends before it is read.
             internal Func<Task>? Settle { get; init; }
+
+            // CB-339: the folder picker. Off by default so a test that does not care gets
+            // forbidden_path for a list_dir, as a desk with nothing to share would.
+            internal BrowseSeams? Browse { get; init; }
         }
+
+        // The filesystem a list_dir reads, the settings it reads them under (resolved on each
+        // request: the automatic roots follow the sessions), and how long a read may take before
+        // the phone is told `unreadable` rather than left waiting (its own timeout is 10 s).
+        internal sealed record BrowseSeams(IBrowseFileSystem Fs, Func<BrowseSettings> Settings, TimeSpan ReadTimeout);
 
         internal sealed record AccountSeams(
             Func<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>> Choices,
@@ -239,9 +248,59 @@ namespace Orbweaver
             // Off the event pump: chunking a picture is milliseconds, but the
             // pump is the one place CB-322 says must never wait on a picture.
             PersonaImageRequest p => Task.Run(() => ImageAsync(phoneId, p)),
+            // CB-339: a folder listing, built off the pump with its own clock on the read.
+            ListDirRequest d => ListDirAsync(phoneId, d),
             // The only other kind RelayRequests makes.
             _ => Task.Run(() => Err(phoneId, request.Ref, RelayReplies.BadFrame, ((BadFrameRequest)request).SessionId)),
         };
+
+        private readonly BrowseRateLimiter _browseRate = new();
+
+        // frames-v11 resolve.steps 1 and 2 here (the rate limit, then the request's shape), 3 to 10 in
+        // BrowseRules. One reply per request: the listing's dir frames or exactly one err. The desk
+        // logs the ref and the outcome, never a path or a folder name.
+        private async Task ListDirAsync(string phoneId, ListDirRequest r)
+        {
+            if (!_browseRate.TryAccept(phoneId, _seams.Now().ToUnixTimeMilliseconds()))
+            {
+                Err(phoneId, r.Ref, RelayReplies.RateLimited);
+                return;
+            }
+            if (r.Path is null)
+            {
+                Err(phoneId, r.Ref, RelayReplies.BadFrame);
+                return;
+            }
+            if (_seams.Browse is not { } browse)
+            {
+                Err(phoneId, r.Ref, RelayReplies.ForbiddenPath);
+                return;
+            }
+
+            BrowseOutcome outcome;
+            try
+            {
+                outcome = await Task.Run(() => BrowseRules.Resolve(r.Path, r.Hidden, browse.Settings(), browse.Fs))
+                    .WaitAsync(browse.ReadTimeout).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                // A read that did not finish in time, or one the filesystem refused in a way the
+                // seam did not name: the phone is told the folder could not be read.
+                _seams.Log($"list_dir {RelayLink.Safe(r.Ref)} {e.GetType().Name}");
+                Err(phoneId, r.Ref, RelayReplies.Unreadable);
+                return;
+            }
+
+            if (outcome.Err is { } code)
+            {
+                Err(phoneId, r.Ref, code);
+                return;
+            }
+            var frames = BrowseFrames.Dir(r.Ref, outcome.Listing!);
+            _seams.Log($"list_dir {RelayLink.Safe(r.Ref)} {outcome.Listing!.Items.Count} entries");
+            foreach (var frame in frames) _send.Reply(phoneId, null, frame);
+        }
 
         private void Err(string phoneId, string reference, string code, string? sessionId = null, string? why = null)
         {

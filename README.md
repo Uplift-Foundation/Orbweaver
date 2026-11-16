@@ -2046,6 +2046,18 @@ Two things a cloud orb draws that a local one does not. It wears a ring showing 
 
 Off means off: with the switch down the app asks the OS for no credential and opens no connection, and nothing can be sent. The same switch turns on reading, sending, archiving and deleting; there is no separate setting for any of them.
 
+## What a paired phone can browse (CB-339)
+
+A paired phone's **New session** screen has a **Browse…** button that lists the folders on this computer, so the project folder does not have to be typed from memory. It sees folder names and three small badges (a git repository, a `CLAUDE.md`, a persona) and nothing else: never a file, never a file's contents.
+
+**It sees only what Settings → Paired phones → *Folders the phone can browse* lists.** Until you edit that list it is *automatic*: the parent folder of each folder you recently ran a session in (`~/Source/app` offers `~/Source` and its siblings). **Add folder…** and **Remove** make it your own list, and **Reset to automatic** gives the automatic one back. A folder you started a session in directly under your home folder (`~/notes`) offers itself, not your home folder, so a session there never makes the whole home folder browsable.
+
+**The home folder is behind its own switch, off by default.** *Let the phone browse my whole home folder* makes everything under your home folder browsable except system folders. There is no switch that turns browsing off for a paired phone: with an empty list and the switch off it simply sees nothing.
+
+**System folders are never listed, wherever they sit.** `/System`, `/Library`, `/Applications`, `/private`, `~/Library`, `~/.ssh`, `~/.gnupg` and `~/.aws` on a Mac; the Windows folder, Program Files, ProgramData, `AppData`, `$Recycle.Bin` and the like on Windows. The list is fixed in the app and is not a setting.
+
+**Links and spellings cannot walk out of the list.** The desk works out where a path really leads (following a symbolic link or a Windows junction, using the capitalisation the disk has, expanding a Windows 8.3 short name) and only then checks it against the list, so `..`, another capitalisation, a link or a short name can only ever arrive at a folder that is itself allowed. Anything outside the list gets the same answer whether or not the folder exists, so a refusal cannot be used to map the disk. A phone is limited to a burst of 8 requests and then 4 a second, a listing is at most 500 folders, and a desk that predates this feature tells the phone so, so Browse is not offered to it.
+
 ## 1. Install it
 
 Either download an installer or build from source — both are fully supported,

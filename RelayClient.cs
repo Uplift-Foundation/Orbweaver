@@ -236,7 +236,17 @@ namespace Orbweaver
             Accounts = new RelayRemote.AccountSeams(RelayAccounts.Choices, OrbweaverSettings.PhoneLaunchProfileFor),
             Summarize = RelayAccounts.Summarize,
             Settle = () => Task.Delay(500),
+            Browse = DefaultBrowseSeams(),
         };
+
+        // CB-339: the real folder picker seam: the real disk, the settings as they are on each
+        // request, and a read that gives up before the phone's own 10 s timeout does.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        private static RelayRemote.BrowseSeams DefaultBrowseSeams()
+        {
+            var fs = new BrowseFileSystem();
+            return new RelayRemote.BrowseSeams(fs, () => BrowseSettingsSource.Current(fs), TimeSpan.FromSeconds(8));
+        }
 
         // CB-316: the account readings the usage orbs just drew. Projected,
         // compared with what was last sent, and sent only when a number a phone
@@ -536,6 +546,9 @@ namespace Orbweaver
 
         // The accounts a launch may name, from each scan; the link sends it only when it changed.
         internal void OnAccounts(string plaintext) => Dispatch(() => _link.SendAccounts(plaintext));
+
+        // CB-339: the caps frame, from each scan; the link sends it only when its bytes changed.
+        internal void OnCaps(string plaintext) => Dispatch(() => _link.SendCaps(plaintext));
 
         // A session finished: its summary, to the phones watching it. Off the event pump, because
         // the summariser is a model call; a failure costs that summary only.
