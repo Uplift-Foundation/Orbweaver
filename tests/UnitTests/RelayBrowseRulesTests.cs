@@ -322,3 +322,20 @@ public class RelayBrowseRulesTests
         Assert.False(limiter.TryAccept("a", 500));                       // a clock that stepped back gives no credit
     }
 }
+
+public class BrowseSettingsSourceTests
+{
+    [Fact]
+    public void Only_local_cli_sessions_with_a_working_folder_feed_the_automatic_roots()
+    {
+        var sessions = new[]
+        {
+            new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = "/w/a" },
+            new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = "  " },
+            new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = null },
+            new SessionStatus { Source = SessionSource.OpenClaw, Cwd = "/w/openclaw" },
+            new SessionStatus { Source = SessionSource.ClaudeCloud, Cwd = "/w/cloud" },
+        };
+        Assert.Equal(["/w/a"], BrowseSettingsSource.LiveFolders(sessions));
+    }
+}

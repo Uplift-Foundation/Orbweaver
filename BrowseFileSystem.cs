@@ -171,7 +171,11 @@ namespace Orbweaver
     {
         internal static BrowseSettings Current(IBrowseFileSystem fs) => BrowseRules.Effective(
             OrbweaverSettings.PhoneBrowseRoots, OrbweaverSettings.PhoneBrowseHome, OrbweaverSettings.NewChatRecentFolders,
-            (SessionManager.Instance?.AllStatuses.Values ?? Enumerable.Empty<SessionStatus>())
-                .Where(s => s.IsLocalCli && !string.IsNullOrWhiteSpace(s.Cwd)).Select(s => s.Cwd!), fs);
+            LiveFolders(SessionManager.Instance?.AllStatuses.Values ?? Enumerable.Empty<SessionStatus>()), fs);
+
+        // The working folders of the local CLI sessions on this desk: never a peer's, a cloud
+        // session's or an OpenClaw conversation's, and never a blank one.
+        internal static IEnumerable<string> LiveFolders(IEnumerable<SessionStatus> sessions) =>
+            sessions.Where(s => s.IsLocalCli && !string.IsNullOrWhiteSpace(s.Cwd)).Select(s => s.Cwd!);
     }
 }
