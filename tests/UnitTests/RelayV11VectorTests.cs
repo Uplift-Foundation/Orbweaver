@@ -113,7 +113,7 @@ public class RelayV11VectorTests
     public void The_limits_are_the_shipped_constants()
     {
         var l = V.GetProperty("limits");
-        Assert.Equal(l.GetProperty("max_window_plaintext_bytes").GetInt32(), BrowseLimits.MaxWindowPlaintextBytes);
+        Assert.Equal(l.GetProperty("max_dir_plaintext_bytes").GetInt32(), BrowseLimits.MaxDirPlaintextBytes);
         Assert.Equal(l.GetProperty("max_entries").GetInt32(), BrowseLimits.MaxEntries);
         Assert.Equal(l.GetProperty("max_path_bytes").GetInt32(), BrowseLimits.MaxPathBytes);
         Assert.Equal(l.GetProperty("max_roots").GetInt32(), BrowseLimits.MaxRoots);

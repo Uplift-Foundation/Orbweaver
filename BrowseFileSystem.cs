@@ -59,7 +59,28 @@ namespace Orbweaver
             MatchType = MatchType.Simple,
         };
 
-        public BrowseEntry? Lookup(string parent, string name)
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetLongPathNameW(string shortPath, StringBuilder buffer, uint size);
+
+        // Windows only: the long name the OS gives an 8.3 alias in `parent`, or null. Enumeration by
+        // name does not map an alias on every runtime (measured: .NET 10 on the Windows box does not),
+        // so the OS is asked outright.
+        private static string? LongNameOf(string parent, string name)
+        {
+            if (!OperatingSystem.IsWindows() || name.IndexOf('~') < 0) return null;
+            var buffer = new StringBuilder(32768);
+            var n = GetLongPathNameW(BrowseRules.Join(parent, name, true), buffer, (uint)buffer.Capacity);
+            if (n == 0 || n >= buffer.Capacity) return null;
+            var resolved = buffer.ToString();
+            var folder = Path.GetDirectoryName(resolved);
+            if (folder is null || !string.Equals(folder.TrimEnd('\\'), parent.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return null;
+            var longName = Path.GetFileName(resolved);
+            return string.Equals(longName, name, StringComparison.OrdinalIgnoreCase) ? null : longName;
+        }
+
+        public BrowseEntry? Lookup(string parent, string name) => Lookup(parent, name, true);
+
+        private BrowseEntry? Lookup(string parent, string name, bool tryAlias)
         {
             try
             {
@@ -79,6 +100,7 @@ namespace Orbweaver
                     if (info.Name == name) return Entry(info);
                     best ??= info;
                 }
+                if (best is null && tryAlias && LongNameOf(parent, name) is { } longName) return Lookup(parent, longName, false);
                 return best is null ? null : Entry(best);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)

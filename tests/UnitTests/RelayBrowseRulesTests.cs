@@ -85,6 +85,29 @@ public class RelayBrowseRulesTests
         Assert.NotNull(BrowseRules.Resolve(@"C:\Users\dev\p\ok", false, Roots(@"C:\Users\dev\p"), fs).Listing);   // control
     }
 
+    [Theory]
+    [InlineData(@"C:\PROGRA~1")]
+    [InlineData(@"C:\PROGRA~1\Common Files")]
+    [InlineData(@"C:\progra~2\x")]
+    [InlineData(@"C:\Users\dev\p\LONGFI~1.TXT")]
+    public void A_windows_short_name_the_filesystem_could_not_resolve_is_refused_not_kept_as_written(string path)
+    {
+        // QA round 1: kept as written, `C:\PROGRA~1` matched neither the denied `C:\Program Files` nor
+        // any root check, and the OS opened it. With a drive root as a project root it listed.
+        var fs = Win().Add(@"C:\").Add(@"C:\Windows").Add(@"C:\Program Files").Add(@"C:\Program Files\Common Files")
+            .Add(@"C:\Users").Add(@"C:\Users\dev").Add(@"C:\Users\dev\p");
+        Assert.Equal("forbidden_path", BrowseRules.Resolve(path, true, Roots(@"C:\"), fs).Err);
+        // The controls: the long spelling is refused as a system folder by the list, an ordinary tilde
+        // name (no digit after it) is an ordinary name, and a short name the filesystem DOES resolve
+        // arrives at the long one.
+        var denyPrograms = new FakeBrowseFileSystem(@"C:\Users\dev", true, [@"C:\Users"], [@"C:\Windows", @"C:\Program Files"])
+            .Add(@"C:\").Add(@"C:\Program Files", alias: "PROGRA~1").Add(@"C:\tilde~a");
+        Assert.Equal("forbidden_path", BrowseRules.Resolve(@"C:\Program Files", true, Roots(@"C:\"), denyPrograms).Err);
+        Assert.Equal("forbidden_path", BrowseRules.Resolve(@"C:\PROGRA~1", true, Roots(@"C:\"), denyPrograms).Err);
+        Assert.Equal(@"C:\Program Files", BrowseRules.Resolve(@"C:\PROGRA~1", true, Roots(@"C:\"), denyPrograms).Canonical);
+        Assert.NotNull(BrowseRules.Resolve(@"C:\tilde~a", true, Roots(@"C:\"), denyPrograms).Listing);
+    }
+
     [Fact]
     public void On_a_mac_a_trailing_dot_or_space_is_an_ordinary_name()
     {
@@ -262,7 +285,7 @@ public class RelayBrowseRulesTests
         {
             var doc = System.Text.Json.JsonDocument.Parse(frame).RootElement;
             Assert.Equal(from, doc.GetProperty("from_entry").GetInt32());
-            Assert.True(Encoding.UTF8.GetByteCount(frame) <= BrowseLimits.MaxWindowPlaintextBytes);
+            Assert.True(Encoding.UTF8.GetByteCount(frame) <= BrowseLimits.MaxDirPlaintextBytes);
             Assert.True(doc.GetProperty("truncated").GetBoolean());
             from += doc.GetProperty("entries").GetArrayLength();
         }
@@ -271,7 +294,7 @@ public class RelayBrowseRulesTests
         // Maximal: the first frame plus the next entry would have been over the cap.
         var first = System.Text.Json.JsonDocument.Parse(frames[0]).RootElement;
         var withOneMore = Encoding.UTF8.GetByteCount(frames[0]) + 1 + 180;
-        Assert.True(withOneMore > BrowseLimits.MaxWindowPlaintextBytes, first.GetProperty("entries").GetArrayLength().ToString());
+        Assert.True(withOneMore > BrowseLimits.MaxDirPlaintextBytes, first.GetProperty("entries").GetArrayLength().ToString());
     }
 
     [Fact]

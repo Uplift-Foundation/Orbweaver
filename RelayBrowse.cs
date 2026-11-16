@@ -68,7 +68,10 @@ namespace Orbweaver
 
     internal static class BrowseLimits
     {
-        internal const int MaxWindowPlaintextBytes = 48000;
+        // frames-v11 limits.max_dir_plaintext_bytes (contract 00c391e): 40,000, not v4's 48,000 window,
+        // so a `dir` chunk still fits the relay's 65,536-byte frame even if its base64 `ct` were
+        // written with the default escaper.
+        internal const int MaxDirPlaintextBytes = 40000;
         internal const int MaxEntries = 500;
         internal const int MaxPathBytes = 4096;
         internal const int MaxRoots = 64;
@@ -200,6 +203,11 @@ namespace Orbweaver
                 var component = node.Value;
                 if (fs.Lookup(current, component) is not { } entry)
                 {
+                    // A Windows 8.3 short name the filesystem could not resolve to its long name is
+                    // refused rather than kept as written: kept, `C:\PROGRA~1` matches neither the
+                    // denied `C:\Program Files` nor anything else the checks name, and the OS would
+                    // still open it.
+                    if (windows && LooksLikeShortName(component)) return null;
                     // Gone: it and everything after it stays as written.
                     current = Join(current, component, windows);
                     foreach (var rest in pending) current = Join(current, rest, windows);
@@ -220,6 +228,14 @@ namespace Orbweaver
                 for (var i = t.Components.Count - 1; i >= 0; i--) pending.AddFirst(t.Components[i]);
             }
             return current;
+        }
+
+        // `NAME~1`, `PROGRA~1.TXT`: a tilde and a digit, which is what an 8.3 alias always has.
+        private static bool LooksLikeShortName(string component)
+        {
+            for (var i = component.IndexOf('~'); i >= 0 && i + 1 < component.Length; i = component.IndexOf('~', i + 1))
+                if (char.IsAsciiDigit(component[i + 1])) return true;
+            return false;
         }
 
         // A link's relative target, against the folder that holds the link. A Windows target that
@@ -529,7 +545,7 @@ namespace Orbweaver
                 .Array("entries", entries).Flag("truncated", l.Truncated).ToString();
 
         // dir.rules, chunking: the listing's entries split over one or more frames with the same ref,
-        // greedily, so each canonical frame is at most 48,000 bytes and adding its next entry would
+        // greedily, so each canonical frame is at most 40,000 bytes and adding its next entry would
         // exceed that. An empty listing is one frame with entries_total 0.
         internal static List<string> Dir(string reference, BrowseListing listing)
         {
@@ -543,7 +559,7 @@ namespace Orbweaver
                 while (from + count < entries.Count)
                 {
                     var add = Encoding.UTF8.GetByteCount(entries[from + count]) + (count > 0 ? 1 : 0);
-                    if (count > 0 && size + add > BrowseLimits.MaxWindowPlaintextBytes) break;
+                    if (count > 0 && size + add > BrowseLimits.MaxDirPlaintextBytes) break;
                     size += add;
                     count++;
                 }
