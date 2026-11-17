@@ -99,6 +99,15 @@ namespace Orbweaver
                     var queued = Str(root, "content");
                     if (string.IsNullOrWhiteSpace(queued) || IsNoise(queued)) return;
 
+                    // CB-330: no real queued row has carried a relay wrapper (0 of
+                    // 493 measured), but the same text arriving here would leak
+                    // exactly as it did on the plain user path.
+                    if (RelayedMessage.Classify(queued) is { } relayed)
+                    {
+                        AddClassified(relayed, uuid, at, into);
+                        return;
+                    }
+
                     into.Add(new Row(uuid, new ChatTurn
                     {
                         Role = ChatRole.User,
@@ -154,15 +163,15 @@ namespace Orbweaver
                 // every isMeta row was before: better a missing bubble than the
                 // provenance boilerplate shown as if the user had typed it.
                 if (content.ValueKind == JsonValueKind.String
-                    && UnwrapPeerMessage(content.SafeString() ?? "") is { } ours)
-                    AddText(ours, ChatRole.User, uuid, at, into);
+                    && RelayedMessage.Classify(content.SafeString() ?? "", meta: true) is { } peer)
+                    AddClassified(peer, uuid, at, into);
 
                 return;
             }
 
             if (content.ValueKind == JsonValueKind.String)
             {
-                AddText(content.SafeString(), ChatRole.User, uuid, at, into);
+                AddUserText(content.SafeString(), uuid, at, into);
                 return;
             }
 
@@ -227,8 +236,41 @@ namespace Orbweaver
                 // block found in the real row this was measured against, so
                 // that is where the decoded picture rides too.
                 var carries = image is not null && i == textBlocks.Count - 1;
-                AddText(textBlocks[i], ChatRole.User, uuid, at, into, carries ? image : null);
+                if (carries) AddText(textBlocks[i], ChatRole.User, uuid, at, into, image);
+                else AddUserText(textBlocks[i], uuid, at, into);
             }
+        }
+
+        // CB-330: a user row's text may be a message a teammate or another session
+        // relayed rather than anything the user typed. Those become compact system
+        // rows; the user's own words, and anything that is not the measured
+        // wrapper, go through AddText exactly as before.
+        private static void AddUserText(string? text, string? uuid, DateTimeOffset at, List<Row> into)
+        {
+            if (text is not null && RelayedMessage.Classify(text) is { } relayed)
+                AddClassified(relayed, uuid, at, into);
+            else
+                AddText(text, ChatRole.User, uuid, at, into);
+        }
+
+        // One system turn per relay, in tag order, all sharing the row's uuid, the
+        // way a row with several text blocks already yields several turns.
+        private static void AddClassified(Classified classified, string? uuid, DateTimeOffset at, List<Row> into)
+        {
+            foreach (var relay in classified.Relays)
+            {
+                into.Add(new Row(uuid, new ChatTurn
+                {
+                    Role = ChatRole.System,
+                    Text = relay.Line,
+                    IsComplete = true,
+                    At = at,
+                    Relay = relay
+                }));
+            }
+
+            if (classified.OwnText is not null)
+                AddText(classified.OwnText, ChatRole.User, uuid, at, into);
         }
 
         // Claude Code writes "[Image #1]", "[Image #2]" and so on directly

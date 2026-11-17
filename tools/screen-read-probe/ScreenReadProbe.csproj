@@ -36,6 +36,8 @@
     <Compile Include="../../OpenClawAttachmentKind.cs" />
     <Compile Include="../../OpenClawAudioKind.cs" />
     <Compile Include="../../RemoteChat.cs" />
+    <Compile Include="../../RelayedMessage.cs" />
+    <Compile Include="../../BridgeProtocol.cs" />
     <Compile Include="../../SlashRoute.cs" />
   </ItemGroup>
 

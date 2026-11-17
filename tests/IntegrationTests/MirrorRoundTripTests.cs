@@ -70,6 +70,52 @@ public class MirrorRoundTripTests : IDisposable
             delivered.Turns);
     }
 
+    // CB-330: a teammate message is a relay turn on this side of the link, not a
+    // user bubble. The rows are the real captures, written to a real transcript
+    // on the far disk, sent through the real server and client; what arrives is
+    // what this machine's own parser produces, relay and all.
+    [Fact]
+    public async Task ARelayedTeammateMessageArrivesAsARelayTurnNotAUserBubble()
+    {
+        var rows = new[] { "lead-idle-result", "lead-multi-terminated-and-approved", "synthetic-control-user-quotes-wrapper" }
+            .Select(n => File.ReadAllText(Path.Combine(Cb330Dir(), n + ".jsonl")).TrimEnd('\n'))
+            .ToList();
+        var path = WriteTranscript("relay.jsonl", rows);
+
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", path);
+
+        Assert.True(await harness.HandshakeAsync("job-hunter"));
+        Assert.True(await harness.Client.OpenAsync("job-hunter"));
+
+        var delivered = Assert.Single(harness.Windows);
+
+        Assert.Equal(MirrorProtocol.TurnsFrom(rows, MirrorProtocol.CliClaudeCode), delivered.Turns);
+
+        // 1 idle + 4 in the multi row + the control.
+        Assert.Equal(6, delivered.Turns.Count);
+        Assert.All(delivered.Turns.Take(5), t =>
+        {
+            Assert.Equal("s", t.Role);
+            Assert.NotNull(t.Relay);
+            Assert.DoesNotContain("Another Claude session", t.Text);
+        });
+        Assert.Equal("hana-moriyama", delivered.Turns[0].Relay!.Name);
+
+        // The control is a person quoting the wrapper: still theirs, no relay.
+        Assert.Equal("u", delivered.Turns[5].Role);
+        Assert.Null(delivered.Turns[5].Relay);
+
+        // And the session adopts all five relay turns, not just the first of a
+        // row that shares one uuid.
+        var adopted = MirrorProtocol.AdoptTurns(delivered.Turns);
+        Assert.Equal(5, adopted.Count(a => a.Turn.Relay is not null));
+        Assert.Equal(adopted.Count, adopted.Select(a => a.Key).Distinct().Count());
+    }
+
+    private static string Cb330Dir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "TranscriptTests", "Captures", "cb330"));
+
     // A conversation big enough to need many frames, which is where chunking,
     // ordering and the whole-payload hash all have to hold at once.
     [Fact]
@@ -565,6 +611,53 @@ public class MirrorRoundTripTests : IDisposable
 
         Assert.Equal(second, Assert.Single(read.Lines));
         Assert.Equal(first.Length + 1, read.From);
+    }
+
+    // CB-330: AdoptTurns keys the n-th turn of a row as uuid#n, so a row that maps
+    // to several turns must always reach the session whole, or the keys of a
+    // later frame would shift. A frame is cut by ReadRange, which skips a partial
+    // first line and drops a partial last one, so a row is sent whole or not at
+    // all. Windows that start and end mid-row, then the full file: no row is
+    // partly delivered, none is duplicated and none is dropped.
+    [Fact]
+    public void AMidRowCutNeverSendsPartOfARowAndALaterFullReadKeepsEveryTurn()
+    {
+        static string Multi(string uuid, params string[] texts) =>
+            "{\"type\":\"assistant\",\"uuid\":\"" + uuid + "\",\"timestamp\":\"2026-11-16T10:00:00Z\","
+            + "\"message\":{\"role\":\"assistant\",\"content\":["
+            + string.Join(",", texts.Select(t => "{\"type\":\"text\",\"text\":\"" + t + "\"}")) + "]}}";
+
+        var r1 = Multi("m1", "a1", "a2", "a3");
+        var r2 = Multi("m2", "b1", "b2", "b3");
+        var r3 = Multi("m3", "c1", "c2", "c3");
+        var path = Path.Combine(_dir, "multi.jsonl");
+        File.WriteAllText(path, r1 + "\n" + r2 + "\n" + r3 + "\n");
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+        // From the middle of row 1 to the middle of row 3: only row 2 is whole.
+        var partial = RemoteMirrorServer.ReadRange(fs, r1.Length / 2, r1.Length + 1 + r2.Length + 1 + r3.Length / 2, alignStart: true);
+        Assert.Equal(r2, Assert.Single(partial.Lines));
+
+        var seen = new HashSet<string>();
+        var texts = new List<string>();
+
+        void Deliver(IEnumerable<string> lines)
+        {
+            foreach (var row in MirrorProtocol.AdoptTurns(MirrorProtocol.TurnsFrom(lines, MirrorProtocol.CliClaudeCode)))
+                if (row.Key is null || seen.Add(row.Key))
+                    texts.Add(row.Turn.Text);
+        }
+
+        Deliver(partial.Lines);
+        Assert.Equal(new[] { "b1", "b2", "b3" }, texts);
+
+        var full = RemoteMirrorServer.ReadRange(fs, 0, fs.Length, alignStart: true);
+        Deliver(full.Lines);
+
+        // Every turn of every row exactly once; the overlap on row 2 was not
+        // duplicated and the other rows lost nothing.
+        Assert.Equal(new[] { "b1", "b2", "b3", "a1", "a2", "a3", "c1", "c2", "c3" }, texts);
     }
 
     [Fact]

@@ -1124,8 +1124,43 @@ namespace Orbweaver
                 "How big the chat panel draws a conversation. "
                 + (OperatingSystem.IsMacOS()
                     ? "Cmd+ and Cmd- do the same thing from the panel itself, and Cmd+0 puts it back."
-                    : "Ctrl+ and Ctrl- do the same thing from the panel itself, and Ctrl+0 puts it back."))
+                    : "Ctrl+ and Ctrl- do the same thing from the panel itself, and Ctrl+0 puts it back.")),
+            Row("Teammate and peer messages", RelayedMessagesPicker(),
+                "How the chat panel shows a message a teammate or another session relayed into it. "
+                + "Collapsed is one dimmed line you can click open; Expanded opens each in full; "
+                + "Hidden leaves them out of the conversation altogether.")
         };
+
+        // CB-330's three-way choice. Written to the setting and pushed into every
+        // open panel, which re-evaluates its relayed rows in place — the same
+        // shape as TextSizeSlider, for the same reason: the panels are already
+        // on screen and have to hear about it.
+        private static readonly (string Label, RelayedMessageDisplay Value)[] RelayedMessageChoices =
+        {
+            ("Collapsed", RelayedMessageDisplay.Collapsed),
+            ("Expanded", RelayedMessageDisplay.Expanded),
+            ("Hidden", RelayedMessageDisplay.Hidden)
+        };
+
+        internal Control RelayedMessagesPicker()
+        {
+            var current = OrbweaverSettings.RelayedMessages;
+            var combo = new ComboBox
+            {
+                ItemsSource = RelayedMessageChoices.Select(c => c.Label).ToList(),
+                SelectedIndex = Array.FindIndex(RelayedMessageChoices, c => c.Value == current),
+                MinWidth = 132
+            };
+            combo.SelectionChanged += (_, _) =>
+            {
+                var index = combo.SelectedIndex;
+                if (index < 0) return;
+
+                OrbweaverSettings.RelayedMessages = RelayedMessageChoices[index].Value;
+                ChatPanel.ApplyRelayDisplay();
+            };
+            return combo;
+        }
 
         internal Control TextSizeSlider()
         {

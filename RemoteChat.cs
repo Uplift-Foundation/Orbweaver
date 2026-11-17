@@ -115,6 +115,12 @@ namespace Orbweaver
 
         public bool IsComplete { get; set; }
 
+        // CB-330: set when this turn is a message relayed from a teammate or
+        // another session. Such a turn is Role System with Text = Relay.Line, so
+        // anything that does not know about Relay degrades to a one-line note
+        // rather than leaking the raw wrapper as the user's own bubble.
+        public RelayedMessage? Relay { get; init; }
+
         // CB-270: drawn from a gateway rollup message; see HistoryTurn.FromRollup.
         public bool FromRollup { get; init; }
 
