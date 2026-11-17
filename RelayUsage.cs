@@ -102,9 +102,9 @@ namespace Orbweaver
 
         private static string? DisplayNameOf(Account a)
         {
-            if (string.IsNullOrWhiteSpace(a.DisplayName)) return null;
-            var cut = PromptFrames.Cut(a.DisplayName.Trim(), MaxDisplayName);
-            return string.IsNullOrWhiteSpace(cut) ? null : cut;
+            // Cut of a non-blank trimmed string is never blank (it keeps at
+            // least one unit besides the mark), so there is nothing to re-check.
+            return string.IsNullOrWhiteSpace(a.DisplayName) ? null : PromptFrames.Cut(a.DisplayName.Trim(), MaxDisplayName);
         }
 
         internal static string Frame(IEnumerable<Account> accounts) =>

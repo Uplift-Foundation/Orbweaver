@@ -21,9 +21,11 @@ namespace Orbweaver
         // Whether two overrides draw the same thing, whatever either's stamp
         // says. A write that changes nothing must not be re-stamped, or merely
         // re-saving the editor would make this PC's look the newest everywhere.
-        internal static bool SameLook(AccountOrbOverride? a, AccountOrbOverride? b) =>
-            (a?.Normalise() ?? new AccountOrbOverride(null, null, null)) with { UpdatedAt = null }
-            == (b?.Normalise() ?? new AccountOrbOverride(null, null, null)) with { UpdatedAt = null };
+        internal static bool SameLook(AccountOrbOverride? a, AccountOrbOverride? b) => LookOf(a) == LookOf(b);
+
+        // Nothing is the same as an override that overrides nothing.
+        private static AccountOrbOverride LookOf(AccountOrbOverride? o) =>
+            (o ?? new AccountOrbOverride(null, null, null)).Normalise() with { UpdatedAt = null };
 
         // The display name feeds the tooltip and the card, so a hand-edited
         // 5000-character value is cut here, on every path in (UI write and
