@@ -173,11 +173,77 @@ public class RelayedMessageTests
     }
 
     [Fact]
-    public void AMissingTeammateIdReadsAsTheTeam()
+    public void AMissingTeammateIdIsAnUnknownTeammateNotTheTeam()
     {
         var r = OneRelay(Tag("color=\"blue\"", "b"));
-        Assert.Null(r.Name);
-        Assert.Equal("Team", r.Label);
+        Assert.Equal("unknown", r.Name);
+        Assert.Equal("Teammate @unknown sent a message", r.Label);
+    }
+
+    [Fact]
+    public void SingleQuotedAttributesAreRead()
+    {
+        var r = OneRelay(Tag("teammate_id='bob' summary='it&apos;s'", "b"));
+        Assert.Equal(("bob", "it's"), (r.Name, r.Preview));
+    }
+
+    [Fact]
+    public void ADoubleQuotedValueMayContainASingleQuote() =>
+        Assert.Equal("it's", OneRelay(Tag("teammate_id=\"a\" summary=\"it's\"", "b")).Preview);
+
+    [Fact]
+    public void ABodyThatMentionsTheCloseTagIsNotSplit()
+    {
+        var c = RelayedMessage.Classify(Peer(
+            Tag("teammate_id=\"a\"", "I changed </teammate-message> handling and then continued")
+            + "\n\n" + Tag("teammate_id=\"b\"", "second")))!;
+
+        Assert.Equal(new[] { "a", "b" }, c.Relays.Select(r => r.Name));
+        Assert.Equal("I changed </teammate-message> handling and then continued", c.Relays[0].FullText);
+    }
+
+    [Fact]
+    public void ABodyThatMentionsTheCloseTagInASingleTagRowIsNotSplit()
+    {
+        var r = OneRelay(Peer(Tag("teammate_id=\"a\"", "x </teammate-message> y")));
+        Assert.Equal("x </teammate-message> y", r.FullText);
+    }
+
+    [Fact]
+    public void ATagNameThatOnlyStartsWithTeammateMessageIsNotATag() =>
+        Assert.Null(RelayedMessage.Classify("<teammate-messages teammate_id=\"a\">\nx\n</teammate-message>"));
+
+    // Decisions, not accidents: what the wrapped cases do with raw tag text.
+    // With text between two tags the strict close-tag rule cannot tell it from a
+    // body that mentions the close tag, so the first tag swallows everything up
+    // to the last close tag. The words stay inside that teammate's body, in the
+    // expanded view, rather than being labelled "From another session". No real
+    // row has this shape (2,957 of 2,957 are tags and whitespace only).
+    [Fact]
+    public void TextBetweenTagsStaysInsideTheFirstTeammatesBody()
+    {
+        var c = RelayedMessage.Classify(Peer(
+            Tag("teammate_id=\"a\"", "1") + "\n\nTYPED BY SOMEONE\n\n" + Tag("teammate_id=\"b\"", "2")))!;
+
+        var r = Assert.Single(c.Relays);
+        Assert.Equal(("a", RelayKind.Teammate), (r.Name, r.Kind));
+        Assert.Contains("TYPED BY SOMEONE", r.FullText);
+    }
+
+    [Fact]
+    public void AnUnclosedTagInsideTheWrapperIsAPeerRowOffTheMetaPath()
+    {
+        var r = OneRelay(Peer("<teammate-message teammate_id=\"bob\">\nno end"));
+        Assert.Equal(RelayKind.Peer, r.Kind);
+        Assert.StartsWith("<teammate-message", r.FullText);
+    }
+
+    [Fact]
+    public void AnUnclosedTagInsideTheWrapperIsTheUsersTextOnTheMetaPath()
+    {
+        var c = RelayedMessage.Classify(Peer("<teammate-message teammate_id=\"bob\">\nno end"), meta: true)!;
+        Assert.Empty(c.Relays);
+        Assert.StartsWith("<teammate-message", c.OwnText);
     }
 
     [Fact]
@@ -206,7 +272,7 @@ public class RelayedMessageTests
     }
 
     [Fact]
-    public void ATagNeverClosedIsOrdinaryText() =>
+    public void ATagNeverClosedIsOrdinaryTextWhenUnwrapped() =>
         Assert.Null(RelayedMessage.Classify("<teammate-message teammate_id=\"a\">\nno end"));
 
     [Fact]

@@ -39,12 +39,21 @@ namespace Orbweaver
         private const string TeammateVerbMessage = "sent a message";
         private const string OwnAppSender = "Orbweaver on ";
 
-        private static readonly Regex TeammateTag = new(
-            @"\G\s*<teammate-message(?<attrs>[^>]*)>(?<body>.*?)</teammate-message>",
+        // Bodies are not XML-escaped, so a body may mention the close tag. The
+        // strict form therefore accepts a close tag only when another tag or the
+        // end of the text follows it, which is every real row (2,957 of 2,957 are
+        // tags and whitespace only). The lenient form, first close tag wins, is
+        // the fallback for a row with text after its last tag.
+        private const string Open = @"\G\s*<teammate-message(?=[\s>])(?<attrs>[^>]*)>(?<body>.*?)</teammate-message>";
+
+        private static readonly Regex StrictTag = new(
+            Open + @"(?=\s*(?:<teammate-message(?=[\s>])|\z))",
             RegexOptions.Compiled | RegexOptions.Singleline);
 
+        private static readonly Regex LenientTag = new(Open, RegexOptions.Compiled | RegexOptions.Singleline);
+
         private static readonly Regex Attr = new(
-            @"(?<key>[A-Za-z_\-]+)\s*=\s*""(?<value>[^""]*)""",
+            @"(?<key>[A-Za-z_\-]+)\s*=\s*(?:""(?<dq>[^""]*)""|'(?<sq>[^']*)')",
             RegexOptions.Compiled);
 
         private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
@@ -78,8 +87,12 @@ namespace Orbweaver
             // sits later in a sentence somebody typed is not a relay.
             var relays = new List<RelayedMessage>();
             var pos = 0;
-            while (TeammateTag.Match(inner, pos) is { Success: true } m)
+            while (true)
             {
+                var m = StrictTag.Match(inner, pos);
+                if (!m.Success) m = LenientTag.Match(inner, pos);
+                if (!m.Success) break;
+
                 relays.Add(FromTeammateTag(m.Groups["attrs"].Value, m.Groups["body"].Value));
                 pos = m.Index + m.Length;
             }
@@ -123,7 +136,7 @@ namespace Orbweaver
             string? id = null, color = null, summary = null;
             foreach (Match a in Attr.Matches(attrs))
             {
-                var value = WebUtility.HtmlDecode(a.Groups["value"].Value);
+                var value = WebUtility.HtmlDecode(a.Groups["dq"].Success ? a.Groups["dq"].Value : a.Groups["sq"].Value);
                 switch (a.Groups["key"].Value)
                 {
                     case "teammate_id": id = value; break;
@@ -132,8 +145,9 @@ namespace Orbweaver
                 }
             }
 
-            // The system speaks as "system"; that is the team, not a teammate.
-            var name = string.IsNullOrWhiteSpace(id) || id == "system" ? null : id;
+            // The system speaks as "system"; that is the team, not a teammate. A
+            // tag with no id at all is a teammate we cannot name, not the team.
+            var name = id == "system" ? null : string.IsNullOrWhiteSpace(id) ? "unknown" : id;
             if (string.IsNullOrWhiteSpace(color)) color = null;
 
             var body = rawBody.Trim();
