@@ -461,5 +461,120 @@ Ready to submit your answers?                                                   
   2. Cancel                                                                                                           │
 
 """"");
+
+        // Real captures at 60 columns, where the mod docks below the chat as a box instead of
+        // beside it, so there is no divider to cut. No-op controls: the strip must leave both
+        // alone. While a form is up the board is not on screen at all.
+        internal static (string Name, string Screen)[] Controls => [("NarrowForm", NarrowForm), ("NarrowAfterEsc", NarrowAfterEsc)];
+
+        // A one-question multi-select at 60 columns: two tabs (Fruits, Submit) and a Submit row.
+        internal static readonly string NarrowForm = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.326
+▝▜██████▀  Haiku 5.5 · Claude Team
+ ▝▝   ▝▝   /…/work
+
+
+❯ /jira
+  ⎿  jira-board: CB board open.
+
+❯ Call the AskUserQuestion tool now with exactly one
+  question: header Fruits, question 'Which fruits do you
+  want?', multiSelect true, options Apple, Banana, Cherry
+  (each with a one-line description). Do nothing else.
+────────────────────────────────────────────────────────────
+←  ☐ Fruits  ✔ Submit  →
+
+Which fruits do you want?
+
+❯ 1. [ ] Apple
+         A crisp, sweet pome fruit.
+  2. [ ] Banana
+         A soft, starchy fruit with a yellow peel.
+  3. [ ] Cherry
+         A small stone fruit, sweet or tart.
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+""""");
+
+        // The same session after Esc declined the form, the board box drawn under the chat.
+        internal static readonly string NarrowAfterEsc = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.326
+▝▜██████▀  Haiku 5.5 · Claude Team
+ ▝▝   ▝▝   /…/work
+
+
+❯ /jira
+  ⎿  jira-board: CB board open.
+
+❯ Call the AskUserQuestion tool now with exactly one
+  question: header Fruits, question 'Which fruits do you
+  want?', multiSelect true, options Apple, Banana, Cherry
+  (each with a one-line description). Do nothing else.
+
+⏺ Declined to answer Claude's questions:
+  ⎿  · Which fruits do you want? (Apple / Banana / Cherry)
+
+
+
+
+
+
+
+
+
+
+
+
+╭────────────────────────────────────────────────────────✕─╮
+│ xx xxxxx                    00 xxxxxx · xxxxxxx xxxx xxx │
+│ [ xxxxxxx ] [ xxxx ] xxxx xx xxxx ↗                      │
+│                                                          │
+│ [ xxxx 00 ] [ xxxxxxxxxxx 0 ] [ xxxxxxx 0 ]              │
+│ [ xxxxxxxxxx 00 ]                                        │
+│                                                          │
+│ xx-000 "xxxx xxxx xxx" xx xxx xxxxx-xxxxx xxxx, xxxx x…  │
+│ xxxxxxx · = xxxxxx · — · 0x                              │
+│                                                          │
+│ xx-000 xxx x xxxx xxxx xx xxx xxxxxxxxx xxxxxxx xxxxxxx… │
+│ xxxx · = xxxxxx · — · 0x                                 │
+│                                                          │
+│ xx-000 xxxxxx: xxx xxxxx'x xxxxxxx xxxxxxxxxx xxxxx xxx… │
+│ xxx · = xxxxxx · — · 00x                                 │
+╰──────────────────────────────────────────────────────────╯
+
+────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  Haiku 5.5 | ~/work | 54% (7d:8%) | [.claude]
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 age…
+
+""""");
     }
 }

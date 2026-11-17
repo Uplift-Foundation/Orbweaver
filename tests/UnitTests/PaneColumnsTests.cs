@@ -330,6 +330,31 @@ public class PaneColumnsTests
         Assert.Equal(PromptFingerprint.Of(screen)!.Hash, PromptFingerprint.Of(changed)!.Hash);
     }
 
+    // At 60 columns the mod docks below the chat, so there is no divider to cut.
+    [Fact]
+    public void A_60_column_pane_with_the_board_below_is_left_alone()
+    {
+        foreach (var (name, screen) in SidePanelFixtures.Controls)
+        {
+            var lines = screen.Split('\n');
+            Assert.Equal(lines, PaneColumns.StripSidePanel(lines));
+            Assert.True(name.StartsWith("Narrow", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void A_form_at_60_columns_has_its_two_tabs_and_its_submit_row()
+    {
+        var form = ChatTranscript.ParseAskForm(SidePanelFixtures.NarrowForm)!;
+
+        Assert.Equal(2, form.Tabs.Count);
+        Assert.True(form.HasSubmitRow);
+    }
+
+    [Fact]
+    public void The_60_column_screen_after_esc_is_at_its_prompt() =>
+        Assert.Equal(PaneReading.Prompt, PaneScreen.Classify(SidePanelFixtures.NarrowAfterEsc));
+
     // No fixture the repository already holds is changed: PaneFixtures, AskFormFixtures and the
     // real screens under Fixtures/screens. 26 of them hold a `│` at cell 20 or beyond, Grok's
     // boxes included, so this is the false-positive control for the rule.
