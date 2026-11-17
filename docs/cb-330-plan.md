@@ -52,7 +52,9 @@ Decision 7 therefore resolves to: **do not touch `CodexTranscript` or `GrokTrans
 
 ## 2. Design
 
-### One fork for the lead (default chosen, engineers are not blocked)
+### The fork, settled
+
+**Decided by the lead, 2026-11-16, final: the table below stands.** Bare isMeta peer text and this app's own `Orbweaver on …` cross-session rows stay user bubbles (the second without its tag); only cross-session messages from another session, and teammate or peer-wrapped rows, become compact rows. The alternative described under the table was rejected.
 
 The ticket says a plain peer message "without a teammate tag" becomes a "From another session" row. On the isMeta peer path, real rows are of three kinds, and two of them are the user's own words:
 
