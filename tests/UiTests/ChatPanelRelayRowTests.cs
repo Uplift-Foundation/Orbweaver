@@ -665,6 +665,23 @@ public class ChatPanelRelayRowTests : IDisposable
         }
     }
 
+    // QA's requirement: the label and the name are plain runs, never Markdown.
+    // A teammate_id decoded from an XML attribute can carry < and &, and a name
+    // like a_b_c or **x** must not turn into emphasis either.
+    [AvaloniaTheory]
+    [InlineData("a<b&c")]
+    [InlineData("**bold**_x_")]
+    [InlineData("`code`[l](u)")]
+    public void ANameWithMarkupCharactersIsDrawnLiterally(string name)
+    {
+        var relay = new RelayedMessage(RelayKind.Teammate, name, null, "idle_notification", "finished", "p", "full");
+        var panel = OpenWith(RelayTurn(relay));
+
+        var row = OnlyRelayRow(panel);
+        Assert.Equal(new[] { "Teammate ", "@" + name, " finished", "  p" }, RunsOf(row));
+        Assert.Equal("Teammate @" + name + " finished  p", LineOf(row));
+    }
+
     // --- the settings window's row ---
 
     private static SettingsWindow NewSettingsWindow()
