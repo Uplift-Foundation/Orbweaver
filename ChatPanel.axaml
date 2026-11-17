@@ -299,56 +299,6 @@
                                  conversation with two sides rather than as a
                                  list of rounded rectangles. -->
                             <Panel>
-                            <!-- CB-330: a message a teammate or another session
-                                 relayed. Its own row beside the bubble rather
-                                 than a restyled bubble, because it is not a
-                                 side of the conversation: no fill, no side, no
-                                 time stamp, one dimmed line that opens on a
-                                 click. Only the header line takes the click, so
-                                 selecting text in the opened body does not close
-                                 it again. -->
-                            <Border Name="RelayRow" IsVisible="{Binding IsRelay}"
-                                    Margin="0,2,0,2" Padding="2,1"
-                                    MaxWidth="{Binding MaxBubbleWidth}"
-                                    HorizontalAlignment="Left">
-                                <StackPanel Spacing="3">
-                                    <Grid Name="RelayHeader" ColumnDefinitions="Auto,*,Auto" Background="Transparent"
-                                          Cursor="Hand"
-                                          PointerPressed="Relay_PointerPressed">
-                                        <Panel Grid.Column="0" Width="{Binding ChipSize}"
-                                               VerticalAlignment="Center">
-                                            <Ellipse Name="RelayDotMark" Width="{Binding RelayDotSize}" Height="{Binding RelayDotSize}"
-                                                     Fill="{Binding RelayDot}"
-                                                     IsVisible="{Binding HasRelayDot}"/>
-                                            <Border Name="RelayAvatarMark" Width="{Binding ChipSize}" Height="{Binding ChipSize}"
-                                                    CornerRadius="{Binding ChipCorners}"
-                                                    ClipToBounds="True"
-                                                    IsVisible="{Binding HasRelayAvatar}">
-                                                <Image Source="{Binding RelayAvatar}"
-                                                       Width="{Binding ChipSize}" Height="{Binding ChipSize}"
-                                                       Stretch="UniformToFill"/>
-                                            </Border>
-                                        </Panel>
-                                        <ContentControl Grid.Column="1" Content="{Binding RelayLine}"
-                                                        Margin="4,0,4,0"/>
-                                        <!-- Drawn, not a glyph, so the Fluent theme on
-                                             Windows cannot substitute a different one. -->
-                                        <Path Name="RelayChevron" Grid.Column="2" Data="M 0,0 L 4,4 L 0,8"
-                                              Stroke="#66FFFFFF" StrokeThickness="1.5"
-                                              StrokeLineCap="Round" StrokeJoin="Round"
-                                              VerticalAlignment="Center"
-                                              RenderTransformOrigin="50%,50%"
-                                              IsVisible="{Binding CanExpand}">
-                                            <Path.RenderTransform>
-                                                <RotateTransform Angle="{Binding ChevronAngle}"/>
-                                            </Path.RenderTransform>
-                                        </Path>
-                                    </Grid>
-                                    <ContentControl Name="RelayBodyHost" Content="{Binding RelayBody}"
-                                                    IsVisible="{Binding IsRelayExpanded}"
-                                                    Margin="20,0,0,0"/>
-                                </StackPanel>
-                            </Border>
                             <Border Name="BubbleRow" IsVisible="{Binding IsBubble}" Margin="{Binding Gap}" Padding="{Binding Pad}"
                                     CornerRadius="{Binding Corners}"
                                     MaxWidth="{Binding MaxBubbleWidth}"
@@ -544,6 +494,56 @@
                                                Margin="0,1,0,0"
                                                FontSize="{Binding TimeSize}" Opacity="0.5"
                                                Foreground="{Binding Ink}"/>
+                                </StackPanel>
+                            </Border>
+                            <!-- CB-330: a message a teammate or another session
+                                 relayed. Its own row beside the bubble rather
+                                 than a restyled bubble, because it is not a
+                                 side of the conversation: no fill, no side, no
+                                 time stamp, one dimmed line that opens on a
+                                 click. Only the header line takes the click, so
+                                 selecting text in the opened body does not close
+                                 it again. -->
+                            <Border Name="RelayRow" IsVisible="{Binding IsRelay}"
+                                    Margin="0,2,0,2" Padding="2,1"
+                                    MaxWidth="{Binding MaxBubbleWidth}"
+                                    HorizontalAlignment="Left">
+                                <StackPanel Spacing="3">
+                                    <Grid Name="RelayHeader" ColumnDefinitions="Auto,*,Auto" Background="Transparent"
+                                          Cursor="Hand"
+                                          PointerPressed="Relay_PointerPressed">
+                                        <Panel Grid.Column="0" Width="{Binding ChipSize}"
+                                               VerticalAlignment="Center">
+                                            <Ellipse Name="RelayDotMark" Width="{Binding RelayDotSize}" Height="{Binding RelayDotSize}"
+                                                     Fill="{Binding RelayDot}"
+                                                     IsVisible="{Binding HasRelayDot}"/>
+                                            <Border Name="RelayAvatarMark" Width="{Binding ChipSize}" Height="{Binding ChipSize}"
+                                                    CornerRadius="{Binding ChipCorners}"
+                                                    ClipToBounds="True"
+                                                    IsVisible="{Binding HasRelayAvatar}">
+                                                <Image Source="{Binding RelayAvatar}"
+                                                       Width="{Binding ChipSize}" Height="{Binding ChipSize}"
+                                                       Stretch="UniformToFill"/>
+                                            </Border>
+                                        </Panel>
+                                        <ContentControl Grid.Column="1" Content="{Binding RelayLine}"
+                                                        Margin="4,0,4,0"/>
+                                        <!-- Drawn, not a glyph, so the Fluent theme on
+                                             Windows cannot substitute a different one. -->
+                                        <Path Name="RelayChevron" Grid.Column="2" Data="M 0,0 L 4,4 L 0,8"
+                                              Stroke="#66FFFFFF" StrokeThickness="1.5"
+                                              StrokeLineCap="Round" StrokeJoin="Round"
+                                              VerticalAlignment="Center"
+                                              RenderTransformOrigin="50%,50%"
+                                              IsVisible="{Binding CanExpand}">
+                                            <Path.RenderTransform>
+                                                <RotateTransform Angle="{Binding ChevronAngle}"/>
+                                            </Path.RenderTransform>
+                                        </Path>
+                                    </Grid>
+                                    <ContentControl Name="RelayBodyHost" Content="{Binding RelayBody}"
+                                                    IsVisible="{Binding IsRelayExpanded}"
+                                                    Margin="20,0,0,0"/>
                                 </StackPanel>
                             </Border>
                             </Panel>
