@@ -85,6 +85,8 @@ public class ChatPanelRelayRowTests : IDisposable
         public Task<ChatSendOutcome> SendAsync(string text) => Task.FromResult(ChatSendOutcome.Sent);
         public void Cancel() { }
 
+        public void RemoveAt(int index) => _history.RemoveAt(index);
+
         public void Add(ChatTurn turn)
         {
             _history.Add(turn);
@@ -256,7 +258,7 @@ public class ChatPanelRelayRowTests : IDisposable
         var rows = RelayRows(panel);
         Assert.Equal(2, rows.Count);
         Assert.Equal(new[] { "Team", "  nadia-okafor has shut down." }, RunsOf(rows[0]));
-        Assert.Equal(new[] { "From another session", "  hello there" }, RunsOf(rows[1]));
+        Assert.Equal(new[] { "From another session", " \u00B7 cb-276", "  hello there" }, RunsOf(rows[1]));
     }
 
     [AvaloniaFact]
@@ -680,6 +682,96 @@ public class ChatPanelRelayRowTests : IDisposable
         var row = OnlyRelayRow(panel);
         Assert.Equal(new[] { "Teammate ", "@" + name, " finished", "  p" }, RunsOf(row));
         Assert.Equal("Teammate @" + name + " finished  p", LineOf(row));
+    }
+
+    // --- QA round: the NRE, the sender, the hidden removal, the key ---
+
+    // The relay row shares the bubble's template, so RelayLine is bound for
+    // every row; on an ordinary turn it must be null and must not throw.
+    [AvaloniaFact]
+    public void RelayLineOnAnOrdinaryTurnIsNullAndDoesNotThrow()
+    {
+        var panel = OpenWith(User("hi"), Assistant("yo"), RelayTurn(Finished()));
+        var turnsField = typeof(ChatPanel).GetField("_turns", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var views = ((System.Collections.IEnumerable)turnsField.GetValue(panel)!).Cast<object>().ToList();
+        Assert.Equal(3, views.Count);
+
+        var getter = views[0].GetType().GetProperty("RelayLine")!;
+        Assert.Null(getter.GetValue(views[0]));
+        Assert.Null(getter.GetValue(views[1]));
+        Assert.NotNull(getter.GetValue(views[2]));
+    }
+
+    [AvaloniaFact]
+    public void APeerRowWithNoNameDrawsOnlyItsLabel()
+    {
+        var peer = new RelayedMessage(RelayKind.Peer, null, null, "message", "", "", "body");
+        var panel = OpenWith(RelayTurn(peer));
+
+        Assert.Equal(new[] { "From another session" }, RunsOf(OnlyRelayRow(panel)));
+    }
+
+    [AvaloniaFact]
+    public void RemovedTurnsAreFoundByRowNotByHistoryIndexUnderHidden()
+    {
+        OrbweaverSettings.RelayedMessages = RelayedMessageDisplay.Hidden;
+        var a = Assistant("A", 1);
+        var b = Assistant("B", 3);
+        var c = Assistant("C", 4);
+        var session = new RelaySession(new[] { a, RelayTurn(Finished(), 2), b, c });
+        var panel = Open(session);
+        Assert.Equal(3, panel.FindControl<ItemsControl>("Turns")!.ItemsPanelRoot!.Children.Count);
+
+        // The session drops B (history index 2) and says so.
+        session.RemoveAt(2);
+        panel.OnTurnsRemoved(2, 1);
+        Flush();
+
+        var texts = panel.FindControl<ItemsControl>("Turns")!.ItemsPanelRoot!.Children
+            .Select(r => string.Concat(r.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text)))
+            .ToList();
+        Assert.Equal(2, texts.Count);
+        Assert.Contains("A", texts[0]);
+        Assert.Contains("C", texts[1]);
+    }
+
+    [AvaloniaFact]
+    public void RemovedTurnsWithRelaysShownStillUseTheHistoryIndex()
+    {
+        var a = Assistant("A", 1);
+        var b = Assistant("B", 3);
+        var session = new RelaySession(new[] { a, RelayTurn(Finished(), 2), b });
+        var panel = Open(session);
+
+        session.RemoveAt(2);
+        panel.OnTurnsRemoved(2, 1);
+        Flush();
+
+        Assert.Equal(2, panel.FindControl<ItemsControl>("Turns")!.ItemsPanelRoot!.Children.Count);
+        Assert.Single(RelayRows(panel));
+    }
+
+    [AvaloniaFact]
+    public void ExpandingOneOfTwoIdenticalRelaysInTheSameSecondLeavesTheOtherCollapsed()
+    {
+        var relay = Finished(full: "same words");
+        var session = new RelaySession(new[] { RelayTurn(relay, 1), RelayTurn(relay, 1) });
+        var panel = Open(session);
+
+        var rows = RelayRows(panel);
+        Assert.Equal(2, rows.Count);
+        Click(Inside<Control>(rows[1], "RelayHeader"), panel);
+
+        rows = RelayRows(panel);
+        Assert.False(BodyShown(rows[0]));
+        Assert.True(BodyShown(rows[1]));
+
+        // And it is still the second one after the history is re-mapped.
+        session.ReplaceWith(new[] { RelayTurn(relay, 1), RelayTurn(relay, 1) });
+        Flush();
+        rows = RelayRows(panel);
+        Assert.False(BodyShown(rows[0]));
+        Assert.True(BodyShown(rows[1]));
     }
 
     // --- the settings window's row ---

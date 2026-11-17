@@ -237,6 +237,7 @@ namespace Orbweaver
         public ChatPanel()
         {
             _relayHost.Avatar = ResolveRelayAvatar;
+            _relayHost.OrdinalOf = RelayOrdinal;
             InitializeComponent();
 
             // Drawn rather than typed — see SymbolMarks. The same gear the
@@ -3074,7 +3075,11 @@ namespace Orbweaver
             // Keyed on (when, what): the transcript gives a relayed turn no id
             // of its own, and RelayedMessage's value equality is what lets the
             // choice survive a rebuild of the row or a re-map of the history.
-            public readonly Dictionary<(DateTimeOffset, RelayedMessage), bool> Choices = new();
+            public readonly Dictionary<(DateTimeOffset, RelayedMessage, int), bool> Choices = new();
+
+            // How many turns before this one in the history are the same relay at
+            // the same time. Zero when the turn is not in the history (yet).
+            public Func<ChatTurn, int> OrdinalOf = _ => 0;
             public Func<RelayedMessageDisplay> Display = () => OrbweaverSettings.RelayedMessages;
             public Func<string, Bitmap?> Avatar = _ => null;
         }
@@ -3208,11 +3213,35 @@ namespace Orbweaver
             ScrollToEndIfPinned();
         }
 
+        private int RelayOrdinal(ChatTurn turn)
+        {
+            if (_session is null || turn.Relay is null) return 0;
+
+            var n = 0;
+            foreach (var earlier in _session.History)
+            {
+                if (ReferenceEquals(earlier, turn)) return n;
+                if (earlier.Relay is not null && earlier.At == turn.At && earlier.Relay.Equals(turn.Relay)) n++;
+            }
+
+            return 0;
+        }
+
         // CB-270: a run's live rows replaced by what history says at its end.
         // The rows that take their place arrive as ordinary TurnAdded.
-        private void OnTurnsRemoved(int from, int count)
+        //
+        // from is a history index, and under Hidden the rows are not one per
+        // history turn, so it is turned into a row position by counting the
+        // turns before it that were drawn (CB-330). The removed turns are gone
+        // from History by now and cannot be asked; the only session that raises
+        // this is the gateway's, whose turns are never relays, so each had a row.
+        internal void OnTurnsRemoved(int from, int count)
         {
-            for (var i = 0; i < count && from < _turns.Count; i++) _turns.RemoveAt(from);
+            var at = from;
+            if (_session is not null && !RelayRow.IsShown(OrbweaverSettings.RelayedMessages))
+                at = _session.History.Take(from).Count(t => t.Relay is null);
+
+            for (var i = 0; i < count && at < _turns.Count; i++) _turns.RemoveAt(at);
         }
 
         private void OnTurnUpdated(ChatTurn turn)
@@ -4991,8 +5020,17 @@ namespace Orbweaver
             // so it has no chevron and a click does nothing.
             public bool CanExpand => !string.IsNullOrWhiteSpace(_turn.Relay?.FullText);
 
-            private (DateTimeOffset, RelayedMessage)? RelayKey =>
-                _turn.Relay is { } relay ? (_turn.At, relay) : null;
+            // (when, what, which of the identical ones). Two idle notifications
+            // with the same text in the same second are equal as records, and one
+            // key would open both. The ordinal is how many equal turns precede this
+            // one in the history; it is stable across a re-map of the same history
+            // and is read once, since a turn never moves relative to those before it.
+            private (DateTimeOffset, RelayedMessage, int)? _relayKey;
+
+            private (DateTimeOffset, RelayedMessage, int)? RelayKey =>
+                _relayKey ??= _turn.Relay is { } relay
+                    ? (_turn.At, relay, _relayHost?.OrdinalOf(_turn) ?? 0)
+                    : null;
 
             private bool? RelayChoice =>
                 _relayHost is not null && RelayKey is { } key && _relayHost.Choices.TryGetValue(key, out var chosen)
@@ -5067,7 +5105,9 @@ namespace Orbweaver
             // Built here rather than bound for the same reason Body is.
             private Control? _relayLine;
 
-            public Control RelayLine => _relayLine ??= BuildRelayLine();
+            // Null for an ordinary turn: the relay row shares the bubble's template and
+            // is only hidden there, so this is bound for every row.
+            public Control? RelayLine => IsRelay ? _relayLine ??= BuildRelayLine() : null;
 
             private Control BuildRelayLine()
             {
@@ -5090,6 +5130,12 @@ namespace Orbweaver
                 else
                 {
                     text.Inlines!.Add(new Run(relay.Label));
+
+                    // Which session it came from: with two sessions messaging a
+                    // lead, rows that all say "From another session" cannot be told
+                    // apart. A plain run, like every other piece of this line.
+                    if (relay.Kind == RelayKind.Peer && !string.IsNullOrEmpty(relay.Name))
+                        text.Inlines.Add(new Run(" \u00B7 " + relay.Name));
                 }
 
                 // The dimmed preview is what the row says while it is closed; open,
