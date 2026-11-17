@@ -76,6 +76,11 @@ public class HookInstallerRunTests : IDisposable
     // to race (CB-293), which a cold CI runner could lose by not having said
     // "started" yet. A child that exits before it is ready gets `true`, so
     // the run comes back Ok or Failed and the test fails saying so.
+    //
+    // The Windows children reach `ready` by `cd /d` into its directory rather
+    // than by quoting its path: ArgumentList escapes an embedded quote as \",
+    // which cmd does not understand, so `type nul > "<path>"` silently wrote
+    // nowhere. `cd /d` takes the rest of its command unquoted, spaces and all.
     private static Func<System.Diagnostics.Process, bool> TimesOutOnce(string ready) => process =>
     {
         var limit = System.Diagnostics.Stopwatch.StartNew();
@@ -93,7 +98,7 @@ public class HookInstallerRunTests : IDisposable
     {
         var ready = Path.Combine(_root, "ready");
         var (file, args) = OperatingSystem.IsWindows()
-            ? ("cmd.exe", new[] { "/c", $"echo started& type nul > \"{ready}\"& ping -n 30 127.0.0.1 > nul" })
+            ? ("cmd.exe", new[] { "/c", $"echo started& cd /d {_root}& type nul > ready& ping -n 30 127.0.0.1 > nul" })
             : ("/bin/sh", new[] { "-c", $"echo started; : > '{ready}'; sleep 30" });
 
         // A handle of our own on the child, since Run disposes its own: TimedOut
@@ -130,7 +135,7 @@ public class HookInstallerRunTests : IDisposable
         var (file, args) = OperatingSystem.IsWindows()
             // The inner cmd starts ping and exits at once, so ping's parent is
             // gone and Kill(true) — which walks parent ids — never reaches it.
-            ? ("cmd.exe", new[] { "/c", $"echo started& cmd /c start /b ping -n 8 127.0.0.1& type nul > \"{ready}\"& ping -n 30 127.0.0.1 > nul" })
+            ? ("cmd.exe", new[] { "/c", $"echo started& cmd /c start /b ping -n 8 127.0.0.1& cd /d {_root}& type nul > ready& ping -n 30 127.0.0.1 > nul" })
             : ("/bin/sh", new[] { "-c", $"echo started; (sleep 6 &); : > '{ready}'; sleep 30" });
 
         var result = HookInstaller.Run(file, args, "fake-installer", waitForExit: TimesOutOnce(ready));
