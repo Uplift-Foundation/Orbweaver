@@ -3905,6 +3905,38 @@ public class SessionScanTests
         Assert.Equal(OrbPresence.Parked, manager.StatusFor("dialog")!.Presence);
     }
 
+    // CB-353: the file says generating because a mod's own board refresh fired
+    // PreToolUse while a form was on screen; the record says waiting. The scan
+    // reports waiting. The control below is the same file with a record that
+    // says idle, which changes nothing.
+    [AvaloniaFact]
+    public void AGeneratingFileWithAWaitingRecordIsWaiting()
+    {
+        using var scratch = new Scratch();
+        scratch.Write("form", state: "generating", title: "board-host");
+
+        var manager = WithRecord(scratch, "waiting");
+        manager.ScanAndUpdate();
+
+        var status = manager.StatusFor("form")!;
+        Assert.Equal("waiting", status.State);
+        Assert.True(status.RecordWaiting);
+    }
+
+    [AvaloniaFact]
+    public void AGeneratingFileWithAnIdleRecordStaysGenerating()
+    {
+        using var scratch = new Scratch();
+        scratch.Write("form", state: "generating", title: "board-host");
+
+        var manager = WithRecord(scratch, "idle");
+        manager.ScanAndUpdate();
+
+        var status = manager.StatusFor("form")!;
+        Assert.Equal("generating", status.State);
+        Assert.False(status.RecordWaiting);
+    }
+
     // The negative control that justifies acting on `waiting` alone: `busy` was
     // measured two days wrong on a session at its prompt, so it changes nothing.
     [AvaloniaFact]

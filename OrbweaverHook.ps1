@@ -29,6 +29,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $sessionId = 'unknown'
 $cwd = ''
 $transcript = ''
+$toolUseId = ''
 try {
     $payload = [Console]::In.ReadToEnd() | ConvertFrom-Json
     if ($payload.session_id) { $sessionId = $payload.session_id }
@@ -36,7 +37,19 @@ try {
     if ($payload.cwd) { $cwd = $payload.cwd }
     if ($payload.transcript_path) { $transcript = $payload.transcript_path }
     elseif ($payload.transcriptPath) { $transcript = $payload.transcriptPath }
+    if ($payload.tool_use_id) { $toolUseId = [string]$payload.tool_use_id }
 } catch {}
+
+# A Claude Code mod's own MCP call (the jira-board pane re-reading Jira every
+# minute) fires PreToolUse under the host session's id; writing `generating`
+# for it flips an idle or waiting session to "working" with nobody at the
+# keyboard (CB-353). Its top-level tool_use_id starts `toolu_plugin_`, the
+# model's `toolu_01`. Write nothing. ConvertFrom-Json gives the top-level
+# property, so text inside tool_input cannot reach this check -- the bash twin
+# has to take the last textual match to get the same answer.
+if ($State -eq 'generating' -and $toolUseId.StartsWith('toolu_plugin_')) {
+    exit 0
+}
 
 # Grok injects these on every hook, including ones loaded from Claude Code's
 # settings.json. That is a stronger signal than -Agent: a Grok session that

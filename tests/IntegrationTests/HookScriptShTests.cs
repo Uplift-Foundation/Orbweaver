@@ -780,4 +780,108 @@ public class HookScriptShTests
             ["PATH"] = bin + ":" + (Environment.GetEnvironmentVariable("PATH") ?? "/usr/bin:/bin"),
         };
     }
+
+    // CB-353: a mod's own MCP call (the jira-board refresh) fires PreToolUse
+    // under the host session's id. Built as raw text, not serialised from an
+    // object, so the field order is the real one: tool_input first,
+    // tool_use_id after it, which is what makes the hook's first-match
+    // `field()` unsafe for this key.
+    private static string PreToolUse(string sessionId, string toolInputText, string toolUseId) =>
+        "{\"session_id\":\"" + sessionId + "\",\"cwd\":\"/tmp/proj\",\"transcript_path\":\"\","
+        + "\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"mcp__x__y\","
+        + "\"tool_input\":{\"jql\":\"" + toolInputText + "\"},"
+        + "\"tool_use_id\":\"" + toolUseId + "\",\"mcp_server\":{\"name\":\"x\"}}";
+
+    private static string SeedStatus(string tmp, string sessionId, string state)
+    {
+        Directory.CreateDirectory(StatusDir(tmp));
+        var file = StatusFile(tmp, sessionId);
+        File.WriteAllText(file, "state=" + state + "\n");
+        return file;
+    }
+
+    [UnixTheory]
+    [InlineData("waiting")]
+    [InlineData("idle")]
+    public void PluginToolCall_LeavesTheStatusFileUntouched(string seeded)
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+        var file = SeedStatus(tmp, "s-plugin", seeded);
+        var before = File.ReadAllText(file);
+        var stamp = File.GetLastWriteTimeUtc(file);
+
+        var result = RunHook("claude", "generating",
+            PreToolUse("s-plugin", "project = CB", "toolu_plugin_183911ef982d461e882ddda08c59a87e"), tmp);
+
+        AssertSilentSuccess(result);
+        Assert.Equal(before, File.ReadAllText(file));
+        Assert.Equal(stamp, File.GetLastWriteTimeUtc(file));
+    }
+
+    [UnixFact]
+    public void PluginToolCall_WithNoStatusFile_CreatesNone()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+
+        var result = RunHook("claude", "generating",
+            PreToolUse("s-fresh", "project = CB", "toolu_plugin_abc"), tmp);
+
+        AssertSilentSuccess(result);
+        Assert.False(File.Exists(StatusFile(tmp, "s-fresh")));
+    }
+
+    [UnixFact]
+    public void ModelToolCall_StillWritesGenerating()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+        SeedStatus(tmp, "s-model", "waiting");
+
+        var result = RunHook("claude", "generating",
+            PreToolUse("s-model", "project = CB", "toolu_01ABCDEFGHJKLMNPQRSTUVWX"), tmp);
+
+        AssertSilentSuccess(result);
+        Assert.Contains("generating", File.ReadAllText(StatusFile(tmp, "s-model")));
+    }
+
+    [UnixFact]
+    public void ModelToolCall_WhoseInputMentionsToolu_plugin_StillWritesGenerating()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+        SeedStatus(tmp, "s-adv", "idle");
+
+        var result = RunHook("claude", "generating",
+            PreToolUse("s-adv", "fix toolu_plugin_ handling", "toolu_01ABCDEFGHJKLMNPQRSTUVWX"), tmp);
+
+        AssertSilentSuccess(result);
+        Assert.Contains("generating", File.ReadAllText(StatusFile(tmp, "s-adv")));
+    }
+
+    [UnixFact]
+    public void PluginToolCall_IsOnlySkippedForGenerating_WaitingStillWrites()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+
+        var result = RunHook("claude", "waiting",
+            PreToolUse("s-wait", "project = CB", "toolu_plugin_abc"), tmp);
+
+        AssertSilentSuccess(result);
+        Assert.Contains("waiting", File.ReadAllText(StatusFile(tmp, "s-wait")));
+    }
+
+    // The key itself, nested inside tool_input and ahead of the real one: the
+    // first match would be the plugin id, the last is the top-level model id.
+    [UnixFact]
+    public void NestedPluginToolUseId_AheadOfTheTopLevelModelId_StillWritesGenerating()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+        SeedStatus(tmp, "s-nest", "idle");
+
+        var result = RunHook("claude", "generating",
+            "{\"session_id\":\"s-nest\",\"cwd\":\"/tmp/proj\",\"transcript_path\":\"\","
+        + "\"tool_input\":{\"echo\":{\"tool_use_id\":\"toolu_plugin_inner\"}},"
+        + "\"tool_use_id\":\"toolu_01ABCDEFGHJKLMNPQRSTUVWX\"}", tmp);
+
+        AssertSilentSuccess(result);
+        Assert.Contains("generating", File.ReadAllText(StatusFile(tmp, "s-nest")));
+    }
 }

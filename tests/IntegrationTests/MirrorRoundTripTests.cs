@@ -1957,6 +1957,33 @@ public class MirrorRoundTripTests : IDisposable
         Assert.DoesNotContain(log, l => prompt.Options.Any(o => l.Contains(o.Label)));
     }
 
+    // CB-353: a far pane with the jira-board mod docked beside the chat serves the clean
+    // prompt, identical to the one its hand-cut twin serves, and pressing a key on it works.
+    [Theory]
+    [InlineData("FormTwoTabMulti")]
+    [InlineData("FormTwoTabSingle")]
+    [InlineData("PermissionBoard")]
+    public async Task AFarPaneWithASidePanelServesTheSamePromptAsItsHandCutTwin(string name)
+    {
+        var screen = SidePanelFixtures.All.First(f => f.Name == name).Screen;
+        var harness = new Harness(_dir) { Screen = screen };
+        harness.AddSession("evidence", WriteTranscript("side.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var withPanel = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        harness.Screen = SidePanelFixtures.HandCut(screen);
+        var twin = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        Assert.Equal(twin.Fingerprint, withPanel.Fingerprint);
+        Assert.Equal(twin.Title, withPanel.Title);
+        Assert.Equal(twin.Options.Select(o => (o.Key, o.Label)), withPanel.Options.Select(o => (o.Key, o.Label)));
+        Assert.DoesNotContain(withPanel.Options, o => o.Label.Contains('│'));
+
+        // The fingerprint is what the answer is checked against, so it works end to end.
+        harness.Screen = screen;
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", withPanel.Options[0].Key, withPanel.Fingerprint));
+    }
+
     // An answer chosen from a screen that has since moved on presses nothing.
     [Fact]
     public async Task AnAnswerToAScreenThatChangedIsRefusedAndPressesNothing()

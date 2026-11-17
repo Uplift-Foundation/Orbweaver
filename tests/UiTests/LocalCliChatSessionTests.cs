@@ -1877,6 +1877,43 @@ public class LocalCliChatSessionTests : IDisposable
         });
     }
 
+    // CB-353: the jira-board mod docked beside the chat. The form is read as it is without
+    // the board: tabs, ticks, the Submit row as the commit button, and the commit presses Right.
+    [AvaloniaFact]
+    public async Task AMultiSelectBesideASidePanelHasItsCommitButtonAndPressesIt()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(SidePanelFixtures.FormTwoTabMulti);
+            var twin = new Pane(SidePanelFixtures.HandCut(SidePanelFixtures.FormTwoTabMulti));
+            var session = await WaitingOn(pane);
+            var twinSession = await WaitingOn(twin);
+
+            Assert.Equal(twinSession.Prompt!.Options.Select(o => (o.Key, o.Label)), session.Prompt!.Options.Select(o => (o.Key, o.Label)));
+            Assert.Equal(twinSession.Prompt.Title, session.Prompt.Title);
+            Assert.Equal(AskFormView.CommitKey, session.Prompt.Options[^1].Key);
+            Assert.DoesNotContain(session.Prompt.Options, o => o.Label.Contains('│') || o.Label.Length > 120);
+
+            await session.AnswerAsync(session.Prompt.Options[^1]);
+
+            Assert.Equal(new[] { "Right" }, pane.Pressed);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task ASingleSelectBesideASidePanelPressesTheDigitOfTheOptionChosen()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(SidePanelFixtures.FormTwoTabSingle);
+            var session = await WaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[1]);
+
+            Assert.Equal(new[] { "2" }, pane.Pressed);
+        });
+    }
+
     // On a single-select question that digit selects the row empty, which
     // declines the whole form: it is never pressed, and the user is told where
     // the answer goes.

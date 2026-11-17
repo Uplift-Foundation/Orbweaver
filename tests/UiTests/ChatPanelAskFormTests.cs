@@ -522,4 +522,24 @@ public class ChatPanelAskFormTests : IDisposable
         Assert.Empty(session.Typed);
         Assert.True(FreeText(panel).IsVisible);
     }
+
+    // CB-353: a form read off a pane with the mod's board beside it shows the same title and
+    // options in the panel as the same form with the board cut off by hand.
+    [AvaloniaFact]
+    public void AFormReadBesideASidePanelShowsTheSameTitleAndOptionsAsItsHandCutTwin()
+    {
+        string[] Shown(string screen)
+        {
+            var (panel, session) = Open(AskFormView.ToPrompt(ChatTranscript.ParseAskForm(screen)!));
+            var labels = panel.FindControl<ItemsControl>("PromptOptions")!.ItemsPanelRoot!.Children
+                .Select(c => string.Join("|", ((Control)c).GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text)));
+            return new[] { panel.FindControl<TextBlock>("PromptTitle")!.Text! }.Concat(labels).ToArray();
+        }
+
+        var screen = SidePanelFixtures.FormTwoTabMulti;
+        var shown = Shown(screen);
+
+        Assert.Equal(Shown(SidePanelFixtures.HandCut(screen)), shown);
+        Assert.DoesNotContain(shown, t => t.Contains('│'));
+    }
 }
