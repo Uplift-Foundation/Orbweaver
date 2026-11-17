@@ -330,6 +330,23 @@ public class PaneColumnsTests
         Assert.Equal(PromptFingerprint.Of(screen)!.Hash, PromptFingerprint.Of(changed)!.Hash);
     }
 
+    // A 110-column pane, the divider at cell 61: the chat is a narrow framed form whose own
+    // `│` edges must survive the cut, and the board's must not.
+    [Fact]
+    public void A_framed_form_in_a_narrow_chat_column_has_its_tabs_options_and_clean_question()
+    {
+        var form = ChatTranscript.ParseAskForm(SidePanelFixtures.NarrowPaneFormDockedRight)!;
+
+        Assert.Equal(2, form.Tabs.Count);
+        Assert.Equal(5, form.Prompt.Options.Count);
+        Assert.StartsWith("Which fruits do you want", form.Prompt.Title, StringComparison.Ordinal);
+        Assert.DoesNotContain('│', form.Prompt.Title);
+    }
+
+    [Fact]
+    public void The_narrow_chat_column_at_its_prompt_is_read_as_a_prompt() =>
+        Assert.Equal(PaneReading.Prompt, PaneScreen.Classify(SidePanelFixtures.NarrowPaneIdleDockedRight));
+
     // At 60 columns the mod docks below the chat, so there is no divider to cut.
     [Fact]
     public void A_60_column_pane_with_the_board_below_is_left_alone()

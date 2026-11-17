@@ -36,6 +36,8 @@ namespace Orbweaver.Tests
             ("WideBoard", WideBoard),
             ("TypedFreeText", TypedFreeText),
             ("ReviewTab", ReviewTab),
+            ("NarrowPaneFormDockedRight", NarrowPaneFormDockedRight),
+            ("NarrowPaneIdleDockedRight", NarrowPaneIdleDockedRight),
         ];
 
         // Two tabs, the first (single-select) open, with the Submit tab to its right. Source r4-form-q1.
@@ -234,7 +236,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel                  
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌│
  Do you want to proceed?                                                                                               │xx-000 xx-000: xxxxx xxxxxxx xx x xxxxx xxxxxxx, xxx xxxx xxxx xxxxx xxxxx xxxxx xxx xxxxx
  ❯ 1. Yes                                                                                                              │xxx x = xxxxxx x x x 0x
-   2. Yes, and always allow access to /private/tmp/claude-000/-Users-someoneexample-Source-Orbweaver/xxxxxxxx-xxxx-xxx │
+   2. Yes, and always allow access to /work/project/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-xxxx-xxx │
       x-xxxx-xxxxxxxxxxxx/scratchpad/live/work from this project                                                       │xx-000 xx-xxxx xx xxxxxxxx xxxxxxxx xxxxxxxxxxxx xxxx xxx xxx xxxx xxxxxx, xxx xxxx xxxxx x xxx
    3. Yes, and switch to auto mode · auto mode handles these prompts for you                                           │xxxxxxx x = xxxxxx x x x 0x
    4. No                                                                                                               │
@@ -574,6 +576,119 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 ────────────────────────────────────────────────────────────
   Haiku 5.5 | ~/work | 54% (7d:8%) | [.claude]
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 age…
+
+""""");
+
+        // A 110-column pane with the mod docked right and its divider at cell 61, so the chat is a
+        // narrow 61-cell column: a framed, wrapped question with a `│` at column 0 and another at
+        // the chat's own right edge. Discriminating: develop reads it as no tabs with the board
+        // in the question.
+        internal static readonly string NarrowPaneFormDockedRight = Lf("""""
+                                                             │                                              ✕
+ ▐▛███▛█   Claude Code v2.1.326                              │xx xxxxx            00 xxxxxx · xxxxxxx xxxx xxx
+▝▜██████▀  Haiku 5.5 · Claude Team                           │[ xxxxxxx ] [ xxxx ] xxxx xx xxxx ↗
+ ▝▝   ▝▝   /…/scratchpad/live/work                           │
+                                                             │[ xxxx 00 ] [ xxxxxxxxxxx 0 ] [ xxxxxxx 0 ]
+                                                             │[ xxxxxxxxxx 00 ]
+❯ /jira                                                      │
+  ⎿  jira-board: CB board open.                              │xx-000 "xxxx xxxx xxx" xx xxx xxxxx-xxxxx xxxx,…
+                                                             │xxxxxxx · = xxxxxx · — · 0x
+❯ Call the AskUserQuestion tool now with exactly one         │
+  question: header Fruits, question 'Which fruits do you     │xx-000 xxx x xxxx xxxx xx xxx xxxxxxxxx xxxxxxx…
+  want, and why does the choice matter for the picnic we are │xxxx · = xxxxxx · — · 0x
+  planning on the long weekend?', multiSelect true, options  │
+  Apple, Banana, Cherry (each with a one-line description).  │xx-000 xxxxxx: xxx xxxxx'x xxxxxxx xxxxxxxxxx x…
+  Do nothing else.                                           │xxx · = xxxxxx · — · 00x
+─────────────────────────────────────────────────────────────│
+←  ☐ Fruits  ✔ Submit  →                                     │xx-000 xxx xxxxx'x xxxxxxx xxx xxxxx xxx xxxx x…
+                                                             │xxx · = xxxxxx · — · 0x
+│ Which fruits do you want, and why does the choice matter   │
+│ for the picnic we are planning on the long weekend?        │xx-000 x xxxxxx xxxx xxxx xxxxx xx "xxx xx xxx…
+                                                             │xxx · = xxxxxx · — · 0x
+❯ 1. [ ] Apple                                               │
+         Crisp and portable, holds up well in a bag for      │xx-000 xxxx xxxxx xx xxxx xxxxxxxx xxxxxxxxx (x…
+         hours.                                              │xxxxxxx · = xxxxxx · — · 0x
+  2. [ ] Banana                                              │
+         Easy to peel and eat by hand, good for quick energy.│xx-000 xxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxx…
+  3. [ ] Cherry                                              │xxx · = xxxxxx · — · 0x
+         Small and sweet, but needs a container so it doesn't│
+         get crushed.                                        │xx-000 xx-000: xxxxx xxxxxxx xx x xxxxx xxxxxxx…
+  4. [ ] Type something                                      │xxx · = xxxxxx · — · 0x
+     Submit                                                  │
+─────────────────────────────────────────────────────────────│xx-000 xx-xxxx xx xxxxxxxx xxxxxxxx xxxxxxxxxxx…
+  5. Chat about this                                         │xxxxxxx · = xxxxxx · — · 0x
+                                                             │
+Enter to select · ↑/↓ to navigate · Esc to cancel            │xx-000 xxxxx xxxx xxxxxxxxxxxxx xx xxxxxxxxx (x…
+                                                             │xxxxxxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxxxx: x xxxxxx xxxxxx xx xxx xxx xxxxx…
+                                                             │xxxxxxx · = xxxxxx · — · 00x
+                                                             │
+                                                             │xx-000 x xxxxxxxxx xxxxxxxx (xxxx-0) xxxxx xxx…
+                                                             │xxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxxxx xx xxx xxxx xxxxx xxxxxx xxxxxxxx…
+                                                             │xxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxx_xxxxxxxx…
+                                                             │xxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxx xxxx xxxxxxx xxxxxxxx xx xxxxx xxxx…
+
+""""");
+
+        // The same pane after the form was declined, back at the prompt.
+        internal static readonly string NarrowPaneIdleDockedRight = Lf("""""
+                                                             │                                              ✕
+ ▐▛███▛█   Claude Code v2.1.326                              │xx xxxxx            00 xxxxxx · xxxxxxx xxxx xxx
+▝▜██████▀  Haiku 5.5 · Claude Team                           │[ xxxxxxx ] [ xxxx ] xxxx xx xxxx ↗
+ ▝▝   ▝▝   /…/scratchpad/live/work                           │
+                                                             │[ xxxx 00 ] [ xxxxxxxxxxx 0 ] [ xxxxxxx 0 ]
+                                                             │[ xxxxxxxxxx 00 ]
+❯ /jira                                                      │
+  ⎿  jira-board: CB board open.                              │xx-000 "xxxx xxxx xxx" xx xxx xxxxx-xxxxx xxxx,…
+                                                             │xxxxxxx · = xxxxxx · — · 0x
+❯ Call the AskUserQuestion tool now with exactly one         │
+  question: header Fruits, question 'Which fruits do you     │xx-000 xxx x xxxx xxxx xx xxx xxxxxxxxx xxxxxxx…
+  want, and why does the choice matter for the picnic we are │xxxx · = xxxxxx · — · 0x
+  planning on the long weekend?', multiSelect true, options  │
+  Apple, Banana, Cherry (each with a one-line description).  │xx-000 xxxxxx: xxx xxxxx'x xxxxxxx xxxxxxxxxx x…
+  Do nothing else.                                           │xxx · = xxxxxx · — · 00x
+                                                             │
+⏺ Declined to answer Claude's questions:                     │xx-000 xxx xxxxx'x xxxxxxx xxx xxxxx xxx xxxx x…
+  ⎿  · Which fruits do you want, and why does the choice     │xxx · = xxxxxx · — · 0x
+     matter for the picnic we are planning on the long       │
+     weekend? (Apple / Banana / Cherry)                      │xx-000 x xxxxxx xxxx xxxx xxxxx xx "xxx xx xxx…
+                                                             │xxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxx xxxxx xx xxxx xxxxxxxx xxxxxxxxx (x…
+                                                             │xxxxxxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxx…
+                                                             │xxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xx-000: xxxxx xxxxxxx xx x xxxxx xxxxxxx…
+                                                             │xxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xx-xxxx xx xxxxxxxx xxxxxxxx xxxxxxxxxxx…
+                                                             │xxxxxxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxxx xxxx xxxxxxxxxxxxx xx xxxxxxxxx (x…
+                                                             │xxxxxxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxxxx: x xxxxxx xxxxxx xx xxx xxx xxxxx…
+                                                             │xxxxxxx · = xxxxxx · — · 00x
+                                                             │
+                                                             │xx-000 x xxxxxxxxx xxxxxxxx (xxxx-0) xxxxx xxx…
+                                                             │xxx · = xxxxxx · — · 0x
+                                                             │
+                                                             │xx-000 xxxxxx xx xxx xxxx xxxxx xxxxxx xxxxxxxx…
+                                                             │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 | ~/work | 57% (7d:8%) | [.claude]
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents
 
 """"");
     }
