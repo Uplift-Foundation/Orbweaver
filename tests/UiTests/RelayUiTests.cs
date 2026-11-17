@@ -268,8 +268,16 @@ public class RelaySettingsAndServiceTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb-relay-ui-" + Guid.NewGuid());
 
+    // ServeEarly starts the headless feed, whose real scan reads this
+    // machine's status directory: no test here may depend on that.
+    public RelaySettingsAndServiceTests()
+    {
+        RelayService.HeadlessScan = () => [];
+    }
+
     public void Dispose()
     {
+        RelayService.ResetHeadlessForTests();
         RelayService.UseForTests(null);
         RelayService.Factory = RelayService.RealClient;
         RelayService.PersonaName = RelayService.CachedPersonaName;
@@ -415,6 +423,88 @@ public class RelaySettingsAndServiceTests : IDisposable
         RelayService.ServeEarly();
         Assert.NotNull(RelayService.Client);
         Assert.Equal(1, made);
+    }
+
+    // The rest of the hotfix: an early relay with nothing behind it showed the
+    // mini on the phone with no orbs. Until Attach, the headless scan feeds it.
+    [AvaloniaFact]
+    public void ServeEarly_feeds_the_relay_from_the_headless_scan()
+    {
+        var scans = 0;
+        RelayService.Factory = () => Client("Phone");
+        RelayService.HeadlessScan = () => { Interlocked.Increment(ref scans); return []; };
+        OrbweaverSettings.RelayEnabled = true;
+
+        RelayService.ServeEarly();
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (Volatile.Read(ref scans) == 0 && DateTime.UtcNow < deadline) Thread.Sleep(10);
+        Assert.True(Volatile.Read(ref scans) > 0, "the headless feed never scanned");
+    }
+
+    // Off means no feed either: the negative control for the one above.
+    [AvaloniaFact]
+    public void ServeEarly_with_the_relay_off_starts_no_feed()
+    {
+        var scans = 0;
+        RelayService.HeadlessScan = () => { scans++; return []; };
+        OrbweaverSettings.RelayEnabled = false;
+
+        RelayService.ServeEarly();
+        Thread.Sleep(200);
+
+        Assert.Equal(0, scans);
+        Assert.Null(RelayService.Client);
+    }
+
+    // Once the live scan is attached, the headless one must stop: two scans
+    // feeding one book would race each other's idea of what exists.
+    [AvaloniaFact]
+    public void A_headless_tick_after_Attach_does_nothing()
+    {
+        var scans = 0;
+        RelayService.Factory = () => Client("Phone");
+        RelayService.HeadlessScan = () => { scans++; return []; };
+        RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.Enable();
+
+        RelayService.HeadlessTick();
+        Assert.Equal(1, scans);
+
+        var manager = new SessionManager(Path.Combine(_dir, "status-tick"),
+            () => new Dictionary<string, string>(StringComparer.Ordinal),
+            () => new HashSet<string>(StringComparer.Ordinal),
+            dependents: _ => SessionDependents.Nothing,
+            paneOwners: claims => claims.ToDictionary(TmuxPaneKey.Of, _ => (string?)null),
+            agentViewer: _ => null,
+            teams: pids => pids.ToDictionary(p => p, _ => AgentTeam.None),
+            fileTeams: _ => new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
+        try
+        {
+            RelayService.Attach(manager);
+            RelayService.HeadlessTick();
+            Assert.Equal(1, scans);
+        }
+        finally
+        {
+            manager.SessionsScanned -= RelayService.OnScanned;
+            AccountOrbs.UsageApplied -= RelayService.OnUsage;
+        }
+    }
+
+    // A scan that throws is logged and swallowed: it runs on a Timer that
+    // discards exceptions, and the next tick must still come.
+    [AvaloniaFact]
+    public void A_headless_scan_that_throws_does_not_escape()
+    {
+        RelayService.Factory = () => Client("Phone");
+        RelayService.HeadlessScan = () => throw new IOException("disk");
+        RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.Enable();
+
+        RelayService.HeadlessTick();
     }
 
     // And when the UI comes up after the unlock, Attach joins the connection

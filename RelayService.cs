@@ -102,11 +102,68 @@ namespace Orbweaver
         // scanned yet.
         internal static void ServeEarly()
         {
-            if (OrbweaverSettings.RelayEnabled) Enable();
+            if (!OrbweaverSettings.RelayEnabled) return;
+            Enable();
+            // A connection with nothing behind it is a machine the phone lists
+            // with no orbs, which is what the mini did all night on 1.0.8's
+            // first cut. The live scan only starts with the UI, so until then
+            // the roster is fed from SessionManager.HeadlessSnapshot, the
+            // window-free scan the peer link already serves this machine's
+            // sessions from for the same reason (CB-24). A plain Timer, not a
+            // DispatcherTimer, because the dispatcher does not pump here.
+            lock (HeadlessGate)
+            {
+                if (_attached || _headless is not null) return;
+                _headless = new Timer(_ => HeadlessTick(), null, TimeSpan.Zero, HeadlessEvery);
+            }
+        }
+
+        private static readonly object HeadlessGate = new();
+        private static Timer? _headless;
+        private static bool _attached;
+
+        // honourOrbLifetime: true, so the phone is sent what the orbs would
+        // show once the UI is up, not more; the live scan takes over at that
+        // point and the two should not disagree about what exists.
+        internal static Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> HeadlessScan { get; set; } =
+            () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
+
+        internal static TimeSpan HeadlessEvery { get; set; } = TimeSpan.FromSeconds(3);
+
+        // One headless scan into the relay, until Attach hands the roster to
+        // the live scan. Under the gate so a tick can never run alongside, or
+        // after, the first live OnScanned. Never throws: it runs on a timer
+        // that discards exceptions, and a silent timer is undiagnosable.
+        internal static void HeadlessTick()
+        {
+            lock (HeadlessGate)
+            {
+                if (_attached) return;
+                try { OnScanned(HeadlessScan()); }
+                catch (Exception e) { MirrorLog.Say("relay", $"headless scan failed: {e.GetType().Name}"); }
+            }
+        }
+
+        internal static void ResetHeadlessForTests()
+        {
+            lock (HeadlessGate)
+            {
+                _headless?.Dispose();
+                _headless = null;
+                _attached = false;
+            }
+            HeadlessScan = () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
+            HeadlessEvery = TimeSpan.FromSeconds(3);
         }
 
         internal static void Attach(SessionManager sessions)
         {
+            lock (HeadlessGate)
+            {
+                _attached = true;
+                _headless?.Dispose();
+                _headless = null;
+            }
             sessions.SessionsScanned += OnScanned;
             AccountOrbs.UsageApplied += OnUsage;
             if (OrbweaverSettings.RelayEnabled) Enable();
