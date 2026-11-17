@@ -20,6 +20,7 @@
          knows what a window is, which is the property that makes them testable
          at all. -->
     <Compile Include="../../ChatTranscript.cs" />
+    <Compile Include="../../PaneColumns.cs" />
     <Compile Include="../../RelayedMessage.cs" />
     <Compile Include="../../BridgeProtocol.cs" />
     <Compile Include="../../GrokDialog.cs" />

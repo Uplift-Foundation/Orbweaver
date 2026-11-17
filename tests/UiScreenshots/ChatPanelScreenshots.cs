@@ -303,6 +303,13 @@ public class ChatPanelScreenshots : IDisposable
     public void AMultiSelectQuestionAsAChecklistWithItsSubmitButton() =>
         OpenForm(AskFormFixtures.MultiSelectTwoChecked, "chat-panel-ask-multiselect.png");
 
+    // CB-353: the same multi-select form read off a pane with the jira-board mod docked beside
+    // it. The panel looks exactly as it does for AMultiSelectQuestion..., which is the point:
+    // the board's text no longer lands in the form. Rendered through real Skia on both rids.
+    [AvaloniaFact]
+    public void AMultiSelectReadBesideASidePanelLooksLikeAnyOther() =>
+        OpenForm(SidePanelFixtures.FormTwoTabMulti, "chat-panel-ask-multiselect-side-panel.png");
+
     [AvaloniaFact]
     public void TheReviewScreenWithItsTwoArmedButtons() =>
         OpenForm(AskFormFixtures.SubmitTab, "chat-panel-ask-review.png");

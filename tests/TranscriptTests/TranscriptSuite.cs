@@ -40,6 +40,20 @@ namespace Orbweaver.Tests
                 failures.Add(detail.Length > 0 ? $"{name}\n      {detail}" : name);
             }
 
+            // CB-353: a mod pane docked beside the chat. Each real capture reads exactly as its
+            // hand-cut twin does, and none of the board lands in a form's labels.
+            foreach (var (name, screen) in SidePanelFixtures.All)
+            {
+                var twin = SidePanelFixtures.HandCut(screen);
+                Check($"side panel: {name} parses as its hand-cut twin",
+                    JsonSerializer.Serialize(ChatTranscript.ParseAskForm(screen)) == JsonSerializer.Serialize(ChatTranscript.ParseAskForm(twin))
+                    && JsonSerializer.Serialize(ChatTranscript.ParseDialog(screen)) == JsonSerializer.Serialize(ChatTranscript.ParseDialog(twin))
+                    && PaneScreen.Read(screen) == PaneScreen.Read(twin));
+            }
+            Check("side panel: a form beside the board has its tabs and its Submit row",
+                ChatTranscript.ParseAskForm(SidePanelFixtures.FormTwoTabMulti) is { HasSubmitRow: true, Tabs.Count: 3 });
+            Check("side panel: the idle board leaves the session at its prompt",
+                PaneScreen.Classify(SidePanelFixtures.IdleBoard) == PaneReading.Prompt);
             Cb327Captures.Run(Check);
             Cb330Captures.Run(Check);
 
