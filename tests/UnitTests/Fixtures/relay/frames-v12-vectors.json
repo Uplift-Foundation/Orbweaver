@@ -1,0 +1,3388 @@
+{
+ "_source": {
+  "generated_by": "Orbweaver-Mobile contracts/make_v12_vectors.py (architect, CB-340); to be reproduced by Uplift-Foundation/Orbweaver tools/relay-vectors",
+  "orbweaver_sha": "hand-authored",
+  "spec": "CB-340 plan sections 3, 5 and 7; contracts/frames-v12.json",
+  "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; e is base64url without padding as in push-vectors.json; every plaintext is canonical (frames-v4 canonical) with the new keys after every older one"
+ },
+ "_rules": "Usage boxes sealed with session-vectors.json's epoch-0 key and ck key, direction 0, counters from 400; limit e sealed with push-vectors.json's phone agreement key and a fixed ephemeral per label (CB-311's orbweaver-push-v1). `merge` rows give the readings the phone holds (desk = the envelope's from, account = one usage account as decoded), the phone's overrides by account key, the merge setting and now, and the cards in display order. `limit_dedupe` rows are sequences of limit_e arrivals, each with what the phone does. Provider ids are fabricated stand-ins.",
+ "inputs": {
+  "desktop_id": "dsk_5f3c9a0e1b7d2468",
+  "phone_id": "ph_a1b2c3d4e5f60718",
+  "machine": "MacBook Pro",
+  "desks": {
+   "dsk_5f3c9a0e1b7d2468": "MacBook Pro",
+   "dsk_2a4c6e8f0b1d3579": "Mac mini",
+   "dsk_9e8d7c6b5a4f3e21": "Windows PC"
+  },
+  "session_key_epoch0": "fd29e2fccfc9b572152a029f7daa4d30428fe4cd7e04a08aa4a2ad96e5dc2e52",
+  "ck_key": "92437d33c0840b762b12fb611f649fa9eb368478d7480db5965c5c69eea3e8cf",
+  "ck_usage": "WKG4KGaUZAO5klJY9TZadw",
+  "phone_agreement": {
+   "private": "a8a840c28d24ee5bbdd7fe4f9785b81ba783503d5c340b43fa6e713c9e6c9ba9",
+   "public": "0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40"
+  },
+  "hmac_key": "orbweaver/account-id/v1",
+  "provider_ids": {
+   "claude_main": [
+    "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+    "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d"
+   ],
+   "claude_other": [
+    "d2e3f4a5-b6c7-4d8e-9f0a-1b2c3d4e5f60",
+    "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d"
+   ],
+   "codex": [
+    "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+    "user-q3vx9klm2npr8stt"
+   ],
+   "grok": [
+    "4c3b2a19-0f8e-4d7c-b6a5-948372615f0e",
+    "8a7b6c5d-4e3f-4210-9fed-cba987654321"
+   ]
+  },
+  "account_ids": {
+   "claude_main": "ac7d4a85766f600f0bbb94dfc5321dc3",
+   "claude_other": "cb44893573e6041f9696d4410f857c90",
+   "codex": "9e234d40bc093dc3c4d9c4800657b849",
+   "grok": "3ffe8259aadeb6e413c6d9d9a1de6d05"
+  },
+  "icons": {
+   "still": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+   "animated_small": "cebe30edea33f970979b173fb016be03bf1d03fee4ee31aad3bf14a8b1b00a9a"
+  },
+  "_note": "session key, ck key and ck_usage are session-vectors.json's and frames-v4's; phone_agreement is push-vectors.json's. The icons are frames-v5-vectors.json's `still` and `animated_small` picture hashes, so fetching one is exactly frames-v5-vectors' persona_image exchange for that hash. dsk_5f3c9a0e1b7d2468 is the MacBook; the mini and the Windows PC are stand-ins that only appear in phone-side tables."
+ },
+ "limits": {
+  "account_id_hex": 32,
+  "icon_hash_hex": 64,
+  "max_display_name_utf16": 64,
+  "max_initials_utf16": 16,
+  "same_window_seconds": 120,
+  "differs_points": 1,
+  "stale_after_seconds": 900
+ },
+ "derivation": [
+  {
+   "name": "claude",
+   "cli": "claude",
+   "id1": "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+   "id2": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+   "_note": "accountUuid, organizationUuid"
+  },
+  {
+   "name": "claude_case_and_space",
+   "cli": "claude",
+   "id1": "  6F1C2A8E-3B4D-4E5F-9A7B-1C2D3E4F5A6B\n",
+   "id2": "0A9B8C7D-6E5F-4A3B-8C2D-1E0F9A8B7C6D",
+   "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+   "_note": "trimmed and lowercased: the same id as `claude`"
+  },
+  {
+   "name": "claude_no_org",
+   "cli": "claude",
+   "id1": "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+   "id2": null,
+   "account_id": "00c7a91e272290f268fa17e529f3317b",
+   "_note": "no organizationUuid: id2 is empty, so a DIFFERENT id (conservative: two cards, never a wrong merge)"
+  },
+  {
+   "name": "claude_other_account",
+   "cli": "claude",
+   "id1": "d2e3f4a5-b6c7-4d8e-9f0a-1b2c3d4e5f60",
+   "id2": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "account_id": "cb44893573e6041f9696d4410f857c90",
+   "_note": "another account in the same organisation: a different id"
+  },
+  {
+   "name": "claude_no_id1",
+   "cli": "claude",
+   "id1": null,
+   "id2": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "account_id": null,
+   "_note": "no accountUuid: no account_id"
+  },
+  {
+   "name": "claude_blank_id1",
+   "cli": "claude",
+   "id1": "   ",
+   "id2": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "account_id": null,
+   "_note": "a blank accountUuid: no account_id"
+  },
+  {
+   "name": "claude_email_as_id1",
+   "cli": "claude",
+   "id1": "user@example.com",
+   "id2": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "account_id": null,
+   "_note": "an id containing @ is never an id: no account_id"
+  },
+  {
+   "name": "codex",
+   "cli": "codex",
+   "id1": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+   "id2": "user-q3vx9klm2npr8stt",
+   "account_id": "9e234d40bc093dc3c4d9c4800657b849",
+   "_note": "tokens.account_id, id_token chatgpt_user_id"
+  },
+  {
+   "name": "codex_undecodable_token",
+   "cli": "codex",
+   "id1": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+   "id2": null,
+   "account_id": "91b89be26ba2b28d4cefc97010ba374a",
+   "_note": "an id_token that does not decode: id2 empty, a different id"
+  },
+  {
+   "name": "grok",
+   "cli": "grok",
+   "id1": "4c3b2a19-0f8e-4d7c-b6a5-948372615f0e",
+   "id2": "8a7b6c5d-4e3f-4210-9fed-cba987654321",
+   "account_id": "3ffe8259aadeb6e413c6d9d9a1de6d05",
+   "_note": "user_id, team_id"
+  },
+  {
+   "name": "cli_separates",
+   "cli": "codex",
+   "id1": "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+   "id2": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "account_id": "1fada2ad3187eeaffb3ac6c697345972",
+   "_note": "Claude's ids read as Codex's: the cli is in the message, so a different id"
+  }
+ ],
+ "sources": [
+  {
+   "name": "claude",
+   "cli": "claude",
+   "path": "<config dir or home>/.claude.json",
+   "file": {
+    "numStartups": 12,
+    "oauthAccount": {
+     "accountUuid": "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+     "emailAddress": "user@example.com",
+     "organizationUuid": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+     "displayName": "User"
+    }
+   },
+   "id1": "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+   "id2": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+  },
+  {
+   "name": "claude_never_logged_in",
+   "cli": "claude",
+   "path": "<config dir>/.claude.json",
+   "file": {
+    "numStartups": 1
+   },
+   "id1": null,
+   "id2": null,
+   "account_id": null
+  },
+  {
+   "name": "codex_nested_claim",
+   "cli": "codex",
+   "path": "~/.codex/auth.json",
+   "file": {
+    "auth_mode": "chatgpt",
+    "OPENAI_API_KEY": null,
+    "tokens": {
+     "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiN2U2ZDVjNGItM2EyOS00MTgwLThmN2UtNmQ1YzRiM2EyOTE4IiwiY2hhdGdwdF91c2VyX2lkIjoidXNlci1xM3Z4OWtsbTJucHI4c3R0In19.bm90LWEtcmVhbC1zaWduYXR1cmU",
+     "access_token": "<never read>",
+     "refresh_token": "<never read>",
+     "account_id": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918"
+    },
+    "last_refresh": "2026-11-16T09:00:00Z"
+   },
+   "id1": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+   "id2": "user-q3vx9klm2npr8stt",
+   "account_id": "9e234d40bc093dc3c4d9c4800657b849"
+  },
+  {
+   "name": "codex_top_level_claim",
+   "cli": "codex",
+   "path": "~/.codex/auth.json",
+   "file": {
+    "auth_mode": "chatgpt",
+    "OPENAI_API_KEY": null,
+    "tokens": {
+     "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20iLCJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyLXEzdng5a2xtMm5wcjhzdHQifQ.bm90LWEtcmVhbC1zaWduYXR1cmU",
+     "account_id": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918"
+    }
+   },
+   "id1": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+   "id2": "user-q3vx9klm2npr8stt",
+   "account_id": "9e234d40bc093dc3c4d9c4800657b849"
+  },
+  {
+   "name": "codex_bad_token",
+   "cli": "codex",
+   "path": "~/.codex/auth.json",
+   "file": {
+    "auth_mode": "chatgpt",
+    "tokens": {
+     "id_token": "not.a-jwt",
+     "account_id": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918"
+    }
+   },
+   "id1": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+   "id2": null,
+   "account_id": "91b89be26ba2b28d4cefc97010ba374a"
+  },
+  {
+   "name": "grok",
+   "cli": "grok",
+   "path": "~/.grok/auth.json",
+   "file": {
+    "a7f3c0e9d2b14e6f8a5c3d1e0f9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a": {
+     "user_id": "4c3b2a19-0f8e-4d7c-b6a5-948372615f0e",
+     "principal_id": "4c3b2a19-0f8e-4d7c-b6a5-948372615f0e",
+     "team_id": "8a7b6c5d-4e3f-4210-9fed-cba987654321",
+     "email": "user@example.com"
+    }
+   },
+   "id1": "4c3b2a19-0f8e-4d7c-b6a5-948372615f0e",
+   "id2": "8a7b6c5d-4e3f-4210-9fed-cba987654321",
+   "account_id": "3ffe8259aadeb6e413c6d9d9a1de6d05"
+  }
+ ],
+ "grammar": [
+  {
+   "key": "account_id",
+   "value": "ac7d4a85766f600f0bbb94dfc5321dc3",
+   "used": true,
+   "why": "32 lowercase hex"
+  },
+  {
+   "key": "account_id",
+   "value": "AC7D4A85766F600F0BBB94DFC5321DC3",
+   "used": false,
+   "why": "uppercase"
+  },
+  {
+   "key": "account_id",
+   "value": "ac7d4a85766f600f0bbb94dfc5321dc",
+   "used": false,
+   "why": "31 characters"
+  },
+  {
+   "key": "account_id",
+   "value": "ac7d4a85766f600f0bbb94dfc5321dc30",
+   "used": false,
+   "why": "33 characters"
+  },
+  {
+   "key": "account_id",
+   "value": 42,
+   "used": false,
+   "why": "not a string"
+  },
+  {
+   "key": "display_name",
+   "value": "Work",
+   "used": true,
+   "why": "a name"
+  },
+  {
+   "key": "display_name",
+   "value": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+   "used": true,
+   "why": "64 UTF-16 units, the cap"
+  },
+  {
+   "key": "display_name",
+   "value": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+   "used": false,
+   "why": "65 UTF-16 units, over the cap a sender always applies"
+  },
+  {
+   "key": "display_name",
+   "value": "   ",
+   "used": false,
+   "why": "whitespace"
+  },
+  {
+   "key": "display_name",
+   "value": "",
+   "used": false,
+   "why": "empty"
+  },
+  {
+   "key": "initials",
+   "value": "WK",
+   "used": true,
+   "why": "two letters"
+  },
+  {
+   "key": "initials",
+   "value": "Q✦",
+   "used": true,
+   "why": "a letter and a symbol"
+  },
+  {
+   "key": "initials",
+   "value": "👩‍💻",
+   "used": true,
+   "why": "one ZWJ emoji, five UTF-16 units"
+  },
+  {
+   "key": "initials",
+   "value": "xxxxxxxxxxxxxxxxx",
+   "used": false,
+   "why": "17 UTF-16 units"
+  },
+  {
+   "key": "initials",
+   "value": " ",
+   "used": false,
+   "why": "whitespace"
+  },
+  {
+   "key": "icon_hash",
+   "value": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+   "used": true,
+   "why": "64 lowercase hex"
+  },
+  {
+   "key": "icon_hash",
+   "value": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f",
+   "used": false,
+   "why": "63 characters"
+  },
+  {
+   "key": "icon_hash",
+   "value": "0650E7361CBF60D869AC6CEEA2E934A4B8CC7070B4075338D4235D413CD045F5",
+   "used": false,
+   "why": "uppercase"
+  },
+  {
+   "key": "override_updated_at",
+   "value": 1794100000,
+   "used": true,
+   "why": "Unix seconds"
+  },
+  {
+   "key": "override_updated_at",
+   "value": 0,
+   "used": true,
+   "why": "an override from a settings file that predates v12"
+  },
+  {
+   "key": "override_updated_at",
+   "value": -1,
+   "used": false,
+   "why": "negative"
+  },
+  {
+   "key": "override_updated_at",
+   "value": "1794100000",
+   "used": false,
+   "why": "a string"
+  },
+  {
+   "key": "override_updated_at",
+   "value": 1794100000.5,
+   "used": false,
+   "why": "not an integer"
+  }
+ ],
+ "merge": [
+  {
+   "name": "three_pcs_one_card",
+   "rule": "identity",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 60,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 59,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111702,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "codex (default)",
+      "cli": "codex",
+      "plan": "",
+      "window_5h_pct": 17,
+      "resets_at": 1794120792,
+      "as_of": 1794111732,
+      "account_id": "9e234d40bc093dc3c4d9c4800657b849",
+      "initials": "CD"
+     }
+    },
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "grok",
+      "cli": "grok",
+      "plan": "",
+      "as_of": 1794111672,
+      "initials": "GR"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "codex:9e234d40bc093dc3c4d9c4800657b849",
+     "cli": "codex",
+     "account_id": "9e234d40bc093dc3c4d9c4800657b849",
+     "title": "codex (default)",
+     "title_from": "derived",
+     "initials": "CD",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 17,
+     "resets_at": 1794120792,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111732,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "local:dsk_9e8d7c6b5a4f3e21:grok:grok",
+     "cli": "grok",
+     "account_id": null,
+     "title": "grok",
+     "title_from": "derived",
+     "initials": "GR",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_9e8d7c6b5a4f3e21",
+     "window_5h_pct": null,
+     "resets_at": null,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111672,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    },
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468",
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    }
+   ],
+   "_note": "the same Claude account on all three PCs is one card with three machines; the mini's newest reading supplies the rings; Codex and an id-less Grok are their own cards"
+  },
+  {
+   "name": "same_name_different_ids",
+   "rule": "identity",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 40,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "account_id": "cb44893573e6041f9696d4410f857c90",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "claude:cb44893573e6041f9696d4410f857c90",
+     "cli": "claude",
+     "account_id": "cb44893573e6041f9696d4410f857c90",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 40,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579"
+     ]
+    }
+   ],
+   "_note": "NEGATIVE CONTROL: the same name with different account ids is two cards"
+  },
+  {
+   "name": "same_name_no_ids",
+   "rule": "identity",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "local:dsk_2a4c6e8f0b1d3579:claude:user@example.com",
+     "cli": "claude",
+     "account_id": null,
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579"
+     ]
+    },
+    {
+     "key": "local:dsk_5f3c9a0e1b7d2468:claude:user@example.com",
+     "cli": "claude",
+     "account_id": null,
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "two older desktops: no account_id, so never merged, one card per desk"
+  },
+  {
+   "name": "id_beside_no_id",
+   "rule": "identity",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "local:dsk_9e8d7c6b5a4f3e21:claude:user@example.com",
+     "cli": "claude",
+     "account_id": null,
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_9e8d7c6b5a4f3e21",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    }
+   ],
+   "_note": "a mixed fleet: the older desk's reading stays its own card beside the merged one"
+  },
+  {
+   "name": "cli_separates",
+   "rule": "identity",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "shared",
+      "cli": "claude",
+      "plan": "",
+      "window_5h_pct": 10,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "shared",
+      "cli": "codex",
+      "plan": "",
+      "window_5h_pct": 10,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "shared",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 10,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "codex:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "codex",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "shared",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 10,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579"
+     ]
+    }
+   ],
+   "_note": "the key carries the cli: the same account_id under two clis is two cards (it cannot happen from the HMAC, but the key must not rely on that)"
+  },
+  {
+   "name": "freshest_tie",
+   "rule": "freshest",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 70,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 65,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 65,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [
+      "5h"
+     ],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    }
+   ],
+   "_note": "equal as_of: the lower desk id (the mini) supplies the rings"
+  },
+  {
+   "name": "freshest_newest",
+   "rule": "freshest",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 65,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111791,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 64,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_9e8d7c6b5a4f3e21",
+     "window_5h_pct": 64,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    }
+   ],
+   "_note": "the newest reading wins even with a lower number, and a window it does not report stays absent on the card (never mixed in)"
+  },
+  {
+   "name": "stale_at_boundary",
+   "rule": "stale",
+   "merge": true,
+   "now": 1794112692,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "now - as_of = 900: not stale"
+  },
+  {
+   "name": "stale_past_boundary",
+   "rule": "stale",
+   "merge": true,
+   "now": 1794112693,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": true,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "now - as_of = 901: stale"
+  },
+  {
+   "name": "stale_only_when_freshest_is",
+   "rule": "stale",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794108792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "an old reading on one desk does not make the card stale while another is fresh"
+  },
+  {
+   "name": "differs_higher",
+   "rule": "differs",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 64,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [
+      "5h"
+     ],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "an older reading 2 points HIGHER in the same window: the readings differ"
+  },
+  {
+   "name": "differs_lower_is_just_older",
+   "rule": "differs",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 50,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "the other direction: an older, lower reading is just older and never differs"
+  },
+  {
+   "name": "differs_by_exactly_one",
+   "rule": "differs",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 63,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "one point higher is not MORE than one: no differs"
+  },
+  {
+   "name": "differs_same_window_90s",
+   "rule": "same_window",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 70,
+      "resets_at": 1794117282,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [
+      "5h"
+     ],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "resets_at 90 s apart is the same window: differs"
+  },
+  {
+   "name": "differs_other_window_200s",
+   "rule": "same_window",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 70,
+      "resets_at": 1794117392,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "resets_at 200 s apart is another window: not compared"
+  },
+  {
+   "name": "differs_stale_other",
+   "rule": "differs",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 90,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794110792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "the higher reading is stale: never differs"
+  },
+  {
+   "name": "differs_weekly_only",
+   "rule": "differs",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 40,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [
+      "weekly"
+     ],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "the weekly window is compared on its own"
+  },
+  {
+   "name": "look_phone_wins",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {
+    "claude:ac7d4a85766f600f0bbb94dfc5321dc3": {
+     "title": "Day job",
+     "initials": "DJ",
+     "icon": "phone:7c1e"
+    }
+   },
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Work laptop",
+      "initials": "WL",
+      "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+      "override_updated_at": 1794100000
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Work",
+      "initials": "WK",
+      "override_updated_at": 1794105000
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "Day job",
+     "title_from": "phone",
+     "initials": "DJ",
+     "initials_from": "phone",
+     "icon": "phone:7c1e",
+     "icon_from": "phone",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "the phone's own override wins every field it sets, over both desks' overrides"
+  },
+  {
+   "name": "look_two_pcs_newest_wins",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Work laptop",
+      "initials": "WL",
+      "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+      "override_updated_at": 1794100000
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Work",
+      "initials": "WK",
+      "override_updated_at": 1794105000
+     }
+    },
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111802,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "Work",
+     "title_from": "desk:dsk_2a4c6e8f0b1d3579",
+     "initials": "WK",
+     "initials_from": "desk:dsk_2a4c6e8f0b1d3579",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_9e8d7c6b5a4f3e21",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111802,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468",
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    }
+   ],
+   "_note": "two PCs with overrides: the mini's is newer, so it supplies title and initials; it sets no icon, so the icon is derived (none), NOT the MacBook's"
+  },
+  {
+   "name": "look_two_pcs_tie",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Windows name",
+      "initials": "WN",
+      "override_updated_at": 1794105000
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Mini name",
+      "initials": "MN",
+      "override_updated_at": 1794105000
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "Mini name",
+     "title_from": "desk:dsk_2a4c6e8f0b1d3579",
+     "initials": "MN",
+     "initials_from": "desk:dsk_2a4c6e8f0b1d3579",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    }
+   ],
+   "_note": "equal stamps: the lower desk id (the mini) wins"
+  },
+  {
+   "name": "look_reset_lets_older_stand",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Old name",
+      "initials": "ON",
+      "icon_hash": "cebe30edea33f970979b173fb016be03bf1d03fee4ee31aad3bf14a8b1b00a9a",
+      "override_updated_at": 1794000000
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111797,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "Old name",
+     "title_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "initials": "ON",
+     "initials_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "icon": "cebe30edea33f970979b173fb016be03bf1d03fee4ee31aad3bf14a8b1b00a9a",
+     "icon_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111797,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "the mini Reset its override (no stamp): the MacBook's older override stands"
+  },
+  {
+   "name": "look_stamp_zero",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Legacy",
+      "initials": "LG",
+      "override_updated_at": 0
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111797,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "Legacy",
+     "title_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "initials": "LG",
+     "initials_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111797,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "an override from a pre-v12 settings file is stamped 0 and still beats no override"
+  },
+  {
+   "name": "look_derived",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111787,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "U1"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "U2"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "U2",
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579",
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "no override anywhere: title is the name, initials the freshest reading's"
+  },
+  {
+   "name": "look_partial_phone",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {
+    "claude:ac7d4a85766f600f0bbb94dfc5321dc3": {
+     "initials": "★"
+    }
+   },
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Work",
+      "initials": "WK",
+      "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+      "override_updated_at": 1794100000
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "Work",
+     "title_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "initials": "★",
+     "initials_from": "phone",
+     "icon": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+     "icon_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "the phone sets initials only: title and icon still come from the desk override"
+  },
+  {
+   "name": "look_no_initials",
+   "rule": "look",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "old",
+      "cli": "claude",
+      "plan": "",
+      "window_5h_pct": 1,
+      "resets_at": 1794117192,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "old",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 1,
+     "resets_at": 1794117192,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "a reading without initials and no override: initials null, the phone draws its own"
+  },
+  {
+   "name": "sort",
+   "rule": "sort",
+   "merge": true,
+   "now": 1794111852,
+   "phone_overrides": {},
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "beta",
+      "cli": "codex",
+      "plan": "",
+      "as_of": 1794111792,
+      "account_id": "9e234d40bc093dc3c4d9c4800657b849"
+     }
+    },
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "Alpha",
+      "cli": "grok",
+      "plan": "",
+      "as_of": 1794111792,
+      "account_id": "3ffe8259aadeb6e413c6d9d9a1de6d05"
+     }
+    },
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "alpha",
+      "cli": "claude",
+      "plan": "",
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+     }
+    },
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "Zed",
+      "cli": "claude",
+      "plan": "",
+      "as_of": 1794111792,
+      "account_id": "cb44893573e6041f9696d4410f857c90"
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "Alpha",
+      "cli": "grok",
+      "plan": "",
+      "as_of": 1794111792
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "grok:3ffe8259aadeb6e413c6d9d9a1de6d05",
+     "cli": "grok",
+     "account_id": "3ffe8259aadeb6e413c6d9d9a1de6d05",
+     "title": "Alpha",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": null,
+     "resets_at": null,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "local:dsk_2a4c6e8f0b1d3579:grok:Alpha",
+     "cli": "grok",
+     "account_id": null,
+     "title": "Alpha",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": null,
+     "resets_at": null,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579"
+     ]
+    },
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "alpha",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": null,
+     "resets_at": null,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "codex:9e234d40bc093dc3c4d9c4800657b849",
+     "cli": "codex",
+     "account_id": "9e234d40bc093dc3c4d9c4800657b849",
+     "title": "beta",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": null,
+     "resets_at": null,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "claude:cb44893573e6041f9696d4410f857c90",
+     "cli": "claude",
+     "account_id": "cb44893573e6041f9696d4410f857c90",
+     "title": "Zed",
+     "title_from": "derived",
+     "initials": null,
+     "initials_from": "derived",
+     "icon": null,
+     "icon_from": "derived",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": null,
+     "resets_at": null,
+     "weekly_pct": null,
+     "weekly_resets_at": null,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    }
+   ],
+   "_note": "ASCII case is folded first, then the unfolded bytes break the tie (Alpha before alpha), then cli, then key"
+  },
+  {
+   "name": "merge_off",
+   "rule": "merge_off",
+   "merge": false,
+   "now": 1794111852,
+   "phone_overrides": {
+    "claude:ac7d4a85766f600f0bbb94dfc5321dc3": {
+     "icon": "phone:7c1e"
+    }
+   },
+   "readings": [
+    {
+     "desk": "dsk_5f3c9a0e1b7d2468",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 60,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111762,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "display_name": "Laptop",
+      "initials": "UE",
+      "override_updated_at": 1794100000
+     }
+    },
+    {
+     "desk": "dsk_2a4c6e8f0b1d3579",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 62,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111792,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    },
+    {
+     "desk": "dsk_9e8d7c6b5a4f3e21",
+     "account": {
+      "name": "user@example.com",
+      "cli": "claude",
+      "plan": "max",
+      "window_5h_pct": 59,
+      "resets_at": 1794117192,
+      "weekly_pct": 31,
+      "weekly_resets_at": 1794543792,
+      "as_of": 1794111702,
+      "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+      "initials": "UE"
+     }
+    }
+   ],
+   "cards": [
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3@dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "Laptop",
+     "title_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "initials": "UE",
+     "initials_from": "desk:dsk_5f3c9a0e1b7d2468",
+     "icon": "phone:7c1e",
+     "icon_from": "phone",
+     "rings_from": "dsk_5f3c9a0e1b7d2468",
+     "window_5h_pct": 60,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111762,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_5f3c9a0e1b7d2468"
+     ]
+    },
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3@dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": "phone:7c1e",
+     "icon_from": "phone",
+     "rings_from": "dsk_2a4c6e8f0b1d3579",
+     "window_5h_pct": 62,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111792,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_2a4c6e8f0b1d3579"
+     ]
+    },
+    {
+     "key": "claude:ac7d4a85766f600f0bbb94dfc5321dc3@dsk_9e8d7c6b5a4f3e21",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "title": "user@example.com",
+     "title_from": "derived",
+     "initials": "UE",
+     "initials_from": "derived",
+     "icon": "phone:7c1e",
+     "icon_from": "phone",
+     "rings_from": "dsk_9e8d7c6b5a4f3e21",
+     "window_5h_pct": 59,
+     "resets_at": 1794117192,
+     "weekly_pct": 31,
+     "weekly_resets_at": 1794543792,
+     "as_of": 1794111702,
+     "stale": false,
+     "differs": [],
+     "machines": [
+      "dsk_9e8d7c6b5a4f3e21"
+     ]
+    }
+   ],
+   "_note": "merging off: three cards, one per desk; each uses only its own desk override; the phone override still applies by account key"
+  }
+ ],
+ "limit_dedupe": [
+  {
+   "name": "three_pcs_90s_apart",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111812,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117282,
+     "window_5h_pct": 81,
+     "expect": "duplicate"
+    },
+    {
+     "at": 1794111832,
+     "from": "dsk_9e8d7c6b5a4f3e21",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117172,
+     "window_5h_pct": 80,
+     "expect": "duplicate"
+    }
+   ],
+   "_note": "three PCs cross 80% for one account, resets_at up to 110 s apart: ONE alert"
+  },
+  {
+   "name": "two_pcs_90s_apart",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111812,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117282,
+     "window_5h_pct": 81,
+     "expect": "duplicate"
+    }
+   ],
+   "_note": "resets_at 90 s apart are one window: ONE alert"
+  },
+  {
+   "name": "two_pcs_200s_apart",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111812,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117392,
+     "window_5h_pct": 81,
+     "expect": "alert"
+    }
+   ],
+   "_note": "resets_at 200 s apart are two windows: TWO alerts"
+  },
+  {
+   "name": "boundary_120s",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111797,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117312,
+     "window_5h_pct": 80,
+     "expect": "duplicate"
+    },
+    {
+     "at": 1794111798,
+     "from": "dsk_9e8d7c6b5a4f3e21",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117313,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    }
+   ],
+   "_note": "120 s is the same window, 121 s is not"
+  },
+  {
+   "name": "duplicates_do_not_extend",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111797,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117292,
+     "window_5h_pct": 80,
+     "expect": "duplicate"
+    },
+    {
+     "at": 1794111801,
+     "from": "dsk_9e8d7c6b5a4f3e21",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117392,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    }
+   ],
+   "_note": "the third is 100 s from a duplicate but 200 s from the alert it was measured against: it alerts"
+  },
+  {
+   "name": "same_name_different_ids",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111797,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "cb44893573e6041f9696d4410f857c90",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    }
+   ],
+   "_note": "NEGATIVE CONTROL: two accounts that share a name both alert"
+  },
+  {
+   "name": "older_desktops_not_deduplicated",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": null,
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111797,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": null,
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    }
+   ],
+   "_note": "no account_id: every limit alerts, as before v12"
+  },
+  {
+   "name": "mixed_fleet",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111797,
+     "from": "dsk_9e8d7c6b5a4f3e21",
+     "cli": "claude",
+     "account_id": null,
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111798,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117222,
+     "window_5h_pct": 80,
+     "expect": "duplicate"
+    }
+   ],
+   "_note": "an older desk's alert sounds and does not enter the ledger; a new desk's second crossing is still a duplicate"
+  },
+  {
+   "name": "desktop_restart_realert",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 82,
+     "expect": "alert"
+    },
+    {
+     "at": 1794112092,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 82,
+     "expect": "duplicate"
+    }
+   ],
+   "_note": "frames-v4 accepted that a restarted desktop re-alerts once; with an account_id the phone now absorbs it"
+  },
+  {
+   "name": "next_window",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794117252,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794135192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    }
+   ],
+   "_note": "the next 5-hour window re-arms the alert"
+  },
+  {
+   "name": "pruned_after_window",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794117313,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    }
+   ],
+   "_note": "an entry is pruned once now passes its resets_at + 120 s, so a late report of that window alerts again"
+  },
+  {
+   "name": "cli_in_the_key",
+   "rule": "limit_dedupe",
+   "events": [
+    {
+     "at": 1794111792,
+     "from": "dsk_5f3c9a0e1b7d2468",
+     "cli": "claude",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    },
+    {
+     "at": 1794111797,
+     "from": "dsk_2a4c6e8f0b1d3579",
+     "cli": "codex",
+     "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+     "name": "user@example.com",
+     "resets_at": 1794117192,
+     "window_5h_pct": 80,
+     "expect": "alert"
+    }
+   ],
+   "_note": "the ledger key carries the cli"
+  }
+ ],
+ "limit_label": [
+  {
+   "name": "phone_override",
+   "phone_overrides": {
+    "claude:ac7d4a85766f600f0bbb94dfc5321dc3": {
+     "title": "Day job"
+    }
+   },
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "limit_e": {
+    "v": 1,
+    "t": "limit",
+    "name": "user@example.com",
+    "cli": "claude",
+    "window_5h_pct": 81,
+    "resets_at": 1794117192,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work"
+   },
+   "label": "Day job",
+   "_note": "the phone's title beats the desk's display_name"
+  },
+  {
+   "name": "display_name",
+   "phone_overrides": {},
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "limit_e": {
+    "v": 1,
+    "t": "limit",
+    "name": "user@example.com",
+    "cli": "claude",
+    "window_5h_pct": 81,
+    "resets_at": 1794117192,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work"
+   },
+   "label": "Work",
+   "_note": "the desk's display_name beats the name"
+  },
+  {
+   "name": "name",
+   "phone_overrides": {},
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "limit_e": {
+    "v": 1,
+    "t": "limit",
+    "name": "user@example.com",
+    "cli": "claude",
+    "window_5h_pct": 81,
+    "resets_at": 1794117192,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+   },
+   "label": "user@example.com",
+   "_note": "neither: the name, as frames-v6"
+  },
+  {
+   "name": "older_desktop_local_key",
+   "phone_overrides": {
+    "local:dsk_5f3c9a0e1b7d2468:claude:user@example.com": {
+     "title": "Laptop account"
+    }
+   },
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "limit_e": {
+    "v": 1,
+    "t": "limit",
+    "name": "user@example.com",
+    "cli": "claude",
+    "window_5h_pct": 81,
+    "resets_at": 1794117192
+   },
+   "label": "Laptop account",
+   "_note": "no account_id: the phone override is found under the local key"
+  },
+  {
+   "name": "override_for_another_account",
+   "phone_overrides": {
+    "claude:cb44893573e6041f9696d4410f857c90": {
+     "title": "Not me"
+    }
+   },
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "limit_e": {
+    "v": 1,
+    "t": "limit",
+    "name": "user@example.com",
+    "cli": "claude",
+    "window_5h_pct": 81,
+    "resets_at": 1794117192,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+   },
+   "label": "user@example.com",
+   "_note": "an override for a different account does not apply"
+  }
+ ],
+ "shape": [
+  {
+   "name": "as_of_only",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111852,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "sends": false,
+   "_note": "as_of alone does not resend (frames-v4)"
+  },
+  {
+   "name": "plan_only",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "pro",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "sends": false,
+   "_note": "plan alone does not resend (frames-v4)"
+  },
+  {
+   "name": "percent",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 63,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "sends": true,
+   "_note": "a percent resends (frames-v4)"
+  },
+  {
+   "name": "rename",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work 2",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "sends": true,
+   "_note": "a new display_name resends"
+  },
+  {
+   "name": "new_icon",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "cebe30edea33f970979b173fb016be03bf1d03fee4ee31aad3bf14a8b1b00a9a",
+    "override_updated_at": 1794100000
+   },
+   "sends": true,
+   "_note": "a new icon resends"
+  },
+  {
+   "name": "icon_removed",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "override_updated_at": 1794100000
+   },
+   "sends": true,
+   "_note": "an icon removed resends"
+  },
+  {
+   "name": "initials",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "W2",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "sends": true,
+   "_note": "new initials resend"
+  },
+  {
+   "name": "restamped",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100001
+   },
+   "sends": true,
+   "_note": "a new stamp resends"
+  },
+  {
+   "name": "reset",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "display_name": "Work",
+    "initials": "WK",
+    "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+    "override_updated_at": 1794100000
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3",
+    "initials": "WK"
+   },
+   "sends": true,
+   "_note": "a Reset resends"
+  },
+  {
+   "name": "account_id_appears",
+   "prev": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792
+   },
+   "new": {
+    "name": "user@example.com",
+    "cli": "claude",
+    "plan": "max",
+    "window_5h_pct": 62,
+    "resets_at": 1794117192,
+    "weekly_pct": 31,
+    "weekly_resets_at": 1794543792,
+    "as_of": 1794111792,
+    "account_id": "ac7d4a85766f600f0bbb94dfc5321dc3"
+   },
+   "sends": true,
+   "_note": "an id appearing resends"
+  }
+ ],
+ "sealed": {
+  "usage_full": {
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "class": "state",
+   "push": "none",
+   "ck": "WKG4KGaUZAO5klJY9TZadw",
+   "plaintext": "{\"t\":\"usage\",\"accounts\":[{\"name\":\"river.quill@example.com\",\"cli\":\"claude\",\"plan\":\"max\",\"window_5h_pct\":62,\"resets_at\":1794117192,\"weekly_pct\":31,\"weekly_resets_at\":1794543792,\"as_of\":1794111792,\"account_id\":\"ac7d4a85766f600f0bbb94dfc5321dc3\",\"display_name\":\"Quillwork Studio\",\"initials\":\"Q✦\",\"icon_hash\":\"0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5\",\"override_updated_at\":1794100000},{\"name\":\"codex (default)\",\"cli\":\"codex\",\"plan\":\"\",\"window_5h_pct\":17,\"resets_at\":1794120792,\"as_of\":1794111732,\"account_id\":\"9e234d40bc093dc3c4d9c4800657b849\",\"initials\":\"CD\"},{\"name\":\"grok\",\"cli\":\"grok\",\"plan\":\"\",\"as_of\":1794111672,\"initials\":\"GR\"}]}",
+   "plaintext_bytes": 658,
+   "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+   "nonce": "000000000000000000000190",
+   "ct": "AAAAAAAAAAAAAAGQ/UssNLMROo3xTLvnE1697owebHfCbgpTtAij0QmY0tHdD8dQE6uI73XsfePBhjvM64RNftNozAz2RT47Qa9eXlSmlsVGB8+RIx1MMW7Q03uIxWqUeWxDZeJRN2mfK0GUxytRkOgHiYYCm4qS8ahp8eLfCYW2aWQ/UMmLNuVZlTL+p0VoqA1yhvzwejbImHyMgJGIYN7EWxri/dAubDqEFVJLOLmHaVcWS+uymkiDyCFBUOc8UihKiGexpIGCrxYWSAccV9NwQK0Gv7w3xFbDRgNx355OHUuBV4cWMCxQeuSONpKmy/yYGdhNJBLWI2HhzcRz7PhJWvIHIDwYW+k46ckQj+OWWlMndYSWoQeEoSybYeaYuArNp5kAYzkUlfMDfm7WoNBz4WivK9pZyRYrexnhTWIWRlRk7M55xWsiCxTKi9J5/kgi18JRIANCRSEN6YHZG2AG4/iNbb4tLg220m441wThuveSzQ0hN5O8AXGNEEahSKDs5PeL6SoYMkRI2cMhY5WKwBPWTpFup1YiNkhAdwIb+kWwB35V/P9JFJMJ+PY8nxbLXay6X46cMYgHTWSXpSyBL1+hB48dzAvbNdiWGe/SBjfIKroRcPBWYs12cREekFgaPGFoKvnFUPA6TRoa28mBFOqim0fEPLDFK8o5XsfpKoqjVBlNx1KfG+XGflQk8bkfgp/VYXRoyPoMyrVmMUcQbrSZdLpMR9Z9RDWg+lHTUzizM2rTocx95jM7xMkhI17nS/TYwM+iW0ehRzBU8HX7KZig4N3DBu2drwn6+EXX0etwerwdV5iwzYM1gsP9vfbC0Z0JfxlXcraRl5U2zoBtAJJ8ENDsWrXis8g4ammCHKrGN6aDA9ctdgKynEjV5P5IVqzX+KsNajhQYhU="
+  },
+  "usage_absent": {
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "class": "state",
+   "push": "none",
+   "ck": "WKG4KGaUZAO5klJY9TZadw",
+   "plaintext": "{\"t\":\"usage\",\"accounts\":[{\"name\":\"user@example.com\",\"cli\":\"claude\",\"plan\":\"max\",\"window_5h_pct\":62,\"resets_at\":1794117192,\"weekly_pct\":31,\"weekly_resets_at\":1794543792,\"as_of\":1794111792},{\"name\":\"codex (default)\",\"cli\":\"codex\",\"plan\":\"\",\"window_5h_pct\":17,\"resets_at\":1794120792,\"as_of\":1794111732},{\"name\":\"grok\",\"cli\":\"grok\",\"plan\":\"\",\"as_of\":1794111672}]}",
+   "plaintext_bytes": 359,
+   "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+   "nonce": "000000000000000000000191",
+   "ct": "AAAAAAAAAAAAAAGR5qE+foTb5ZQM7MkRX2OCMfLFdgplLet0bRJn9RFvPBAc/yas3+XnhwUnre2iurOOHYmdoeo85TVwlEIgV6ichKsX7HttjchGTdCZjGqBvhhc1jHt7TRAEBY/NNsbEKQMSrTFiivQggAynCuJx/nVaYuyUStS1203jh1xdJz3OQiKn6tlj5EwclLANzIskM9PtBWuSmpSPIptp2Mg5tNNpCR7nMZiFzXbyv0aYMhy15DoKR7NZWecCUqmmqROUIZp3frLzE2ZjF/lMwfyuIoaY8Nf5z+otcZ5WcXXMFWZ6ohFl/jWf+po+PDTiKoeqbs1pfDztt03JXvY5kRprk+rpdF0YqKRG7rXdYM5hssC3ekvYGWKQivBkWamkC+CdiQE2Eqif0o8RC8z5GWRkHBtL5EDBXqIZxlq8Ag8/jde4wLjAjin+nJQCY4x0tm6I8GJJxvaIPevhU2vdm6SSCRsAI5EL4wtUXeVZEmZPYlsEH2MIrR/AOQh"
+  },
+  "limit_frame": {
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "class": "state",
+   "push": "limit",
+   "ck": "WKG4KGaUZAO5klJY9TZadw",
+   "plaintext": "{\"t\":\"usage\",\"accounts\":[{\"name\":\"river.quill@example.com\",\"cli\":\"claude\",\"plan\":\"max\",\"window_5h_pct\":81,\"resets_at\":1794117192,\"weekly_pct\":31,\"weekly_resets_at\":1794543792,\"as_of\":1794111792,\"account_id\":\"ac7d4a85766f600f0bbb94dfc5321dc3\",\"display_name\":\"Quillwork Studio\",\"initials\":\"Q✦\",\"icon_hash\":\"0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5\",\"override_updated_at\":1794100000},{\"name\":\"codex (default)\",\"cli\":\"codex\",\"plan\":\"\",\"window_5h_pct\":17,\"resets_at\":1794120792,\"as_of\":1794111732,\"account_id\":\"9e234d40bc093dc3c4d9c4800657b849\",\"initials\":\"CD\"},{\"name\":\"grok\",\"cli\":\"grok\",\"plan\":\"\",\"as_of\":1794111672,\"initials\":\"GR\"}]}",
+   "plaintext_bytes": 658,
+   "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+   "nonce": "000000000000000000000192",
+   "ct": "AAAAAAAAAAAAAAGS1kbuBJWWVr/ot3twugvdsBw8aDvq5SXrrVnyrIuWY01J5ITMBLxhP2wr4qN/GWwyUVzVE+T39tVcrZPGaBxR+0f7anYH+MBYBbMJlUlroUwJ/erMgid1du9szNdBri3lPq+e3GrHaXPTfBP4fXM1RNINkZ8k00P750vJVpdoP6K+Zu7LfgCy4fr9jDdErEP5Vv7HGvXQ2ZGeNqgrh2MA7tWpem1KqSi6ciQdfHNyz79xkZLI7Q1mo0JfyrP75wEa69SE2NUcSmaEt1+X44PgFmtIuVO1K7vakXs+dIp8gGBY97hClkpG+8LIo/NSg9fXqZXfOJ2muFpGd2dIP/+rv98mYz4mWCzbUsevM7X8sI1TZV/Wm9Z82sxRu4PBVi/Z1cbM/8wyQm0NubnK3W9T2k4UlGNx078l8+nMz7Rv9A//Xhz5Pef29AMEkjbxoP7TWkjXhzfig918oJhtEqJI/4jGvCJZ7A0hHuEShP7QXkHaD9eL5Edgjepv1rOE8izLkTLsLU/xQewWjlWkWxNt0ymcaUSP5NwoE63suZHN4735qUP7c4uu/PaJ8o+e+Rzz/yyqzphFFy2mQ4FoJeg484Do5k2b9edHqkQUilEsbS+qReBK+th6xmLVvtq44GjNtzmOd4JHNJzyIvfmxynH38lD9cykDHRYWlQ5nYAl7GfQmT06EUsQC77ZfuVEKLYxPoBRY3H+xuX1zeXgwaq7WBSW8y89NytC7XGtkGGoISj9BwyWRzXTTmKbLCQACS9nkuw6HfebRd6yDS8DJ3lgHw7YCkIuNsaZisNApJu90K/m/yvCd8SmT0/Nir5XVkhrQE5q/breu1FlXhnP6yRAp8KVSm0K8Kt0CUBkFw09S4EAGpUJ84TAdYzY1HIWQ8h/5sM=",
+   "e": "AQRyQelK5RGDbSF02OUFGB2plKefMHdPm4j5SEWfo82asws0p5yvPJSEqJb-nubk-rgNHXkSlsEWvuBo5JLhl-rSGlx3g9i4i3GBnJCrmmzHN7i34lISj0TeMXAyBhhMylOjOBpi5-k8Mv3YwENNwBtBFihzkj0wOJJKW63BvisISIRB-eq5KYLrZlDfkDx-cYfhIVsXdNwM2xSayHd-9ZzlaLDAm3HG-m6V1_PLehWP98hkacWPl0zDqi_6vBekC96apK1-TW4pcqVjUm_zuvo_Wp4KRT6utQra4-vTq5zg1abxNzlLcALMiFaCLizSfqUISyApEd3LOvoTyxLOEtE17x9XdJTEBtA_QT1HbRKm6E8u1hkZ1Am8OmmXV62iunL9pyzcr8WqjIBzSIRy0EUYDrignCvNz-UwhxbPxiM3XWrP3z8CYIuRuF7VxaWUmailL1gR8gHkyAE1eXtpy6Kmu4kuuzejR1GPZgf5sN5D2ZA8tknEzHlZxuCtqEEA86KKZimQx17Q7ojnkVmQLH7fKDCUkF5y53VSVZotc9w0",
+   "envelope_id": "01JCA0LIMIT000000000000C40"
+  }
+ },
+ "limit_e": {
+  "full": {
+   "eph": {
+    "private": "937bf040538348ec437610aa89e140aecae27996b4189d469d292e623e6c26fa",
+    "public": "047241e94ae511836d2174d8e505181da994a79f30774f9b88f948459fa3cd9ab30b34a79caf3c9484a896fe9ee6e4fab80d1d791296c116bee068e492e197ead2"
+   },
+   "shared_secret": "b627bcf0be7855aa0f5a068f85c0b466c1f14660e1ff0b5cfb7719f675e1f8a1",
+   "key": "1229a0bccb273d58d4b7d5deb039f9047cf8cd18fd3f0dfec69666340dc4dd5f",
+   "nonce": "1a5c7783d8b88b71819c90ab",
+   "plaintext": "{\"v\":1,\"t\":\"limit\",\"name\":\"river.quill@example.com\",\"cli\":\"claude\",\"window_5h_pct\":81,\"resets_at\":1794117192,\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"Aurora\",\"image_hash\":\"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3\"},\"account_id\":\"ac7d4a85766f600f0bbb94dfc5321dc3\",\"display_name\":\"Quillwork Studio\"}",
+   "e": "AQRyQelK5RGDbSF02OUFGB2plKefMHdPm4j5SEWfo82asws0p5yvPJSEqJb-nubk-rgNHXkSlsEWvuBo5JLhl-rSGlx3g9i4i3GBnJCrmmzHN7i34lISj0TeMXAyBhhMylOjOBpi5-k8Mv3YwENNwBtBFihzkj0wOJJKW63BvisISIRB-eq5KYLrZlDfkDx-cYfhIVsXdNwM2xSayHd-9ZzlaLDAm3HG-m6V1_PLehWP98hkacWPl0zDqi_6vBekC96apK1-TW4pcqVjUm_zuvo_Wp4KRT6utQra4-vTq5zg1abxNzlLcALMiFaCLizSfqUISyApEd3LOvoTyxLOEtE17x9XdJTEBtA_QT1HbRKm6E8u1hkZ1Am8OmmXV62iunL9pyzcr8WqjIBzSIRy0EUYDrignCvNz-UwhxbPxiM3XWrP3z8CYIuRuF7VxaWUmailL1gR8gHkyAE1eXtpy6Kmu4kuuzejR1GPZgf5sN5D2ZA8tknEzHlZxuCtqEEA86KKZimQx17Q7ojnkVmQLH7fKDCUkF5y53VSVZotc9w0",
+   "e_length": 556
+  },
+  "account_id_only": {
+   "eph": {
+    "private": "dd56f46bb55f033a3971d12eef7cd4309a385778e21533254d7a386253ebcc25",
+    "public": "0465dd56885cdfde29ef9e89c350d09df572094fb0df7aeee9cc3b36be433695ffcb159b46ceab3e88f5e8120364675a2b4e077f22643b6e803eb754953c9d4e69"
+   },
+   "shared_secret": "03bac2961caf3a214d7ee82bc68c63277ef6519fa4886fd1feb38997647d73ea",
+   "key": "aadaa5d43f06962bd55b6c28cef93db068f930929af30addecfd8d6873dd634b",
+   "nonce": "f5ee6ba0aed9f91c6df633f7",
+   "plaintext": "{\"v\":1,\"t\":\"limit\",\"name\":\"river.quill@example.com\",\"cli\":\"claude\",\"window_5h_pct\":81,\"resets_at\":1794117192,\"account_id\":\"ac7d4a85766f600f0bbb94dfc5321dc3\"}",
+   "e": "AQRl3VaIXN_eKe-eicNQ0J31cglPsN967unMOza-QzaV_8sVm0bOqz6I9egSA2RnWitOB38iZDtugD63VJU8nU5p9e5roK7Z-Rxt9jP3Y1V8xxjx9vZOUIqmyy-GAi65_IBJK-umrGlknqLFc7S-OMEj78M1ta1dn-Sra00NqnLxAtBbJ--eDVggAgQ1QVO9wJSFalqvEufzqUKu1S0cnJeDuYzSb-7L63xJw0_SMOKTDPRcLKhr1HTYdZ_xj2rCoXNBWLLzIcBo7pZ166G51QYkP1AMChzbj8oQmf5Yb5GSY0SvNme8Y-IbVt874pZTn7Fq3SRJHtFFxX8",
+   "e_length": 335
+  },
+  "no_new_keys": {
+   "plaintext": "{\"v\":1,\"t\":\"limit\",\"name\":\"user@example.com\",\"cli\":\"claude\",\"window_5h_pct\":81,\"resets_at\":1794117192}",
+   "_note": "equals frames-v4-vectors.json usage.limit_e.plaintext byte for byte"
+  },
+  "persona_only": {
+   "plaintext": "{\"v\":1,\"t\":\"limit\",\"name\":\"user@example.com\",\"cli\":\"claude\",\"window_5h_pct\":81,\"resets_at\":1794117192,\"persona\":{\"id\":\"3f7a9c1e5b2d8046\",\"name\":\"Aurora\",\"image_hash\":\"6a3f8c2d1e0b9a7f4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3\"}}",
+   "_note": "equals frames-v6-vectors.json limit.e.plaintext byte for byte"
+  }
+ },
+ "limit_apns_body": {
+  "aps": {
+   "alert": {
+    "title": "Orbweaver",
+    "body": "An account is near its limit"
+   },
+   "mutable-content": 1,
+   "interruption-level": "active",
+   "thread-id": "dsk_5f3c9a0e1b7d2468:WKG4KGaUZAO5klJY9TZadw"
+  },
+  "push": "limit",
+  "from": "dsk_5f3c9a0e1b7d2468",
+  "to": "ph_a1b2c3d4e5f60718",
+  "id": "01JCA0LIMIT000000000000C40",
+  "e": "AQRyQelK5RGDbSF02OUFGB2plKefMHdPm4j5SEWfo82asws0p5yvPJSEqJb-nubk-rgNHXkSlsEWvuBo5JLhl-rSGlx3g9i4i3GBnJCrmmzHN7i34lISj0TeMXAyBhhMylOjOBpi5-k8Mv3YwENNwBtBFihzkj0wOJJKW63BvisISIRB-eq5KYLrZlDfkDx-cYfhIVsXdNwM2xSayHd-9ZzlaLDAm3HG-m6V1_PLehWP98hkacWPl0zDqi_6vBekC96apK1-TW4pcqVjUm_zuvo_Wp4KRT6utQra4-vTq5zg1abxNzlLcALMiFaCLizSfqUISyApEd3LOvoTyxLOEtE17x9XdJTEBtA_QT1HbRKm6E8u1hkZ1Am8OmmXV62iunL9pyzcr8WqjIBzSIRy0EUYDrignCvNz-UwhxbPxiM3XWrP3z8CYIuRuF7VxaWUmailL1gR8gHkyAE1eXtpy6Kmu4kuuzejR1GPZgf5sN5D2ZA8tknEzHlZxuCtqEEA86KKZimQx17Q7ojnkVmQLH7fKDCUkF5y53VSVZotc9w0"
+ },
+ "icon_fetch": {
+  "icon_hash": "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5",
+  "v5_picture": "still",
+  "v5_request_plaintext": "{\"t\":\"persona_image\",\"hash\":\"0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5\"}",
+  "_note": "usage_full's Claude account offers the frames-v5 `still` hash as its icon_hash; the phone's fetch and the desktop's answer are frames-v5-vectors.json persona_image.still, byte for byte. No new frame."
+ },
+ "blindness": {
+  "_note": "frames-v12.json blindness (1). Each planted string is in at least one sealed plaintext (usage boxes or the limit e) and in none of relay_visible, as text, base64 or base64url, nor in the APNs body outside e. never_on_wire are the raw provider ids: found in the derivation table (the positive control) and in no plaintext at all.",
+  "relay_visible": [
+   "id",
+   "from",
+   "to",
+   "class",
+   "push",
+   "ck",
+   "ct",
+   "e"
+  ],
+  "planted": [
+   "river.quill@example.com",
+   "Quillwork Studio",
+   "Q✦",
+   "ac7d4a85766f600f0bbb94dfc5321dc3",
+   "9e234d40bc093dc3c4d9c4800657b849",
+   "0650e7361cbf60d869ac6ceea2e934a4b8cc7070b4075338d4235d413cd045f5"
+  ],
+  "planted_base64": [
+   "cml2ZXIucXVpbGxAZXhhbXBsZS5jb20",
+   "UXVpbGx3b3JrIFN0dWRpbw",
+   "UeKcpg",
+   "YWM3ZDRhODU3NjZmNjAwZjBiYmI5NGRmYzUzMjFkYzM",
+   "OWUyMzRkNDBiYzA5M2RjM2M0ZDljNDgwMDY1N2I4NDk",
+   "MDY1MGU3MzYxY2JmNjBkODY5YWM2Y2VlYTJlOTM0YTRiOGNjNzA3MGI0MDc1MzM4ZDQyMzVkNDEzY2QwNDVmNQ"
+  ],
+  "never_on_wire": [
+   "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+   "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+   "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+   "user-q3vx9klm2npr8stt",
+   "4c3b2a19-0f8e-4d7c-b6a5-948372615f0e",
+   "8a7b6c5d-4e3f-4210-9fed-cba987654321"
+  ]
+ }
+}
