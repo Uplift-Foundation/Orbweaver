@@ -207,16 +207,12 @@ namespace Orbweaver
             UpdateIcon(_lastSessions);
         }
 
-        private void Rebuild(IReadOnlyList<SessionEntry> sessions)
+        // The "Agents (N)" entry that holds every session row.
+        internal static NativeMenuItem AgentsItem(IReadOnlyList<SessionEntry> sessions, Action<SessionEntry> onClick)
         {
-            UpdateIcon(sessions);
-
-            var menu = _menu;
-            menu.Items.Clear();
-
             if (sessions.Count == 0)
             {
-                // Just "No sessions", for everyone.
+                // Just "Agents", disabled, for everyone.
                 //
                 // This used to name Claude Code unless the OpenClaw feature was
                 // on, on the reasoning that naming the only kind of session
@@ -227,27 +223,38 @@ namespace Orbweaver
                 // there is no longer any state in which "no Claude Code
                 // sessions" is known to be the whole truth, and naming one CLI
                 // while another is quietly running reads as a bug in the other.
-                menu.Add(new NativeMenuItem("No sessions") { IsEnabled = false });
+                return new NativeMenuItem("Agents") { IsEnabled = false };
             }
-            else
-            {
-                // Two sessions that resolve to the same name would otherwise
-                // produce identical menu entries, which is worse than useless —
-                // you can't tell which terminal a click will take you to.
-                var ambiguous = sessions.GroupBy(DisplayName)
-                    .Where(g => g.Count() > 1)
-                    .Select(g => g.Key)
-                    .ToHashSet();
 
-                foreach (var session in sessions)
-                {
-                    var item = new NativeMenuItem(SessionLabel(session, ambiguous.Contains(DisplayName(session))));
-                    var status = session.Status;
-                    var id = session.SessionId;
-                    item.Click += (_, _) => TerminalFocuser.Focus(status, null, id);
-                    menu.Add(item);
-                }
+            // Two sessions that resolve to the same name would otherwise
+            // produce identical menu entries, which is worse than useless —
+            // you can't tell which terminal a click will take you to.
+            var ambiguous = sessions.GroupBy(DisplayName)
+                .Where(g => g.Count() > 1)
+                .Select(g => g.Key)
+                .ToHashSet();
+
+            var submenu = new NativeMenu();
+            foreach (var session in sessions)
+            {
+                var item = new NativeMenuItem(SessionLabel(session, ambiguous.Contains(DisplayName(session))));
+                var captured = session;
+                item.Click += (_, _) => onClick(captured);
+                submenu.Add(item);
             }
+            return new NativeMenuItem($"Agents ({sessions.Count})") { Menu = submenu };
+        }
+
+        private void Rebuild(IReadOnlyList<SessionEntry> sessions)
+        {
+            UpdateIcon(sessions);
+
+            var menu = _menu;
+            menu.Items.Clear();
+
+            // A submenu, not top-level rows: 17+ live sessions pushed Show
+            // orbs, Settings and Quit off the bottom of the menu (CB-355).
+            menu.Add(AgentsItem(sessions, s => TerminalFocuser.Focus(s.Status, null, s.SessionId)));
 
             ClaudeDesktopSection.Append(menu);
 
