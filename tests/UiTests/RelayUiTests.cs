@@ -396,6 +396,62 @@ public class RelaySettingsAndServiceTests : IDisposable
         finally { RelayService.ClientChanged -= OnChanged; }
     }
 
+    // The hotfix after 1.0.7: the relay connects from serveOnLaunch, before
+    // the screen-lock wait, so a Mac restarted while locked still reaches the
+    // phone. Off stays off — the negative control, which would fail if
+    // ServeEarly connected unconditionally.
+    [AvaloniaFact]
+    public void ServeEarly_connects_only_when_the_relay_is_on()
+    {
+        var made = 0;
+        RelayService.Factory = () => { made++; return Client("Phone"); };
+
+        OrbweaverSettings.RelayEnabled = false;
+        RelayService.ServeEarly();
+        Assert.Null(RelayService.Client);
+        Assert.Equal(0, made);
+
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.ServeEarly();
+        Assert.NotNull(RelayService.Client);
+        Assert.Equal(1, made);
+    }
+
+    // And when the UI comes up after the unlock, Attach joins the connection
+    // ServeEarly opened instead of making a second client: two clients on one
+    // identity would fight over the one socket the relay allows a device.
+    [AvaloniaFact]
+    public void Attach_after_ServeEarly_reuses_the_early_client()
+    {
+        var made = 0;
+        RelayService.Factory = () => { made++; return Client("Phone"); };
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.ServeEarly();
+        var early = RelayService.Client;
+
+        var dir = Path.Combine(_dir, "status-early");
+        Directory.CreateDirectory(dir);
+        var manager = new SessionManager(dir,
+            () => new Dictionary<string, string>(StringComparer.Ordinal),
+            () => new HashSet<string>(StringComparer.Ordinal),
+            dependents: _ => SessionDependents.Nothing,
+            paneOwners: claims => claims.ToDictionary(TmuxPaneKey.Of, _ => (string?)null),
+            agentViewer: _ => null,
+            teams: pids => pids.ToDictionary(p => p, _ => AgentTeam.None),
+            fileTeams: _ => new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
+        try
+        {
+            RelayService.Attach(manager);
+            Assert.Same(early, RelayService.Client);
+            Assert.Equal(1, made);
+        }
+        finally
+        {
+            manager.SessionsScanned -= RelayService.OnScanned;
+            AccountOrbs.UsageApplied -= RelayService.OnUsage;
+        }
+    }
+
     [AvaloniaFact]
     public async Task Attach_listens_to_the_scan_and_connects_only_if_paired_before()
     {

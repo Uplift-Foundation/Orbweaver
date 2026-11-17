@@ -88,6 +88,23 @@ namespace Orbweaver
 
         // At launch: listen to the scan, and connect if the user has paired
         // before. Nothing connects for someone who never used the feature.
+        // The relay connection on its own, before the screen-lock wait
+        // (Program.Main's serveOnLaunch), for the reason the peer link and
+        // OpenClaw start there: it is a WebSocket on pool threads with no
+        // display anywhere in it. Behind the wait, a Mac that restarted while
+        // locked never connected at all, so it vanished from the phone until
+        // someone typed a password at it. 1.0.7's auto-update restarted the
+        // mini into exactly that and both stayed down for hours. Attach still
+        // calls Enable once the UI is up; Enable hands back the client this
+        // started, so the scan wiring joins the existing connection rather
+        // than opening a second one. Until then the phone sees the machine
+        // online with an empty roster, which is the truth: nothing has been
+        // scanned yet.
+        internal static void ServeEarly()
+        {
+            if (OrbweaverSettings.RelayEnabled) Enable();
+        }
+
         internal static void Attach(SessionManager sessions)
         {
             sessions.SessionsScanned += OnScanned;
