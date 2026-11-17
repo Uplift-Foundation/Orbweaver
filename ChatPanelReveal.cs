@@ -7,10 +7,11 @@ namespace Orbweaver
     //
     // The transient panel is one window reused across orbs, so when Bind
     // changes its Width and Height the first frame can still carry the layout
-    // (and the per-row widths) of the conversation shown before. The window is
-    // transparent, so that frame is the whole content at the wrong scale with
-    // the orbs behind it. Nothing here claims to know what the native layer
-    // presents; the gate just refuses to let anything be seen until the layout
+    // (and the per-row widths) of the conversation shown before — measured
+    // headless: Bounds and every row's width still the previous panel's right
+    // after a visible rebind. The window is transparent, so a frame drawn from
+    // that layout would be seen against whatever is behind it. Nothing here claims to know what the
+    // native layer presents; the gate just refuses to let anything be seen until the layout
     // agrees with the target, and fails open so a panel that never settles is
     // still a panel.
     //

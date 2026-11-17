@@ -423,7 +423,7 @@ namespace Orbweaver
                     new Size(Width, Height), Bounds.Size, RenderScaling, _targetScale),
                 hide: () => Chrome.Opacity = 0,
                 reveal: () => Chrome.Opacity = 1,
-                nextFrame: cb => (TopLevel.GetTopLevel(this) ?? this).RequestAnimationFrame(_ => cb()),
+                nextFrame: cb => RequestAnimationFrame(_ => cb()),
                 startDeadline: cb => DispatcherTimer.RunOnce(cb, TimeSpan.FromMilliseconds(400)));
 
             Opened += (_, _) =>
