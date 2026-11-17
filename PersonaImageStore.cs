@@ -50,6 +50,26 @@ namespace Orbweaver
             PeerAvatarStore.StatFile, PersonaFiles.ReadAvatarFile, b => PersonaImageBundle.Build(b),
             OffThread.OnOwnThread, line => MirrorLog.Say("relay", line));
 
+        // CB-340: the account icons, kept apart from the persona pictures. Both
+        // are bounded at eight bundles, so one store would let a few account
+        // icons push persona pictures out of the roster's offers (and the other
+        // way round); two stores cost one rebuild at most, never an eviction
+        // across kinds. A phone fetches either kind through the same frames-v5
+        // exchange, so Find looks in both.
+        internal static PersonaImageStore Accounts { get; } = new(
+            PeerAvatarStore.StatFile, PersonaFiles.ReadAvatarFile, b => PersonaImageBundle.Build(b),
+            OffThread.OnOwnThread, line => MirrorLog.Say("relay", line));
+
+        // The bundle under a hash in whichever store offered it.
+        internal static PersonaImageBundle? Find(string hash, PersonaImageStore first, PersonaImageStore second) =>
+            first.ById(hash) ?? second.ById(hash);
+
+        // Raised (on the worker that built it) when a bundle becomes offerable,
+        // so a caller that was told "not yet" can offer again. An account icon
+        // is set a moment before its hash exists, and nothing else would tell
+        // the phone it is ready.
+        internal event Action? Built;
+
         internal int Count { get { lock (_gate) return _byHash.Count; } }
 
         internal long TotalBytes { get { lock (_gate) return _byHash.Values.Sum(b => b.Bytes); } }
@@ -124,6 +144,7 @@ namespace Orbweaver
                 }
             }
             _log($"persona_image {PersonaFrames.Short(bundle.Hash)} ready frames {bundle.Frames.Count} {bundle.W}x{bundle.H} {bundle.Bytes}B");
+            Built?.Invoke();
         }
     }
 }

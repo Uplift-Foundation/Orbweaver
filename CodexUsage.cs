@@ -291,6 +291,15 @@ namespace Orbweaver
         // OPENAI_API_KEY — those rotate, and a second reader that loses a
         // compare-and-swap logs the user out. Same argument GrokUsageAccounts
         // makes for not reading Grok's refresh token.
+        //
+        // CB-340 narrowed that, deliberately and in one place: AccountIdentity.Codex
+        // now reads exactly two identifier strings out of `tokens` —
+        // tokens.account_id and the id_token's chatgpt_user_id claim — so one
+        // Codex account can be recognised across PCs. The objection above was
+        // always to *refreshing* or *writing* a rotating token, which a read of
+        // an identifier does not touch; nothing from `tokens` is logged, stored
+        // or sent, and access_token, refresh_token and OPENAI_API_KEY stay
+        // unread. This method still skips `tokens`: the label never needed it.
         internal static string LabelFrom(string? json, string? codexHome)
         {
             var fallback = FallbackLabel(codexHome);
@@ -428,7 +437,9 @@ namespace Orbweaver
             var readings = new List<AccountUsage>();
             foreach (var codexHome in homes)
             {
-                var label = CodexUsageAccounts.LabelFrom(ReadAuth(codexHome), codexHome);
+                var auth = ReadAuth(codexHome);
+                var label = CodexUsageAccounts.LabelFrom(auth, codexHome);
+                var accountId = AccountIdentity.Codex(auth);
 
                 // ObservedAt is left null on the live answer, so AsOf falls back
                 // to the read: the number *is* current, and stamping it with a
@@ -438,14 +449,14 @@ namespace Orbweaver
                     ask(codexHome), codexHome, label, readAt);
                 if (live is { Available: true })
                 {
-                    readings.Add(live);
+                    readings.Add(live with { AccountId = accountId });
                     continue;
                 }
 
                 var snapshot = LatestSnapshotFrom(Path.Combine(codexHome, "sessions"));
                 var usage = CodexUsageParse.FromRateLimits(
                     snapshot?.Json, codexHome, label, readAt, snapshot?.WrittenAt);
-                if (usage is not null) readings.Add(usage);
+                if (usage is not null) readings.Add(usage with { AccountId = accountId });
             }
 
             return readings;

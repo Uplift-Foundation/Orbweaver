@@ -5,13 +5,25 @@ namespace Orbweaver
     // colour still apply for whatever is null. IconFile is a bare file name
     // minted by AccountOrbIcons, never a path: settings.json travels (the data
     // dir is migrated, tests redirect it), and a stored path would not.
-    internal sealed record AccountOrbOverride(string? Initials, string? Name, string? IconFile)
+    //
+    // CB-340: UpdatedAt is when this PC last changed the override, in Unix
+    // seconds, so a phone that hears from two PCs can tell whose edit is newer.
+    // It is not part of what the override *is*: IsEmpty ignores it, and null
+    // means a file that predates the stamp, which the phone is told as 0.
+    internal sealed record AccountOrbOverride(string? Initials, string? Name, string? IconFile, long? UpdatedAt = null)
     {
         // Trims every field and turns blank into null. Applied on the way in
         // and on load, so a hand-edited file and a UI write reach the same
         // shape and "nothing set" is spelled exactly one way.
         internal AccountOrbOverride Normalise() =>
-            new(Empty(OrbGlyph.Clip(Initials, twoLetter: true)), Empty(OrbGlyph.ClipText(Blank(Name), MaxNameElements).Trim()), Blank(IconFile));
+            new(Empty(OrbGlyph.Clip(Initials, twoLetter: true)), Empty(OrbGlyph.ClipText(Blank(Name), MaxNameElements).Trim()), Blank(IconFile), UpdatedAt);
+
+        // Whether two overrides draw the same thing, whatever either's stamp
+        // says. A write that changes nothing must not be re-stamped, or merely
+        // re-saving the editor would make this PC's look the newest everywhere.
+        internal static bool SameLook(AccountOrbOverride? a, AccountOrbOverride? b) =>
+            (a?.Normalise() ?? new AccountOrbOverride(null, null, null)) with { UpdatedAt = null }
+            == (b?.Normalise() ?? new AccountOrbOverride(null, null, null)) with { UpdatedAt = null };
 
         // The display name feeds the tooltip and the card, so a hand-edited
         // 5000-character value is cut here, on every path in (UI write and

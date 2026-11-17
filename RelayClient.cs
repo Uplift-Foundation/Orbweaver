@@ -232,7 +232,7 @@ namespace Orbweaver
             line => MirrorLog.Say("relay", line))
         {
             // CB-321: pictures are answered only from a finished bundle.
-            Images = hash => PersonaImageStore.Shared.ById(hash),
+            Images = hash => PersonaImageStore.Find(hash, PersonaImageStore.Shared, PersonaImageStore.Accounts),
             Accounts = new RelayRemote.AccountSeams(RelayAccounts.Choices, OrbweaverSettings.PhoneLaunchProfileFor),
             Summarize = RelayAccounts.Summarize,
             Settle = () => Task.Delay(500),

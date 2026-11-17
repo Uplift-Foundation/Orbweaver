@@ -3009,7 +3009,10 @@ namespace Orbweaver
                             if (node is not JsonObject entry) continue;
 
                             var parsed = new AccountOrbOverride(
-                                Text(entry["initials"]), Text(entry["name"]), Text(entry["iconFile"])).Normalise();
+                                Text(entry["initials"]), Text(entry["name"]), Text(entry["iconFile"]),
+                                // CB-340: absent in a file written before the
+                                // stamp existed; the phone is told 0 for it.
+                                Number(entry["updatedAt"]) is double stamp && stamp >= 0 ? (long)stamp : null).Normalise();
 
                             // An entry that overrides nothing is dropped, as
                             // SetAccountOrbOverride would have on the way in.
@@ -3322,12 +3325,16 @@ namespace Orbweaver
                     var accountOverrides = new JsonObject();
                     foreach (var (key, o) in _model.AccountOrbOverrides)
                     {
-                        accountOverrides[key] = new JsonObject
+                        var written = new JsonObject
                         {
                             ["initials"] = o.Initials,
                             ["name"] = o.Name,
                             ["iconFile"] = o.IconFile
                         };
+                        // Only when stamped, so a file nobody has edited since
+                        // CB-340 stays byte for byte what it was.
+                        if (o.UpdatedAt is { } at) written["updatedAt"] = at;
+                        accountOverrides[key] = written;
                     }
 
                     var orbSizes = new JsonObject();

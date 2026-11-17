@@ -133,7 +133,7 @@ public class AccountOrbOverrideSettingsTests
         {
             AccountOrbCustomization.SetInitials("k", "abc");
             AccountOrbCustomization.SetName("k", "  Acme ");
-            Assert.Equal(new AccountOrbOverride("ab", "Acme", null), AccountOrbCustomization.Current("k"));
+            Assert.Equal(new AccountOrbOverride("ab", "Acme", null), AccountOrbCustomization.Current("k") with { UpdatedAt = null });   // the stamp has its own tests (AccountOrbOverrideStampTests)
 
             var look = AccountOrbCustomization.Preview(new("k", "k", AccountUsageSource.Codex, "derived"));
             Assert.Equal("Acme", look.DisplayName);

@@ -691,9 +691,12 @@ namespace Orbweaver
         // frames-v6: with a persona, the e is tried with it first and then
         // without it before giving up, so the persona goes before e does. The
         // log line says which, by the persona's id prefix only.
-        private string? PushE(Channel c, string kind, PushPersona? persona, Func<PushPersona?, string> plaintext)
+        private string? PushE(Channel c, string kind, PushPersona? persona, Func<PushPersona?, string> plaintext) =>
+            PushSealed(c, kind, persona, PushPlaintext(persona, plaintext));
+
+        private string? PushSealed(Channel c, string kind, PushPersona? persona, (byte[]? Bytes, bool WithPersona) fitted)
         {
-            var (bytes, withPersona) = PushPlaintext(persona, plaintext);
+            var (bytes, withPersona) = fitted;
             Note($"push {kind} e={(bytes is null ? "none" : "yes")} {PushPersona.LogTagFor(persona, withPersona)}");
             return bytes is null ? null : PushSeal.Seal(c.Phone.KaPublic, bytes);
         }
@@ -711,6 +714,20 @@ namespace Orbweaver
                 var bytes = Encoding.UTF8.GetBytes(p);
                 return PushSeal.SealedLength(bytes.Length) <= PushSeal.MaxE ? bytes : null;
             }
+        }
+
+        // The limit fitting rule (frames-v12 limit_e): if the sealed e would
+        // exceed the relay's cap, drop display_name, then persona, then
+        // account_id, and only then send no e. Pure, like PushPlaintext.
+        internal static (byte[]? Bytes, bool WithPersona) LimitPlaintext(RelayUsage.Account crossing, PushPersona? persona)
+        {
+            foreach (var (p, accountId, name) in new (PushPersona?, bool, bool)[]
+                     { (persona, true, true), (persona, true, false), (null, true, false), (null, false, false) })
+            {
+                var bytes = Encoding.UTF8.GetBytes(RelayUsage.LimitE(crossing, p, accountId, name));
+                if (PushSeal.SealedLength(bytes.Length) <= PushSeal.MaxE) return (bytes, p is not null);
+            }
+            return (null, false);
         }
 
         // CB-321 addendum 2: the persona a session's amber speaks as — its
@@ -767,7 +784,7 @@ namespace Orbweaver
             foreach (var c in _channels.Values)
             {
                 if (crossing is null && !c.Online) continue;
-                var e = crossing is null ? null : PushE(c, "limit", _defaultPersona, p => RelayUsage.LimitE(crossing, p));
+                var e = crossing is null ? null : PushSealed(c, "limit", _defaultPersona, LimitPlaintext(crossing, _defaultPersona));
                 frames.AddRange(Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, UsageCk), Encoding.UTF8.GetBytes(plaintext),
                     push: crossing is null ? "none" : "limit", e: e)));
             }
