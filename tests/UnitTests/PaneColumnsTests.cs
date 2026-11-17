@@ -90,12 +90,40 @@ public class PaneColumnsTests
         Assert.Equal("a row the width table drew wrong", cut[5]);
     }
 
+    // A blank mod pane is still a panel: the lone divider would otherwise stay in the form.
     [Fact]
-    public void A_box_edge_with_nothing_to_its_right_is_not_a_panel()
+    public void A_panel_with_nothing_drawn_in_it_is_still_stripped()
     {
         var lines = Enumerable.Range(0, 12).Select(n => Row($"chat {n}", "")).ToArray();
 
-        Assert.Same(lines, PaneColumns.StripSidePanel(lines));
+        Assert.Equal("chat 3", PaneColumns.StripSidePanel(lines)[3]);
+    }
+
+    // A tool-output box scrolled to the top has a right edge that qualifies too; the panel,
+    // with text to its right on more rows, wins however far left the box edge is.
+    [Fact]
+    public void A_box_edge_to_the_left_does_not_hide_the_panel()
+    {
+        var lines = Enumerable.Range(0, 12).Select(n => Row($"chat {n}", "board", col: 100)).ToArray();
+        for (var n = 0; n < 9; n++) lines[n] = lines[n][..60] + "│" + lines[n][61..];
+
+        var cut = PaneColumns.StripSidePanel(lines);
+
+        Assert.Equal("chat 4", cut[4][..6]);
+        Assert.All(cut, l => Assert.DoesNotContain("board", l));
+    }
+
+    // With a blank panel and a left box, neither has text to its right: the rightmost wins.
+    [Fact]
+    public void Of_two_equally_blank_columns_the_rightmost_is_the_panel()
+    {
+        var lines = Enumerable.Range(0, 12).Select(n => Row($"chat {n}", "", col: 100)).ToArray();
+        for (var n = 0; n < 9; n++) lines[n] = lines[n][..60] + "│" + lines[n][61..];
+
+        var cut = PaneColumns.StripSidePanel(lines);
+
+        Assert.Equal(lines[3][..60] + "│", cut[3][..61]);
+        Assert.DoesNotContain(cut, l => l.Length > 62);
     }
 
     [Fact]

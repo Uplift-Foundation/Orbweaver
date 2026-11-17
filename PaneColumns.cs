@@ -16,19 +16,20 @@ namespace Orbweaver
     // rows in them, and the prompt fingerprint changed whenever the board did.
     //
     // The rule is a divider, found by what it looks like rather than where it is:
-    // the leftmost display-cell column of at least MinChatCells that holds a `│`
-    // on a run of rows that starts at the top of the screen (row 0 or 1), is at
-    // least MinRows long, covers at least 90% of the rows between its first and
-    // last, and has text to its right on at least one row. Each row in the run
-    // is cut at that bar and trimmed; rows outside the run are untouched, so with
-    // the board open and no dialog the input box below stays full width.
+    // a display-cell column of at least MinChatCells that holds a `│` on a run of
+    // rows that starts at the top of the screen (row 0 or 1), is at least MinRows
+    // long and covers at least 90% of the rows between its first and last. Each
+    // row in the run is cut at that bar and trimmed; rows outside the run are
+    // untouched, so with the board open and no dialog the input box below stays
+    // full width. A panel with nothing drawn in it is still a panel.
     //
     // Columns are display cells, not string indexes: a row holding CJK or emoji
     // has its divider at string index 110 and cell 119 (measured). The width
     // table is deliberately small — a row it gets wrong is absorbed by the 90%
     // allowance and by cutting at the nearest bar within Near cells.
     //
-    // Not handled, on purpose: a panel docked left or below. No capture of one.
+    // Not handled, on purpose: a panel docked left or below (no capture of one), and a
+    // divider that starts on row 2 or lower (every real capture starts on row 0).
     internal static class PaneColumns
     {
         internal const char Bar = '│';
@@ -67,11 +68,20 @@ namespace Orbweaver
 
         // The lines with any docked side panel cut off, or the same array when
         // there is none. Never throws and never returns null.
+        //
+        // Several columns can qualify: a tool-output box scrolled to the top of the pane
+        // has a right edge that looks like a divider too. The panel is the one with text to
+        // its right on the most rows, and the rightmost on a tie (a blank panel and a box
+        // both have none; a divider further right is not text), because a chat box sits left of a panel and never the reverse.
         internal static string[] StripSidePanel(string[] lines)
         {
             var bars = lines.Select(Bars).ToArray();
-            var candidates = bars.SelectMany(b => b.Select(x => x.Cell)).Where(c => c >= MinChatCells).Distinct().OrderBy(c => c);
+            var candidates = bars.SelectMany(b => b.Select(x => x.Cell)).Where(c => c >= MinChatCells).Distinct();
 
+            var best = -1;
+            var bestText = -1;
+            var bestTop = 0;
+            var bestBottom = 0;
             foreach (var column in candidates)
             {
                 var rows = Enumerable.Range(0, lines.Length).Where(n => bars[n].Any(b => b.Cell == column)).ToList();
@@ -79,19 +89,22 @@ namespace Orbweaver
 
                 if (top > 1 || rows.Count < MinRows || rows.Count * 10 < (bottom - top + 1) * 9) continue;
 
-                // A box's right edge has nothing to its right; a panel does.
-                if (!rows.Any(n => lines[n][(bars[n].First(b => b.Cell == column).Index + 1)..].Any(ch => !char.IsWhiteSpace(ch)))) continue;
-
-                var cut = (string[])lines.Clone();
-                for (var n = top; n <= bottom; n++)
+                var text = rows.Count(n => lines[n][(bars[n].First(b => b.Cell == column).Index + 1)..].Any(ch => !char.IsWhiteSpace(ch) && ch != Bar));
+                if (text > bestText || (text == bestText && column > best))
                 {
-                    var near = bars[n].Where(b => Math.Abs(b.Cell - column) <= Near)
-                        .OrderBy(b => Math.Abs(b.Cell - column)).Cast<(int Index, int Cell)?>().FirstOrDefault();
-                    if (near is { } hit) cut[n] = lines[n][..hit.Index].TrimEnd();
+                    (best, bestText, bestTop, bestBottom) = (column, text, top, bottom);
                 }
-                return cut;
             }
-            return lines;
+            if (best < 0) return lines;
+
+            var cut = (string[])lines.Clone();
+            for (var n = bestTop; n <= bestBottom; n++)
+            {
+                var near = bars[n].Where(b => Math.Abs(b.Cell - best) <= Near)
+                    .OrderBy(b => Math.Abs(b.Cell - best)).Cast<(int Index, int Cell)?>().FirstOrDefault();
+                if (near is { } hit) cut[n] = lines[n][..hit.Index].TrimEnd();
+            }
+            return cut;
         }
     }
 }
