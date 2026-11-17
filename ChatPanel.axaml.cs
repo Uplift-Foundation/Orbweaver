@@ -969,6 +969,7 @@ namespace Orbweaver
             Reposition();
 
             if (!IsVisible) Show();
+            _reveal.Start();
 
             // Show() then Activate(): an accessory app can be activated
             // programmatically or by a click on one of its windows, and this one

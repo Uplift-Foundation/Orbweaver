@@ -10,6 +10,10 @@ namespace Orbweaver.Tests;
 // conversation's size. Headless never presents an intermediate frame, so what
 // is asserted is the state the gate exposes: hidden until Bounds and the
 // per-row widths agree with the size the panel was bound at.
+//
+// An OrbWindow's PositionKey defaults to empty, and a panel opened for an
+// empty key ignores its saved size — so Orb() below sets it, or the sizes
+// these cases depend on would silently never apply.
 [Collection("Settings")]
 public class ChatPanelFirstFrameTests : IDisposable
 {
@@ -103,5 +107,123 @@ public class ChatPanelFirstFrameTests : IDisposable
         Pump(ChatPanelReveal.MaxFrames);
 
         Assert.False(panel.IsRevealed);
+    }
+
+    [AvaloniaFact]
+    public void HiddenReopen_IsGatedAndThenRevealed()
+    {
+        var a = Orb(600, 640);
+        var b = Orb(300, 260);
+        var fakeA = Fake();
+
+        ChatPanel.OpenFor(a, fakeA);
+        Pump(ChatPanelReveal.MaxFrames);
+        var panel = ChatPanelTestAccess.Instance!;
+        ChatPanel.HideFor(fakeA.SessionId);
+        Pump(ChatPanelReveal.MaxFrames);
+        Assert.False(panel.IsRevealed);
+
+        ChatPanel.OpenFor(b, Fake());
+
+        // Whether Show() lays out before returning is recorded, not asserted
+        // either way: it is the headless answer, not a guarantee about the
+        // native window (see the PR body).
+        Assert.False(panel.IsRevealed);
+        Pump(ChatPanelReveal.MaxFrames);
+        Assert.True(panel.IsRevealed);
+        Assert.Equal(new Size(300, 260), panel.Bounds.Size);
+    }
+
+    [AvaloniaFact]
+    public void HideThenReopenSameSession_Reveals()
+    {
+        var fake = Fake();
+        var orb = Orb(400, 300);
+        ChatPanel.OpenFor(orb, fake);
+        ChatPanel.HideFor(fake.SessionId);
+        Pump(ChatPanelReveal.MaxFrames);
+        var panel = ChatPanelTestAccess.Instance!;
+        Assert.False(panel.IsRevealed);
+
+        ChatPanel.OpenFor(orb, fake);
+        Pump(ChatPanelReveal.MaxFrames);
+        Assert.True(panel.IsRevealed);
+    }
+
+    [AvaloniaFact]
+    public void RapidAbaRebinds_EndRevealedAtA()
+    {
+        var a = Orb(560, 600);
+        var b = Orb(300, 260);
+        ChatPanel.OpenFor(a, Fake());
+        ChatPanel.OpenFor(b, Fake());
+        Pump(1);
+        ChatPanel.OpenFor(a, Fake());
+        var panel = ChatPanelTestAccess.Instance!;
+        Assert.False(panel.IsRevealed);
+
+        Pump(ChatPanelReveal.MaxFrames);
+        Assert.True(panel.IsRevealed);
+        Assert.Equal(new Size(560, 600), panel.Bounds.Size);
+    }
+
+    [AvaloniaFact]
+    public void CloseForMidGate_DoesNotRevealThePanel()
+    {
+        var fake = Fake();
+        ChatPanel.OpenFor(Orb(500, 500), fake);
+        var panel = ChatPanelTestAccess.Instance!;
+
+        ChatPanel.CloseFor(fake.SessionId);
+        Pump(ChatPanelReveal.MaxFrames);
+
+        Assert.False(panel.IsRevealed);
+    }
+
+    [AvaloniaFact]
+    public void RestorePinned_RevealsWithoutActivation()
+    {
+        var orb = Orb(420, 360);
+        var fake = Fake();
+        ChatPanel.RestorePinned(orb, fake, new PixelPoint(40, 40));
+        var panel = ChatPanelTestAccess.PanelFor(fake.SessionId)!;
+        Assert.False(panel.IsRevealed);
+
+        Pump(ChatPanelReveal.MaxFrames);
+        Assert.True(panel.IsRevealed);
+    }
+
+    [AvaloniaFact]
+    public void PinAndUnpin_DoNotChangeReveal()
+    {
+        var fake = Fake();
+        ChatPanel.OpenFor(Orb(420, 360), fake);
+        Pump(ChatPanelReveal.MaxFrames);
+        var panel = ChatPanelTestAccess.PanelFor(fake.SessionId)!;
+        Assert.True(panel.IsRevealed);
+
+        panel.TogglePin();
+        Pump(2);
+        Assert.True(panel.IsRevealed);
+        panel.TogglePin();
+        Pump(2);
+        Assert.True(panel.IsRevealed);
+    }
+
+    [AvaloniaFact]
+    public void RepositionAndTextScale_DoNotHideARevealedPanel()
+    {
+        var orb = Orb(420, 360);
+        var fake = Fake();
+        ChatPanel.OpenFor(orb, fake);
+        Pump(ChatPanelReveal.MaxFrames);
+        var panel = ChatPanelTestAccess.Instance!;
+
+        ChatPanel.RepositionFor(orb);
+        ChatPanel.ReapplyTextScale();
+        panel.Width = 450;
+        Pump(2);
+
+        Assert.True(panel.IsRevealed);
     }
 }

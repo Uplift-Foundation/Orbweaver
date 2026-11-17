@@ -40,8 +40,23 @@ public class ChatPanelRevealTests
         h.Gate.Begin();
         Assert.Equal(1, h.Hides);
         Assert.True(h.Gate.Pending);
+        Assert.Empty(h.Frames);
+        h.Gate.Start();
         Assert.Single(h.Frames);
         Assert.Equal(0, h.Reveals);
+    }
+
+    [Fact]
+    public void Start_WithNothingPendingRequestsNoFrame()
+    {
+        var h = new Harness();
+        h.Gate.Start();
+        Assert.Empty(h.Frames);
+
+        h.Gate.Begin();
+        h.Gate.Cancel();
+        h.Gate.Start();
+        Assert.Empty(h.Frames);
     }
 
     [Fact]
@@ -49,6 +64,7 @@ public class ChatPanelRevealTests
     {
         var h = new Harness { Settled = true };
         h.Gate.Begin();
+        h.Gate.Start();
         h.Frame();
         Assert.Equal(0, h.Reveals);
         h.Frame();
@@ -62,6 +78,7 @@ public class ChatPanelRevealTests
     {
         var h = new Harness();
         h.Gate.Begin();
+        h.Gate.Start();
         for (var i = 0; i < 5; i++) h.Frame();
         Assert.Equal(0, h.Reveals);
         h.Settled = true;
@@ -75,6 +92,7 @@ public class ChatPanelRevealTests
     {
         var h = new Harness();
         h.Gate.Begin();
+        h.Gate.Start();
         for (var i = 0; i < ChatPanelReveal.MaxFrames - 1; i++) h.Frame();
         Assert.Equal(0, h.Reveals);
         h.Frame();
@@ -87,6 +105,7 @@ public class ChatPanelRevealTests
     {
         var h = new Harness();
         h.Gate.Begin();
+        h.Gate.Start();
         h.Deadline!();
         Assert.Equal(1, h.Reveals);
         h.Frame();
@@ -98,6 +117,7 @@ public class ChatPanelRevealTests
     {
         var h = new Harness { Settled = true };
         h.Gate.Begin();
+        h.Gate.Start();
         var late = h.Deadline!;
         h.Frame(); h.Frame();
         late();
@@ -115,6 +135,7 @@ public class ChatPanelRevealTests
     {
         var h = new Harness { Settled = true };
         h.Gate.Begin();
+        h.Gate.Start();
         h.Gate.Cancel();
         Assert.False(h.Gate.Pending);
         h.Frame(); h.Frame(); h.Frame();
@@ -126,9 +147,10 @@ public class ChatPanelRevealTests
     {
         var h = new Harness { Settled = true };
         h.Gate.Begin();
+        h.Gate.Start();
         var old = h.Deadline!;
         h.Frame();                // one frame into round 1
-        h.Gate.Begin();           // round 2; round 1's callbacks are stale
+        h.Gate.Begin(); h.Gate.Start(); // round 2; round 1's callbacks are stale
         Assert.Equal(2, h.Hides);
         old();
         Assert.Equal(0, h.Reveals);

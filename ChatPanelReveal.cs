@@ -75,7 +75,15 @@ namespace Orbweaver
                 if (generation != _generation || !Pending) return;
                 Finish();
             });
-            RequestFrame(generation);
+        }
+
+        // Asks for the first frame. Separate from Begin because Bind hides the
+        // panel before it shows it, and a window that is not open yet is not
+        // promised to tick animation frames at all — so the frames are only
+        // counted from after Show(), and the deadline covers the gap anyway.
+        public void Start()
+        {
+            if (Pending) RequestFrame(_generation);
         }
 
         // Stops without revealing: the panel is being hidden, and whatever is
