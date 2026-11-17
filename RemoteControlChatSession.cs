@@ -465,21 +465,7 @@ namespace Orbweaver
             // note on why, which is that the rows cost ten to thirty times as
             // much to relay as the turns they produce. So there is nothing to
             // parse here, only turns to adopt.
-            var mapped = rows.Turns
-                .Select(t => new
-                {
-                    t.Uuid,
-                    Turn = new ChatTurn
-                    {
-                        Role = MirrorProtocol.RoleOf(t.Role),
-                        Text = t.Text,
-                        IsComplete = true,
-                        At = t.At > 0
-                            ? DateTimeOffset.FromUnixTimeSeconds(t.At).ToLocalTime()
-                            : DateTimeOffset.Now
-                    }
-                })
-                .ToList();
+            var mapped = MirrorProtocol.AdoptTurns(rows.Turns);
 
             OnUi(() =>
             {
@@ -493,7 +479,7 @@ namespace Orbweaver
 
                     foreach (var row in mapped)
                     {
-                        if (row.Uuid is not null && !_seen.Add(row.Uuid)) continue;
+                        if (row.Key is not null && !_seen.Add(row.Key)) continue;
                         _history.Add(row.Turn);
                     }
 
@@ -519,7 +505,7 @@ namespace Orbweaver
 
                 foreach (var row in mapped)
                 {
-                    if (row.Uuid is not null && !_seen.Add(row.Uuid)) continue;
+                    if (row.Key is not null && !_seen.Add(row.Key)) continue;
                     if (Reconcile(row.Turn)) continue;
 
                     Add(row.Turn);
@@ -571,27 +557,13 @@ namespace Orbweaver
             var turns = await client.LoadOlderAsync(_remoteName).ConfigureAwait(true);
             if (turns is null) return false;
 
-            var mapped = turns
-                .Select(t => new
-                {
-                    t.Uuid,
-                    Turn = new ChatTurn
-                    {
-                        Role = MirrorProtocol.RoleOf(t.Role),
-                        Text = t.Text,
-                        IsComplete = true,
-                        At = t.At > 0
-                            ? DateTimeOffset.FromUnixTimeSeconds(t.At).ToLocalTime()
-                            : DateTimeOffset.Now
-                    }
-                })
-                .ToList();
+            var mapped = MirrorProtocol.AdoptTurns(turns);
 
             var older = new List<ChatTurn>();
 
             foreach (var row in mapped)
             {
-                if (row.Uuid is not null && !_seen.Add(row.Uuid)) continue;
+                if (row.Key is not null && !_seen.Add(row.Key)) continue;
                 older.Add(row.Turn);
             }
 

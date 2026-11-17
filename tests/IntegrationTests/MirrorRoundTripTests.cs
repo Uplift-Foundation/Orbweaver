@@ -70,6 +70,52 @@ public class MirrorRoundTripTests : IDisposable
             delivered.Turns);
     }
 
+    // CB-330: a teammate message is a relay turn on this side of the link, not a
+    // user bubble. The rows are the real captures, written to a real transcript
+    // on the far disk, sent through the real server and client; what arrives is
+    // what this machine's own parser produces, relay and all.
+    [Fact]
+    public async Task ARelayedTeammateMessageArrivesAsARelayTurnNotAUserBubble()
+    {
+        var rows = new[] { "lead-idle-result", "lead-multi-terminated-and-approved", "synthetic-control-user-quotes-wrapper" }
+            .Select(n => File.ReadAllText(Path.Combine(Cb330Dir(), n + ".jsonl")).TrimEnd('\n'))
+            .ToList();
+        var path = WriteTranscript("relay.jsonl", rows);
+
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", path);
+
+        Assert.True(await harness.HandshakeAsync("job-hunter"));
+        Assert.True(await harness.Client.OpenAsync("job-hunter"));
+
+        var delivered = Assert.Single(harness.Windows);
+
+        Assert.Equal(MirrorProtocol.TurnsFrom(rows, MirrorProtocol.CliClaudeCode), delivered.Turns);
+
+        // 1 idle + 4 in the multi row + the control.
+        Assert.Equal(6, delivered.Turns.Count);
+        Assert.All(delivered.Turns.Take(5), t =>
+        {
+            Assert.Equal("s", t.Role);
+            Assert.NotNull(t.Relay);
+            Assert.DoesNotContain("Another Claude session", t.Text);
+        });
+        Assert.Equal("hana-moriyama", delivered.Turns[0].Relay!.Name);
+
+        // The control is a person quoting the wrapper: still theirs, no relay.
+        Assert.Equal("u", delivered.Turns[5].Role);
+        Assert.Null(delivered.Turns[5].Relay);
+
+        // And the session adopts all five relay turns, not just the first of a
+        // row that shares one uuid.
+        var adopted = MirrorProtocol.AdoptTurns(delivered.Turns);
+        Assert.Equal(5, adopted.Count(a => a.Turn.Relay is not null));
+        Assert.Equal(adopted.Count, adopted.Select(a => a.Key).Distinct().Count());
+    }
+
+    private static string Cb330Dir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "TranscriptTests", "Captures", "cb330"));
+
     // A conversation big enough to need many frames, which is where chunking,
     // ordering and the whole-payload hash all have to hold at once.
     [Fact]

@@ -854,7 +854,94 @@ namespace Orbweaver
             [property: JsonPropertyName("r")] string Role,
             [property: JsonPropertyName("t")] string Text,
             [property: JsonPropertyName("u")] string? Uuid = null,
-            [property: JsonPropertyName("a")] long At = 0);
+            [property: JsonPropertyName("a")] long At = 0,
+            [property: JsonPropertyName("k")] MirrorRelay? Relay = null);
+
+        // CB-330: the fields of a RelayedMessage, with short names like the rest
+        // of the frame. Optional on MirrorTurn and omitted when null, so a frame
+        // without a relay is byte for byte what it was; a receiver that predates
+        // it ignores the unknown "k" and draws the turn's Text as a system line.
+        public sealed record MirrorRelay(
+            [property: JsonPropertyName("d")] int Kind,
+            [property: JsonPropertyName("n")] string? Name,
+            [property: JsonPropertyName("c")] string? Color,
+            [property: JsonPropertyName("y")] string Type,
+            [property: JsonPropertyName("v")] string Verb,
+            [property: JsonPropertyName("p")] string Preview,
+            [property: JsonPropertyName("f")] string FullText)
+        {
+            public static MirrorRelay From(RelayedMessage r) =>
+                new((int)r.Kind, r.Name, r.Color, r.PayloadType, r.Verb, r.Preview, r.FullText);
+
+            // A Kind this build does not know is read as Peer, the plainer row.
+            public RelayedMessage ToRelayed() =>
+                new(Kind == (int)RelayKind.Teammate ? RelayKind.Teammate : RelayKind.Peer,
+                    Name, Color, Type ?? "", Verb ?? "", Preview ?? "", FullText ?? "");
+        }
+
+        // One mirrored turn as the turn(s) this side draws, keyed for dedupe.
+        // Key is the row's uuid for its first turn and uuid#n for the n-th turn
+        // of the same row in the same frame: one transcript row can map to
+        // several turns (a row with several tags does), and keying by uuid alone
+        // would keep the first and drop the rest.
+        public sealed record MirroredRow(string? Key, ChatTurn Turn);
+
+        public static List<MirroredRow> AdoptTurns(IEnumerable<MirrorTurn> turns)
+        {
+            var result = new List<MirroredRow>();
+            var perUuid = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            void Add(string? uuid, ChatTurn turn)
+            {
+                var key = uuid;
+                if (uuid is not null)
+                {
+                    perUuid.TryGetValue(uuid, out var n);
+                    perUuid[uuid] = n + 1;
+                    if (n > 0) key = uuid + "#" + n;
+                }
+
+                result.Add(new MirroredRow(key, turn));
+            }
+
+            foreach (var t in turns)
+            {
+                var at = t.At > 0
+                    ? DateTimeOffset.FromUnixTimeSeconds(t.At).ToLocalTime()
+                    : DateTimeOffset.Now;
+
+                if (t.Relay is { } frame)
+                {
+                    var relay = frame.ToRelayed();
+                    Add(t.Uuid, new ChatTurn
+                    {
+                        Role = ChatRole.System, Text = t.Text, IsComplete = true, At = at, Relay = relay
+                    });
+                    continue;
+                }
+
+                // An older Orbweaver on the far side sends the raw wrapper as a
+                // user turn. Compact it here so the row looks the same whichever
+                // end is newer.
+                var role = RoleOf(t.Role);
+                if (role == ChatRole.User && RelayedMessage.Classify(t.Text) is { } old)
+                {
+                    foreach (var relay in old.Relays)
+                        Add(t.Uuid, new ChatTurn
+                        {
+                            Role = ChatRole.System, Text = relay.Line, IsComplete = true, At = at, Relay = relay
+                        });
+
+                    if (old.OwnText is not null)
+                        Add(t.Uuid, new ChatTurn { Role = ChatRole.User, Text = old.OwnText, IsComplete = true, At = at });
+                    continue;
+                }
+
+                Add(t.Uuid, new ChatTurn { Role = role, Text = t.Text, IsComplete = true, At = at });
+            }
+
+            return result;
+        }
 
         private static readonly JsonSerializerOptions TurnJson = new()
         {
@@ -900,7 +987,8 @@ namespace Orbweaver
                     },
                     r.Turn.Text,
                     r.Uuid,
-                    r.Turn.At.ToUnixTimeSeconds()))
+                    r.Turn.At.ToUnixTimeSeconds(),
+                    r.Turn.Relay is { } relay ? MirrorRelay.From(relay) : null))
                 .ToList();
         }
 
