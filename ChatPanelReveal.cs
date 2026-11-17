@@ -114,7 +114,9 @@ namespace Orbweaver
         private void Finish()
         {
             Pending = false;
-            _deadline?.Dispose();
+            // Never null here: Pending is only true between Begin, which arms
+            // it, and Cancel/Finish, which clear Pending first.
+            _deadline!.Dispose();
             _deadline = null;
             _reveal();
         }

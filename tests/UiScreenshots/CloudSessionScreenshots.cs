@@ -427,7 +427,10 @@ public class CloudSessionScreenshots : IDisposable
         input.Focus();
         input.Text = "/";
         input.CaretIndex = 1;
-        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        // Flush, not RunJobs: the panel is held at opacity 0 until its reveal
+        // gate has seen a couple of frames (CB-286).
+        ScreenshotHelper.Flush();
 
         ScreenshotHelper.CaptureAlreadyShown(panel, "chat-panel-cloud-slash-box.png");
     }
