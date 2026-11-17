@@ -24,7 +24,7 @@ namespace Orbweaver.Tests;
 [Collection("Settings")]
 public class TrayMenuTests
 {
-    private const string NoSessions = "Agents";
+    private const string AgentsEmpty = "Agents";
     private const string ResetAll = "Reset all sessions to idle";
     private const string ShowOrbs = "Show orbs";
     private const string Quit = $"Quit {Brand.DisplayName}";
@@ -88,8 +88,8 @@ public class TrayMenuTests
         // "no Claude Code sessions" is known to be the whole truth — Codex has
         // no enable switch this app can see — and naming one CLI while another
         // is quietly running reads as a bug in the other.
-        Assert.Contains(NoSessions, Labels(menu));
-        Assert.False(Item(menu, NoSessions)!.IsEnabled);
+        Assert.Contains(AgentsEmpty, Labels(menu));
+        Assert.False(Item(menu, AgentsEmpty)!.IsEnabled);
         Assert.False(Item(menu, ResetAll)!.IsEnabled);
 
         // The permanent controls are there regardless: there is no Dock icon and
@@ -113,7 +113,7 @@ public class TrayMenuTests
 
         var labels = AgentLabels(MenuOf(tray));
 
-        Assert.DoesNotContain(NoSessions, Labels(MenuOf(tray)));
+        Assert.DoesNotContain(AgentsEmpty, Labels(MenuOf(tray)));
         Assert.Contains("Agents (2)", Labels(MenuOf(tray)));
         Assert.Equal("first — idle", labels[0]);
         Assert.Equal("second — needs you", labels[1]);
