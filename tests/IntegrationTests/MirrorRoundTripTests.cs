@@ -613,6 +613,53 @@ public class MirrorRoundTripTests : IDisposable
         Assert.Equal(first.Length + 1, read.From);
     }
 
+    // CB-330: AdoptTurns keys the n-th turn of a row as uuid#n, so a row that maps
+    // to several turns must always reach the session whole, or the keys of a
+    // later frame would shift. A frame is cut by ReadRange, which skips a partial
+    // first line and drops a partial last one, so a row is sent whole or not at
+    // all. Windows that start and end mid-row, then the full file: no row is
+    // partly delivered, none is duplicated and none is dropped.
+    [Fact]
+    public void AMidRowCutNeverSendsPartOfARowAndALaterFullReadKeepsEveryTurn()
+    {
+        static string Multi(string uuid, params string[] texts) =>
+            "{\"type\":\"assistant\",\"uuid\":\"" + uuid + "\",\"timestamp\":\"2026-11-16T10:00:00Z\","
+            + "\"message\":{\"role\":\"assistant\",\"content\":["
+            + string.Join(",", texts.Select(t => "{\"type\":\"text\",\"text\":\"" + t + "\"}")) + "]}}";
+
+        var r1 = Multi("m1", "a1", "a2", "a3");
+        var r2 = Multi("m2", "b1", "b2", "b3");
+        var r3 = Multi("m3", "c1", "c2", "c3");
+        var path = Path.Combine(_dir, "multi.jsonl");
+        File.WriteAllText(path, r1 + "\n" + r2 + "\n" + r3 + "\n");
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+        // From the middle of row 1 to the middle of row 3: only row 2 is whole.
+        var partial = RemoteMirrorServer.ReadRange(fs, r1.Length / 2, r1.Length + 1 + r2.Length + 1 + r3.Length / 2, alignStart: true);
+        Assert.Equal(r2, Assert.Single(partial.Lines));
+
+        var seen = new HashSet<string>();
+        var texts = new List<string>();
+
+        void Deliver(IEnumerable<string> lines)
+        {
+            foreach (var row in MirrorProtocol.AdoptTurns(MirrorProtocol.TurnsFrom(lines, MirrorProtocol.CliClaudeCode)))
+                if (row.Key is null || seen.Add(row.Key))
+                    texts.Add(row.Turn.Text);
+        }
+
+        Deliver(partial.Lines);
+        Assert.Equal(new[] { "b1", "b2", "b3" }, texts);
+
+        var full = RemoteMirrorServer.ReadRange(fs, 0, fs.Length, alignStart: true);
+        Deliver(full.Lines);
+
+        // Every turn of every row exactly once; the overlap on row 2 was not
+        // duplicated and the other rows lost nothing.
+        Assert.Equal(new[] { "b1", "b2", "b3", "a1", "a2", "a3", "c1", "c2", "c3" }, texts);
+    }
+
     [Fact]
     public void AnEmptyWindowIsEmptyRatherThanAThrow()
     {

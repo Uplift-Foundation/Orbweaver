@@ -148,6 +148,29 @@ public class MirrorRelayTests
         Assert.Equal(new[] { "r", "r#1", "r#2" }, adopted.Select(a => a.Key));
     }
 
+    // The old behaviour, shown beside the new. The session dedupes on a key; keyed
+    // by uuid alone (before CB-330) a row with three text blocks kept the first
+    // turn and dropped two. Keyed by AdoptTurns it keeps all three.
+    [Fact]
+    public void ANonRelayRowWithSeveralTurnsKeepsAllOfThemWhereUuidAloneKeptOne()
+    {
+        var row = "{\"type\":\"assistant\",\"uuid\":\"m1\",\"timestamp\":\"2026-11-16T10:00:00Z\","
+            + "\"message\":{\"role\":\"assistant\",\"content\":["
+            + "{\"type\":\"text\",\"text\":\"one\"},{\"type\":\"text\",\"text\":\"two\"},{\"type\":\"text\",\"text\":\"three\"}]}}";
+        var turns = MirrorProtocol.TurnsFrom(new[] { row }, MirrorProtocol.CliClaudeCode);
+        Assert.Equal(3, turns.Count);
+        Assert.All(turns, t => Assert.Null(t.Relay));
+
+        var oldSeen = new System.Collections.Generic.HashSet<string>();
+        var keptByUuid = turns.Where(t => oldSeen.Add(t.Uuid!)).Count();
+
+        var newSeen = new System.Collections.Generic.HashSet<string>();
+        var keptByKey = MirrorProtocol.AdoptTurns(turns).Where(a => newSeen.Add(a.Key!)).Select(a => a.Turn.Text).ToList();
+
+        Assert.Equal(1, keptByUuid);
+        Assert.Equal(new[] { "one", "two", "three" }, keptByKey);
+    }
+
     [Fact]
     public void AnUnknownRelayKindIsReadAsPeer()
     {
