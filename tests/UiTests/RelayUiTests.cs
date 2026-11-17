@@ -493,6 +493,43 @@ public class RelaySettingsAndServiceTests : IDisposable
         }
     }
 
+    // Orbs without faces was the next report: LocalPersonas is filled only by
+    // the live scan, so the headless feed sent no personas. A tick now
+    // resolves them under ApplyPersona's rules, from the project's real files,
+    // and forgets them when the session goes.
+    [AvaloniaFact]
+    public void A_headless_tick_gives_its_sessions_their_personas_and_forgets_them()
+    {
+        var project = Path.Combine(_dir, "persona-project");
+        Directory.CreateDirectory(project);
+        File.WriteAllText(Path.Combine(project, "CLAUDE.md"), "# Notes\n\nHer name is Leota.\n");
+        var sessionId = "headless-persona-" + Guid.NewGuid();
+        var status = new SessionStatus { State = "idle", Cli = "", Title = "t", Cwd = project, SessionPid = Environment.ProcessId };
+        var rows = new List<(string, SessionStatus)> { (sessionId, status) };
+
+        RelayService.Factory = () => Client("Phone");
+        RelayService.UserConfigDirs = () => [];
+        RelayService.HeadlessScan = () => rows;
+        RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.Enable();
+        try
+        {
+            RelayService.HeadlessTick();
+            Assert.Equal("Leota", LocalPersonas.For(sessionId)?.Name);
+
+            // Same files, next tick: the same persona object, not a re-resolve.
+            var first = LocalPersonas.For(sessionId);
+            RelayService.HeadlessTick();
+            Assert.Same(first, LocalPersonas.For(sessionId));
+
+            rows.Clear();
+            RelayService.HeadlessTick();
+            Assert.Null(LocalPersonas.For(sessionId));
+        }
+        finally { LocalPersonas.Forget(sessionId); }
+    }
+
     // A scan that throws is logged and swallowed: it runs on a Timer that
     // discards exceptions, and the next tick must still come.
     [AvaloniaFact]

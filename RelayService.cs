@@ -139,8 +139,58 @@ namespace Orbweaver
             lock (HeadlessGate)
             {
                 if (_attached) return;
-                try { OnScanned(HeadlessScan()); }
+                try
+                {
+                    var snapshot = HeadlessScan();
+                    ResolveHeadlessPersonas(snapshot);
+                    OnScanned(snapshot);
+                }
                 catch (Exception e) { MirrorLog.Say("relay", $"headless scan failed: {e.GetType().Name}"); }
+            }
+        }
+
+        // The roster's personas come from LocalPersonas, and only the live
+        // scan's ApplyPersona fills it. The headless feed above sent the
+        // phone a parked Mac's orbs with no personas at all until this ran.
+        // The same rules as ApplyPersona: candidates per (cwd, source, agent)
+        // for one pass, the persona kept while its files' signature holds so
+        // a tick every three seconds is not a re-resolve every three seconds,
+        // and a session's persona forgotten once the session has gone, as
+        // the live scan forgets it. Under HeadlessGate, from HeadlessTick.
+        private static readonly Dictionary<string, (string Signature, LocalPersona.Persona Persona)> HeadlessPersonas =
+            new(StringComparer.Ordinal);
+
+        internal static void ResolveHeadlessPersonas(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
+        {
+            var dirs = UserConfigDirs();
+            var candidatesByKey = new Dictionary<(string, SessionSource, string), IReadOnlyList<LocalPersona.Candidate>>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (sessionId, status) in snapshot)
+            {
+                if (!status.IsLocalCli || string.IsNullOrWhiteSpace(status.Cwd)) continue;
+                seen.Add(sessionId);
+                var key = (status.Cwd, status.Source, status.Agent);
+                if (!candidatesByKey.TryGetValue(key, out var candidates))
+                    candidatesByKey[key] = candidates = LocalPersona.Candidates(status.Cwd, dirs, status.Source, status.Agent);
+
+                var paths = candidates.Select(c => c.Path);
+                var known = HeadlessPersonas.TryGetValue(sessionId, out var k) ? k : default;
+                if (known.Persona is not null
+                    && known.Signature == LocalPersona.Signature(paths.Concat(known.Persona.Watched)))
+                {
+                    LocalPersonas.Set(sessionId, known.Persona);
+                    continue;
+                }
+
+                var persona = LocalPersona.ResolveFrom(candidates, status.Cwd);
+                HeadlessPersonas[sessionId] = (LocalPersona.Signature(paths.Concat(persona.Watched)), persona);
+                LocalPersonas.Set(sessionId, persona);
+            }
+
+            foreach (var gone in HeadlessPersonas.Keys.Where(id => !seen.Contains(id)).ToList())
+            {
+                HeadlessPersonas.Remove(gone);
+                LocalPersonas.Forget(gone);
             }
         }
 
@@ -151,6 +201,7 @@ namespace Orbweaver
                 _headless?.Dispose();
                 _headless = null;
                 _attached = false;
+                HeadlessPersonas.Clear();
             }
             HeadlessScan = () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
             HeadlessEvery = TimeSpan.FromSeconds(3);
