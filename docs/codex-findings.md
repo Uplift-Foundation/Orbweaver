@@ -484,7 +484,17 @@ rather than on a five-minute timer.
 The usage orb tries this first and falls back to the newest windowed snapshot
 across the rollout tree, carrying that snapshot's timestamp so the card can date
 the number rather than the read. It does not call `/status`, does not hit
-chatgpt.com, and does not read `auth.json`'s `tokens` or `OPENAI_API_KEY`.
+chatgpt.com, and does not read `auth.json`'s `OPENAI_API_KEY`, `access_token` or
+`refresh_token`.
+
+It does read two identifier strings out of `tokens` since CB-340 —
+`tokens.account_id` and the `chatgpt_user_id` claim of `tokens.id_token`,
+nested under `https://api.openai.com/auth` on the machine measured — so one
+Codex account can be recognised across PCs. The old rule ("never `tokens`")
+existed because a second reader that loses a compare-and-swap on a rotating
+token logs the user out; that is an argument against refreshing or writing a
+token, and reading an identifier does neither. Only an HMAC of the two ids
+leaves the desktop. See `docs/account-identity-findings.md`.
 
 ## Still unknown
 
