@@ -124,6 +124,20 @@ public class RelayUsageV12Tests
             Assert.False(a.Shape.Equals(changed.Shape));
     }
 
+    [Fact]
+    public void The_log_line_names_each_account_by_cli_and_six_hex_and_nothing_that_identifies_it()
+    {
+        var line = RelayUsage.LogLine([
+            Acct(display: "Quillwork Studio", name: "river.quill@example.com"),
+            Acct(id: null) with { Cli = "grok", Name = "grok" },
+            Acct(id: "not-an-id") with { Cli = "codex" },
+        ]);
+        Assert.Equal("usage accounts claude:ac7d4a grok:- codex:-", line);
+        Assert.DoesNotContain("quill", line, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(Id, line);
+        Assert.Equal("usage accounts ", RelayUsage.LogLine([]));
+    }
+
     // ---- limit_e ----------------------------------------------------------------------
 
     [Fact]

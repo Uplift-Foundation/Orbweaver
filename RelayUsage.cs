@@ -107,6 +107,15 @@ namespace Orbweaver
             return string.IsNullOrWhiteSpace(a.DisplayName) ? null : PromptFrames.Cut(a.DisplayName.Trim(), MaxDisplayName);
         }
 
+        // What the desktop's log may say about the accounts it just projected
+        // (frames-v12 desktop_rules.log): each as its CLI and the first six hex
+        // of its account id, "-" for one with none. Never a name, a display
+        // name, an email or a provider id — which is also what lets the same
+        // account be compared across PCs by reading three logs.
+        internal static string LogLine(IEnumerable<Account> accounts) =>
+            "usage accounts " + string.Join(' ', accounts.Select(a =>
+                a.Cli + ":" + (IsAccountId(a.AccountId) ? AccountIdentity.Short(a.AccountId!) : "-")));
+
         internal static string Frame(IEnumerable<Account> accounts) =>
             new CanonicalJson().Str("t", "usage").Array("accounts", accounts.Select(AccountJson)).ToString();
 

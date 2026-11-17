@@ -255,6 +255,7 @@ namespace Orbweaver
         internal void OnUsage(IReadOnlyList<RelayUsage.Account> accounts)
         {
             IReadOnlyList<RelayUsageTracker.Send> sends;
+            MirrorLog.Say("relay", RelayUsage.LogLine(accounts));
             lock (_gate) sends = _usage.Next(accounts);
             foreach (var send in sends)
                 Dispatch(() => _link.SendUsage(send.Plaintext, send.Crossing));
