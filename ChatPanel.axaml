@@ -37,7 +37,7 @@
          BeginResizeDrag somewhere to grab.
 
          Colours are lifted from OrbFlyout.axaml so the two read as one app. -->
-    <Grid>
+    <Grid x:Name="Chrome">
     <Border x:Name="Root"
             HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
             CornerRadius="12" Padding="10"

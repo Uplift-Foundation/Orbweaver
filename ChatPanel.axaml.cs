@@ -160,6 +160,20 @@ namespace Orbweaver
 
         private readonly ObservableCollection<TurnView> _turns = new();
 
+        // CB-286's reveal gate, and the scale of the screen Reposition last
+        // placed this panel on — what the gate waits for RenderScaling to
+        // match. NaN until a Reposition has run, which the gate reads as
+        // "nothing to compare".
+        private readonly ChatPanelReveal _reveal;
+        private double _targetScale = double.NaN;
+
+        // False from Bind until the panel has been laid out at its final size.
+        internal bool IsRevealed => Chrome.Opacity > 0;
+
+        // The width each row was last told it has, read by the CB-286 tests to
+        // see whether a freshly bound transcript was laid out for the new size.
+        internal IReadOnlyList<double> TurnAvailableWidths => _turns.Select(t => t.AvailableWidth).ToList();
+
         // Pictures pasted since the last send, waiting to go out with
         // whatever gets typed next. Not part of a session's own draft store
         // below — a paste is only ever meant for the message being composed
@@ -403,6 +417,14 @@ namespace Orbweaver
             // was left at. Done here rather than in Bind because it is about
             // the window, not about which session is in it.
             ApplyTextScale();
+
+            _reveal = new ChatPanelReveal(
+                settled: () => ChatPanelReveal.IsSettled(
+                    new Size(Width, Height), Bounds.Size, RenderScaling, _targetScale),
+                hide: () => Chrome.Opacity = 0,
+                reveal: () => Chrome.Opacity = 1,
+                nextFrame: cb => (TopLevel.GetTopLevel(this) ?? this).RequestAnimationFrame(_ => cb()),
+                startDeadline: cb => DispatcherTimer.RunOnce(cb, TimeSpan.FromMilliseconds(400)));
 
             Opened += (_, _) =>
             {
@@ -826,6 +848,8 @@ namespace Orbweaver
             // Whatever this agent's panel was last dragged to. Before the
             // transcript is built and before Reposition(), because the height
             // decides whether the panel goes above or below the orb.
+            _targetScale = double.NaN;
+            _reveal.Begin();
             ApplySavedSize(orb);
 
             session.TurnAdded += OnTurnAdded;
@@ -2167,6 +2191,7 @@ namespace Orbweaver
             if (screen is null) return;
 
             var scale = screen.Scaling;
+            _targetScale = scale;
             var work = screen.WorkingArea;
 
             // Width and Height are the resize target (see the XAML comment),
@@ -3865,6 +3890,12 @@ namespace Orbweaver
             // the session's own history is bounded, this collection was not.
             // Bind rebuilds from History anyway, so there is nothing to keep.
             Unbind();
+
+            // Left at opacity 0 on purpose: the next Bind begins a new reveal
+            // anyway, and a panel that flashed visible while hiding would be
+            // the same defect from the other end.
+            _reveal.Cancel();
+            Chrome.Opacity = 0;
 
             _owner?.SetChatOpen(false);
             Hide();
