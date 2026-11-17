@@ -234,7 +234,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel                  
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌│
  Do you want to proceed?                                                                                               │xx-000 xx-000: xxxxx xxxxxxx xx x xxxxx xxxxxxx, xxx xxxx xxxx xxxxx xxxxx xxxxx xxx xxxxx
  ❯ 1. Yes                                                                                                              │xxx x = xxxxxx x x x 0x
-   2. Yes, and always allow access to /work/project/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-xxxx-xxx │
+   2. Yes, and always allow access to /private/tmp/claude-000/-Users-someoneexample-Source-Orbweaver/xxxxxxxx-xxxx-xxx │
       x-xxxx-xxxxxxxxxxxx/scratchpad/live/work from this project                                                       │xx-000 xx-xxxx xx xxxxxxxx xxxxxxxx xxxxxxxxxxxx xxxx xxx xxx xxxx xxxxxx, xxx xxxx xxxxx x xxx
    3. Yes, and switch to auto mode · auto mode handles these prompts for you                                           │xxxxxxx x = xxxxxx x x x 0x
    4. No                                                                                                               │
