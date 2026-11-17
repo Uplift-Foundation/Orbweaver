@@ -91,15 +91,32 @@ stored or sent** — only the HMAC leaves the desktop. `access_token`,
 `tokens` because the label never needed them. A test pins that the id does not
 move when those secrets do.
 
+## Confirmed on all three machines
+
+Measured 16 Nov 2026 on the MacBook, the Mac mini and the Windows PC, by the
+lead, again key names and value shapes only:
+
+- **Claude**: every logged-in profile has `oauthAccount.accountUuid` and
+  `organizationUuid` (UUIDs) beside `emailAddress` and `displayName`; a
+  never-logged-in profile (`.claude-work`) has no `oauthAccount` and so gets no
+  id.
+- **Codex**: `auth.json` top level is exactly `OPENAI_API_KEY`, `auth_mode`,
+  `last_refresh`, `tokens`; `tokens.account_id` is a UUID; `chatgpt_user_id` is
+  under the `https://api.openai.com/auth` claim (a 29-character string) on the
+  mini and the Windows PC as well as here.
+- **Grok**: one object entry with `user_id`, `principal_id`, `team_id` (UUIDs)
+  and `email`.
+- **Same account, same provider id across machines**: a SHA-256 fingerprint of
+  `accountUuid` per profile is identical on all three machines for `~`,
+  `.claude-board`, `.claude-loginid` and, where present, `.claude-sundaysky`.
+  Since the HMAC's inputs agree, so does the id it produces.
+
 ## Not verified — do not write these down as facts until they are
 
-- **The same key names on the Mac mini and the Windows PC.** Only one machine's
-  files were read. A key-name-only capture over ssh on each is still to do, and
-  it is the cheapest way to turn this into a confirmed claim on all three.
-- **That one Claude account gives one `account_id` on all three PCs.** It
-  should, because the ids come from the provider, but nothing has compared them
-  across machines. The live check is the desktop's verbose log on each PC
-  (cli plus the first six hex only).
+- **The desktop's own log showing one `account_id` per account on all three
+  PCs.** The inputs agree (above) and the derivation is pinned by vectors, but
+  no installed build has logged its ids yet; that is the live check after
+  install.
 - **Whether `chatgpt_user_id` is stable across a re-login** and whether Codex
   and Grok limits are per user or per team. The id is conservative either way:
   the failure is two cards, not a wrong merge.
