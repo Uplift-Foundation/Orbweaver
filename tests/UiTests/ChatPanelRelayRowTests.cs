@@ -649,8 +649,14 @@ public class ChatPanelRelayRowTests : IDisposable
     public void TheRowGrowsWithTheChatTextScale()
     {
         var panel = OpenWith(RelayTurn(Finished()));
-        var before = Inside<Avalonia.Controls.Shapes.Ellipse>(OnlyRelayRow(panel), "RelayDotMark").Width;
+
+        // The panel is reused across tests and an earlier one can leave the
+        // scale at the maximum, which would make "grows" compare 16 with 16.
         var scaleBefore = OrbweaverSettings.ChatTextScale;
+        OrbweaverSettings.ChatTextScale = ChatZoom.Default;
+        ChatPanel.ReapplyTextScale();
+        Flush();
+        var before = Inside<Avalonia.Controls.Shapes.Ellipse>(OnlyRelayRow(panel), "RelayDotMark").Width;
         try
         {
             OrbweaverSettings.ChatTextScale = ChatZoom.Max;
