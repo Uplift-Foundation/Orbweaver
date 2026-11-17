@@ -64,6 +64,27 @@ field() {
         | sed 's/.*:[[:space:]]*"\(.*\)"$/\1/'
 }
 
+# A Claude Code mod's own MCP call (the jira-board pane re-reading Jira every
+# minute, say) fires PreToolUse under the host session's id, and writing
+# `generating` for it flips an idle or waiting session to "working" with nobody
+# at the keyboard (CB-353). Claude Code marks those calls: the top-level
+# `tool_use_id` starts `toolu_plugin_`, where the model's own start `toolu_01`.
+# Write nothing and leave whatever state the session is in.
+#
+# Top-level, so the LAST match, not `field`'s first: `tool_input` is written
+# before `tool_use_id` and can carry that very text (a prompt about this fix
+# would). A nested object in tool_input holding its own `tool_use_id` key would
+# also precede the top-level one, so last is right there too.
+if [ "$STATE" = "generating" ]; then
+    TOOL_USE_ID=$(printf '%s' "$PAYLOAD" \
+        | grep -o '"tool_use_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | tail -1 \
+        | sed 's/.*:[[:space:]]*"\(.*\)"$/\1/')
+    case "$TOOL_USE_ID" in
+        toolu_plugin_*) exit 0 ;;
+    esac
+fi
+
 SESSION_ID=$(field session_id)
 [ -n "$SESSION_ID" ] || SESSION_ID=$(field sessionId)
 [ -n "$SESSION_ID" ] || SESSION_ID="${GROK_SESSION_ID:-}"
