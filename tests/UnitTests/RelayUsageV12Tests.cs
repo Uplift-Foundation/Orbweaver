@@ -73,13 +73,13 @@ public class RelayUsageV12Tests
     }
 
     [Fact]
-    public void Initials_are_cut_to_sixteen_units_and_dropped_when_blank()
+    public void Initials_over_sixteen_units_or_blank_are_omitted_never_cut()
     {
         Assert.Equal("Q✦", Sent(Acct(initials: "Q✦")).GetProperty("initials").GetString());
+        Assert.Equal(new string('x', 16), Sent(Acct(initials: new string('x', 16))).GetProperty("initials").GetString());
+        Assert.False(Sent(Acct(initials: new string('x', 17))).TryGetProperty("initials", out _));
         Assert.False(Sent(Acct(initials: " ")).TryGetProperty("initials", out _));
-        var cut = Sent(Acct(initials: new string('x', 17))).GetProperty("initials").GetString()!;
-        Assert.Equal(16, cut.Length);
-        Assert.EndsWith("…", cut);
+        Assert.False(Sent(Acct(initials: null)).TryGetProperty("initials", out _));
     }
 
     [Theory]

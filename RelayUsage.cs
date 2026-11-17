@@ -87,7 +87,9 @@ namespace Orbweaver
             // and not the account.
             if (IsAccountId(a.AccountId)) j.Str("account_id", a.AccountId!);
             if (DisplayNameOf(a) is { } name) j.Str("display_name", name);
-            if (!string.IsNullOrWhiteSpace(a.Initials)) j.Str("initials", PromptFrames.Cut(a.Initials, MaxInitials));
+            // Omitted, not cut, when over the cap: a cut grapheme is a different
+            // glyph, and the phone draws its own letters from the title anyway.
+            if (!string.IsNullOrWhiteSpace(a.Initials) && a.Initials.Length <= MaxInitials) j.Str("initials", a.Initials);
             if (PersonaFrames.IsHash(a.IconHash)) j.Str("icon_hash", a.IconHash!);
             if (a.OverrideUpdatedAt is >= 0 and var at) j.Num("override_updated_at", at);
             return j.ToString();

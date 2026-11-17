@@ -152,9 +152,10 @@ public class RelayV12VectorTests
         }
         else if (sent.TryGetProperty(key, out var got))
         {
-            // Over the cap: sent, but cut to within it and ending in the cut mark.
-            Assert.True(key is "display_name" or "initials");
-            Assert.True(got.GetString()!.Length <= (key == "display_name" ? 64 : 16));
+            // Over the cap: a display name is sent cut to within it, ending in the cut mark.
+            // Initials over the cap are omitted, never cut, so they cannot reach here.
+            Assert.Equal("display_name", key);
+            Assert.True(got.GetString()!.Length <= 64);
             Assert.EndsWith("…", got.GetString());
         }
     }
