@@ -24,7 +24,7 @@ namespace Orbweaver.Tests;
 [Collection("Settings")]
 public class TrayMenuTests
 {
-    private const string NoSessions = "No sessions";
+    private const string NoSessions = "Agents";
     private const string ResetAll = "Reset all sessions to idle";
     private const string ShowOrbs = "Show orbs";
     private const string Quit = $"Quit {Brand.DisplayName}";
@@ -63,6 +63,11 @@ public class TrayMenuTests
 
     private static List<string> Labels(NativeMenu menu) =>
         menu.Items.OfType<NativeMenuItem>().Select(item => item.Header ?? "").ToList();
+
+    // The session rows live in the "Agents (N)" submenu since CB-355.
+    private static List<string> AgentLabels(NativeMenu menu) =>
+        Labels(menu.Items.OfType<NativeMenuItem>()
+            .First(i => i.Header == "Agents" || (i.Header ?? "").StartsWith("Agents (")).Menu!);
 
     private static NativeMenuItem? Item(NativeMenu menu, string header) =>
         menu.Items.OfType<NativeMenuItem>().FirstOrDefault(i => i.Header == header);
@@ -106,9 +111,10 @@ public class TrayMenuTests
             Entry("id-2", state: "waiting", title: "second"),
         });
 
-        var labels = Labels(MenuOf(tray));
+        var labels = AgentLabels(MenuOf(tray));
 
-        Assert.DoesNotContain(NoSessions, labels);
+        Assert.DoesNotContain(NoSessions, Labels(MenuOf(tray)));
+        Assert.Contains("Agents (2)", Labels(MenuOf(tray)));
         Assert.Equal("first — idle", labels[0]);
         Assert.Equal("second — needs you", labels[1]);
         Assert.True(Item(MenuOf(tray), ResetAll)!.IsEnabled);
@@ -130,7 +136,7 @@ public class TrayMenuTests
             Entry("cccc3333-0000", title: "unique"),
         });
 
-        var labels = Labels(MenuOf(tray));
+        var labels = AgentLabels(MenuOf(tray));
 
         Assert.Contains("evidence (aaaa) — idle", labels);
         Assert.Contains("evidence (bbbb) — idle", labels);
@@ -159,7 +165,7 @@ public class TrayMenuTests
         // doing anything.
         tray.Update(new[] { Entry("id-1", state: "waiting", title: "first") });
         Assert.DoesNotContain(Sentinel, Labels(menu));
-        Assert.Contains("first — needs you", Labels(menu));
+        Assert.Contains("first — needs you", AgentLabels(menu));
     }
 
     [AvaloniaFact]
@@ -185,7 +191,7 @@ public class TrayMenuTests
         // Replayed on close. _lastSignature was deliberately left stale so the
         // change could not be swallowed by the gate above.
         Assert.DoesNotContain(Sentinel, Labels(menu));
-        Assert.Contains("first — needs you", Labels(menu));
+        Assert.Contains("first — needs you", AgentLabels(menu));
     }
 
     [AvaloniaFact]
