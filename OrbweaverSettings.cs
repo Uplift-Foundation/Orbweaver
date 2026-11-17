@@ -1951,7 +1951,7 @@ namespace Orbweaver
         // CB-330: Collapsed (a one-line row, the default), Expanded (the full text
         // open) or Hidden (no row at all) for relayed teammate and peer messages.
         // Always one of the three: an unknown word in the file reads as Collapsed
-        // (RelayRow.Parse), so there is nothing to clamp on the way out.
+        // (RelayedMessageWords.Parse), so there is nothing to clamp on the way out.
         public static RelayedMessageDisplay RelayedMessages
         {
             get { Load(); lock (Gate) return _model.RelayedMessages; }
@@ -2713,7 +2713,7 @@ namespace Orbweaver
 
                         // Text() and a parse that falls back to Collapsed: a
                         // hand-edited 7 or "sideways" costs this one choice.
-                        RelayedMessages = RelayRow.Parse(Text(root["relayedMessages"])),
+                        RelayedMessages = RelayedMessageWords.Parse(Text(root["relayedMessages"])),
 
                         // Number() rather than GetValue<double>(): a new key,
                         // so it gets the defence Number's comment describes
@@ -3462,7 +3462,7 @@ namespace Orbweaver
                         ["arrangeShape"] = _model.ArrangeShape,
                         ["arrangeSpacing"] = _model.ArrangeSpacing,
                         ["chatTextScale"] = _model.ChatTextScale,
-                        ["relayedMessages"] = RelayRow.Name(_model.RelayedMessages),
+                        ["relayedMessages"] = RelayedMessageWords.Name(_model.RelayedMessages),
                         ["orbSize"] = _model.OrbSize,
                         ["speechVolume"] = _model.SpeechVolume,
                         ["alertVolume"] = _model.AlertVolume,

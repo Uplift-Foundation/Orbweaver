@@ -10,31 +10,8 @@ namespace Orbweaver
     // session. Everything that is a decision rather than a drawing lives here,
     // pure, so it can be tested with no window and no settings behind it.
     //
-    // The three answers the setting can give. Collapsed is the default: a lead
-    // with a team gets an idle notification per teammate per turn, and a full
-    // bubble for each is exactly the noise this ticket removes.
-    public enum RelayedMessageDisplay { Collapsed, Expanded, Hidden }
-
     internal static class RelayRow
     {
-        // The JSON spellings, and the only ones: a hand-edited or newer value
-        // is read as Collapsed rather than guessed at (see Parse).
-        internal static string Name(RelayedMessageDisplay display) => display switch
-        {
-            RelayedMessageDisplay.Expanded => "expanded",
-            RelayedMessageDisplay.Hidden => "hidden",
-            _ => "collapsed"
-        };
-
-        // Unknown, empty and missing all read as Collapsed. A settings file is
-        // editable by hand and shared with versions that know more words than
-        // this one, and the cost of misreading one must be "the default", never
-        // "every teammate message vanishes".
-        internal static RelayedMessageDisplay Parse(string? value) =>
-            string.Equals(value, "expanded", StringComparison.OrdinalIgnoreCase) ? RelayedMessageDisplay.Expanded
-            : string.Equals(value, "hidden", StringComparison.OrdinalIgnoreCase) ? RelayedMessageDisplay.Hidden
-            : RelayedMessageDisplay.Collapsed;
-
         // The reader's own click wins over the setting, in both directions: a
         // row they opened stays open under Collapsed, and one they closed stays
         // closed under Expanded. Hidden never reaches here — the row is not

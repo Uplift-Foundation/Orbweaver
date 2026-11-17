@@ -21,7 +21,7 @@ public class RelayRowTests
     [InlineData("", RelayedMessageDisplay.Collapsed)]
     [InlineData(null, RelayedMessageDisplay.Collapsed)]
     public void ParseReadsTheThreeWordsAndFallsBackToCollapsed(string? word, RelayedMessageDisplay expected) =>
-        Assert.Equal(expected, RelayRow.Parse(word));
+        Assert.Equal(expected, RelayedMessageWords.Parse(word));
 
     [Theory]
     [InlineData(RelayedMessageDisplay.Collapsed, "collapsed")]
@@ -29,8 +29,8 @@ public class RelayRowTests
     [InlineData(RelayedMessageDisplay.Hidden, "hidden")]
     public void NameWritesTheWordParseReads(RelayedMessageDisplay display, string word)
     {
-        Assert.Equal(word, RelayRow.Name(display));
-        Assert.Equal(display, RelayRow.Parse(RelayRow.Name(display)));
+        Assert.Equal(word, RelayedMessageWords.Name(display));
+        Assert.Equal(display, RelayedMessageWords.Parse(RelayedMessageWords.Name(display)));
     }
 
     // --- the user's click against the setting: all nine combinations ---
