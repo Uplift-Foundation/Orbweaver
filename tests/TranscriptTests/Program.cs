@@ -74,6 +74,13 @@ if (args.Length > 0)
             var first = t.Turn.Text.Split('\n')[0];
             if (first.Length > 96) first = first[..96] + "…";
             Console.WriteLine($"{t.Turn.Role,-9} {first}");
+
+            // CB-330: the fields a relayed turn carries, so a real transcript can
+            // be checked against what the panel will draw, not only its text.
+            if (t.Turn.Relay is { } r)
+                Console.WriteLine(
+                    $"          relay: kind={r.Kind} name={r.Name ?? "-"} color={r.Color ?? "-"} "
+                    + $"type={r.PayloadType} verb=\"{r.Verb}\" preview=\"{r.Preview}\"");
         }
 
         return 0;
