@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 
 namespace Orbweaver
 {
@@ -191,10 +192,17 @@ namespace Orbweaver
         // environment overrides the child's variables; a null value removes one.
         // It exists so a test can point the real installers at a scratch HOME and
         // ORBWEAVER_SETTINGS_DIR without touching the test process's own.
+        //
+        // waitForExit decides whether the child finished in time, and defaults to
+        // WaitForExit(timeoutMs). It exists so a test can say *when* the timeout
+        // fires (CB-293): a hang test that races a one-second wall clock against
+        // a cold CI runner fails whenever the child is slow to say its first
+        // word, which is a fact about the runner, not about Run.
         internal static HookInstallResult Run(
             string file, string[] arguments, string label,
             int timeoutMs = TimeoutMs,
-            IReadOnlyDictionary<string, string?>? environment = null)
+            IReadOnlyDictionary<string, string?>? environment = null,
+            Func<Process, bool>? waitForExit = null)
         {
             try
             {
@@ -222,32 +230,60 @@ namespace Orbweaver
                 // child that fills one pipe blocks on the write, and reading the
                 // other first (what this did before) would sit there until the
                 // timeout on a run that was otherwise fine.
-                var output = process.StandardOutput.ReadToEndAsync();
-                var error = process.StandardError.ReadToEndAsync();
+                //
+                // Into buffers as the bytes arrive, not ReadToEndAsync: on a
+                // timeout the readers may never finish (CB-293), and what the
+                // child had said by then must not depend on whether they did.
+                var output = new StringBuilder();
+                var error = new StringBuilder();
+                var outputDrained = Drain(process.StandardOutput, output);
+                var errorDrained = Drain(process.StandardError, error);
 
-                if (!process.WaitForExit(timeoutMs))
+                if (!(waitForExit ?? (p => p.WaitForExit(timeoutMs)))(process))
                 {
                     try { ProcessTreeKill.Kill(process); } catch { }
 
                     // Whatever it had said by then is the best clue to where it
-                    // hung; the kill closes the pipes, so this is a short wait.
-                    Task.WaitAll(new Task[] { output, error }, 2_000);
+                    // hung. The kill usually closes the pipes and this is a short
+                    // wait for the last bytes; when a descendant the kill could
+                    // not reach still holds them, the readers never finish, and
+                    // what had already arrived is returned anyway.
+                    Task.WaitAll(new[] { outputDrained, errorDrained }, 2_000);
                     return Finish(label, new HookInstallResult(
                         HookInstallOutcome.TimedOut, label,
-                        Output: output.IsCompletedSuccessfully ? output.Result : "",
-                        Error: error.IsCompletedSuccessfully ? error.Result : ""));
+                        Output: Snapshot(output), Error: Snapshot(error)));
                 }
 
                 var code = process.ExitCode;
+                outputDrained.GetAwaiter().GetResult();
+                errorDrained.GetAwaiter().GetResult();
                 return Finish(label, new HookInstallResult(
                     code == 0 ? HookInstallOutcome.Ok : HookInstallOutcome.Failed,
-                    label, code, output.GetAwaiter().GetResult(), error.GetAwaiter().GetResult()));
+                    label, code, Snapshot(output), Snapshot(error)));
             }
             catch (Exception ex)
             {
                 return Finish(label, new HookInstallResult(
                     HookInstallOutcome.Threw, label, Error: ex.Message));
             }
+        }
+
+        // Appends everything the reader yields to into, as it arrives, until
+        // end-of-stream. Locked because Snapshot can read while this writes: the
+        // timeout arm returns without waiting for a reader that may never end.
+        private static async Task Drain(StreamReader reader, StringBuilder into)
+        {
+            var buffer = new char[4096];
+            int read;
+            while ((read = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+            {
+                lock (into) into.Append(buffer, 0, read);
+            }
+        }
+
+        private static string Snapshot(StringBuilder text)
+        {
+            lock (text) return text.ToString();
         }
 
         // The one line the Settings card shows.

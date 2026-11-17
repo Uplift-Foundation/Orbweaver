@@ -70,19 +70,60 @@ public class HookInstallerRunTests : IDisposable
         Assert.Contains("      err", log);
     }
 
+    // A wait that reports a timeout as soon as the child has made `ready`
+    // exist, for the hang tests below. The kill and everything after it are
+    // real; what this replaces is the one-second wall clock the hang test used
+    // to race (CB-293), which a cold CI runner could lose by not having said
+    // "started" yet. A child that exits before it is ready gets `true`, so
+    // the run comes back Ok or Failed and the test fails saying so.
+    private static Func<System.Diagnostics.Process, bool> TimesOutOnce(string ready) => process =>
+    {
+        var limit = System.Diagnostics.Stopwatch.StartNew();
+        while (!File.Exists(ready))
+        {
+            if (process.HasExited) return true;
+            if (limit.Elapsed > TimeSpan.FromSeconds(60)) return false;
+            Thread.Sleep(10);
+        }
+        return false;
+    };
+
     [Fact]
     public void AChildThatHangsIsKilledAndReportedAsTimedOutWithWhatItSaid()
     {
+        var ready = Path.Combine(_root, "ready");
         var (file, args) = OperatingSystem.IsWindows()
-            ? ("cmd.exe", new[] { "/c", "echo started& ping -n 30 127.0.0.1 > nul" })
-            : ("/bin/sh", new[] { "-c", "echo started; sleep 30" });
+            ? ("cmd.exe", new[] { "/c", $"echo started& type nul > \"{ready}\"& ping -n 30 127.0.0.1 > nul" })
+            : ("/bin/sh", new[] { "-c", $"echo started; : > '{ready}'; sleep 30" });
 
-        var result = HookInstaller.Run(file, args, "fake-installer", timeoutMs: 1_000);
+        var result = HookInstaller.Run(file, args, "fake-installer", waitForExit: TimesOutOnce(ready));
 
         Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
         Assert.Null(result.ExitCode);
         Assert.Contains("started", result.Output);
         Assert.Contains("fake-installer  TimedOut", Log());
+    }
+
+    // What the timeout arm is for, when the kill cannot close the pipes: a
+    // descendant orphaned before the kill is outside the tree it takes, keeps
+    // stdout open, and the readers never reach end-of-stream. What the child
+    // had already said must still come back. Before CB-293 Run kept output only
+    // from a reader that had *finished*, so this returned "" — the hang it was
+    // meant to explain, explained by nothing.
+    [Fact]
+    public void WhatAChildSaidSurvivesAnOrphanHoldingThePipesOpen()
+    {
+        var ready = Path.Combine(_root, "ready");
+        var (file, args) = OperatingSystem.IsWindows()
+            // The inner cmd starts ping and exits at once, so ping's parent is
+            // gone and Kill(true) — which walks parent ids — never reaches it.
+            ? ("cmd.exe", new[] { "/c", $"echo started& cmd /c start /b ping -n 8 127.0.0.1& type nul > \"{ready}\"& ping -n 30 127.0.0.1 > nul" })
+            : ("/bin/sh", new[] { "-c", $"echo started; (sleep 6 &); : > '{ready}'; sleep 30" });
+
+        var result = HookInstaller.Run(file, args, "fake-installer", waitForExit: TimesOutOnce(ready));
+
+        Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
+        Assert.Contains("started", result.Output);
     }
 
     // The drain-order fix: the old Run read stdout to the end and only then
