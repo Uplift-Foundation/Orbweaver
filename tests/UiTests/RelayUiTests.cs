@@ -268,8 +268,16 @@ public class RelaySettingsAndServiceTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb-relay-ui-" + Guid.NewGuid());
 
+    // ServeEarly starts the headless feed, whose real scan reads this
+    // machine's status directory: no test here may depend on that.
+    public RelaySettingsAndServiceTests()
+    {
+        RelayService.HeadlessScan = () => [];
+    }
+
     public void Dispose()
     {
+        RelayService.ResetHeadlessForTests();
         RelayService.UseForTests(null);
         RelayService.Factory = RelayService.RealClient;
         RelayService.PersonaName = RelayService.CachedPersonaName;
@@ -394,6 +402,181 @@ public class RelaySettingsAndServiceTests : IDisposable
             Assert.Equal(3, changed);
         }
         finally { RelayService.ClientChanged -= OnChanged; }
+    }
+
+    // The hotfix after 1.0.7: the relay connects from serveOnLaunch, before
+    // the screen-lock wait, so a Mac restarted while locked still reaches the
+    // phone. Off stays off — the negative control, which would fail if
+    // ServeEarly connected unconditionally.
+    [AvaloniaFact]
+    public void ServeEarly_connects_only_when_the_relay_is_on()
+    {
+        var made = 0;
+        RelayService.Factory = () => { made++; return Client("Phone"); };
+
+        OrbweaverSettings.RelayEnabled = false;
+        RelayService.ServeEarly();
+        Assert.Null(RelayService.Client);
+        Assert.Equal(0, made);
+
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.ServeEarly();
+        Assert.NotNull(RelayService.Client);
+        Assert.Equal(1, made);
+    }
+
+    // The rest of the hotfix: an early relay with nothing behind it showed the
+    // mini on the phone with no orbs. Until Attach, the headless scan feeds it.
+    [AvaloniaFact]
+    public void ServeEarly_feeds_the_relay_from_the_headless_scan()
+    {
+        var scans = 0;
+        RelayService.Factory = () => Client("Phone");
+        RelayService.HeadlessScan = () => { Interlocked.Increment(ref scans); return []; };
+        OrbweaverSettings.RelayEnabled = true;
+
+        RelayService.ServeEarly();
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (Volatile.Read(ref scans) == 0 && DateTime.UtcNow < deadline) Thread.Sleep(10);
+        Assert.True(Volatile.Read(ref scans) > 0, "the headless feed never scanned");
+    }
+
+    // Off means no feed either: the negative control for the one above.
+    [AvaloniaFact]
+    public void ServeEarly_with_the_relay_off_starts_no_feed()
+    {
+        var scans = 0;
+        RelayService.HeadlessScan = () => { scans++; return []; };
+        OrbweaverSettings.RelayEnabled = false;
+
+        RelayService.ServeEarly();
+        Thread.Sleep(200);
+
+        Assert.Equal(0, scans);
+        Assert.Null(RelayService.Client);
+    }
+
+    // Once the live scan is attached, the headless one must stop: two scans
+    // feeding one book would race each other's idea of what exists.
+    [AvaloniaFact]
+    public void A_headless_tick_after_Attach_does_nothing()
+    {
+        var scans = 0;
+        RelayService.Factory = () => Client("Phone");
+        RelayService.HeadlessScan = () => { scans++; return []; };
+        RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.Enable();
+
+        RelayService.HeadlessTick();
+        Assert.Equal(1, scans);
+
+        var manager = new SessionManager(Path.Combine(_dir, "status-tick"),
+            () => new Dictionary<string, string>(StringComparer.Ordinal),
+            () => new HashSet<string>(StringComparer.Ordinal),
+            dependents: _ => SessionDependents.Nothing,
+            paneOwners: claims => claims.ToDictionary(TmuxPaneKey.Of, _ => (string?)null),
+            agentViewer: _ => null,
+            teams: pids => pids.ToDictionary(p => p, _ => AgentTeam.None),
+            fileTeams: _ => new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
+        try
+        {
+            RelayService.Attach(manager);
+            RelayService.HeadlessTick();
+            Assert.Equal(1, scans);
+        }
+        finally
+        {
+            manager.SessionsScanned -= RelayService.OnScanned;
+            AccountOrbs.UsageApplied -= RelayService.OnUsage;
+        }
+    }
+
+    // Orbs without faces was the next report: LocalPersonas is filled only by
+    // the live scan, so the headless feed sent no personas. A tick now
+    // resolves them under ApplyPersona's rules, from the project's real files,
+    // and forgets them when the session goes.
+    [AvaloniaFact]
+    public void A_headless_tick_gives_its_sessions_their_personas_and_forgets_them()
+    {
+        var project = Path.Combine(_dir, "persona-project");
+        Directory.CreateDirectory(project);
+        File.WriteAllText(Path.Combine(project, "CLAUDE.md"), "# Notes\n\nHer name is Leota.\n");
+        var sessionId = "headless-persona-" + Guid.NewGuid();
+        var status = new SessionStatus { State = "idle", Cli = "", Title = "t", Cwd = project, SessionPid = Environment.ProcessId };
+        var rows = new List<(string, SessionStatus)> { (sessionId, status) };
+
+        RelayService.Factory = () => Client("Phone");
+        RelayService.UserConfigDirs = () => [];
+        RelayService.HeadlessScan = () => rows;
+        RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.Enable();
+        try
+        {
+            RelayService.HeadlessTick();
+            Assert.Equal("Leota", LocalPersonas.For(sessionId)?.Name);
+
+            // Same files, next tick: the same persona object, not a re-resolve.
+            var first = LocalPersonas.For(sessionId);
+            RelayService.HeadlessTick();
+            Assert.Same(first, LocalPersonas.For(sessionId));
+
+            rows.Clear();
+            RelayService.HeadlessTick();
+            Assert.Null(LocalPersonas.For(sessionId));
+        }
+        finally { LocalPersonas.Forget(sessionId); }
+    }
+
+    // A scan that throws is logged and swallowed: it runs on a Timer that
+    // discards exceptions, and the next tick must still come.
+    [AvaloniaFact]
+    public void A_headless_scan_that_throws_does_not_escape()
+    {
+        RelayService.Factory = () => Client("Phone");
+        RelayService.HeadlessScan = () => throw new IOException("disk");
+        RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.Enable();
+
+        RelayService.HeadlessTick();
+    }
+
+    // And when the UI comes up after the unlock, Attach joins the connection
+    // ServeEarly opened instead of making a second client: two clients on one
+    // identity would fight over the one socket the relay allows a device.
+    [AvaloniaFact]
+    public void Attach_after_ServeEarly_reuses_the_early_client()
+    {
+        var made = 0;
+        RelayService.Factory = () => { made++; return Client("Phone"); };
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.ServeEarly();
+        var early = RelayService.Client;
+
+        var dir = Path.Combine(_dir, "status-early");
+        Directory.CreateDirectory(dir);
+        var manager = new SessionManager(dir,
+            () => new Dictionary<string, string>(StringComparer.Ordinal),
+            () => new HashSet<string>(StringComparer.Ordinal),
+            dependents: _ => SessionDependents.Nothing,
+            paneOwners: claims => claims.ToDictionary(TmuxPaneKey.Of, _ => (string?)null),
+            agentViewer: _ => null,
+            teams: pids => pids.ToDictionary(p => p, _ => AgentTeam.None),
+            fileTeams: _ => new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
+        try
+        {
+            RelayService.Attach(manager);
+            Assert.Same(early, RelayService.Client);
+            Assert.Equal(1, made);
+        }
+        finally
+        {
+            manager.SessionsScanned -= RelayService.OnScanned;
+            AccountOrbs.UsageApplied -= RelayService.OnUsage;
+        }
     }
 
     [AvaloniaFact]
