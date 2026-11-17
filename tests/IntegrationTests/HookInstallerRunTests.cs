@@ -96,12 +96,25 @@ public class HookInstallerRunTests : IDisposable
             ? ("cmd.exe", new[] { "/c", $"echo started& type nul > \"{ready}\"& ping -n 30 127.0.0.1 > nul" })
             : ("/bin/sh", new[] { "-c", $"echo started; : > '{ready}'; sleep 30" });
 
-        var result = HookInstaller.Run(file, args, "fake-installer", waitForExit: TimesOutOnce(ready));
+        // A handle of our own on the child, since Run disposes its own: TimedOut
+        // and a null exit code come from the wait alone, so without this a Run
+        // that never killed anything would pass too.
+        System.Diagnostics.Process? child = null;
+        var wait = TimesOutOnce(ready);
+        var result = HookInstaller.Run(file, args, "fake-installer",
+            waitForExit: p => { child = System.Diagnostics.Process.GetProcessById(p.Id); return wait(p); });
 
         Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
         Assert.Null(result.ExitCode);
         Assert.Contains("started", result.Output);
         Assert.Contains("fake-installer  TimedOut", Log());
+        using (child)
+        {
+            Assert.NotNull(child);
+            // An upper bound for a kill that has already been sent, not a race:
+            // a living child (`ping -n 30`, `sleep 30`) fails it by 25 seconds.
+            Assert.True(child.WaitForExit(5_000), "the timed-out child was not killed");
+        }
     }
 
     // What the timeout arm is for, when the kill cannot close the pipes: a
