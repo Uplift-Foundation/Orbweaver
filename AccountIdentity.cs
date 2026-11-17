@@ -111,9 +111,11 @@ namespace Orbweaver
 
         // The chatgpt_user_id claim of a JWT's payload: the middle segment,
         // base64url, JSON. Looked for at the top level, then under the
-        // "https://api.openai.com/auth" object, because the nesting has not been
-        // confirmed (docs/account-identity-findings.md). Null for anything that
-        // does not decode, which makes the id a different one rather than none.
+        // "https://api.openai.com/auth" object. It is nested there on all three
+        // machines this was measured on (docs/account-identity-findings.md); the
+        // top level is still read first because the contract says so and a
+        // different Codex version could move it. Null for anything that does not
+        // decode, which makes the id a different one rather than none.
         internal static string? ChatGptUserId(string jwt)
         {
             var parts = jwt.Split('.');
