@@ -23,13 +23,21 @@ internal static class StreamProbe
     {
         if (args.Length == 0 || !ClaudeCloudRoster.IsWellFormedId(args[0]))
         {
-            Console.Error.WriteLine("stream <id> [--from <n>] [--seconds <n>]");
+            Console.Error.WriteLine("stream <id> [--from <n>] [--seconds <n>] [--rows] [--save <path>]\n  --rows         run each user/assistant event through the panel's own row mapper\n  --save <path>  write every event's raw data to <path>, 0600, never printed");
             return 2;
         }
 
         var id = args[0];
         long? from = Value(args, "--from") is { } f && long.TryParse(f, out var parsed) ? parsed : null;
         var seconds = Value(args, "--seconds") is { } s && int.TryParse(s, out var secs) ? secs : 15;
+        var rows = Array.IndexOf(args, "--rows") >= 0;
+        var savePath = Value(args, "--save");
+        StreamWriter? save = null;
+        if (savePath is not null)
+        {
+            save = new StreamWriter(savePath, append: false);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(savePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
 
         var read = await readCredential();
         if (read.Outcome != CredentialOutcome.Found || read.AccessToken is null)
@@ -78,11 +86,19 @@ internal static class StreamProbe
                         inits++;
                         Console.WriteLine("init     " + Keys(json));
                     }
+                    if (save is not null && ev.PayloadJson is { } raw) save.WriteLine(raw);
+                    if (rows && ev.Kind == CloudStreamEventKind.Durable && ev.PayloadType is "user" or "assistant")
+                    {
+                        var mapped = CloudStreamRows.RowsFrom(ev.PayloadJson);
+                        Console.WriteLine($"rows     {mapped.Count} typed={CloudStreamRows.IsTypedMessage(ev.PayloadJson)}"
+                            + string.Concat(mapped.Select(r => $" [{r.Turn.Role} uuid={(r.Uuid is null ? "null" : "set")} text={r.Turn.Text?.Length ?? 0}]")));
+                    }
                     if (ev.Kind == CloudStreamEventKind.Ended) break;
                 }
             }
             catch (OperationCanceledException) { }
 
+            save?.Dispose();
             Console.WriteLine($"summary  {count} event(s) in {seconds}s, {inits} system/init row(s)");
             return 0;
         }

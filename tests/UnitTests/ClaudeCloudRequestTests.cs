@@ -160,6 +160,40 @@ public class ClaudeCloudRequestTests
             CloudRequest.EventsPath("session_01ABC", 100, "evt_9"));
     }
 
+    // The list the panel's history reads: the write host's, newest first, paged
+    // backwards by `cursor` (measured 2026-11-17). Capped and escaped like the
+    // others, and refused outright for a malformed id, as the write paths are.
+    [Fact]
+    public void TheNewestEventsPathAsksForNewestFirstAndPagesBackwards()
+    {
+        Assert.Equal("/v1/code/sessions/session_01ABC/events?limit=100&sort_order=desc",
+            CloudRequest.NewestEventsPath("session_01ABC", 100, null));
+
+        Assert.Equal("/v1/code/sessions/session_01ABC/events?limit=100&sort_order=desc&cursor=2448",
+            CloudRequest.NewestEventsPath("session_01ABC", 100, "2448"));
+
+        Assert.Equal("/v1/code/sessions/session_01ABC/events?limit=100&sort_order=desc",
+            CloudRequest.NewestEventsPath("session_01ABC", 100, "  "));
+
+        Assert.EndsWith("&cursor=1%262",
+            CloudRequest.NewestEventsPath("session_01ABC", 100, "1&2"), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0, "limit=1&")]
+    [InlineData(5000, "limit=100&")]
+    public void TheNewestEventsPathCapsItsLimit(int asked, string sent)
+    {
+        Assert.Contains(sent, CloudRequest.NewestEventsPath("session_01ABC", asked, null), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheNewestEventsPathRefusesAMalformedId()
+    {
+        Assert.Null(CloudRequest.NewestEventsPath("session_a/../admin", 100, null));
+        Assert.Null(CloudRequest.NewestEventsPath(null, 100, null));
+    }
+
     // An id arrives from a payload nobody here owns and ends up in a path. Escaped
     // rather than trusted — a path is the one place an external string turns into
     // a different request.

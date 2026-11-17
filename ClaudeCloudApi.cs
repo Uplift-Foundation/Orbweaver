@@ -272,6 +272,20 @@ namespace Orbweaver
                 ? CodeSessionsPath + "/" + Uri.EscapeDataString(id!) + "/events"
                 : null;
 
+        // A page of a session's events from the write host, newest first, and the
+        // page before it when given the last page's `next_cursor`. Measured
+        // (2026-11-17): newest first with or without `sort_order=desc`, sent
+        // anyway so the order is asked for rather than relied on. Null for a
+        // malformed id, for CodeEventsPath's reason.
+        internal static string? NewestEventsPath(string? id, int limit, string? cursor)
+        {
+            if (CodeEventsPath(id) is not { } events) return null;
+
+            var capped = limit < 1 ? 1 : limit > MaxPageSize ? MaxPageSize : limit;
+            var path = events + "?limit=" + capped.ToString(CultureInfo.InvariantCulture) + "&sort_order=desc";
+            return string.IsNullOrWhiteSpace(cursor) ? path : path + "&cursor=" + Uri.EscapeDataString(cursor);
+        }
+
         // A session's own record on the write host, which is where its live turn
         // state is read while a panel is watching a reply (CB-199). **Measured**:
         // 200 with the same two headers as a read, and `status_bucket` "working"
