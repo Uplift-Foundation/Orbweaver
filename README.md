@@ -1705,6 +1705,8 @@ the keyboard. A hand-edited value outside that range is pinned back into it on
 read, so a mistyped `40` cannot leave you with a panel too large to find the
 setting that caused it.
 
+**Messages a teammate or another session relayed into a conversation are one dimmed line, not a bubble.** A lead with a team gets an idle notification from every member after every turn, and a "Teammate @name finished" report is not something you said or something the agent said. Each one is drawn as a row with a coloured dot (or the teammate's own portrait, when it is one of this conversation's live team members), a bold name, and a one-line preview of what it said; click it and the full text opens as Markdown, click again to close it. What you opened stays open for as long as the panel does. A message from another Claude session reads "From another session" instead. Speaking the latest reply and the speak button skip these rows. Under **Chat panel** in settings, **Teammate and peer messages** chooses **Collapsed** (the default), **Expanded** (every row open, still closable by hand) or **Hidden** (no row at all, and switching back brings them all back). It lives in `relayedMessages` in `settings.json` as `"collapsed"`, `"expanded"` or `"hidden"`; any other word reads as collapsed rather than hiding anything.
+
 Replying is a **second switch**, off by default: **Allow replying to agents**.
 Turning it on asks the gateway for write permission as well as read, which it
 treats as a new pairing — so approve the device again there

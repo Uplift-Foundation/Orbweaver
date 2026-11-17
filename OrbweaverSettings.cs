@@ -84,7 +84,7 @@ namespace Orbweaver
             "muted", "turnSoundsEnabled", "turnFinishedSound", "needsAttentionSound", "orbTurnSounds",
             "orbColors", "claudeCodeProfileDirs", "codexHomes", "grokHomes", "profiles", "orbPositions",
             "collapsedSettingsSections",
-            "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale",
+            "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale", "relayedMessages",
             "orbSize", "orbSizes", "orbMemberOffsets", "accountOrbOverrides",
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
@@ -947,6 +947,10 @@ namespace Orbweaver
             // How much bigger or smaller than shipped the chat panel draws its
             // text. A multiplier, not a point size — see ChatZoom.
             public double ChatTextScale { get; set; } = ChatZoom.Default;
+
+            // CB-330: how the chat panel draws a message a teammate or another
+            // session relayed into it. Collapsed unless told otherwise.
+            public RelayedMessageDisplay RelayedMessages { get; set; } = RelayedMessageDisplay.Collapsed;
 
             // How big every session orb is drawn, as a multiplier over the
             // shipped 56-DIP orb — see OrbSizing. An orb's own entry in
@@ -1944,6 +1948,16 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.ChatTextScale = ChatZoom.Clamp(value); Save(); }
         }
 
+        // CB-330: Collapsed (a one-line row, the default), Expanded (the full text
+        // open) or Hidden (no row at all) for relayed teammate and peer messages.
+        // Always one of the three: an unknown word in the file reads as Collapsed
+        // (RelayRow.Parse), so there is nothing to clamp on the way out.
+        public static RelayedMessageDisplay RelayedMessages
+        {
+            get { Load(); lock (Gate) return _model.RelayedMessages; }
+            set { Load(); lock (Gate) _model.RelayedMessages = value; Save(); }
+        }
+
         // Every session orb's size, as a multiplier over the shipped orb.
         // Clamped both ways for ChatTextScale's reason — and on read against
         // *this* platform's floor, so a file written on a Mac at 0.6 and
@@ -2697,6 +2711,10 @@ namespace Orbweaver
                         ChatTextScale = ChatZoom.Clamp(
                             root["chatTextScale"]?.GetValue<double>() ?? ChatZoom.Default),
 
+                        // Text() and a parse that falls back to Collapsed: a
+                        // hand-edited 7 or "sideways" costs this one choice.
+                        RelayedMessages = RelayRow.Parse(Text(root["relayedMessages"])),
+
                         // Number() rather than GetValue<double>(): a new key,
                         // so it gets the defence Number's comment describes
                         // from the start — a hand-edited "big" costs the orb
@@ -3444,6 +3462,7 @@ namespace Orbweaver
                         ["arrangeShape"] = _model.ArrangeShape,
                         ["arrangeSpacing"] = _model.ArrangeSpacing,
                         ["chatTextScale"] = _model.ChatTextScale,
+                        ["relayedMessages"] = RelayRow.Name(_model.RelayedMessages),
                         ["orbSize"] = _model.OrbSize,
                         ["speechVolume"] = _model.SpeechVolume,
                         ["alertVolume"] = _model.AlertVolume,

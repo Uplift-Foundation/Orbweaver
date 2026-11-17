@@ -236,6 +236,7 @@ namespace Orbweaver
 
         public ChatPanel()
         {
+            _relayHost.Avatar = ResolveRelayAvatar;
             InitializeComponent();
 
             // Drawn rather than typed — see SymbolMarks. The same gear the
@@ -704,6 +705,10 @@ namespace Orbweaver
             _pendingImages.Clear();
             Attachments.IsVisible = false;
 
+            // CB-330: what the reader opened belongs to this conversation's rows; a
+            // panel reused for the next one starts them all closed again.
+            _relayHost.Choices.Clear();
+
             _session.TurnAdded -= OnTurnAdded;
             _session.TurnUpdated -= OnTurnUpdated;
             _session.StateChanged -= OnStateChanged;
@@ -921,7 +926,7 @@ namespace Orbweaver
             OnStateChanged(session.State);
 
             _turns.Clear();
-            foreach (var turn in session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+            foreach (var turn in session.History) AddTurnView(turn);
 
             HideSlashSuggestions();
 
@@ -3045,6 +3050,105 @@ namespace Orbweaver
             }
         }
 
+        // CB-330. The one place a TurnView is built, so "Hidden" is one rule and
+        // not four. Null is a relayed turn the setting says not to draw.
+        private TurnView? NewTurnView(ChatTurn turn) =>
+            turn.Relay is not null && !RelayRow.IsShown(OrbweaverSettings.RelayedMessages)
+                ? null
+                : new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey(), _relayHost);
+
+        private bool AddTurnView(ChatTurn turn)
+        {
+            if (NewTurnView(turn) is not { } view) return false;
+            _turns.Add(view);
+            return true;
+        }
+
+        // What every relayed row of this panel shares: where a reader's click is
+        // remembered, how the setting is read, and who a name resolves to. A
+        // field rather than a static so two panels keep their own clicks.
+        private readonly RelayHost _relayHost = new();
+
+        private sealed class RelayHost
+        {
+            // Keyed on (when, what): the transcript gives a relayed turn no id
+            // of its own, and RelayedMessage's value equality is what lets the
+            // choice survive a rebuild of the row or a re-map of the history.
+            public readonly Dictionary<(DateTimeOffset, RelayedMessage), bool> Choices = new();
+            public Func<RelayedMessageDisplay> Display = () => OrbweaverSettings.RelayedMessages;
+            public Func<string, Bitmap?> Avatar = _ => null;
+        }
+
+        // Tests supply faces here: the default lookup reaches into SessionManager,
+        // which needs a live scan to have anything to find.
+        internal static Func<string, Bitmap?>? RelayAvatarForTests;
+
+        // CB-330: the setting changed under panels that are already open.
+        // Collapsed and Expanded only re-ask each row, so a row the reader
+        // opened by hand stays as they left it. Hidden removes the rows, and
+        // leaving Hidden rebuilds from history, because the turns that were
+        // never drawn have nothing to be re-asked.
+        internal static void ApplyRelayDisplay()
+        {
+            foreach (var panel in Panels) panel.ApplyRelayDisplayHere();
+        }
+
+        private void ApplyRelayDisplayHere()
+        {
+            var shown = RelayRow.IsShown(OrbweaverSettings.RelayedMessages);
+
+            if (!shown)
+            {
+                for (var i = _turns.Count - 1; i >= 0; i--)
+                {
+                    if (_turns[i].IsRelay) _turns.RemoveAt(i);
+                }
+                return;
+            }
+
+            if (_session is not null && _turns.Count(t => t.IsRelay) < _session.History.Count(t => t.Relay is not null))
+            {
+                _turns.Clear();
+                foreach (var turn in _session.History) AddTurnView(turn);
+                return;
+            }
+
+            foreach (var turn in _turns) turn.RelayDisplayChanged();
+        }
+
+        // The default face lookup: a live session this one leads whose agent
+        // name is the relayed name (or the persona it is an instance of) and
+        // that is the only one called that. The lead's own face never lands on a
+        // member's message because only sessions that *answer to* this one are
+        // considered (CB-288's lesson). First frame only, for SpeakerAvatar's
+        // reason: a scrolling list of rows is no place for a timer each.
+        private Bitmap? ResolveRelayAvatar(string name)
+        {
+            if (RelayAvatarForTests is { } seam) return seam(name);
+
+            var manager = SessionManager.Instance;
+            return manager is null ? null : FaceFor(name, _session?.SessionId, manager.AllStatuses);
+        }
+
+        // The lookup with the live session table passed in, so it can be driven
+        // without a SessionManager.
+        internal static Bitmap? FaceFor(
+            string name, string? leadSessionId, IEnumerable<KeyValuePair<string, SessionStatus>> statuses)
+        {
+            var id = RelayRow.MemberSessionId(name, leadSessionId, statuses);
+            var path = id is null ? null : LocalPersonas.For(id)?.AvatarPath;
+            return path is null || id is null
+                ? null
+                : OpenClawAvatars.ForFile(LocalPersonas.AvatarKey(id), path)?.Frames.FirstOrDefault();
+        }
+
+        private void Relay_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+
+            if ((sender as Control)?.DataContext is TurnView turn) turn.ToggleRelay();
+        }
+
         private void OnHistoryPrepended(int count)
         {
             if (_session is null) return;
@@ -3052,9 +3156,14 @@ namespace Orbweaver
             // Inserted at the front in order, rather than rebuilding the whole
             // list: rebuilding would discard every already-fetched picture and
             // start them downloading again.
+            //
+            // CB-330: positions are counted in rows actually drawn, not in
+            // history turns — under Hidden a relayed turn has no row, so the
+            // two stop being the same number.
+            var at = 0;
             for (var i = 0; i < count && i < _session.History.Count; i++)
             {
-                _turns.Insert(i, new TurnView(_session.History[i], _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+                if (NewTurnView(_session.History[i]) is { } view) _turns.Insert(at++, view);
             }
         }
 
@@ -3063,7 +3172,7 @@ namespace Orbweaver
             if (_session is null) return;
 
             _turns.Clear();
-            foreach (var turn in _session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+            foreach (var turn in _session.History) AddTurnView(turn);
 
             // Re-read rather than left at what Bind found.
             //
@@ -3084,7 +3193,9 @@ namespace Orbweaver
 
         private void OnTurnAdded(ChatTurn turn)
         {
-            _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+            // CB-330: a relayed message under Hidden has no row, and arriving is
+            // not a reason to move the view either.
+            if (!AddTurnView(turn)) return;
 
             // Your own turn always brings the view with it; everything else
             // respects where you were reading.
@@ -3761,9 +3872,13 @@ namespace Orbweaver
             // it, to say a route was re-keyed (CB-277).
             private readonly string? _askingKey;
 
+            private readonly RelayHost? _relayHost;
+
             public TurnView(ChatTurn turn, Color? defaultBubble, Speaker? soleSpeaker,
-                Action<SelectableTextBlock> adopt, TextScale scale, string? askingKey = null)
+                Action<SelectableTextBlock> adopt, TextScale scale, string? askingKey = null,
+                RelayHost? relayHost = null)
             {
+                _relayHost = relayHost;
                 _askingKey = askingKey;
                 _turn = turn;
                 _defaultBubble = defaultBubble;
@@ -3871,9 +3986,14 @@ namespace Orbweaver
             // delta, and reparsing on read would reparse per layout pass too.
             private Control? _body;
 
-            public Control Body => _body ??= BuildBody();
+            // A relay draws its own row, so the bubble's body is left empty
+            // rather than built and thrown away (and so it cannot reset _blocks
+            // out from under the relay body's selectable runs).
+            public Control Body => _body ??= IsRelay ? new Border() : BuildBody();
 
-            private Control BuildBody()
+            private Control BuildBody() => BuildBodyOf(_turn.Text);
+
+            private Control BuildBodyOf(string text)
             {
                 // Thrown away with the body they belong to. A streaming turn
                 // rebuilds its body per delta (see the PropertyChanged hook
@@ -3884,13 +4004,13 @@ namespace Orbweaver
 
                 var stack = new StackPanel { Spacing = 4 };
 
-                foreach (var block in ChatMarkdown.Parse(_turn.Text))
+                foreach (var block in ChatMarkdown.Parse(text))
                     stack.Children.Add(BuildBlock(block));
 
                 // A turn whose text is only whitespace still needs something to
                 // hand back; HasText hides it either way.
                 if (stack.Children.Count == 0)
-                    stack.Children.Add(Line(_turn.Text));
+                    stack.Children.Add(Line(text));
 
                 return stack;
             }
@@ -4838,18 +4958,160 @@ namespace Orbweaver
             public void Rescaled()
             {
                 _body = null;
+                _relayLine = null;
+                _relayBody = null;
 
                 foreach (var name in new[]
                          {
                              nameof(Body), nameof(Size), nameof(SpeakerNameSize), nameof(TimeSize),
-                             nameof(ChipSize), nameof(ChipCorners), nameof(ChipTextSize)
+                             nameof(ChipSize), nameof(ChipCorners), nameof(ChipTextSize),
+                             nameof(RelayLine), nameof(RelayBody), nameof(RelayDotSize)
                          })
                 {
                     PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
                 }
             }
 
-            public FontStyle Style => IsSystem ? FontStyle.Italic : FontStyle.Normal;
+            // ---- CB-330: a message a teammate or another session relayed ----
+            //
+            // A relayed turn is a System turn carrying a RelayedMessage. Role
+            // System is what makes everything that has never heard of relays
+            // degrade into a quiet line instead of a user bubble, and IsRelay is
+            // what lets this row draw something better than that line.
+
+            public bool IsRelay => _turn.Relay is not null;
+
+            // The bubble template is for everything that is not a relay; a relay
+            // draws its own row beside it (ChatPanel.axaml).
+            public bool IsBubble => !IsRelay;
+
+            private RelayedMessageDisplay RelaySetting => _relayHost?.Display() ?? RelayedMessageDisplay.Collapsed;
+
+            // Nothing to open for a row with no body — "shut down" says it all —
+            // so it has no chevron and a click does nothing.
+            public bool CanExpand => !string.IsNullOrWhiteSpace(_turn.Relay?.FullText);
+
+            private (DateTimeOffset, RelayedMessage)? RelayKey =>
+                _turn.Relay is { } relay ? (_turn.At, relay) : null;
+
+            private bool? RelayChoice =>
+                _relayHost is not null && RelayKey is { } key && _relayHost.Choices.TryGetValue(key, out var chosen)
+                    ? chosen
+                    : null;
+
+            public bool IsRelayExpanded => CanExpand && RelayRow.IsExpanded(RelaySetting, RelayChoice);
+
+            public double ChevronAngle => IsRelayExpanded ? 90 : 0;
+
+            // The reader's click. Recorded against the row's key so it outlives
+            // this TurnView: the panel rebuilds its rows on a history replace and
+            // a click should not be forgotten by that.
+            public void ToggleRelay()
+            {
+                if (!CanExpand || _relayHost is null || RelayKey is not { } key) return;
+
+                _relayHost.Choices[key] = !IsRelayExpanded;
+                RelayDisplayChanged();
+            }
+
+            // Asked again after the choice or the setting moved.
+            public void RelayDisplayChanged()
+            {
+                _relayLine = null;
+                foreach (var name in new[]
+                         {
+                             nameof(IsRelayExpanded), nameof(ChevronAngle),
+                             nameof(RelayLine), nameof(RelayBody)
+                         })
+                {
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                }
+            }
+
+            private static readonly IBrush RelayNeutralDot = new SolidColorBrush(Color.Parse("#66FFFFFF"));
+            private static readonly IBrush RelayDim = new SolidColorBrush(Color.Parse("#66FFFFFF"));
+
+            // The face when a live member resolves, else a dot in the colour the
+            // payload named, else a neutral one. The face is looked up lazily and
+            // once: a resolver that reaches into SessionManager has no business
+            // running per layout pass.
+            private Bitmap? _relayAvatar;
+            private bool _relayAvatarResolved;
+
+            public Bitmap? RelayAvatar
+            {
+                get
+                {
+                    if (_relayAvatarResolved) return _relayAvatar;
+                    _relayAvatarResolved = true;
+
+                    if (_relayHost is not null && _turn.Relay is { Kind: RelayKind.Teammate, Name: { Length: > 0 } name })
+                        _relayAvatar = _relayHost.Avatar(name);
+
+                    return _relayAvatar;
+                }
+            }
+
+            public bool HasRelayAvatar => RelayAvatar is not null;
+
+            public bool HasRelayDot => !HasRelayAvatar;
+
+            public IBrush RelayDot =>
+                RelayRow.DotColor(_turn.Relay?.Color) is { } c ? new SolidColorBrush(c) : RelayNeutralDot;
+
+            public double RelayDotSize => 8 * Scale;
+
+            // "Teammate", the name in bold, the verb — as runs of one TextBlock
+            // so the whole thing trims to a single line with an ellipsis, rather
+            // than three controls that each decide for themselves how to cut.
+            // Built here rather than bound for the same reason Body is.
+            private Control? _relayLine;
+
+            public Control RelayLine => _relayLine ??= BuildRelayLine();
+
+            private Control BuildRelayLine()
+            {
+                var relay = _turn.Relay!;
+                var text = new TextBlock
+                {
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextWrapping = TextWrapping.NoWrap,
+                    FontSize = 10.5 * Scale,
+                    Foreground = SystemInk,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+                if (relay.Kind == RelayKind.Teammate && !string.IsNullOrEmpty(relay.Name))
+                {
+                    text.Inlines!.Add(new Run("Teammate "));
+                    text.Inlines.Add(new Run("@" + relay.Name) { FontWeight = FontWeight.Bold });
+                    if (relay.Verb.Length > 0) text.Inlines.Add(new Run(" " + relay.Verb));
+                }
+                else
+                {
+                    text.Inlines!.Add(new Run(relay.Label));
+                }
+
+                // The dimmed preview is what the row says while it is closed; open,
+                // the body says it, and repeating it above itself is noise.
+                if (relay.Preview.Length > 0 && !IsRelayExpanded)
+                    text.Inlines.Add(new Run("  " + relay.Preview) { Foreground = RelayDim });
+
+                return text;
+            }
+
+            // The expanded text, as Markdown, built the first time it is opened
+            // and not before: a lead with a team can hold hundreds of these.
+            private Control? _relayBody;
+
+            public Control? RelayBody =>
+                IsRelayExpanded ? _relayBody ??= BuildRelayBody() : null;
+
+            private Control BuildRelayBody() => BuildBodyOf(_turn.Relay!.FullText);
+
+            // A system note is italic because it is the app talking; an opened
+            // relay body is somebody's words, so it is upright (CB-330).
+            public FontStyle Style => IsSystem && !IsRelay ? FontStyle.Italic : FontStyle.Normal;
 
             public bool ShowTime => !IsSystem;
 
