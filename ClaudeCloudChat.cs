@@ -84,6 +84,74 @@ namespace Orbweaver
                     string.IsNullOrWhiteSpace(lastId) ? null : lastId, true);
             }
         }
+
+        // One page of the write host's event list, read newest first.
+        //
+        // **Why the panel reads this list and not the one above.** Measured on a
+        // real session of 2,547 events (2026-11-17): `/v2/ccr-sessions/<id>/events`
+        // returns the *oldest* events first and ignores `sort_order` and `order`
+        // alike, and its only cursor (`after_id`) walks forward. So a load capped
+        // at MaxEventPages could only ever reach the first thousand events, and
+        // on any session longer than that the panel's "newest" turn was months
+        // old — and a reply that arrived while the panel was shut was never read
+        // back at all, which is how CB-285's fix came to look undone.
+        // `/v1/code/sessions/<id>/events` returns the newest first, and
+        // `cursor=<next_cursor>` pages *backwards* (measured; `before=` and
+        // `before_sequence_num=` are ignored, which is the control that shows the
+        // cursor is what moved).
+        //
+        // Each item is the stream's own wrapper — `event_id`, `sequence_num`,
+        // `payload` — so rows come out through CloudStreamRows' payload rule, one
+        // rule for both.
+        internal sealed record NewestPage(
+            IReadOnlyList<string> Payloads,
+            string? NextCursor,
+            bool Parsed);
+
+        internal static NewestPage ParseNewestPage(string? json)
+        {
+            var refused = new NewestPage(Array.Empty<string>(), null, false);
+            if (string.IsNullOrWhiteSpace(json)) return refused;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("data", out var data)
+                    || data.ValueKind != JsonValueKind.Array)
+                {
+                    return refused;
+                }
+
+                // Compact, for the substring reason ParsePage gives. An item with
+                // no payload object is passed through whole, as RowsFrom would.
+                var payloads = new List<string>();
+                foreach (var item in data.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+                    var row = item.TryGetProperty("payload", out var payload) && payload.ValueKind == JsonValueKind.Object
+                        ? payload
+                        : item;
+                    payloads.Add(JsonSerializer.Serialize(row));
+                }
+
+                var cursor = root.TryGetProperty("next_cursor", out var next)
+                    ? next.ValueKind switch
+                    {
+                        JsonValueKind.String => next.GetString(),
+                        JsonValueKind.Number => next.GetRawText(),
+                        _ => null,
+                    }
+                    : null;
+
+                return new NewestPage(payloads, string.IsNullOrWhiteSpace(cursor) ? null : cursor, true);
+            }
+            catch (JsonException)
+            {
+                return refused;
+            }
+        }
     }
 
 
@@ -1187,7 +1255,7 @@ namespace Orbweaver
                 {
                     if (start is { } found)
                     {
-                        resumeFrom = found.Sequence;
+                        resumeFrom = ClaudeCloudStreamPolicy.StartFrom(found.Sequence, LastDurableSequence);
                         knowWhereToStart = true;
                     }
 
@@ -1219,6 +1287,7 @@ namespace Orbweaver
                             }
 
                             resumeFrom = ClaudeCloudStreamPolicy.ResumeFrom(resumeFrom, e);
+                            NoteDurable(resumeFrom);
                             Handle(e);
                             Interlocked.Increment(ref _streamEventsSeen);
                         }
@@ -1280,6 +1349,37 @@ namespace Orbweaver
 
                 if (ct.IsCancellationRequested) return;
             }
+        }
+
+        // The newest durable event any stream run of this session has handled.
+        // It outlives the run, and the panel: a panel hidden mid-turn closes its
+        // stream, and the next open resumes from here rather than from "now", so
+        // the echo, the tool rows and the reply that landed while it was hidden
+        // are replayed into it instead of skipped (see StartFrom). Only ever
+        // moves forward, because a cancelled run can still be unwinding while
+        // its successor reads.
+        private long _lastDurableSequence = -1;
+
+        internal long? LastDurableSequence
+        {
+            get
+            {
+                var seen = Interlocked.Read(ref _lastDurableSequence);
+                return seen < 0 ? null : seen;
+            }
+        }
+
+        private void NoteDurable(long? sequence)
+        {
+            if (sequence is not { } seq) return;
+
+            long seen;
+            do
+            {
+                seen = Interlocked.Read(ref _lastDurableSequence);
+                if (seq <= seen) return;
+            }
+            while (Interlocked.CompareExchange(ref _lastDurableSequence, seq, seen) != seen);
         }
 
         // Stop relying on the stream for this panel and let polling carry any
@@ -1722,14 +1822,26 @@ namespace Orbweaver
                 return new LoadResult(CloudOutcomeKind.AuthFailed);
             }
 
-            var rows = new List<ChatTranscript.Row>();
-            string? after = null;
+            // Pages arrive newest first and are walked backwards (see
+            // ClaudeCloudEvents.ParseNewestPage for why this list and not the
+            // oldest-first one), until there is a panel's worth of turns, the
+            // session runs out, or the page cap is reached. The cap now bounds
+            // how far *back* a load reaches, never whether it reaches the end.
+            var newestFirst = new List<string>();
+            var turns = 0;
+            string? cursor = null;
+
+            if (CloudRequest.NewestEventsPath(SessionId, CloudRequest.MaxPageSize, null) is null)
+            {
+                Publish(RemoteChatState.Error);
+                return new LoadResult(CloudOutcomeKind.ShapeChanged);
+            }
 
             for (var i = 0; i < MaxEventPages; i++)
             {
                 var result = await _api.SendAsync(
                     new CloudRequestContext(token,
-                        CloudRequest.EventsPath(SessionId, CloudRequest.MaxPageSize, after)),
+                        CloudRequest.NewestEventsPath(SessionId, CloudRequest.MaxPageSize, cursor)!),
                     CancellationToken.None).ConfigureAwait(false);
 
                 if (result.Outcome.Kind != CloudOutcomeKind.Ok)
@@ -1738,23 +1850,28 @@ namespace Orbweaver
                     return new LoadResult(result.Outcome.Kind);
                 }
 
-                var page = ClaudeCloudEvents.ParsePage(result.Body);
+                var page = ClaudeCloudEvents.ParseNewestPage(result.Body);
                 if (!page.Parsed)
                 {
                     Publish(RemoteChatState.Error);
                     return new LoadResult(CloudOutcomeKind.ShapeChanged);
                 }
 
-                rows.AddRange(page.Rows);
+                newestFirst.AddRange(page.Payloads);
+                turns += ChatTranscript.Map(page.Payloads).Count;
 
-                if (!page.HasMore || page.LastId is null) break;
-                after = page.LastId;
+                // A cursor that does not move would read the same page again.
+                if (turns >= HistoryTurns || page.Payloads.Count == 0
+                    || page.NextCursor is null || page.NextCursor == cursor) break;
+                cursor = page.NextCursor;
             }
 
-            // Oldest to newest is the order the events endpoint returns and the
-            // order the interface promises, so the trim takes the *tail*. Trimming
-            // the head would hand the panel the beginning of a conversation and
-            // call it the end of one.
+            // Oldest to newest is the order the interface promises, so the list
+            // is turned round before mapping, and the trim takes the *tail*.
+            // Trimming the head would hand the panel the beginning of a
+            // conversation and call it the end of one.
+            newestFirst.Reverse();
+            var rows = ChatTranscript.Map(newestFirst);
             var kept = rows.Count > HistoryTurns
                 ? rows.Skip(rows.Count - HistoryTurns).ToList()
                 : rows;

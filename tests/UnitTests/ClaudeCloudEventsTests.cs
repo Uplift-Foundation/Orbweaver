@@ -44,11 +44,30 @@ public partial class ClaudeCloudEventsTests
         AssistantTemplate.Replace("UUID", uuid, StringComparison.Ordinal)
             .Replace("TEXT", text, StringComparison.Ordinal);
 
-    private static string Envelope(IEnumerable<string> rows, bool hasMore = false, string? lastId = null)
+    // The /v2 envelope ClaudeCloudEvents.ParsePage reads: rows bare, oldest
+    // first, a forward `last_id` cursor. Only the probe's v2-events verb still
+    // reads that list; the panel does not (see Envelope).
+    private static string V2Envelope(IEnumerable<string> rows, bool hasMore = false, string? lastId = null)
     {
         var last = lastId is null ? "null" : "\"" + lastId + "\"";
         return "{\"data\":[" + string.Join(",", rows) + "],\"has_more\":"
                + (hasMore ? "true" : "false") + ",\"last_id\":" + last + "}";
+    }
+
+    // One page of the write host's event list, which is what the panel reads
+    // since the history fix: the measured shape, newest first, each row the
+    // `payload` of an event wrapper, and a `next_cursor` that pages backwards.
+    //
+    // Rows are given oldest first, the way a conversation reads, and turned
+    // round here, so every test still writes "the user asked, then the reply".
+    // `hasMore`/`lastId` keep their old names at the call sites: "there is an
+    // older page, and this is its cursor".
+    private static string Envelope(IEnumerable<string> rows, bool hasMore = false, string? lastId = null)
+    {
+        var wrapped = rows.Reverse().Select((row, i) =>
+            "{\"event_id\":\"e" + i + "\",\"sequence_num\":\"" + (1000 - i) + "\",\"payload\":" + row + "}");
+        var cursor = hasMore && lastId is not null ? "\"" + lastId + "\"" : "null";
+        return "{\"data\":[" + string.Join(",", wrapped) + "],\"next_cursor\":" + cursor + "}";
     }
 
     // --- the envelope --------------------------------------------------------
@@ -56,7 +75,7 @@ public partial class ClaudeCloudEventsTests
     [Fact]
     public void APageOfEventsBecomesTurnsThroughTheExistingParser()
     {
-        var page = ClaudeCloudEvents.ParsePage(Envelope(new[]
+        var page = ClaudeCloudEvents.ParsePage(V2Envelope(new[]
         {
             UserRow("u1", "run the tests"),
             AssistantRow("a1", "running them now"),
@@ -130,7 +149,7 @@ public partial class ClaudeCloudEventsTests
     [Fact]
     public void RowTypesTheParserDoesNotHandleAreSkippedRatherThanFatal()
     {
-        var page = ClaudeCloudEvents.ParsePage(Envelope(new[]
+        var page = ClaudeCloudEvents.ParsePage(V2Envelope(new[]
         {
             """{"type":"system","uuid":"s1","subtype":"init"}""",
             """{"type":"control_request","uuid":"c1"}""",
@@ -140,6 +159,80 @@ public partial class ClaudeCloudEventsTests
 
         Assert.True(page.Parsed);
         Assert.Equal("still here", Assert.Single(page.Rows).Turn.Text);
+    }
+
+    // --- the newest-first page ---------------------------------------------------
+
+    // The measured wrapper, newest first: each item's `payload` is the row, in
+    // the order the server sent it, and `next_cursor` names the page before.
+    [Fact]
+    public void ANewestPageUnwrapsEachPayloadInTheOrderSent()
+    {
+        var page = ClaudeCloudEvents.ParseNewestPage(
+            "{\"data\":[{\"event_id\":\"e2\",\"sequence_num\":\"9\",\"payload\":" + AssistantRow("a1", "hi")
+            + "},{\"event_id\":\"e1\",\"sequence_num\":\"8\",\"payload\":" + UserRow("u1", "hello")
+            + "}],\"next_cursor\":\"7\",\"resume_cursor\":\"7\"}");
+
+        Assert.True(page.Parsed);
+        Assert.Equal("7", page.NextCursor);
+        Assert.Equal(2, page.Payloads.Count);
+        Assert.Equal("hi", Assert.Single(ChatTranscript.Map(new[] { page.Payloads[0] })).Turn.Text);
+        Assert.Equal("hello", Assert.Single(ChatTranscript.Map(new[] { page.Payloads[1] })).Turn.Text);
+    }
+
+    // Pretty-printed or not, a payload comes out compact, for the substring
+    // reason ParsePage gives; an item with no payload object is passed whole,
+    // as CloudStreamRows.RowsFrom would; and anything that is not an object is
+    // skipped rather than fatal.
+    [Fact]
+    public void ANewestPageIsCompactAndToleratesOddItems()
+    {
+        var page = ClaudeCloudEvents.ParseNewestPage("""
+        {
+          "data": [
+            { "payload": { "type": "assistant", "uuid": "a1", "message": { "role": "assistant", "content": [ { "type": "text", "text": "spaced" } ] } } },
+            { "type": "user", "uuid": "u1", "message": { "role": "user", "content": "bare" } },
+            "not an item",
+            { "payload": "not an object" }
+          ],
+          "next_cursor": 41
+        }
+        """);
+
+        Assert.True(page.Parsed);
+        Assert.Equal("41", page.NextCursor);
+        Assert.Equal(3, page.Payloads.Count);
+        Assert.DoesNotContain(" ", page.Payloads[0].Replace("\"spaced\"", "", StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Equal(new[] { "spaced", "bare" },
+            ChatTranscript.Map(page.Payloads.Take(2).ToList()).Select(r => r.Turn.Text));
+    }
+
+    [Theory]
+    [InlineData("""{"data":[],"next_cursor":"  "}""")]
+    [InlineData("""{"data":[],"next_cursor":null}""")]
+    [InlineData("""{"data":[],"next_cursor":true}""")]
+    [InlineData("""{"data":[]}""")]
+    public void ANewestPageWithNoUsableCursorHasNone(string body)
+    {
+        var page = ClaudeCloudEvents.ParseNewestPage(body);
+
+        Assert.True(page.Parsed);
+        Assert.Null(page.NextCursor);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("<html>")]
+    [InlineData("""{"no_data":true}""")]
+    [InlineData("""{"data":"nope"}""")]
+    [InlineData("""[]""")]
+    public void AnUnusableNewestPageSaysItDidNotParse(string? body)
+    {
+        var page = ClaudeCloudEvents.ParseNewestPage(body);
+
+        Assert.False(page.Parsed);
+        Assert.Empty(page.Payloads);
     }
 
     [Fact]
@@ -203,19 +296,21 @@ public partial class ClaudeCloudEventsTests
 
         Assert.True(await chat.LoadAsync(CancellationToken.None));
 
-        Assert.Equal("/v2/ccr-sessions/session_a/events?limit=100", Assert.Single(api.Paths));
+        Assert.Equal("/v1/code/sessions/session_a/events?limit=100&sort_order=desc", Assert.Single(api.Paths));
         Assert.Equal(new[] { "hello", "hi" }, chat.History.Select(t => t.Text));
         Assert.Equal(2, added.Count);
         Assert.Equal(RemoteChatState.Connected, chat.State);
     }
 
+    // Newest first, walked backwards: the first page is the end of the
+    // conversation and its cursor names the page before it.
     [Fact]
     public async Task TheEventsWalkFollowsItsCursor()
     {
         var pages = new Queue<string>(new[]
         {
-            Envelope(new[] { UserRow("u1", "first") }, hasMore: true, lastId: "evt_1"),
-            Envelope(new[] { AssistantRow("a1", "second") }),
+            Envelope(new[] { AssistantRow("a1", "second") }, hasMore: true, lastId: "2448"),
+            Envelope(new[] { UserRow("u1", "first") }),
         });
 
         var api = new FakeApi(_ => new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""), pages.Dequeue()));
@@ -225,11 +320,88 @@ public partial class ClaudeCloudEventsTests
 
         Assert.Equal(new[]
         {
-            "/v2/ccr-sessions/session_a/events?limit=100",
-            "/v2/ccr-sessions/session_a/events?limit=100&after_id=evt_1",
+            "/v1/code/sessions/session_a/events?limit=100&sort_order=desc",
+            "/v1/code/sessions/session_a/events?limit=100&sort_order=desc&cursor=2448",
         }, api.Paths);
 
         Assert.Equal(new[] { "first", "second" }, chat.History.Select(t => t.Text));
+    }
+
+    // The defect this read was rewritten for. The old list was oldest first and
+    // could only walk forward, so a session longer than the page cap never
+    // showed anything past its first thousand events: measured, a 2,547-event
+    // session's panel ended on a turn from September, and a reply that arrived
+    // while the panel was shut was never read back. The cap now bounds how far
+    // *back* a load reaches; the newest page is always the first one read.
+    [Fact]
+    public async Task ASessionLongerThanThePageCapStillEndsOnItsNewestTurn()
+    {
+        var page = 0;
+        var api = new FakeApi(_ =>
+        {
+            page++;
+            return new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""),
+                Envelope(new[] { UserRow($"u{page}", $"turn {page} back") }, hasMore: true, lastId: $"{5000 - page}"));
+        });
+
+        var chat = Build(api);
+        Assert.True(await chat.LoadAsync(CancellationToken.None));
+
+        Assert.Equal(ClaudeCloudChatSession.MaxEventPages, api.Paths.Count);
+        Assert.Equal("turn 1 back", chat.History[^1].Text);
+        Assert.Equal($"turn {ClaudeCloudChatSession.MaxEventPages} back", chat.History[0].Text);
+    }
+
+    // A panel's worth of turns is enough: the walk stops there rather than
+    // spending the rest of the cap on history nobody will be shown.
+    [Fact]
+    public async Task TheEventsWalkStopsOnceItHasAPanelsWorthOfTurns()
+    {
+        var full = Enumerable.Range(0, ClaudeCloudChatSession.HistoryTurns)
+            .Select(i => UserRow($"u{i}", $"turn {i}"));
+
+        var api = new FakeApi(_ => new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""),
+            Envelope(full, hasMore: true, lastId: "12")));
+
+        var chat = Build(api);
+        Assert.True(await chat.LoadAsync(CancellationToken.None));
+
+        Assert.Single(api.Paths);
+        Assert.Equal(ClaudeCloudChatSession.HistoryTurns, chat.History.Count);
+    }
+
+    // Two ways the walk could otherwise read one page over and over: a cursor
+    // that does not move, and an empty page that still names one.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheEventsWalkStopsWhenItCanGoNoFurther(bool emptyPage)
+    {
+        var reads = 0;
+        var api = new FakeApi(_ =>
+        {
+            reads++;
+            var rows = emptyPage ? Array.Empty<string>() : new[] { UserRow($"u{reads}", $"turn {reads}") };
+            return new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""), Envelope(rows, hasMore: true, lastId: "77"));
+        });
+
+        var chat = Build(api);
+        Assert.True(await chat.LoadAsync(CancellationToken.None));
+
+        Assert.Equal(emptyPage ? 1 : 2, reads);
+    }
+
+    // No path for a malformed id means no read: the panel says it could not
+    // read rather than asking the server about an id it would refuse.
+    [Fact]
+    public async Task AMalformedIdIsNotReadAndSaysSo()
+    {
+        var api = new FakeApi(_ => throw new InvalidOperationException("no request should be made"));
+        var chat = Build(api, session: Session("not a session id"));
+
+        Assert.False(await chat.LoadAsync(CancellationToken.None));
+        Assert.Empty(api.Paths);
+        Assert.Equal(RemoteChatState.Error, chat.State);
     }
 
     [Fact]
@@ -512,10 +684,11 @@ public partial class ClaudeCloudEventsTests
 
         internal List<CloudRequestContext> Posts => Where(r => r.Method == HttpMethod.Post);
 
-        // The transcript reads, on the /v2 events path.
+        // The transcript reads: the write host's event list, newest first —
+        // every events read except the stream's one-event starting-point read.
         internal List<CloudRequestContext> Transcripts =>
             Where(r => r.Method is null && r.Path.Contains("/events?", StringComparison.Ordinal)
-                                        && !r.Path.StartsWith(CloudRequest.CodeSessionsPath, StringComparison.Ordinal));
+                                        && !r.Path.EndsWith("?limit=1&sort_order=desc", StringComparison.Ordinal));
 
         internal List<CloudRequestContext> NewestReads =>
             Where(r => r.Path == ClaudeCloudStreamRequest.NewestSequencePath("session_a"));
