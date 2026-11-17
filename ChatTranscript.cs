@@ -1029,7 +1029,9 @@ namespace Orbweaver
         // had hidden it, because generating them trimmed exactly those rows.
         internal static string[] ScreenLines(string screen)
         {
-            var lines = screen.Replace("\r", "").Split('\n');
+            // CB-353: a docked side panel is cut off first, because the rows
+            // under a form are blank only once the panel's text is gone.
+            var lines = PaneColumns.StripSidePanel(screen.Replace("\r", "").Split('\n'));
             var end = lines.Length;
             while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
             return end == lines.Length ? lines : lines[..end];
