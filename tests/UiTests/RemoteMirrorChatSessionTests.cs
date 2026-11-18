@@ -261,6 +261,75 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Contains("Live view", session.History[0].Text);
     }
 
+    // CB-356: a page seam that falls between a compaction's boundary and its
+    // summary. The opening window starts with the summary, shown as an orphan;
+    // paging back delivers the boundary as the older page's last turn. The shown
+    // row takes the boundary's numbers and the page's copy is not inserted, so
+    // there is one row for the pair, and it is the same row the panel drew.
+    //
+    // Built on the uniform fixture of ALiveViewCanBePagedBackInto: one open
+    // finds the first row the window shows, and a second transcript puts the
+    // boundary just before it and the summary on it, each padded to the byte
+    // length of the row it replaces, so the far side windows it the same way.
+    // The precondition is asserted rather than assumed.
+    [AvaloniaFact]
+    public async Task APageSeamBetweenACompactionsHalvesStillShowsOneRow()
+    {
+        string PadTo(string row, int length)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(row)!.AsObject();
+            node["pad"] = "";
+            var bare = node.ToJsonString().Length;
+            Assert.True(bare <= length, $"a row of {bare} bytes cannot be padded to {length}");
+            node["pad"] = new string('p', length - bare);
+            return node.ToJsonString();
+        }
+
+        // Every row the same length, longer than either captured row, so the
+        // two can stand in for any pair of rows without moving the window.
+        const int RowBytes = 8000;
+        var rows = new List<string>();
+        for (var i = 0; rows.Count * (RowBytes + 1) < MirrorProtocol.InitialBytes * 8; i++)
+            rows.Add(PadTo(UserRow($"r{i}", $"message {i} " + new string('y', 300)), RowBytes));
+
+        WireRows(rows);
+        var probe = await OpenAsync();
+        var first = probe.History.Skip(1).First().Text;
+        var k = rows.FindIndex(r => r.Contains($"\"message {first.Split(' ')[1]} ", StringComparison.Ordinal));
+        Assert.True(k > 1, $"the opening window should not start at the top: {first}");
+
+        var capture = File.ReadAllLines(Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(Here())!, "..", "TranscriptTests", "Captures", "cb356", "auto-adjacent.jsonl")));
+        var seamed = new List<string>(rows)
+        {
+            [k - 1] = PadTo(capture[1], RowBytes),
+            [k] = PadTo(capture[2], RowBytes),
+        };
+
+        _agents.Clear();
+        _sessions.Clear();
+        WireRows(seamed);
+        var session = await OpenAsync();
+        var backlog = (IRemoteChatBacklog)session;
+
+        var shown = session.History[1];
+        Assert.True(shown.Compaction is { HasBoundary: false, HasSummary: true },
+            $"the opening window should start on the summary (row {k}), not on: {shown.Text[..Math.Min(20, shown.Text.Length)]}");
+
+        var updated = new List<ChatTurn>();
+        session.TurnUpdated += updated.Add;
+
+        Assert.True(await backlog.LoadOlderAsync(CancellationToken.None));
+
+        Assert.Same(shown, Assert.Single(session.History, t => t.Compaction is not null));
+        Assert.True(shown.Compaction is { HasBoundary: true, HasSummary: true, Trigger: "auto" });
+        Assert.Equal("Conversation compacted automatically · 246k → 21k tokens", shown.Text);
+        Assert.Same(shown, Assert.Single(updated));
+        Assert.Contains("Live view", session.History[0].Text);
+    }
+
+    private static string Here([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
     // --- typing -----------------------------------------------------------------
 
     // The half of this bug that was about slash commands. The message reaches

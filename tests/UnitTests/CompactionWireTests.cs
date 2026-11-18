@@ -254,6 +254,19 @@ public class CompactionWireTests
     }
 
     [Fact]
+    public void FitAlone_cuts_an_already_cut_body_without_doubling_its_ellipsis()
+    {
+        var line = TranscriptWatch.From(Compaction(BoundaryOnly with { Summary = new string('\u0001', 9000) }));
+        Assert.True(line.BodyCut);
+
+        var fitted = TranscriptWatch.FitAlone(line, "s", 1, false, false);
+
+        Assert.True(fitted.BodyCut);
+        Assert.EndsWith("\u0001…", fitted.Body);
+        Assert.True(fitted.Body!.Length < line.Body!.Length);
+    }
+
+    [Fact]
     public void FitAlone_empties_the_body_and_then_cuts_the_text_when_the_text_alone_is_too_big()
     {
         var huge = new TranscriptWatch.WireLine("system", new string('\u0001', 8000), 1, false, false,

@@ -86,6 +86,24 @@ public partial class ClaudeCloudEventsTests
         await Close(chat);
     }
 
+    // A summary with no uuid still folds in; it just has no second key to file.
+    [Fact]
+    public async Task ASummaryWithNoUuidStillFoldsIntoItsBoundary()
+    {
+        var (chat, _, stream, _) = Streaming();
+        chat.PanelOpened();
+        var events = await stream.NextOpenAsync();
+        var node = System.Text.Json.Nodes.JsonNode.Parse(SummaryRow)!.AsObject();
+        node.Remove("uuid");
+
+        events.TryWrite(Durable(40, "system", "compact_boundary", payload: BoundaryRow));
+        events.TryWrite(Durable(41, "user", payload: node.ToJsonString()));
+        await Until(() => chat.History.FirstOrDefault()?.Compaction?.HasSummary == true);
+
+        Assert.Equal(Merged, Assert.Single(chat.History).Compaction);
+        await Close(chat);
+    }
+
     [Fact]
     public async Task ALaterReadOfThePairOrOfTheSummaryAloneLandsOnTheSameRow()
     {
