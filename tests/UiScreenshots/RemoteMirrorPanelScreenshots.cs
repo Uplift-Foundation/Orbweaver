@@ -1,3 +1,4 @@
+using Xunit;
 using Avalonia.Headless.XUnit;
 
 namespace Orbweaver.Tests;
@@ -77,9 +78,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             ("assistant", "Set — this session's orb is green now."));
 
         var session = Open();
-        await _client.DiscoverAsync(Peers, new[] { Name });
+        await HandshakeAsync();
 
         ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("orb is green now"));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view.png");
@@ -120,9 +122,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
         _mangle = true;
 
         var session = Open();
-        await _client.DiscoverAsync(Peers, new[] { Name });
+        await HandshakeAsync();
 
         ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("failed its integrity check"));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-integrity-refusal.png");
@@ -151,9 +154,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
         _swallowFetch = true;
 
         var session = Open();
-        await _client.DiscoverAsync(Peers, new[] { Name });
+        await HandshakeAsync();
 
         ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text == RemoteControlChatSession.FetchingNote(session.DisplayName));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-fetching.png");
@@ -172,9 +176,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             ("assistant", "yes — deploying now"));
 
         var session = Open();
-        await _client.DiscoverAsync(Peers, new[] { Name });
+        await HandshakeAsync();
 
         ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("deploying now"));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view-deliverable.png");
@@ -183,6 +188,7 @@ public class RemoteMirrorPanelScreenshots : IDisposable
     // --- wiring -------------------------------------------------------------------
 
     private bool _mangle;
+    private bool _peerAllowed = true;
 
     // Swallows the FETCH so the request stays pending and the panel keeps
     // drawing its wait. A screenshot cannot sit through a real one, and holding the
@@ -190,6 +196,60 @@ public class RemoteMirrorPanelScreenshots : IDisposable
     // "in flight" a fact rather than a race.
     private bool _swallowFetch;
     private string _path = "";
+
+    // The handshake, bounded and checked. A Hello nobody answers would otherwise
+    // wait out RequestAsync's 120s and then let the test capture whatever the
+    // panel happened to show; here it is cut to seconds and the roster must say
+    // the session is available before anything is drawn (CB-334).
+    private async Task<RemoteMirrorClient.MirrorState> HandshakeAsync(int timeoutSeconds = 3)
+    {
+        _client.TimeoutOverrideForTests = TimeSpan.FromSeconds(timeoutSeconds);
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        var state = _client.StateFor(Name);
+        Assert.True(state.Availability == RemoteMirrorClient.MirrorAvailability.Available,
+                $"the far Buddy never answered the Hello; roster says {state.Availability}");
+        return state;
+    }
+
+    // The panel reached the state the picture is named for: switched to live
+    // view, and holding a turn that says so. Without this a Hello that never
+    // completed still produced a green test and a PNG of "Checking whether...".
+    private static async Task PanelShowsAsync(RemoteControlChatSession session, Func<ChatTurn, bool> turn)
+    {
+        Assert.True(await UntilAsync(() => session.IsMirroring), "the panel never switched to live view");
+        var shown = await UntilAsync(() => session.History.Any(turn));
+        Assert.True(shown, "the panel never showed its state; history: "
+            + string.Join(" | ", session.History.Select(h => h.Text)));
+    }
+
+    // Negative control for HandshakeAsync: the exact CB-334 failure (the far
+    // Buddy refusing the peer, which it does silently) must fail fast here,
+    // not pass after 120s.
+    [AvaloniaFact]
+    public async Task AHelloTheFarBuddyNeverAnswersFailsTheHandshakeInSeconds()
+    {
+        Wire(("user", "hi"), ("assistant", "hello"));
+        _peerAllowed = false;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() => HandshakeAsync(timeoutSeconds: 1));
+
+        Assert.Contains("never answered", failure.Message);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"took {clock.Elapsed}");
+    }
+
+    // Polls rather than sleeps: returns the moment the condition holds.
+    private static async Task<bool> UntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(25);
+        }
+        return condition();
+    }
 
     private RemoteControlChatSession Open()
     {
@@ -247,6 +307,11 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             CanDeliver: status => canDeliver,
             Deliver: (status, text) =>
                 Task.FromResult(new DeliveryReceipt(DeliveryResult.Accepted, "idle")),
+            // Who may ask. The server refuses every peer by default (CB-344) and
+            // does so SILENTLY - a dropped frame, no reply - so a fixture that
+            // forgets this leaves each Hello waiting out its whole timeout while
+            // the panel sits on "Checking whether a live view..." (CB-334).
+            PeerAllowed: _ => _peerAllowed,
             // CB-252: never the developer's real persona files.
             UserConfigDirs: () => Array.Empty<string>()));
 
