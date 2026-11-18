@@ -110,6 +110,15 @@ public class NewChatMachinesTests
     }
 
     [Fact]
+    public void A_null_terminal_is_not_ready_to_launch()
+    {
+        var s = NewChatMachines.From("m", new PeerLaunchInfo(true, "macos", "/h", null, [new("claude", true)], [], ["/a"]));
+        Assert.False(s.StartEnabled);
+        Assert.False(s.CliEnabled("claude"));
+        Assert.Equal("No terminal to start it in (tmux isn't installed).", s.Note);
+    }
+
+    [Fact]
     public void Start_needs_a_folder_to_start_in()
     {
         var none = NewChatMachines.From("m", Info(recents: [], home: null));

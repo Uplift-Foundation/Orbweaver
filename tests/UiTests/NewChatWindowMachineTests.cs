@@ -368,6 +368,7 @@ public class NewChatWindowMachineTests : IDisposable
     [InlineData("unknown_cwd", null, "That folder doesn't exist on mini.")]
     [InlineData("no_terminal", null, "No terminal to start it in (no reason given).")]
     [InlineData("link_lost", null, "The link to mini dropped before it answered.")]
+    [InlineData("cannot_sign", null, "This machine couldn't sign the request, so nothing was sent.")]
     [InlineData("whatever", "disk full", "mini refused it (whatever).")]
     public void EachRefusalShowsItsCopyInline(string code, string? why, string expected)
     {
@@ -378,6 +379,21 @@ public class NewChatWindowMachineTests : IDisposable
         Click(w.StartButton);
         Assert.Equal(expected, w.StatusLine.Text);
         Assert.True(w.StartButton.IsEnabled);
+    }
+
+    // The far machine reports only a CLI this window has no row for, so the
+    // scope says Start is possible while no radio can be chosen.
+    [AvaloniaFact]
+    public void AMachineWithOnlyAnUnknownCliSaysChooseACliOnAStrayClick()
+    {
+        var f = Ready();
+        f.Answers["mini"] = new PeerLaunchInfo(true, "macos", "/h", true, [new("gemini", true)], [], ["/a"]);
+        var w = Make(f);
+        Pick(w, 1);
+        Assert.Null(w.SelectedCli);
+        Click(w.StartButton);
+        Assert.Equal("Choose a CLI first.", w.StatusLine.Text);
+        Assert.Empty(f.Launches);
     }
 
     [AvaloniaFact]

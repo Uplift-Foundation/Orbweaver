@@ -7,6 +7,7 @@ public class PeerLaunchCopyTests
     [Theory]
     [InlineData("peer_launch_off", "mini doesn't allow other desktops to start sessions. Turn that on in its Settings.")]
     [InlineData("no_answer", "mini didn't answer. It may be asleep, or running a version that can't start sessions for another desktop.")]
+    [InlineData("cannot_sign", "This machine couldn't sign the request, so nothing was sent.")]
     [InlineData("link_lost", "The link to mini dropped before it answered.")]
     [InlineData("bad_frame", "mini could not read that request.")]
     [InlineData("bad_input", "That message can't be typed.")]

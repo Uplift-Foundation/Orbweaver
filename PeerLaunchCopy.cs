@@ -50,6 +50,9 @@ namespace Orbweaver
             {
                 PeerLaunchCodes.PeerLaunchOff => machine + " doesn't allow other desktops to start sessions. Turn that on in its Settings.",
                 PeerLaunchCodes.NoAnswer => machine + " didn't answer. It may be asleep, or running a version that can't start sessions for another desktop.",
+                // This desktop's own failure: nothing was sent, so it must not read
+                // as the far machine refusing.
+                PeerLaunchCodes.CannotSign => "This machine couldn't sign the request, so nothing was sent.",
                 PeerLaunchCodes.LinkLost => "The link to " + machine + " dropped before it answered.",
                 RelayReplies.BadFrame => machine + " could not read that request.",
                 RelayReplies.BadInput => "That message can't be typed.",
