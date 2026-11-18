@@ -196,5 +196,42 @@ namespace Orbweaver
             open.Text = merged.Line;
             return true;
         }
+
+        // Two reads of the same compaction under the same key: a session that
+        // re-reads its transcript by uuid (the cloud panel does, every poll) can
+        // get back the merged pair, or either half on its own, for a turn
+        // already on screen. The turn keeps whatever it already knew and gains
+        // what the new read adds, so a later read of one half never undoes a
+        // merge. True when the turn changed; false, and nothing touched, when
+        // either side is not a compaction or the read adds nothing.
+        public static bool TryRefresh(ChatTurn shown, ChatTurn reread)
+        {
+            if (shown.Compaction is not { } have || reread.Compaction is not { } read) return false;
+
+            var boundary = have.HasBoundary || !read.HasBoundary ? have : read;
+            var merged = boundary with { Summary = have.HasSummary ? have.Summary : read.Summary };
+            if (merged == have) return false;
+
+            shown.Compaction = merged;
+            shown.Text = merged.Line;
+            return true;
+        }
+
+        // The same pair met the other way round: an older page ends on the
+        // boundary while the summary is already on screen as an orphan. The
+        // turn on screen keeps its identity and takes the boundary's numbers,
+        // and the caller drops `older` instead of inserting it. Merging into
+        // `older` and removing the shown turn would need the panel to delete a
+        // row, and a prepend only ever inserts.
+        public static bool TryAdopt(ChatTurn older, ChatTurn shown)
+        {
+            if (older.Compaction is not { HasBoundary: true, HasSummary: false } boundary) return false;
+            if (shown.Compaction is not { HasBoundary: false, HasSummary: true } summary) return false;
+
+            var merged = boundary.WithSummaryFrom(summary);
+            shown.Compaction = merged;
+            shown.Text = merged.Line;
+            return true;
+        }
     }
 }

@@ -81,6 +81,13 @@ if (args.Length > 0)
                 Console.WriteLine(
                     $"          relay: kind={r.Kind} name={r.Name ?? "-"} color={r.Color ?? "-"} "
                     + $"type={r.PayloadType} verb=\"{r.Verb}\" preview=\"{r.Preview}\"");
+
+            // CB-356: the fields a compaction turn carries.
+            if (t.Turn.Compaction is { } c)
+                Console.WriteLine(
+                    $"          compaction: trigger={c.Trigger ?? "-"} pre={c.PreTokens?.ToString() ?? "-"} "
+                    + $"post={c.PostTokens?.ToString() ?? "-"} boundary={c.HasBoundary} "
+                    + $"summary={c.Summary.Length} chars uuid={t.Uuid ?? "-"}");
         }
 
         return 0;

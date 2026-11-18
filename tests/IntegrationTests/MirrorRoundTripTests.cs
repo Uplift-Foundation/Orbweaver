@@ -116,6 +116,66 @@ public class MirrorRoundTripTests : IDisposable
     private static string Cb330Dir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
         Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "TranscriptTests", "Captures", "cb330"));
 
+    // CB-356: a compaction on the far disk arrives as one compaction turn, not
+    // a user bubble holding the summary. The rows are the real capture.
+    [Fact]
+    public async Task ACompactionArrivesAsOneCompactionTurnNotAUserBubble()
+    {
+        var rows = File.ReadAllLines(Path.Combine(Cb356Dir(), "auto-attachments-between.jsonl")).ToList();
+        var path = WriteTranscript("compacted.jsonl", rows);
+
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", path);
+
+        Assert.True(await harness.HandshakeAsync("job-hunter"));
+        Assert.True(await harness.Client.OpenAsync("job-hunter"));
+
+        var delivered = Assert.Single(harness.Windows);
+        Assert.Equal(MirrorProtocol.TurnsFrom(rows, MirrorProtocol.CliClaudeCode), delivered.Turns);
+        Assert.Equal(new[] { "a", "s", "a" }, delivered.Turns.Select(t => t.Role));
+        Assert.DoesNotContain(delivered.Turns, t => t.Role == "u");
+
+        var adopted = MirrorProtocol.AdoptTurns(delivered.Turns);
+        var compaction = Assert.Single(adopted, a => a.Turn.Compaction is not null).Turn.Compaction!;
+        Assert.Equal(("auto", 168548L, 16159L, true), (compaction.Trigger, compaction.PreTokens, compaction.PostTokens, compaction.HasSummary));
+        Assert.DoesNotContain("This session is being continued", compaction.Summary);
+    }
+
+    // The boundary and the summary appended in two separate writes reach the
+    // far side as two updates, one half each. The receiving session folds them
+    // with TryAbsorb (pinned in the UI suite); what this pins is that each half
+    // crosses the wire as itself rather than as a user bubble or nothing.
+    [Fact]
+    public async Task ACompactionWrittenInTwoPiecesArrivesAsTheTwoHalves()
+    {
+        var capture = File.ReadAllLines(Path.Combine(Cb356Dir(), "auto-adjacent.jsonl"));
+        var path = WriteTranscript("live-compaction.jsonl", new[] { capture[0] });
+
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", path);
+        await harness.HandshakeAsync("job-hunter");
+        await harness.Client.OpenAsync("job-hunter");
+
+        File.AppendAllText(path, capture[1] + "\n");
+        await harness.Server.TickAsync();
+        File.AppendAllText(path, capture[2] + "\n");
+        await harness.Server.TickAsync();
+
+        Assert.Equal(2, harness.Deltas.Count);
+        var boundary = Assert.Single(MirrorProtocol.AdoptTurns(harness.Deltas[0].Turns)).Turn;
+        var summary = Assert.Single(MirrorProtocol.AdoptTurns(harness.Deltas[1].Turns)).Turn;
+        Assert.True(boundary.Compaction is { HasBoundary: true, HasSummary: false });
+        Assert.True(summary.Compaction is { HasBoundary: false, HasSummary: true });
+
+        Assert.True(CompactionNote.TryAbsorb(boundary, summary));
+        Assert.Equal(boundary.Compaction,
+            Assert.Single(MirrorProtocol.AdoptTurns(MirrorProtocol.TurnsFrom(capture.Take(3), MirrorProtocol.CliClaudeCode)),
+                a => a.Turn.Compaction is not null).Turn.Compaction);
+    }
+
+    private static string Cb356Dir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "TranscriptTests", "Captures", "cb356"));
+
     // A conversation big enough to need many frames, which is where chunking,
     // ordering and the whole-payload hash all have to hold at once.
     [Fact]

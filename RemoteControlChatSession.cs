@@ -480,6 +480,11 @@ namespace Orbweaver
                     foreach (var row in mapped)
                     {
                         if (row.Key is not null && !_seen.Add(row.Key)) continue;
+
+                        // CB-356: a far side that sent the boundary and the
+                        // summary as separate turns still draws one row.
+                        if (_history.Count > 0 && CompactionNote.TryAbsorb(_history[^1], row.Turn)) continue;
+
                         _history.Add(row.Turn);
                     }
 
@@ -506,6 +511,15 @@ namespace Orbweaver
                 foreach (var row in mapped)
                 {
                     if (row.Key is not null && !_seen.Add(row.Key)) continue;
+
+                    // CB-356: the summary arriving a batch after its boundary
+                    // folds into the boundary's row.
+                    if (_history.Count > 0 && CompactionNote.TryAbsorb(_history[^1], row.Turn))
+                    {
+                        TurnUpdated?.Invoke(_history[^1]);
+                        continue;
+                    }
+
                     if (Reconcile(row.Turn)) continue;
 
                     Add(row.Turn);
@@ -567,6 +581,19 @@ namespace Orbweaver
                 older.Add(row.Turn);
             }
 
+            // After the live-view banner, which is the one thing that stays at
+            // the top: it describes the panel, not a moment in the conversation.
+            var at = _history.Count > 0 && _history[0].Role == ChatRole.System ? 1 : 0;
+
+            // CB-356: a page that ends on a compaction boundary whose summary is
+            // already the first conversation turn shown. The shown turn takes the
+            // boundary's numbers and the page's copy is not inserted.
+            if (older.Count > 0 && _history.Count > at && CompactionNote.TryAdopt(older[^1], _history[at]))
+            {
+                older.RemoveAt(older.Count - 1);
+                TurnUpdated?.Invoke(_history[at]);
+            }
+
             if (older.Count == 0)
             {
                 // A page that parsed to nothing but moved the offset is not the
@@ -576,9 +603,6 @@ namespace Orbweaver
                 return HasMore;
             }
 
-            // After the live-view banner, which is the one thing that stays at
-            // the top: it describes the panel, not a moment in the conversation.
-            var at = _history.Count > 0 && _history[0].Role == ChatRole.System ? 1 : 0;
             _history.InsertRange(at, older);
 
             HistoryPrepended?.Invoke(older.Count);
