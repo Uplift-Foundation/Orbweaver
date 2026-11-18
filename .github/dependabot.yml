@@ -27,6 +27,12 @@ updates:
       - dependency-name: "Microsoft.Testing.Extensions.HangDump"
       - dependency-name: "Microsoft.Testing.Platform*"
       - dependency-name: "xunit.v3*"
+      # Major bumps are a decision, not a weekly PR: Microsoft.NET.Test.Sdk 18.x
+      # may drag Microsoft.Testing.Platform 2.x in under the pins above,
+      # Avalonia.Headless.XUnit 12.x needs xunit v3 and the pinned platform, and
+      # openclaw-probe sits on Avalonia 11 on purpose. Do those by hand.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"

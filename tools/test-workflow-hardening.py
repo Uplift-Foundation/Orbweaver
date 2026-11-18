@@ -20,6 +20,9 @@ indentation. That is deliberately narrow. A flow-style `jobs: {...}` or a tab
 indent is reported as unparseable rather than guessed at, so the guard cannot
 pass a file it did not understand.
 
+A third: no job holding `environment: release` may have `contents: write`,
+since that job is the one holding the signing secrets.
+
 A negative control runs first: a synthetic workflow that breaks both rules must
 fail both checks, so a parser that goes blind turns this red instead of green.
 """
@@ -43,6 +46,11 @@ def _meaningful(text):
             raise ValueError("tab indentation")
         out.append((len(raw) - len(raw.lstrip(" ")), raw.strip(), raw))
     return out
+
+
+def _strip_comment(value):
+    """Drop a trailing ` # comment`. Values compared here are plain words."""
+    return re.sub(r"\s+#.*$", "", value)
 
 
 def parse(text):
@@ -78,7 +86,7 @@ def parse(text):
         current["raw"].append(raw)
         if indent == job_indent + 2 and ":" in content:
             k, v = content.split(":", 1)
-            current["keys"][k] = v.strip()
+            current["keys"][k] = _strip_comment(v).strip()
     if not jobs:
         raise ValueError("jobs: has no jobs")
     return top, jobs
@@ -100,6 +108,52 @@ def environment_problems(name, text, required="release"):
             for j, d in jobs.items()
             if re.search(r"secrets\.MACOS_", "\n".join(d["raw"]))
             and d["keys"].get("environment") != required]
+
+
+def write_problems(name, text, required="release"):
+    top, jobs = parse(text)
+    top_block = _top_permissions(text)
+    out = []
+    for j, d in jobs.items():
+        if d["keys"].get("environment") != required:
+            continue
+        own = "\n".join(d["raw"])
+        has_own = "permissions" in d["keys"]
+        scope = _permissions_block(d["raw"]) if has_own else top_block
+        if re.search(r"contents:\s*write|write-all", scope) or (
+                has_own and re.search(r"permissions:\s*write-all", own)):
+            out.append(f"{name}: job '{j}' holds environment: {required} "
+                       f"and has contents: write")
+    return out
+
+
+def _permissions_block(raw_lines):
+    """Text of a job's own permissions: block (the key line and its children)."""
+    out, base = [], None
+    for raw in raw_lines:
+        ind = len(raw) - len(raw.lstrip(" "))
+        if base is None:
+            if raw.strip().startswith("permissions:") and ind >= 4:
+                base = ind
+                out.append(_strip_comment(raw))
+            continue
+        if ind <= base:
+            break
+        out.append(_strip_comment(raw))
+    return "\n".join(out)
+
+
+def _top_permissions(text):
+    out, on = [], False
+    for raw in text.splitlines():
+        if raw.startswith("permissions:"):
+            on = True
+            out.append(_strip_comment(raw))
+        elif on and raw.startswith(" ") and raw.strip():
+            out.append(_strip_comment(raw))
+        elif on and raw.strip() and not raw.startswith("#"):
+            break
+    return "\n".join(out)
 
 
 def workflow_files():
@@ -164,6 +218,25 @@ class NegativeControl(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("'b'", problems[0])
 
+    def test_inline_comment_after_environment_passes(self):
+        commented = GOOD_TOP.replace("environment: release",
+                                     "environment: release   # why")
+        self.assertEqual(environment_problems("c.yml", commented), [])
+
+    def test_release_job_with_write_fails(self):
+        top_write = GOOD_TOP.replace("contents: read", "contents: write")
+        self.assertEqual(len(write_problems("w.yml", top_write)), 1)
+        job_write = GOOD_TOP.replace("    environment: release\n",
+            "    environment: release\n    permissions:\n      contents: write  # x\n")
+        self.assertEqual(len(write_problems("w.yml", job_write)), 1)
+        self.assertEqual(write_problems("w.yml", GOOD_TOP), [])
+
+    def test_job_read_overrides_top_level_write(self):
+        text = GOOD_TOP.replace("contents: read", "contents: write").replace(
+            "    environment: release\n",
+            "    environment: release\n    permissions:\n      contents: read\n")
+        self.assertEqual(write_problems("o.yml", text), [])
+
     def test_unparseable_input_raises_instead_of_passing(self):
         for text in ("name: x\n", "jobs: {a: {}}\n", "jobs:\n"):
             with self.assertRaises(ValueError):
@@ -182,6 +255,13 @@ class RealWorkflows(unittest.TestCase):
         for f in workflow_files():
             with open(f, encoding="utf-8") as fh:
                 problems += permission_problems(os.path.basename(f), fh.read())
+        self.assertEqual(problems, [])
+
+    def test_release_environment_jobs_cannot_write(self):
+        problems = []
+        for f in workflow_files():
+            with open(f, encoding="utf-8") as fh:
+                problems += write_problems(os.path.basename(f), fh.read())
         self.assertEqual(problems, [])
 
     def test_macos_secret_jobs_use_release_environment(self):

@@ -13,8 +13,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Read-only by default; only `publish` creates the release and needs write.
+# macos holds the signing secrets and must never also hold a write token.
 permissions:
-  contents: write   # needed to create the release and upload assets
+  contents: read
 
 jobs:
   # Runs first and gates everything else. A tag whose number disagrees with the
@@ -220,6 +222,8 @@ jobs:
   publish:
     needs: [macos, windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create the release and upload assets
     # Only a tag push publishes; workflow_dispatch runs stop after building.
     if: startsWith(github.ref, 'refs/tags/v')
 
