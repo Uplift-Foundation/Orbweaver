@@ -2548,15 +2548,28 @@ namespace Orbweaver
                 // Just before the piece that ends the transfer, so the peer's slot
                 // is free by the time it can act on the answer.
                 //
-                // The memory bound this leaves is TWO transfers' buffers per peer,
-                // not one: until this last send returns, this transfer still holds
-                // its payload and the Split copies of it, and a new request may by
-                // then have taken the slot and be reading its own file. It cannot
-                // grow past two. A connection's sends go through one writer
-                // (PeerLink's per-peer Writing semaphore), so the newer request's
-                // first frame queues behind this last send, and it only reaches its
-                // own release - before ITS last piece - once this send has returned
-                // and these buffers can go.
+                // The memory bound this leaves is at most TWO multi-piece transfers'
+                // buffers per peer, not one, plus single-piece answers queued
+                // behind a stalled send.
+                //
+                // Until this last send returns, this transfer still holds its
+                // payload and the Split copies of it, and a new request may by then
+                // have taken the slot and be reading its own file. A connection's
+                // sends go through one writer (PeerLink's per-peer Writing
+                // semaphore), so a newer MULTI-piece transfer's first frame queues
+                // behind this last send, and it only reaches its own release -
+                // before ITS last piece - once this send has returned and these
+                // buffers can go.
+                //
+                // That does not hold for an answer that is a single frame: a
+                // refusal, same, or a file small enough to be one piece releases
+                // before its only frame, and that frame is the one queued. So while
+                // this send is stalled any number of single-piece answers, each no
+                // larger than one chunk, can queue behind it. They are bounded by the
+                // per-peer rate bucket checked in FileAsync before the slot is taken,
+                // and each request has to arrive over this same connection. Releasing
+                // a single-piece answer after its send would tighten that and reopen
+                // the race this release exists to close, so it is left as is.
                 if (seq == pieces.Count - 1) beforeLast?.Invoke();
 
                 if (!await SendAsync(toPeer, Piece(id, transfer, seq)).ConfigureAwait(false))
