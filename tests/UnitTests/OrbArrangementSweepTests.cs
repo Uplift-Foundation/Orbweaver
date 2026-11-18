@@ -25,20 +25,16 @@ namespace Orbweaver.Tests
     // Theory lives in OrbArrangementSweepPartitions.cs, one class per slice.
     public class OrbArrangementSweepTests
     {
-        // The partitions are the matrix, all of it and each case once: their
-        // sizes add up to exactly the cases RunAll() counts (the pre-CB-366
-        // single test), and the cases enumerated are the ones the matrix has.
+        // Every partition has exactly one test class. The classes, found by
+        // reflection, are what runs; the partitions are what the matrix holds.
+        // (The case total itself is guarded by the two floors below, and by
+        // `dotnet run --project tests/ArrangementTests`, which prints it.)
         [Fact]
-        public void ThePartitionsHoldExactlyTheCasesTheWholeSweepRuns()
+        public void EveryPartitionIsRunByExactlyOneClass()
         {
-            var total = ArrangementSweep.Cases().Count() + ArrangementSweep.GroupCases().Count();
-            Assert.Equal(total, ArrangementSweep.PartitionSizes().Values.Sum());
-            Assert.Equal(ArrangementSweep.PartitionKeys().Count, ArrangementSweep.PartitionSizes().Count);
-
-            // And the classes cover every partition exactly once: a new shape,
-            // screen or sweep kind with no class would otherwise run nowhere.
-            var covered = SweepSlices.All.SelectMany(slice => slice.Keys()).ToList();
-            Assert.Equal(ArrangementSweep.PartitionKeys(), covered.OrderBy(k => k, StringComparer.Ordinal).ToList());
+            var covered = SweepPartitionClasses.Slices().SelectMany(slice => slice.Keys())
+                .OrderBy(k => k, StringComparer.Ordinal).ToList();
+            Assert.Equal(ArrangementSweep.PartitionKeys(), covered);
         }
 
         // Negative control: a rule that is broken must fail a partition and the

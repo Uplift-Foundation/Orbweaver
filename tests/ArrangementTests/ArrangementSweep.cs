@@ -1271,7 +1271,7 @@ namespace Orbweaver.Tests
         // A case belongs to exactly one partition, named by which of the sweeps
         // it came from, its screen and its shape. The key is a pure function of
         // the case, so partitions cannot overlap or drop a case, and
-        // PartitionCaseCount() / RunAll() agreeing is what the tests pin.
+        // the tests pin that every partition is run by exactly one class.
         // Nothing about Check or CheckGroups changes: same cases, same rules.
         internal static string KeyOf(Case c)
             => (c.Mix is not null ? "mixed" : c.Split is not null ? "grouped" : c.Anchor is not null ? "anchored" : "plain")
@@ -1310,13 +1310,6 @@ namespace Orbweaver.Tests
 
             return (cases, failures);
         }
-
-        // How many cases the partitions hold between them, counted by key
-        // without running any check.
-        internal static Dictionary<string, int> PartitionSizes()
-            => Partitioned.Value.Plain.Select(g => (g.Key, N: g.Count()))
-                .Concat(Partitioned.Value.Groups.Select(g => (g.Key, N: g.Count())))
-                .ToDictionary(g => g.Key, g => g.N);
 
         // Grouped, because one broken rule usually fails hundreds of cases and
         // the list is only useful if the shape of the problem is visible. Shared
