@@ -344,6 +344,11 @@ public class OpenClawChatApprovalTests : IDisposable
             Assert.Single(Resolves(socket));
             Assert.False(first.IsCompleted);
 
+            // The request has left the bar the moment the click landed, so there is
+            // nothing left to click (the other half of what _answering does; it
+            // comes back on a failed answer, see AFailureKeepsTheRequest...).
+            Assert.Null(chat.Prompt);
+
             await chat.AnswerAsync(option);
 
             Assert.Single(Resolves(socket));
