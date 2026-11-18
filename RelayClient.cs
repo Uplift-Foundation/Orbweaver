@@ -488,9 +488,15 @@ namespace Orbweaver
             {
                 var wait = _options.PaceFrames ? pacer.Reserve(_now()) : TimeSpan.Zero;
                 if (wait > TimeSpan.Zero) await _delay(wait, token).ConfigureAwait(false);
+                // CB-388: stamped before the send, written after it. The line is
+                // still only logged once the send completed (CB-323: sent, not
+                // queued), but a reply can be received and logged while the
+                // writer is still inside SendAsync, so a stamp taken afterwards
+                // would put the frame later than its own reply.
+                var sentAt = _now();
                 await socket.SendAsync(frame, token).ConfigureAwait(false);
                 // CB-323: logged as sent once it is, not when it was queued.
-                if (_options.ActivityLog is { } log && RelayActivityLog.IsActivityFrame(frame)) log.Sent(frame, _now());
+                if (_options.ActivityLog is { } log && RelayActivityLog.IsActivityFrame(frame)) log.Sent(frame, sentAt);
             }
         }
 

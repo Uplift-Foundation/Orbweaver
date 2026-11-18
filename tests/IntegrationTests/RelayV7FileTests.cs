@@ -28,6 +28,29 @@ public class RelayV7FileTests : IAsyncLifetime
 
     private readonly MemoryStore _store = new();
 
+    // CB-388: a transport whose sockets hold each send's completion until the
+    // test lets it go, after the frame has already reached the stub. That is
+    // the ordering a slow runner produces by accident: the far side has the
+    // frame and answers while the writer is still inside SendAsync, so the
+    // client logs the reply before the "sent" line (which it writes only once
+    // the send completes).
+    private sealed class HoldSendTransport(IRelayTransport inner, TaskCompletionSource released) : IRelayTransport
+    {
+        public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token) =>
+            new HoldSendSocket(await inner.ConnectAsync(uri, token), released.Task);
+    }
+
+    private sealed class HoldSendSocket(IRelaySocket inner, Task released) : IRelaySocket
+    {
+        public async Task SendAsync(string frame, CancellationToken token)
+        {
+            await inner.SendAsync(frame, token);
+            if (frame.Contains("\"t\":\"activity\"")) await released.WaitAsync(token);
+        }
+        public Task<string?> ReceiveAsync(CancellationToken token) => inner.ReceiveAsync(token);
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
     // A clock the debounce's wait moves, so the 2 s interval passes without
     // the test waiting 2 s of wall time. Every other wait — the five-minute
     // ping — is a real one, cancelled at stop.
@@ -63,7 +86,7 @@ public class RelayV7FileTests : IAsyncLifetime
 
     private string LogPath => Path.Combine(_dir, "activity.jsonl");
 
-    private RelayClient Client(string? log = null)
+    private RelayClient Client(string? log = null, IRelayTransport? transport = null)
     {
         var options = new RelayClient.Options(_stub.Base, "mac", "9.9.9", "Test Mac")
         {
@@ -73,7 +96,7 @@ public class RelayV7FileTests : IAsyncLifetime
             MaxBackoff = TimeSpan.FromMilliseconds(100),
             ActivityLog = log is null ? null : new RelayActivityLog(log),
         };
-        _client = new RelayClient(new RelayIdentity(Path.Combine(_dir, "id"), _store), options, new WebSocketRelayTransport(), now: Now, delay: Delay);
+        _client = new RelayClient(new RelayIdentity(Path.Combine(_dir, "id"), _store), options, transport ?? new WebSocketRelayTransport(), now: Now, delay: Delay);
         return _client;
     }
 
@@ -115,9 +138,75 @@ public class RelayV7FileTests : IAsyncLifetime
 
         await _stub.Send($$"""{"t":"ok","ref":"{{reference}}","code":"activity"}""");
         await Until(() => Lines(LogPath).Length == 2);
+        AssertTheFrameAndItsReply(Lines(LogPath), first, reference);
+    }
+
+    // CB-388: what the log promises is one line per frame and one per reply,
+    // each carrying its own ref and a timestamp — not that the frame line comes
+    // first. The frame is logged once its send completes and the reply when the
+    // receive loop gets it, two tasks, so a prompt reply can be logged first.
+    // The lines are matched by content, not by position.
+    private void AssertTheFrameAndItsReply(string[] lines, JsonElement first, string reference)
+    {
+        var at = Now().ToUnixTimeMilliseconds();
+        var sentLine = first.GetRawText()[..^1] + ",\"at_ms\":" + at + "}";
+        var replyLine = $$"""{"ref":"{{reference}}","code":"activity","at_ms":{{at}}}""";
+        Assert.Equal(2, lines.Length);
+        Assert.Contains(sentLine, lines);
+        Assert.Contains(replyLine, lines);
+    }
+
+    // CB-388: matching by content must not become matching loosely. Lines that
+    // are right in either order pass; a missing line, a wrong ref or a wrong
+    // timestamp each fail.
+    [Fact]
+    public void The_content_match_still_fails_on_a_missing_line_or_a_wrong_ref()
+    {
+        using var doc = JsonDocument.Parse($$"""{"t":"activity","ref":"act-1","seq":1}""");
+        var first = doc.RootElement.Clone();
+        var at = Now().ToUnixTimeMilliseconds();
+        var sent = first.GetRawText()[..^1] + ",\"at_ms\":" + at + "}";
+        var reply = $$"""{"ref":"act-1","code":"activity","at_ms":{{at}}}""";
+
+        AssertTheFrameAndItsReply([sent, reply], first, "act-1");
+        AssertTheFrameAndItsReply([reply, sent], first, "act-1");
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([sent], first, "act-1"));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([reply], first, "act-1"));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([sent, reply.Replace("act-1", "act-2")], first, "act-1"));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([sent, reply.Replace("\"at_ms\":" + at, "\"at_ms\":" + (at + 1))], first, "act-1"));
+    }
+
+    [Fact]
+    public async Task A_reply_that_lands_before_its_send_completes_is_still_one_line_each()
+    {
+        var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = Client(LogPath, new HoldSendTransport(new WebSocketRelayTransport(), released));
+        client.OnScanned([Row("s1", "waiting"), Row("s2", "generating")]);
+        client.Start();
+        await _stub.NextT("hello");
+        var first = await _stub.Next(_ => true);
+        var reference = first.GetProperty("ref").GetString()!;
+
+        await _stub.Send($$"""{"t":"ok","ref":"{{reference}}","code":"activity"}""");
+        await Until(() => Lines(LogPath).Length == 1);                                // the reply is logged while the send is held
+        Assert.Contains("\"code\":\"activity\"", Lines(LogPath)[0]);
+        Assert.DoesNotContain("\"t\":\"activity\"", Lines(LogPath)[0]);
+
+        var replyAt = Now().ToUnixTimeMilliseconds();
+        lock (_clockGate) _clock += TimeSpan.FromSeconds(1);                          // time passes before the send completes
+        released.SetResult();
+        await Until(() => Lines(LogPath).Length == 2);
         var lines = Lines(LogPath);
-        Assert.Equal(first.GetRawText()[..^1] + ",\"at_ms\":" + Now().ToUnixTimeMilliseconds() + "}", lines[0]);
-        Assert.Equal($$"""{"ref":"{{reference}}","code":"activity","at_ms":{{Now().ToUnixTimeMilliseconds()}}}""", lines[1]);
+        Assert.StartsWith("{\"t\":\"activity\"", lines[1]);                           // the order the old assertion forbade
+        Assert.Equal(reference, JsonDocument.Parse(lines[1]).RootElement.GetProperty("ref").GetString());
+        Assert.Equal(reference, JsonDocument.Parse(lines[0]).RootElement.GetProperty("ref").GetString());
+
+        // CB-388: and the timestamps tell the true order. The frame was handed to
+        // the socket before the reply existed, so its at_ms is not after the
+        // reply's, although its line was written later; stamped when the line
+        // was written it would be a second later.
+        var sentAt = JsonDocument.Parse(lines[1]).RootElement.GetProperty("at_ms").GetInt64();
+        Assert.True(sentAt <= replyAt, $"the frame is stamped {sentAt}, after its reply at {replyAt}");
     }
 
     [Fact]
