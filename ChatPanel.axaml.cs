@@ -731,6 +731,7 @@ namespace Orbweaver
             // CB-330: what the reader opened belongs to this conversation's rows; a
             // panel reused for the next one starts them all closed again.
             _relayHost.Choices.Clear();
+            _relayHost.CompactionChoices.Clear();
 
             _session.TurnAdded -= OnTurnAdded;
             _session.TurnUpdated -= OnTurnUpdated;
