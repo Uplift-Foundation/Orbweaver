@@ -288,6 +288,8 @@ public partial class MirrorRoundTripTests
         var path = tree.Write("report.pdf", Random(MirrorProtocol.PictureChunkBytes * 2 + 1234));
         string? transferId = null;
         var firstPiece = true;
+        Task? lastRequest = null;
+        var hookDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         harness.AfterDelivered = async frame =>
         {
@@ -303,12 +305,24 @@ public partial class MirrorRoundTripTests
             else if (frame.Get("H") is not null)
             {
                 await harness.Server.HandleAsync(Harness.NearRelay, FileFrame("last", path));
+
+                // FileAsync has set this to the task it just started for "last".
+                lastRequest = harness.Server.FileInFlight;
+                hookDone.TrySetResult();
             }
         };
 
         var got = BytesOf(await harness.Client.FetchFileAsync("job-hunter", path, null));
-
         Assert.Equal(MirrorProtocol.PictureChunkBytes * 2 + 1234, got.Data.Length);
+
+        // The fetch returns when the first transfer's last frame lands, but the
+        // "last" request is made from inside that delivery and is still running on
+        // the server, appending its own frames to ToClient. Waited for before
+        // ToClient is read, or the read races its writer.
+        Assert.Same(hookDone.Task, await Task.WhenAny(hookDone.Task, Task.Delay(TimeSpan.FromSeconds(30))));
+        await lastRequest!;
+        await harness.Server.FileInFlight;
+
         Assert.Equal(MirrorProtocol.ErrBusy, ErrCodeIn(harness.ToClient, "mid"));
         // Not refused: accepted, and answered with its own pieces.
         Assert.Null(ErrCodeIn(harness.ToClient, "last"));
