@@ -120,4 +120,26 @@ public partial class MirrorRoundTripTests
         }
         finally { RemoteControlSessions.ResetForTests(); }
     }
+
+    // The "from <machine>" in the fetching note and every refusal is this name,
+    // so it is read off the real session over the real client: null until the
+    // roster has offered the session, then whatever machine served it.
+    [Fact]
+    public async Task ASessionNamesTheMachineOnlyOnceTheRosterHasOfferedIt()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", WriteTranscript("files.jsonl", Conversation(2)));
+        try
+        {
+            var session = SessionOver(harness);
+            Assert.Null(((IRemoteChatFiles)session).FileHostName);
+
+            Assert.True(await harness.HandshakeAsync("job-hunter"));
+
+            var named = ((IRemoteChatFiles)session).FileHostName;
+            Assert.False(string.IsNullOrWhiteSpace(named));
+            Assert.Equal(harness.Client.RelayFor("job-hunter"), named);
+        }
+        finally { RemoteControlSessions.ResetForTests(); }
+    }
 }
