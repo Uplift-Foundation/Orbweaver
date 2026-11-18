@@ -215,7 +215,7 @@ namespace Orbweaver
                 // which opens something other than the file the name shows.
                 if (path.IndexOf(':', 2) >= 0) return null;
 
-                return new FileLink(path.Replace('/', '\\'), IsWindowsPath: true);
+                return new FileLink(Collapse(path.Replace('/', '\\'), '\\', 3), IsWindowsPath: true);
             }
 
             if (path[0] != '/') return null;
@@ -225,7 +225,31 @@ namespace Orbweaver
             // ambiguity is the attack, so it is refused.
             if (path.Contains('\\') || path.Contains(':')) return null;
 
-            return new FileLink(path, IsWindowsPath: false);
+            return new FileLink(Collapse(path, '/', 1), IsWindowsPath: false);
+        }
+
+        // "." and ".." segments resolved lexically, so the tooltip and the
+        // launcher show and open the same path ("/a/../etc/x.pdf" is
+        // "/etc/x.pdf"), and a ".." cannot hide behind a name that looks
+        // harmless. Clamped at the root rather than refused. This is display
+        // and launch hygiene only; it resolves no symlinks, and the serving
+        // side canonicalises for itself and never trusts this.
+        private static string Collapse(string path, char separator, int rootLength)
+        {
+            var segments = new System.Collections.Generic.List<string>();
+            foreach (var segment in path[rootLength..].Split(separator))
+            {
+                if (segment.Length == 0 || segment == ".") continue;
+                if (segment == "..")
+                {
+                    if (segments.Count > 0) segments.RemoveAt(segments.Count - 1);
+                    continue;
+                }
+
+                segments.Add(segment);
+            }
+
+            return path[..rootLength] + string.Join(separator, segments);
         }
     }
 }

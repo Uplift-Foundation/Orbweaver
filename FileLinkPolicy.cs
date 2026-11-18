@@ -5,8 +5,13 @@ namespace Orbweaver
 {
     // What is known about a path on disk, gathered by the caller so that the
     // decision below stays a pure function of it.
-    internal readonly record struct FileFacts(bool Exists, bool IsDirectory, bool Executable)
+    internal readonly record struct FileFacts(bool Exists, bool IsDirectory, bool Executable, string? Target = null)
     {
+        // Target is the final destination when the path is itself a symlink,
+        // and null when it is not. A link named x.pdf that points at y.command
+        // is a command, so the extension rule applies to both names and the
+        // launcher is handed the target, so swapping the link after the
+        // decision cannot redirect what is opened.
         // The facts for a real path on this machine. The one place the policy
         // touches the disk, kept out of Decide so Decide needs no temp tree.
         //
@@ -19,8 +24,17 @@ namespace Orbweaver
         {
             try
             {
-                if (Directory.Exists(path)) return new FileFacts(true, true, false);
-                if (!File.Exists(path)) return new FileFacts(false, false, false);
+                var isDirectory = Directory.Exists(path);
+                if (!isDirectory && !File.Exists(path)) return new FileFacts(false, false, false);
+
+                // The final target of a link, or null for a plain path. A
+                // dangling or looping link never reaches here: both make
+                // Exists false (a loop throws, and lands in the catch).
+                var target = isDirectory
+                    ? Directory.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName
+                    : File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName;
+
+                if (isDirectory) return new FileFacts(true, true, false, target);
 
                 var executable = false;
                 if (!OperatingSystem.IsWindows())
@@ -29,12 +43,13 @@ namespace Orbweaver
                     executable = (File.GetUnixFileMode(path) & anyExecute) != 0;
                 }
 
-                return new FileFacts(true, false, executable);
+                return new FileFacts(true, false, executable, target);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
-                // Unreadable is treated as missing: the verdict is a refusal
-                // either way, and nothing here may throw into a click handler.
+                // Unreadable (or a link loop) is treated as missing: the
+                // verdict is a refusal either way, and nothing here may throw
+                // into a click handler.
                 return new FileFacts(false, false, false);
             }
         }
@@ -100,7 +115,9 @@ namespace Orbweaver
 
             if (facts.Executable) return FileLinkVerdict.Reveal("Executable files are shown, not run.");
 
-            if (!IsAllowedExtension(link.Path)) return FileLinkVerdict.Reveal("Only documents, images, audio and video are opened from chat; other files are shown.");
+            // Both names: the one in the message and, for a symlink, where it
+            // really goes. Either one off the list is shown, not opened.
+            if (!IsAllowedExtension(link.Path) || (facts.Target is not null && !IsAllowedExtension(facts.Target))) return FileLinkVerdict.Reveal("Only documents, images, audio and video are opened from chat; other files are shown.");
 
             return FileLinkVerdict.Open;
         }

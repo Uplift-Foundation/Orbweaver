@@ -72,7 +72,10 @@ namespace Orbweaver
                 ? FileLinkVerdict.Refuse("That is not a path this computer can open.")
                 : FileLinkPolicy.Decide(link.Value, facts, isWindows);
 
-            info = StartInfoFor(verdict, path, isMacOs, isWindows);
+            // A symlink is launched by its target, never its own name, so a
+            // swap of the link between this decision and the launch cannot
+            // point `open` somewhere the policy did not see.
+            info = StartInfoFor(verdict, facts.Target ?? path, isMacOs, isWindows);
             return info is not null;
         }
 
@@ -84,8 +87,16 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         internal static bool OpenLocal(string path)
         {
-            if (!Plan(path, FileFacts.Probe(path), OperatingSystem.IsMacOS(), OperatingSystem.IsWindows(), out var info, out _))
+            var facts = FileFacts.Probe(path);
+            if (!Plan(path, facts, OperatingSystem.IsMacOS(), OperatingSystem.IsWindows(), out var info, out _))
                 return false;
+
+            // Probe again immediately before starting and refuse if anything
+            // changed — a .pdf swapped for an executable, a link repointed —
+            // which narrows the window between check and use to the few
+            // instructions between this line and Process.Start. It cannot
+            // close it: a file system offers no atomic "check and open".
+            if (FileFacts.Probe(path) != facts) return false;
 
             try
             {

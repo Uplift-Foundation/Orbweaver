@@ -142,4 +142,27 @@ public class FileLinkLauncherTests
         Assert.Equal(FileLinkAction.Refuse, bad.Action);
         Assert.NotEmpty(bad.Reason);
     }
+
+    // A symlink is launched by its target, so a link swapped after the
+    // decision cannot redirect the open; the control is the same call with no
+    // target, which launches the path itself.
+    [Fact]
+    public void PlanLaunchesTheTargetOfASymlink()
+    {
+        var link = new FileFacts(true, false, false, "/real/y.pdf");
+        Assert.True(FileLinkLauncher.Plan("/a/x.pdf", link, true, false, out var info, out _));
+        Assert.Equal(["--", "/real/y.pdf"], info!.ArgumentList);
+
+        Assert.True(FileLinkLauncher.Plan("/a/x.pdf", Plain, true, false, out var plain, out _));
+        Assert.Equal(["--", "/a/x.pdf"], plain!.ArgumentList);
+    }
+
+    [Fact]
+    public void PlanRevealsALinkWhoseTargetIsOffTheAllowlist()
+    {
+        var link = new FileFacts(true, false, false, "/real/y.command");
+        Assert.True(FileLinkLauncher.Plan("/a/x.pdf", link, true, false, out var info, out var verdict));
+        Assert.Equal(FileLinkAction.Reveal, verdict.Action);
+        Assert.Equal(["-R", "--", "/real/y.command"], info!.ArgumentList);
+    }
 }

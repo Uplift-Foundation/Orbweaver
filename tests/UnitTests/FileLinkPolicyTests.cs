@@ -188,6 +188,62 @@ public class FileLinkPolicyTests
         finally { Directory.Delete(dir, true); }
     }
 
+    // The extension rule reads both names: a link named x.pdf is only as safe
+    // as what it points at.
+    [Fact]
+    public void ASymlinkIsJudgedByItsTargetAsWellAsItsName()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var dir = Temp();
+        try
+        {
+            var d = dir;
+            var yPdf = Path.Combine(d, "y.pdf");
+            var yCommand = Path.Combine(d, "y.command");
+            var yHtml = Path.Combine(d, "y.html");
+            var bundle = Path.Combine(d, "dir.app");
+            foreach (var f in new[] { yPdf, yCommand, yHtml }) File.WriteAllText(f, "x");
+            Directory.CreateDirectory(bundle);
+
+            string Link(string name, string target)
+            {
+                var l = Path.Combine(d, name);
+                File.CreateSymbolicLink(l, target);
+                return l;
+            }
+
+            FileLinkAction Act(string path)
+            {
+                var facts = FileFacts.Probe(path);
+                return FileLinkPolicy.Decide(new FileLink(path, false), facts, false).Action;
+            }
+
+            // Control: a link to a pdf opens, and carries its target.
+            var good = Link("x.pdf", yPdf);
+            Assert.Equal(FileLinkAction.Open, Act(good));
+            Assert.Equal(Path.GetFullPath(yPdf), FileFacts.Probe(good).Target);
+            Assert.Null(FileFacts.Probe(yPdf).Target);
+
+            Assert.Equal(FileLinkAction.Reveal, Act(Link("c.pdf", yCommand)));
+            Assert.Equal(FileLinkAction.Reveal, Act(Link("h.pdf", yHtml)));
+            Assert.Equal(FileLinkAction.Reveal, Act(Link("b.pdf", bundle)));
+            Assert.Equal(FileLinkAction.Reveal, Act(Link("l.pdf", "/bin/ls")));
+
+            // A link to a link: the final target counts.
+            Assert.Equal(FileLinkAction.Reveal, Act(Link("chain.pdf", Link("hop.pdf", yCommand))));
+
+            // Dangling and looping links name nothing: refused.
+            Assert.Equal(FileLinkAction.Refuse, Act(Link("dangling.pdf", Path.Combine(d, "nope.pdf"))));
+            var loopA = Path.Combine(d, "la.pdf");
+            var loopB = Path.Combine(d, "lb.pdf");
+            File.CreateSymbolicLink(loopA, loopB);
+            File.CreateSymbolicLink(loopB, loopA);
+            Assert.Equal(FileLinkAction.Refuse, Act(loopA));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
     [Fact]
     public void ProbeReadsTheExecuteBitThroughASymlinkOnPosix()
     {

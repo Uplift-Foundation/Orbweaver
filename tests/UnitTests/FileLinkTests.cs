@@ -141,6 +141,21 @@ public class FileLinkTests
     public void BadEscapesAndBadUtf8AreRefused(string dest) =>
         Assert.Null(FileLink.TryParse(dest));
 
+    // Dot segments are resolved lexically (clamped at the root) so what the
+    // tooltip shows is what opens; the controls have none and are untouched.
+    [Theory]
+    [InlineData("/a/../etc/x.pdf", "/etc/x.pdf")]
+    [InlineData("/a/./b//c.pdf", "/a/b/c.pdf")]
+    [InlineData("/../../x.pdf", "/x.pdf")]
+    [InlineData("/a/b.pdf", "/a/b.pdf")]
+    [InlineData("/a/%2e%2e/x.pdf", "/x.pdf")]
+    [InlineData("C:\\a\\..\\b\\x.pdf", "C:\\b\\x.pdf")]
+    [InlineData("C:/a/./x.pdf", "C:\\a\\x.pdf")]
+    [InlineData("C:\\..\\x.pdf", "C:\\x.pdf")]
+    [InlineData("/a/%252e%252e/x.pdf", "/a/%2e%2e/x.pdf")]
+    public void DotSegmentsAreCollapsed(string dest, string path) =>
+        Assert.Equal(path, FileLink.TryParse(dest)!.Value.Path);
+
     [Fact]
     public void ALoneSurrogateIsRefused() =>
         Assert.Null(FileLink.TryParse("/a/%41\uD800.pdf"));
