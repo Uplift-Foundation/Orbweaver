@@ -4170,11 +4170,12 @@ public partial class MirrorRoundTripTests : IDisposable
         // it types the line as ordinary text, which is what such a Buddy did.
         public bool FarPredatesSlash { get; set; }
 
-        public int ChunkFrames { get; private set; }
+        private int _chunkFrames;
+        public int ChunkFrames => Volatile.Read(ref _chunkFrames);
 
         // The handshake pays for its own roster chunk, and a test about the
         // *window* should not have to subtract it.
-        public void ForgetFramesSoFar() => ChunkFrames = 0;
+        public void ForgetFramesSoFar() => Interlocked.Exchange(ref _chunkFrames, 0);
         public int Resends { get; private set; }
 
         // CB-307 addendum: the far pane's screen and Claude Code's own record,
@@ -4583,7 +4584,7 @@ public partial class MirrorRoundTripTests : IDisposable
 
             if (frame.Type == MirrorProtocol.Chunk)
             {
-                ChunkFrames++;
+                Interlocked.Increment(ref _chunkFrames);
 
                 if (MangleChunks || (MangleOnce && !_mangledAlready))
                 {
