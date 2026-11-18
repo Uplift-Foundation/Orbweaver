@@ -4262,7 +4262,8 @@ public partial class MirrorRoundTripTests : IDisposable
 
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
             LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
-            bool noPressKey = false, bool noCanReadPane = false, Func<PeerFileEnv>? files = null)
+            bool noPressKey = false, bool noCanReadPane = false, Func<PeerFileEnv>? files = null,
+            Func<IReadOnlyList<AgentRoster.Entry>?>? peekAgents = null)
         {
             _dir = dir;
 
@@ -4338,7 +4339,8 @@ public partial class MirrorRoundTripTests : IDisposable
                 },
                 // CB-363: null unless a test serves files, so every harness
                 // above keeps a far side that never says rf=1.
-                Files: files));
+                Files: files,
+                PeekAgents: peekAgents));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -4455,6 +4457,9 @@ public partial class MirrorRoundTripTests : IDisposable
             _sessions.Where(s => s.Status.Title == title).Select(s => s.SessionId);
 
         public void AddSession(string name, string transcriptPath) => AddSession(name, transcriptPath, null);
+
+        // CB-363: the registry as it stands, for a peek that has a roster.
+        public IReadOnlyList<AgentRoster.Entry> AgentsNow => _agents.ToList();
 
         // CB-306: the same, with the status shaped by the test (an OpenClaw
         // spawn's entrypoint and workspace cwd).

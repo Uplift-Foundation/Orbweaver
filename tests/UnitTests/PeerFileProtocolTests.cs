@@ -248,6 +248,82 @@ public class PeerFileProtocolTests
         Assert.Equal(0, PeerFileCache.LengthOrZero(Path.Combine(gone, "f")));
     }
 
+    // --- the far side's deadline and the near side's patience -------------------------
+
+    // Nothing is sent until the disk half is done, so a deadline the near side
+    // gives up before can never be seen: the user would read `unreachable`
+    // while the far side was still reading. It was 60 against 20.
+    [Fact]
+    public void TheReadDeadlineEndsBeforeTheNearSideStopsWaiting() =>
+        Assert.True(MirrorProtocol.FileReadDeadlineSeconds < MirrorProtocol.FetchTimeoutSeconds,
+            $"FileReadDeadlineSeconds ({MirrorProtocol.FileReadDeadlineSeconds}) must be below FetchTimeoutSeconds ({MirrorProtocol.FetchTimeoutSeconds})");
+
+    // --- peeking the roster -------------------------------------------------------------
+
+    private sealed class Roster
+    {
+        public DateTime Clock = new(2026, 11, 17, 12, 0, 0, DateTimeKind.Utc);
+        public int Reads;
+        public ManualResetEventSlim? Hold;
+        public readonly ManualResetEventSlim Reading = new();
+        public RemoteMirrorServer.RosterMemo Memo { get; }
+
+        public Roster()
+        {
+            Memo = new RemoteMirrorServer.RosterMemo(
+                () => [".a", ".b", ".c"],
+                dir =>
+                {
+                    Interlocked.Increment(ref Reads);
+                    Reading.Set();
+                    Hold?.Wait(TimeSpan.FromSeconds(10));
+                    return new AgentRoster.ReadResult([new AgentRoster.Entry("n" + dir, "id" + dir, 0)], null);
+                },
+                () => Clock, TimeSpan.FromSeconds(5), new RosterReadLog((_, _) => { }), "/home/u");
+        }
+    }
+
+    // A FILE never launches `claude agents`: with nothing read yet a peek is
+    // null and reads nothing; once read, a peek long past the TTL answers the
+    // same list and still reads nothing.
+    [Fact]
+    public void PeekNeverReadsTheRoster()
+    {
+        var r = new Roster();
+        Assert.Null(r.Memo.Peek());
+        Assert.Equal(0, r.Reads);
+
+        var read = r.Memo.Read();
+        Assert.Equal(3, r.Reads);
+
+        r.Clock += TimeSpan.FromMinutes(10);
+        Assert.Same(read, r.Memo.Peek());
+        Assert.Equal(3, r.Reads);
+    }
+
+    // And it does not wait on a read another caller has in progress: that
+    // read holds the memo's lock across every launch, which is what made a
+    // FILE take seconds on the mini.
+    [Fact]
+    public void PeekDoesNotWaitOnAReadInProgress()
+    {
+        var r = new Roster();
+        var first = r.Memo.Read();
+        r.Clock += TimeSpan.FromSeconds(6);
+        r.Hold = new ManualResetEventSlim();
+        r.Reading.Reset();
+
+        var refresh = Task.Run(() => r.Memo.Read());
+        Assert.True(r.Reading.Wait(TimeSpan.FromSeconds(10)));
+
+        var peek = Task.Run(() => r.Memo.Peek());
+        Assert.True(peek.Wait(TimeSpan.FromSeconds(2)), "Peek waited on the refresh's lock");
+        Assert.Same(first, peek.Result);
+
+        r.Hold.Set();
+        Assert.NotSame(first, refresh.Result);
+    }
+
     // --- the download mark's content ---------------------------------------------------------
 
     [Fact]

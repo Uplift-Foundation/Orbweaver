@@ -1141,7 +1141,14 @@ namespace Orbweaver
         // How long the far side's disk half of one FILE may take before it
         // answers unreadable and frees the peer's slot; see
         // RemoteMirrorServer.FileDeadline for why a read can block for good.
-        public const int FileReadDeadlineSeconds = 60;
+        //
+        // **It must stay below FetchTimeoutSeconds**, and a unit case pins
+        // that. Nothing is sent until the disk half is done, and the near side
+        // gives up after FetchTimeoutSeconds of silence, so a deadline at or
+        // above it can never be seen: the user is told `unreachable` while the
+        // far side is still reading, and a retry meets `busy`. It was 60 and
+        // was exactly that. 15 is still far beyond an honest 50 MB local read.
+        public const int FileReadDeadlineSeconds = 15;
 
         // Whether a HELLO reply's fields say the far Buddy serves FILE.
         public static bool SaysItServesFiles(IReadOnlyDictionary<string, string>? fields) =>

@@ -735,6 +735,32 @@ public partial class MirrorRoundTripTests
             BytesOf(await harness.Client.FetchFileAsync("job-hunter", Path.Combine(tree.Project, "sub", "notes.txt"), null)).Data);
     }
 
+    // --- the roster is peeked, never read -------------------------------------------------
+
+    // With no roster read yet, a FILE does not wait for one: the session adds
+    // no folder and the browse roots alone decide. The control is the same
+    // far side once the peek has a roster: the session's folder counts again.
+    [Fact]
+    public async Task WithNoRosterYetTheBrowseRootsAloneDecide()
+    {
+        var tree = new FileTree();
+        using var _ = tree;
+        Harness? self = null;
+        var haveRoster = false;
+        var harness = new Harness(_dir, files: tree.Env, peekAgents: () => haveRoster ? self!.AgentsNow : null);
+        self = harness;
+        harness.AddSession("job-hunter", WriteTranscript("files.jsonl", Conversation(2)), s => s.Cwd = tree.Project);
+        Assert.True(await harness.HandshakeAsync("job-hunter"));
+        var inSession = Path.Combine(tree.Project, "sub", "notes.txt");
+        var inRoot = Path.Combine(tree.Other, "a.txt");
+
+        Assert.Equal(MirrorProtocol.ErrForbiddenPath, CodeOf(await harness.Client.FetchFileAsync("job-hunter", inSession, null)));
+        Assert.Equal("in a configured root"u8.ToArray(), BytesOf(await harness.Client.FetchFileAsync("job-hunter", inRoot, null)).Data);
+
+        haveRoster = true;
+        Assert.Equal("notes"u8.ToArray(), BytesOf(await harness.Client.FetchFileAsync("job-hunter", inSession, null)).Data);
+    }
+
     // --- the cache, end to end -------------------------------------------------------
 
     // What the panel will do: store what came, offer its stamp next time, and

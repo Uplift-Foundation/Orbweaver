@@ -160,7 +160,17 @@ namespace Orbweaver
             // once per request, off the frame loop. Null means this server does
             // not serve files: HELLO does not say rf=1 and FILE is refused as
             // unsupported, which is every harness built before this.
-            Func<PeerFileEnv>? Files = null);
+            Func<PeerFileEnv>? Files = null,
+
+            // CB-363: the last roster already read, without reading it again.
+            // A FILE uses it only to find the session's working folder, and
+            // must never wait on `claude agents` to do that: RosterMemo holds
+            // its lock across one launch per config dir, measured at 1.6 to
+            // 6.1 s on the mini, inside the near side's 20 s of silence.
+            // Null on a harness that predates it, which reads Agents as before;
+            // a peek that has nothing yet answers null, and the request is then
+            // judged against the browse roots alone.
+            Func<IReadOnlyList<AgentRoster.Entry>?>? PeekAgents = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -256,7 +266,7 @@ namespace Orbweaver
                 profileDirs, readAgents ?? AgentRosterReader, now ?? (() => DateTime.UtcNow), RosterMemoTtl,
                 readLog ?? new RosterReadLog(MirrorLog.Say));
 
-            return one with { Agents = memo.Read, RosterSnapshot = memo.Snapshot };
+            return one with { Agents = memo.Read, RosterSnapshot = memo.Snapshot, PeekAgents = memo.Peek };
         }
 
         // CB-363: this machine's browse settings and disk, read per request.
@@ -335,6 +345,13 @@ namespace Orbweaver
             }
 
             internal IReadOnlyList<AgentRoster.Entry> Read() => Snapshot().Agents;
+
+            // The last roster read, however old, or null before the first. Never
+            // reads, and never takes _lock: that lock is held across the
+            // `claude agents` launches, and waiting on it is the very wait this
+            // exists to avoid. A reference read is atomic, and _merged is only
+            // ever replaced whole.
+            internal IReadOnlyList<AgentRoster.Entry>? Peek() => Volatile.Read(ref _merged);
 
             // The roster and the dirs it was read from, taken together under
             // one lock so they cannot come from two different reads.
@@ -1033,8 +1050,11 @@ namespace Orbweaver
             var env = _seams.Files!();
 
             // The session's own folder counts as a root only for a session
-            // this machine offers; a name it does not know adds nothing.
-            var cwd = Resolve(name, _seams.Agents(), _seams.LocalSessions())?.Status.Cwd;
+            // this machine offers; a name it does not know adds nothing. The
+            // roster is peeked, never re-read (see Seams.PeekAgents); with no
+            // roster yet the session adds no folder and the roots alone decide.
+            var agents = _seams.PeekAgents is { } peek ? peek() : _seams.Agents();
+            var cwd = agents is null ? null : Resolve(name, agents, _seams.LocalSessions())?.Status.Cwd;
 
             var decision = PeerFileRules.Decide(path, frame.Get(MirrorProtocol.HaveField), cwd, env);
             if (decision.Err is not null || decision.Same) return new FileOutcome(decision.Err, decision, null);
