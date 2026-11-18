@@ -27,37 +27,13 @@ namespace Orbweaver
         // extension list is the gate.
         // Whether the path, with symlinks followed, is a regular file. The
         // type is not readable through .NET (FileAttributes is Normal for a
-        // FIFO), so this asks the system's own `test -f`, argv-only with a
-        // bound on how long it may take: the same answer as stat's S_IFREG
-        // without a per-platform struct layout to get wrong. Always true on
-        // Windows, which has no such kinds. Anything that cannot be asked is
-        // treated as not regular, which is a reveal, never an open.
-        internal static bool IsRegularFile(string path)
-        {
-            if (OperatingSystem.IsWindows()) return true;
-
-            try
-            {
-                var info = new System.Diagnostics.ProcessStartInfo("/bin/test") { UseShellExecute = false };
-                info.ArgumentList.Add("-f");
-                info.ArgumentList.Add(path);
-
-                using var process = System.Diagnostics.Process.Start(info);
-                if (process is null) return false;
-
-                if (!process.WaitForExit(5000))
-                {
-                    process.Kill();
-                    return false;
-                }
-
-                return process.ExitCode == 0;
-            }
-            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
-            {
-                return false;
-            }
-        }
+        // FIFO), so this reads st_mode in-process through the same
+        // PeerFileSource.UnixKind the serving side uses, one stat and no
+        // subprocess. Always true on Windows, which has no such kinds; a path
+        // that cannot be stat'ed is not regular, which is a reveal, never an
+        // open.
+        internal static bool IsRegularFile(string path) =>
+            OperatingSystem.IsWindows() || PeerFileSource.UnixKind(path) == PeerFileKind.Regular;
 
         internal static FileFacts Probe(string path)
         {
