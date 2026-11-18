@@ -4030,6 +4030,12 @@ namespace Orbweaver
                             new System.ComponentModel.PropertyChangedEventArgs(nameof(ImageNoteDetail)));
                     }
 
+                    if (e.PropertyName == nameof(ChatTurn.FileNote))
+                    {
+                        PropertyChanged?.Invoke(this,
+                            new System.ComponentModel.PropertyChangedEventArgs(nameof(HasFileNote)));
+                    }
+
                     PropertyChanged?.Invoke(this, e);
                 };
 
@@ -4342,6 +4348,10 @@ namespace Orbweaver
             public string? ImageNote => _turn.ImageNote;
 
             public bool HasImageNote => !string.IsNullOrEmpty(_turn.ImageNote);
+
+            public string? FileNote => _turn.FileNote;
+
+            public bool HasFileNote => !string.IsNullOrEmpty(_turn.FileNote);
 
             public string? ImageNoteDetail => _turn.ImageNoteDetail;
 
