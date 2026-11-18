@@ -88,6 +88,6 @@ public class SettingsPeerLaunchInboundTests : IDisposable
         var text = string.Join(" ", Descendants(LaunchRow(NewWindow(link: true))!).OfType<TextBlock>().Select(t => t.Text));
 
         Assert.Contains("start a Claude Code, Codex or Grok session on this one", text);
-        Assert.Contains("can't see this one's folders or accounts", text);
+        Assert.Contains("can't see this one's recent folders or accounts", text);
     }
 }

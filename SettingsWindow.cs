@@ -2643,7 +2643,7 @@ namespace Orbweaver
                 Switch(OrbweaverSettings.PeerLaunchInboundEnabled, value => OrbweaverSettings.PeerLaunchInboundEnabled = value),
                 "Lets a machine paired below start a Claude Code, Codex or Grok session on this one "
                 + "from its New Chat window. While this is off, other machines can't see this one's "
-                + "folders or accounts either."));
+                + "recent folders or accounts either."));
 
             rows.Add(Row("Let another machine pair with this one", PairingCodeButton(),
                 "Shows a code. Type it into the other machine's list below, next to this "

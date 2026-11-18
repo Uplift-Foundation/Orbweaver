@@ -28,6 +28,7 @@ namespace Orbweaver
             Func<bool> Enabled,
             Func<string, PeerIdentity.Peer?> KnownPeer,
             Func<string> OwnPin,
+            Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> Snapshot,
             RelayRemote.LaunchSeams Launch,
             RelayRemote.AccountSeams Accounts,
             Func<DateTimeOffset> Now,
@@ -43,23 +44,13 @@ namespace Orbweaver
         // peer's ("peer:<pin>") can never equal, so the two never meet.
         private readonly NonceWindow _nonces = new();
 
-        private IReadOnlyList<(string SessionId, SessionStatus Status)> _snapshot = [];
-
         internal PeerLaunchServer(Seams seams)
         {
             _seams = seams;
-            _runner = new LaunchRunner(new LaunchRunner.Seams(seams.Launch, seams.Accounts, Snapshot, seams.Now, seams.Delay));
+            _runner = new LaunchRunner(new LaunchRunner.Seams(seams.Launch, seams.Accounts, seams.Snapshot, seams.Now, seams.Delay));
         }
 
         internal int NoncesSeen => _nonces.Count;
-
-        // The scan's snapshot, which the runner watches for the new session
-        // and the gate reads for a parent. Subscribed to
-        // SessionManager.SessionsScanned, as the relay is.
-        internal void OnScanned(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot) =>
-            Volatile.Write(ref _snapshot, snapshot);
-
-        private IReadOnlyList<(string SessionId, SessionStatus Status)> Snapshot() => Volatile.Read(ref _snapshot);
 
         // The shape PeerMirrorHost.ServeLaunch takes. `machine` is the name the
         // link gave the connection, which is what this desk paired under.
@@ -112,11 +103,30 @@ namespace Orbweaver
         // peers and this desk's own pin from PeerIdentity, and the same launch
         // and account seams the phone path uses. Excluded: each is one line
         // into the settings file, the identity file or a real process.
+        //
+        // Wire Shared, not Create(): one server per process, so a peer link
+        // restart (PeerSessions.Restart) cannot hand a replayed nonce a fresh
+        // window.
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
-        internal static PeerLaunchServer Create() => new(new Seams(
+        internal static PeerLaunchServer Shared => SharedServer.Value;
+
+        private static readonly Lazy<PeerLaunchServer> SharedServer = new(Create);
+
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        private static PeerLaunchServer Create() => new(new Seams(
             () => OrbweaverSettings.PeerLaunchInboundEnabled,
             PeerIdentity.PeerFor,
             PeerIdentity.OwnPin,
+            // Pulled, not pushed, so there is no subscription for the wiring to
+            // forget: an unfed snapshot would start the CLI and then tell the
+            // sender no_session after 30 s. Read before relying on it: each call
+            // is a fresh SessionManager.HeadlessSnapshot of the status directory
+            // (memoized for 2 s, independent of scans and of roster requests),
+            // and a new session is in it as soon as its hook has written a
+            // status file and its process is alive — Cwd and Source come from
+            // that file, which is all the check-in compares. The same provider
+            // the peer link already serves its roster from.
+            RemoteControlSessions.LocalSessions,
             LaunchRunner.DefaultLaunchSeams(),
             new RelayRemote.AccountSeams(RelayAccounts.Choices, _ => null),
             () => DateTimeOffset.UtcNow,

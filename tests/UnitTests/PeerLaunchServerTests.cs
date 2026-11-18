@@ -42,6 +42,7 @@ public class PeerLaunchServerTests
                 () => Enabled,
                 m => { KnownPeerCalls++; return Paired.GetValueOrDefault(m); },
                 () => OwnPin,
+                () => Desk.Sessions,
                 Desk.Launch(),
                 Desk.Accounts(),
                 () => Desk.Now,
@@ -54,7 +55,7 @@ public class PeerLaunchServerTests
         public void ChecksIn(string id = "new")
         {
             var polls = 0;
-            Desk.OnDelay = () => { if (++polls == 1) Server.OnScanned([(id, LaunchRunnerTests.Status())]); };
+            Desk.OnDelay = () => { if (++polls == 1) Desk.Sessions = [(id, LaunchRunnerTests.Status())]; };
         }
     }
 
