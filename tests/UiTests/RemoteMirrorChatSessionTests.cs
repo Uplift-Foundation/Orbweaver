@@ -1205,6 +1205,55 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.DoesNotContain(session.History, t => t.Text.Contains("what did the build say?"));
     }
 
+    // --- a pane with no transcript yet (CB-357) ----------------------------------
+
+    [AvaloniaFact]
+    public async Task AnEmptyPeerPanelOpensWithTheNoMessagesNoteAndATypeableComposer()
+    {
+        WireNoTranscript();
+
+        var session = await OpenAsync();
+
+        Assert.True(session.IsMirroring);
+        Assert.Null(session.WaitingSince);
+        Assert.Contains("terminal", session.ComposerHint);
+        Assert.Contains(Name, session.ComposerHint);
+
+        var only = Assert.Single(session.History);
+        Assert.Equal(ChatRole.System, only.Role);
+        Assert.Equal(RemoteControlChatSession.LiveViewNote(Name, true), only.Text);
+        Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't verify"));
+    }
+
+    [AvaloniaFact]
+    public async Task TheTurnsAppearUnderTheNoteOnceTheTranscriptIsWritten()
+    {
+        WireNoTranscript();
+        var session = await OpenAsync();
+
+        File.WriteAllText(_path, UserRow("u1", "first words") + "\n" + AssistantRow("a1", "first reply") + "\n");
+        await _server.TickAsync();
+        await PumpUntilAsync(() => Turns(session).Count == 2);
+
+        var said = Turns(session);
+        Assert.Equal(2, said.Count);
+        Assert.Equal("first words", said[0].Text);
+        Assert.Equal("first reply", said[1].Text);
+        Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't verify"));
+    }
+
+    [AvaloniaFact]
+    public async Task ANoPaneNoTranscriptEntryStillShowsTheNoLiveViewLine()
+    {
+        _canType = false;
+        WireNoTranscript();
+
+        var session = await OpenAsync(expectMirror: false);
+
+        Assert.False(session.IsMirroring);
+        Assert.Equal(RemoteControlChatSession.NoLiveViewNote(Name), session.History[^1].Text);
+    }
+
     // --- no live view --------------------------------------------------------------
 
     // A peer the far Buddy cannot show says so once, in so many words. It used
@@ -2077,6 +2126,28 @@ public class RemoteMirrorChatSessionTests : IDisposable
             TmuxPane = "%1",
             SessionPid = 4242,
             State = _farState ?? new SessionStatus().State
+        }));
+
+        BuildServer();
+        BuildClient();
+    }
+
+    // CB-357: a running session whose Claude Code has written no transcript
+    // yet. The path names a file that does not exist; a test writes it later.
+    private void WireNoTranscript()
+    {
+        _path = Path.Combine(_dir, "not-yet.jsonl");
+
+        var sessionId = Guid.NewGuid().ToString();
+        _agents.Add(new AgentRoster.Entry(Name, sessionId, 4242));
+        _sessions.Add((sessionId, new SessionStatus
+        {
+            Title = Name,
+            Cwd = _dir,
+            Source = SessionSource.ClaudeCode,
+            TranscriptPath = _path,
+            TmuxPane = "%1",
+            SessionPid = 4242
         }));
 
         BuildServer();

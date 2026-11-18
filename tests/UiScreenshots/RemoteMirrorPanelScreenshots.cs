@@ -85,6 +85,35 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view.png");
     }
 
+    // CB-357: a session launched on the other machine and not yet spoken to.
+    // It has a terminal and no transcript, so the panel opens empty and says
+    // where the first message goes.
+    [AvaloniaFact]
+    public async Task AnEmptyPeerPanelIsReadyForTheFirstMessage()
+    {
+        _path = Path.Combine(_dir, "not-yet.jsonl");
+        var sessionId = Guid.NewGuid().ToString();
+        _agents.Add(new AgentRoster.Entry(Name, sessionId, 4242));
+        _sessions.Add((sessionId, new SessionStatus
+        {
+            Title = Name,
+            Cwd = _dir,
+            Source = SessionSource.ClaudeCode,
+            TranscriptPath = _path,
+            TmuxPane = "%1",
+            SessionPid = 4242
+        }));
+        Build(true, false);
+
+        var session = Open();
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        ChatPanel.OpenFor(NewOrb(), session);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-remote-empty-peer.png");
+    }
+
     // The fallback, and the reason it has to look different: there is no Buddy on
     // the other machine, so what arrives here is written *for* the reader by a
     // model rather than read off a disk. The panel says so instead of letting it
