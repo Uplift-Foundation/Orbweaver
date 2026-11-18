@@ -1,3 +1,4 @@
+using Avalonia.Controls;
 using Xunit;
 using Avalonia.Headless.XUnit;
 
@@ -15,10 +16,14 @@ namespace Orbweaver.Tests;
 // The far Buddy is the real RemoteMirrorServer reading a real file in a temp
 // directory, reached through the real client and protocol — only the relay is
 // faked, same seam as MirrorRoundTripTests.
+[Collection("Settings")]
 public class RemoteMirrorPanelScreenshots : IDisposable
 {
     private const string Account = ".claude-board";
     private const string Name = "job-hunter";
+    // What the header calls this machine in the no-live-view capture.
+    private const string FixtureMachine = "fixture-machine";
+
     private const string FarRelay = "claude-buddy-rc--claude-mini";
     private const string NearRelay = "claude-buddy-rc--claude-laptop";
 
@@ -102,7 +107,18 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             Array.Empty<string>(),
             new[] { Name });
 
+        // With no far machine the header falls back to naming THIS one, which
+        // made the capture different on every machine that ran it and put the
+        // host's name in a published image (CB-374). Pinned to a fixture value,
+        // and asserted to be that value and not the host's.
+        using var machine = ChatPanelTestAccess.WithMachineName(FixtureMachine);
+
         ChatPanel.OpenFor(NewOrb(), session);
+
+        var shown = HeaderMachineText(ChatPanelTestAccess.Instance!);
+        Assert.Equal(MachineNames.Readable(FixtureMachine), shown);
+        Assert.NotEqual(MachineNames.Readable(MachineNames.Clean(Environment.MachineName)), shown);
+
         Assert.True(await UntilAsync(() => session.History.Any(
                 t => t.Text == RemoteControlChatSession.NoLiveViewNote(session.DisplayName))),
             "the panel never said there is no live view; history: "
@@ -188,6 +204,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view-deliverable.png");
     }
+
+    // The machine named in the header's quiet line, wherever the panel puts it.
+    private static string HeaderMachineText(ChatPanel panel) =>
+        panel.FindControl<TextBlock>("MetaMachineText")!.Text ?? "";
 
     // --- wiring -------------------------------------------------------------------
 
