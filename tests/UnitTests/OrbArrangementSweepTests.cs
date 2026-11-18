@@ -15,22 +15,42 @@ namespace Orbweaver.Tests
     // CLAUDE.md warns about precisely because it reads like a gap and is not
     // one.
     //
-    // Kept as one Fact rather than a Theory per case. A hundred thousand xUnit
-    // test cases would cost more in discovery and reporting than the sweep costs
-    // to run, and the sweep's own grouped report is a better failure message
-    // than that many individual results: one broken rule fails hundreds of cases, and what you
-    // need to see is the rule, not the roll call.
+    // CB-366: one Theory case per partition of the matrix (sweep x screen x
+    // shape, see ArrangementSweep.KeyOf), not one Fact and not one case per
+    // arrangement. The single Fact ran ~100s on one core long after the rest
+    // of the suite had finished; a Theory per arrangement would be a quarter
+    // of a million xUnit results. Partitions are the middle: each failure still
+    // carries the sweep's grouped report naming the failing case. xUnit v2 runs
+    // test *classes* in parallel but the cases of one class in sequence, so the
+    // Theory lives in OrbArrangementSweepPartitions.cs, one class per slice.
     public class OrbArrangementSweepTests
     {
+        // The partitions are the matrix, all of it and each case once: their
+        // sizes add up to exactly the cases RunAll() counts (the pre-CB-366
+        // single test), and the cases enumerated are the ones the matrix has.
         [Fact]
-        public void EveryArrangementKeepsOrbsOnScreenAndApart()
+        public void ThePartitionsHoldExactlyTheCasesTheWholeSweepRuns()
         {
-            var (cases, failures) = ArrangementSweep.RunAll();
+            var total = ArrangementSweep.Cases().Count() + ArrangementSweep.GroupCases().Count();
+            Assert.Equal(total, ArrangementSweep.PartitionSizes().Values.Sum());
+            Assert.Equal(ArrangementSweep.PartitionKeys().Count, ArrangementSweep.PartitionSizes().Count);
 
-            Assert.True(
-                failures.Count == 0,
-                $"{failures.Count} of {cases} arrangement cases failed:\n"
-                    + ArrangementSweep.Report(failures));
+            // And the classes cover every partition exactly once: a new shape,
+            // screen or sweep kind with no class would otherwise run nowhere.
+            var covered = SweepSlices.All.SelectMany(slice => slice.Keys()).ToList();
+            Assert.Equal(ArrangementSweep.PartitionKeys(), covered.OrderBy(k => k, StringComparer.Ordinal).ToList());
+        }
+
+        // Negative control: a rule that is broken must fail a partition and the
+        // message must name the case. A deliberately wrong failure list stands in
+        // for a broken arrangement through the same Report the Theory asserts on.
+        [Fact]
+        public void AFailingCaseIsNamedInThePartitionFailure()
+        {
+            var some = ArrangementSweep.Cases().First();
+            var report = ArrangementSweep.Report(new[] { $"{some}: orb 3 is off screen" });
+            Assert.Contains(some.ToString(), report);
+            Assert.Contains("orb 3 is off screen", report);
         }
 
         // A floor, not an equality, and the asymmetry is the point: adding a

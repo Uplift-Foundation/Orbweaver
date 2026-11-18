@@ -1265,6 +1265,59 @@ namespace Orbweaver.Tests
             return (cases, failures);
         }
 
+        // CB-366: the sweep cut into independent partitions, so a test runner can
+        // run them in parallel instead of one case after another on one core.
+        //
+        // A case belongs to exactly one partition, named by which of the sweeps
+        // it came from, its screen and its shape. The key is a pure function of
+        // the case, so partitions cannot overlap or drop a case, and
+        // PartitionCaseCount() / RunAll() agreeing is what the tests pin.
+        // Nothing about Check or CheckGroups changes: same cases, same rules.
+        internal static string KeyOf(Case c)
+            => (c.Mix is not null ? "mixed" : c.Split is not null ? "grouped" : c.Anchor is not null ? "anchored" : "plain")
+             + $" / {c.Screen.Name} / {c.Shape}";
+
+        internal static string KeyOf(GroupCase c)
+            => "groups-" + (c.Mix is not null ? "mixed" : c.Obstacles != "none" ? "obstacles" : c.Offsets != "none" ? "offsets" : "base")
+             + $" / {c.Screen.Name} / {c.Shape}";
+
+        // The matrix is enumerated and keyed once, not once per partition: every
+        // partition asking for its own slice would otherwise walk all of the
+        // cases and format a key for each one, ~270k times over.
+        private static readonly Lazy<(ILookup<string, Case> Plain, ILookup<string, GroupCase> Groups)> Partitioned =
+            new(() => (Cases().ToLookup(KeyOf), GroupCases().ToLookup(KeyOf)));
+
+        internal static IReadOnlyList<string> PartitionKeys()
+            => Partitioned.Value.Plain.Select(g => g.Key).Concat(Partitioned.Value.Groups.Select(g => g.Key))
+                .Distinct().OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+        internal static (int Cases, List<string> Failures) RunPartition(string key)
+        {
+            var cases = 0;
+            var failures = new List<string>();
+
+            foreach (var test in Partitioned.Value.Plain[key])
+            {
+                cases++;
+                failures.AddRange(Check(test));
+            }
+
+            foreach (var test in Partitioned.Value.Groups[key])
+            {
+                cases++;
+                failures.AddRange(CheckGroups(test));
+            }
+
+            return (cases, failures);
+        }
+
+        // How many cases the partitions hold between them, counted by key
+        // without running any check.
+        internal static Dictionary<string, int> PartitionSizes()
+            => Partitioned.Value.Plain.Select(g => (g.Key, N: g.Count()))
+                .Concat(Partitioned.Value.Groups.Select(g => (g.Key, N: g.Count())))
+                .ToDictionary(g => g.Key, g => g.N);
+
         // Grouped, because one broken rule usually fails hundreds of cases and
         // the list is only useful if the shape of the problem is visible. Shared
         // so that a failing xUnit assertion reads the same way as the console
