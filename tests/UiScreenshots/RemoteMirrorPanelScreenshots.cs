@@ -103,6 +103,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             new[] { Name });
 
         ChatPanel.OpenFor(NewOrb(), session);
+        Assert.True(await UntilAsync(() => session.History.Any(
+                t => t.Text == RemoteControlChatSession.NoLiveViewNote(session.DisplayName))),
+            "the panel never said there is no live view; history: "
+            + string.Join(" | ", session.History.Select(h => h.Text)));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-no-live-view.png");
