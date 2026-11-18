@@ -14,6 +14,12 @@ public class HostNameLeakGuardTests
     [AvaloniaFact]
     public void ACaptureShowingTheHostNameIsRefused()
     {
+        // On a host whose name is under four characters the guard has nothing to
+        // look for, so every capture passes unchecked and this would loop zero
+        // times and pass having tested nothing. Say so instead.
+        Assert.SkipWhen(ScreenshotHelper.HostNameSpellings().Count == 0,
+            "this host's name is under four characters, so the host-name guard is off here");
+
         foreach (var spelling in ScreenshotHelper.HostNameSpellings())
         {
             var panel = new StackPanel();
@@ -25,6 +31,23 @@ public class HostNameLeakGuardTests
 
             Assert.Contains(spelling, refusal.Message);
         }
+    }
+
+    // The kinds of text beyond a plain TextBlock that it does read.
+    [AvaloniaFact]
+    public void AHostNameInAnInlineRunOrATextBoxIsRefusedToo()
+    {
+        Assert.SkipWhen(ScreenshotHelper.HostNameSpellings().Count == 0,
+            "this host's name is under four characters, so the host-name guard is off here");
+
+        var host = ScreenshotHelper.HostNameSpellings()[0];
+
+        var inline = new TextBlock();
+        inline.Inlines!.Add(new Avalonia.Controls.Documents.Run(host));
+        Assert.Throws<XunitException>(() => ScreenshotHelper.AssertNoHostNameIsShown(inline, "inline.png"));
+
+        var box = new TextBox { Text = host };
+        Assert.Throws<XunitException>(() => ScreenshotHelper.AssertNoHostNameIsShown(box, "box.png"));
     }
 
     [AvaloniaFact]
