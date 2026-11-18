@@ -56,6 +56,7 @@ namespace Orbweaver.Tests
                 PaneScreen.Classify(SidePanelFixtures.IdleBoard) == PaneReading.Prompt);
             Cb327Captures.Run(Check);
             Cb330Captures.Run(Check);
+            Cb356Captures.Run(Check);
 
             // --- the transcript ---
 

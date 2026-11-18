@@ -22,6 +22,7 @@
     <Compile Include="../../ChatTranscript.cs" />
     <Compile Include="../../PaneColumns.cs" />
     <Compile Include="../../RelayedMessage.cs" />
+    <Compile Include="../../CompactionNote.cs" />
     <Compile Include="../../BridgeProtocol.cs" />
     <Compile Include="../../GrokDialog.cs" />
     <Compile Include="../../FirstRunDialogs.cs" />

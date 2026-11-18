@@ -855,7 +855,37 @@ namespace Orbweaver
             [property: JsonPropertyName("t")] string Text,
             [property: JsonPropertyName("u")] string? Uuid = null,
             [property: JsonPropertyName("a")] long At = 0,
-            [property: JsonPropertyName("k")] MirrorRelay? Relay = null);
+            [property: JsonPropertyName("k")] MirrorRelay? Relay = null,
+            [property: JsonPropertyName("c")] MirrorCompaction? Compaction = null);
+
+        // CB-356: a CompactionNote, with short names like the rest of the frame.
+        // A new key rather than a new relay kind on purpose: MirrorRelay.ToRelayed
+        // reads an unknown kind as Peer, so an older receiver would label a
+        // compaction "From another session". With "c", an older receiver ignores
+        // the key and draws Text, which is the note's Line, as a system line.
+        // Omitted when null, so every other frame is byte for byte what it was.
+        public sealed record MirrorCompaction(
+            [property: JsonPropertyName("g")] string? Trigger,
+            [property: JsonPropertyName("b")] long? PreTokens,
+            [property: JsonPropertyName("o")] long? PostTokens,
+            [property: JsonPropertyName("m")] long? DurationMs,
+            [property: JsonPropertyName("s")] string? Summary,
+            [property: JsonPropertyName("h")] bool HasBoundary)
+        {
+            public static MirrorCompaction From(CompactionNote n) =>
+                new(n.Trigger, n.PreTokens, n.PostTokens, n.DurationMs, n.Summary, n.HasBoundary);
+
+            // A count the sender could not have produced (negative) is dropped
+            // the way the parser drops one, so the far side cannot put a number
+            // on screen this side's own parser would refuse.
+            public CompactionNote ToNote() =>
+                new(Trigger,
+                    PreTokens is >= 0 ? PreTokens : null,
+                    PostTokens is >= 0 ? PostTokens : null,
+                    DurationMs is >= 0 ? DurationMs : null,
+                    Summary ?? "",
+                    HasBoundary);
+        }
 
         // CB-330: the fields of a RelayedMessage, with short names like the rest
         // of the frame. Optional on MirrorTurn and omitted when null, so a frame
@@ -909,6 +939,18 @@ namespace Orbweaver
                 var at = t.At > 0
                     ? DateTimeOffset.FromUnixTimeSeconds(t.At).ToLocalTime()
                     : DateTimeOffset.Now;
+
+                // CB-356: Text is rebuilt from the note rather than trusted, so the
+                // row's line and its fields cannot disagree.
+                if (t.Compaction is { } compaction)
+                {
+                    var note = compaction.ToNote();
+                    Add(t.Uuid, new ChatTurn
+                    {
+                        Role = ChatRole.System, Text = note.Line, IsComplete = true, At = at, Compaction = note
+                    });
+                    continue;
+                }
 
                 if (t.Relay is { } frame)
                 {
@@ -988,7 +1030,8 @@ namespace Orbweaver
                     r.Turn.Text,
                     r.Uuid,
                     r.Turn.At.ToUnixTimeSeconds(),
-                    r.Turn.Relay is { } relay ? MirrorRelay.From(relay) : null))
+                    r.Turn.Relay is { } relay ? MirrorRelay.From(relay) : null,
+                    r.Turn.Compaction is { } note ? MirrorCompaction.From(note) : null))
                 .ToList();
         }
 

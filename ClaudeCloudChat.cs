@@ -397,6 +397,12 @@ namespace Orbweaver
                     ? payload
                     : root;
 
+                // CB-356: a compaction's summary is a `user` row nobody typed.
+                // Taken as typed, it would set the panel busy for a turn that
+                // never starts.
+                if (row.TryGetProperty("isCompactSummary", out var summary) && summary.ValueKind == JsonValueKind.True)
+                    return false;
+
                 if (!row.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
                     || !message.TryGetProperty("content", out var content))
                 {
@@ -1492,6 +1498,14 @@ namespace Orbweaver
                     var rows = CloudStreamRows.RowsFrom(e.PayloadJson);
                     _post(() => FoldDurable(rows));
                     break;
+
+                // CB-356: a compaction's boundary. Its summary follows as a
+                // `user` event and folds into this row in Reconcile. Not a turn
+                // starting or ending, so busy is left alone.
+                case "system" when e.Subtype == "compact_boundary":
+                    var boundary = CloudStreamRows.RowsFrom(e.PayloadJson);
+                    _post(() => FoldDurable(boundary));
+                    break;
             }
         }
 
@@ -1903,6 +1917,14 @@ namespace Orbweaver
                 // failure than silently replacing an unrelated turn.
                 if (row.Uuid is { } uuid && _byUuid.TryGetValue(uuid, out var existing))
                 {
+                    // CB-356: a compaction re-read as the merged pair, or as
+                    // either half, never loses what the shown row already knew.
+                    if (existing.Compaction is not null && row.Turn.Compaction is not null)
+                    {
+                        if (CompactionNote.TryRefresh(existing, row.Turn)) TurnUpdated?.Invoke(existing);
+                        continue;
+                    }
+
                     if (existing.Text == row.Turn.Text
                         && existing.IsComplete == row.Turn.IsComplete)
                     {
@@ -1912,6 +1934,17 @@ namespace Orbweaver
                     existing.Text = row.Turn.Text;
                     existing.IsComplete = row.Turn.IsComplete;
                     TurnUpdated?.Invoke(existing);
+                    continue;
+                }
+
+                // CB-356: the stream maps one event per call, so a summary
+                // arrives on its own after its boundary. It folds into the
+                // boundary's row and is filed under its own uuid as well, so a
+                // later read of it alone lands on that row instead of adding one.
+                if (CompactionNote.AbsorbIntoLast(_history, row.Turn) is { } merged)
+                {
+                    if (row.Uuid is { } summaryUuid) _byUuid[summaryUuid] = merged;
+                    TurnUpdated?.Invoke(merged);
                     continue;
                 }
 
