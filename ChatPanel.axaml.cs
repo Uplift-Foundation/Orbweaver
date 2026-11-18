@@ -5104,6 +5104,9 @@ namespace Orbweaver
             public bool IsRelayExpanded => CanExpand
                 && (IsCompaction ? CompactionChoice : RelayRow.IsExpanded(RelaySetting, RelayChoice));
 
+            // The key includes the note, so a live merge (which replaces it) drops a
+            // choice made before it. That loses nothing: a boundary-only row has no
+            // summary, cannot be expanded, and so has no choice to lose.
             private bool CompactionChoice =>
                 _relayHost is not null && _turn.Compaction is { } note
                 && _relayHost.CompactionChoices.TryGetValue((_turn.At, note), out var chosen) && chosen;
