@@ -28,10 +28,7 @@ namespace Orbweaver
 
         internal static string Asking(string machine) => "Asking " + machine + "…";
 
-        // launch-info came back fine but says there is nothing to start a CLI in
-        // (no tmux on a Mac), or nothing to start.
-        internal static string NoTerminal(string machine) =>
-            machine + " has no terminal to start a session in. On a Mac, that means tmux isn't installed.";
+        internal static string NoFolder(string machine) => machine + " reported no folder to start in.";
 
         internal static string NoCli(string machine) => "No supported CLI is installed on " + machine + ".";
 
@@ -40,28 +37,36 @@ namespace Orbweaver
         internal static string Launched(string cli, string machine) =>
             CliName(cli) + " is starting on " + machine + ". Its orb appears when " + machine + " next reports its sessions.";
 
-        // The reason Start is off after the machine's launch-info came back
-        // without a usable answer. Null when the info is fine.
+        // One sentence per refusal code. The phone's own explanations (its
+        // ClientFrames.explain), with "the desk" replaced by the machine's name,
+        // so the same failure reads the same on whichever device asked. `why` is
+        // the far desk's own sentence where it sends one (no_terminal and
+        // launch_failed), and it is the useful part. unknown_account is the one
+        // the phone has no copy for; the last three are peer-only.
         internal static string Explain(string code, string? why, string cli, string machine)
         {
-            var name = CliName(cli);
+            var w = string.IsNullOrWhiteSpace(why) ? "no reason given" : why;
             return code switch
             {
                 PeerLaunchCodes.PeerLaunchOff => machine + " doesn't allow other desktops to start sessions. Turn that on in its Settings.",
                 PeerLaunchCodes.NoAnswer => machine + " didn't answer. It may be asleep, or running a version that can't start sessions for another desktop.",
                 PeerLaunchCodes.LinkLost => "The link to " + machine + " dropped before it answered.",
-                RelayReplies.BadSignature => machine + " didn't accept this machine's signature. Pair the two desktops again.",
-                RelayReplies.Expired => "That request took too long to reach " + machine + ". Check both clocks and try again.",
-                RelayReplies.Replayed => machine + " has already seen that request. Try again.",
-                RelayReplies.UnknownCli => name + " isn't installed on " + machine + ".",
-                RelayReplies.UnknownCwd => machine + " doesn't have that folder, or won't start sessions in it.",
+                RelayReplies.BadFrame => machine + " could not read that request.",
+                RelayReplies.BadInput => "That message can't be typed.",
+                RelayReplies.BadSignature => machine + " could not verify this machine's signature. Nothing was started.",
+                RelayReplies.Expired => "That launch timed out. Nothing was started.",
+                RelayReplies.Replayed => "That launch was already sent once.",
+                RelayReplies.UnknownCli => CliName(cli) + " isn't installed on " + machine + ".",
+                RelayReplies.UnknownCwd => "That folder doesn't exist on " + machine + ".",
                 RelayReplies.UnknownAccount => machine + " doesn't have that account.",
-                RelayReplies.NoTerminal => machine + " has no terminal to start " + name + " in. On a Mac, that means tmux isn't installed.",
-                RelayReplies.LaunchFailed => machine + " couldn't start " + name + ".",
-                RelayReplies.NoSession => name + " started on " + machine + " but never reported in.",
-                RelayReplies.BadFrame or RelayReplies.BadInput => machine + " couldn't read the request.",
-                RelayReplies.BadModel => machine + " doesn't know that model.",
-                _ => machine + " refused: " + (string.IsNullOrWhiteSpace(why) ? code : why) + ".",
+                RelayReplies.BadModel => "That model name can't be passed to the CLI.",
+                RelayReplies.UnsupportedPersona => "Personas come from the folder in this version.",
+                RelayReplies.UnknownParent => "That lead session is gone.",
+                RelayReplies.UnsupportedParent => "Only Claude Code sessions can join a team.",
+                RelayReplies.NoTerminal => "No terminal to start it in (" + w + ").",
+                RelayReplies.LaunchFailed => machine + " could not start it (" + w + ").",
+                RelayReplies.NoSession => "It started but never checked in. Open " + machine + " to see why.",
+                _ => machine + " refused it (" + code + ").",
             };
         }
     }

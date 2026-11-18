@@ -196,10 +196,15 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.False(w.BrowseButton.IsEnabled);
         Assert.True(w.AccountSection.IsVisible);
         Assert.Equal(["Default", "Work"], (w.AccountCombo.ItemsSource as IEnumerable<NewChatAccounts.Choice>)!.Select(c => c.Label).ToArray());
-        Assert.Equal(PeerLaunchCopy.OpenClawLocalOnly, w.MachineNote.Text);
+        Assert.Equal("Codex isn't installed on mini. Grok isn't installed on mini. " + PeerLaunchCopy.OpenClawLocalOnly, w.MachineNote.Text);
+        Assert.Equal("Grok isn't installed on mini.", ToolTip.GetTip(Radio(w, NewChatCli.Grok)));
+        Assert.Null(ToolTip.GetTip(Radio(w, NewChatCli.ClaudeCode)));
+        Assert.Equal(PeerLaunchCopy.OpenClawLocalOnly, ToolTip.GetTip(Radio(w, NewChatWindow.OpenClawTag)));
         Assert.True(w.StartButton.IsEnabled);
 
         Pick(w, 0);
+        Assert.Null(ToolTip.GetTip(Radio(w, NewChatCli.Grok)));
+        Assert.Null(ToolTip.GetTip(Radio(w, NewChatWindow.OpenClawTag)));
         Assert.True(Radio(w, NewChatCli.Codex).IsEnabled);
         Assert.True(Radio(w, NewChatWindow.OpenClawTag).IsEnabled);
         Assert.Equal(NewChatCli.Codex, w.SelectedCli);
@@ -243,13 +248,13 @@ public class NewChatWindowMachineTests : IDisposable
         tcs.SetResult(Info());
         Flush();
         Assert.True(w.StartButton.IsEnabled);
-        Assert.Equal(PeerLaunchCopy.OpenClawLocalOnly, w.MachineNote.Text);
+        Assert.EndsWith(PeerLaunchCopy.OpenClawLocalOnly, w.MachineNote.Text);
     }
 
     [AvaloniaTheory]
     [InlineData("none", "didn't answer")]
     [InlineData("off", "doesn't allow other desktops")]
-    [InlineData("noterm", "no terminal")]
+    [InlineData("noterm", "No terminal to start it in")]
     [InlineData("nocli", "No supported CLI")]
     public void AMachineThatCannotBeLaunchedOnDisablesStartAndSaysWhy(string kind, string expected)
     {
@@ -349,11 +354,11 @@ public class NewChatWindowMachineTests : IDisposable
 
     [AvaloniaTheory]
     [InlineData("peer_launch_off", null, "mini doesn't allow other desktops to start sessions. Turn that on in its Settings.")]
-    [InlineData("bad_signature", null, "mini didn't accept this machine's signature. Pair the two desktops again.")]
-    [InlineData("unknown_cwd", null, "mini doesn't have that folder, or won't start sessions in it.")]
-    [InlineData("no_terminal", null, "mini has no terminal to start Claude Code in. On a Mac, that means tmux isn't installed.")]
+    [InlineData("bad_signature", null, "mini could not verify this machine's signature. Nothing was started.")]
+    [InlineData("unknown_cwd", null, "That folder doesn't exist on mini.")]
+    [InlineData("no_terminal", null, "No terminal to start it in (no reason given).")]
     [InlineData("link_lost", null, "The link to mini dropped before it answered.")]
-    [InlineData("whatever", "disk full", "mini refused: disk full.")]
+    [InlineData("whatever", "disk full", "mini refused it (whatever).")]
     public void EachRefusalShowsItsCopyInline(string code, string? why, string expected)
     {
         var f = Ready();
@@ -373,7 +378,7 @@ public class NewChatWindowMachineTests : IDisposable
         var w = Make(f);
         Pick(w, 1);
         Click(w.StartButton);
-        Assert.Equal("Choose a folder first.", w.StatusLine.Text);
+        Assert.Equal("mini reported no folder to start in.", w.StatusLine.Text);
         Assert.Empty(f.Launches);
     }
 

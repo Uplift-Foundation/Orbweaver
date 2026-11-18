@@ -45,8 +45,10 @@ namespace Orbweaver
             string Machine)
         {
             // Ready alone is not enough: a machine with nowhere to start a CLI,
-            // or none installed, answers fine and still cannot be launched on.
-            internal bool StartEnabled => State == InfoState.Ready && AnyCli;
+            // none installed, or no folder to start in answers fine and still
+            // cannot be launched on. This is the machine's half; the window
+            // must also require that the CLI it has selected is CliEnabled.
+            internal bool StartEnabled => State == InfoState.Ready && AnyCli && Folders().Count > 0;
 
             internal bool AnyCli =>
                 State == InfoState.Ready && Info is { Terminal: true, Clis: { } clis } && clis.Any(c => c.Installed);
@@ -58,8 +60,10 @@ namespace Orbweaver
                 InfoState.Loading => PeerLaunchCopy.Asking(Machine),
                 InfoState.NoAnswer => PeerLaunchCopy.Explain(PeerLaunchCodes.NoAnswer, null, "claude", Machine),
                 InfoState.NotAllowed => PeerLaunchCopy.Explain(PeerLaunchCodes.PeerLaunchOff, null, "claude", Machine),
-                InfoState.Ready when Info is { Terminal: false } => PeerLaunchCopy.NoTerminal(Machine),
+                InfoState.Ready when Info is not { Terminal: true } => PeerLaunchCopy.Explain(
+                    RelayReplies.NoTerminal, Info?.Os == "macos" ? "tmux isn't installed" : null, "claude", Machine),
                 InfoState.Ready when !AnyCli => PeerLaunchCopy.NoCli(Machine),
+                InfoState.Ready when Folders().Count == 0 => PeerLaunchCopy.NoFolder(Machine),
                 _ => null,
             };
 
@@ -69,6 +73,15 @@ namespace Orbweaver
                 State == InfoState.Ready
                 && Info is { Terminal: true, Clis: { } clis }
                 && clis.Any(c => c.Cli == cli && c.Installed);
+
+            // Why a CLI is not offered on a machine that is otherwise ready:
+            // it is not installed there. Null when it is offered, or when the
+            // machine is not ready (Note says why then) or has no terminal
+            // (Note says that for every CLI at once).
+            internal string? CliReason(string cli) =>
+                State == InfoState.Ready && Info is { Terminal: true } && !CliEnabled(cli)
+                    ? PeerLaunchCopy.Explain(RelayReplies.UnknownCli, null, cli, Machine)
+                    : null;
 
             // The far machine's recents, or its home folder when it has none,
             // so a machine that has never run a session can still be launched

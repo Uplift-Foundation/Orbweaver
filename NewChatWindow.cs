@@ -194,7 +194,7 @@ namespace Orbweaver
         internal static IPeerLauncher? PeerLauncherForTests;
         internal static bool? PeerLinkOnForTests;
 
-        private static IPeerLauncher? PeerLauncher => PeerLauncherForTests;
+        private static IPeerLauncher? PeerLauncher => PeerLauncherForTests ?? PeerSessions.Launcher;
 
         // Two lines reserved under the Machine row, always, for the same
         // reason the status line reserves three: every note it shows (asking,
@@ -226,6 +226,7 @@ namespace Orbweaver
         // What each CLI row and the OpenClaw row were enabled for locally, so
         // going back to this machine can put them back.
         private readonly Dictionary<RadioButton, bool> _localEnabled = new();
+        private readonly Dictionary<RadioButton, string?> _localTip = new();
         private List<string>? _localFolders;
         private string? _localFolder;
         private NewChatCli? _localCli;
@@ -674,6 +675,7 @@ namespace Orbweaver
 
                 _cliList.Children.Add(radio);
                 _localEnabled[radio] = option.Enabled;
+                _localTip[radio] = ToolTip.GetTip(radio) as string;
 
                 if (statedText is { Length: > 0 } shown)
                 {
@@ -751,6 +753,7 @@ namespace Orbweaver
 
             _cliList.Children.Add(openClawRadio);
             _localEnabled[openClawRadio] = openClawUsable;
+            _localTip[openClawRadio] = ToolTip.GetTip(openClawRadio) as string;
 
             if (openClawReasonText is { Length: > 0 } shownOpenClawReason)
             {
@@ -1508,14 +1511,23 @@ namespace Orbweaver
         {
             _scope = scope;
 
-            var note = scope.Note ?? PeerLaunchCopy.OpenClawLocalOnly;
+            // The reserved note line: the machine's own problem if it has one,
+            // otherwise which CLIs it lacks and that OpenClaw stays here. The
+            // OpenClaw sentence is last so the two-line trim cuts it first; the
+            // tooltip has all of it.
+            var missing = _cliList.Children.OfType<RadioButton>()
+                .Select(r => r.Tag is NewChatCli c ? scope.CliReason(RelayAccounts.CliName(c)) : null)
+                .Where(r => r is not null);
+            var note = scope.Note ?? string.Join(" ", missing.Append(PeerLaunchCopy.OpenClawLocalOnly));
             _machineNote.Text = note;
             ToolTip.SetTip(_machineNote, note);
 
             foreach (var radio in _cliList.Children.OfType<RadioButton>())
             {
                 radio.IsEnabled = radio.Tag is NewChatCli cli && scope.CliEnabled(RelayAccounts.CliName(cli));
-                if (ReferenceEquals(radio.Tag, OpenClawTag)) ToolTip.SetTip(radio, PeerLaunchCopy.OpenClawLocalOnly);
+                ToolTip.SetTip(radio, radio.Tag is NewChatCli rc
+                    ? scope.CliReason(RelayAccounts.CliName(rc))
+                    : PeerLaunchCopy.OpenClawLocalOnly);
             }
 
             // Keep the chosen CLI when the far machine has it; otherwise the
@@ -1550,7 +1562,7 @@ namespace Orbweaver
             foreach (var (radio, enabled) in _localEnabled)
             {
                 radio.IsEnabled = enabled;
-                if (ReferenceEquals(radio.Tag, OpenClawTag)) ToolTip.SetTip(radio, null);
+                ToolTip.SetTip(radio, _localTip[radio]);
             }
 
             var folders = _localFolders ?? new List<string>();
@@ -1576,19 +1588,16 @@ namespace Orbweaver
 
         private async Task StartRemoteClicked()
         {
-            if (_scope is not { StartEnabled: true } scope || _selectedCli is not { } cli)
+            // Start is disabled in each of these states; a stray click still says
+            // why instead of launching.
+            if (_scope is not { StartEnabled: true } scope || _selectedCli is not { } cli
+                || _folderCombo.SelectedItem is not string folder)
             {
                 _statusLine.Text = _scope?.Note ?? "Choose a CLI first.";
                 return;
             }
 
             var machine = _machine!.Name!;
-            var folder = _folderCombo.SelectedItem as string;
-            if (folder is not { Length: > 0 })
-            {
-                _statusLine.Text = "Choose a folder first.";
-                return;
-            }
 
             var account = _accountSection.IsVisible && _accountCombo.SelectedItem is NewChatAccounts.Choice choice
                 ? choice.ProfileDir ?? RelayAccounts.Default

@@ -8,28 +8,34 @@ public class PeerLaunchCopyTests
     [InlineData("peer_launch_off", "mini doesn't allow other desktops to start sessions. Turn that on in its Settings.")]
     [InlineData("no_answer", "mini didn't answer. It may be asleep, or running a version that can't start sessions for another desktop.")]
     [InlineData("link_lost", "The link to mini dropped before it answered.")]
-    [InlineData("bad_signature", "mini didn't accept this machine's signature. Pair the two desktops again.")]
-    [InlineData("expired", "That request took too long to reach mini. Check both clocks and try again.")]
-    [InlineData("replayed", "mini has already seen that request. Try again.")]
+    [InlineData("bad_frame", "mini could not read that request.")]
+    [InlineData("bad_input", "That message can't be typed.")]
+    [InlineData("bad_signature", "mini could not verify this machine's signature. Nothing was started.")]
+    [InlineData("expired", "That launch timed out. Nothing was started.")]
+    [InlineData("replayed", "That launch was already sent once.")]
     [InlineData("unknown_cli", "Codex isn't installed on mini.")]
-    [InlineData("unknown_cwd", "mini doesn't have that folder, or won't start sessions in it.")]
+    [InlineData("unknown_cwd", "That folder doesn't exist on mini.")]
     [InlineData("unknown_account", "mini doesn't have that account.")]
-    [InlineData("no_terminal", "mini has no terminal to start Codex in. On a Mac, that means tmux isn't installed.")]
-    [InlineData("launch_failed", "mini couldn't start Codex.")]
-    [InlineData("no_session", "Codex started on mini but never reported in.")]
-    [InlineData("bad_frame", "mini couldn't read the request.")]
-    [InlineData("bad_input", "mini couldn't read the request.")]
-    [InlineData("bad_model", "mini doesn't know that model.")]
+    [InlineData("bad_model", "That model name can't be passed to the CLI.")]
+    [InlineData("unsupported_persona", "Personas come from the folder in this version.")]
+    [InlineData("unknown_parent", "That lead session is gone.")]
+    [InlineData("unsupported_parent", "Only Claude Code sessions can join a team.")]
+    [InlineData("no_terminal", "No terminal to start it in (no reason given).")]
+    [InlineData("launch_failed", "mini could not start it (no reason given).")]
+    [InlineData("no_session", "It started but never checked in. Open mini to see why.")]
+    [InlineData("weird", "mini refused it (weird).")]
     public void Each_code_reads_as_its_own_sentence(string code, string expected) =>
         Assert.Equal(expected, PeerLaunchCopy.Explain(code, null, "codex", "mini"));
 
+    [Theory]
+    [InlineData("no_terminal", "No terminal to start it in (tmux isn't installed).")]
+    [InlineData("launch_failed", "mini could not start it (tmux isn't installed).")]
+    public void The_far_desks_own_sentence_is_carried_where_the_code_has_one(string code, string expected) =>
+        Assert.Equal(expected, PeerLaunchCopy.Explain(code, "tmux isn't installed", "claude", "mini"));
+
     [Fact]
-    public void An_unknown_code_falls_back_to_why_then_to_the_code()
-    {
-        Assert.Equal("mini refused: out of disk.", PeerLaunchCopy.Explain("weird", "out of disk", "claude", "mini"));
-        Assert.Equal("mini refused: weird.", PeerLaunchCopy.Explain("weird", " ", "claude", "mini"));
-        Assert.Equal("mini refused: weird.", PeerLaunchCopy.Explain("weird", null, "claude", "mini"));
-    }
+    public void A_blank_why_reads_as_no_reason_given() =>
+        Assert.Equal("mini could not start it (no reason given).", PeerLaunchCopy.Explain("launch_failed", "  ", "claude", "mini"));
 
     [Theory]
     [InlineData("claude", "Claude Code")]
@@ -45,7 +51,7 @@ public class PeerLaunchCopyTests
         Assert.Equal("Starting on mini…", PeerLaunchCopy.Starting("mini"));
         Assert.Equal("Claude Code is starting on mini. Its orb appears when mini next reports its sessions.",
             PeerLaunchCopy.Launched("claude", "mini"));
-        Assert.Equal("mini has no terminal to start a session in. On a Mac, that means tmux isn't installed.", PeerLaunchCopy.NoTerminal("mini"));
+        Assert.Equal("mini reported no folder to start in.", PeerLaunchCopy.NoFolder("mini"));
         Assert.Equal("No supported CLI is installed on mini.", PeerLaunchCopy.NoCli("mini"));
         Assert.Equal("OpenClaw conversations start from this machine only.", PeerLaunchCopy.OpenClawLocalOnly);
     }

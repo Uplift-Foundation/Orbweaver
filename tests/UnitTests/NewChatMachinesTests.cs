@@ -85,12 +85,37 @@ public class NewChatMachinesTests
     {
         var noTerm = NewChatMachines.From("m", Info(terminal: false));
         Assert.False(noTerm.StartEnabled);
-        Assert.Equal(PeerLaunchCopy.NoTerminal("m"), noTerm.Note);
+        Assert.Equal("No terminal to start it in (tmux isn't installed).", noTerm.Note);
+        Assert.Null(noTerm.CliReason("claude")); // the note covers every CLI at once
+
+        var winNoTerm = NewChatMachines.From("m", new PeerLaunchInfo(true, "windows", "C:\\Users\\w", false, [], [], []));
+        Assert.Equal("No terminal to start it in (no reason given).", winNoTerm.Note);
 
         var noCli = NewChatMachines.From("m", Info(installed: []));
         Assert.False(noCli.AnyCli);
         Assert.False(noCli.StartEnabled);
         Assert.Equal("No supported CLI is installed on m.", noCli.Note);
+    }
+
+    [Fact]
+    public void An_uninstalled_cli_has_a_reason_and_an_installed_one_does_not()
+    {
+        var s = NewChatMachines.From("mini", Info(installed: ["claude"]));
+        Assert.Null(s.CliReason("claude"));
+        Assert.Equal("Grok isn't installed on mini.", s.CliReason("grok"));
+        Assert.Equal("Codex isn't installed on mini.", s.CliReason("codex"));
+        Assert.Equal("gemini isn't installed on mini.", s.CliReason("gemini")); // not listed at all
+        Assert.Null(NewChatMachines.Loading("mini").CliReason("grok"));
+        Assert.Null(NewChatMachines.From("mini", Info(allowed: false)).CliReason("grok"));
+    }
+
+    [Fact]
+    public void Start_needs_a_folder_to_start_in()
+    {
+        var none = NewChatMachines.From("m", Info(recents: [], home: null));
+        Assert.False(none.StartEnabled);
+        Assert.Equal("m reported no folder to start in.", none.Note);
+        Assert.True(NewChatMachines.From("m", Info(recents: [], home: "/h")).StartEnabled);
     }
 
     [Fact]
