@@ -46,6 +46,19 @@ namespace Orbweaver
         // connection per interval, which is nothing.
         internal static readonly TimeSpan ReconnectEvery = TimeSpan.FromSeconds(10);
 
+        // The one place the answering half is wired. The info source reads the
+        // switch on every answer, and PeerLaunchServer.Shared reads the same
+        // accessor on every launch, so flipping it needs no restart. Shared is
+        // process-wide on purpose: a server per link restart would hand a
+        // replayed nonce a fresh window.
+        internal static void ServeLaunchOn(PeerMirrorHost host, PeerLaunchClient? client) =>
+            host.ServeLaunch(
+                PeerLaunchInfoSource.ForThisDesk(
+                    () => OrbweaverSettings.PeerLaunchInboundEnabled,
+                    () => RemoteControlSessions.LocalSessions().Select(s => s.Status).ToList()),
+                PeerLaunchServer.Shared.HandleAsync,
+                client);
+
         // What New Chat asks to start a session on another desktop: null until
         // the link is running.
         internal static IPeerLauncher? Launcher => Host?.LaunchClient;
@@ -195,11 +208,10 @@ namespace Orbweaver
                 () => PeerRosterDirs.Configured(),
                 RemoteControlSessions.LocalSessions);
 
-            // CB-357: the asking side of "start a session on another desktop".
-            // The answering side (info source and the receiving server) joins
-            // this ServeLaunch call when it exists; the client alone is enough
-            // for the window to list machines and say "didn't answer".
-            host.ServeLaunch(null, null, LaunchClientFor(host));
+            // CB-357: both halves of "start a session on another desktop" in
+            // one call, so there is no moment where this desk answers info but
+            // not launches.
+            ServeLaunchOn(host, LaunchClientFor(host));
 
             // A roster landing is what puts an orb on screen and what tells an
             // open panel to look again. Both, in that order: the panel reads the
