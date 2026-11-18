@@ -121,6 +121,24 @@ namespace Orbweaver
         // rather than leaking the raw wrapper as the user's own bubble.
         public RelayedMessage? Relay { get; init; }
 
+        private CompactionNote? _compaction;
+
+        // CB-356: set when this turn is a Claude Code compaction. Role System,
+        // Text = Compaction.Line, IsComplete, for the same reason as Relay.
+        // Settable and notifying, unlike Relay: the boundary and the summary
+        // can arrive in different reads, and CompactionNote.TryAbsorb folds the
+        // second into the turn already on screen rather than adding a row.
+        public CompactionNote? Compaction
+        {
+            get => _compaction;
+            set
+            {
+                if (Equals(_compaction, value)) return;
+                _compaction = value;
+                Raise();
+            }
+        }
+
         // CB-270: drawn from a gateway rollup message; see HistoryTurn.FromRollup.
         public bool FromRollup { get; init; }
 
