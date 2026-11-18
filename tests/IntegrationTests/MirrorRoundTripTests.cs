@@ -25,7 +25,7 @@ namespace Orbweaver.Tests;
 // The whole class rather than just those tests, since xUnit serialises by
 // collection and a class cannot be half in one.
 [Collection("ConfigDirEnv")]
-public class MirrorRoundTripTests : IDisposable
+public partial class MirrorRoundTripTests : IDisposable
 {
     private readonly string _dir;
     private readonly string? _previousConfigDir;
@@ -4262,7 +4262,7 @@ public class MirrorRoundTripTests : IDisposable
 
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
             LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
-            bool noPressKey = false, bool noCanReadPane = false)
+            bool noPressKey = false, bool noCanReadPane = false, Func<PeerFileEnv>? files = null)
         {
             _dir = dir;
 
@@ -4335,7 +4335,10 @@ public class MirrorRoundTripTests : IDisposable
                     Literal.Add(text);
                     if (AfterType?.Invoke(text) is { } next) Screen = next;
                     return Task.FromResult(true);
-                }));
+                },
+                // CB-363: null unless a test serves files, so every harness
+                // above keeps a far side that never says rf=1.
+                Files: files));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
