@@ -73,33 +73,63 @@ internal static class LoopbackHttp
             .ConfigureAwait(false);
     }
 
-    // A loopback port on which connecting is refused with an RST, immediately.
+    // A loopback port that refuses connections for as long as it is held, and
+    // that nothing in this test process can take meanwhile.
     //
-    // CB-365: this used to bind a socket and never listen, which refuses on
-    // Windows but on macOS drops the SYN — measured on osx-arm64, a connect to
-    // a bound-only port hangs until the ~75s TCP connect timeout, while a
-    // released port answers ECONNREFUSED in 0.0s. A listening socket accepts
-    // instead (even shut down or with a full backlog), so there is no way to
-    // *hold* a refusing port on macOS. Instead the port is probed and released,
-    // from 10000-19999: below Start()'s 20000-60000 range and below every OS's
-    // ephemeral range, so nothing in this test process can bind it meanwhile.
-    // Each candidate is verified with a bounded connect, so a platform that
-    // drops rather than refuses is skipped rather than hung on.
-    internal static int RefusingPort()
+    // CB-365: the old shape bound a socket and never listened. Measured on
+    // macOS 27 (osx-arm64), a connect to that port gets no answer until the
+    // ~75s connect timeout, where a released port answers ECONNREFUSED in 0.0s.
+    // Binding and then *connecting* the holder to a throwaway loopback listener
+    // refuses on both macOS (0-45 ms) and Windows (~2s; every loopback refusal
+    // on Windows takes about that long, which is why callers must bound the
+    // wait generously and assert Refused rather than "fast").
+    //
+    // The port comes from 10000-19999: below Start()'s 20000-60000 and below
+    // the ephemeral ranges, so no port-0 bind and no Start() in the suite can
+    // land on it. Remaining gap: on macOS a second socket that names this exact
+    // port can still bind it; nothing in the suite does, a foreign process could.
+    internal sealed class RefusingPortHolder : IDisposable
     {
-        for (var attempt = 0; attempt < 50; attempt++)
-        {
-            var port = Random.Shared.Next(10000, 20000);
-            try
-            {
-                using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                probe.Bind(new IPEndPoint(IPAddress.Loopback, port));
-            }
-            catch (SocketException) { continue; }
+        private readonly TcpListener _listener;
+        private readonly Socket _holder;
 
-            if (ProbeAsync(port, TimeSpan.FromSeconds(1)).GetAwaiter().GetResult() == ConnectOutcome.Refused)
-                return port;
+        public int Port { get; }
+
+        internal RefusingPortHolder()
+        {
+            _listener = new TcpListener(IPAddress.Loopback, 0);
+            _listener.Start();
+            for (var attempt = 0; ; attempt++)
+            {
+                var holder = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    var port = Random.Shared.Next(10000, 20000);
+                    holder.Bind(new IPEndPoint(IPAddress.Loopback, port));
+                    holder.Connect(_listener.LocalEndpoint);
+                    _holder = holder;
+                    Port = port;
+                    return;
+                }
+                catch (SocketException) when (attempt < 50)
+                {
+                    holder.Dispose();
+                }
+                catch
+                {
+                    holder.Dispose();
+                    _listener.Stop();
+                    throw;
+                }
+            }
         }
-        throw new InvalidOperationException("no loopback port in 10000-19999 refused a connection");
+
+        public void Dispose()
+        {
+            _holder.Dispose();
+            _listener.Stop();
+        }
     }
+
+    internal static RefusingPortHolder RefusingPort() => new();
 }

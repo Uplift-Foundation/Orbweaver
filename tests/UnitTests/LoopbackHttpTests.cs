@@ -75,13 +75,13 @@ public class LoopbackHttpTests
     }
 
     [Fact]
-    public async Task RefusingPortRefusesImmediately()
+    public async Task RefusingPortRefusesWhileHeld()
     {
-        var port = LoopbackHttp.RefusingPort();
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var outcome = await LoopbackHttp.ProbeAsync(port, TimeSpan.FromSeconds(5));
+        // Not "immediately": a loopback refusal takes ~2s on Windows. What holds
+        // on both is Refused rather than TimedOut, well inside the 75s timeout.
+        using var refusing = LoopbackHttp.RefusingPort();
+        var outcome = await LoopbackHttp.ProbeAsync(refusing.Port, TimeSpan.FromSeconds(10));
         Assert.Equal(LoopbackHttp.ConnectOutcome.Refused, outcome);
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"refusal took {sw.Elapsed}");
     }
 
     // Negative controls: a connect that is silently dropped, or that succeeds,
@@ -105,12 +105,11 @@ public class LoopbackHttpTests
     }
 
     // The real-socket control: the pre-CB-365 shape. On macOS a bound-only port
-    // drops the SYN, and the probe must call that a timeout (on other OSes it
-    // refuses, so the claim is made only where it was measured).
-    [Fact]
+    // drops the SYN, and the probe must call that a timeout. Skipped elsewhere:
+    // Windows refuses a bound-only port (after ~2s), so the claim is macOS's.
+    [MacDropsBoundOnlyFact]
     public async Task OnMacAPortBoundButNotListeningDropsInsteadOfRefusing()
     {
-        if (!OperatingSystem.IsMacOS()) return;
         using var holder = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         holder.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         var port = ((IPEndPoint)holder.LocalEndPoint!).Port;
@@ -125,5 +124,14 @@ public class LoopbackHttpTests
         var calls = 0;
         Assert.Throws<HttpListenerException>(() => LoopbackHttp.Start(() => { calls++; return heldPort; }));
         Assert.Equal(51, calls);
+    }
+}
+
+internal sealed class MacDropsBoundOnlyFactAttribute : FactAttribute
+{
+    public MacDropsBoundOnlyFactAttribute()
+    {
+        if (!OperatingSystem.IsMacOS())
+            Skip = "only macOS silently drops the SYN on a bound-only port; Windows refuses it";
     }
 }

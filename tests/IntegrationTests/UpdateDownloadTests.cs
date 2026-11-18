@@ -190,9 +190,10 @@ public sealed class UpdateDownloadTests : IDisposable
     [Fact]
     public async Task ARefusedConnectionIsANetworkFailure()
     {
-        // A port verified to refuse with an RST (CB-365): a bound-but-silent
-        // socket drops the SYN on macOS and the connect waits ~75s instead.
-        var dead = LoopbackHttp.RefusingPort();
+        // Held and refusing (CB-365): a bound-but-silent socket drops the SYN on
+        // macOS and the connect waits ~75s instead.
+        using var refusing = LoopbackHttp.RefusingPort();
+        var dead = refusing.Port;
 
         var ex = await Assert.ThrowsAsync<UpdateException>(() => _http.GetStringAsync($"http://127.0.0.1:{dead}/x", default));
         Assert.Equal(UpdateFailure.Network, ex.Kind);
