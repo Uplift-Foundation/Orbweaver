@@ -105,8 +105,9 @@ public class LoopbackHttpTests
     }
 
     // The real-socket control: the pre-CB-365 shape. On macOS a bound-only port
-    // drops the SYN, and the probe must call that a timeout. Skipped elsewhere:
-    // Windows refuses a bound-only port (after ~2s), so the claim is macOS's.
+    // drops the SYN, and the probe must call that a timeout. Opt-in
+    // (ORBWEAVER_OS_PROBE_TESTS=1) and macOS-only: Windows refuses a bound-only
+    // port (after ~2s), so the claim is macOS's.
     [MacDropsBoundOnlyFact]
     public async Task OnMacAPortBoundButNotListeningDropsInsteadOfRefusing()
     {
@@ -131,7 +132,12 @@ internal sealed class MacDropsBoundOnlyFactAttribute : FactAttribute
 {
     public MacDropsBoundOnlyFactAttribute()
     {
-        if (!OperatingSystem.IsMacOS())
+        // Opt-in: this asserts the OS's own behaviour, not ours, and waits out a
+        // probe timeout on every run. The control that guards RefusingPort() is
+        // that a bound-only port fails RefusingPortRefusesWhileHeld.
+        if (Environment.GetEnvironmentVariable("ORBWEAVER_OS_PROBE_TESTS") != "1")
+            Skip = "documents macOS's own behaviour (a bound-only port drops the SYN); set ORBWEAVER_OS_PROBE_TESTS=1 to run it";
+        else if (!OperatingSystem.IsMacOS())
             Skip = "only macOS silently drops the SYN on a bound-only port; Windows refuses it";
     }
 }
