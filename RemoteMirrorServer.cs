@@ -1045,7 +1045,11 @@ namespace Orbweaver
             {
                 FileLog("file", $"id={frame.Id} -> same");
                 await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id,
-                    new Dictionary<string, string> { [MirrorProtocol.SameField] = "1" })).ConfigureAwait(false);
+                    new Dictionary<string, string>
+                    {
+                        [MirrorProtocol.SameField] = "1",
+                        [MirrorProtocol.ExecField] = decision.Stat.Exec ? "1" : "0",
+                    })).ConfigureAwait(false);
                 return;
             }
 

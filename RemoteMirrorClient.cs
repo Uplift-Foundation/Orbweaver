@@ -1001,7 +1001,8 @@ namespace Orbweaver
             if (MirrorProtocol.ParseFileStamp(have) is not null) fields[MirrorProtocol.HaveField] = have!;
 
             var reply = await RequestAsync(relay, MirrorProtocol.ReadFile, fields, Encoding.UTF8.GetBytes(path),
-                TimeSpan.FromSeconds(MirrorProtocol.FetchTimeoutSeconds), progress: progress, ct: ct)
+                TimeSpan.FromSeconds(MirrorProtocol.FetchTimeoutSeconds), progress: progress, ct: ct,
+                fileCap: MirrorProtocol.MaxFileBytes)
                 .ConfigureAwait(false);
 
             ct.ThrowIfCancellationRequested();
@@ -1026,7 +1027,7 @@ namespace Orbweaver
 
             if (payload is null)
                 return fields is not null && fields.TryGetValue(MirrorProtocol.SameField, out var same) && same == "1"
-                    ? new PeerFileResult.Same()
+                    ? new PeerFileResult.Same(Num(fields, MirrorProtocol.ExecField, 0) == 1)
                     : new PeerFileResult.Error(MirrorProtocol.ErrUnsupported, reason);
 
             var size = Num(fields, MirrorProtocol.SizeField, -1);
@@ -1219,6 +1220,13 @@ namespace Orbweaver
             // CB-363: told (bytes so far, total) on every verified piece of a
             // transfer that says its total in `sz`. Null for everything else.
             public IProgress<(long Got, long Total)>? Progress;
+
+            // CB-363: a FILE transfer's ceiling, enforced here rather than
+            // trusted to the far side. Null for every other request. Declared
+            // is the `sz` the first piece carried; every later piece must
+            // carry the same.
+            public long? FileCap;
+            public long Declared = -1;
         }
 
         private readonly Dictionary<string, Pending> _pending = new(StringComparer.Ordinal);
@@ -1286,7 +1294,8 @@ namespace Orbweaver
             string relay, string type,
             IReadOnlyDictionary<string, string>? fields, byte[]? payload,
             TimeSpan timeout, string? id = null, bool awaitReply = true,
-            IProgress<(long Got, long Total)>? progress = null, CancellationToken ct = default)
+            IProgress<(long Got, long Total)>? progress = null, CancellationToken ct = default,
+            long? fileCap = null)
         {
             if (TimeoutOverrideForTests is { } shorter) timeout = shorter;
 
@@ -1303,7 +1312,8 @@ namespace Orbweaver
                     Assembly = new MirrorProtocol.MirrorAssembly(),
                     Deadline = DateTime.UtcNow + timeout,
                     Grace = timeout,
-                    Progress = progress
+                    Progress = progress,
+                    FileCap = fileCap
                 };
             }
 
@@ -1345,6 +1355,19 @@ namespace Orbweaver
             {
                 lock (_gate) _pending.Remove(id);
             }
+        }
+
+        // Whether one piece of a FILE transfer breaks the cap, as the code to
+        // refuse it with, or null when it may be buffered. Records the first
+        // piece's `sz`; a later piece that disagrees is too_large too, since
+        // the only safe reading of a size that moves is the larger one.
+        internal static (string? Refusal, long Declared) FileOverCap(long declared, long size, long of, long cap)
+        {
+            var maxPieces = Math.Max(1, (cap + MirrorProtocol.PictureChunkBytes - 1) / MirrorProtocol.PictureChunkBytes);
+
+            if (size < 0 || size > cap || of > maxPieces) return (MirrorProtocol.ErrTooLarge, declared);
+            if (declared >= 0 && declared != size) return (MirrorProtocol.ErrTooLarge, declared);
+            return (null, size);
         }
 
         // Every piece verified individually and the reassembled whole still did
@@ -1405,7 +1428,31 @@ namespace Orbweaver
 
             if (pending is not null)
             {
+                // Before a byte is buffered: a far side that declares more than
+                // the cap, more pieces than the cap could need, or a different
+                // size from the one it started with is refused, so a hostile or
+                // broken peer cannot fill this process's memory.
+                if (pending.FileCap is { } cap)
+                {
+                    var (refusal, declared) = FileOverCap(
+                        pending.Declared, frame.Num(MirrorProtocol.SizeField, -1), frame.Num("of", -1), cap);
+                    if (refusal is not null)
+                    {
+                        Settle(frame.Id, new Reply(false, null, null, refusal, "the file is larger than it is allowed to be"));
+                        return;
+                    }
+
+                    pending.Declared = declared;
+                }
+
                 var result = pending.Assembly.Offer(frame);
+
+                // After: never more bytes than were declared.
+                if (pending.FileCap is not null && pending.Assembly.Received > pending.Declared)
+                {
+                    Settle(frame.Id, new Reply(false, null, null, MirrorProtocol.ErrTooLarge, "more bytes arrived than the file said it had"));
+                    return;
+                }
 
                 if (pending.Progress is { } progress && frame.PayloadVerified
                     && Num(frame.Fields, MirrorProtocol.SizeField, -1) is var total and >= 0)
@@ -1570,7 +1617,9 @@ namespace Orbweaver
         private PeerFileResult() { }
 
         internal sealed record Bytes(byte[] Data, long MtimeMs, long Size, bool Exec) : PeerFileResult;
-        internal sealed record Same : PeerFileResult;
+        // Exec is the far file's exec bit, echoed on `OK same=1`, so a cached
+        // copy (always written without one) is judged as the far file is.
+        internal sealed record Same(bool Exec = false) : PeerFileResult;
         internal sealed record Error(string Code, string? Reason) : PeerFileResult;
     }
 }

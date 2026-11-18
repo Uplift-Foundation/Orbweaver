@@ -29,8 +29,11 @@ public sealed class PeerFileCacheTests : IDisposable
         public readonly List<(string Path, string Origin)> Seen = new();
         public bool Throw;
 
+        public Exception? Throws;
+
         public void Mark(string path, string origin)
         {
+            if (Throws is not null) throw Throws;
             if (Throw) throw new IOException("xattr refused");
             Seen.Add((path, origin));
         }
@@ -102,6 +105,37 @@ public sealed class PeerFileCacheTests : IDisposable
         Assert.Null(cache.Store("mini", "/a/b.pdf", 1, [1, 2], "mini"));
         Assert.Null(cache.Newest("mini", "/a/b.pdf"));
         Assert.Empty(Directory.GetFiles(_root, "*", SearchOption.AllDirectories));
+    }
+
+    // Not only an IOException: a Windows stream name the OS calls invalid is
+    // an ArgumentException, and it must not leak the temp file either.
+    [Fact]
+    public void AMarkThatFailsAnyOtherWayIsNotStoredEither()
+    {
+        foreach (var e in new Exception[] { new ArgumentException("bad stream name"), new NotSupportedException("no ADS here") })
+        {
+            var cache = Cache(new Marks { Throws = e });
+            Assert.Null(cache.Store("mini", "/a/b.pdf", 1, [1, 2], "mini"));
+            Assert.Empty(Directory.GetFiles(_root, "*", SearchOption.AllDirectories));
+        }
+    }
+
+    // A copy that is used every day is never old, however long ago it was
+    // fetched: the caller's Touch on a `same` hit is what keeps it.
+    [Fact]
+    public void ACopyReusedWithinTheMonthSurvivesTheSweep()
+    {
+        var cache = Cache();
+        var stored = cache.Store("mini", "/a/b.pdf", 1, [1], "mini")!;
+        _now = _now.AddDays(25);
+        cache.Touch(cache.Newest("mini", "/a/b.pdf")!);
+        _now = _now.AddDays(25);
+
+        Assert.Equal(0, cache.Sweep());
+        Assert.True(File.Exists(stored.LocalPath));
+
+        _now = _now.AddDays(6);
+        Assert.Equal(1, cache.Sweep());
     }
 
     [Fact]

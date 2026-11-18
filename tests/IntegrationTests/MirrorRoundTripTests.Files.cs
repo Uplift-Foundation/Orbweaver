@@ -565,6 +565,101 @@ public partial class MirrorRoundTripTests
         Assert.Equal(MirrorProtocol.ErrUnreachable, CodeOf(result));
     }
 
+    // `same` carries the far exec bit, so a cached copy (always written
+    // without one) can still be judged as the far file is.
+    [FilesUnixFact]
+    public async Task SameCarriesTheFarExecBit()
+    {
+        var (harness, tree) = await FileHarnessAsync();
+        using var _ = tree;
+        var script = tree.Write("run.sh", "#!/bin/sh\n"u8.ToArray());
+        File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var doc = tree.Write("doc.pdf", "%PDF"u8.ToArray());
+
+        var s1 = BytesOf(await harness.Client.FetchFileAsync("job-hunter", script, null));
+        var d1 = BytesOf(await harness.Client.FetchFileAsync("job-hunter", doc, null));
+
+        Assert.True(Assert.IsType<PeerFileResult.Same>(
+            await harness.Client.FetchFileAsync("job-hunter", script, MirrorProtocol.FileStamp(s1.MtimeMs, s1.Size))).Exec);
+        Assert.False(Assert.IsType<PeerFileResult.Same>(
+            await harness.Client.FetchFileAsync("job-hunter", doc, MirrorProtocol.FileStamp(d1.MtimeMs, d1.Size))).Exec);
+    }
+
+    // --- a far side that lies ---------------------------------------------------------
+
+    // The near side does not take the far side's word for the cap. The real
+    // server is held at its stat, and hand-built pieces answer the real
+    // client's request instead: each lie is refused as too_large before it
+    // can be buffered, and the honest control after them is still served.
+    [Theory]
+    [InlineData("terabyte")]
+    [InlineData("pieces")]
+    [InlineData("moving")]
+    [InlineData("overflow")]
+    public async Task AFarSideThatLiesAboutSizeIsRefusedBeforeItFillsMemory(string lie)
+    {
+        var tree = new FileTree();
+        using var _ = tree;
+        var gate = new BlockingSource(PeerFileSource.Instance);
+        tree.Source = gate;
+        var (harness, _) = await FileHarnessAsync(tree);
+        var path = Path.Combine(tree.Project, "sub", "notes.txt");
+        var reports = new Reports();
+
+        var fetch = harness.Client.FetchFileAsync("job-hunter", path, null, reports);
+        Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(10)));
+        var id = MirrorProtocol.TryParseFrame(harness.ToServer.Last(l => l.Contains(";t=FILE;")))!.Id;
+
+        async Task Piece(int seq, int of, long size, byte[] bytes) =>
+            await harness.Client.OnFrameAsync(Harness.FarRelay, MirrorProtocol.TryParseFrame(MirrorProtocol.BuildFrame(
+                MirrorProtocol.Chunk, id,
+                new Dictionary<string, string> { ["seq"] = seq.ToString(), ["of"] = of.ToString(), ["sz"] = size.ToString(), ["mt"] = "1", ["x"] = "0" },
+                bytes))!);
+
+        switch (lie)
+        {
+            case "terabyte": await Piece(0, 2, 1_000_000_000_000, new byte[4]); break;
+            case "pieces": await Piece(0, 1_000_000, 8, new byte[4]); break;
+            case "moving": await Piece(0, 3, 8, new byte[4]); await Piece(1, 3, 9, new byte[4]); break;
+            case "overflow": await Piece(0, 2, 5, new byte[10]); break;
+        }
+
+        Assert.Equal(MirrorProtocol.ErrTooLarge, CodeOf(await fetch));
+        gate.Release.Set();
+        await harness.Server.FileInFlight;
+        Assert.False(harness.Client.Waiting);
+        Assert.Equal("notes"u8.ToArray(), BytesOf(await harness.Client.FetchFileAsync("job-hunter", path, null)).Data);
+    }
+
+    // A cancelled fetch leaves nothing waiting, and the pieces that arrive
+    // after it are dropped quietly: no exception, no progress report.
+    [Fact]
+    public async Task PiecesArrivingAfterACancelAreDroppedAndNothingIsLeftWaiting()
+    {
+        var tree = new FileTree();
+        using var _ = tree;
+        var gate = new BlockingSource(PeerFileSource.Instance);
+        tree.Source = gate;
+        var (harness, _) = await FileHarnessAsync(tree);
+        var path = tree.Write("report.pdf", Random(MirrorProtocol.PictureChunkBytes * 2 + 1));
+        var reports = new Reports();
+        harness.ForgetFramesSoFar();
+
+        using var cts = new CancellationTokenSource();
+        var fetch = harness.Client.FetchFileAsync("job-hunter", path, null, reports, cts.Token);
+        Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(10)));
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
+        Assert.False(harness.Client.Waiting);
+
+        gate.Release.Set();
+        await harness.Server.FileInFlight;
+
+        Assert.Equal(3, harness.ChunkFrames);   // the far side did send them
+        Assert.Empty(reports.Seen);             // and nobody was told
+        Assert.False(harness.Client.Waiting);
+    }
+
     // --- the cache, end to end -------------------------------------------------------
 
     // What the panel will do: store what came, offer its stamp next time, and

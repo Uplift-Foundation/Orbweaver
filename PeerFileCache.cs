@@ -72,9 +72,13 @@ namespace Orbweaver
         internal static string Key(string machine, string path) =>
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(machine + "|" + path)))[..16].ToLowerInvariant();
 
+        // Every name Windows reserves, the superscript-digit ports and the
+        // console pair included, compared against the stem with its trailing
+        // spaces and dots gone, which is how Windows itself reads `AUX .txt`.
         private static readonly string[] WindowsDeviceNames =
-            ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-             "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
+            ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+             "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "COM\u00b9", "COM\u00b2", "COM\u00b3",
+             "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT\u00b9", "LPT\u00b2", "LPT\u00b3"];
 
         // The far path's last component, made safe to be a file name on either
         // OS: separators and the characters Windows refuses become `_`,
@@ -88,23 +92,39 @@ namespace Orbweaver
             var name = cut >= 0 ? path[(cut + 1)..] : path;
 
             var sb = new StringBuilder(name.Length);
-            foreach (var c in name)
+            for (var i = 0; i < name.Length; i++)
             {
+                var c = name[i];
                 if (char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format) continue;
+
+                // A surrogate pair is kept whole; half of one (which a Windows
+                // name may hold) is dropped, since no file API here takes it.
+                if (char.IsHighSurrogate(c))
+                {
+                    if (i + 1 < name.Length && char.IsLowSurrogate(name[i + 1])) { sb.Append(c).Append(name[++i]); }
+                    continue;
+                }
+                if (char.IsLowSurrogate(c)) continue;
+
                 sb.Append(c is '<' or '>' or ':' or '"' or '|' or '?' or '*' or '/' or '\\' ? '_' : c);
             }
 
             var safe = sb.ToString().TrimEnd('.', ' ').TrimStart(' ');
             if (safe.Length == 0 || safe == "." || safe == "..") safe = "file";
 
-            var stem = safe.Split('.')[0];
+            var stem = safe.Split('.')[0].TrimEnd(' ', '.');
             if (WindowsDeviceNames.Contains(stem, StringComparer.OrdinalIgnoreCase)) safe = "_" + safe;
 
             if (safe.Length > 120)
             {
                 var ext = Path.GetExtension(safe);
                 if (ext.Length > 20) ext = "";
-                safe = safe[..(120 - ext.Length)] + ext;
+                var keep = 120 - ext.Length;
+
+                // Never between the halves of a surrogate pair.
+                if (char.IsHighSurrogate(safe[keep - 1])) keep--;
+                safe = safe[..keep].TrimEnd(' ', '.') + ext;
+                if (safe.Length == 0) safe = "file";
             }
 
             // A leading dot would make it hidden, and the sweep's temp files
@@ -191,7 +211,8 @@ namespace Orbweaver
                     Directory.SetLastWriteTimeUtc(entry, _utcNow());
                     return new CachedFile(final, mtimeMs, bytes.LongLength);
                 }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException
+                                              or ArgumentException or NotSupportedException)
                 {
                     TryDelete(temp);
                     MirrorLog.Say("file-cache", $"store failed: {e.GetType().Name}");
@@ -231,7 +252,7 @@ namespace Orbweaver
                         // which would read as a use and keep an old copy alive.
                         var used = Directory.GetLastWriteTimeUtc(entry);
 
-                        foreach (var temp in Directory.EnumerateFiles(entry, "*" + TempSuffix))
+                        foreach (var temp in FilesIn(entry, "*" + TempSuffix))
                             if (now - File.GetLastWriteTimeUtc(temp) > StaleTemp) TryDelete(temp);
 
                         if (now - used > MaxAge)
@@ -240,7 +261,7 @@ namespace Orbweaver
                             continue;
                         }
 
-                        var bytes = Directory.EnumerateFiles(entry).Sum(f => new FileInfo(f).Length);
+                        var bytes = FilesIn(entry, "*").Sum(LengthOrZero);
                         live.Add((entry, used, bytes));
                     }
                 }
@@ -257,6 +278,21 @@ namespace Orbweaver
             }
 
             return removed;
+        }
+
+        // An entry or a file another click (or another sweep) removes while
+        // this one is walking is simply not there, rather than an exception
+        // out of Sweep.
+        internal static string[] FilesIn(string dir, string pattern)
+        {
+            try { return Directory.GetFiles(dir, pattern); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+        }
+
+        internal static long LengthOrZero(string file)
+        {
+            try { return new FileInfo(file).Length; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return 0; }
         }
 
         private static IEnumerable<string> SafeEnumerate(string dir) =>

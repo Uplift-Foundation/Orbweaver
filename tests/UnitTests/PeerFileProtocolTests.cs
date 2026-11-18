@@ -13,6 +13,7 @@ public class PeerFileProtocolTests
     [InlineData("1700000000000-14", 1700000000000L, 14L)]
     [InlineData("0-0", 0L, 0L)]
     [InlineData("-5-3", -5L, 3L)]   // an mtime before 1970 is still a stamp
+    [InlineData("-5-10", -5L, 10L)]
     public void AStampRoundTrips(string stamp, long mtime, long size)
     {
         Assert.Equal((mtime, size), MirrorProtocol.ParseFileStamp(stamp));
@@ -27,6 +28,12 @@ public class PeerFileProtocolTests
     [InlineData("1-b")]
     [InlineData("1--3")]
     [InlineData("1-+3")]
+    [InlineData("-")]
+    [InlineData("5")]
+    [InlineData("5-")]
+    [InlineData("9999999999999999999-1")]
+    [InlineData("1-2-3")]
+    [InlineData("1-+2")]
     public void AnythingElseIsNoStamp(string? stamp) => Assert.Null(MirrorProtocol.ParseFileStamp(stamp));
 
     // --- the HELLO flag ---------------------------------------------------------
@@ -102,6 +109,44 @@ public class PeerFileProtocolTests
             Assert.IsType<PeerFileResult.Error>(RemoteMirrorClient.FileResultOf(true, null, null, new Dictionary<string, string> { ["sz"] = "3" }, [1, 2, 3])).Code);
     }
 
+    // The far exec bit rides on `same`, so a cached copy is judged as the far
+    // file is; a far side that sends no `x` reads as not executable.
+    [Fact]
+    public void SameCarriesTheFarExecBit()
+    {
+        Assert.True(Assert.IsType<PeerFileResult.Same>(RemoteMirrorClient.FileResultOf(true, null, null,
+            new Dictionary<string, string> { ["same"] = "1", ["x"] = "1" }, null)).Exec);
+        Assert.False(Assert.IsType<PeerFileResult.Same>(RemoteMirrorClient.FileResultOf(true, null, null,
+            new Dictionary<string, string> { ["same"] = "1", ["x"] = "0" }, null)).Exec);
+        Assert.False(new PeerFileResult.Same().Exec);
+    }
+
+    // --- the near side's own cap -------------------------------------------------------
+
+    private const long Cap = MirrorProtocol.MaxFileBytes;
+    private static readonly long MaxPieces = Cap / MirrorProtocol.PictureChunkBytes;
+
+    [Fact]
+    public void AFirstPieceWithinTheCapIsRecordedAsTheDeclaredSize()
+    {
+        Assert.Equal((null, 1000L), RemoteMirrorClient.FileOverCap(-1, 1000, 1, Cap));
+        Assert.Equal((null, Cap), RemoteMirrorClient.FileOverCap(-1, Cap, MaxPieces, Cap));
+        Assert.Equal((null, 1000L), RemoteMirrorClient.FileOverCap(1000, 1000, 1, Cap));
+        Assert.Equal((null, 0L), RemoteMirrorClient.FileOverCap(-1, 0, 1, 1));
+    }
+
+    [Theory]
+    [InlineData(-1L, 1_000_000_000_000L, 1L)]   // declares a terabyte
+    [InlineData(-1L, 10L, 1_000_000L)]            // more pieces than the cap could need
+    [InlineData(-1L, -1L, 1L)]                    // no size at all
+    [InlineData(1000L, 2000L, 1L)]                // a size that moved between pieces
+    public void APieceThatBreaksTheCapIsTooLargeAndDeclaresNothingNew(long declared, long size, long of)
+    {
+        var (refusal, kept) = RemoteMirrorClient.FileOverCap(declared, size, of, Cap);
+        Assert.Equal(MirrorProtocol.ErrTooLarge, refusal);
+        Assert.Equal(declared, kept);
+    }
+
     [Fact]
     public void AnOkWithSameIsSameAndAnyOtherEmptyOkIsUnsupported()
     {
@@ -149,6 +194,11 @@ public class PeerFileProtocolTests
     [InlineData("/a/lpt1", "_lpt1")]
     [InlineData("/a/.env", "_.env")]
     [InlineData("plain.pdf", "plain.pdf")]
+    [InlineData("/a/AUX .txt", "_AUX .txt")]          // Windows reads the stem as AUX
+    [InlineData("/a/NUL .", "_NUL")]
+    [InlineData("/a/COM\u00b9.txt", "_COM\u00b9.txt")]
+    [InlineData("/a/conin$", "_conin$")]
+    [InlineData("/a/\ud83d\ude00.png", "\ud83d\ude00.png")]
     public void ASafeNameKeepsTheNameAndExtensionAndNothingDangerous(string path, string expected) =>
         Assert.Equal(expected, PeerFileCache.SafeName(path));
 
@@ -162,6 +212,40 @@ public class PeerFileProtocolTests
         var weird = PeerFileCache.SafeName("/a/" + new string('x', 200) + "." + new string('y', 40));
         Assert.Equal(120, weird.Length);
         Assert.Equal(new string('x', 120), weird);
+    }
+
+    // Half a surrogate pair (which a Windows name may hold) is dropped. Built
+    // at runtime: in an attribute it would reach the test as U+FFFD.
+    [Fact]
+    public void ALoneSurrogateIsDropped()
+    {
+        Assert.Equal("bc.txt", PeerFileCache.SafeName("/a/b" + (char)0xD800 + "c.txt"));
+        Assert.Equal("bc.txt", PeerFileCache.SafeName("/a/b" + (char)0xDC00 + "c.txt"));
+        Assert.Equal("bc.txt", PeerFileCache.SafeName("/a/bc.txt" + (char)0xD800));   // high at the very end
+    }
+
+    // A cut at the length limit never leaves half a surrogate pair, which no
+    // file API here would accept.
+    [Fact]
+    public void TheLengthCutNeverSplitsASurrogatePair()
+    {
+        var name = PeerFileCache.SafeName("/a/" + new string('x', 119) + "\ud83d\ude00" + "yyyy");
+        Assert.Equal(new string('x', 119), name);
+
+        var withExt = PeerFileCache.SafeName("/a/" + new string('x', 115) + "\ud83d\ude00" + "yyyy.pdf");
+        Assert.Equal(new string('x', 115) + ".pdf", withExt);
+
+        Assert.Equal("file", PeerFileCache.SafeName("/a/" + new string('.', 1) + new string(' ', 200) + "." + new string('z', 30)));
+    }
+
+    // --- the sweep's tolerance of things vanishing under it -------------------------------
+
+    [Fact]
+    public void AFolderOrFileThatVanishedIsEmptyAndZero()
+    {
+        var gone = Path.Combine(Path.GetTempPath(), "cb363-gone-" + Guid.NewGuid().ToString("N"));
+        Assert.Empty(PeerFileCache.FilesIn(gone, "*"));
+        Assert.Equal(0, PeerFileCache.LengthOrZero(Path.Combine(gone, "f")));
     }
 
     // --- the download mark's content ---------------------------------------------------------
