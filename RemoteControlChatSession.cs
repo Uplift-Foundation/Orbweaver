@@ -35,7 +35,7 @@ namespace Orbweaver
     // makes that free — the panel already redraws from History when it fires.
     internal sealed partial class RemoteControlChatSession :
         IRemoteChatSession, IRemoteChatComposer, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatBacklog,
-        IRemoteChatFetchWait, IRemoteChatMachine, IDisposable
+        IRemoteChatFetchWait, IRemoteChatMachine, IRemoteChatComposerChanges, IDisposable
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -255,11 +255,48 @@ namespace Orbweaver
             {
                 MachineChanged?.Invoke();
                 TryUpgrade();
+                RefreshReach();
 
                 // The roster is what says the far session started or stopped
                 // waiting, which is what decides whether to ask for a form.
                 EnsurePromptPolling();
             });
+        }
+
+        // The banner turn this session inserted at the top of the live view, kept
+        // so it can be rewritten in place rather than found by position.
+        private ChatTurn? _banner;
+
+        public event Action? ComposerHintChanged;
+
+        // What the far session can do changes after the panel has upgraded - it
+        // gains a pane, a messaging socket comes or goes - and the roster says so
+        // on its next landing. TryUpgrade reads it once and returns early after
+        // that, so the banner and the composer hint went on saying what had been
+        // true at the upgrade until the app restarted (CB-379). A stale "can't" is
+        // the worse half of that: it stops people trying.
+        //
+        // Re-read on every roster landing rather than on reopening the panel,
+        // because the roster arrives whether or not a panel is open. Says nothing
+        // when nothing it shows has changed.
+        private void RefreshReach()
+        {
+            if (_disposed || !_mirroring) return;
+
+            var state = RemoteControlSessions.MirrorStateFor(_account, _remoteName);
+            if (state.Availability != RemoteMirrorClient.MirrorAvailability.Available) return;
+            if (state.Entry is not { } entry) return;
+
+            var canType = entry.HasPane;
+            var canDeliver = entry.CanDeliver ?? false;
+            if (canType == _canType && canDeliver == _canDeliver) return;
+
+            _canType = canType;
+            _canDeliver = canDeliver;
+
+            if (_banner is not null) _banner.Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle);
+
+            ComposerHintChanged?.Invoke();
         }
 
         private void TryUpgrade()
@@ -379,6 +416,10 @@ namespace Orbweaver
         internal string FarName => MachineName is { Length: > 0 } machine ? $"{FarTitle} on {machine}" : FarTitle;
 
         // "the other machine", when the roster has not said which.
+        // The title the panel names the far session by, for tests that compare the
+        // wording it builds from it.
+        internal string FarTitleForTests => FarTitle;
+
         internal string FarMachine => MachineName is { Length: > 0 } machine ? machine : "the other machine";
 
         internal static bool IsRoute(string? name) =>
@@ -526,12 +567,13 @@ namespace Orbweaver
                     // Said once, at the top of the real conversation, so nobody
                     // mistakes a mirror for a chat thread and wonders why their
                     // half of it is missing.
-                    _history.Insert(0, new ChatTurn
+                    _banner = new ChatTurn
                     {
                         Role = ChatRole.System,
                         IsComplete = true,
                         Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle)
-                    });
+                    };
+                    _history.Insert(0, _banner);
 
                     _painted = true;
 

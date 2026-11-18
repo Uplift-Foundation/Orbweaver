@@ -759,6 +759,7 @@ namespace Orbweaver
             // conversation is open next — a refusal from one cloud session
             // taking the box away from an unrelated one.
             if (_session is IRemoteChatReadOnly wasReadOnly) wasReadOnly.ReadOnlyChanged -= OnReadOnlyChanged;
+            if (_session is IRemoteChatComposerChanges wasHinted) wasHinted.ComposerHintChanged -= OnComposerHintChanged;
             if (_session is IRemoteChatInterrupt wasInterruptible) wasInterruptible.InterruptChanged -= OnInterruptChanged;
             if (_session is IRemoteChatRunOptions wasRunnable) wasRunnable.RunOptionsChanged -= OnRunOptionsChanged;
 
@@ -906,6 +907,7 @@ namespace Orbweaver
             // the roster's schedule rather than the panel's. Both are re-read by
             // ApplyComposerAffordances below for the initial state.
             if (session is IRemoteChatReadOnly readOnlyNow) readOnlyNow.ReadOnlyChanged += OnReadOnlyChanged;
+            if (session is IRemoteChatComposerChanges hinted) hinted.ComposerHintChanged += OnComposerHintChanged;
             if (session is IRemoteChatInterrupt interruptible) interruptible.InterruptChanged += OnInterruptChanged;
             if (session is IRemoteChatRunOptions runnable) runnable.RunOptionsChanged += OnRunOptionsChanged;
             ApplyRunOptions(session);
@@ -1096,6 +1098,9 @@ namespace Orbweaver
         // Raised on the UI thread by contract (see IRemoteChatReadOnly), and only
         // by the session currently bound: Unbind takes both subscriptions off.
         private void OnReadOnlyChanged() => ApplyComposerAffordances(_session);
+
+        // The remote session's hint followed a roster change (CB-379): same redraw.
+        private void OnComposerHintChanged() => ApplyComposerAffordances(_session);
 
         private void OnInterruptChanged() => ApplyStop(_session);
 
