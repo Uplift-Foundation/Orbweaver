@@ -45,7 +45,7 @@ namespace Orbweaver
     internal sealed class LocalCliChatSession :
         IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
         IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
-        IRemoteChatPeerInbound, IDisposable
+        IRemoteChatPeerInbound, IRemoteChatFiles, IDisposable
     {
         // How much of the tail to read when the panel first opens.
         //
@@ -361,6 +361,18 @@ namespace Orbweaver
             _debounce?.Stop();
             Pump();
         }
+
+        // CB-363: the file is on this computer already, so there is nothing to
+        // fetch — the path is handed back and ChatFileLinks asks the policy
+        // about the real file. One class backs Claude Code, Codex and Grok
+        // sessions alike (CliChatFormat), so all three get file links here.
+        public ChatFileHost FileHost => ChatFileHost.ThisMachine;
+
+        public string? FileHostName => null;
+
+        public Task<ChatFileResult> FetchFileAsync(
+            string path, IProgress<(long Done, long Total)>? progress, CancellationToken ct) =>
+            Task.FromResult(ChatFileResult.Local(path));
 
         public void Dispose()
         {
