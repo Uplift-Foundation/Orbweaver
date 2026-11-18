@@ -1281,6 +1281,12 @@ namespace Orbweaver.Tests
             => "groups-" + (c.Mix is not null ? "mixed" : c.Obstacles != "none" ? "obstacles" : c.Offsets != "none" ? "offsets" : "base")
              + $" / {c.Screen.Name} / {c.Shape}";
 
+        // The partitions' sizes, keyed.
+        internal static Dictionary<string, int> PartitionSizes()
+            => Partitioned.Value.Plain.Select(g => (g.Key, N: g.Count()))
+                .Concat(Partitioned.Value.Groups.Select(g => (g.Key, N: g.Count())))
+                .ToDictionary(g => g.Key, g => g.N);
+
         // The matrix is enumerated and keyed once, not once per partition: every
         // partition asking for its own slice would otherwise walk all of the
         // cases and format a key for each one, ~270k times over.
@@ -1291,15 +1297,18 @@ namespace Orbweaver.Tests
             => Partitioned.Value.Plain.Select(g => g.Key).Concat(Partitioned.Value.Groups.Select(g => g.Key))
                 .Distinct().OrderBy(k => k, StringComparer.Ordinal).ToList();
 
-        internal static (int Cases, List<string> Failures) RunPartition(string key)
+        // `check` is a seam so a test can drive a real partition run with a
+        // rule that fails; production callers leave it null and get Check.
+        internal static (int Cases, List<string> Failures) RunPartition(string key, Func<Case, IReadOnlyList<string>>? check = null)
         {
+            check ??= Check;
             var cases = 0;
             var failures = new List<string>();
 
             foreach (var test in Partitioned.Value.Plain[key])
             {
                 cases++;
-                failures.AddRange(Check(test));
+                failures.AddRange(check(test));
             }
 
             foreach (var test in Partitioned.Value.Groups[key])

@@ -37,16 +37,33 @@ namespace Orbweaver.Tests
             Assert.Equal(ArrangementSweep.PartitionKeys(), covered);
         }
 
-        // Negative control: a rule that is broken must fail a partition and the
-        // message must name the case. A deliberately wrong failure list stands in
-        // for a broken arrangement through the same Report the Theory asserts on.
+        // The partitions hold the whole matrix: their sizes add up to the cases
+        // the sweeps enumerate, and to no fewer than the 271488 the sweep had
+        // when it was one test (108864 + 162624, console exe `RunAll`).
         [Fact]
-        public void AFailingCaseIsNamedInThePartitionFailure()
+        public void ThePartitionsHoldAtLeastTheWholeMatrix()
         {
-            var some = ArrangementSweep.Cases().First();
-            var report = ArrangementSweep.Report(new[] { $"{some}: orb 3 is off screen" });
-            Assert.Contains(some.ToString(), report);
-            Assert.Contains("orb 3 is off screen", report);
+            var held = ArrangementSweep.PartitionSizes().Values.Sum();
+            Assert.Equal(ArrangementSweep.Cases().Count() + ArrangementSweep.GroupCases().Count(), held);
+            Assert.True(held >= 271488, $"the partitions hold {held} cases, down from 271488");
+        }
+
+        // Negative control, end to end: a rule that fails for a case must fail
+        // the partition's own assertion (the one every Theory row runs) with a
+        // message that names the case.
+        [Fact]
+        public void AFailingCaseFailsItsPartitionAndIsNamed()
+        {
+            var key = ArrangementSweep.PartitionKeys().First(k => k.StartsWith("plain"));
+            var failing = ArrangementSweep.Cases().First(c => ArrangementSweep.KeyOf(c) == key);
+
+            var ex = Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => SweepSlice.Run(
+                key,
+                c => c.Equals(failing) ? new[] { $"{c}: orb 3 is off screen" } : Array.Empty<string>()));
+
+            Assert.Contains(failing.ToString(), ex.Message);
+            Assert.Contains("orb 3 is off screen", ex.Message);
+            Assert.Contains(key, ex.Message);
         }
 
         // A floor, not an equality, and the asymmetry is the point: adding a

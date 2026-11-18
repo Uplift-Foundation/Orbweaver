@@ -27,9 +27,9 @@ namespace Orbweaver.Tests
 
         internal IEnumerable<object[]> Data() => Keys().Select(k => new object[] { k });
 
-        internal static void Run(string partition)
+        internal static void Run(string partition, Func<ArrangementSweep.Case, IReadOnlyList<string>>? check = null)
         {
-            var (cases, failures) = ArrangementSweep.RunPartition(partition);
+            var (cases, failures) = ArrangementSweep.RunPartition(partition, check);
 
             Assert.True(cases > 0, $"partition '{partition}' holds no cases");
             Assert.True(
