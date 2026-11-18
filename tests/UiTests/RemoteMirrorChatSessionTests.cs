@@ -1223,6 +1223,9 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(ChatRole.System, only.Role);
         Assert.Equal(RemoteControlChatSession.LiveViewNote(Name, true), only.Text);
         Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't verify"));
+
+        // The state the empty-panel screenshot waits for before it captures.
+        Assert.DoesNotContain(session.History, t => t.Text.Contains("Checking whether"));
     }
 
     [AvaloniaFact]

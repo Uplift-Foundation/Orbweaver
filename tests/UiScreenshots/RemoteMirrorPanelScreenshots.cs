@@ -108,6 +108,22 @@ public class RemoteMirrorPanelScreenshots : IDisposable
         var session = Open();
         await _client.DiscoverAsync(Peers, new[] { Name });
 
+        // The empty window arrives on a pool thread and is applied on the UI
+        // thread, so the fetching line is still showing when DiscoverAsync
+        // returns. Wait for the very state the UiTests case asserts: the
+        // panel mirrors, the history is the one "No messages yet" note, and
+        // the fetching line is gone. A condition, not a sleep.
+        var note = RemoteControlChatSession.LiveViewNote(Name, true);
+        for (var i = 0; i < 500 && !(session.IsMirroring
+                 && session.History.Count == 1 && session.History[0].Text == note); i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
+
+        if (!session.IsMirroring || session.History.Count != 1 || session.History[0].Text != note)
+            throw new InvalidOperationException("the empty peer panel never showed its note");
+
         ChatPanel.OpenFor(NewOrb(), session);
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
