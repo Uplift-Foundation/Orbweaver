@@ -49,10 +49,19 @@ internal static class ScreenshotHelper
     // (headless hit-testing has the same caveat, per tests/UiTests's
     // OrbFlyoutTests) still needs a timer tick to actually run a paint pass
     // over whatever just got invalidated.
+    //
+    // Pumped MinFrames + 1 times (CB-286): a chat panel stays at opacity 0 until
+    // its reveal gate has seen MinFrames settled frames, and a capture before
+    // that is a blank rectangle. Deliberately not the fail-open cap, so a gate
+    // that never settles shows up as a blank capture instead of being papered over.
     public static void Flush()
     {
-        Dispatcher.UIThread.RunJobs();
-        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        for (var i = 0; i < ChatPanelReveal.MinFrames + 1; i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        }
+
         Dispatcher.UIThread.RunJobs();
     }
 
