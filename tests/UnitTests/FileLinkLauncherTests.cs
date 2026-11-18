@@ -214,6 +214,31 @@ public class FileLinkLauncherTests
         Assert.DoesNotContain("-R", opened!.ArgumentList);
     }
 
+    // Device names are refused on both launch paths, not only by Decide: the
+    // controls beside them are ordinary names that open and reveal.
+    [Theory]
+    [InlineData("CON.pdf")] [InlineData("nul.txt")] [InlineData("COM1.pdf")] [InlineData("LPT\u00B2.pdf")]
+    public void AWindowsDeviceNameIsRefusedByPlanAndPlanReveal(string name)
+    {
+        var path = "C:\\a\\" + name;
+        Assert.False(FileLinkLauncher.Plan(path, Plain, false, true, out var planned, out var verdict));
+        Assert.Equal(FileLinkAction.Refuse, verdict.Action);
+        Assert.Null(planned);
+        Assert.False(FileLinkLauncher.PlanReveal(path, Plain, false, true, out var revealed));
+        Assert.Null(revealed);
+    }
+
+    [Theory]
+    [InlineData("CONSOLE.pdf")] [InlineData("con1.pdf")]
+    public void NamesThatOnlyResembleDevicesAreOpenedAndRevealed(string name)
+    {
+        var path = "C:\\a\\" + name;
+        Assert.True(FileLinkLauncher.Plan(path, Plain, false, true, out _, out var verdict));
+        Assert.Equal(FileLinkAction.Open, verdict.Action);
+        Assert.True(FileLinkLauncher.PlanReveal(path, Plain, false, true, out var revealed));
+        Assert.Equal("explorer.exe", revealed!.FileName);
+    }
+
     [Fact]
     public void PlanRevealRevealsTheTargetOfASymlink()
     {
