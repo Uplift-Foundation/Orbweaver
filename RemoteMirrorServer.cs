@@ -1009,7 +1009,8 @@ namespace Orbweaver
                 return;
             }
 
-            if (!_files.TryBegin(fromPeer))
+            var lease = _files.TryBegin(fromPeer);
+            if (lease is null)
             {
                 await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrBusy).ConfigureAwait(false);
                 return;
@@ -1017,8 +1018,14 @@ namespace Orbweaver
 
             FileInFlight = Task.Run(async () =>
             {
-                try { await ServeFileAsync(fromPeer, frame, name, path).ConfigureAwait(false); }
-                finally { _files.End(fromPeer); }
+                // The lease is let go BEFORE the answer's last frame is sent: the
+                // answer is the end of the request, and a peer that asks again the
+                // instant it lands must not find the slot still held (CB-384). The
+                // finally is only a backstop, for a path that never got that far; a
+                // lease releases once and only its own hold, so it cannot free a
+                // newer request's slot.
+                try { await ServeFileAsync(fromPeer, frame, name, path, lease).ConfigureAwait(false); }
+                finally { lease.Release(); }
             });
         }
 
@@ -1062,7 +1069,10 @@ namespace Orbweaver
             return new FileOutcome(err, decision, bytes);
         }
 
-        private async Task ServeFileAsync(string fromPeer, MirrorProtocol.MirrorFrame frame, string name, string path)
+        // The lease is released just before the last frame of every answer goes out,
+        // never after (see FileAsync).
+        private async Task ServeFileAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame, string name, string path, PeerFileGate.PeerFileLease lease)
         {
             // The disk half runs on its own task and is raced against the
             // deadline. It only RETURNS an outcome — every frame is sent from
@@ -1077,6 +1087,7 @@ namespace Orbweaver
             {
                 FileLog("file", $"id={frame.Id} -> timeout");
                 _ = work.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                lease.Release();
                 await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnreadable, MirrorProtocol.ErrUnreadable).ConfigureAwait(false);
                 return;
             }
@@ -1089,6 +1100,7 @@ namespace Orbweaver
             catch (Exception e)
             {
                 FileLog("file", $"id={frame.Id} -> err code={MirrorProtocol.ErrUnreadable} ({e.GetType().Name})");
+                lease.Release();
                 await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnreadable, MirrorProtocol.ErrUnreadable).ConfigureAwait(false);
                 return;
             }
@@ -1099,6 +1111,7 @@ namespace Orbweaver
 
             if (err is not null)
             {
+                lease.Release();
                 await FileRefuseAsync(fromPeer, frame.Id, err).ConfigureAwait(false);
                 return;
             }
@@ -1106,6 +1119,7 @@ namespace Orbweaver
             if (decision.Same)
             {
                 FileLog("file", $"id={frame.Id} -> same");
+                lease.Release();
                 await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id,
                     new Dictionary<string, string>
                     {
@@ -1123,7 +1137,7 @@ namespace Orbweaver
                     [MirrorProtocol.MtimeField] = decision.Stat.MtimeMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     [MirrorProtocol.ExecField] = decision.Stat.Exec ? "1" : "0",
                 },
-                sub: null, MirrorProtocol.PictureChunkBytes, retain: false).ConfigureAwait(false);
+                sub: null, MirrorProtocol.PictureChunkBytes, retain: false, beforeLast: lease.Release).ConfigureAwait(false);
         }
 
         private Task FileRefuseAsync(string toPeer, string id, string code)
@@ -2499,7 +2513,7 @@ namespace Orbweaver
         private async Task SendTransferAsync(
             string toPeer, string id, byte[] payload,
             Dictionary<string, string> fields, string? sub,
-            int chunkBytes = MirrorProtocol.ChunkBytes, bool retain = true)
+            int chunkBytes = MirrorProtocol.ChunkBytes, bool retain = true, Action? beforeLast = null)
         {
             var pieces = MirrorProtocol.Split(payload, chunkBytes);
 
@@ -2531,6 +2545,33 @@ namespace Orbweaver
 
             for (var seq = 0; seq < pieces.Count; seq++)
             {
+                // Just before the piece that ends the transfer, so the peer's slot
+                // is free by the time it can act on the answer.
+                //
+                // The memory bound this leaves is at most TWO multi-piece transfers'
+                // buffers per peer, not one, plus single-piece answers queued
+                // behind a stalled send.
+                //
+                // Until this last send returns, this transfer still holds its
+                // payload and the Split copies of it, and a new request may by then
+                // have taken the slot and be reading its own file. A connection's
+                // sends go through one writer (PeerLink's per-peer Writing
+                // semaphore), so a newer MULTI-piece transfer's first frame queues
+                // behind this last send, and it only reaches its own release -
+                // before ITS last piece - once this send has returned and these
+                // buffers can go.
+                //
+                // That does not hold for an answer that is a single frame: a
+                // refusal, same, or a file small enough to be one piece releases
+                // before its only frame, and that frame is the one queued. So while
+                // this send is stalled any number of single-piece answers, each no
+                // larger than one chunk, can queue behind it. They are bounded by the
+                // per-peer rate bucket checked in FileAsync before the slot is taken,
+                // and each request has to arrive over this same connection. Releasing
+                // a single-piece answer after its send would tighten that and reopen
+                // the race this release exists to close, so it is left as is.
+                if (seq == pieces.Count - 1) beforeLast?.Invoke();
+
                 if (!await SendAsync(toPeer, Piece(id, transfer, seq)).ConfigureAwait(false))
                 {
                     // The relay refused or timed out. Stopping is right: the

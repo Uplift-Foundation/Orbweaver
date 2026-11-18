@@ -4602,8 +4602,19 @@ public partial class MirrorRoundTripTests : IDisposable
             }
 
             await Client.OnFrameAsync(FarRelay, frame);
+
+            // CB-384: the client acting on a frame the moment it lands, while the
+            // far side is still inside the send that delivered it.
+            if (AfterDelivered is { } after) await after(frame);
+
             return true;
         }
+
+        // Called after every frame reaches the client, from inside the courier. A
+        // test uses it to make the client's next request the instant a reply
+        // arrives - what a fast client does - which is a race in production and a
+        // certainty here.
+        public Func<MirrorProtocol.MirrorFrame, Task>? AfterDelivered { get; set; }
 
         // Rebuilds the frame around different bytes, which recomputes that
         // piece's digest — BuildFrame appends it — while carrying the original
