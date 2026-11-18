@@ -123,6 +123,9 @@ public class RemoteMirrorPanelScreenshots : IDisposable
                 t => t.Text == RemoteControlChatSession.NoLiveViewNote(session.DisplayName))),
             "the panel never said there is no live view; history: "
             + string.Join(" | ", session.History.Select(h => h.Text)));
+
+        // CB-380: and the placeholder says so too, rather than inviting a send.
+        Assert.StartsWith("Can't message", session.ComposerHint);
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-no-live-view.png");
