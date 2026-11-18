@@ -258,14 +258,14 @@ public class ChatPanelOpenClawSlashTests : IDisposable
             var input = panel.FindControl<TextBox>("Input")!;
 
             // The panel is reused between tests, so its count does not start at 0.
-            var done = panel.CompletedSends;
+            var done = panel.CompletedSendsForTests;
             Type(input, "/t high");
             Press(input, Key.Enter);
             WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
 
             Type(input, "/tmp/build.log has the error");
             release();
-            WaitFor(() => panel.CompletedSends == done + 1);
+            WaitFor(() => panel.CompletedSendsForTests == done + 1);
             Assert.Equal("/tmp/build.log has the error", input.Text);
 
             Press(input, Key.Enter);
@@ -282,14 +282,18 @@ public class ChatPanelOpenClawSlashTests : IDisposable
             var (_, panel) = OpenPanel();
             var input = panel.FindControl<TextBox>("Input")!;
 
-            var done = panel.CompletedSends;
+            var done = panel.CompletedSendsForTests;
             Type(input, "/t high");
             Press(input, Key.Enter);
             WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
 
+            // The box holds "/t high" already, and setting a property to the value
+            // it has raises no change. This is an edit only because Type empties
+            // the box first and then enters the text (two real changes); if Type
+            // ever stops doing that, this stops testing the restated text.
             Type(input, "/t high");
             release();
-            WaitFor(() => panel.CompletedSends == done + 1);
+            WaitFor(() => panel.CompletedSendsForTests == done + 1);
             Assert.Equal("/t high", input.Text);
         }
     }
@@ -334,6 +338,24 @@ public class ChatPanelOpenClawSlashTests : IDisposable
             WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
             WaitFor(() => input.Text == "");
         }
+    }
+
+    // The panel's own gate, alone: what it hands to the runner. A gate that
+    // accepted a path would be absorbed by the runner (which re-checks the
+    // catalogue), so nothing else notices. The runner and the rule are pinned on
+    // their own by OpenClawSlashCommandsTests and SlashRouteTests.
+    [AvaloniaFact]
+    public void TheGateKnowsAnAliasAndNotAPathAndNothingWithoutACatalogue()
+    {
+        var (_, panel) = OpenPanel();
+
+        Assert.True(panel.IsKnownSlashCommand("/t high"));
+        Assert.False(panel.IsKnownSlashCommand("/tmp/build.log has the error"));
+
+        OpenClawSessions.SetCommandsForTests(OpenClawSessions.CommandCatalogue.None);
+
+        Assert.False(panel.IsKnownSlashCommand("/t high"));
+        Assert.False(panel.IsKnownSlashCommand("/tmp/build.log has the error"));
     }
 
     [AvaloniaTheory]

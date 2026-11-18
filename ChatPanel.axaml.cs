@@ -3013,9 +3013,11 @@ namespace Orbweaver
         // the person touched the box after pressing Enter (CB-376).
         private int _inputEdits;
 
-        // How many sends have run to the end of the decision below, so a test can
-        // wait for "the reply has been handled" rather than guess when.
-        internal int CompletedSends { get; private set; }
+        // For tests only: how many sends have run to the end of the decision below
+        // (a send that threw counts too), so a test can wait for "the reply has
+        // been handled" rather than guess when. Nothing in the app reads it, and
+        // nothing should come to.
+        internal int CompletedSendsForTests { get; private set; }
 
         // The decision at the end of a send: the box is emptied only if the send
         // went and the person has not written in it since. The reply to a send
@@ -3031,29 +3033,35 @@ namespace Orbweaver
             IRemoteChatSession session, string text, List<string> images)
         {
             var editsAtSend = _inputEdits;
-            // CB-306: a known command typed with a picture attached is refused,
-            // not run and not sent — a control request carries no image, and a
-            // command must never reach the model as prose. The note says why and
-            // the text stays for a retry without the picture. An unknown "/word"
-            // or a path with a picture is not a command and still sends below.
-            if (images.Count > 0 && session is IRemoteChatSlashRunner && IsKnownSlashCommand(text))
+            try
             {
-                OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = SlashCommandAndPictureNote });
-                return;
+                // CB-306: a known command typed with a picture attached is refused,
+                // not run and not sent — a control request carries no image, and a
+                // command must never reach the model as prose. The note says why and
+                // the text stays for a retry without the picture. An unknown "/word"
+                // or a path with a picture is not a command and still sends below.
+                if (images.Count > 0 && session is IRemoteChatSlashRunner && IsKnownSlashCommand(text))
+                {
+                    OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = SlashCommandAndPictureNote });
+                    return;
+                }
+
+                // A line that names a command this session knows goes to the runner,
+                // which routes it — control request, pass-through, or a refusal note
+                // with nothing sent. Anything else (a path, an unknown word, ordinary
+                // prose) sends as before.
+                var outcome = images.Count == 0 && session is IRemoteChatSlashRunner runner && IsKnownSlashCommand(text)
+                    ? await runner.RunSlashAsync(text)
+                    : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
+                        ? await withImages.SendWithImagesAsync(text, images)
+                        : await session.SendAsync(text);
+
+                if (ShouldClearComposerAfterSend(outcome, _inputEdits != editsAtSend)) Input.Text = "";
             }
-
-            // A line that names a command this session knows goes to the runner,
-            // which routes it — control request, pass-through, or a refusal note
-            // with nothing sent. Anything else (a path, an unknown word, ordinary
-            // prose) sends as before.
-            var outcome = images.Count == 0 && session is IRemoteChatSlashRunner runner && IsKnownSlashCommand(text)
-                ? await runner.RunSlashAsync(text)
-                : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
-                    ? await withImages.SendWithImagesAsync(text, images)
-                    : await session.SendAsync(text);
-
-            if (ShouldClearComposerAfterSend(outcome, _inputEdits != editsAtSend)) Input.Text = "";
-            CompletedSends++;
+            finally
+            {
+                CompletedSendsForTests++;
+            }
         }
 
         // The button. Everything it decides beyond "am I already speaking" now
