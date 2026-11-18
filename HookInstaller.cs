@@ -278,7 +278,8 @@ namespace Orbweaver
         // after it need a pool thread, so on a busy pool bytes already sitting in
         // the pipe were not in the buffer when the timeout arm took its snapshot:
         // reproduced on the Windows PC by blocking the pool's workers, which gave
-        // a TimedOut result with empty Output after the full wait. A thread of
+        // a TimedOut result with empty Output after the full wait (the regression
+        // test fails the same way against the old loop on macOS too). A thread of
         // our own never queues behind anyone. Background, so a descendant that
         // holds the pipe open forever cannot keep the app alive.
         private static PipeDrain Drain(StreamReader reader, StringBuilder into)
