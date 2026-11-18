@@ -180,6 +180,30 @@ namespace Orbweaver
             }
         }
 
+        // The real signer: binds the launch to the receiving desk's pin, signs
+        // the gate's own canonical body with the peer certificate's key, and
+        // hands back the signature (base64url) and our certificate (base64
+        // DER). Null when this desk has no pairing for that machine, because
+        // a signature for a pin it does not know would only be refused.
+        //
+        // Both lookups are seams so the signature can be checked against
+        // LaunchGate's own verifier with a certificate generated in the test.
+        internal static Signer SignerFor(
+            Func<string, string?> pinFor, Func<byte[], Task<PeerIdentity.Signature>> sign) =>
+            async (machine, request) =>
+            {
+                if (pinFor(machine) is not { Length: > 0 } receiverPin) return null;
+
+                var fields = new LaunchFields(
+                    request.Cwd, request.Cli, request.Persona, request.Model, request.ParentSessionId,
+                    request.FirstMessage, request.Nonce, request.ExpiresAt, request.Account);
+
+                var signature = await sign(LaunchGate.PeerMessage(receiverPin, LaunchGate.Body(fields)))
+                    .ConfigureAwait(false);
+
+                return (RelayCrypto.Base64Url(signature.Sig), Convert.ToBase64String(signature.CertificateDer));
+            };
+
         private static string RandomNonce() =>
             Convert.ToBase64String(RandomNumberGenerator.GetBytes(AnswerGate.NonceLength))
                 .TrimEnd('=').Replace('+', '-').Replace('/', '_');

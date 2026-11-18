@@ -43,3 +43,20 @@ public class PeerLaunchHostRoutingTests
             await host.DeliverAsync("ghost", PeerProtocol.Message(type, "id1"));
     }
 }
+
+public class PeerSessionsMachinesTests
+{
+    [Fact]
+    public void PairedMachinesAreListedByNameWithTheirLinkState()
+    {
+        var machines = PeerSessions.MachinesFrom(
+            ["pc", "Mini", "(inbound 10.0.0.9)"], name => name == "Mini");
+
+        // Sorted without regard to case; an unnamed inbound entry is not a machine.
+        Assert.Equal([new PeerMachine("Mini", true), new PeerMachine("pc", false)], machines);
+    }
+
+    [Fact]
+    public void NobodyPairedIsNoMachines() =>
+        Assert.Empty(PeerSessions.MachinesFrom([], _ => true));
+}
