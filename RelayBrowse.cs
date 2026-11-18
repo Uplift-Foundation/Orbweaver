@@ -466,6 +466,27 @@ namespace Orbweaver
 
         private static BrowseOutcome Refused(string code, string? canonical) => new(code, null, canonical);
 
+        // ---- for CB-363's FILE frame ------------------------------------------------------
+        //
+        // The peer file server (PeerFileRules) answers "may this file be read" with exactly the
+        // rules that answer "may this folder be listed", rather than a second copy of them. These
+        // expose the three pieces it needs and change nothing about how Resolve uses them.
+
+        // Whether a path is absolute in this filesystem's sense (step 5): no `~`, no relative, no
+        // UNC or device path, no drive-relative or ADS form.
+        internal static bool IsAbsolute(string path, IBrowseFileSystem fs) => AbsoluteRoot(path, fs.IsWindows) is not null;
+
+        // Whether a canonical path is inside one of the settings' roots and outside every system
+        // folder (step 7).
+        internal static bool InScope(BrowseSettings settings, IBrowseFileSystem fs, string canonical) =>
+            Browsable(fs, Roots(settings, fs), canonical);
+
+        // Whether a canonical path is, or is inside, one of the system folders.
+        internal static bool IsDenied(IBrowseFileSystem fs, string canonical) => Denied(fs, canonical);
+
+        // Equal under the filesystem's own case rule.
+        internal static bool SamePath(string a, string b, IBrowseFileSystem fs) => Equal(a, b, fs);
+
         // listing.top: the roots that exist, the home folder first, then the project roots sorted by
         // path. A Windows desk's every entry carries its drive, which is how a phone groups them.
         private static BrowseListing Top(List<Root> roots, IBrowseFileSystem fs)

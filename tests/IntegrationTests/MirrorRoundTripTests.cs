@@ -25,7 +25,7 @@ namespace Orbweaver.Tests;
 // The whole class rather than just those tests, since xUnit serialises by
 // collection and a class cannot be half in one.
 [Collection("ConfigDirEnv")]
-public class MirrorRoundTripTests : IDisposable
+public partial class MirrorRoundTripTests : IDisposable
 {
     private readonly string _dir;
     private readonly string? _previousConfigDir;
@@ -4170,11 +4170,12 @@ public class MirrorRoundTripTests : IDisposable
         // it types the line as ordinary text, which is what such a Buddy did.
         public bool FarPredatesSlash { get; set; }
 
-        public int ChunkFrames { get; private set; }
+        private int _chunkFrames;
+        public int ChunkFrames => Volatile.Read(ref _chunkFrames);
 
         // The handshake pays for its own roster chunk, and a test about the
         // *window* should not have to subtract it.
-        public void ForgetFramesSoFar() => ChunkFrames = 0;
+        public void ForgetFramesSoFar() => Interlocked.Exchange(ref _chunkFrames, 0);
         public int Resends { get; private set; }
 
         // CB-307 addendum: the far pane's screen and Claude Code's own record,
@@ -4262,7 +4263,8 @@ public class MirrorRoundTripTests : IDisposable
 
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
             LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
-            bool noPressKey = false, bool noCanReadPane = false)
+            bool noPressKey = false, bool noCanReadPane = false, Func<PeerFileEnv>? files = null,
+            Func<IReadOnlyList<AgentRoster.Entry>?>? peekAgents = null)
         {
             _dir = dir;
 
@@ -4335,7 +4337,11 @@ public class MirrorRoundTripTests : IDisposable
                     Literal.Add(text);
                     if (AfterType?.Invoke(text) is { } next) Screen = next;
                     return Task.FromResult(true);
-                }));
+                },
+                // CB-363: null unless a test serves files, so every harness
+                // above keeps a far side that never says rf=1.
+                Files: files,
+                PeekAgents: peekAgents));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -4452,6 +4458,9 @@ public class MirrorRoundTripTests : IDisposable
             _sessions.Where(s => s.Status.Title == title).Select(s => s.SessionId);
 
         public void AddSession(string name, string transcriptPath) => AddSession(name, transcriptPath, null);
+
+        // CB-363: the registry as it stands, for a peek that has a roster.
+        public IReadOnlyList<AgentRoster.Entry> AgentsNow => _agents.ToList();
 
         // CB-306: the same, with the status shaped by the test (an OpenClaw
         // spawn's entrypoint and workspace cwd).
@@ -4575,7 +4584,7 @@ public class MirrorRoundTripTests : IDisposable
 
             if (frame.Type == MirrorProtocol.Chunk)
             {
-                ChunkFrames++;
+                Interlocked.Increment(ref _chunkFrames);
 
                 if (MangleChunks || (MangleOnce && !_mangledAlready))
                 {
