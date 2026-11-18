@@ -1644,8 +1644,25 @@ public class MirrorRoundTripTests : IDisposable
             harness.Client.StateFor("private-thing").Availability);
     }
 
+    // Cannot read and cannot type: no transcript and no pane is settled.
     [Fact]
-    public async Task ASessionTheFarBuddyCannotReadIsSettledAsNoLiveView()
+    public async Task ASessionTheFarBuddyCannotReadOrTypeIntoIsSettledAsNoLiveView()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", Path.Combine(_dir, "does-not-exist.jsonl"));
+        harness.Paneless.Add("job-hunter");
+
+        await harness.Client.DiscoverAsync(harness.Peers, new[] { "job-hunter" });
+
+        Assert.Equal(
+            RemoteMirrorClient.MirrorAvailability.Unavailable,
+            harness.Client.StateFor("job-hunter").Availability);
+    }
+
+    // CB-357: the same missing file with a pane is a session that has not been
+    // spoken to yet, and is offered.
+    [Fact]
+    public async Task ASessionWithAPaneAndNoFileYetIsOfferedNotSettledAsNoLiveView()
     {
         var harness = new Harness(_dir);
         harness.AddSession("job-hunter", Path.Combine(_dir, "does-not-exist.jsonl"));
@@ -1653,7 +1670,7 @@ public class MirrorRoundTripTests : IDisposable
         await harness.Client.DiscoverAsync(harness.Peers, new[] { "job-hunter" });
 
         Assert.Equal(
-            RemoteMirrorClient.MirrorAvailability.Unavailable,
+            RemoteMirrorClient.MirrorAvailability.Available,
             harness.Client.StateFor("job-hunter").Availability);
     }
 
@@ -2917,7 +2934,7 @@ public class MirrorRoundTripTests : IDisposable
         // The negative control: neither a transcript nor a pane is still not
         // worth an orb.
         Assert.DoesNotContain("no-pane-no-file", known);
-        Assert.NotEqual(RemoteMirrorClient.MirrorAvailability.Available,
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Unknown,
             harness.Client.StateFor("no-pane-no-file").Availability);
 
         var fresh = harness.Client.StateFor("fresh").Entry!;
@@ -4072,8 +4089,10 @@ public class MirrorRoundTripTests : IDisposable
         harness.Server.Now = () => LiveAt.AddHours(23);
 
         // Read off what the server sent rather than what the client kept: the
-        // client keeps only rows with a transcript or a pane to show, and
-        // two of these deliberately have neither a transcript nor a pane.
+        // client keeps only rows with a transcript or a pane to show. The
+        // harness gives these team members a pane, so the client would now
+        // keep them; this test passes because it reads the server's output,
+        // not because the client drops them.
         await harness.Server.HandleAsync(Harness.NearRelay, OldHello("stale1"));
         var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "stale1"))!.ToList();
         var staleEntry = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(stale));
