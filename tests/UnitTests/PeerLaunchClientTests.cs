@@ -280,4 +280,16 @@ public class PeerLaunchClientTests
         Assert.DoesNotContain('/', a);
         Assert.NotEqual(a, seams.NewNonce());
     }
+
+    [Fact]
+    public async Task AResultThatCarriesNoBodyAtAllIsNoAnswer()
+    {
+        var rig = new Rig();
+        rig.OnSend = (_, _) => rig.Client.OnReply("mini",
+            PeerProtocol.Message(PeerProtocol.LaunchResult, rig.Sent[^1].Message.Id));
+
+        var result = await rig.Client.LaunchAsync("mini", Spec, CancellationToken.None);
+
+        Assert.Equal(new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, "unreadable reply"), result);
+    }
 }

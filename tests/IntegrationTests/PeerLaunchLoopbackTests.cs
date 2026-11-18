@@ -30,15 +30,19 @@ public class PeerLaunchLoopbackTests : IDisposable
         [new PeerLaunchAccount("claude", "default", "Default")],
         ["/Users/a/work"]);
 
+    private PeerMirrorHost _sender = null!;
+
     private async Task<(PeerMirrorHost Receiver, PeerLaunchClient Client)> Pair(
         PeerLaunchInfoSource? info,
         Func<string, JsonElement, Task<PeerLaunchResult>>? handler,
-        TimeSpan? infoWait = null)
+        TimeSpan? infoWait = null,
+        TimeSpan? launchWait = null)
     {
         var receiver = new PeerMirrorHost();
         var sender = new PeerMirrorHost();
         _hosts.Add(receiver);
         _hosts.Add(sender);
+        _sender = sender;
 
         var client = new PeerLaunchClient(new PeerLaunchClient.Seams(
             sender.Link.SendAsync,
@@ -47,7 +51,7 @@ public class PeerLaunchLoopbackTests : IDisposable
             () => Now)
         {
             InfoWait = infoWait ?? TimeSpan.FromSeconds(10),
-            LaunchWait = TimeSpan.FromSeconds(10),
+            LaunchWait = launchWait ?? TimeSpan.FromSeconds(10),
         });
 
         receiver.ServeLaunch(info, handler, null);
@@ -178,5 +182,51 @@ public class PeerLaunchLoopbackTests : IDisposable
 
         cts.Cancel();
         never.TrySetResult(new PeerLaunchResult(true, "launched", "s", null));
+    }
+
+    // Nadia's no-unobserved-throw rule for the reply sends. PeerLink.SendAsync
+    // swallows a write failure itself, so what can throw inside the info guard
+    // is building the info, and that is what this fails. The launch-result
+    // guard has no equivalent: the result's encoding cannot throw (a lone
+    // surrogate is replaced, not rejected, which a first version of this test
+    // found out), so that catch is defensive and unreached.
+    [Fact]
+    public async Task AnInfoThatCannotBeBuiltCostsOnlyThatAnswer()
+    {
+        var boom = true;
+        var source = new PeerLaunchInfoSource(new PeerLaunchInfoSource.Seams(
+            () => boom ? throw new InvalidOperationException("boom") : true,
+            () => "macos", () => "/Users/a", () => true, _ => true, () => [], () => []));
+        var (_, client) = await Pair(source, Decide, infoWait: TimeSpan.FromMilliseconds(400));
+
+        Assert.Null(await client.InfoAsync("receiver", CancellationToken.None));
+
+        // Control: with the fault gone the same query is answered, and a launch
+        // on the same connection still gets through.
+        boom = false;
+        Assert.True((await client.InfoAsync("receiver", CancellationToken.None))!.Allowed);
+        Assert.Equal("launched",
+            (await client.LaunchAsync("receiver", new("claude", "/ok", "default"), CancellationToken.None)).Code);
+    }
+
+    [Fact]
+    public async Task ADesksWithNoClientIgnoresAReplyAndAHangUpWithoutFailing()
+    {
+        var (receiver, client) = await Pair(Source(true), Decide);
+        var gone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Link.PeerDisconnected += _ => gone.TrySetResult();
+
+        // The receiver has no launch client bound, as a desk that only answers.
+        // Stray replies reach it from a connected, named peer: dropped quietly.
+        Assert.True(await _sender.Link.SendAsync("receiver", PeerProtocol.Message(PeerProtocol.LaunchInfo, "stray")));
+        Assert.True(await _sender.Link.SendAsync("receiver", PeerProtocol.Message(PeerProtocol.LaunchResult, "stray")));
+
+        // Control that the connection still carries messages afterwards.
+        Assert.Equal("launched",
+            (await client.LaunchAsync("receiver", new("claude", "/ok", "default"), CancellationToken.None)).Code);
+
+        // Hanging up fires PeerDisconnected on a receiver with no client to tell.
+        _sender.Link.Drop("receiver");
+        await gone.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 }

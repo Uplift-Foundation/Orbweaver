@@ -60,3 +60,33 @@ public class PeerSessionsMachinesTests
     public void NobodyPairedIsNoMachines() =>
         Assert.Empty(PeerSessions.MachinesFrom([], _ => true));
 }
+
+public class PeerSessionsLauncherTests
+{
+    [Fact]
+    public void TheLauncherIsNullUntilALinkIsRunningAndIsTheHostsClientAfter()
+    {
+        PeerSessions.UseClientForTests(null);
+        Assert.Null(PeerSessions.Launcher);
+
+        try
+        {
+            // The stand-in host a test installs is a real host with no launch
+            // client until one is served onto it.
+            PeerSessions.UseClientForTests(new RemoteMirrorClient(
+                ".claude", new RemoteMirrorClient.Seams((_, _) => Task.FromResult(true))));
+            Assert.Null(PeerSessions.Launcher);
+
+            var launch = new PeerLaunchClient(new PeerLaunchClient.Seams(
+                (_, _) => Task.FromResult(true), () => [],
+                (_, _) => Task.FromResult<(string, string)?>(null), () => DateTimeOffset.UtcNow));
+            PeerSessions.Host!.ServeLaunch(null, null, launch);
+
+            Assert.Same(launch, PeerSessions.Launcher);
+        }
+        finally
+        {
+            PeerSessions.UseClientForTests(null);
+        }
+    }
+}
