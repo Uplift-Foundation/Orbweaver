@@ -284,11 +284,12 @@ namespace Orbweaver
             if (_disposed || !_mirroring) return;
 
             var state = RemoteControlSessions.MirrorStateFor(_account, _remoteName);
-            if (state.Availability != RemoteMirrorClient.MirrorAvailability.Available) return;
-
-            // Available is only ever returned with the entry (StateFor), so there is
-            // no missing-entry branch to take here.
-            var entry = state.Entry!;
+            // One guard: only an entry that is actually in the roster counts, and
+            // anything else means "change nothing". Available is returned with an
+            // entry today, but that is StateFor's property, not this method's, and a
+            // future change to it should be a quiet no-op here rather than a
+            // NullReferenceException on the UI thread.
+            if (state is not { Availability: RemoteMirrorClient.MirrorAvailability.Available, Entry: { } entry }) return;
 
             var canType = entry.HasPane;
             var canDeliver = entry.CanDeliver ?? false;
