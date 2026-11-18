@@ -1493,7 +1493,7 @@ namespace Orbweaver
             // Snapshot the local form once, the first time it is left.
             if (_machine is null)
             {
-                _localFolders = (_folderCombo.ItemsSource as IEnumerable<string>)?.ToList();
+                _localFolders = ((IEnumerable<string>)_folderCombo.ItemsSource!).ToList();
                 _localFolder = _folderCombo.SelectedItem as string;
                 _localCli = _selectedCli;
                 _localOpenClaw = _openClawSelected;
@@ -1545,16 +1545,23 @@ namespace Orbweaver
                     : PeerLaunchCopy.OpenClawLocalOnly);
             }
 
-            // Keep the chosen CLI when the far machine has it; otherwise the
-            // first one it does have; otherwise none, and Start stays off.
-            var keep = _selectedCli is { } sel && scope.CliEnabled(RelayAccounts.CliName(sel)) ? sel : (NewChatCli?)null;
-            var pick = keep ?? _cliList.Children.OfType<RadioButton>()
-                .Where(r => r.IsEnabled && r.Tag is NewChatCli).Select(r => (NewChatCli)r.Tag!).Cast<NewChatCli?>().FirstOrDefault();
-
             _openClawSelected = false;
-            _selectedCli = pick;
-            foreach (var radio in _cliList.Children.OfType<RadioButton>())
-                radio.IsChecked = pick is { } p && radio.Tag is NewChatCli c && c == p;
+
+            // While the answer is still on its way nothing is installed as far as
+            // the scope knows, so the chosen CLI is left alone: dropping it here
+            // would mean it could never survive the trip to a machine that has it.
+            if (scope.State != NewChatMachines.InfoState.Loading)
+            {
+                // Keep the chosen CLI when the far machine has it; otherwise the
+                // first one it does have; otherwise none, and Start stays off.
+                var keep = _selectedCli is { } sel && scope.CliEnabled(RelayAccounts.CliName(sel)) ? sel : (NewChatCli?)null;
+                var pick = keep ?? _cliList.Children.OfType<RadioButton>()
+                    .Where(r => r.IsEnabled && r.Tag is NewChatCli).Select(r => (NewChatCli)r.Tag!).Cast<NewChatCli?>().FirstOrDefault();
+
+                _selectedCli = pick;
+                foreach (var radio in _cliList.Children.OfType<RadioButton>())
+                    radio.IsChecked = pick is { } p && radio.Tag is NewChatCli c && c == p;
+            }
 
             var folders = scope.Folders().ToList();
             _folderCombo.ItemsSource = folders;
@@ -1581,9 +1588,10 @@ namespace Orbweaver
                 ToolTip.SetTip(radio, _localTip[radio]);
             }
 
-            var folders = _localFolders ?? new List<string>();
-            _folderCombo.ItemsSource = folders;
-            _folderCombo.SelectedItem = _localFolder is { } f && folders.Contains(f) ? f : folders.FirstOrDefault();
+            // Snapshotted the first time a remote machine was chosen, and a
+            // restore only ever follows one, so both are set.
+            _folderCombo.ItemsSource = _localFolders!;
+            _folderCombo.SelectedItem = _localFolder;
             _browseButton.IsEnabled = true;
 
             // Put back what was chosen before the first remote pass, falling
@@ -1606,10 +1614,11 @@ namespace Orbweaver
         {
             // Start is disabled in each of these states; a stray click still says
             // why instead of launching.
-            if (_scope is not { StartEnabled: true } scope || _selectedCli is not { } cli
+            var scope = _scope!;   // set with _machine, always
+            if (!scope.StartEnabled || _selectedCli is not { } cli
                 || _folderCombo.SelectedItem is not string folder)
             {
-                _statusLine.Text = _scope?.Note ?? "Choose a CLI first.";
+                _statusLine.Text = scope.Note ?? "Choose a CLI first.";
                 return;
             }
 

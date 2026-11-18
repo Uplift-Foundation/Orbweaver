@@ -37,6 +37,7 @@ public class NewChatWindowMachineTests : IDisposable
         public PeerLaunchResult Result = new(true, "launched", "s1", null);
         public TaskCompletionSource<PeerLaunchResult>? PendingLaunch;
         public Exception? ThrowInfo, ThrowLaunch;
+        public bool IgnoreInfoToken;
         public List<(string machine, PeerLaunchSpec spec)> Launches = new();
 
         public IReadOnlyList<PeerMachine> Machines() => Peers;
@@ -46,7 +47,7 @@ public class NewChatWindowMachineTests : IDisposable
             if (ThrowInfo is { } boom) throw boom;
             if (Pending.TryGetValue(machine, out var tcs))
             {
-                ct.Register(() => tcs.TrySetCanceled(ct));
+                if (!IgnoreInfoToken) ct.Register(() => tcs.TrySetCanceled(ct));
                 return tcs.Task;
             }
             return Task.FromResult(Answers.GetValueOrDefault(machine));
@@ -301,6 +302,66 @@ public class NewChatWindowMachineTests : IDisposable
         slow.TrySetResult(Info()); // already cancelled by the second pick
         Flush();
         Assert.Equal(["/Users/w"], (w.FolderCombo.ItemsSource as IEnumerable<string>)!.ToArray());
+    }
+
+    // A client that ignores the token still answers late; only the window's
+    // own generation check stops that answer repainting the form.
+    [AvaloniaFact]
+    public void AnAnswerFromAClientThatIgnoresCancellationIsStillIgnored()
+    {
+        var f = Ready();
+        f.IgnoreInfoToken = true;
+        var slow = f.Pending["mini"] = new();
+        var w = Make(f);
+        Pick(w, 1);
+        Pick(w, 2);
+        slow.SetResult(Info());
+        Flush();
+        Assert.Equal(["/Users/w"], (w.FolderCombo.ItemsSource as IEnumerable<string>)!.ToArray());
+    }
+
+    [AvaloniaFact]
+    public void AChosenCliTheFarMachineLacksMovesToTheFirstOneItHasAndAnInstalledOneStays()
+    {
+        var w = Make(Ready());
+        Select(w, NewChatCli.Grok);
+        Pick(w, 1); // mini: claude only
+        Assert.Equal(NewChatCli.ClaudeCode, w.SelectedCli);
+        Assert.True(Radio(w, NewChatCli.ClaudeCode).IsChecked);
+
+        Pick(w, 0);
+        Select(w, NewChatCli.Codex);
+        Pick(w, 2); // pc: claude and codex
+        Assert.Equal(NewChatCli.Codex, w.SelectedCli); // control: installed there, so it stays
+    }
+
+    [AvaloniaFact]
+    public void ACliWithNoAccountsOnTheFarMachineLeavesTheAccountPickerEmpty()
+    {
+        var f = Ready();
+        f.Answers["mini"] = Info(installed: ["claude", "grok"]);
+        var w = Make(f);
+        Pick(w, 1);
+        Radio(w, NewChatCli.Grok).IsChecked = true;
+        Flush();
+        Assert.Equal(-1, w.AccountCombo.SelectedIndex);
+        Assert.False(w.AccountSection.IsVisible);
+        Click(w.StartButton);
+        Assert.Equal("default", f.Launches.Single().spec.Account);
+    }
+
+    [AvaloniaFact]
+    public void WithoutTheSeamTheRowFollowsTheRealPeerLinkSetting()
+    {
+        var f = Ready();
+        var w = Make(f);
+        NewChatWindow.PeerLinkOnForTests = null;
+        w = RebuildWith(f);
+        Assert.Null(w.MachineSection); // setting defaults off
+
+        OrbweaverSettings.PeerLinkEnabled = true;
+        try { Assert.NotNull(RebuildWith(f).MachineSection); }
+        finally { OrbweaverSettings.PeerLinkEnabled = false; }
     }
 
     [AvaloniaFact]
