@@ -45,6 +45,7 @@ internal static class Program
         {
             Console.Error.WriteLine(
                 "usage: peer-probe [--evict] <host[:port]> <machine-name> [session-name]\n" +
+                "       peer-probe [--evict] <host[:port]> <machine-name> " + PeerProbeFile.Usage.Replace("\n", "\n       ") + "\n" +
                 "\n" +
                 "  host          where to dial, e.g. 198.51.100.10 or mini:7677\n" +
                 "  machine-name  what that machine calls itself, as paired\n" +
@@ -68,7 +69,23 @@ internal static class Program
         if (!verdict.Run) return 3;
 
         var machine = args[1];
-        var session = args.Length > 2 ? args[2] : null;
+
+        // `read_file` is a command rather than a session name: a session is
+        // never called that, and a flag would make the common call longer.
+        PeerProbeFile.Request? fileRequest = null;
+        if (args.Length > 2 && args[2] == "read_file")
+        {
+            var parsed = PeerProbeFile.Parse(args[3..]);
+            if (parsed.Request is null)
+            {
+                Console.Error.WriteLine($"{parsed.Error}\n\n{PeerProbeFile.Usage}");
+                return 2;
+            }
+
+            fileRequest = parsed.Request;
+        }
+
+        var session = fileRequest is null && args.Length > 2 ? args[2] : null;
 
         if (PeerIdentity.PeerFor(machine) is null)
         {
@@ -103,6 +120,8 @@ internal static class Program
         await client.AskWhatTheyHaveAsync(new[] { machine });
 
         var known = client.Known();
+
+        if (fileRequest is { } file) return await ReadFileAsync(client, machine, file);
 
         if (known.Count == 0)
         {
@@ -167,5 +186,40 @@ internal static class Program
         }
 
         return 0;
+    }
+
+    // One FILE round trip, printed. Excluded from the unit suites by being a
+    // tool: its decisions (arguments, wording, exit code) are PeerProbeFile's.
+    private static async Task<int> ReadFileAsync(RemoteMirrorClient client, string machine, PeerProbeFile.Request file)
+    {
+        if (!client.SpeaksFiles(file.Session))
+        {
+            Console.Error.WriteLine(
+                $"'{file.Session}' is not offered by {machine}, or {machine} does not serve files " +
+                "(it needs a build with CB-363).");
+            return 1;
+        }
+
+        Console.WriteLine($"fetching a file from {file.Session}…");
+
+        var started = DateTime.UtcNow;
+        var result = await client.FetchFileAsync(file.Session, file.Path, file.Have);
+        Console.WriteLine($"took={(DateTime.UtcNow - started).TotalMilliseconds:0}ms");
+
+        foreach (var line in PeerProbeFile.Describe(result)) Console.WriteLine(line);
+
+        if (result is PeerFileResult.Bytes bytes)
+        {
+            var path = file.OutPath ?? PeerProbeFile.DefaultOutPath(Path.GetTempPath(), bytes.Data);
+            await File.WriteAllBytesAsync(path, bytes.Data);
+
+            // Never the far side's execute bit: what arrives is data.
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+            Console.WriteLine($"wrote={path}");
+        }
+
+        return PeerProbeFile.ExitCodeOf(result);
     }
 }

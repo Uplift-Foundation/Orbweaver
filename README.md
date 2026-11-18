@@ -2074,6 +2074,8 @@ When a session's reply links to a file, the link in the chat panel is clickable 
 
 **The other computer decides what it will serve, not this one.** It serves only files under the folders Settings → Paired phones → *Folders the phone can browse* lists (the same list, and the same home-folder switch) **plus the working folder of the session the link came from**, never anything in the system folders listed above and never the home folder itself or anything above it. Links, `..`, other capitalisations and Windows short names are resolved on that side before the check. The cap is 50 MB a file, a peer gets a burst of requests and then a steady rate, and only one transfer at a time. A refusal comes back as `forbidden_path` (the same answer whether or not the file exists), `not_found`, `too_large` or `rate_limited`, and the panel says so in words. A computer that predates this feature is reported as needing an update.
 
+To check the far side without a mouse, `peer-probe` can fetch one file the way the panel does and print the outcome code, size and checksum: `dotnet run --project tools/peer-probe -- <host> <machine-name> read_file <session-name> <absolute-path> [--out <file>] [--have <stamp>]`. It writes the bytes to `--out` (or a file in the temp directory named by the checksum) and exits non-zero on a refusal; `--have` with the stamp it printed asks again and should come back `same`.
+
 ## 1. Install it
 
 Either download an installer or build from source — both are fully supported,
