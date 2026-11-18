@@ -21,11 +21,31 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
 
     public void Dispose()
     {
+        Assert.Equal(0, _started);
         OrbweaverSettings.PeerLaunchInboundEnabled = _saved;
         foreach (var host in _hosts) host.Dispose();
     }
 
     private static readonly PeerLaunchSpec Missing = new("claude", "/orbweaver-cb357/does/not/exist", "default");
+
+    private int _started;
+
+    // The real server with real settings, pairing and session source, and one
+    // thing pinned: the CLI lookup reports the CLI installed. The gate checks
+    // that before the folder, so without it a runner with no claude on PATH
+    // answers unknown_cli where a developer's machine answers unknown_cwd.
+    // The start seams count and refuse, so a launch that unexpectedly got
+    // through would show as _started > 0 rather than opening a terminal.
+    private PeerLaunchServer ServerWithCliInstalled() => new(PeerLaunchServer.RealSeams() with
+    {
+        Launch = new RelayRemote.LaunchSeams(
+            OperatingSystem.IsWindows(),
+            _ => OperatingSystem.IsWindows() ? "C:\\c\\claude.exe" : "/bin/claude",
+            Directory.Exists,
+            () => "/bin/zsh",
+            (_, _) => { _started++; return (null, "refused by the test"); },
+            _ => { _started++; return null; }),
+    });
 
     private async Task<PeerLaunchClient> Pair(
         DateTimeOffset? now = null,
@@ -52,7 +72,7 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
         var client = new PeerLaunchClient(seams);
 
         // The production wiring, not a copy of it.
-        PeerSessions.ServeLaunchOn(receiver, null);
+        PeerSessions.ServeLaunchOn(receiver, null, ServerWithCliInstalled().HandleAsync);
         sender.ServeLaunch(null, null, client);
 
         PeerIdentity.Remember(new PeerIdentity.Peer(PeerIdentity.OwnPin(), "receiver"));
@@ -64,13 +84,6 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
 
         return client;
     }
-
-    // Past the switch, the signature, the expiry and the nonce, the gate checks
-    // the CLI is installed and only then the folder. Which of the two a
-    // machine answers depends on whether Claude Code is on its PATH, which the
-    // suite must not install or fake, so either proves the launch got that far.
-    private static void AssertReachedTheGatesLaterRules(string code) =>
-        Assert.Contains(code, new[] { RelayReplies.UnknownCli, RelayReplies.UnknownCwd });
 
     private static Task<PeerLaunchResult> Launch(PeerLaunchClient c) =>
         c.LaunchAsync("receiver", Missing, CancellationToken.None);
@@ -89,7 +102,7 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
         // gate for the folder, which is the control that the first answer was
         // the switch and not a broken pairing or signature.
         OrbweaverSettings.PeerLaunchInboundEnabled = true;
-        AssertReachedTheGatesLaterRules((await Launch(client)).Code);
+        Assert.Equal(RelayReplies.UnknownCwd, (await Launch(client)).Code);
         var info = await client.InfoAsync("receiver", CancellationToken.None);
         Assert.True(info!.Allowed);
         Assert.NotNull(info.Recents);
@@ -137,8 +150,8 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var client = await Pair(nonce: nonce);
 
-        // First is refused by a later rule, which is after the nonce is spent.
-        AssertReachedTheGatesLaterRules((await Launch(client)).Code);
+        // First is refused for the folder, which is after the nonce is spent.
+        Assert.Equal(RelayReplies.UnknownCwd, (await Launch(client)).Code);
         Assert.Equal(RelayReplies.Replayed, (await Launch(client)).Code);
     }
 }

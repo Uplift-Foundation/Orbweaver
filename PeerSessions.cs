@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Orbweaver
@@ -51,12 +52,17 @@ namespace Orbweaver
         // accessor on every launch, so flipping it needs no restart. Shared is
         // process-wide on purpose: a server per link restart would hand a
         // replayed nonce a fresh window.
-        internal static void ServeLaunchOn(PeerMirrorHost host, PeerLaunchClient? client) =>
+        //
+        // `handler` exists so a test can hand the same wiring a server of its own
+        // with the CLI lookup pinned; production always passes none.
+        internal static void ServeLaunchOn(
+            PeerMirrorHost host, PeerLaunchClient? client,
+            Func<string, JsonElement, Task<PeerLaunchResult>>? handler = null) =>
             host.ServeLaunch(
                 PeerLaunchInfoSource.ForThisDesk(
                     () => OrbweaverSettings.PeerLaunchInboundEnabled,
                     () => RemoteControlSessions.LocalSessions().Select(s => s.Status).ToList()),
-                PeerLaunchServer.Shared.HandleAsync,
+                handler ?? PeerLaunchServer.Shared.HandleAsync,
                 client);
 
         // What New Chat asks to start a session on another desktop: null until
