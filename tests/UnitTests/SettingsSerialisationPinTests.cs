@@ -176,12 +176,19 @@ public class SettingsSerialisationPinTests
         var types = typeof(SettingsSerialisationPinTests).Assembly.GetTypes();
         var checkedClasses = new List<string>();
         var offenders = new List<string>();
+        var scanned = 0;
 
+        // How the classes are found: reflection cannot see what a test body
+        // calls, so this reads the test sources (tests/UnitTests/**/*.cs, found
+        // from Orbweaver.csproj upward) and maps each touching class back to its
+        // type. It fails if it scanned no files or matched none of the known
+        // touchers, so a moved directory cannot turn it into a pass.
         foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
         {
             if (file.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar) ||
                 file.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar)) continue;
             if (Path.GetFileName(file) == nameof(SettingsSerialisationPinTests) + ".cs") continue;
+            scanned++;
 
             foreach (var name in ClassesThatTouch(File.ReadAllText(file), TouchesSkippedUpdate))
             {
@@ -198,6 +205,7 @@ public class SettingsSerialisationPinTests
         }
 
         // Not vacuous: the known touchers.
+        Assert.True(scanned > 100, $"scanned only {scanned} source files under {root}");
         Assert.Contains(nameof(UpdateUiLogicTests), checkedClasses);
         Assert.Contains(nameof(UpdateSettingsTests), checkedClasses);
 
