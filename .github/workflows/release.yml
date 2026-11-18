@@ -40,6 +40,12 @@ jobs:
 
   macos:
     needs: check-version
+    # The only job that maps the MACOS_* signing and notarization secrets, so
+    # it is the only one gated by the `release` environment. Those secrets live
+    # on the environment, which requires a reviewer's approval and only deploys
+    # from v* tags and e2e/* branches: a branch someone pushed cannot read the
+    # Developer ID certificate just by editing this file.
+    environment: release
     # Both architectures build on the arm64 runner: .NET cross-publishes osx-x64
     # happily, and codesign/notarytool do not care which host they run on. One
     # runner image instead of pinning a legacy Intel image that keeps getting
