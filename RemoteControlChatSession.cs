@@ -141,7 +141,7 @@ namespace Orbweaver
         // Said in the input box itself. "Message…" would be a lie by omission
         // here: this one leaves the machine, and in live view it is typed into
         // somebody else's terminal, which is worth being even plainer about.
-        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, FarTitle);
+        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, FarTitle, _saidNoLiveView);
 
         // Pure and static so the three-way choice is a unit test rather than
         // a screenshot — the same arrangement WaitLabel and FetchingNote are
@@ -157,6 +157,10 @@ namespace Orbweaver
         // send" — canDeliver says whether this machine can hand the text to
         // that session's own messaging socket instead.
         //
+        // **A settled "no live view" says so too (CB-380).** Not mirroring means two
+        // things: still being asked, where "Message ..." is fair because the answer may
+        // be yes, and answered no, where SendAsync can only refuse.
+        //
         // **The last arm says so rather than inviting a send.** With neither a
         // pane nor a socket a send goes to the far Buddy and comes back refused,
         // and the live-view banner says it cannot be delivered (CB-372); a
@@ -164,9 +168,12 @@ namespace Orbweaver
         // two-lines-disagreeing fault. The box stays enabled all the same, as
         // IRemoteChatComposer explains: a draft can still be pasted, and
         // SendAsync explains the refusal in the transcript.
-        internal static string ComposerHintFor(bool mirroring, bool canType, bool canDeliver, string name) =>
+        internal static string ComposerHintFor(
+            bool mirroring, bool canType, bool canDeliver, string name, bool noLiveView = false) =>
             !mirroring
-                ? $"Message {name} on the other machine…"
+                ? noLiveView
+                    ? $"Can't message {name} from this machine"
+                    : $"Message {name} on the other machine…"
                 : canType
                     ? $"Type into {name}'s terminal on the other machine…"
                     : canDeliver
@@ -522,6 +529,12 @@ namespace Orbweaver
             // is gone (937de9ec): a session the far Buddy cannot show cannot be
             // written to from here either (see NoWayToSendNote).
             Note(NoLiveViewNote(FarTitle));
+
+            // The placeholder still invited a message at this point, and the send
+            // then ended in NoWayToSendNote (CB-380). Once the far Buddy has
+            // answered no, it says so; while it is still being asked it stays
+            // "Message ...", which is fair. Raised on the UI thread, like the note.
+            ComposerHintChanged?.Invoke();
         }
 
         // Said once, when the far Buddy has answered that it cannot show this

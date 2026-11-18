@@ -1557,7 +1557,79 @@ public class RemoteMirrorChatSessionTests : IDisposable
         var last = session.History[^1];
 
         Assert.Equal(RemoteControlChatSession.NoLiveViewNote(Name), last.Text);
-        Assert.Contains("Message", session.ComposerHint);
+        Assert.StartsWith("Can't message", session.ComposerHint);
+    }
+
+    // CB-380: the far Buddy has answered that it cannot show this session and the
+    // panel has said so. The placeholder used to go on inviting a message that the
+    // send then refused; it says so too once the answer is in, and the panel is
+    // told to redraw it because the answer usually lands after the panel is open.
+    [AvaloniaFact]
+    public async Task ASettledNoLiveViewNoLongerInvitesASendThatFails()
+    {
+        WireClientOnly();
+
+        var session = NewSession();
+        session.PanelOpened();
+
+        // Still being asked: the answer may be yes, so the neutral wording stands.
+        Assert.StartsWith("Message", session.ComposerHint);
+
+        var raised = 0;
+        session.ComposerHintChanged += () => raised++;
+
+        await _client.DiscoverAsync(Array.Empty<string>(), new[] { Name });
+        Assert.Equal(RemoteControlChatSession.NoLiveViewNote(Name), session.History[^1].Text);
+
+        Assert.Equal(1, raised);
+        Assert.StartsWith("Can't message", session.ComposerHint);
+        Assert.Equal($"Can't message {Name} from this machine", session.ComposerHint);
+
+        // ...and what it says is true: the send is refused.
+        OrbweaverSettings.PeerLinkEnabled = true;
+        Assert.Equal(ChatSendOutcome.Failed, await session.SendAsync("are you there?"));
+        Assert.Contains(session.History, t => t.Text == RemoteControlChatSession.NoWayToSendNote(Name));
+    }
+
+    // Seen where a person sees it: a panel opened before the answer lands redraws
+    // its placeholder when the answer is no.
+    [AvaloniaFact]
+    public async Task AnOpenPanelRedrawsItsPlaceholderWhenTheFarBuddyAnswersNoLiveView()
+    {
+        WireClientOnly();
+
+        var session = NewSession();
+        session.PanelOpened();
+        ChatPanel.OpenFor(new OrbWindow(session.SessionId), session);
+        var input = ChatPanelTestAccess.Instance!.FindControl<TextBox>("Input")!;
+        Assert.StartsWith("Message", input.Watermark);
+
+        await _client.DiscoverAsync(Array.Empty<string>(), new[] { Name });
+
+        Assert.StartsWith("Can't message", input.Watermark);
+
+        ChatPanel.HideFor(session.SessionId);
+    }
+
+    // The answer can change: a roster arriving after the panel gave up upgrades it,
+    // and the placeholder follows to the live-view wording.
+    [AvaloniaFact]
+    public async Task ARosterArrivingAfterNoLiveViewReplacesTheCantMessagePlaceholder()
+    {
+        _canType = true;
+        WireClientOnly();
+
+        var session = NewSession();
+        session.PanelOpened();
+        await _client.DiscoverAsync(Array.Empty<string>(), new[] { Name });
+        Assert.StartsWith("Can't message", session.ComposerHint);
+
+        // The far Buddy now has the session.
+        Wire("a", "b");
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        Assert.True(session.IsMirroring);
+        Assert.StartsWith("Type into", session.ComposerHint);
     }
 
     // The sequence a user actually hit, and the one that must be asserted rather

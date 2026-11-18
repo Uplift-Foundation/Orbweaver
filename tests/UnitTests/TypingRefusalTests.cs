@@ -204,6 +204,27 @@ public class TypingRefusalTests
                 mirroring: false, canType: false, canDeliver: false, Remote));
     }
 
+    // CB-380: not mirroring has two meanings. Still being asked, "Message ..." is
+    // fair; once the far Buddy has answered no, the box says it cannot.
+    [Fact]
+    public void ASettledNoLiveViewSaysItCannotMessageWhileStillAskingStaysNeutral()
+    {
+        Assert.Equal(
+            $"Message {Remote} on the other machine…",
+            RemoteControlChatSession.ComposerHintFor(
+                mirroring: false, canType: false, canDeliver: false, Remote, noLiveView: false));
+
+        Assert.Equal(
+            $"Can't message {Remote} from this machine",
+            RemoteControlChatSession.ComposerHintFor(
+                mirroring: false, canType: false, canDeliver: false, Remote, noLiveView: true));
+
+        // Mirroring wins: a flag left over from before an upgrade changes nothing.
+        Assert.StartsWith("Type into",
+            RemoteControlChatSession.ComposerHintFor(
+                mirroring: true, canType: true, canDeliver: false, Remote, noLiveView: true));
+    }
+
     // --- CB-105: the delivered-remotely note ------------------------------------
 
     [Fact]
