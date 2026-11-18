@@ -199,9 +199,11 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         var session = await OpenAsync();
 
-        Assert.Contains("Message", session.ComposerHint);
-        Assert.DoesNotContain("terminal", session.ComposerHint);
+        // CB-372: no pane and no socket is not "Message…" any more. It says so,
+        // matching the banner above it that says the send cannot be delivered.
+        Assert.StartsWith("Can't message", session.ComposerHint);
         Assert.Contains(Name, session.ComposerHint);
+        Assert.DoesNotContain("Type into", session.ComposerHint);
     }
 
     // CB-105's third arm: no pane, but this machine can hand the text to the
@@ -221,6 +223,47 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Contains(Name, session.ComposerHint);
         Assert.Contains("background job", session.ComposerHint);
         Assert.DoesNotContain("terminal", session.ComposerHint);
+    }
+
+    // CB-372: the banner at the top of the live view said "typed into its
+    // terminal" for every live view, including the background job whose composer
+    // directly below it said it would message the job. It follows the same two
+    // facts the composer does.
+    [AvaloniaFact]
+    public async Task TheBannerSaysTypedIntoItsTerminalWhenThereIsAPane()
+    {
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Contains("typed into its terminal", session.History[0].Text);
+    }
+
+    [AvaloniaFact]
+    public async Task TheBannerSaysDeliveredToTheBackgroundJobWhenThereIsNoPaneButASocket()
+    {
+        _canType = false;
+        _canDeliver = true;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Contains("background job", session.History[0].Text);
+        Assert.DoesNotContain("typed into its terminal", session.History[0].Text);
+    }
+
+    [AvaloniaFact]
+    public async Task TheBannerSaysThereIsNothingToSendWhenThereIsNeitherPaneNorSocket()
+    {
+        _canType = false;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Contains("can't be delivered", session.History[0].Text);
+        Assert.DoesNotContain("typed into its terminal", session.History[0].Text);
     }
 
     // A live view is a real transcript, so it can be paged back into — which is

@@ -205,6 +205,27 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view-deliverable.png");
     }
 
+    // The third shape: no pane and no way to message it either. The banner says
+    // what sent text will meet, and the composer says so too instead of inviting a
+    // send - the two used to disagree (CB-372).
+    [AvaloniaFact]
+    public async Task ALiveViewWithNeitherPaneNorSocketSaysNothingCanBeDelivered()
+    {
+        Wire(canType: false, canDeliver: false,
+            ("user", "anyone there?"),
+            ("assistant", "the job finished an hour ago"));
+
+        var session = Open();
+        await HandshakeAsync();
+
+        ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("can't be delivered"));
+        Assert.StartsWith("Can't message", session.ComposerHint);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view-undeliverable.png");
+    }
+
     // The machine named in the header's quiet line, wherever the panel puts it.
     private static string HeaderMachineText(ChatPanel panel) =>
         panel.FindControl<TextBlock>("MetaMachineText")!.Text ?? "";
