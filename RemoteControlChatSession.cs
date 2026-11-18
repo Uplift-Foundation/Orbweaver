@@ -483,7 +483,7 @@ namespace Orbweaver
 
                         // CB-356: a far side that sent the boundary and the
                         // summary as separate turns still draws one row.
-                        if (_history.Count > 0 && CompactionNote.TryAbsorb(_history[^1], row.Turn)) continue;
+                        if (CompactionNote.AbsorbIntoLast(_history, row.Turn) is not null) continue;
 
                         _history.Add(row.Turn);
                     }
@@ -514,9 +514,9 @@ namespace Orbweaver
 
                     // CB-356: the summary arriving a batch after its boundary
                     // folds into the boundary's row.
-                    if (_history.Count > 0 && CompactionNote.TryAbsorb(_history[^1], row.Turn))
+                    if (CompactionNote.AbsorbIntoLast(_history, row.Turn) is { } merged)
                     {
-                        TurnUpdated?.Invoke(_history[^1]);
+                        TurnUpdated?.Invoke(merged);
                         continue;
                     }
 
@@ -581,18 +581,13 @@ namespace Orbweaver
                 older.Add(row.Turn);
             }
 
-            // After the live-view banner, which is the one thing that stays at
-            // the top: it describes the panel, not a moment in the conversation.
-            var at = _history.Count > 0 && _history[0].Role == ChatRole.System ? 1 : 0;
+            var at = AfterBanner(_history);
 
             // CB-356: a page that ends on a compaction boundary whose summary is
             // already the first conversation turn shown. The shown turn takes the
             // boundary's numbers and the page's copy is not inserted.
-            if (older.Count > 0 && _history.Count > at && CompactionNote.TryAdopt(older[^1], _history[at]))
-            {
-                older.RemoveAt(older.Count - 1);
-                TurnUpdated?.Invoke(_history[at]);
-            }
+            if (CompactionNote.AdoptAcrossSeam(older, _history, at) is { } adopted)
+                TurnUpdated?.Invoke(adopted);
 
             if (older.Count == 0)
             {
@@ -608,6 +603,12 @@ namespace Orbweaver
             HistoryPrepended?.Invoke(older.Count);
             return true;
         }
+
+        // Where older turns go: after the live-view banner, which is the one
+        // thing that stays at the top, since it describes the panel rather than a
+        // moment in the conversation. Pure, so both arms are a unit test.
+        internal static int AfterBanner(IReadOnlyList<ChatTurn> history) =>
+            history.Count > 0 && history[0].Role == ChatRole.System ? 1 : 0;
 
         public event Action? HistoryReplaced;
 

@@ -128,6 +128,13 @@ public class CompactionNoteTests
     }
 
     [Fact]
+    public void FromBoundary_with_metadata_but_no_trigger_has_a_null_trigger()
+    {
+        var n = CompactionNote.FromBoundary(Json("""{"compactMetadata":{"preTokens":1000}}"""));
+        Assert.Equal(new CompactionNote(null, 1000, null, null, "", true), n);
+    }
+
+    [Fact]
     public void FromBoundary_drops_a_count_that_is_not_a_whole_non_negative_number()
     {
         var n = CompactionNote.FromBoundary(Json(
@@ -204,6 +211,12 @@ public class CompactionNoteTests
     {
         Assert.Equal("## Heading", CompactionNote.Strip("Summary:\n## Heading"));
         Assert.Equal("## Heading", CompactionNote.Strip("Summary:  \r\n## Heading"));
+    }
+
+    [Fact]
+    public void Strip_falls_back_when_a_bare_summary_line_is_all_there_is()
+    {
+        Assert.Equal("Summary:", CompactionNote.Strip("Summary:"));
     }
 
     [Fact]
@@ -357,6 +370,75 @@ public class CompactionNoteTests
         {
             Assert.Equal(before, a.Compaction);
         }
+    }
+
+    // ---- AbsorbIntoLast, AdoptAcrossSeam ----------------------------------
+
+    [Fact]
+    public void AbsorbIntoLast_returns_the_last_turn_only_when_it_took_the_summary()
+    {
+        Assert.Null(CompactionNote.AbsorbIntoLast(new List<ChatTurn>(), Turn("summary")));
+        Assert.Null(CompactionNote.AbsorbIntoLast(new List<ChatTurn> { Turn("boundary"), Turn("user") }, Turn("summary")));
+
+        var history = new List<ChatTurn> { Turn("user"), Turn("boundary") };
+        Assert.Same(history[1], CompactionNote.AbsorbIntoLast(history, Turn("summary")));
+        Assert.Equal(Boundary().WithSummaryFrom(SummaryNote()), history[1].Compaction);
+    }
+
+    [Fact]
+    public void AdoptAcrossSeam_moves_the_pages_boundary_onto_the_shown_summary_after_a_banner()
+    {
+        var banner = Turn("system");
+        var shown = Turn("summary");
+        var history = new List<ChatTurn> { banner, shown, Turn("user") };
+        var older = new List<ChatTurn> { Turn("user"), Turn("boundary") };
+
+        Assert.Same(shown, CompactionNote.AdoptAcrossSeam(older, history, 1));
+
+        Assert.Single(older);
+        Assert.Equal(Boundary().WithSummaryFrom(SummaryNote()), shown.Compaction);
+        Assert.Null(banner.Compaction);
+    }
+
+    [Fact]
+    public void AdoptAcrossSeam_at_the_top_when_there_is_no_banner()
+    {
+        var history = new List<ChatTurn> { Turn("summary") };
+        var older = new List<ChatTurn> { Turn("boundary") };
+
+        Assert.Same(history[0], CompactionNote.AdoptAcrossSeam(older, history, 0));
+        Assert.Empty(older);
+    }
+
+    [Fact]
+    public void AdoptAcrossSeam_touches_nothing_when_it_does_not_apply()
+    {
+        var history = new List<ChatTurn> { Turn("system"), Turn("summary") };
+
+        // Nothing older; an index before the start; an index past the end; the
+        // banner rather than the summary at the index; a page not ending on a boundary.
+        Assert.Null(CompactionNote.AdoptAcrossSeam(new List<ChatTurn>(), history, 1));
+        Assert.Null(CompactionNote.AdoptAcrossSeam(new List<ChatTurn> { Turn("boundary") }, history, -1));
+        Assert.Null(CompactionNote.AdoptAcrossSeam(new List<ChatTurn> { Turn("boundary") }, history, 2));
+
+        var older = new List<ChatTurn> { Turn("boundary") };
+        Assert.Null(CompactionNote.AdoptAcrossSeam(older, history, 0));
+        Assert.Single(older);
+
+        var notBoundary = new List<ChatTurn> { Turn("user") };
+        Assert.Null(CompactionNote.AdoptAcrossSeam(notBoundary, history, 1));
+        Assert.Single(notBoundary);
+        Assert.Equal(SummaryNote(), history[1].Compaction);
+    }
+
+    // RemoteControlChatSession's own index for that seam: after the live-view
+    // banner when there is one.
+    [Fact]
+    public void AfterBanner_is_one_past_a_leading_system_turn_and_zero_otherwise()
+    {
+        Assert.Equal(0, RemoteControlChatSession.AfterBanner(new List<ChatTurn>()));
+        Assert.Equal(1, RemoteControlChatSession.AfterBanner(new List<ChatTurn> { Turn("system"), Turn("summary") }));
+        Assert.Equal(0, RemoteControlChatSession.AfterBanner(new List<ChatTurn> { Turn("user"), Turn("system") }));
     }
 
     // ---- ChatTurn.Compaction ---------------------------------------------

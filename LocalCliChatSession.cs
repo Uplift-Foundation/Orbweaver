@@ -467,12 +467,8 @@ namespace Orbweaver
                 // CB-356: a page that ends on a compaction boundary whose summary
                 // is already the first turn shown. The shown turn takes the
                 // boundary's numbers and the page's copy is not inserted.
-                if (older.Count > 0 && _history.Count > 0
-                    && CompactionNote.TryAdopt(older[^1], _history[0]))
-                {
-                    older.RemoveAt(older.Count - 1);
-                    TurnUpdated?.Invoke(_history[0]);
-                }
+                if (CompactionNote.AdoptAcrossSeam(older, _history, 0) is { } adopted)
+                    TurnUpdated?.Invoke(adopted);
 
                 if (older.Count == 0) return;
 
@@ -2076,9 +2072,9 @@ namespace Orbweaver
         {
             // CB-356: a compaction summary arriving in a later read than its
             // boundary folds into the boundary's row rather than adding one.
-            if (_history.Count > 0 && CompactionNote.TryAbsorb(_history[^1], turn))
+            if (CompactionNote.AbsorbIntoLast(_history, turn) is { } merged)
             {
-                TurnUpdated?.Invoke(_history[^1]);
+                TurnUpdated?.Invoke(merged);
                 return;
             }
 

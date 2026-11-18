@@ -78,6 +78,15 @@ public class CompactionWireTests
         Assert.Equal("Conversation compacted", turn.Text);
     }
 
+    // A string JsonElement.GetString refuses (a lone surrogate) reads as no text.
+    [Fact]
+    public void A_summary_string_that_cannot_be_read_is_a_plain_row()
+    {
+        var turn = Assert.Single(ChatTranscript.Map(new[] { SummaryWithContent("\"\\ud800\"") })).Turn;
+
+        Assert.Equal(new CompactionNote(null, null, null, null, "", false), turn.Compaction);
+    }
+
     [Fact]
     public void A_summary_marked_isMeta_is_still_a_compaction()
     {
@@ -167,6 +176,9 @@ public class CompactionWireTests
 
         Assert.Equal(new CompactionNote("manual", null, 20628, null, "", true), turn.Compaction);
         Assert.Equal("Conversation compacted manually", turn.Text);
+
+        var absent = new MirrorProtocol.MirrorCompaction(null, null, null, null, "s", false).ToNote();
+        Assert.Equal(new CompactionNote(null, null, null, null, "s", false), absent);
     }
 
     private sealed record OldTurn(

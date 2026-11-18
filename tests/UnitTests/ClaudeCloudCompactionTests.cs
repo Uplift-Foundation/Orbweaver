@@ -86,6 +86,27 @@ public partial class ClaudeCloudEventsTests
         await Close(chat);
     }
 
+    // Nobody listening: the re-read still merges, with no event to raise.
+    [Fact]
+    public async Task AReadOfThePairFillsInABoundaryWithNobodySubscribed()
+    {
+        var page = Array.Empty<string>();
+        var api = new RoutingApi(_ => new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""), Envelope(page)));
+        var stream = new FakeStream();
+        var chat = Sender(api, new FakeClock(), stream: stream);
+        chat.PanelOpened();
+        var events = await stream.NextOpenAsync();
+
+        events.TryWrite(Durable(40, "system", "compact_boundary", payload: BoundaryRow));
+        await Until(() => chat.History.Count == 1);
+
+        page = new[] { BoundaryRow, SummaryRow };
+        Assert.True(await chat.LoadAsync(CancellationToken.None));
+
+        Assert.Equal(Merged, Assert.Single(chat.History).Compaction);
+        await Close(chat);
+    }
+
     // A summary with no uuid still folds in; it just has no second key to file.
     [Fact]
     public async Task ASummaryWithNoUuidStillFoldsIntoItsBoundary()

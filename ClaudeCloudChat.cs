@@ -1941,10 +1941,10 @@ namespace Orbweaver
                 // arrives on its own after its boundary. It folds into the
                 // boundary's row and is filed under its own uuid as well, so a
                 // later read of it alone lands on that row instead of adding one.
-                if (_history.Count > 0 && CompactionNote.TryAbsorb(_history[^1], row.Turn))
+                if (CompactionNote.AbsorbIntoLast(_history, row.Turn) is { } merged)
                 {
-                    if (row.Uuid is { } summaryUuid) _byUuid[summaryUuid] = _history[^1];
-                    TurnUpdated?.Invoke(_history[^1]);
+                    if (row.Uuid is { } summaryUuid) _byUuid[summaryUuid] = merged;
+                    TurnUpdated?.Invoke(merged);
                     continue;
                 }
 

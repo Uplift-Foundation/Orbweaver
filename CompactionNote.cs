@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -195,6 +196,28 @@ namespace Orbweaver
             open.Compaction = merged;
             open.Text = merged.Line;
             return true;
+        }
+
+        // TryAbsorb against the last turn a session holds: the turn that took
+        // the summary, or null when `incoming` is not a summary for it. The
+        // sessions call this rather than repeating the guard, so the decision
+        // is pure and the session only raises TurnUpdated for what it returns.
+        public static ChatTurn? AbsorbIntoLast(IReadOnlyList<ChatTurn> history, ChatTurn incoming) =>
+            history.Count > 0 && TryAbsorb(history[^1], incoming) ? history[^1] : null;
+
+        // TryAdopt at a page seam: `older` is the page about to be prepended and
+        // history[at] the first conversation turn shown (after any banner). When
+        // the page ends on the boundary of the shown summary, that turn takes the
+        // boundary's numbers, the page's copy is removed from `older`, and the
+        // shown turn is returned for the caller's TurnUpdated. Null otherwise,
+        // with nothing touched.
+        public static ChatTurn? AdoptAcrossSeam(List<ChatTurn> older, IReadOnlyList<ChatTurn> history, int at)
+        {
+            if (older.Count == 0 || at < 0 || history.Count <= at) return null;
+            if (!TryAdopt(older[^1], history[at])) return null;
+
+            older.RemoveAt(older.Count - 1);
+            return history[at];
         }
 
         // Two reads of the same compaction under the same key: a session that
