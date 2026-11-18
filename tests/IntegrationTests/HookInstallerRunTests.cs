@@ -142,6 +142,89 @@ public class HookInstallerRunTests : IDisposable
 
         Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
         Assert.Contains("started", result.Output);
+        Assert.True(result.OutputMayBeCutShort);   // the orphan still holds the pipe at the bound
+    }
+
+    // CB-377. An installer that exits by itself after leaving a descendant that
+    // holds its output pipes must not keep Run waiting for the descendant: the
+    // exit code is known and what was said has arrived. Before the fix Run
+    // returned only when the descendant did (about 8 seconds for an 8 second
+    // sleeper, on macOS and on the Windows PC).
+    //
+    // The proof is order, not speed: when Run returns, the orphan is still
+    // running. A Run that waited for it would return after it had gone. The
+    // test finds the orphan by pid and kills it in its own finally so the suite
+    // leaves no sleeper or ping behind.
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(3, false)]
+    public void AnExitWithADescendantStillHoldingTheOutputReturnsWhileItIsAlive(int exitCode, bool succeeds)
+    {
+        var tag = "9" + Environment.ProcessId % 1000;   // Windows: a ping buffer size no other ping here uses
+        var pidFile = Path.Combine(_root, "orphan.pid");
+        var (file, args) = OperatingSystem.IsWindows()
+            ? ("cmd.exe", new[] { "/c", $"echo hello& cmd /c start /b ping -n 13 -l {tag} 127.0.0.1 >nul& exit {exitCode}" })
+            : ("/bin/sh", new[] { "-c", $"echo hello; sleep 12 & echo $! > '{pidFile}'; exit {exitCode}" });
+
+        var orphans = new List<int>();
+        try
+        {
+            var result = HookInstaller.Run(file, args, "fake-installer", timeoutMs: 60_000);
+
+            // Collected after Run returns, and used in the finally either way.
+            orphans = OperatingSystem.IsWindows() ? WindowsPingPids(tag) : [int.Parse(File.ReadAllText(pidFile).Trim())];
+
+            Assert.Equal(succeeds ? HookInstallOutcome.Ok : HookInstallOutcome.Failed, result.Outcome);
+            Assert.Equal(exitCode, result.ExitCode);
+            Assert.Contains("hello", result.Output);
+            Assert.True(result.OutputMayBeCutShort);
+            Assert.True(orphans.Count > 0 && orphans.All(IsRunning),
+                "Run returned only after the descendant was gone, so it waited for it");
+            Assert.Contains("(output may be cut short", Log());
+        }
+        finally
+        {
+            foreach (var pid in orphans)
+            {
+                try { System.Diagnostics.Process.GetProcessById(pid).Kill(); } catch { }
+            }
+        }
+    }
+
+    // The bound must not truncate a healthy run: no descendant, several hundred
+    // kilobytes (far more than a pipe buffer) written before exiting 0, and
+    // every byte of it arrives with the flag clear.
+    [Fact]
+    public void ALargeOutputFromAnInstallerThatLeavesNothingBehindArrivesWhole()
+    {
+        var (file, args, expected) = OperatingSystem.IsWindows()
+            ? ("cmd.exe", new[] { "/c", "for /l %i in (1,1,6000) do @echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, 6000 * 66)
+            : ("/bin/sh", new[] { "-c", "head -c 400000 /dev/zero | tr '\\0' x; exit 0" }, 400_000);
+
+        var result = HookInstaller.Run(file, args, "fake-installer", timeoutMs: 60_000);
+
+        Assert.Equal(HookInstallOutcome.Ok, result.Outcome);
+        Assert.False(result.OutputMayBeCutShort);
+        Assert.Equal(expected, result.Output.Count(c => c is 'x' or 'a'));
+    }
+
+    private static bool IsRunning(int pid)
+    {
+        try { return !System.Diagnostics.Process.GetProcessById(pid).HasExited; }
+        catch (ArgumentException) { return false; }
+    }
+
+    // Windows has no pid file from `start /b`, so the orphan is found by the
+    // ping buffer size the test gave it.
+    private static List<int> WindowsPingPids(string tag)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            "-NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\"Name='PING.EXE'\\\" | Where-Object { $_.CommandLine -like '*-l " + tag + " *' } | ForEach-Object { $_.ProcessId }\"")
+        { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+        using var ps = System.Diagnostics.Process.Start(psi)!;
+        var text = ps.StandardOutput.ReadToEnd();
+        ps.WaitForExit();
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => int.Parse(l.Trim())).ToList();
     }
 
     // The drain-order fix: the old Run read stdout to the end and only then

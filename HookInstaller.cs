@@ -25,6 +25,10 @@ namespace Orbweaver
         // to account for a WSL VM cold-booting.
         internal const int TimeoutMs = 20_000;
 
+        // How long Run waits for the output readers after the child has gone,
+        // whether it was killed for a timeout or exited by itself.
+        internal const int ReaderGraceMs = 2_000;
+
         // What every installer exits with when the app's saved profile list exists
         // but could not be read or parsed. The default profile is still wired
         // first; it is the extra ones that were not. Distinct so the card can say
@@ -249,18 +253,37 @@ namespace Orbweaver
                     // wait for the last bytes; when a descendant the kill could
                     // not reach still holds them, the readers never finish, and
                     // what had already arrived is returned anyway.
-                    WaitForDrains(drains, 2_000);
+                    WaitForDrains(drains, ReaderGraceMs);
                     return Finish(label, new HookInstallResult(
                         HookInstallOutcome.TimedOut, label,
-                        Output: Snapshot(output), Error: Snapshot(error)));
+                        Output: Snapshot(output), Error: Snapshot(error),
+                        OutputMayBeCutShort: ParkedAfterTheWait(drains).Count > 0));
                 }
 
                 var code = process.ExitCode;
-                outputDrained.Finish();
-                errorDrained.Finish();
+
+                // The child has exited, so its own writes are over and the readers
+                // only have to reach the end of what is already in the pipes. They
+                // can fail to when a descendant that outlived the child inherited
+                // them (CB-377): an installer that exits 0 after leaving a
+                // background process holding stdout would otherwise keep Run here
+                // until that process exits, 8 seconds in the reproduction on both
+                // macOS and Windows, with the exit code already known. The same
+                // bound as the timeout arm, and what arrived is returned. A reader
+                // that did finish still reports its failure; one left parked
+                // behind the descendant is a background thread and ends with it.
+                WaitForDrains(drains, ReaderGraceMs);
+
+                // Decided once: a reader alive at one look and gone at the next
+                // would otherwise be left out of Finish() (dropping its failure)
+                // while the flag said nothing was cut short.
+                var parked = ParkedAfterTheWait(drains);
+                foreach (var drain in drains)
+                    if (!parked.Contains(drain)) drain.Finish();
                 return Finish(label, new HookInstallResult(
                     code == 0 ? HookInstallOutcome.Ok : HookInstallOutcome.Failed,
-                    label, code, Snapshot(output), Snapshot(error)));
+                    label, code, Snapshot(output), Snapshot(error),
+                    OutputMayBeCutShort: parked.Count > 0));
             }
             catch (Exception ex)
             {
@@ -288,6 +311,11 @@ namespace Orbweaver
             drain.Start();
             return drain;
         }
+
+        // A drain still running after its wait is parked behind a pipe someone else
+        // holds open.
+        private static HashSet<PipeDrain> ParkedAfterTheWait(PipeDrain[] drains) =>
+            drains.Where(d => d.Thread.IsAlive).ToHashSet();
 
         // Waits for all of the drains together, within one budget.
         private static void WaitForDrains(PipeDrain[] drains, int budgetMs)
@@ -449,7 +477,12 @@ namespace Orbweaver
     // (HookInstaller.StatusMessage) and the log (HookInstallerLog).
     internal sealed record HookInstallResult(
         HookInstallOutcome Outcome, string Script, int? ExitCode = null,
-        string Output = "", string Error = "")
+        string Output = "", string Error = "",
+        // True when Run gave up waiting for a reader because a descendant that
+        // outlived the installer still held the pipe (CB-377): what the installer
+        // said after that point, if anything, is not here. Only the log says so;
+        // the Settings card is deliberately unchanged.
+        bool OutputMayBeCutShort = false)
     {
         internal static HookInstallResult NotFound(string script) =>
             new(HookInstallOutcome.ScriptNotFound, script);
