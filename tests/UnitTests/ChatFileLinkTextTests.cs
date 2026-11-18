@@ -76,4 +76,21 @@ public class ChatFileLinkTextTests
     public void ARevealedFileSaysSoRatherThanDoingNothing() =>
         Assert.Equal("x.sh isn't opened from chat — it's shown in your file manager instead.",
             ChatFileLinkText.Revealed("/a/x.sh"));
+
+    [Theory]
+    [InlineData("forbidden_path", "That file is outside the folders Orbweaver opens from chat.")]
+    [InlineData("not_found", "That file no longer exists.")]
+    [InlineData("missing", "That file no longer exists.")]
+    [InlineData("unreadable", "That file couldn't be read.")]
+    [InlineData("refused", "That kind of link can't be opened.")]
+    [InlineData("failed", "Couldn't open that file.")]
+    [InlineData("busy", "Couldn't open that file.")]
+    [InlineData("update", "Couldn't open that file.")]
+    public void ALocalRefusalNeverBlamesAMachine(string code, string expected)
+    {
+        var text = ChatFileLinkText.Refusal(code, "Mac Mini", ChatFileHost.ThisMachine);
+        Assert.Equal(expected, text);
+        Assert.DoesNotContain("machine", text);
+        Assert.DoesNotContain("Mac Mini", text);
+    }
 }

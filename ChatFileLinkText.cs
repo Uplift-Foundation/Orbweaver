@@ -49,7 +49,23 @@ namespace Orbweaver
             return line + " " + pct.ToString(CultureInfo.InvariantCulture) + "%";
         }
 
-        internal static string Refusal(string? code, string? machine) => code switch
+        // The sentence for a refusal, chosen by where the file lives as well as
+        // by the code: a file on this computer must never be blamed on "that
+        // machine". A local session has no peer to be busy, rate limited or
+        // out of date, so those codes fall to the generic line there.
+        internal static string Refusal(string? code, string? machine, ChatFileHost host = ChatFileHost.Peer) =>
+            host == ChatFileHost.ThisMachine ? LocalRefusal(code) : PeerRefusal(code, machine);
+
+        private static string LocalRefusal(string? code) => code switch
+        {
+            "forbidden_path" => "That file is outside the folders Orbweaver opens from chat.",
+            "not_found" or "missing" => "That file no longer exists.",
+            "unreadable" => "That file couldn't be read.",
+            "refused" => "That kind of link can't be opened.",
+            _ => "Couldn't open that file."
+        };
+
+        private static string PeerRefusal(string? code, string? machine) => code switch
         {
             "update" => $"Update Orbweaver on {MachineOr(machine)} to open files from it.",
             "forbidden_path" => $"{MachineOr(machine)} doesn't share that folder.",

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -45,19 +46,51 @@ namespace Orbweaver
         // null clears it. Never throws: a fetch that blows up is a refusal
         // line, because a link click that crashes the panel is worse than one
         // that says it failed.
+        // Paths with a click already in flight. One FILE request per peer is
+        // all the serving side allows, so a second click on a link that is
+        // still fetching would only earn "still sending another file".
+        private readonly HashSet<string> _inFlight = new(StringComparer.Ordinal);
+
         internal async Task ClickAsync(string path, Action<string?> note, CancellationToken ct = default)
         {
+            if (!_inFlight.Add(path)) return;
+
             var machine = _files.FileHostName;
+            var host = _files.FileHost;
+
+            // Progress is delivered through the context the click started on,
+            // like Progress<T>, but gated: once the final note has been
+            // written, a report still queued behind it is dropped rather than
+            // landing afterwards as a "Fetching… 99%" line nothing will clear.
+            // The gate is read and set on that same context, so the two cannot
+            // interleave.
+            var closed = false;
+            var context = SynchronizationContext.Current;
+            void Say(string? text)
+            {
+                if (!closed) note(text);
+            }
+
+            void Final(string? text)
+            {
+                closed = true;
+                note(text);
+            }
+
+            var progress = new GatedProgress(p =>
+            {
+                void Apply() => Say(ChatFileLinkText.Fetching(path, machine, p.Done, p.Total));
+                if (context is null) Apply();
+                else context.Post(_ => Apply(), null);
+            });
 
             try
             {
                 ChatFileResult result;
 
-                if (_files.FileHost == ChatFileHost.Peer)
+                if (host == ChatFileHost.Peer)
                 {
-                    note(ChatFileLinkText.Fetching(path, machine, 0, 0));
-                    var progress = new Progress<(long Done, long Total)>(p =>
-                        note(ChatFileLinkText.Fetching(path, machine, p.Done, p.Total)));
+                    Say(ChatFileLinkText.Fetching(path, machine, 0, 0));
                     result = await _files.FetchFileAsync(path, progress, ct).ConfigureAwait(true);
                 }
                 else
@@ -67,35 +100,46 @@ namespace Orbweaver
 
                 if (!result.Ok)
                 {
-                    note(ChatFileLinkText.Refusal(result.Refusal ?? "failed", machine));
+                    Final(ChatFileLinkText.Refusal(result.Refusal ?? "failed", machine, host));
                     return;
                 }
 
                 var decision = _decide(result.LocalPath!, result.Executable);
                 if (decision.Action == FileLinkAction.Refuse)
                 {
-                    note(ChatFileLinkText.Refusal(decision.Refusal ?? "refused", machine));
+                    Final(ChatFileLinkText.Refusal(decision.Refusal ?? "refused", machine, host));
                     return;
                 }
 
                 if (!_open(result.LocalPath!, decision.Action))
                 {
-                    note(ChatFileLinkText.Refusal("failed", machine));
+                    Final(ChatFileLinkText.Refusal("failed", machine, host));
                     return;
                 }
 
-                note(decision.Action == FileLinkAction.Reveal
+                Final(decision.Action == FileLinkAction.Reveal
                     ? ChatFileLinkText.Revealed(result.LocalPath!)
                     : null);
             }
             catch (OperationCanceledException)
             {
-                note(null);
+                Final(null);
             }
             catch (Exception)
             {
-                note(ChatFileLinkText.Refusal("failed", machine));
+                Final(ChatFileLinkText.Refusal("failed", machine, host));
             }
+            finally
+            {
+                _inFlight.Remove(path);
+            }
+        }
+
+        private sealed class GatedProgress : IProgress<(long Done, long Total)>
+        {
+            private readonly Action<(long Done, long Total)> _report;
+            public GatedProgress(Action<(long Done, long Total)> report) => _report = report;
+            public void Report((long Done, long Total) value) => _report(value);
         }
     }
 
