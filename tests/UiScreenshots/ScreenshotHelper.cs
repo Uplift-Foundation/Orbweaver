@@ -214,7 +214,9 @@ internal static class ScreenshotHelper
     // WHAT IT SEES: the text of every visible TextBlock (its Text, and the runs in
     // its Inlines when Text is empty) and the Text of every visible TextBox.
     // WHAT IT CANNOT SEE: a tooltip, text drawn into an image or by a custom
-    // control that paints its own glyphs, and anything outside the captured visual.
+    // control that paints its own glyphs, text inside a nested inline (a Span or
+    // Bold holding Runs - only top-level Runs are read), and anything outside the
+    // captured visual.
     // It is a case-insensitive substring match, so a host whose name is also a
     // word the fixtures use ("build", say) would fail captures that leak nothing;
     // the message names the spelling it matched, which is what to look at.
