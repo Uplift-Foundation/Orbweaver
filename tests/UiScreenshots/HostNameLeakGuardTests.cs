@@ -48,4 +48,38 @@ public class HostNameLeakGuardTests
 
         Assert.Equal(ChatPanelTestAccess.SuiteMachineName, held);
     }
+
+    // The end of it, through a real panel: a freshly built panel on a local
+    // session - one with no far machine, which is what every capture in the suite
+    // except the mirrored ones is - names the fixture machine in its header, not
+    // the host. The guard above catches a capture that leaks; this says why none
+    // does.
+    [AvaloniaFact]
+    public void AFreshLocalPanelsHeaderNamesTheFixtureMachine()
+    {
+        var id = "host-leak-guard-" + Guid.NewGuid();
+        var fake = new FakeChatSession(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Text = "hello" },
+        })
+        { SessionId = id, DisplayName = "Leota" };
+
+        ChatPanel.OpenFor(new OrbWindow(id), fake);
+        ScreenshotHelper.Flush();
+
+        try
+        {
+            var panel = ChatPanelTestAccess.Instance!;
+            var machine = panel.FindControl<TextBlock>("MetaMachineText")!.Text ?? "";
+
+            Assert.Equal(MachineNames.Readable(ChatPanelTestAccess.SuiteMachineName), machine);
+            Assert.DoesNotContain(
+                ScreenshotHelper.HostNameSpellings(),
+                host => machine.Contains(host, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            ChatPanel.HideFor(id);
+        }
+    }
 }
