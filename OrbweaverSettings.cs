@@ -110,7 +110,7 @@ namespace Orbweaver
             "personaPoolDir",
             "remoteControlEnabled", "remoteControlProfileDir", "remoteControlProfileDirs",
             "remoteControlIdleMinutes", "remoteControlServeOnLaunch",
-            "peerLinkEnabled", "peerLinkPort",
+            "peerLinkEnabled", "peerLinkPort", "peerLaunchInboundEnabled",
             // CB-314: the phone relay. Read, written and listed here, all three:
             // a model property alone is never persisted (measured on the
             // installed app: pairing set it, a restart lost it, and the relay
@@ -543,6 +543,12 @@ namespace Orbweaver
             // is no model in the path and no quota to spend, which is the whole
             // point of it.
             public bool PeerLinkEnabled { get; set; }
+
+            // CB-357: whether another paired desktop may start a session on
+            // this one over the peer link. Off by default and separate from
+            // PeerLinkEnabled, because seeing another machine's sessions and
+            // letting it run a process here are different amounts of trust.
+            public bool PeerLaunchInboundEnabled { get; set; }
 
             // CB-314: whether this desktop keeps its connection to the phone
             // relay. Off until the user first chooses "Pair phone…", so an
@@ -1669,6 +1675,12 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.PeerLinkEnabled = value; Save(); }
         }
 
+        public static bool PeerLaunchInboundEnabled
+        {
+            get { Load(); lock (Gate) return _model.PeerLaunchInboundEnabled; }
+            set { Load(); lock (Gate) _model.PeerLaunchInboundEnabled = value; Save(); }
+        }
+
         public static bool RelayEnabled
         {
             get { Load(); lock (Gate) return _model.RelayEnabled; }
@@ -2670,6 +2682,7 @@ namespace Orbweaver
                         RemoteControlServeOnLaunch =
                             root["remoteControlServeOnLaunch"]?.GetValue<bool>() ?? false,
                         PeerLinkEnabled = root["peerLinkEnabled"]?.GetValue<bool>() ?? false,
+                        PeerLaunchInboundEnabled = Bool(root["peerLaunchInboundEnabled"], false),
                         RelayEnabled = root["relayEnabled"]?.GetValue<bool>() ?? false,
                         PhoneBrowseHome = Bool(root["phoneBrowseHome"], false),
                         PeerLinkPort = root["peerLinkPort"]?.GetValue<int>() ?? 0,
@@ -3427,6 +3440,7 @@ namespace Orbweaver
                         ["openclawNativeShape"] = _model.OpenClawNativeShape,
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
+                        ["peerLaunchInboundEnabled"] = _model.PeerLaunchInboundEnabled,
                         ["relayEnabled"] = _model.RelayEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,
                         ["autoCheckForUpdates"] = _model.AutoCheckForUpdates,
