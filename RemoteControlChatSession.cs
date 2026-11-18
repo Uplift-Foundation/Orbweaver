@@ -156,6 +156,14 @@ namespace Orbweaver
         // `mirroring && !canType` no longer automatically means "can't
         // send" — canDeliver says whether this machine can hand the text to
         // that session's own messaging socket instead.
+        //
+        // **The last arm says so rather than inviting a send.** With neither a
+        // pane nor a socket a send goes to the far Buddy and comes back refused,
+        // and the live-view banner says it cannot be delivered (CB-372); a
+        // placeholder reading "Message …" one line below that was the same
+        // two-lines-disagreeing fault. The box stays enabled all the same, as
+        // IRemoteChatComposer explains: a draft can still be pasted, and
+        // SendAsync explains the refusal in the transcript.
         internal static string ComposerHintFor(bool mirroring, bool canType, bool canDeliver, string name) =>
             !mirroring
                 ? $"Message {name} on the other machine…"
@@ -163,7 +171,32 @@ namespace Orbweaver
                     ? $"Type into {name}'s terminal on the other machine…"
                     : canDeliver
                         ? $"Message {name}'s background job on the other machine — it reads this at its next turn…"
-                        : $"Message {name} on the other machine…";
+                        : $"Can't message {name}: no terminal or messaging socket this machine can reach";
+
+        // The line at the top of a live view saying where what you send goes.
+        // Pure and static for the same reason ComposerHintFor is, and it follows
+        // the same two facts: the banner used to say "typed into its terminal"
+        // for every live view, including a background job with no terminal at
+        // all, while the composer directly below it said it would message the
+        // job (CB-372).
+        //
+        // Written once, at the first paint, and that is safe: _canType and
+        // _canDeliver are assigned only in TryUpgrade, which returns early once
+        // _mirroring is set, so they cannot change after the banner is drawn —
+        // the composer hint reads the same two fields and could not diverge from
+        // it either.
+        internal static string LiveViewBannerFor(bool canType, bool canDeliver, string name)
+        {
+            var mirror = $"Live view: this panel mirrors {name}'s own conversation from "
+                       + "the other machine, a few seconds behind. ";
+
+            return canType
+                ? mirror + "Messages you type are typed into its terminal."
+                : canDeliver
+                    ? mirror + "It has no terminal, so messages you send are delivered to its background job "
+                      + "and read at its next turn."
+                    : mirror + "It has no terminal and no messaging socket this machine can reach, so messages you send can't be delivered.";
+        }
 
         // Whether the far session actually has an input line to type into.
         //
@@ -497,9 +530,7 @@ namespace Orbweaver
                     {
                         Role = ChatRole.System,
                         IsComplete = true,
-                        Text = $"Live view: this panel mirrors {FarTitle}'s own conversation from "
-                             + "the other machine, a few seconds behind. Messages you type are typed "
-                             + "into its terminal."
+                        Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle)
                     });
 
                     _painted = true;
