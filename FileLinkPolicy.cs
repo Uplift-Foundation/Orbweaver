@@ -47,7 +47,8 @@ namespace Orbweaver
     // number of kinds. So the default for anything that could execute, or be
     // asked to by a double-click, is Reveal: show it in Finder or Explorer and
     // let a person decide. Open is what is left once a file is none of those.
-    internal enum FileLinkAction { Open, Reveal, Refuse }
+    // FileLinkAction itself is declared beside its first consumer in
+    // ChatFileLinks.cs; the three members are the contract between them.
 
     internal readonly record struct FileLinkVerdict(FileLinkAction Action, string Reason = "")
     {
