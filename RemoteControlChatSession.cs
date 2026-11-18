@@ -415,11 +415,11 @@ namespace Orbweaver
 
         internal string FarName => MachineName is { Length: > 0 } machine ? $"{FarTitle} on {machine}" : FarTitle;
 
-        // "the other machine", when the roster has not said which.
         // The title the panel names the far session by, for tests that compare the
         // wording it builds from it.
         internal string FarTitleForTests => FarTitle;
 
+        // "the other machine", when the roster has not said which.
         internal string FarMachine => MachineName is { Length: > 0 } machine ? machine : "the other machine";
 
         internal static bool IsRoute(string? name) =>
