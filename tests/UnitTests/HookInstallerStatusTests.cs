@@ -145,4 +145,21 @@ public class HookInstallerStatusTests
         Assert.Contains("ScriptNotFound", text);
         Assert.DoesNotContain("exit", text);
     }
+
+    // CB-377: an entry whose output may be incomplete says so on its header line,
+    // and a normal one says nothing, so a reader of the log can tell "Ok" from
+    // "Ok, but a descendant still held the pipe".
+    [Fact]
+    public void AnEntryWhoseOutputMayBeCutShortSaysSoOnItsHeaderOnly()
+    {
+        var when = new DateTimeOffset(2026, 10, 8, 10, 0, 0, TimeSpan.Zero);
+        var cut = new HookInstallResult(HookInstallOutcome.Ok, "x.sh", 0, "hello", "", OutputMayBeCutShort: true);
+        var whole = new HookInstallResult(HookInstallOutcome.Ok, "x.sh", 0, "hello", "");
+
+        var header = HookInstallerLog.Format(when, "x.sh", cut)
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)[0];
+
+        Assert.Contains("Ok  exit 0  (output may be cut short", header);
+        Assert.DoesNotContain("cut short", HookInstallerLog.Format(when, "x.sh", whole));
+    }
 }
