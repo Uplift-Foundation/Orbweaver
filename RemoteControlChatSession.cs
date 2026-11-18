@@ -452,6 +452,15 @@ namespace Orbweaver
             $"No live view: {Brand.DisplayName} on the other machine lists {remoteName} but can't show "
           + "its conversation, so there's nothing to read or type into here.";
 
+        // The one line that opens the panel. A window with no turns is a
+        // session that is running but has not been spoken to yet, so the
+        // sentence about a conversation being mirrored would be false.
+        internal static string LiveViewNote(string farTitle, bool empty) => empty
+            ? $"No messages yet in {farTitle}. The first one you type here goes into its terminal."
+            : $"Live view: this panel mirrors {farTitle}'s own conversation from "
+              + "the other machine, a few seconds behind. Messages you type are typed "
+              + "into its terminal.";
+
         private void OnDelivered(RemoteMirrorClient.MirrorRows rows)
         {
             if (!rows.Name.Equals(_remoteName, StringComparison.OrdinalIgnoreCase)) return;
@@ -492,9 +501,7 @@ namespace Orbweaver
                     {
                         Role = ChatRole.System,
                         IsComplete = true,
-                        Text = $"Live view: this panel mirrors {FarTitle}'s own conversation from "
-                             + "the other machine, a few seconds behind. Messages you type are typed "
-                             + "into its terminal."
+                        Text = LiveViewNote(FarTitle, mapped.Count == 0)
                     });
 
                     _painted = true;
