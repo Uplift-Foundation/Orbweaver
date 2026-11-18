@@ -21,7 +21,12 @@ namespace Orbweaver
         // file; a peer's cached copy is real too, but its executable bit
         // comes from the serving side, because a cache entry is written
         // without one.
-        internal readonly record struct Decision(FileLinkAction Action, string? Refusal);
+        //
+        // Reason is the policy's own sentence ("Executable files are shown,
+        // not run."), shown as the note for a Refuse and for a Reveal, so the
+        // reader is told why a click showed a folder window instead of a
+        // document.
+        internal readonly record struct Decision(FileLinkAction Action, string? Reason);
 
         private readonly IRemoteChatFiles _files;
         private readonly Func<string, bool, Decision> _decide;
@@ -34,13 +39,37 @@ namespace Orbweaver
         {
             _files = files;
             _decide = decide ?? DefaultDecide;
-            _open = open ?? ((_, _) => false); // ChatLinks.OpenFile once celeste's seam lands
+            _open = open ?? DefaultOpen;
         }
 
-        // The result of one click, so the caller knows whether to clear the
-        // note (opened or revealed) or leave a refusal on screen.
-        internal static Decision DefaultDecide(string path, bool executableOnServer) =>
-            throw new NotImplementedException("wired to FileLinkPolicy once its signature lands");
+        // The real decision: the policy, on the real facts of the local path,
+        // with the serving side's executable bit folded in — a cache entry is
+        // written without one, so the file on disk alone would call a peer's
+        // script harmless.
+        internal static Decision DefaultDecide(string path, bool executableOnServer)
+        {
+            var link = FileLink.FromDecodedPath(path);
+            if (link is null) return new Decision(FileLinkAction.Refuse, "That is not a path this computer can open.");
+
+            var facts = FileFacts.Probe(path);
+            var verdict = FileLinkPolicy.Decide(
+                link.Value, facts with { Executable = facts.Executable || executableOnServer }, OperatingSystem.IsWindows());
+            return new Decision(verdict.Action, verdict.Reason);
+        }
+
+        // Hands the decided path to the launcher seam. The launcher decides
+        // again from the disk on its own (it is the last gate and trusts no
+        // caller), and it cannot see the serving side's executable bit. So a
+        // Reveal that came only from that bit would be re-decided as Open: it
+        // is refused here instead, because a missing answer must never mean
+        // Open.
+        internal static bool DefaultOpen(string path, FileLinkAction action)
+        {
+            if (action == FileLinkAction.Reveal && DefaultDecide(path, false).Action != FileLinkAction.Reveal)
+                return false;
+
+            return ChatLinks.OpenFile(path);
+        }
 
         // Runs one click. note receives the line to show under the bubble —
         // null clears it. Never throws: a fetch that blows up is a refusal
@@ -107,7 +136,7 @@ namespace Orbweaver
                 var decision = _decide(result.LocalPath!, result.Executable);
                 if (decision.Action == FileLinkAction.Refuse)
                 {
-                    Final(ChatFileLinkText.Refusal(decision.Refusal ?? "refused", machine, host));
+                    Final(decision.Reason is { Length: > 0 } why ? why : ChatFileLinkText.Refusal("refused", machine, host));
                     return;
                 }
 
@@ -118,7 +147,7 @@ namespace Orbweaver
                 }
 
                 Final(decision.Action == FileLinkAction.Reveal
-                    ? ChatFileLinkText.Revealed(result.LocalPath!)
+                    ? (decision.Reason is { Length: > 0 } shown ? shown : ChatFileLinkText.Revealed(result.LocalPath!))
                     : null);
             }
             catch (OperationCanceledException)
@@ -143,6 +172,6 @@ namespace Orbweaver
         }
     }
 
-    // Placeholder until FileLinkPolicy lands (celeste-ngata, surface A).
+    // What the policy decided; FileLinkPolicy and the launcher share it.
     internal enum FileLinkAction { Open, Reveal, Refuse }
 }

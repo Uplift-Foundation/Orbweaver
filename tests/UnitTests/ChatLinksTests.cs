@@ -7,6 +7,9 @@ namespace Orbweaver.Tests;
 // release open one (CB-284). Built against hand-made spans rather than the
 // parser, so these cases say what the click handler does with whatever the
 // parser hands it — including a Link span the parser promises never to emit.
+// Shares ChatLinks.OpenFile, a process-wide seam, with ChatFileLinksTests: the two swap it, so they
+// must not run in parallel.
+[Collection("ChatLinksOpenFileSeam")]
 public class ChatLinksTests
 {
     private const string Url = "https://example.com/a_b";

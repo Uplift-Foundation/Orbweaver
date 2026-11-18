@@ -8,6 +8,7 @@ namespace Orbweaver.Tests;
 /// asserting the opener was NOT called, because the property that matters is that nothing launches
 /// on the way to a refusal.
 /// </summary>
+[Collection("ChatLinksOpenFileSeam")]
 public class ChatFileLinksTests
 {
     // Progress is delivered through the context the click started on. xUnit installs its own for
@@ -45,12 +46,12 @@ public class ChatFileLinksTests
         public List<(string Path, FileLinkAction Action)> Opened { get; } = new();
         public List<(string Path, bool Exec)> Decided { get; } = new();
         public FileLinkAction Verdict { get; set; } = FileLinkAction.Open;
-        public string? VerdictRefusal { get; set; }
+        public string? VerdictReason { get; set; }
         public bool OpenResult { get; set; } = true;
 
         public ChatFileLinks Links => new(
             Files,
-            (p, x) => { Decided.Add((p, x)); return new ChatFileLinks.Decision(Verdict, VerdictRefusal); },
+            (p, x) => { Decided.Add((p, x)); return new ChatFileLinks.Decision(Verdict, VerdictReason); },
             (p, a) => { Opened.Add((p, a)); return OpenResult; });
 
         public ChatFileLinks Make(ChatFileLinks? links = null) => links ?? Links;
@@ -95,6 +96,7 @@ public class ChatFileLinksTests
         await h.Click(h.Links, "/a/tool");
         Assert.Equal(new[] { ("/cache/tool", true) }, h.Decided);
         Assert.Equal(new[] { ("/cache/tool", FileLinkAction.Reveal) }, h.Opened);
+        // No reason from the policy: the generic line says what happened.
         Assert.Equal("tool isn't opened from chat — it's shown in your file manager instead.", h.Notes[^1]);
     }
 
@@ -159,9 +161,9 @@ public class ChatFileLinksTests
     [Fact]
     public async Task APolicyRefusalSaysSoAndNeverOpens()
     {
-        var h = new Harness { Verdict = FileLinkAction.Refuse, VerdictRefusal = "forbidden_path" };
+        var h = new Harness { Verdict = FileLinkAction.Refuse, VerdictReason = "That file does not exist." };
         await h.Click(h.Links);
-        Assert.Equal("That file is outside the folders Orbweaver opens from chat.", h.Notes[^1]);
+        Assert.Equal("That file does not exist.", h.Notes[^1]);
         Assert.Empty(h.Opened);
 
         var bare = new Harness { Verdict = FileLinkAction.Refuse };
@@ -216,14 +218,16 @@ public class ChatFileLinksTests
     }
 
     [Fact]
-    public async Task AMissingPolicyFailsClosedNeverOpen()
+    public async Task APolicyThatThrowsFailsClosedNeverOpen()
     {
-        // The default decide is the unwired placeholder: it throws, and the
-        // click must come out as a refusal with nothing launched.
         var files = new Files();
         var notes = new List<string?>();
         var opened = new List<string>();
-        var links = new ChatFileLinks(files, open: (p, _) => { opened.Add(p); return true; });
+        var links = new ChatFileLinks(
+            files,
+            decide: (_, _) => throw new InvalidOperationException("policy blew up"),
+            open: (p, _) => { opened.Add(p); return true; });
+        SynchronizationContext.SetSynchronizationContext(null);
         await links.ClickAsync("/a/x.pdf", notes.Add);
         Assert.Empty(opened);
         Assert.Equal("Couldn't open that file.", notes[^1]);
@@ -347,5 +351,92 @@ public class ChatFileLinksTests
         SynchronizationContext.SetSynchronizationContext(null);
         ctx.Pump();
         await task;
+    }
+
+    [Fact]
+    public async Task ARevealShowsThePolicysOwnReason()
+    {
+        var h = new Harness { Verdict = FileLinkAction.Reveal, VerdictReason = "Executable files are shown, not run." };
+        await h.Click(h.Links, "/a/tool");
+        Assert.Equal("Executable files are shown, not run.", h.Notes[^1]);
+        Assert.Equal(FileLinkAction.Reveal, Assert.Single(h.Opened).Action);
+    }
+
+    // --- the real policy, on real files ------------------------------------------------------
+
+    private static string Scratch(out string dir)
+    {
+        dir = Path.Combine(Path.GetTempPath(), "cb363-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    [Fact]
+    public void TheRealDecisionOpensADocumentAndRevealsWhatCouldRun()
+    {
+        Scratch(out var dir);
+        try
+        {
+            var pdf = Path.Combine(dir, "x.pdf");
+            File.WriteAllText(pdf, "%PDF");
+            Assert.Equal(FileLinkAction.Open, ChatFileLinks.DefaultDecide(pdf, false).Action);
+
+            // The serving side's executable bit makes the same file a reveal.
+            var viaServer = ChatFileLinks.DefaultDecide(pdf, true);
+            Assert.Equal(FileLinkAction.Reveal, viaServer.Action);
+            Assert.Equal("Executable files are shown, not run.", viaServer.Reason);
+
+            var script = Path.Combine(dir, "run.sh");
+            File.WriteAllText(script, "#!/bin/sh");
+            Assert.Equal(FileLinkAction.Reveal, ChatFileLinks.DefaultDecide(script, false).Action);
+
+            Assert.Equal(FileLinkAction.Reveal, ChatFileLinks.DefaultDecide(dir, false).Action);
+
+            var missing = ChatFileLinks.DefaultDecide(Path.Combine(dir, "gone.pdf"), false);
+            Assert.Equal(FileLinkAction.Refuse, missing.Action);
+            Assert.Equal("That file does not exist.", missing.Reason);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void TheRealDecisionRefusesAPathThisComputerCannotOpen()
+    {
+        var d = ChatFileLinks.DefaultDecide("relative/x.pdf", false);
+        Assert.Equal(FileLinkAction.Refuse, d.Action);
+        Assert.Equal("That is not a path this computer can open.", d.Reason);
+    }
+
+    [Fact]
+    public void TheRealOpenerHandsTheLauncherOnlyWhatTheDiskAgreesWith()
+    {
+        Scratch(out var dir);
+        var calls = new List<string>();
+        var previous = ChatLinks.OpenFile;
+        ChatLinks.OpenFile = p => { calls.Add(p); return true; };
+        try
+        {
+            var pdf = Path.Combine(dir, "x.pdf");
+            File.WriteAllText(pdf, "%PDF");
+            var script = Path.Combine(dir, "run.sh");
+            File.WriteAllText(script, "#!/bin/sh");
+
+            // Open goes straight to the launcher.
+            Assert.True(ChatFileLinks.DefaultOpen(pdf, FileLinkAction.Open));
+            // A Reveal the disk itself also says is a reveal goes through.
+            Assert.True(ChatFileLinks.DefaultOpen(script, FileLinkAction.Reveal));
+            Assert.Equal(new[] { pdf, script }, calls);
+
+            // A Reveal that only the server's bit asked for would be re-decided
+            // as Open by the launcher, so it is refused here and nothing starts.
+            calls.Clear();
+            Assert.False(ChatFileLinks.DefaultOpen(pdf, FileLinkAction.Reveal));
+            Assert.Empty(calls);
+        }
+        finally
+        {
+            ChatLinks.OpenFile = previous;
+            Directory.Delete(dir, true);
+        }
     }
 }
