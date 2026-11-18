@@ -224,6 +224,8 @@ jobs:
       # and is not in tools/test-budget-allowlist.txt with a reason. if:
       # success() || failure() so a red suite still names its slow tests, and a
       # cancelled run does not pile a second error on top of the cancellation.
+      # If the suite step was red before it copied a trx, this step adds "no .trx
+      # reports found" (exit 2): a symptom of the red suite, never its cause.
       - name: Test time budget
         if: success() || failure()
         run: python tools/check-test-budget.py --allowlist tools/test-budget-allowlist.txt TestResults
@@ -430,6 +432,8 @@ jobs:
       # and is not in tools/test-budget-allowlist.txt with a reason. if:
       # success() || failure() so a red suite still names its slow tests, and a
       # cancelled run does not pile a second error on top of the cancellation.
+      # If the suite step was red before it copied a trx, this step adds "no .trx
+      # reports found" (exit 2): a symptom of the red suite, never its cause.
       - name: Test time budget
         if: success() || failure()
         run: python tools/check-test-budget.py --allowlist tools/test-budget-allowlist.txt TestResults
@@ -563,6 +567,8 @@ jobs:
       # and is not in tools/test-budget-allowlist.txt with a reason. if:
       # success() || failure() so a red suite still names its slow tests, and a
       # cancelled run does not pile a second error on top of the cancellation.
+      # If the suite step was red before it copied a trx, this step adds "no .trx
+      # reports found" (exit 2): a symptom of the red suite, never its cause.
       - name: Test time budget
         if: success() || failure()
         run: python tools/check-test-budget.py --allowlist tools/test-budget-allowlist.txt TestResults

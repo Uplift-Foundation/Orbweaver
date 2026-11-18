@@ -82,11 +82,17 @@ class BudgetTests(unittest.TestCase):
                 self.assertEqual(code, 2, out)
                 self.assertIn("needs '<test name> | <reason>'", out)
 
-    def test_stale_entry_warns_but_does_not_fail(self):
+    def test_stale_entry_that_ran_fast_warns_but_does_not_fail(self):
         allow = self.allow("A.NowFast | was slow; CB-1\n")
         code, out = self.run_check("--allowlist", allow, self.trx([("A.NowFast", 0.1)]))
         self.assertEqual(code, 0, out)
-        self.assertIn("::warning::allow-list entry matched nothing", out)
+        self.assertIn("::warning::allow-list entry ran within budget", out)
+
+    def test_entry_for_a_test_in_another_suite_is_silent(self):
+        allow = self.allow("Other.Suite.Test | lives in a different job's reports; CB-1\n")
+        code, out = self.run_check("--allowlist", allow, self.trx([("A.Fast", 0.1)]))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("::warning::", out)
 
     def test_budget_is_configurable(self):
         report = self.trx([("A.Four", 4.0)])

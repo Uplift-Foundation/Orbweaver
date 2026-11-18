@@ -22,9 +22,11 @@ The allow-list (tools/test-budget-allowlist.txt) is one entry per line:
 
 An entry without a reason is an error, not a free pass: the point of the list
 is that every slow test has a stated cause and an owner. Parameterised tests
-match on the name with the `(args)` suffix removed. An entry that nothing
-exceeded is reported as stale (a warning, not a failure, since a test can be
-slow on one runner only) so the list shrinks as the tickets land.
+match on the name with the `(args)` suffix removed. An entry whose test ran in
+the given reports and stayed within budget is reported as stale (a warning, not
+a failure, since a test can be slow on one runner only) so the list shrinks as
+the tickets land; an entry for a test absent from these reports says nothing,
+because each CI job sees only its own suite.
 """
 import argparse
 import glob
@@ -115,8 +117,11 @@ def main(argv=None):
           f"{len(over)} over budget ({len(allowed)} allow-listed).")
     for n, s, why in allowed:
         print(f"  allowed  {s:7.1f}s  {n}  -- {why}")
-    for name in sorted(set(allow) - used):
-        print(f"::warning::allow-list entry matched nothing over budget (stale on this run?): {name}")
+    # Stale only if the test ran in these reports and was fast. Each CI job sees
+    # one suite's reports, so an entry for another suite's test is not stale here.
+    seen = {n for _, n, _ in results} | {base_name(n) for _, n, _ in results}
+    for name in sorted((set(allow) - used) & seen):
+        print(f"::warning::allow-list entry ran within budget here (stale, or slow only on another runner): {name}")
     for f, n, s in sorted(failed, key=lambda r: -r[2]):
         print(f"::error::{n} took {s:.1f}s, over the {args.budget:g}s budget "
               f"({os.path.basename(f)}). Make it faster, or allow-list it with a reason and a ticket.")
