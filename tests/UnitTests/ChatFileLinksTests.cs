@@ -408,35 +408,28 @@ public class ChatFileLinksTests
     }
 
     [Fact]
-    public void TheRealOpenerHandsTheLauncherOnlyWhatTheDiskAgreesWith()
+    public void TheRealOpenerSendsOpenToOpenFileAndRevealToRevealFile()
     {
-        Scratch(out var dir);
-        var calls = new List<string>();
-        var previous = ChatLinks.OpenFile;
-        ChatLinks.OpenFile = p => { calls.Add(p); return true; };
+        var opened = new List<string>();
+        var revealed = new List<string>();
+        var (prevOpen, prevReveal) = (ChatLinks.OpenFile, ChatLinks.RevealFile);
+        ChatLinks.OpenFile = p => { opened.Add(p); return true; };
+        ChatLinks.RevealFile = p => { revealed.Add(p); return false; };
         try
         {
-            var pdf = Path.Combine(dir, "x.pdf");
-            File.WriteAllText(pdf, "%PDF");
-            var script = Path.Combine(dir, "run.sh");
-            File.WriteAllText(script, "#!/bin/sh");
+            Assert.True(ChatFileLinks.DefaultOpen("/a/x.pdf", FileLinkAction.Open));
+            Assert.Equal(new[] { "/a/x.pdf" }, opened);
+            Assert.Empty(revealed);
 
-            // Open goes straight to the launcher.
-            Assert.True(ChatFileLinks.DefaultOpen(pdf, FileLinkAction.Open));
-            // A Reveal the disk itself also says is a reveal goes through.
-            Assert.True(ChatFileLinks.DefaultOpen(script, FileLinkAction.Reveal));
-            Assert.Equal(new[] { pdf, script }, calls);
-
-            // A Reveal that only the server's bit asked for would be re-decided
-            // as Open by the launcher, so it is refused here and nothing starts.
-            calls.Clear();
-            Assert.False(ChatFileLinks.DefaultOpen(pdf, FileLinkAction.Reveal));
-            Assert.Empty(calls);
+            // A reveal never reaches the opener, and its answer is the seam's own.
+            Assert.False(ChatFileLinks.DefaultOpen("/a/tool.pdf", FileLinkAction.Reveal));
+            Assert.Equal(new[] { "/a/tool.pdf" }, revealed);
+            Assert.Single(opened);
         }
         finally
         {
-            ChatLinks.OpenFile = previous;
-            Directory.Delete(dir, true);
+            ChatLinks.OpenFile = prevOpen;
+            ChatLinks.RevealFile = prevReveal;
         }
     }
 }

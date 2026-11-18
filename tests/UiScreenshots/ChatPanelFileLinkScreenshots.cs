@@ -22,16 +22,19 @@ public class ChatPanelFileLinkScreenshots : IDisposable
     private readonly List<string> _panelsToClean = new();
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb363-shot-" + Guid.NewGuid().ToString("N"));
     private readonly Func<string, bool> _previousOpener = ChatLinks.OpenFile;
+    private readonly Func<string, bool> _previousReveal = ChatLinks.RevealFile;
 
     public ChatPanelFileLinkScreenshots()
     {
         Directory.CreateDirectory(_dir);
         ChatLinks.OpenFile = _ => true;
+        ChatLinks.RevealFile = _ => true;
     }
 
     public void Dispose()
     {
         ChatLinks.OpenFile = _previousOpener;
+        ChatLinks.RevealFile = _previousReveal;
         foreach (var id in _panelsToClean) ChatPanel.HideFor(id);
         if (Directory.Exists(_dir)) Directory.Delete(_dir, true);
     }

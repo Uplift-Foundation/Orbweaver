@@ -57,24 +57,14 @@ namespace Orbweaver
             return new Decision(verdict.Action, verdict.Reason);
         }
 
-        // Hands the decided path to the launcher seam. The launcher decides
-        // again from the disk on its own (it is the last gate and trusts no
-        // caller), and it cannot see the serving side's executable bit. So a
-        // Reveal that came only from that bit would be re-decided as Open: it
-        // is refused here instead, because a missing answer must never mean
-        // Open.
-        internal static bool DefaultOpen(string path, FileLinkAction action)
-        {
-            if (action == FileLinkAction.Reveal && DefaultDecide(path, false).Action != FileLinkAction.Reveal)
-                return false;
+        // Hands the decided path to the matching launcher seam: Open to
+        // ChatLinks.OpenFile, Reveal to ChatLinks.RevealFile. Reveal has its
+        // own seam because the launcher behind OpenFile decides again from the
+        // disk and cannot see the serving side's executable bit, so it would
+        // open a peer's script that this class decided to show.
+        internal static bool DefaultOpen(string path, FileLinkAction action) =>
+            action == FileLinkAction.Reveal ? ChatLinks.RevealFile(path) : ChatLinks.OpenFile(path);
 
-            return ChatLinks.OpenFile(path);
-        }
-
-        // Runs one click. note receives the line to show under the bubble —
-        // null clears it. Never throws: a fetch that blows up is a refusal
-        // line, because a link click that crashes the panel is worse than one
-        // that says it failed.
         // Paths with a click already in flight. One FILE request per peer is
         // all the serving side allows, so a second click on a link that is
         // still fetching would only earn "still sending another file".

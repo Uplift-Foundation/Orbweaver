@@ -26,6 +26,8 @@ public class ChatPanelFileLinkTests : IDisposable
     private readonly List<string> _toClean = new();
     private readonly List<string> _opened = new();
     private readonly List<string> _web = new();
+    private readonly List<string> _revealed = new();
+    private readonly Func<string, bool> _previousReveal = ChatLinks.RevealFile;
     private readonly Func<string, bool> _previousFile;
     private readonly Func<string, bool> _previousWeb;
 
@@ -36,11 +38,13 @@ public class ChatPanelFileLinkTests : IDisposable
         _previousWeb = ChatLinks.Open;
         ChatLinks.OpenFile = path => { _opened.Add(path); return true; };
         ChatLinks.Open = url => { _web.Add(url); return true; };
+        ChatLinks.RevealFile = path => { _revealed.Add(path); return true; };
     }
 
     public void Dispose()
     {
         ChatLinks.OpenFile = _previousFile;
+        ChatLinks.RevealFile = _previousReveal;
         ChatLinks.Open = _previousWeb;
         foreach (var id in _toClean) ChatPanel.HideFor(id);
         if (Directory.Exists(_dir)) Directory.Delete(_dir, true);
@@ -197,7 +201,8 @@ public class ChatPanelFileLinkTests : IDisposable
 
         new Mouse(panel, block).Click(At(panel, block, "the folder", 2));
 
-        Assert.Equal(new[] { _dir }, _opened);
+        Assert.Equal(new[] { _dir }, _revealed);
+        Assert.Empty(_opened);
         Assert.Equal("Folders are shown, not opened.", turn.FileNote);
     }
 
@@ -279,6 +284,26 @@ public class ChatPanelFileLinkTests : IDisposable
         gate.SetResult(true);
         await Until(() => _opened.Count == 1);
         Assert.Single(_opened);
+    }
+
+    [AvaloniaFact]
+    public void APeersExecutableFileIsRevealedNotOpenedAndSaysWhy()
+    {
+        var cached = File("tool.pdf");
+        var (panel, _, turn) = Open("[the tool](/Users/a/Docs/tool.pdf)", f =>
+        {
+            f.FileHost = ChatFileHost.Peer;
+            f.FileHostName = "Mac Mini";
+            f.FileAnswer = _ => ChatFileResult.Cached(cached, executable: true);
+        });
+        var block = BlockSaying(panel, "the tool");
+
+        new Mouse(panel, block).Click(At(panel, block, "the tool", 2));
+        Flush();
+
+        Assert.Equal(new[] { cached }, _revealed);
+        Assert.Empty(_opened);
+        Assert.Equal("Executable files are shown, not run.", turn.FileNote);
     }
 
     // --- tooltip ---
