@@ -43,6 +43,15 @@ on:
 permissions:
   contents: read
 
+# A push to a PR branch supersedes the run before it, which would otherwise sit
+# on macOS runners (five jobs per run, see above) while the run that matters
+# queues behind it. Only pull_request runs are cancelled: a push to main or
+# develop, and workflow_dispatch, group by their own run id and never cancel
+# one another.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Console exes, then every Python tool suite. Cheap and platform-neutral.
   checks:
