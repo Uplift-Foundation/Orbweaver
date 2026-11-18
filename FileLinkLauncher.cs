@@ -79,6 +79,24 @@ namespace Orbweaver
             return info is not null;
         }
 
+        // Shows a local file in Finder or Explorer whatever the policy would
+        // have said about opening it — for a file that is fine to look at but
+        // whose danger is not on this disk: a copy fetched from another
+        // machine, which is written without the execute bit the original had.
+        // Still refuses everything Decide refuses (missing, network, wrong
+        // platform), because a reveal of those is no safer than an open.
+        internal static bool PlanReveal(string path, FileFacts facts, bool isMacOs, bool isWindows, out ProcessStartInfo? info)
+        {
+            info = null;
+
+            var link = FileLink.FromDecodedPath(path);
+            if (link is null) return false;
+            if (FileLinkPolicy.Decide(link.Value, facts, isWindows).Action == FileLinkAction.Refuse) return false;
+
+            info = StartInfoFor(FileLinkVerdict.Reveal("Shown, not opened."), facts.Target ?? path, isMacOs, isWindows);
+            return info is not null;
+        }
+
         // Excluded from coverage: what is left is Process.Start, which opens a
         // real application or a Finder window on whichever machine runs it,
         // plus the disk probe that Plan's tests feed by hand. Everything it
@@ -96,6 +114,24 @@ namespace Orbweaver
             // which narrows the window between check and use to the few
             // instructions between this line and Process.Start. It cannot
             // close it: a file system offers no atomic "check and open".
+            if (FileFacts.Probe(path) != facts) return false;
+
+            try
+            {
+                using var process = Process.Start(info!);
+                return process is not null;
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        [ExcludeFromCodeCoverage]
+        internal static bool RevealLocal(string path)
+        {
+            var facts = FileFacts.Probe(path);
+            if (!PlanReveal(path, facts, OperatingSystem.IsMacOS(), OperatingSystem.IsWindows(), out var info)) return false;
             if (FileFacts.Probe(path) != facts) return false;
 
             try

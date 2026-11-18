@@ -63,6 +63,20 @@ public class ChatLinksTests
 
     // The seam exists, is settable, and is what a test swaps for a recorder.
     [Fact]
+    public void RevealFileIsASettableSeam()
+    {
+        var before = ChatLinks.RevealFile;
+        try
+        {
+            string? seen = null;
+            ChatLinks.RevealFile = p => { seen = p; return true; };
+            Assert.True(ChatLinks.RevealFile("/a/b.pdf"));
+            Assert.Equal("/a/b.pdf", seen);
+        }
+        finally { ChatLinks.RevealFile = before; }
+    }
+
+    [Fact]
     public void OpenFileIsASettableSeam()
     {
         var before = ChatLinks.OpenFile;

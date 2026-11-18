@@ -5,8 +5,13 @@ namespace Orbweaver
 {
     // What is known about a path on disk, gathered by the caller so that the
     // decision below stays a pure function of it.
-    internal readonly record struct FileFacts(bool Exists, bool IsDirectory, bool Executable, string? Target = null)
+    internal readonly record struct FileFacts(bool Exists, bool IsDirectory, bool Executable, string? Target = null, bool Special = false)
     {
+        // Special is true for something that exists, is not a directory and is
+        // not a regular file: a FIFO, a socket, a character or block device.
+        // .NET reports all of them as an ordinary file, and "open" on a FIFO
+        // hands a viewer a path whose read blocks for ever. Only ever true on
+        // POSIX, where those kinds exist.
         // Target is the final destination when the path is itself a symlink,
         // and null when it is not. A link named x.pdf that points at y.command
         // is a command, so the extension rule applies to both names and the
@@ -20,6 +25,40 @@ namespace Orbweaver
         // "report.pdf" that is a link to /bin/ls is judged as /bin/ls). It is
         // always false on Windows, where there is no such bit and the
         // extension list is the gate.
+        // Whether the path, with symlinks followed, is a regular file. The
+        // type is not readable through .NET (FileAttributes is Normal for a
+        // FIFO), so this asks the system's own `test -f`, argv-only with a
+        // bound on how long it may take: the same answer as stat's S_IFREG
+        // without a per-platform struct layout to get wrong. Always true on
+        // Windows, which has no such kinds. Anything that cannot be asked is
+        // treated as not regular, which is a reveal, never an open.
+        internal static bool IsRegularFile(string path)
+        {
+            if (OperatingSystem.IsWindows()) return true;
+
+            try
+            {
+                var info = new System.Diagnostics.ProcessStartInfo("/bin/test") { UseShellExecute = false };
+                info.ArgumentList.Add("-f");
+                info.ArgumentList.Add(path);
+
+                using var process = System.Diagnostics.Process.Start(info);
+                if (process is null) return false;
+
+                if (!process.WaitForExit(5000))
+                {
+                    process.Kill();
+                    return false;
+                }
+
+                return process.ExitCode == 0;
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
         internal static FileFacts Probe(string path)
         {
             try
@@ -43,7 +82,7 @@ namespace Orbweaver
                     executable = (File.GetUnixFileMode(path) & anyExecute) != 0;
                 }
 
-                return new FileFacts(true, false, executable, target);
+                return new FileFacts(true, false, executable, target, Special: !IsRegularFile(path));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
@@ -112,6 +151,8 @@ namespace Orbweaver
             if (!facts.Exists) return FileLinkVerdict.Refuse("That file does not exist.");
 
             if (facts.IsDirectory) return FileLinkVerdict.Reveal("Folders are shown, not opened.");
+
+            if (facts.Special) return FileLinkVerdict.Reveal("Pipes, sockets and devices are shown, not opened.");
 
             if (facts.Executable) return FileLinkVerdict.Reveal("Executable files are shown, not run.");
 

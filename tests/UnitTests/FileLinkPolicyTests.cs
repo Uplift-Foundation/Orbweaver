@@ -87,6 +87,18 @@ public class FileLinkPolicyTests
         Assert.Equal(FileLinkAction.Open, Mac("/a/x.pdf"));
     }
 
+    // Something that is neither a directory nor a regular file (a FIFO, a
+    // socket, a device) is shown, never opened, however its name reads.
+    [Fact]
+    public void ASpecialFileIsRevealedEvenWithAnAllowlistedName()
+    {
+        var special = new FileFacts(true, false, false, Special: true);
+        var verdict = FileLinkPolicy.Decide(new FileLink("/a/x.pdf", false), special, false);
+        Assert.Equal(FileLinkAction.Reveal, verdict.Action);
+        Assert.NotEmpty(verdict.Reason);
+        Assert.Equal(FileLinkAction.Open, Mac("/a/x.pdf"));
+    }
+
     [Fact]
     public void TheExecuteBitRevealsAnOtherwiseOrdinaryFile()
     {
@@ -272,6 +284,77 @@ public class FileLinkPolicyTests
             Directory.CreateDirectory(bundle);
             File.CreateSymbolicLink(bundleLink, bundle);
             Assert.True(FileFacts.Probe(bundleLink).IsDirectory);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    // --- special files, against real ones (POSIX only) ---
+
+    private static void MakeFifo(string path)
+    {
+        var info = new System.Diagnostics.ProcessStartInfo("/usr/bin/mkfifo") { UseShellExecute = false };
+        info.ArgumentList.Add(path);
+        using var process = System.Diagnostics.Process.Start(info)!;
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
+    public void AFifoNamedLikeAPdfIsSpecialAndRevealedNotOpened()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var dir = Temp();
+        try
+        {
+            var fifo = Path.Combine(dir, "fifo.pdf");
+            var regular = Path.Combine(dir, "real.pdf");
+            MakeFifo(fifo);
+            File.WriteAllText(regular, "x");
+
+            // Control first: a regular file is not special and opens.
+            var good = FileFacts.Probe(regular);
+            Assert.False(good.Special);
+            Assert.Equal(FileLinkAction.Open, FileLinkPolicy.Decide(new FileLink(regular, false), good, false).Action);
+
+            // The fifo exists, is not a directory, and has no execute bit —
+            // everything the other checks look at says "ordinary".
+            var facts = FileFacts.Probe(fifo);
+            Assert.True(facts.Exists);
+            Assert.False(facts.IsDirectory);
+            Assert.False(facts.Executable);
+            Assert.True(facts.Special);
+            Assert.Equal(FileLinkAction.Reveal, FileLinkPolicy.Decide(new FileLink(fifo, false), facts, false).Action);
+
+            // And a link named .pdf that points at it is judged by the target.
+            var link = Path.Combine(dir, "link.pdf");
+            File.CreateSymbolicLink(link, fifo);
+            Assert.True(FileFacts.Probe(link).Special);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ADeviceIsSpecial()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        Assert.True(FileFacts.Probe("/dev/null").Special);
+    }
+
+    [Fact]
+    public void IsRegularFileSaysNoForAMissingPathAndAFolder()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var dir = Temp();
+        try
+        {
+            Assert.False(FileFacts.IsRegularFile(Path.Combine(dir, "missing.pdf")));
+            Assert.False(FileFacts.IsRegularFile(dir));
+            var file = Path.Combine(dir, "a.pdf");
+            File.WriteAllText(file, "x");
+            Assert.True(FileFacts.IsRegularFile(file));
         }
         finally { Directory.Delete(dir, true); }
     }

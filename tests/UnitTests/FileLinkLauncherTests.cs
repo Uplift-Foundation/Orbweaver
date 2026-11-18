@@ -165,4 +165,46 @@ public class FileLinkLauncherTests
         Assert.Equal(FileLinkAction.Reveal, verdict.Action);
         Assert.Equal(["-R", "--", "/real/y.command"], info!.ArgumentList);
     }
+
+    // --- PlanReveal: show a file whatever the policy would do about opening it ---
+
+    [Fact]
+    public void PlanRevealShowsAnOrdinaryFileThatWouldHaveBeenOpened()
+    {
+        Assert.True(FileLinkLauncher.PlanReveal("/a/x.pdf", Plain, true, false, out var mac));
+        Assert.Equal(["-R", "--", "/a/x.pdf"], mac!.ArgumentList);
+
+        Assert.True(FileLinkLauncher.PlanReveal("C:\\a\\x.pdf", Plain, false, true, out var win));
+        Assert.Equal("explorer.exe", win!.FileName);
+
+        // The control: opening the same file is an open.
+        Assert.True(FileLinkLauncher.Plan("/a/x.pdf", Plain, true, false, out var open, out _));
+        Assert.DoesNotContain("-R", open!.ArgumentList);
+    }
+
+    [Fact]
+    public void PlanRevealRevealsTheTargetOfASymlink()
+    {
+        Assert.True(FileLinkLauncher.PlanReveal("/a/x.pdf", new FileFacts(true, false, false, "/real/y.pdf"), true, false, out var info));
+        Assert.Equal(["-R", "--", "/real/y.pdf"], info!.ArgumentList);
+    }
+
+    // What Decide refuses a reveal cannot make safer.
+    [Fact]
+    public void PlanRevealRefusesWhatThePolicyRefuses()
+    {
+        Assert.False(FileLinkLauncher.PlanReveal("/a/x.pdf", new FileFacts(false, false, false), true, false, out var missing));
+        Assert.Null(missing);
+        Assert.False(FileLinkLauncher.PlanReveal("relative.pdf", Plain, true, false, out _));
+        Assert.False(FileLinkLauncher.PlanReveal("C:\\a\\x.pdf", Plain, true, false, out _));
+        Assert.False(FileLinkLauncher.PlanReveal("/a/x.pdf", Plain, false, false, out _));
+    }
+
+    [Fact]
+    public void ASpecialFileIsRevealedByPlan()
+    {
+        Assert.True(FileLinkLauncher.Plan("/a/x.pdf", new FileFacts(true, false, false, Special: true), true, false, out var info, out var verdict));
+        Assert.Equal(FileLinkAction.Reveal, verdict.Action);
+        Assert.Equal("-R", info!.ArgumentList[0]);
+    }
 }

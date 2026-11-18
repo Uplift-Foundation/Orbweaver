@@ -106,6 +106,12 @@ namespace Orbweaver
         // FileLinkPolicy on its own, whatever it is handed here.
         internal static Func<string, bool> OpenFile { get; set; } = FileLinkLauncher.OpenLocal;
 
+        // Shows a local file in Finder or Explorer without opening it (CB-363):
+        // for a file the policy would open but that is known elsewhere to be
+        // dangerous, such as a fetched copy of something executable. Same
+        // seam shape and the same no-op in both UI suites as OpenFile.
+        internal static Func<string, bool> RevealFile { get; set; } = FileLinkLauncher.RevealLocal;
+
         // A click opens a link only when it began and ended on the same one and
         // left nothing selected.
         //

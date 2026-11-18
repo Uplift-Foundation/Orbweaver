@@ -120,6 +120,7 @@ internal static class TestBootstrap
         // to see what would have opened swap in a recorder and put this back.
         ChatLinks.Open = _ => false;
         ChatLinks.OpenFile = _ => false;
+        ChatLinks.RevealFile = _ => false;
 
         OrbweaverSettings.ReloadForTests();
     }
