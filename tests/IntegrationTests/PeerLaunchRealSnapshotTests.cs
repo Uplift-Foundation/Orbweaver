@@ -98,4 +98,66 @@ public class PeerLaunchRealSnapshotTests
             RemoteControlSessions.ForgetLocalSessionsForTests();
         }
     }
+
+    // The control: the same real source, but nothing ever writes a status
+    // file, so the launch must come back no_session. Without it, the test
+    // above could be passing because something other than the real source
+    // produced the session. A fake clock walks the 30 s check-in at once;
+    // LocalSessions' own two-second memo runs on real time, which only means
+    // every poll here is answered from one real scan of a folder that never
+    // gains the session.
+    [Fact]
+    public async Task With_no_status_file_the_same_launch_is_no_session()
+    {
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        RemoteControlSessions.ForgetLocalSessionsForTests();
+
+        using var key = RSA.Create(2048);
+        using var sender = new CertificateRequest("CN=sender", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+            .CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        var ownPin = new string('b', 64);
+        var cwd = Path.Combine(Path.GetTempPath(), "cb357-real-snapshot-none-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cwd);
+
+        var now = DateTimeOffset.UtcNow;
+        var started = 0;
+        var server = new PeerLaunchServer(PeerLaunchServer.RealSeams() with
+        {
+            Enabled = () => true,
+            KnownPeer = m => m == "mbp" ? new PeerIdentity.Peer(PeerIdentity.PinOf(sender), "mbp") : null,
+            OwnPin = () => ownPin,
+            Launch = new RelayRemote.LaunchSeams(
+                OperatingSystem.IsWindows(),
+                _ => OperatingSystem.IsWindows() ? "C:\\c\\claude.exe" : "/bin/claude",
+                Directory.Exists,
+                () => "/bin/zsh",
+                (_, _) => { started++; return ("%1", null); },
+                _ => { started++; return 42; }),
+            Accounts = new RelayRemote.AccountSeams(_ => [], _ => null),
+            Now = () => now,
+            Delay = d => { now += d; return Task.CompletedTask; },
+            Log = _ => { },
+        });
+
+        try
+        {
+            var f = new LaunchFields(cwd, "claude", "", "", "", "",
+                RelayCrypto.Base64Url(RandomNumberGenerator.GetBytes(16)),
+                now.ToUnixTimeSeconds() + 120, "default");
+            var signed = PeerIdentity.Sign(sender, LaunchGate.PeerMessage(ownPin, LaunchGate.Body(f)));
+            var body = PeerLaunchWire.EncodeLaunch(new PeerLaunchWire.LaunchRequest(
+                f.Cwd, f.Cli, "", "", f.Account, "", "", f.Nonce, f.ExpiresAt,
+                RelayCrypto.Base64Url(signed.Sig), Convert.ToBase64String(signed.CertificateDer)));
+
+            var result = await server.HandleAsync("mbp", body);
+
+            Assert.Equal(1, started);
+            Assert.Equal(new PeerLaunchResult(false, RelayReplies.NoSession, null, null), result);
+        }
+        finally
+        {
+            Directory.Delete(cwd);
+            RemoteControlSessions.ForgetLocalSessionsForTests();
+        }
+    }
 }
