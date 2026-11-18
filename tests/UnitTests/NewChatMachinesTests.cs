@@ -81,6 +81,19 @@ public class NewChatMachinesTests
     }
 
     [Fact]
+    public void A_ready_machine_with_nowhere_or_nothing_to_start_says_so_and_disables_start()
+    {
+        var noTerm = NewChatMachines.From("m", Info(terminal: false));
+        Assert.False(noTerm.StartEnabled);
+        Assert.Equal(PeerLaunchCopy.NoTerminal("m"), noTerm.Note);
+
+        var noCli = NewChatMachines.From("m", Info(installed: []));
+        Assert.False(noCli.AnyCli);
+        Assert.False(noCli.StartEnabled);
+        Assert.Equal("No supported CLI is installed on m.", noCli.Note);
+    }
+
+    [Fact]
     public void No_terminal_or_no_cli_list_enables_nothing()
     {
         Assert.False(NewChatMachines.From("m", Info(terminal: false)).CliEnabled("claude"));

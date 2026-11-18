@@ -28,6 +28,13 @@ namespace Orbweaver
 
         internal static string Asking(string machine) => "Asking " + machine + "…";
 
+        // launch-info came back fine but says there is nothing to start a CLI in
+        // (no tmux on a Mac), or nothing to start.
+        internal static string NoTerminal(string machine) =>
+            machine + " has no terminal to start a session in. On a Mac, that means tmux isn't installed.";
+
+        internal static string NoCli(string machine) => "No supported CLI is installed on " + machine + ".";
+
         internal static string Starting(string machine) => "Starting on " + machine + "…";
 
         internal static string Launched(string cli, string machine) =>

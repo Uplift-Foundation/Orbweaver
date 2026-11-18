@@ -45,6 +45,8 @@ public class PeerLaunchCopyTests
         Assert.Equal("Starting on mini…", PeerLaunchCopy.Starting("mini"));
         Assert.Equal("Claude Code is starting on mini. Its orb appears when mini next reports its sessions.",
             PeerLaunchCopy.Launched("claude", "mini"));
+        Assert.Equal("mini has no terminal to start a session in. On a Mac, that means tmux isn't installed.", PeerLaunchCopy.NoTerminal("mini"));
+        Assert.Equal("No supported CLI is installed on mini.", PeerLaunchCopy.NoCli("mini"));
         Assert.Equal("OpenClaw conversations start from this machine only.", PeerLaunchCopy.OpenClawLocalOnly);
     }
 }

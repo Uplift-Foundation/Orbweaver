@@ -187,6 +187,50 @@ namespace Orbweaver
         // it finds a local row's by NewChatCli.
         internal static readonly object OpenClawTag = new();
 
+        // CB-357: the peer launcher the Machine row asks. The real one is
+        // PeerSessions.Launcher; a test hands in a fake. PeerLinkOnForTests
+        // stands in for the setting, which a headless suite would otherwise
+        // have to write into a settings file to flip.
+        internal static IPeerLauncher? PeerLauncherForTests;
+        internal static bool? PeerLinkOnForTests;
+
+        private static IPeerLauncher? PeerLauncher => PeerLauncherForTests;
+
+        // Two lines reserved under the Machine row, always, for the same
+        // reason the status line reserves three: every note it shows (asking,
+        // no answer, switch off) arrives after the window is on screen, and a
+        // note that could add a line would resize it (CB-207).
+        private const int MachineNoteLines = 2;
+        private const double MachineNoteLineHeight = 15;
+        private readonly ComboBox _machineCombo = new() { MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Stretch };
+        private readonly TextBlock _machineNote = new()
+        {
+            FontSize = 11,
+            Opacity = 0.7,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = MachineNoteLines,
+            LineHeight = MachineNoteLineHeight,
+            Height = MachineNoteLines * MachineNoteLineHeight
+        };
+        private StackPanel? _machineSection;
+        private IPeerLauncher? _peers;
+        // Null while this machine is chosen. Everything remote-specific hangs
+        // off it, so the local path reads exactly as it did before CB-357.
+        private NewChatMachines.Entry? _machine;
+        private NewChatMachines.Scope? _scope;
+        private int _machineGeneration;
+        private CancellationTokenSource? _machineCts;
+        private bool _restoringMachine;
+        private int _machineIndex;
+        // What each CLI row and the OpenClaw row were enabled for locally, so
+        // going back to this machine can put them back.
+        private readonly Dictionary<RadioButton, bool> _localEnabled = new();
+        private List<string>? _localFolders;
+        private string? _localFolder;
+        private NewChatCli? _localCli;
+        private bool _localOpenClaw;
+
         private readonly StackPanel _cliList = new() { Spacing = 6 };
         private readonly StackPanel _accountSection = new() { Spacing = 6, IsVisible = false };
         private readonly StackPanel _folderSection = new() { Spacing = 6 };
@@ -393,6 +437,8 @@ namespace Orbweaver
         private Control Body()
         {
             var root = new StackPanel { Margin = new Avalonia.Thickness(20), Spacing = 12 };
+
+            BuildMachineRow(root);
 
             root.Children.Add(new TextBlock { Text = "CLI", FontWeight = FontWeight.SemiBold });
             BuildCliList();
@@ -627,6 +673,7 @@ namespace Orbweaver
                 };
 
                 _cliList.Children.Add(radio);
+                _localEnabled[radio] = option.Enabled;
 
                 if (statedText is { Length: > 0 } shown)
                 {
@@ -658,6 +705,14 @@ namespace Orbweaver
             _accountWarningGhost.IsVisible = _accountGhost.IsVisible && options.Any(o =>
                 o.Enabled && AccountChoices(o.Cli).Any(c => AccountWarningFor(o.Cli, c) is not null));
             _folderGhost.IsVisible = options.Any(o => o.Enabled);
+            // CB-357: a remote machine can bring accounts and a folder of its
+            // own, after show, so the Machine row reserves both slots whether
+            // or not this machine would have (CB-207).
+            if (_machineSection is not null)
+            {
+                _accountGhost.IsVisible = true;
+                _folderGhost.IsVisible = true;
+            }
             _agentGhost.IsVisible = openClawUsable;
             _existingGhost.IsVisible = openClawUsable;
             var replyDisabled = openClawAvailability == OpenClawNewChatAvailability.ReplyDisabled;
@@ -695,6 +750,7 @@ namespace Orbweaver
             };
 
             _cliList.Children.Add(openClawRadio);
+            _localEnabled[openClawRadio] = openClawUsable;
 
             if (openClawReasonText is { Length: > 0 } shownOpenClawReason)
             {
@@ -793,6 +849,19 @@ namespace Orbweaver
                 return;
             }
 
+            if (_scope is { } remote)
+            {
+                // The far machine's own accounts for this CLI. "default" is
+                // the CLI's own directory there, which Choice spells as null.
+                var theirs = remote.Accounts(RelayAccounts.CliName(cli))
+                    .Select(a => new NewChatAccounts.Choice(a.Label, a.Id == RelayAccounts.Default ? null : a.Id))
+                    .ToList();
+                _accountCombo.ItemsSource = theirs;
+                _accountCombo.SelectedIndex = theirs.Count > 0 ? 0 : -1;
+                UpdateAccountWarning();
+                return;
+            }
+
             var choices = AccountChoices(cli);
             _accountCombo.ItemsSource = choices;
 
@@ -809,7 +878,8 @@ namespace Orbweaver
         // space BuildCliList reserved for it — see _accountWarning.
         private void UpdateAccountWarning()
         {
-            var text = _selectedCli is { } cli && _accountCombo.SelectedItem is NewChatAccounts.Choice choice
+            // A far machine's account directory is not ours to test.
+            var text = _scope is null && _selectedCli is { } cli && _accountCombo.SelectedItem is NewChatAccounts.Choice choice
                 ? AccountWarningFor(cli, choice)
                 : null;
 
@@ -1285,6 +1355,12 @@ namespace Orbweaver
 
         private async Task StartClicked()
         {
+            if (_machine is not null)
+            {
+                await StartRemoteClicked();
+                return;
+            }
+
             if (_openClawSelected)
             {
                 if (_existingMode) OpenExistingClicked();
@@ -1334,6 +1410,216 @@ namespace Orbweaver
             OrbweaverSettings.SetNewChatRecentFolders(updatedFolders);
 
             StartWatch(priorIds, cli, folder);
+        }
+
+        // ---- CB-357: the Machine row ------------------------------------
+
+        private void BuildMachineRow(StackPanel root)
+        {
+            _peers = PeerLauncher;
+            if (_peers is null) return;
+
+            var entries = NewChatMachines.Build(
+                PeerLinkOnForTests ?? OrbweaverSettings.PeerLinkEnabled, _peers.Machines(), OperatingSystem.IsWindows());
+            if (entries.Count == 0) return;
+
+            foreach (var e in entries)
+            {
+                _machineCombo.Items.Add(new ComboBoxItem
+                {
+                    Content = e.Label,
+                    Tag = e,
+                    // An offline peer is listed so it can be seen to be paired,
+                    // and cannot be chosen.
+                    IsEnabled = e.Selectable,
+                });
+            }
+            _machineCombo.SelectedIndex = 0;
+            _machineCombo.SelectionChanged += OnMachineChanged;
+
+            _machineSection = new StackPanel { Spacing = 6 };
+            _machineSection.Children.Add(new TextBlock { Text = "Machine", FontWeight = FontWeight.SemiBold });
+            _machineSection.Children.Add(_machineCombo);
+            _machineSection.Children.Add(_machineNote);
+            root.Children.Add(_machineSection);
+        }
+
+        internal ComboBox MachineCombo => _machineCombo;
+        internal TextBlock MachineNote => _machineNote;
+        internal StackPanel? MachineSection => _machineSection;
+
+        // Not private: a test drives a switch by setting the combo's selection,
+        // which comes here, and an offline pick must bounce back.
+        private async void OnMachineChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (_restoringMachine) return;
+            if (_machineCombo.SelectedItem is not ComboBoxItem { Tag: NewChatMachines.Entry entry })
+                return;
+
+            if (!entry.Selectable)
+            {
+                _restoringMachine = true;
+                _machineCombo.SelectedIndex = _machineIndex;
+                _restoringMachine = false;
+                return;
+            }
+
+            _machineIndex = _machineCombo.SelectedIndex;
+            await SwitchMachineAsync(entry);
+        }
+
+        private async Task SwitchMachineAsync(NewChatMachines.Entry entry)
+        {
+            var generation = ++_machineGeneration;
+            _machineCts?.Cancel();
+            _machineCts = new CancellationTokenSource();
+            var ct = _machineCts.Token;
+
+            if (entry.IsSelf)
+            {
+                RestoreLocal();
+                return;
+            }
+
+            // Snapshot the local form once, the first time it is left.
+            if (_machine is null)
+            {
+                _localFolders = (_folderCombo.ItemsSource as IEnumerable<string>)?.ToList();
+                _localFolder = _folderCombo.SelectedItem as string;
+                _localCli = _selectedCli;
+                _localOpenClaw = _openClawSelected;
+            }
+
+            _machine = entry;
+            ApplyScope(NewChatMachines.Loading(entry.Name!));
+
+            PeerLaunchInfo? info;
+            try { info = await _peers!.InfoAsync(entry.Name!, ct); }
+            catch (OperationCanceledException) { return; }
+
+            // A newer pick (or a return to this machine) owns the form now.
+            if (generation != _machineGeneration) return;
+            ApplyScope(NewChatMachines.From(entry.Name!, info));
+        }
+
+        // Paints one scope onto the form. Every control keeps its place and
+        // its size — only text, enablement and items change (CB-207).
+        private void ApplyScope(NewChatMachines.Scope scope)
+        {
+            _scope = scope;
+
+            var note = scope.Note ?? PeerLaunchCopy.OpenClawLocalOnly;
+            _machineNote.Text = note;
+            ToolTip.SetTip(_machineNote, note);
+
+            foreach (var radio in _cliList.Children.OfType<RadioButton>())
+            {
+                radio.IsEnabled = radio.Tag is NewChatCli cli && scope.CliEnabled(RelayAccounts.CliName(cli));
+                if (ReferenceEquals(radio.Tag, OpenClawTag)) ToolTip.SetTip(radio, PeerLaunchCopy.OpenClawLocalOnly);
+            }
+
+            // Keep the chosen CLI when the far machine has it; otherwise the
+            // first one it does have; otherwise none, and Start stays off.
+            var keep = _selectedCli is { } sel && scope.CliEnabled(RelayAccounts.CliName(sel)) ? sel : (NewChatCli?)null;
+            var pick = keep ?? _cliList.Children.OfType<RadioButton>()
+                .Where(r => r.IsEnabled && r.Tag is NewChatCli).Select(r => (NewChatCli)r.Tag!).Cast<NewChatCli?>().FirstOrDefault();
+
+            _openClawSelected = false;
+            _selectedCli = pick;
+            foreach (var radio in _cliList.Children.OfType<RadioButton>())
+                radio.IsChecked = pick is { } p && radio.Tag is NewChatCli c && c == p;
+
+            var folders = scope.Folders().ToList();
+            _folderCombo.ItemsSource = folders;
+            _folderCombo.SelectedIndex = folders.Count > 0 ? 0 : -1;
+            _browseButton.IsEnabled = false;
+
+            BuildAccountCombo();
+            UpdateTargetSectionVisibility();
+            _startButton.IsEnabled = scope.StartEnabled;
+            _statusLine.Text = null;
+        }
+
+        private void RestoreLocal()
+        {
+            _machine = null;
+            _scope = null;
+            _machineNote.Text = null;
+            ToolTip.SetTip(_machineNote, null);
+
+            foreach (var (radio, enabled) in _localEnabled)
+            {
+                radio.IsEnabled = enabled;
+                if (ReferenceEquals(radio.Tag, OpenClawTag)) ToolTip.SetTip(radio, null);
+            }
+
+            var folders = _localFolders ?? new List<string>();
+            _folderCombo.ItemsSource = folders;
+            _folderCombo.SelectedItem = _localFolder is { } f && folders.Contains(f) ? f : folders.FirstOrDefault();
+            _browseButton.IsEnabled = true;
+
+            // Put back what was chosen before the first remote pass, falling
+            // back to the first CLI this machine can start.
+            var radios = _cliList.Children.OfType<RadioButton>().ToList();
+            var back = (_localOpenClaw
+                    ? radios.FirstOrDefault(r => ReferenceEquals(r.Tag, OpenClawTag))
+                    : radios.FirstOrDefault(r => r.Tag is NewChatCli c && c == _localCli))
+                is { IsEnabled: true } was ? was
+                : radios.FirstOrDefault(r => r.IsEnabled && r.Tag is NewChatCli);
+            if (back is not null) back.IsChecked = true;
+
+            BuildAccountCombo();
+            UpdateTargetSectionVisibility();
+            _startButton.IsEnabled = true;
+            _statusLine.Text = null;
+        }
+
+        private async Task StartRemoteClicked()
+        {
+            if (_scope is not { StartEnabled: true } scope || _selectedCli is not { } cli)
+            {
+                _statusLine.Text = _scope?.Note ?? "Choose a CLI first.";
+                return;
+            }
+
+            var machine = _machine!.Name!;
+            var folder = _folderCombo.SelectedItem as string;
+            if (folder is not { Length: > 0 })
+            {
+                _statusLine.Text = "Choose a folder first.";
+                return;
+            }
+
+            var account = _accountSection.IsVisible && _accountCombo.SelectedItem is NewChatAccounts.Choice choice
+                ? choice.ProfileDir ?? RelayAccounts.Default
+                : RelayAccounts.Default;
+
+            var wire = RelayAccounts.CliName(cli);
+            _startButton.IsEnabled = false;
+            _statusLine.Text = PeerLaunchCopy.Starting(machine);
+
+            PeerLaunchResult result;
+            try
+            {
+                result = await _peers!.LaunchAsync(machine, new PeerLaunchSpec(wire, folder, account), _machineCts?.Token ?? CancellationToken.None);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            // The user moved to another machine while this was in flight; the
+            // form is theirs again and this answer is about something else.
+            if (_machine?.Name != machine || !ReferenceEquals(_scope, scope)) return;
+
+            _startButton.IsEnabled = true;
+
+            // Nothing local is written: the last CLI, the last account and the
+            // recent folders are this machine's, and no orb watch starts here —
+            // the new session's orb comes from the far machine's own roster.
+            _statusLine.Text = result.Ok
+                ? PeerLaunchCopy.Launched(wire, machine)
+                : PeerLaunchCopy.Explain(result.Code, result.Why, wire, machine);
         }
 
         // OpenClaw's Start: no launch-and-wait-for-a-hook the way a local

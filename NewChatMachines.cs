@@ -44,7 +44,12 @@ namespace Orbweaver
             PeerLaunchInfo? Info,
             string Machine)
         {
-            internal bool StartEnabled => State == InfoState.Ready;
+            // Ready alone is not enough: a machine with nowhere to start a CLI,
+            // or none installed, answers fine and still cannot be launched on.
+            internal bool StartEnabled => State == InfoState.Ready && AnyCli;
+
+            internal bool AnyCli =>
+                State == InfoState.Ready && Info is { Terminal: true, Clis: { } clis } && clis.Any(c => c.Installed);
 
             // The note line under the Machine row. Null when there is nothing
             // to say, in which case the line keeps its height and shows nothing.
@@ -53,6 +58,8 @@ namespace Orbweaver
                 InfoState.Loading => PeerLaunchCopy.Asking(Machine),
                 InfoState.NoAnswer => PeerLaunchCopy.Explain(PeerLaunchCodes.NoAnswer, null, "claude", Machine),
                 InfoState.NotAllowed => PeerLaunchCopy.Explain(PeerLaunchCodes.PeerLaunchOff, null, "claude", Machine),
+                InfoState.Ready when Info is { Terminal: false } => PeerLaunchCopy.NoTerminal(Machine),
+                InfoState.Ready when !AnyCli => PeerLaunchCopy.NoCli(Machine),
                 _ => null,
             };
 
