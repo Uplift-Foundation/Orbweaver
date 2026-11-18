@@ -182,6 +182,29 @@ public class FileLinkLauncherTests
         Assert.DoesNotContain("-R", open!.ArgumentList);
     }
 
+    // A fetched copy is 0600 on disk, so the far side's execute bit reaches the
+    // policy only as FileFacts.Executable. That ends in a reveal on both
+    // paths — never an open, and never a refusal.
+    [Fact]
+    public void AServerExecutableWithAnAllowlistedNameIsRevealedByPlanAndPlanReveal()
+    {
+        var exec = new FileFacts(true, false, Executable: true);
+
+        Assert.True(FileLinkLauncher.Plan("/c/x.pdf", exec, true, false, out var planned, out var verdict));
+        Assert.Equal(FileLinkAction.Reveal, verdict.Action);
+        Assert.Equal(["-R", "--", "/c/x.pdf"], planned!.ArgumentList);
+
+        Assert.True(FileLinkLauncher.PlanReveal("/c/x.pdf", exec, true, false, out var revealed));
+        Assert.Equal(["-R", "--", "/c/x.pdf"], revealed!.ArgumentList);
+
+        Assert.True(FileLinkLauncher.PlanReveal("C:\\c\\x.pdf", exec, false, true, out var win));
+        Assert.Equal(["/select,C:\\c\\x.pdf"], win!.ArgumentList);
+
+        // The control: the same facts without the bit open.
+        Assert.True(FileLinkLauncher.Plan("/c/x.pdf", Plain, true, false, out var opened, out _));
+        Assert.DoesNotContain("-R", opened!.ArgumentList);
+    }
+
     [Fact]
     public void PlanRevealRevealsTheTargetOfASymlink()
     {
