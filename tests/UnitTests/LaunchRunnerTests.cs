@@ -193,4 +193,34 @@ public class LaunchRunnerTests
         Assert.True(LaunchRunner.SameFolder("C:\\W\\", "c:\\w", true));
         Assert.False(LaunchRunner.SameFolder(null, "/w", false));
     }
+
+    // The override that keeps the loopback suites from opening a terminal. It
+    // is read at call time, so seams built before it was set (PeerLaunchServer.
+    // Shared builds its once per process) still honour it, and nothing built
+    // after it is cleared keeps a stale fake.
+    [Fact]
+    public void TheStartOverrideIsOffByDefaultAndIsReadWhenTheStartIsCalled()
+    {
+        Assert.Null(LaunchRunner.StartForTests);
+
+        // Built while the override is null, as Shared's is.
+        var seams = LaunchRunner.DefaultLaunchSeams();
+        var placed = new List<(string, string)>();
+        var started = 0;
+
+        LaunchRunner.StartForTests = new LaunchRunner.StartOverride(
+            (command, cwd) => { placed.Add((command, cwd)); return ("%9", null); },
+            _ => { started++; return 77; });
+        try
+        {
+            Assert.Equal(("%9", (string?)null), seams.PlaceMac("claude", "/w"));
+            Assert.Equal(77, seams.StartWindows(new ProcessStartInfo("claude")));
+            Assert.Equal([("claude", "/w")], placed);
+            Assert.Equal(1, started);
+        }
+        finally
+        {
+            LaunchRunner.StartForTests = null;
+        }
+    }
 }

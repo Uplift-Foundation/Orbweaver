@@ -125,6 +125,17 @@ namespace Orbweaver
             return string.Equals(Trim(a), Trim(b), isWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
         }
 
+        // Exists only so a suite can never start a real terminal: the loopback
+        // tests drive PeerLaunchServer.Shared, whose start goes through
+        // DefaultLaunchSeams, and a gate bug that let a launch through would
+        // otherwise open tmux or conhost on whoever ran them. Null in
+        // production and unset by anything but a test.
+        internal static StartOverride? StartForTests;
+
+        internal sealed record StartOverride(
+            Func<string, string, (string? Pane, string? Why)> PlaceMac,
+            Func<System.Diagnostics.ProcessStartInfo, int?> StartWindows);
+
         // The real desk's launch seams, shared by the phone path and the peer
         // path so the two can never start a CLI differently. Excluded: each is
         // one line into something that runs real processes.
@@ -134,7 +145,17 @@ namespace Orbweaver
             cli => NewChatLauncher.LocateFresh(LaunchGate.CliFor(cli)),
             Directory.Exists,
             () => System.Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } sh ? sh : "/bin/zsh",
-            TerminalLauncher.PlaceForPhone,
-            TerminalLauncher.StartConsole);
+            PlaceMac,
+            StartWindows);
+
+        // Looked up when the start is called, not when the seams are built:
+        // PeerLaunchServer.Shared builds its seams once per process, so an
+        // override read at that moment would either miss a test that set it
+        // later or leave a stale fake behind for every class after it.
+        private static (string? Pane, string? Why) PlaceMac(string command, string cwd) =>
+            StartForTests is { } fake ? fake.PlaceMac(command, cwd) : TerminalLauncher.PlaceForPhone(command, cwd);
+
+        private static int? StartWindows(System.Diagnostics.ProcessStartInfo start) =>
+            StartForTests is { } fake ? fake.StartWindows(start) : TerminalLauncher.StartConsole(start);
     }
 }

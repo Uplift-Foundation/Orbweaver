@@ -24,14 +24,29 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
     // before the folder, so without this a runner with no claude answers
     // unknown_cli where a developer's machine answers unknown_cwd. Every case
     // is refused by the gate, so no launch seam is ever reached.
-    public PeerLaunchRealServerLoopbackTests() =>
+    //
+    // The other pin is the start itself: Shared's start goes through
+    // LaunchRunner.DefaultLaunchSeams, and these seams count and refuse, so a
+    // gate bug that let a launch through fails Dispose's zero-start assertion
+    // instead of opening a terminal on whoever ran the suite.
+    private int _started;
+
+    public PeerLaunchRealServerLoopbackTests()
+    {
         NewChatLauncher.LocateFreshForTests = cli => cli == NewChatCli.ClaudeCode
             ? (OperatingSystem.IsWindows() ? "C:\\c\\claude.exe" : "/bin/claude")
             : null;
+        LaunchRunner.StartForTests = new LaunchRunner.StartOverride(
+            (_, _) => { Interlocked.Increment(ref _started); return (null, "refused by the test"); },
+            _ => { Interlocked.Increment(ref _started); return null; });
+    }
 
     public void Dispose()
     {
+        var started = Volatile.Read(ref _started);
         NewChatLauncher.LocateFreshForTests = null;
+        LaunchRunner.StartForTests = null;
+        Assert.Equal(0, started);
         OrbweaverSettings.PeerLaunchInboundEnabled = _saved;
         foreach (var host in _hosts) host.Dispose();
     }
