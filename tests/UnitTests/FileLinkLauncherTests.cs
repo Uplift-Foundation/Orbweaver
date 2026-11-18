@@ -94,6 +94,15 @@ public class FileLinkLauncherTests
     }
 
     [Fact]
+    public void AWindowsDeviceNameStartsNothingEvenOnAnOpenVerdict()
+    {
+        Assert.Null(Info(FileLinkVerdict.Open, "C:\\a\\CON.pdf", false, true));
+        Assert.Null(Info(FileLinkVerdict.Reveal("x"), "C:\\a\\nul.txt", false, true));
+        Assert.NotNull(Info(FileLinkVerdict.Open, "C:\\a\\CONSOLE.pdf", false, true));
+        Assert.NotNull(Info(FileLinkVerdict.Open, "/a/CON.pdf", true, false));
+    }
+
+    [Fact]
     public void AWindowsTrailingDotStartsNothingEvenOnAnOpenVerdict()
     {
         Assert.Null(Info(FileLinkVerdict.Open, "C:\\a\\x.exe.", false, true));

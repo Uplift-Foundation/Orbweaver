@@ -33,7 +33,7 @@ namespace Orbweaver
             if (link is null || link.Value.IsWindowsPath != isWindows) return null;
 
             var local = link.Value.Path;
-            if (isWindows && FileLinkPolicy.HasTrailingDotOrSpace(local)) return null;
+            if (isWindows && (FileLinkPolicy.HasTrailingDotOrSpace(local) || FileLinkPolicy.IsReservedDeviceName(local))) return null;
 
             var reveal = verdict.Action == FileLinkAction.Reveal || !FileLinkPolicy.IsAllowedExtension(local);
 

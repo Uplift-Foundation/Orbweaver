@@ -148,6 +148,12 @@ namespace Orbweaver
             if (isWindows && HasTrailingDotOrSpace(link.Path))
                 return FileLinkVerdict.Refuse("Names ending in a dot or space are not opened from chat.");
 
+            // CON.pdf and nul.txt are not files on Windows: the name before the
+            // first dot is a device, whatever follows, and opening one reads
+            // the console or blocks on a port.
+            if (isWindows && IsReservedDeviceName(link.Path))
+                return FileLinkVerdict.Refuse("That name is a Windows device, not a file.");
+
             if (!facts.Exists) return FileLinkVerdict.Refuse("That file does not exist.");
 
             if (facts.IsDirectory) return FileLinkVerdict.Reveal("Folders are shown, not opened.");
@@ -180,6 +186,33 @@ namespace Orbweaver
 
         private static bool IsNetworkPath(string path) =>
             path.StartsWith("\\\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal);
+
+        private static readonly string[] ReservedStems = ["CON", "PRN", "AUX", "NUL"];
+
+        // The final segment's stem — before its first dot, trailing spaces
+        // trimmed, compared without case — is CON, PRN, AUX, NUL, COM0-9 or
+        // LPT0-9, including the superscript digits Windows also reserves
+        // (COM¹ COM² COM³, LPT¹ LPT² LPT³). "CONSOLE" and "con1" are names.
+        internal static bool IsReservedDeviceName(string path)
+        {
+            var name = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
+            var dot = name.IndexOf('.');
+            var stem = (dot < 0 ? name : name[..dot]).TrimEnd(' ');
+
+            foreach (var reserved in ReservedStems)
+            {
+                if (string.Equals(stem, reserved, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+
+            if (stem.Length != 4) return false;
+
+            var prefix = stem[..3];
+            if (!prefix.Equals("COM", StringComparison.OrdinalIgnoreCase)
+                && !prefix.Equals("LPT", StringComparison.OrdinalIgnoreCase)) return false;
+
+            var digit = stem[3];
+            return (digit >= '0' && digit <= '9') || digit is '\u00B9' or '\u00B2' or '\u00B3';
+        }
 
         internal static bool HasTrailingDotOrSpace(string path)
         {

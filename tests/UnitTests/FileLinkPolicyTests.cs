@@ -128,6 +128,40 @@ public class FileLinkPolicyTests
         Assert.Equal(FileLinkAction.Open, Win("C:\\a\\x.pdf"));
     }
 
+    // CON.pdf is a device on Windows, not a file. Each device name, in either
+    // case and with a trailing space before the extension, is refused; the
+    // control beside each is a longer or different name that is an ordinary file.
+    [Theory]
+    [InlineData("CON.pdf")] [InlineData("con.pdf")] [InlineData("Con.txt")] [InlineData("PRN.pdf")]
+    [InlineData("AUX.pdf")] [InlineData("nul.txt")] [InlineData("NUL.tar.pdf")] [InlineData("CON .pdf")]
+    [InlineData("COM0.pdf")] [InlineData("COM1.pdf")] [InlineData("com9.pdf")] [InlineData("LPT0.pdf")]
+    [InlineData("LPT1.pdf")] [InlineData("lpt9.txt")]
+    [InlineData("COM\u00B9.pdf")] [InlineData("COM\u00B2.pdf")] [InlineData("COM\u00B3.pdf")]
+    [InlineData("LPT\u00B9.pdf")] [InlineData("lpt\u00B2.pdf")] [InlineData("LPT\u00B3.pdf")]
+    public void WindowsDeviceNamesAreRefused(string name)
+    {
+        Assert.Equal(FileLinkAction.Refuse, Win("C:\\a\\" + name));
+        Assert.Equal(FileLinkAction.Open, Win("C:\\a\\x.pdf"));
+    }
+
+    [Theory]
+    [InlineData("CONSOLE.pdf")] [InlineData("con1.pdf")] [InlineData("CONN.pdf")] [InlineData("PRNT.pdf")]
+    [InlineData("AUXILIARY.pdf")] [InlineData("NULL.pdf")] [InlineData("COM10.pdf")] [InlineData("COM.pdf")]
+    [InlineData("COMA.pdf")] [InlineData("LPT.pdf")] [InlineData("LPT10.pdf")] [InlineData("xCON.pdf")]
+    [InlineData("a.CON.pdf")] [InlineData("COM\u2074.pdf")]
+    public void NamesThatOnlyResembleDevicesOpen(string name) =>
+        Assert.Equal(FileLinkAction.Open, Win("C:\\a\\" + name));
+
+    // A device name is a Windows rule: on a Mac, CON.pdf is a file.
+    [Fact]
+    public void ADeviceNameIsOnlyAWindowsProblem() =>
+        Assert.Equal(FileLinkAction.Open, Mac("/a/CON.pdf"));
+
+    // On Windows only the final segment counts, as specified.
+    [Fact]
+    public void OnlyTheFinalSegmentIsCheckedForADeviceName() =>
+        Assert.Equal(FileLinkAction.Open, Win("C:\\CON\\x.pdf"));
+
     // On a Mac a trailing dot is not refused (that is a Windows rule), but the
     // extension is then "." and off the allowlist, so it is shown, not opened.
     [Fact]
