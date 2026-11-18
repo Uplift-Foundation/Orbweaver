@@ -4,27 +4,49 @@ name: CI
 # the packaging path before a tag is pushed, because a Release run that fails
 # halfway leaves a tag with no assets attached to it.
 #
-# Tests run before packaging, in the same job, on purpose: a failing test
-# blocks the artifact the same way a failed publish already does, rather than
-# racing a separate job that might finish (and upload) first. develop is in
-# the push trigger alongside main because that is where feature/ and bugfix/
-# branches land first and sit for a while — untested until a release branch
-# cuts, previously.
+# CB-367: this used to be one job per rid with every suite as a step, so wall
+# time was their sum (~23 min on macOS). It is now five parallel jobs per rid --
+# checks, unit, ui, screenshots, package -- plus a `build` gate, so wall time is
+# the slowest suite plus its own build. Each job checks out and builds for
+# itself: Integration's whole step, build included, is ~77 s, and sharing
+# bin/obj between runners means `--no-build` against MTP's rid-specific output
+# paths, which is more fragile than a minute's build. Five, not six, because
+# GitHub's documented concurrency cap for macOS jobs on the Team plan is 5
+# (from GitHub's docs, not measured here), and a sixth would just queue.
+#
+# What used to be true and no longer is: "a failing test blocks the artifact
+# the same way a failed publish does, in the same job". `package` now runs in
+# parallel with the suites, so `unsigned-<rid>` uploads even when a suite is
+# red. What blocks is the `build` gate below.
+#
+# The required status checks (ruleset "main and develop: PRs only") are
+# `build (macos-latest, osx-arm64)` and `build (windows-latest, win-x64)`.
+# `build` keeps exactly those names and means "every job passed". It runs
+# `if: always()` and checks each need's result itself, because a job skipped
+# on a failed need reports as passing to a required check. It aggregates
+# across both rids (`needs.<job>.result` covers the whole matrix), so a
+# Windows-only failure turns both checks red; both are required anyway, so
+# what blocks a merge is unchanged, and the failing rid is the one whose
+# suite job is red. The workflow name stays `CI` and `ui-screenshots-<rid>`
+# stays the only artifact with that prefix: publish-screenshots.yml listens
+# for this workflow by name and downloads by that pattern.
+#
+# develop is in the push trigger alongside main because that is where feature/
+# and bugfix/ branches land first and sit for a while -- untested until a
+# release branch cuts, previously.
 on:
   push:
     branches: [main, develop]
   pull_request:
   workflow_dispatch:
 
-# Nothing here writes through the token: CI uploads artifacts (which uses the
-# runtime token, not GITHUB_TOKEN) and verify only runs `gh release download`
-# on a public release. Read-only is the whole need, and stating it means a
-# repo whose default token is ever widened does not widen these runs with it.
 permissions:
   contents: read
 
 jobs:
-  build:
+  # Console exes, then every Python tool suite. Cheap and platform-neutral.
+  checks:
+    name: checks (${{ matrix.rid }})
     strategy:
       fail-fast: false
       matrix:
@@ -34,14 +56,8 @@ jobs:
           - os: windows-latest
             rid: win-x64
     runs-on: ${{ matrix.os }}
-
-    # CB-269: a backstop above every step's own limit, so a hang the step
-    # timeouts somehow miss still ends in about an hour rather than at GitHub's
-    # six. The step limits below are what normally fire; sized from run
-    # 39505745439's green attempt (step times, build included): Unit 132/134 s,
-    # Integration 62/54 s, UI 128/68 s per attempt with up to three attempts,
-    # Screenshots 518/495 s.
-    timeout-minutes: 75
+    # CB-269: a backstop above every step's own limit.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v7
@@ -58,6 +74,7 @@ jobs:
           dotnet run --project tests/ArrangementTests -c Release
           dotnet run --project tests/GlyphTests -c Release
           dotnet run --project tests/TranscriptTests -c Release
+
 
       # tools/merge-coverage.py is the only Python in the repository that
       # decides anything, and what it decides is the coverage number every
@@ -144,6 +161,37 @@ jobs:
       - name: Unit tests (build-macos-app.sh install tail)
         run: python tools/test-build-macos-app.py
 
+      # CB-367: the budget checker's own suite -- passing control, over-budget
+      # failure, allow-listed pass, and the cases where it must refuse to pass.
+      - name: Unit tests (check-test-budget.py)
+        run: python tools/test-check-test-budget.py
+
+  unit:
+    name: unit (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # `python`, not `python3`: the Windows image has no python3 (see `checks`).
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       # Everything added after those three is xUnit, in tests/Tests.sln. Run
       # as separate `dotnet test` invocations rather than one pass over the
       # whole solution, so a red run in one attributes to a suite by its own
@@ -171,6 +219,52 @@ jobs:
       - name: Integration tests (xUnit)
         timeout-minutes: 10
         run: dotnet test tests/IntegrationTests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none --logger "trx;LogFileName=integration-tests.trx" --results-directory TestResults
+
+      # CB-367: fails the job when any single test ran past the per-test budget
+      # and is not in tools/test-budget-allowlist.txt with a reason. if:
+      # success() || failure() so a red suite still names its slow tests, and a
+      # cancelled run does not pile a second error on top of the cancellation.
+      - name: Test time budget
+        if: success() || failure()
+        run: python tools/check-test-budget.py --allowlist tools/test-budget-allowlist.txt TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-unit-${{ matrix.rid }}
+          path: |
+            TestResults/*.trx
+            TestResults/**/Sequence_*.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  ui:
+    name: ui (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    # CB-269 backstop; the step limit below is what normally fires.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # `python`, not `python3`: the Windows image has no python3 (see `checks`).
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
       # xUnit v3 now (see tests/UiTests/Orbweaver.UiTests.csproj's own
       # comment for why), which drops the old VSTest-hosted `dotnet test`
@@ -332,6 +426,83 @@ jobs:
           New-Item -ItemType Directory -Force -Path TestResults | Out-Null
           Copy-Item "tests/UiTests/bin/Release/net10.0/${{ matrix.rid }}/TestResults/ui-tests.trx" "TestResults/ui-tests.trx"
 
+      # CB-367: fails the job when any single test ran past the per-test budget
+      # and is not in tools/test-budget-allowlist.txt with a reason. if:
+      # success() || failure() so a red suite still names its slow tests, and a
+      # cancelled run does not pile a second error on top of the cancellation.
+      - name: Test time budget
+        if: success() || failure()
+        run: python tools/check-test-budget.py --allowlist tools/test-budget-allowlist.txt TestResults
+
+      # CB-279: surfaces what `--hangdump` left behind in this suite. always(),
+      # because the case this exists for is the step above being killed by
+      # timeout-minutes. A hang log on a green run is still reported, as a
+      # warning: it means an attempt ran past its hangdump timeout.
+      - name: Report hang dumps
+        if: always()
+        shell: pwsh
+        run: |
+          $dest = "TestResults/hangdumps"
+          $dir = "tests/UiTests/bin/Release/net10.0/${{ matrix.rid }}/TestResults"
+          $found = @()
+          if (Test-Path $dir) { $found += Get-ChildItem -Path $dir -Filter "*_hang.*" -File }
+          if ($found.Count -eq 0) { Write-Host "No hang dumps."; exit 0 }
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          foreach ($f in $found) {
+            Copy-Item $f.FullName (Join-Path $dest $f.Name)
+            if ($f.Extension -eq ".log") {
+              $inFlight = (Get-Content $f.FullName) -join "; "
+              Write-Host "::warning title=Test host hang ($($f.Name))::In flight when the hang dump fired: $inFlight"
+            } else {
+              Write-Host "Dump written: $($f.Name) ($([math]::Round($f.Length / 1MB, 1)) MB)"
+            }
+          }
+
+      - name: Upload hang dumps
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hang-dumps-ui-${{ matrix.rid }}
+          path: TestResults/hangdumps/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-ui-${{ matrix.rid }}
+          path: |
+            TestResults/*.trx
+          if-no-files-found: error
+          retention-days: 14
+
+  screenshots:
+    name: screenshots (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # `python`, not `python3`: the Windows image has no python3 (see `checks`).
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       # Gated now, not a proof of concept: this started as a 2-screenshot POC
       # with continue-on-error, scaled up to one capture per tests/UiTests
       # scenario (30 total) once the POC proved out. It turns on real Skia
@@ -388,21 +559,26 @@ jobs:
           New-Item -ItemType Directory -Force -Path TestResults | Out-Null
           Copy-Item "tests/UiScreenshots/bin/Release/net10.0/${{ matrix.rid }}/TestResults/ui-screenshots.trx" "TestResults/ui-screenshots.trx"
 
-      # CB-279: surfaces what `--hangdump` left behind in either UI suite.
-      # always(), because the case this exists for is the step above being
-      # killed by timeout-minutes. A hang log on a green run is still reported
-      # — as a warning — since it means an attempt ran past its hangdump
-      # timeout: either a retry hid a real hang, or the figure is too tight.
+      # CB-367: fails the job when any single test ran past the per-test budget
+      # and is not in tools/test-budget-allowlist.txt with a reason. if:
+      # success() || failure() so a red suite still names its slow tests, and a
+      # cancelled run does not pile a second error on top of the cancellation.
+      - name: Test time budget
+        if: success() || failure()
+        run: python tools/check-test-budget.py --allowlist tools/test-budget-allowlist.txt TestResults
+
+      # CB-279: surfaces what `--hangdump` left behind in this suite. always(),
+      # because the case this exists for is the step above being killed by
+      # timeout-minutes. A hang log on a green run is still reported, as a
+      # warning: it means an attempt ran past its hangdump timeout.
       - name: Report hang dumps
         if: always()
         shell: pwsh
         run: |
           $dest = "TestResults/hangdumps"
+          $dir = "tests/UiScreenshots/bin/Release/net10.0/${{ matrix.rid }}/TestResults"
           $found = @()
-          foreach ($suite in "UiTests", "UiScreenshots") {
-            $dir = "tests/$suite/bin/Release/net10.0/${{ matrix.rid }}/TestResults"
-            if (Test-Path $dir) { $found += Get-ChildItem -Path $dir -Filter "*_hang.*" -File }
-          }
+          if (Test-Path $dir) { $found += Get-ChildItem -Path $dir -Filter "*_hang.*" -File }
           if ($found.Count -eq 0) { Write-Host "No hang dumps."; exit 0 }
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           foreach ($f in $found) {
@@ -419,7 +595,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: hang-dumps-${{ matrix.rid }}
+          name: hang-dumps-screenshots-${{ matrix.rid }}
           path: TestResults/hangdumps/*
           if-no-files-found: ignore
           retention-days: 7
@@ -455,12 +631,31 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ matrix.rid }}
+          name: test-results-screenshots-${{ matrix.rid }}
           path: |
             TestResults/*.trx
-            TestResults/**/Sequence_*.xml
           if-no-files-found: error
           retention-days: 14
+
+  package:
+    name: package (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
 
       # The probe is what every live OpenClaw check runs through, and its compile
       # list is kept by hand: a dependency added to any file in it breaks this
@@ -500,3 +695,26 @@ jobs:
             dist/*.exe
           if-no-files-found: error
           retention-days: 14
+
+  # The gate. Name and matrix reproduce the required status checks exactly.
+  build:
+    name: build (${{ matrix.os }}, ${{ matrix.rid }})
+    if: always()
+    needs: [checks, unit, ui, screenshots, package]
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job must have succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null \
+            || { echo "::error::a CI job was not green (failure, cancelled and skipped all count as red)"; exit 1; }
