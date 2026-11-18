@@ -350,6 +350,38 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.Equal("default", f.Launches.Single().spec.Account);
     }
 
+    // A machine with no usable CLI of its own and no OpenClaw has nothing
+    // selected, so on the way back there is no saved radio to restore and the
+    // restore falls through to "the first CLI this machine can start": none.
+    // Reaching a peer is exactly what such a machine is for.
+    [AvaloniaFact]
+    public void ReturningToAMachineWithNoUsableCliDisablesEveryRowAgain()
+    {
+        var f = Ready();
+        var w = Make(f);
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            new NewChatOption(NewChatCli.ClaudeCode, Enabled: false, Reason: "not found", Warning: null),
+            new NewChatOption(NewChatCli.Codex, Enabled: false, Reason: "not found", Warning: null),
+            new NewChatOption(NewChatCli.Grok, Enabled: false, Reason: "not found", Warning: null),
+        };
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
+        w = RebuildWith(f);
+        Assert.Null(w.SelectedCli);
+
+        Pick(w, 1);
+        Assert.Equal(NewChatCli.ClaudeCode, w.SelectedCli); // the peer has one
+        Assert.True(w.StartButton.IsEnabled);
+
+        // Back home: the restore runs its fall-through, which finds no CLI this
+        // machine can start. Every row is disabled again and OpenClaw is not
+        // selected. (What SelectedCli reads here is not pinned: it is left
+        // holding the peer's pick, which is reported as a finding, not asserted.)
+        Pick(w, 0);
+        Assert.False(w.OpenClawSelected);
+        Assert.All(w.CliList.Children.OfType<RadioButton>(), r => Assert.False(r.IsEnabled));
+    }
+
     [AvaloniaFact]
     public void WithoutTheSeamTheRowFollowsTheRealPeerLinkSetting()
     {
