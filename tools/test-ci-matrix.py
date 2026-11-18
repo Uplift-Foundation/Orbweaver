@@ -22,6 +22,16 @@ CI = os.path.join(HERE, "..", ".github", "workflows", "ci.yml")
 SUITES = {"checks", "unit", "ui", "screenshots", "package"}
 RESERVED = {"os", "rid", "name"}
 RIDS = {"osx-arm64", "win-x64"}
+# What each suite's command must be gated on. A step under a real but wrong
+# flag (UiTests under matrix.unit) would pass the structural checks above.
+COMMANDS = {
+    "dotnet run --project tests/ArrangementTests": "checks",
+    "dotnet test tests/UnitTests": "unit",
+    "dotnet test tests/IntegrationTests": "unit",
+    "dotnet test tests/UiTests": "ui",
+    "dotnet test tests/UiScreenshots": "screenshots",
+    "dotnet publish Orbweaver.csproj": "package",
+}
 
 
 def suite_job(text):
@@ -54,7 +64,7 @@ def suite_steps(job):
             continue
         im = re.search(r"^        if: (.*)$", s, re.M)
         flags = set(re.findall(r"matrix\.(\w+)", im.group(1))) - RESERVED if im else None
-        out.append((name, flags))
+        out.append((name, flags, s))
     return out
 
 
@@ -72,7 +82,7 @@ def problems(text):
             n = flags.count(suite)
             if n != 1:
                 found.append(f"{rid}: suite {suite!r} runs {n} times, expected exactly 1")
-    for name, flags in suite_steps(job):
+    for name, flags, _ in suite_steps(job):
         if flags is None:
             found.append(f"step {name!r} has no `if:`")
             continue
@@ -80,8 +90,13 @@ def problems(text):
             found.append(f"step {name!r} tests matrix.{f}, which is not a suite flag")
         if not flags & SUITES:
             found.append(f"step {name!r} names no suite flag in its `if:`")
+    # a real but wrong flag: each suite's command must sit under its own flag
+    for name, flags, body in suite_steps(job):
+        for needle, want in COMMANDS.items():
+            if needle in body and flags and want not in flags:
+                found.append(f"step {name!r} runs {needle!r} but is gated on {sorted(flags)}, not {want!r}")
     # every suite flag must be used by at least one step
-    used = set().union(*[f for _, f in suite_steps(job) if f])
+    used = set().union(*[f for _, f, _ in suite_steps(job) if f])
     for suite in sorted(SUITES - used):
         found.append(f"no step is gated on matrix.{suite}")
     return found
@@ -117,6 +132,12 @@ class CiMatrixTests(unittest.TestCase):
         bad = self.text.replace("name: ui, ui: true }\n          # Windows", "name: ui, ui: true, unit: true }\n          # Windows", 1)
         self.assertNotEqual(bad, self.text)
         self.assertIn("osx-arm64: suite 'unit' runs 2 times, expected exactly 1", problems(bad))
+
+    def test_a_suite_command_under_the_wrong_but_real_flag_is_caught(self):
+        i = self.text.index("      - name: UI tests (xUnit, headless)\n        if: ${{ !cancelled() && matrix.ui }}")
+        bad = self.text[:i] + self.text[i:].replace("matrix.ui }}", "matrix.unit }}", 1)
+        self.assertNotEqual(bad, self.text)
+        self.assertTrue(any("dotnet test tests/UiTests" in p and "not 'ui'" in p for p in problems(bad)), problems(bad))
 
     def test_a_step_with_no_if_is_caught(self):
         bad = self.text.replace("        if: ${{ !cancelled() && matrix.unit }}\n", "", 1)
