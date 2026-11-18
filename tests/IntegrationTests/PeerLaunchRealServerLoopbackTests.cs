@@ -173,4 +173,23 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
 
         Assert.Equal(RelayReplies.UnknownCli, (await Launch(client)).Code);
     }
+
+    // The control for every zero-start assertion in this class: without it,
+    // "no starts" would also hold if the override were never wired in. The
+    // seams are built by the same method Shared's come from, and one start is
+    // invoked through whichever of the two this platform uses.
+    [Fact]
+    public void TheStartCounterIsLive()
+    {
+        var seams = LaunchRunner.DefaultLaunchSeams();
+
+        if (OperatingSystem.IsWindows()) seams.StartWindows(new System.Diagnostics.ProcessStartInfo("claude"));
+        else seams.PlaceMac("claude", "/w");
+
+        Assert.Equal(1, Volatile.Read(ref _started));
+
+        // Put back, so Dispose's zero-start assertion judges the rest of the
+        // class and not this deliberate call.
+        Interlocked.Exchange(ref _started, 0);
+    }
 }
