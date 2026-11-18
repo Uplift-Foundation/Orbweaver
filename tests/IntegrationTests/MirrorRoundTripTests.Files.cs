@@ -241,6 +241,145 @@ public partial class MirrorRoundTripTests
             BytesOf(await harness.Client.FetchFileAsync("job-hunter", Path.Combine(tree.Project, "sub", "notes.txt"), null)).Data);
     }
 
+    // CB-384. One file in flight per peer, and a peer that asks for the next file
+    // the instant it has the last answer is not "busy": the answer is the end of
+    // the request. The slot used to be released after the reply was sent, so a
+    // client acting on the reply while the server was still unwinding from the
+    // send was refused busy - once in 1921 on a CI runner, and a certainty here,
+    // where the client's next request is made from inside the delivery itself.
+    [Fact]
+    public async Task APeerThatAsksAgainTheInstantItIsAnsweredIsNotToldBusy()
+    {
+        var (harness, tree) = await FileHarnessAsync();
+        using var _ = tree;
+        var second = new TaskCompletionSource<PeerFileResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acted = false;
+
+        harness.AfterDelivered = async frame =>
+        {
+            if (acted || frame.Type != MirrorProtocol.Err) return;
+            acted = true;
+            second.SetResult(await harness.Client.FetchFileAsync(
+                "job-hunter", Path.Combine(tree.Project, "sub", "notes.txt"), null));
+        };
+
+        var first = await harness.Client.FetchFileAsync("job-hunter", Path.Combine(tree.Denied, "x.txt"), null);
+
+        Assert.Equal(MirrorProtocol.ErrForbiddenPath, CodeOf(first));
+
+        // The second request is made from inside the server's own send of the first
+        // answer, so it finishes on the server's task, not the test's: waited for
+        // here, with a bound that only matters if something is broken.
+        var done = await Task.WhenAny(second.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        Assert.True(acted, "the hook never ran, so nothing was tested");
+        Assert.Same(second.Task, done);
+        Assert.Equal("notes"u8.ToArray(), BytesOf(await second.Task).Data);
+    }
+
+    // The slot is let go just before the answer's LAST piece, not a piece earlier:
+    // the buffer is still being sent until then, and one file per peer is a memory
+    // bound as well as a courtesy. A request made while an earlier piece is being
+    // delivered is busy; one made from the last piece is not.
+    [Fact]
+    public async Task ATransferKeepsThePeersSlotUntilItsLastPiece()
+    {
+        var (harness, tree) = await FileHarnessAsync();
+        using var _ = tree;
+        var path = tree.Write("report.pdf", Random(MirrorProtocol.PictureChunkBytes * 2 + 1234));
+        string? transferId = null;
+        var firstPiece = true;
+
+        harness.AfterDelivered = async frame =>
+        {
+            if (frame.Type != MirrorProtocol.Chunk) return;
+            transferId ??= frame.Id;
+            if (frame.Id != transferId) return;
+
+            if (firstPiece)
+            {
+                firstPiece = false;
+                await harness.Server.HandleAsync(Harness.NearRelay, FileFrame("mid", path));
+            }
+            else if (frame.Get("H") is not null)
+            {
+                await harness.Server.HandleAsync(Harness.NearRelay, FileFrame("last", path));
+            }
+        };
+
+        var got = BytesOf(await harness.Client.FetchFileAsync("job-hunter", path, null));
+
+        Assert.Equal(MirrorProtocol.PictureChunkBytes * 2 + 1234, got.Data.Length);
+        Assert.Equal(MirrorProtocol.ErrBusy, ErrCodeIn(harness.ToClient, "mid"));
+        // Not refused: accepted, and answered with its own pieces.
+        Assert.Null(ErrCodeIn(harness.ToClient, "last"));
+    }
+
+    // The release is once-only. The first request lets go before its answer, a second
+    // takes the slot, and the first one's own cleanup then runs: it must not release
+    // the second's slot, or a third would be served alongside it.
+    [Fact]
+    public async Task AnEarlierRequestsCleanupDoesNotReleaseALaterRequestsSlot()
+    {
+        var tree = new FileTree();
+        using var _ = tree;
+        var gate = new BlockingSource(PeerFileSource.Instance);
+        tree.Source = gate;
+        var (harness, _) = await FileHarnessAsync(tree);
+        var notes = Path.Combine(tree.Project, "sub", "notes.txt");
+        Task? firstTask = null;
+
+        harness.AfterDelivered = async frame =>
+        {
+            if (firstTask is not null || frame.Type != MirrorProtocol.Err) return;
+            firstTask = harness.Server.FileInFlight;
+            await harness.Server.HandleAsync(Harness.NearRelay, FileFrame("second", notes));
+        };
+
+        // Refused before the disk is touched, so the gate is not involved: the second
+        // is the one that blocks in Stat and holds the slot.
+        await harness.Server.HandleAsync(Harness.NearRelay,
+            FileFrame("first", Path.Combine(tree.Outside, "secret.txt")));
+        await Task.WhenAny(harness.Server.FileInFlight, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(10)), "the second request never reached the disk");
+        await firstTask!;
+
+        await harness.Server.HandleAsync(Harness.NearRelay, FileFrame("third", notes));
+        Assert.Equal(MirrorProtocol.ErrBusy, ErrCodeIn(harness.ToClient, "third"));
+
+        gate.Release.Set();
+        await harness.Server.FileInFlight;
+    }
+
+    // The backstop: an answer that fails to send leaves the slot free, however far
+    // it got. A courier that throws on the FIRST piece means the pre-last-piece
+    // release is never reached, so only the cleanup can free it; one that throws on
+    // the LAST piece means the release already happened and the cleanup must not
+    // free anything twice (a unit test pins the lease's own once-only rule). Either
+    // way the peer's next request is served, not told busy.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ATransferWhoseSendFailsStillLeavesThePeersSlotFree(bool failOnFirstPiece)
+    {
+        var (harness, tree) = await FileHarnessAsync();
+        using var _ = tree;
+        var path = tree.Write("report.pdf", Random(MirrorProtocol.PictureChunkBytes * 2 + 1234));
+        var notes = Path.Combine(tree.Project, "sub", "notes.txt");
+
+        harness.AfterDelivered = frame =>
+        {
+            if (frame.Type != MirrorProtocol.Chunk || frame.Id != "doomed") return Task.CompletedTask;
+            var last = frame.Get("H") is not null;
+            if (last == !failOnFirstPiece) throw new IOException("the relay went away");
+            return Task.CompletedTask;
+        };
+
+        await harness.Server.HandleAsync(Harness.NearRelay, FileFrame("doomed", path));
+        await harness.Server.FileInFlight;
+
+        Assert.Equal("notes"u8.ToArray(), BytesOf(await harness.Client.FetchFileAsync("job-hunter", notes, null)).Data);
+    }
+
     // Too large is answered from the size alone, before a byte is read: the
     // file here is sparse, so reading it would be slow and is not what happens.
     [Fact]

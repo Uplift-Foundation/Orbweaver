@@ -336,11 +336,57 @@ public class PeerFileRulesTests
     public void OneInFlightPerPeerAndPeersAreIndependent()
     {
         var gate = new PeerFileGate();
-        Assert.True(gate.TryBegin("mini"));
-        Assert.False(gate.TryBegin("mini"));
-        Assert.True(gate.TryBegin("windows"));
-        gate.End("mini");
-        Assert.True(gate.TryBegin("mini"));
+        var mini = gate.TryBegin("mini");
+        Assert.NotNull(mini);
+        Assert.Null(gate.TryBegin("mini"));
+        Assert.NotNull(gate.TryBegin("windows"));
+        mini!.Release();
+        Assert.NotNull(gate.TryBegin("mini"));
+    }
+
+    // CB-384: a lease releases once, and only its own hold.
+    [Fact]
+    public void ReleasingALeaseTwiceFreesTheSlotOnce()
+    {
+        var gate = new PeerFileGate();
+        var lease = gate.TryBegin("mini")!;
+
+        lease.Release();
+        lease.Release();
+
+        var next = gate.TryBegin("mini");
+        Assert.NotNull(next);
+        Assert.Null(gate.TryBegin("mini"));
+    }
+
+    [Fact]
+    public void AnOldLeaseReleasedAfterANewOneBeganDoesNotFreeTheNewOnes()
+    {
+        var gate = new PeerFileGate();
+        var old = gate.TryBegin("mini")!;
+        old.Release();
+
+        var current = gate.TryBegin("mini")!;
+        old.Release();
+
+        // Still held by the newer request.
+        Assert.Null(gate.TryBegin("mini"));
+
+        current.Release();
+        Assert.NotNull(gate.TryBegin("mini"));
+    }
+
+    [Fact]
+    public void ALeaseOnlyEverFreesItsOwnPeer()
+    {
+        var gate = new PeerFileGate();
+        var mini = gate.TryBegin("mini")!;
+        gate.TryBegin("windows");
+
+        mini.Release();
+
+        Assert.NotNull(gate.TryBegin("mini"));
+        Assert.Null(gate.TryBegin("windows"));
     }
 
     [Fact]

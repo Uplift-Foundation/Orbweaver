@@ -234,19 +234,56 @@ namespace Orbweaver
     internal sealed class PeerFileGate
     {
         private readonly BrowseRateLimiter _rate = new();
-        private readonly HashSet<string> _busy = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, PeerFileLease> _held = new(StringComparer.Ordinal);
         private readonly object _gate = new();
 
         internal bool TryRate(string peer, long nowMs) => _rate.TryAccept(peer, nowMs);
 
-        internal bool TryBegin(string peer)
+        // The peer's one slot, or null when it is already held. What comes back is
+        // the only way to let it go, so a release belongs to the request that took
+        // it by construction (CB-384).
+        internal PeerFileLease? TryBegin(string peer)
         {
-            lock (_gate) return _busy.Add(peer);
+            lock (_gate)
+            {
+                if (_held.ContainsKey(peer)) return null;
+
+                var lease = new PeerFileLease(this, peer);
+                _held[peer] = lease;
+                return lease;
+            }
         }
 
-        internal void End(string peer)
+        private void Free(PeerFileLease lease)
         {
-            lock (_gate) _busy.Remove(peer);
+            lock (_gate)
+            {
+                // Only if the slot is still this lease's. A late release from a request
+                // that already let go must never free a newer request's slot.
+                if (_held.TryGetValue(lease.Peer, out var current) && ReferenceEquals(current, lease))
+                    _held.Remove(lease.Peer);
+            }
+        }
+
+        // One request's hold on its peer's slot. Releasing is idempotent and cannot
+        // release anything but this lease's own hold.
+        internal sealed class PeerFileLease
+        {
+            private readonly PeerFileGate _owner;
+            private int _released;
+
+            internal PeerFileLease(PeerFileGate owner, string peer)
+            {
+                _owner = owner;
+                Peer = peer;
+            }
+
+            internal string Peer { get; }
+
+            internal void Release()
+            {
+                if (Interlocked.Exchange(ref _released, 1) == 0) _owner.Free(this);
+            }
         }
     }
 }
