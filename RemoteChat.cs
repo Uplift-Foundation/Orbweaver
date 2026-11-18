@@ -456,6 +456,19 @@ namespace Orbweaver
         string ComposerHint { get; }
     }
 
+    // The empty box's wording changed after the panel read it.
+    //
+    // A remote session's hint follows what the far session can do (type into a
+    // pane, message a background job, neither), and that is learned from a roster
+    // that keeps landing - so it can change while the panel is up (CB-379). The
+    // panel re-reads ComposerHint when this is raised, on the UI thread like every
+    // other event on these interfaces. Separate from IRemoteChatComposer because
+    // most sessions' hints never change.
+    public interface IRemoteChatComposerChanges
+    {
+        event Action? ComposerHintChanged;
+    }
+
     // A session that can be read and, right now, not written to *at all*.
     //
     // **The panel hides the composer entirely while IsReadOnly is true**,
