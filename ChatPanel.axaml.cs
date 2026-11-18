@@ -3103,6 +3103,10 @@ namespace Orbweaver
             // choice survive a rebuild of the row or a re-map of the history.
             public readonly Dictionary<(DateTimeOffset, RelayedMessage, int), bool> Choices = new();
 
+            // CB-356: the same for a compaction row. Never governed by the relay
+            // setting, so there is no default to ask: absent means collapsed.
+            public readonly Dictionary<(DateTimeOffset, CompactionNote), bool> CompactionChoices = new();
+
             // How many turns before this one in the history are the same relay at
             // the same time. Zero when the turn is not in the history (yet).
             public Func<ChatTurn, int> OrdinalOf = _ => 0;
@@ -3958,6 +3962,24 @@ namespace Orbweaver
                         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Body)));
                     }
 
+                    // CB-356: a live merge hands a boundary-only row its summary.
+                    // The cached line and body describe the old note.
+                    if (e.PropertyName == nameof(ChatTurn.Compaction))
+                    {
+                        _relayLine = null;
+                        _relayBody = null;
+                        _relayKey = null;
+                        foreach (var name in new[]
+                                 {
+                                     nameof(IsCompaction), nameof(IsCompactRow), nameof(CanExpand),
+                                     nameof(IsRelayExpanded), nameof(ChevronAngle),
+                                     nameof(RelayLine), nameof(RelayBody)
+                                 })
+                        {
+                            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                        }
+                    }
+
                     // CB-270: a tool line learns it failed only when the result
                     // arrives, after its row is drawn. The body is rebuilt because
                     // its runs carry the ink they were made with.
@@ -4050,7 +4072,7 @@ namespace Orbweaver
             // A relay draws its own row, so the bubble's body is left empty
             // rather than built and thrown away (and so it cannot reset _blocks
             // out from under the relay body's selectable runs).
-            public Control Body => _body ??= IsRelay ? new Border() : BuildBody();
+            public Control Body => _body ??= IsCompactRow ? new Border() : BuildBody();
 
             private Control BuildBody() => BuildBodyOf(_turn.Text);
 
@@ -5044,13 +5066,22 @@ namespace Orbweaver
 
             // The bubble template is for everything that is not a relay; a relay
             // draws its own row beside it (ChatPanel.axaml).
-            public bool IsBubble => !IsRelay;
+            public bool IsBubble => !IsCompactRow;
+
+            // CB-356: a Claude Code compaction, one row of the same family as a
+            // relay. Not governed by the relay setting: it is always shown and
+            // always starts collapsed.
+            public bool IsCompaction => _turn.Compaction is not null;
+
+            public bool IsCompactRow => IsRelay || IsCompaction;
 
             private RelayedMessageDisplay RelaySetting => _relayHost?.Display() ?? RelayedMessageDisplay.Collapsed;
 
             // Nothing to open for a row with no body — "shut down" says it all —
             // so it has no chevron and a click does nothing.
-            public bool CanExpand => !string.IsNullOrWhiteSpace(_turn.Relay?.FullText);
+            public bool CanExpand => IsCompaction
+                ? _turn.Compaction!.HasSummary
+                : !string.IsNullOrWhiteSpace(_turn.Relay?.FullText);
 
             // (when, what, which of the identical ones). Two idle notifications
             // with the same text in the same second are equal as records, and one
@@ -5069,7 +5100,12 @@ namespace Orbweaver
                     ? chosen
                     : null;
 
-            public bool IsRelayExpanded => CanExpand && RelayRow.IsExpanded(RelaySetting, RelayChoice);
+            public bool IsRelayExpanded => CanExpand
+                && (IsCompaction ? CompactionChoice : RelayRow.IsExpanded(RelaySetting, RelayChoice));
+
+            private bool CompactionChoice =>
+                _relayHost is not null && _turn.Compaction is { } note
+                && _relayHost.CompactionChoices.TryGetValue((_turn.At, note), out var chosen) && chosen;
 
             public double ChevronAngle => IsRelayExpanded ? 90 : 0;
 
@@ -5078,6 +5114,15 @@ namespace Orbweaver
             // a click should not be forgotten by that.
             public void ToggleRelay()
             {
+                if (_turn.Compaction is { } note)
+                {
+                    if (!CanExpand || _relayHost is null) return;
+
+                    _relayHost.CompactionChoices[(_turn.At, note)] = !IsRelayExpanded;
+                    RelayDisplayChanged();
+                    return;
+                }
+
                 if (!CanExpand || _relayHost is null || RelayKey is not { } key) return;
 
                 _relayHost.Choices[key] = !IsRelayExpanded;
@@ -5124,7 +5169,7 @@ namespace Orbweaver
 
             public bool HasRelayAvatar => RelayAvatar is not null;
 
-            public bool HasRelayDot => !HasRelayAvatar;
+            public bool HasRelayDot => !IsCompaction && !HasRelayAvatar;
 
             public IBrush RelayDot =>
                 RelayRow.DotColor(_turn.Relay?.Color) is { } c ? new SolidColorBrush(c) : RelayNeutralDot;
@@ -5139,10 +5184,12 @@ namespace Orbweaver
 
             // Null for an ordinary turn: the relay row shares the bubble's template and
             // is only hidden there, so this is bound for every row.
-            public Control? RelayLine => IsRelay ? _relayLine ??= BuildRelayLine() : null;
+            public Control? RelayLine => IsCompactRow ? _relayLine ??= BuildRelayLine() : null;
 
             private Control BuildRelayLine()
             {
+                if (_turn.Compaction is { } note) return BuildCompactionLine(note);
+
                 var relay = _turn.Relay!;
                 var text = new TextBlock
                 {
@@ -5185,11 +5232,32 @@ namespace Orbweaver
             public Control? RelayBody =>
                 IsRelayExpanded ? _relayBody ??= BuildRelayBody() : null;
 
-            private Control BuildRelayBody() => BuildBodyOf(_turn.Relay!.FullText);
+            private Control BuildRelayBody() =>
+                BuildBodyOf(_turn.Compaction is { } note ? note.Summary : _turn.Relay!.FullText);
+
+            // The label in the normal weight, then the detail dimmed, as runs of
+            // one TextBlock so it trims to one line like a relay's.
+            private Control BuildCompactionLine(CompactionNote note)
+            {
+                var text = new TextBlock
+                {
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextWrapping = TextWrapping.NoWrap,
+                    FontSize = 10.5 * Scale,
+                    Foreground = SystemInk,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+                text.Inlines!.Add(new Run(note.Label));
+                if (note.Detail.Length > 0)
+                    text.Inlines.Add(new Run("  " + note.Detail) { Foreground = RelayDim });
+
+                return text;
+            }
 
             // A system note is italic because it is the app talking; an opened
             // relay body is somebody's words, so it is upright (CB-330).
-            public FontStyle Style => IsSystem && !IsRelay ? FontStyle.Italic : FontStyle.Normal;
+            public FontStyle Style => IsSystem && !IsCompactRow ? FontStyle.Italic : FontStyle.Normal;
 
             public bool ShowTime => !IsSystem;
 
