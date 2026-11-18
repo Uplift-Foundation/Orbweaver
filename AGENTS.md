@@ -297,7 +297,7 @@ dotnet test tests/UnitTests --collect:"XPlat Code Coverage"
 
 ## Test cadence: targeted while iterating, full once before push
 
-None of the commands below is meant to run on every round trip. A full local pass — `dotnet test tests/Tests.sln`, the UI suite in Release through CB-119's guard, the screenshots, `tools/coverage.sh` — costs more than fifteen minutes and a feature takes many rounds, while CI runs the full regression on both rids anyway. Which run belongs when:
+None of the commands below is meant to run on every round trip. A full local pass — `dotnet test tests/Tests.sln`, the UI suite in Release through CB-119's guard, the screenshots, `tools/coverage.sh` — costs many minutes and a feature takes many rounds, while CI runs the full regression on both rids anyway. Which run belongs when:
 
 - **While iterating**, run only the test classes the change can affect. The VSTest suites (`tests/UnitTests`, `tests/IntegrationTests`) take `--filter "FullyQualifiedName~<Class>"`; the MTP suites (`tests/UiTests`, `tests/UiScreenshots`) take `--filter-class <Namespace.Class>` or `--filter-method`, never `--filter` (CB-270 — check the total in the summary line to confirm the filter took). Add the matching console suite for any change to geometry (`ArrangementTests`), transcript parsing (`TranscriptTests`) or orb initials (`GlyphTests`).
 - **Once before pushing**, the full pass: `dotnet test tests/Tests.sln`, `dotnet test tests/UiTests -c Release` through CB-119's guard, and `tests/UiScreenshots` only if a visible surface changed — against the commit you are about to push.
