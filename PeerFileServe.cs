@@ -92,7 +92,7 @@ namespace Orbweaver
             var fs = env.Fs;
             var settings = WithSessionRoot(env.Settings, sessionCwd, fs);
 
-            if (!BrowseRules.IsAbsolute(path, fs) || BrowseRules.Canonical(fs, path) is not { } canonical)
+            if (!BrowseRules.IsAbsolute(path, fs) || NamesADevice(path, fs) || BrowseRules.Canonical(fs, path) is not { } canonical)
                 return Refuse(MirrorProtocol.ErrForbiddenPath);
 
             if (!BrowseRules.InScope(settings, fs, canonical))
@@ -107,6 +107,20 @@ namespace Orbweaver
         }
 
         private static PeerFileDecision Refuse(string code) => new(code, false, null, default);
+
+        // On Windows, any component that is a reserved device name (NUL, CON,
+        // aux.txt, COM1 …) is refused before the disk is asked anything: the
+        // OS reads `<root>\NUL` as the device \\.\NUL whatever folder it is
+        // written under, so it would pass the scope check as a path inside a
+        // root and then open something that is not a file at all. The stem
+        // rule is FileLinkPolicy's, the one the near side already uses.
+        internal static bool NamesADevice(string path, IBrowseFileSystem fs)
+        {
+            if (!fs.IsWindows) return false;
+            foreach (var component in path.Split('\\', '/'))
+                if (component.Length > 0 && FileLinkPolicy.IsReservedDeviceName(component)) return true;
+            return false;
+        }
 
         // The bytes, or unreadable. After opening, the canonical path is
         // worked out again and must not have moved (a component swapped for a

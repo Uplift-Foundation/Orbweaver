@@ -131,6 +131,26 @@ public class PeerFileRulesTests
         Assert.Null(PeerFileRules.Decide("/Users/dev/Source/app/report.pdf", null, "/Users/dev/Source/app", env).Err);
     }
 
+    // Windows reads `<root>\NUL` as the NUL device, so a reserved stem
+    // anywhere in the path is refused before the disk is asked; on a Mac the
+    // same names are ordinary files.
+    [Theory]
+    [InlineData(@"C:\Users\dev\p\NUL", true)]
+    [InlineData(@"C:\Users\dev\p\aux.txt", true)]
+    [InlineData(@"C:\Users\dev\p\COM1.pdf", true)]
+    [InlineData(@"C:\Users\dev\con\x.pdf", true)]
+    [InlineData(@"C:\Users\dev\p\console.pdf", false)]
+    [InlineData(@"C:\Users\dev\p\nul1.pdf", false)]
+    public void AReservedDeviceNameOnWindowsIsForbidden(string path, bool device)
+    {
+        var fs = new FakeBrowseFileSystem(@"C:\Users\dev", true, [], []).Add(@"C:\").Add(@"C:\Users").Add(@"C:\Users\dev")
+            .Add(@"C:\Users\dev\p").Add(@"C:\Users\dev\con");
+        Assert.Equal(device, PeerFileRules.NamesADevice(path, fs));
+        var (env, _) = Env(fs: fs);
+        if (device) Assert.Equal(MirrorProtocol.ErrForbiddenPath, PeerFileRules.Decide(path, null, @"C:\Users\dev\p", env).Err);
+        Assert.False(PeerFileRules.NamesADevice("/Users/dev/p/NUL", Fs()));
+    }
+
     [Fact]
     public void AnUncanonicalisablePathIsForbidden()
     {

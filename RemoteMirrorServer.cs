@@ -1011,22 +1011,60 @@ namespace Orbweaver
 
         internal Action<string, string> FileLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
 
+        // How long the disk half of one FILE (stat, open, read) may take before
+        // it is given up on. A read can block for good on this fleet: a folder
+        // whose privacy grant was never given on a locked machine (CB-306's
+        // hang), an iCloud placeholder, a network share, or a FIFO swapped in
+        // after the stat, where open() itself never returns and no check after
+        // it can help. Without this the peer's one slot stays busy until the
+        // app restarts. Sixty seconds is far longer than any honest 50 MB read
+        // from a local disk, and short enough that the panel's note is still
+        // being looked at. Settable for tests.
+        internal TimeSpan FileDeadline { get; set; } = TimeSpan.FromSeconds(60);
+
+        // The last disk half that ran, abandoned or not, so a test can watch a
+        // timed-out read finish later and see that it sends nothing.
+        internal Task FileWork { get; private set; } = Task.CompletedTask;
+
+        private readonly record struct FileOutcome(string? Err, PeerFileDecision? Decision, byte[]? Bytes);
+
+        private FileOutcome DecideAndRead(MirrorProtocol.MirrorFrame frame, string name, string path)
+        {
+            var env = _seams.Files!();
+
+            // The session's own folder counts as a root only for a session
+            // this machine offers; a name it does not know adds nothing.
+            var cwd = Resolve(name, _seams.Agents(), _seams.LocalSessions())?.Status.Cwd;
+
+            var decision = PeerFileRules.Decide(path, frame.Get(MirrorProtocol.HaveField), cwd, env);
+            if (decision.Err is not null || decision.Same) return new FileOutcome(decision.Err, decision, null);
+            var (err, bytes) = PeerFileRules.Read(decision, env);
+            return new FileOutcome(err, decision, bytes);
+        }
+
         private async Task ServeFileAsync(string fromPeer, MirrorProtocol.MirrorFrame frame, string name, string path)
         {
-            PeerFileDecision decision;
-            byte[]? bytes = null;
-            string? err;
+            // The disk half runs on its own task and is raced against the
+            // deadline. It only RETURNS an outcome — every frame is sent from
+            // here — so a read that wakes up long after it was abandoned has
+            // nobody to send to: its answer is simply never awaited. The thread
+            // it is blocked on cannot be taken back; the rate limit bounds how
+            // many a peer can strand that way.
+            var work = Task.Run(() => DecideAndRead(frame, name, path));
+            FileWork = work;
+
+            if (await Task.WhenAny(work, Task.Delay(FileDeadline)).ConfigureAwait(false) != work)
+            {
+                FileLog("file", $"id={frame.Id} -> timeout");
+                _ = work.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnreadable, MirrorProtocol.ErrUnreadable).ConfigureAwait(false);
+                return;
+            }
+
+            FileOutcome outcome;
             try
             {
-                var env = _seams.Files!();
-
-                // The session's own folder counts as a root only for a session
-                // this machine offers; a name it does not know adds nothing.
-                var cwd = Resolve(name, _seams.Agents(), _seams.LocalSessions())?.Status.Cwd;
-
-                decision = PeerFileRules.Decide(path, frame.Get(MirrorProtocol.HaveField), cwd, env);
-                err = decision.Err;
-                if (err is null && !decision.Same) (err, bytes) = PeerFileRules.Read(decision, env);
+                outcome = await work.ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -1034,6 +1072,10 @@ namespace Orbweaver
                 await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnreadable, MirrorProtocol.ErrUnreadable).ConfigureAwait(false);
                 return;
             }
+
+            var err = outcome.Err;
+            var decision = outcome.Decision!;
+            var bytes = outcome.Bytes;
 
             if (err is not null)
             {

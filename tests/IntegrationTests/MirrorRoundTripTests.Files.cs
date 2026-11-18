@@ -660,6 +660,81 @@ public partial class MirrorRoundTripTests
         Assert.False(harness.Client.Waiting);
     }
 
+    // --- a read that never comes back ------------------------------------------------
+
+    // The first Open blocks until released, as a read under an ungranted
+    // folder, an iCloud placeholder or a FIFO swapped in after the stat does;
+    // every later Open answers at once.
+    private sealed class FirstOpenHangs(IPeerFileSource inner) : IPeerFileSource
+    {
+        public readonly ManualResetEventSlim Release = new();
+        public readonly ManualResetEventSlim Hung = new();
+        private int _opens;
+
+        public PeerFileStat Stat(string canonical) => inner.Stat(canonical);
+
+        public Stream? Open(string canonical)
+        {
+            if (Interlocked.Increment(ref _opens) == 1)
+            {
+                Hung.Set();
+                Release.Wait(TimeSpan.FromSeconds(30));
+            }
+            return inner.Open(canonical);
+        }
+    }
+
+    // Past the deadline the far side answers unreadable, logs a timeout and
+    // frees the peer's slot, so the next FILE is served at once. When the
+    // stranded read finally returns, nothing at all is sent for it.
+    [Fact]
+    public async Task AReadThatHangsTimesOutAsUnreadableFreesTheSlotAndNeverSendsLate()
+    {
+        var tree = new FileTree();
+        using var _ = tree;
+        var hang = new FirstOpenHangs(PeerFileSource.Instance);
+        tree.Source = hang;
+        var (harness, _) = await FileHarnessAsync(tree);
+        harness.Server.FileDeadline = TimeSpan.FromMilliseconds(300);
+        var lines = new List<string>();
+        harness.Server.FileLog = (what, detail) => { lock (lines) lines.Add(detail); };
+        var path = Path.Combine(tree.Project, "sub", "notes.txt");
+
+        Assert.Equal(MirrorProtocol.ErrUnreadable, CodeOf(await harness.Client.FetchFileAsync("job-hunter", path, null)));
+        Assert.True(hang.Hung.IsSet);
+        var stranded = harness.Server.FileWork;
+        Assert.False(stranded.IsCompleted);
+        var firstId = MirrorProtocol.TryParseFrame(harness.ToServer.Last(l => l.Contains(";t=FILE;")))!.Id;
+        Assert.Contains(lines, l => l == $"id={firstId} -> timeout");
+
+        // The slot is free: the next request is served, not busy.
+        Assert.Equal("notes"u8.ToArray(), BytesOf(await harness.Client.FetchFileAsync("job-hunter", path, null)).Data);
+
+        hang.Release.Set();
+        await stranded;
+        await Task.Delay(100);
+        var forFirst = harness.ToClient.Select(MirrorProtocol.TryParseFrame).Where(f => f?.Id == firstId).ToList();
+        Assert.Equal(MirrorProtocol.Err, Assert.Single(forFirst)!.Type);
+    }
+
+    // On NTFS, `<root>\NUL` is the NUL device whatever folder it is written
+    // under. Every reserved stem under a root is refused at once, and the
+    // control beside them is served.
+    [FilesWindowsFact]
+    public async Task AReservedDeviceNameUnderARootIsForbiddenAtOnce()
+    {
+        var (harness, tree) = await FileHarnessAsync();
+        using var _ = tree;
+        foreach (var name in new[] { "NUL", "CON", "COM1", "aux.txt", "nul.pdf", "LPT\u00b9" })
+        {
+            var fetch = harness.Client.FetchFileAsync("job-hunter", Path.Combine(tree.Project, name), null);
+            Assert.Same(fetch, await Task.WhenAny(fetch, Task.Delay(TimeSpan.FromSeconds(5))));
+            Assert.Equal(MirrorProtocol.ErrForbiddenPath, CodeOf(await fetch));
+        }
+        Assert.Equal("notes"u8.ToArray(),
+            BytesOf(await harness.Client.FetchFileAsync("job-hunter", Path.Combine(tree.Project, "sub", "notes.txt"), null)).Data);
+    }
+
     // --- the cache, end to end -------------------------------------------------------
 
     // What the panel will do: store what came, offer its stamp next time, and
