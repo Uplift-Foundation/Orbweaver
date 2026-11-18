@@ -29,8 +29,14 @@ namespace Orbweaver
         // as text that opens something on click is worse — and stating it once,
         // beside the launcher's own allowlist, keeps the two from drifting if
         // the parser's contract ever loosens.
-        internal static bool IsLive(ChatMarkdown.MdSpan span) =>
-            span.Style == ChatMarkdown.MdStyle.Link && (CloudSessionLink.IsOpenable(span.Url) || IsFileUrl(span.Url));
+        //
+        // files says whether the session behind the bubble can open a file at
+        // all (IRemoteChatFiles). A cloud, OpenClaw or room session cannot, so
+        // there a file link is flattened to its label exactly as before CB-363
+        // rather than drawn as a link that does nothing.
+        internal static bool IsLive(ChatMarkdown.MdSpan span, bool files = true) =>
+            span.Style == ChatMarkdown.MdStyle.Link
+            && (CloudSessionLink.IsOpenable(span.Url) || (files && IsFileUrl(span.Url)));
 
         // Whether a destination is one of the file forms (CB-363) rather than
         // a web address. The click handler asks it to choose between Open and
@@ -44,20 +50,20 @@ namespace Orbweaver
         // opens one. The parser never emits such a span today; this is the arm
         // that keeps a dead link off the screen if it ever does, and it lives
         // here rather than inline in the renderer so it is a unit case.
-        internal static ChatMarkdown.MdStyle StyleOf(ChatMarkdown.MdSpan span) =>
-            span.Style == ChatMarkdown.MdStyle.Link && !IsLive(span) ? ChatMarkdown.MdStyle.Normal : span.Style;
+        internal static ChatMarkdown.MdStyle StyleOf(ChatMarkdown.MdSpan span, bool files = true) =>
+            span.Style == ChatMarkdown.MdStyle.Link && !IsLive(span, files) ? ChatMarkdown.MdStyle.Normal : span.Style;
 
         // The link ranges of a line, in the same character offsets the block's
         // text layout reports: each span's text is concatenated into Runs in
         // order, so a running sum over span lengths is the layout's offset.
-        internal static IReadOnlyList<LinkRange> RangesOf(IReadOnlyList<ChatMarkdown.MdSpan> spans)
+        internal static IReadOnlyList<LinkRange> RangesOf(IReadOnlyList<ChatMarkdown.MdSpan> spans, bool files = true)
         {
             var ranges = new List<LinkRange>();
             var offset = 0;
 
             foreach (var span in spans)
             {
-                if (IsLive(span)) ranges.Add(new LinkRange(offset, span.Text.Length, span.Url!));
+                if (IsLive(span, files)) ranges.Add(new LinkRange(offset, span.Text.Length, span.Url!));
                 offset += span.Text.Length;
             }
 

@@ -2382,7 +2382,7 @@ namespace Orbweaver
 
         // Every rule that spans more than one bubble, applied to a block as
         // TurnView builds it.
-        private void Adopt(SelectableTextBlock block)
+        private void Adopt(SelectableTextBlock block, ChatTurn turn)
         {
             // Only one bubble may hold a selection at a time, so that the copy
             // gesture is never ambiguous about which of two highlighted
@@ -2400,7 +2400,7 @@ namespace Orbweaver
             // the two items need to know.
             block.ContextFlyout = _bubbleMenu;
 
-            AdoptLinks(block);
+            AdoptLinks(block, turn);
         }
 
         // A pointing hand over a link, because it is the one thing in a bubble
@@ -2421,7 +2421,7 @@ namespace Orbweaver
         // own handler, so it hit-tests the layout the person was looking at
         // rather than the one the selection reset is about to throw away (see
         // LinkUnder).
-        private static void AdoptLinks(SelectableTextBlock block)
+        private void AdoptLinks(SelectableTextBlock block, ChatTurn turn)
         {
             var normalCursor = block.Cursor;
             string? pressed = null;
@@ -2435,7 +2435,8 @@ namespace Orbweaver
 
                 // The destination, not the label: [google.com](https://evil.example)
                 // has to be readable for what it is before anyone clicks it.
-                ToolTip.SetTip(block, url);
+                // A file link says where the file is as well (CB-363).
+                ToolTip.SetTip(block, TipFor(url));
             }
 
             block.AddHandler(
@@ -2461,7 +2462,7 @@ namespace Orbweaver
                     // release, so a drag's selection is already in place.
                     var hasSelection = !string.IsNullOrEmpty(block.SelectedText);
 
-                    if (ChatLinks.ShouldOpen(pressed, released, hasSelection)) ChatLinks.Open(released!);
+                    if (ChatLinks.ShouldOpen(pressed, released, hasSelection)) OpenLink(released!, turn);
                     pressed = null;
                 },
                 RoutingStrategies.Bubble,
@@ -2481,6 +2482,48 @@ namespace Orbweaver
                 (_, _) => Hover(null),
                 RoutingStrategies.Direct,
                 handledEventsToo: true);
+        }
+
+        // The tooltip for a link: the destination for a web address; for a
+        // file, its decoded path and the machine it is on (CB-363).
+        private string? TipFor(string? url)
+        {
+            if (url is null || FileLink.TryParse(url) is not { } link || _session is not IRemoteChatFiles files) return url;
+            return ChatFileLinkText.Tooltip(link.Path, files.FileHost, files.FileHostName);
+        }
+
+        // One click on a live link: a web address goes to the browser seam, a
+        // file to the orchestrator, whose progress and refusals land on the
+        // turn's own note row.
+        private void OpenLink(string url, ChatTurn turn)
+        {
+            if (!ChatLinks.IsFileUrl(url))
+            {
+                ChatLinks.Open(url);
+                return;
+            }
+
+            if (FileLinksFor() is not { } links || FileLink.TryParse(url) is not { } link) return;
+
+            _ = links.ClickAsync(link.Path, note => turn.FileNote = note);
+        }
+
+        // One orchestrator per bound session, so its in-flight guard is
+        // per session and a rebind starts clean.
+        private ChatFileLinks? _fileLinks;
+        private IRemoteChatFiles? _fileLinksFor;
+
+        private ChatFileLinks? FileLinksFor()
+        {
+            if (_session is not IRemoteChatFiles files) return null;
+
+            if (!ReferenceEquals(files, _fileLinksFor))
+            {
+                _fileLinks = new ChatFileLinks(files);
+                _fileLinksFor = files;
+            }
+
+            return _fileLinks;
         }
 
         // The destination of the link under a point in a block's own
@@ -3083,7 +3126,8 @@ namespace Orbweaver
         private TurnView? NewTurnView(ChatTurn turn) =>
             turn.Relay is not null && !RelayRow.IsShown(OrbweaverSettings.RelayedMessages)
                 ? null
-                : new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey(), _relayHost);
+                : new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey(), _relayHost,
+                    filesLive: _session is IRemoteChatFiles);
 
         private bool AddTurnView(ChatTurn turn)
         {
@@ -3919,7 +3963,8 @@ namespace Orbweaver
             private readonly ChatTurn _turn;
             private readonly Speaker? _soleSpeaker;
             private readonly Color? _defaultBubble;
-            private readonly Action<SelectableTextBlock> _adopt;
+            private readonly Action<SelectableTextBlock, ChatTurn> _adopt;
+            private readonly bool _filesLive;
             private readonly TextScale _scale;
 
             // soleSpeaker is who is talking when the transcript does not say.
@@ -3941,9 +3986,10 @@ namespace Orbweaver
             private readonly RelayHost? _relayHost;
 
             public TurnView(ChatTurn turn, Color? defaultBubble, Speaker? soleSpeaker,
-                Action<SelectableTextBlock> adopt, TextScale scale, string? askingKey = null,
-                RelayHost? relayHost = null)
+                Action<SelectableTextBlock, ChatTurn> adopt, TextScale scale, string? askingKey = null,
+                RelayHost? relayHost = null, bool filesLive = false)
             {
+                _filesLive = filesLive;
                 _relayHost = relayHost;
                 _askingKey = askingKey;
                 _turn = turn;
@@ -4152,7 +4198,7 @@ namespace Orbweaver
                 // more than one bubble — that only one may hold a selection,
                 // and that they share a single context menu — and neither is a
                 // TurnView's to enforce from inside one row.
-                _adopt(block);
+                _adopt(block, _turn);
 
                 return block;
             }
@@ -4277,7 +4323,7 @@ namespace Orbweaver
                 // reply rebuilds its blocks wholesale and the ranges have to go
                 // wherever the block goes. Left null on a line with no link, so
                 // the handlers' first question is answered without a lookup.
-                var links = ChatLinks.RangesOf(spans);
+                var links = ChatLinks.RangesOf(spans, _filesLive);
                 if (links.Count > 0) block.Tag = links;
 
                 foreach (var span in spans)
@@ -4286,7 +4332,7 @@ namespace Orbweaver
 
                     // See ChatLinks.StyleOf: what looks like a link is exactly
                     // what opens one.
-                    switch (ChatLinks.StyleOf(span))
+                    switch (ChatLinks.StyleOf(span, _filesLive))
                     {
                         case ChatMarkdown.MdStyle.Bold:
                             run.FontWeight = FontWeight.SemiBold;
