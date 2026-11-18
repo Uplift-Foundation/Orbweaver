@@ -113,7 +113,13 @@ namespace Orbweaver
         private static readonly Lazy<PeerLaunchServer> SharedServer = new(Create);
 
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
-        private static PeerLaunchServer Create() => new(new Seams(
+        private static PeerLaunchServer Create() => new(RealSeams());
+
+        // Internal so PeerLaunchRealSnapshotTests can run a launch through the
+        // real session source with only the process start faked: the one
+        // seam whose absence a fake snapshot would hide.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static Seams RealSeams() => new(
             () => OrbweaverSettings.PeerLaunchInboundEnabled,
             PeerIdentity.PeerFor,
             PeerIdentity.OwnPin,
@@ -131,6 +137,6 @@ namespace Orbweaver
             new RelayRemote.AccountSeams(RelayAccounts.Choices, _ => null),
             () => DateTimeOffset.UtcNow,
             Task.Delay,
-            line => MirrorLog.Say("peer-launch", line)));
+            line => MirrorLog.Say("peer-launch", line));
     }
 }
