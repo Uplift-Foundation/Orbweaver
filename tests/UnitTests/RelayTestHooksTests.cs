@@ -87,8 +87,9 @@ public class RelayTestHooksTests : IDisposable
         Assert.False(run.IsCompleted);
 
         lock (expiries) expiries[0].SetResult();                                          // the offer runs out
-        await secondOfferWaiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await secondOfferWaiting.Task.WaitAsync(TimeSpan.FromSeconds(10));              // a timeout here means no second offer was issued
         Assert.Equal("orbweaver://pair?o=off_2", File.ReadAllText(Path.Combine(_dir, RelayTestHooks.QrFile)));
+        Assert.Contains("offer off_2 expires", Events());                                // written before the same delay call
 
         fake.AllowResult = true;
         fake.Raise("ph_1");
