@@ -35,43 +35,53 @@ public class HookInstallerStarvedPoolTests : IDisposable
     [Fact]
     public void WhatAChildSaidSurvivesAThreadPoolWithNoFreeWorkers()
     {
-        var ready = Path.Combine(_root, "ready");
-        var (file, args) = OperatingSystem.IsWindows()
-            ? ("cmd.exe", new[] { "/c", $"echo started& cd /d {_root}& type nul > ready& ping -n 30 127.0.0.1 > nul" })
-            : ("/bin/sh", new[] { "-c", $"echo started; : > '{ready}'; sleep 30" });
-
         ThreadPool.GetMinThreads(out var minWorkers, out var minIo);
         ThreadPool.GetMaxThreads(out var maxWorkers, out var maxIo);
         using var release = new ManualResetEventSlim();
-        var markerRan = false;
         try
         {
-            // Min raised so every blocker starts at once; then, with the pool
-            // full, max is pinned to what is busy so it cannot grow a thread to
-            // rescue the reader. A pool that merely has to inject one is slow,
-            // not starved.
+            // Min raised so blockers start at once, then max pinned to what is
+            // busy so the pool cannot grow a thread to rescue the reader. A pool
+            // that merely has to inject one is slow, not starved.
             var blockers = Environment.ProcessorCount * 2;
             ThreadPool.SetMinThreads(minWorkers + blockers, minIo);
-            using var occupied = new CountdownEvent(blockers);
-            for (var i = 0; i < blockers; i++)
-                ThreadPool.QueueUserWorkItem(_ => { occupied.Signal(); release.Wait(); });
-            Assert.True(occupied.Wait(TimeSpan.FromSeconds(30)), "the pool was not saturated");
-
+            Occupy(blockers, release);
             ThreadPool.SetMinThreads(Environment.ProcessorCount, minIo);
             ThreadPool.GetAvailableThreads(out var free, out _);
             ThreadPool.SetMaxThreads(Math.Max(Environment.ProcessorCount, maxWorkers - free), maxIo);
 
-            // A work item that can only run if the pool has a free worker. If
-            // it has run by the time Run returns, the pool was not starved and
-            // a pass proves nothing.
-            ThreadPool.QueueUserWorkItem(_ => markerRan = true);
+            // Another worker can still go idle after the pin (a runner thread
+            // finishing its own item), and then the pool is not starved. That is
+            // detected, not assumed: a marker item that can only run on a free
+            // worker, and an attempt where it ran proves nothing, so it is
+            // refilled and tried again. The test fails only if no attempt ever
+            // saw a starved pool, which is "could not starve the pool", not a
+            // verdict on Run.
+            for (var attempt = 1; attempt <= 5; attempt++)
+            {
+                ThreadPool.GetAvailableThreads(out var idle, out _);
+                if (idle > 0) Occupy(idle, release);
 
-            var result = HookInstaller.Run(file, args, "fake-installer",
-                waitForExit: HookInstallerRunTests.TimesOutOnce(ready));
+                var dir = Path.Combine(_root, "attempt" + attempt);
+                Directory.CreateDirectory(dir);
+                var ready = Path.Combine(dir, "ready");
+                var (file, args) = OperatingSystem.IsWindows()
+                    ? ("cmd.exe", new[] { "/c", $"echo started& cd /d {dir}& type nul > ready& ping -n 30 127.0.0.1 > nul" })
+                    : ("/bin/sh", new[] { "-c", $"echo started; : > '{ready}'; sleep 30" });
 
-            Assert.False(Volatile.Read(ref markerRan), "could not starve the pool");
-            Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
-            Assert.Contains("started", result.Output);
+                var markerRan = false;
+                ThreadPool.QueueUserWorkItem(_ => Volatile.Write(ref markerRan, true));
+
+                var result = HookInstaller.Run(file, args, "fake-installer",
+                    waitForExit: HookInstallerRunTests.TimesOutOnce(ready));
+
+                if (Volatile.Read(ref markerRan)) continue;
+
+                Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
+                Assert.Contains("started", result.Output);
+                return;
+            }
+            Assert.Fail("could not starve the pool");
         }
         finally
         {
@@ -79,6 +89,15 @@ public class HookInstallerStarvedPoolTests : IDisposable
             ThreadPool.SetMaxThreads(maxWorkers, maxIo);
             ThreadPool.SetMinThreads(minWorkers, minIo);
         }
+    }
+
+    // Parks n pool workers on release and returns once all of them are running.
+    private static void Occupy(int n, ManualResetEventSlim release)
+    {
+        using var occupied = new CountdownEvent(n);
+        for (var i = 0; i < n; i++)
+            ThreadPool.QueueUserWorkItem(_ => { occupied.Signal(); release.Wait(); });
+        Assert.True(occupied.Wait(TimeSpan.FromSeconds(30)), "the pool was not saturated");
     }
 
     [Fact]
