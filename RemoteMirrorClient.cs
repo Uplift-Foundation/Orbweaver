@@ -1007,13 +1007,9 @@ namespace Orbweaver
             ct.ThrowIfCancellationRequested();
 
             var result = FileResultOf(reply.Ok, reply.ErrCode, reply.Reason, reply.Fields, reply.Payload);
-            Log("file", result switch
-            {
-                PeerFileResult.Bytes b => $"n={name} -> ok bytes={b.Data.LongLength}",
-                PeerFileResult.Same => $"n={name} -> same",
-                PeerFileResult.Error e => $"n={name} -> err code={e.Code}",
-                _ => $"n={name} -> ?"
-            });
+            Log("file", result is PeerFileResult.Bytes b ? $"n={name} -> ok bytes={b.Data.LongLength}"
+                : result is PeerFileResult.Error e ? $"n={name} -> err code={e.Code}"
+                : $"n={name} -> same");
             return result;
         }
 

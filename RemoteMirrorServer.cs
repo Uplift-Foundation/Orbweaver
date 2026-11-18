@@ -153,7 +153,14 @@ namespace Orbweaver
             // logged, typing let through (TypingGate.GuardedTypeAsync). Null is
             // off; LiveSeams reads the same marker file and environment
             // variable as the local panel's gate.
-            Func<bool>? Shadow = null);
+            Func<bool>? Shadow = null,
+
+            // CB-363: what a FILE request is answered against — the browse
+            // settings, the disk BrowseRules reads, and the file reader. Read
+            // once per request, off the frame loop. Null means this server does
+            // not serve files: HELLO does not say rf=1 and FILE is refused as
+            // unsupported, which is every harness built before this.
+            Func<PeerFileEnv>? Files = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -250,6 +257,14 @@ namespace Orbweaver
                 readLog ?? new RosterReadLog(MirrorLog.Say));
 
             return one with { Agents = memo.Read, RosterSnapshot = memo.Snapshot };
+        }
+
+        // CB-363: this machine's browse settings and disk, read per request.
+        [ExcludeFromCodeCoverage]
+        private static PeerFileEnv LiveFiles()
+        {
+            var fs = new BrowseFileSystem();
+            return new PeerFileEnv(BrowseSettingsSource.Current(fs), fs, PeerFileSource.Instance);
         }
 
         // The one line that launches `claude agents`, held apart so RosterMemo
@@ -477,7 +492,8 @@ namespace Orbweaver
                 CanReadPane: TerminalFocuser.CanReadPane,
                 PressKey: TerminalFocuser.SendPaneKey,
                 TypeLiteral: TerminalFocuser.SendPaneText,
-                Shadow: RealShadowOn);
+                Shadow: RealShadowOn,
+                Files: LiveFiles);
         }
 
         // CB-307: shadow mode, read the way the local panel's gate reads it —
@@ -588,6 +604,10 @@ namespace Orbweaver
 
                 case MirrorProtocol.Answer:
                     await AnswerAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.ReadFile:
+                    await FileAsync(fromPeer, frame).ConfigureAwait(false);
                     break;
             }
         }
@@ -832,6 +852,7 @@ namespace Orbweaver
             var hash = MirrorProtocol.Hash(raw);
             var reply = new Dictionary<string, string> { [MirrorProtocol.RosterHashField] = hash };
             if (_seams.CapturePane is not null && _seams.PressKey is not null) reply[MirrorProtocol.PromptsField] = "1";
+            if (_seams.Files is not null) reply[MirrorProtocol.FilesField] = "1";
 
             if (MirrorProtocol.RosterUnchanged(frame.Get(MirrorProtocol.RosterHashField), hash))
             {
@@ -933,6 +954,116 @@ namespace Orbweaver
                 new Dictionary<string, string> { [MirrorProtocol.AvatarIdField] = id! }, sub: null,
                 MirrorProtocol.PictureChunkBytes)
                 .ConfigureAwait(false);
+        }
+
+        // --- a file a chat linked to (CB-363) ------------------------------------
+
+        private readonly PeerFileGate _files = new();
+
+        // The FILE refusals answered on the frame loop, cheapest first: the
+        // rate limit (so a flood costs nothing more), the frame's own shape,
+        // and one file in flight per peer. Everything that touches the disk
+        // runs detached (FileInFlight), the SlashInFlight pattern, because a
+        // 50 MB read and two hundred pieces must not hold up an INPUT or a
+        // HELLO behind them on PeerLink's in-order loop.
+        //
+        // The log line names the id and the outcome and never the path: the
+        // path is somebody's file name, and a log is the wrong place to keep
+        // a record of which ones were asked for.
+        private async Task FileAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            if (_seams.Files is null)
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnsupported).ConfigureAwait(false);
+                return;
+            }
+
+            if (!_files.TryRate(fromPeer, new DateTimeOffset(Now()).ToUnixTimeMilliseconds()))
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrRateLimited).ConfigureAwait(false);
+                return;
+            }
+
+            var path = frame.PayloadVerified ? PeerFileRules.PathOf(frame.Payload) : null;
+            var name = frame.Text("n");
+            if (path is null || name is null || !PeerFileRules.ShapeOk(path))
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrBadFrame).ConfigureAwait(false);
+                return;
+            }
+
+            if (!_files.TryBegin(fromPeer))
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrBusy).ConfigureAwait(false);
+                return;
+            }
+
+            FileInFlight = Task.Run(async () =>
+            {
+                try { await ServeFileAsync(fromPeer, frame, name, path).ConfigureAwait(false); }
+                finally { _files.End(fromPeer); }
+            });
+        }
+
+        // The last detached FILE, so a test can wait on it. Nothing in
+        // production reads it.
+        internal Task FileInFlight { get; private set; } = Task.CompletedTask;
+
+        internal Action<string, string> FileLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
+
+        private async Task ServeFileAsync(string fromPeer, MirrorProtocol.MirrorFrame frame, string name, string path)
+        {
+            PeerFileDecision decision;
+            byte[]? bytes = null;
+            string? err;
+            try
+            {
+                var env = _seams.Files!();
+
+                // The session's own folder counts as a root only for a session
+                // this machine offers; a name it does not know adds nothing.
+                var cwd = Resolve(name, _seams.Agents(), _seams.LocalSessions())?.Status.Cwd;
+
+                decision = PeerFileRules.Decide(path, frame.Get(MirrorProtocol.HaveField), cwd, env);
+                err = decision.Err;
+                if (err is null && !decision.Same) (err, bytes) = PeerFileRules.Read(decision, env);
+            }
+            catch (Exception e)
+            {
+                FileLog("file", $"id={frame.Id} -> err code={MirrorProtocol.ErrUnreadable} ({e.GetType().Name})");
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnreadable, MirrorProtocol.ErrUnreadable).ConfigureAwait(false);
+                return;
+            }
+
+            if (err is not null)
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, err).ConfigureAwait(false);
+                return;
+            }
+
+            if (decision.Same)
+            {
+                FileLog("file", $"id={frame.Id} -> same");
+                await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id,
+                    new Dictionary<string, string> { [MirrorProtocol.SameField] = "1" })).ConfigureAwait(false);
+                return;
+            }
+
+            FileLog("file", $"id={frame.Id} -> ok bytes={bytes!.LongLength}");
+            await SendTransferAsync(fromPeer, frame.Id, bytes,
+                new Dictionary<string, string>
+                {
+                    [MirrorProtocol.SizeField] = bytes.LongLength.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    [MirrorProtocol.MtimeField] = decision.Stat.MtimeMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    [MirrorProtocol.ExecField] = decision.Stat.Exec ? "1" : "0",
+                },
+                sub: null, MirrorProtocol.PictureChunkBytes, retain: false).ConfigureAwait(false);
+        }
+
+        private Task FileRefuseAsync(string toPeer, string id, string code)
+        {
+            FileLog("file", $"id={id} -> err code={code}");
+            return ErrAsync(toPeer, id, code, code);
         }
 
         // --- answering a dialog (CB-307 addendum item 3) -----------------------
@@ -2302,7 +2433,7 @@ namespace Orbweaver
         private async Task SendTransferAsync(
             string toPeer, string id, byte[] payload,
             Dictionary<string, string> fields, string? sub,
-            int chunkBytes = MirrorProtocol.ChunkBytes)
+            int chunkBytes = MirrorProtocol.ChunkBytes, bool retain = true)
         {
             var pieces = MirrorProtocol.Split(payload, chunkBytes);
 
@@ -2316,13 +2447,20 @@ namespace Orbweaver
 
             if (sub is not null) transfer.Fields["sub"] = sub;
 
-            lock (_gate)
+            // Not kept for RESEND when the caller says so (CB-363): eight
+            // retained 50 MB files would pin 400 MB for the sake of a hash
+            // failure TLS all but rules out. A RESEND for one is answered
+            // bad-hash, and the near side asks for the file again.
+            if (retain)
             {
-                _transfers[id] = transfer;
-                _transferOrder.Enqueue(id);
+                lock (_gate)
+                {
+                    _transfers[id] = transfer;
+                    _transferOrder.Enqueue(id);
 
-                while (_transferOrder.Count > KeepTransfers)
-                    _transfers.Remove(_transferOrder.Dequeue());
+                    while (_transferOrder.Count > KeepTransfers)
+                        _transfers.Remove(_transferOrder.Dequeue());
+                }
             }
 
             for (var seq = 0; seq < pieces.Count; seq++)

@@ -1147,7 +1147,7 @@ namespace Orbweaver
 
         public static (long MtimeMs, long Size)? ParseFileStamp(string? stamp)
         {
-            if (stamp is null) return null;
+            if (stamp is null || stamp.Length < 3) return null;
             var dash = stamp.IndexOf('-', 1);
             if (dash < 0) return null;
             return long.TryParse(stamp.AsSpan(0, dash), System.Globalization.NumberStyles.AllowLeadingSign,

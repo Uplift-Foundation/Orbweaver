@@ -42,13 +42,16 @@ namespace Orbweaver
         private readonly string _root;
         private readonly Func<DateTime> _utcNow;
         private readonly IDownloadMarker _marker;
+        private readonly long _maxTotalBytes;
         private readonly object _gate = new();
 
-        internal PeerFileCache(string root, Func<DateTime>? utcNow = null, IDownloadMarker? marker = null)
+        internal PeerFileCache(string root, Func<DateTime>? utcNow = null, IDownloadMarker? marker = null,
+            long maxTotalBytes = MaxTotalBytes)
         {
             _root = root;
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
             _marker = marker ?? OsDownloadMarker.Instance;
+            _maxTotalBytes = maxTotalBytes;
         }
 
         internal string Root => _root;
@@ -57,9 +60,9 @@ namespace Orbweaver
         // lives in, and moved by the same ORBWEAVER_SETTINGS_DIR a test sets.
         internal static PeerFileCache Shared { get; } = new(DefaultRoot());
 
-        internal static string DefaultRoot() =>
+        internal static string DefaultRoot(Func<string, string?>? env = null) =>
             Path.Combine(
-                BrandEnv.Get(BrandEnv.SettingsDir) is { Length: > 0 } scratch
+                BrandEnv.Get(BrandEnv.SettingsDir, env ?? Environment.GetEnvironmentVariable) is { Length: > 0 } scratch
                     ? scratch
                     : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Brand.DataDirName),
                 "peer-files");
@@ -223,10 +226,14 @@ namespace Orbweaver
                 {
                     foreach (var entry in SafeEnumerate(keyDir))
                     {
+                        // Read before anything in the entry is deleted: removing a
+                        // stale temp moves the folder's own time to the wall clock,
+                        // which would read as a use and keep an old copy alive.
+                        var used = Directory.GetLastWriteTimeUtc(entry);
+
                         foreach (var temp in Directory.EnumerateFiles(entry, "*" + TempSuffix))
                             if (now - File.GetLastWriteTimeUtc(temp) > StaleTemp) TryDelete(temp);
 
-                        var used = Directory.GetLastWriteTimeUtc(entry);
                         if (now - used > MaxAge)
                         {
                             if (TryDeleteDir(entry)) removed++;
@@ -241,7 +248,7 @@ namespace Orbweaver
                 var total = live.Sum(l => l.Bytes);
                 foreach (var (dir, _, bytes) in live.OrderBy(l => l.Used))
                 {
-                    if (total <= MaxTotalBytes) break;
+                    if (total <= _maxTotalBytes) break;
                     if (TryDeleteDir(dir)) { removed++; total -= bytes; }
                 }
 
