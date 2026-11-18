@@ -81,7 +81,7 @@ public class HookInstallerRunTests : IDisposable
     // than by quoting its path: ArgumentList escapes an embedded quote as \",
     // which cmd does not understand, so `type nul > "<path>"` silently wrote
     // nowhere. `cd /d` takes the rest of its command unquoted, spaces and all.
-    private static Func<System.Diagnostics.Process, bool> TimesOutOnce(string ready) => process =>
+    internal static Func<System.Diagnostics.Process, bool> TimesOutOnce(string ready) => process =>
     {
         var limit = System.Diagnostics.Stopwatch.StartNew();
         while (!File.Exists(ready))

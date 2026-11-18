@@ -238,6 +238,7 @@ namespace Orbweaver
                 var error = new StringBuilder();
                 var outputDrained = Drain(process.StandardOutput, output);
                 var errorDrained = Drain(process.StandardError, error);
+                var drains = new[] { outputDrained, errorDrained };
 
                 if (!(waitForExit ?? (p => p.WaitForExit(timeoutMs)))(process))
                 {
@@ -248,15 +249,15 @@ namespace Orbweaver
                     // wait for the last bytes; when a descendant the kill could
                     // not reach still holds them, the readers never finish, and
                     // what had already arrived is returned anyway.
-                    Task.WaitAll(new[] { outputDrained, errorDrained }, 2_000);
+                    WaitForDrains(drains, 2_000);
                     return Finish(label, new HookInstallResult(
                         HookInstallOutcome.TimedOut, label,
                         Output: Snapshot(output), Error: Snapshot(error)));
                 }
 
                 var code = process.ExitCode;
-                outputDrained.GetAwaiter().GetResult();
-                errorDrained.GetAwaiter().GetResult();
+                outputDrained.Finish();
+                errorDrained.Finish();
                 return Finish(label, new HookInstallResult(
                     code == 0 ? HookInstallOutcome.Ok : HookInstallOutcome.Failed,
                     label, code, Snapshot(output), Snapshot(error)));
@@ -271,13 +272,71 @@ namespace Orbweaver
         // Appends everything the reader yields to into, as it arrives, until
         // end-of-stream. Locked because Snapshot can read while this writes: the
         // timeout arm returns without waiting for a reader that may never end.
-        private static async Task Drain(StreamReader reader, StringBuilder into)
+        //
+        // A dedicated thread doing blocking reads, not an async loop on the
+        // thread pool (CB-370). An async read's completion and every continuation
+        // after it need a pool thread, so on a busy pool bytes already sitting in
+        // the pipe were not in the buffer when the timeout arm took its snapshot:
+        // reproduced on the Windows PC by blocking the pool's workers, which gave
+        // a TimedOut result with empty Output after the full wait (the regression
+        // test fails the same way against the old loop on macOS too). A thread of
+        // our own never queues behind anyone. Background, so a descendant that
+        // holds the pipe open forever cannot keep the app alive.
+        private static PipeDrain Drain(StreamReader reader, StringBuilder into)
         {
-            var buffer = new char[4096];
-            int read;
-            while ((read = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+            var drain = new PipeDrain(reader, into);
+            drain.Start();
+            return drain;
+        }
+
+        // Waits for all of the drains together, within one budget.
+        private static void WaitForDrains(PipeDrain[] drains, int budgetMs)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var d in drains)
+                d.Thread.Join(Math.Max(0, budgetMs - (int)clock.ElapsedMilliseconds));
+        }
+
+        // One reader thread. An exception is kept rather than thrown: unhandled
+        // on a thread of our own it would end the process, where a faulted Task
+        // used to surface as Threw. The normal-exit arm rethrows it (Finish); the
+        // timeout arm ignores it and keeps what arrived, since the dispose that
+        // follows a timeout can make a parked read throw late.
+        internal sealed class PipeDrain
+        {
+            private readonly StreamReader _reader;
+            private readonly StringBuilder _into;
+            private Exception? _failure;
+            internal Thread Thread { get; }
+
+            internal PipeDrain(StreamReader reader, StringBuilder into)
             {
-                lock (into) into.Append(buffer, 0, read);
+                _reader = reader;
+                _into = into;
+                Thread = new Thread(Loop) { IsBackground = true, Name = "hook-installer-drain" };
+            }
+
+            internal void Start() => Thread.Start();
+
+            private void Loop()
+            {
+                var buffer = new char[4096];
+                try
+                {
+                    int read;
+                    while ((read = _reader.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        lock (_into) _into.Append(buffer, 0, read);
+                    }
+                }
+                catch (Exception ex) { _failure = ex; }
+            }
+
+            internal void Finish()
+            {
+                Thread.Join();
+                if (_failure is not null)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(_failure).Throw();
             }
         }
 
