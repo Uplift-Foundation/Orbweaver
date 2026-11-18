@@ -5,5 +5,4 @@
 #
 # Measured from run 44227575517's test-results artifacts (both rids).
 
-Orbweaver.Tests.LoopbackHttpTests.RefusingPortRefusesConnectionsWhileHeld | macOS connection-refused wait of 75.0s (osx-arm64 only); CB-365
 Orbweaver.Tests.OrbArrangementSweepTests.EveryArrangementKeepsOrbsOnScreenAndApart | whole arrangement sweep in one test, 102.7s osx-arm64 / 87.7s win-x64; CB-366 splits it to run in parallel
