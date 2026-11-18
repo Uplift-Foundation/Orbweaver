@@ -84,9 +84,15 @@ jobs:
           - { os: windows-latest, rid: win-x64, name: package, package: true }
     runs-on: ${{ matrix.os }}
     # CB-269: a backstop above every step's own limit; the step limits below are
-    # what normally fire. Sized for the largest group, unit+package or
-    # checks+screenshots, with the retry loops at their worst.
-    timeout-minutes: 60
+    # what normally fire. CB-385: 30, down from 60. A macOS runner occasionally
+    # goes silent mid-Integration-step (CB-382) and only this job-level limit
+    # ends it, so each occurrence holds a scarce slot for the whole limit.
+    # Worst healthy job measured over 25 recent green runs (both rids): osx-arm64
+    # 11.7 min (ui, a run where UiTests retried once), win-x64 7.0 min; even
+    # three UiTests attempts at ~5.5 min each plus the build is ~19 min, so
+    # 30 clears every healthy case with margin. If a healthy job ever
+    # approaches it, raise it.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v7
