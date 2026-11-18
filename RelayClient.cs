@@ -222,13 +222,7 @@ namespace Orbweaver
                 TerminalFocuser.SendTextAndSubmit,
                 Task.Delay,
                 TerminalFocuser.TmuxPaneHolds)),
-            new RelayRemote.LaunchSeams(
-                OperatingSystem.IsWindows(),
-                cli => NewChatLauncher.LocateFresh(LaunchGate.CliFor(cli)),
-                Directory.Exists,
-                () => Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } sh ? sh : "/bin/zsh",
-                TerminalLauncher.PlaceForPhone,
-                TerminalLauncher.StartConsole),
+            LaunchRunner.DefaultLaunchSeams(),
             line => MirrorLog.Say("relay", line))
         {
             // CB-321: pictures are answered only from a finished bundle.
