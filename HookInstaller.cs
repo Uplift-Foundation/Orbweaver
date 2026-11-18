@@ -257,7 +257,7 @@ namespace Orbweaver
                     return Finish(label, new HookInstallResult(
                         HookInstallOutcome.TimedOut, label,
                         Output: Snapshot(output), Error: Snapshot(error),
-                        OutputMayBeCutShort: AnyParked(drains)));
+                        OutputMayBeCutShort: ParkedAfterTheWait(drains).Count > 0));
                 }
 
                 var code = process.ExitCode;
@@ -273,12 +273,17 @@ namespace Orbweaver
                 // that did finish still reports its failure; one left parked
                 // behind the descendant is a background thread and ends with it.
                 WaitForDrains(drains, ReaderGraceMs);
+
+                // Decided once: a reader alive at one look and gone at the next
+                // would otherwise be left out of Finish() (dropping its failure)
+                // while the flag said nothing was cut short.
+                var parked = ParkedAfterTheWait(drains);
                 foreach (var drain in drains)
-                    if (!drain.Thread.IsAlive) drain.Finish();
+                    if (!parked.Contains(drain)) drain.Finish();
                 return Finish(label, new HookInstallResult(
                     code == 0 ? HookInstallOutcome.Ok : HookInstallOutcome.Failed,
                     label, code, Snapshot(output), Snapshot(error),
-                    OutputMayBeCutShort: AnyParked(drains)));
+                    OutputMayBeCutShort: parked.Count > 0));
             }
             catch (Exception ex)
             {
@@ -309,7 +314,8 @@ namespace Orbweaver
 
         // A drain still running after its wait is parked behind a pipe someone else
         // holds open.
-        private static bool AnyParked(PipeDrain[] drains) => drains.Any(d => d.Thread.IsAlive);
+        private static HashSet<PipeDrain> ParkedAfterTheWait(PipeDrain[] drains) =>
+            drains.Where(d => d.Thread.IsAlive).ToHashSet();
 
         // Waits for all of the drains together, within one budget.
         private static void WaitForDrains(PipeDrain[] drains, int budgetMs)
