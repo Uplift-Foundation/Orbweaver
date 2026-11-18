@@ -278,7 +278,14 @@ public sealed class PeerFileCacheTests : IDisposable
         var real = PeerFileCache.DefaultRoot(_ => null);
         Assert.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), real);
         Assert.Equal("peer-files", Path.GetFileName(real));
-        Assert.Equal(PeerFileCache.DefaultRoot(), PeerFileCache.Shared.Root);
+        // Shared latches its root once, from whatever ORBWEAVER_SETTINGS_DIR was
+        // when it was first touched; other test classes point that variable
+        // elsewhere, so comparing it with the live environment is a race on
+        // test order (it went red on CI exactly that way). Only its folder name
+        // is asserted here; the env-to-path mapping is pinned above with an
+        // injected environment, and production never changes the variable
+        // after startup.
+        Assert.Equal("peer-files", Path.GetFileName(PeerFileCache.Shared.Root));
     }
 
     // --- the real stat ----------------------------------------------------------------------
