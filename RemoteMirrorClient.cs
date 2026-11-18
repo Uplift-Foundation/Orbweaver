@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 namespace Orbweaver
 {
     // This machine asking another machine's Buddy for what its sessions
@@ -937,6 +938,9 @@ namespace Orbweaver
             {
                 if (MirrorProtocol.SaysItAnswersPrompts(reply.Fields)) _speaksPrompts.Add(peer);
                 else _speaksPrompts.Remove(peer);
+
+                if (MirrorProtocol.SaysItServesFiles(reply.Fields)) _speaksFiles.Add(peer);
+                else _speaksFiles.Remove(peer);
             }
         }
 
@@ -949,6 +953,92 @@ namespace Orbweaver
                 var key = ExistingKey(name);
                 return key is not null && _servedBy.TryGetValue(key, out var relay) && _speaksPrompts.Contains(relay);
             }
+        }
+
+        // --- a file a chat linked to (CB-363) ----------------------------------
+
+        private readonly HashSet<string> _speaksFiles = new(StringComparer.OrdinalIgnoreCase);
+
+        // Whether the machine serving this session said it serves FILE
+        // (MirrorProtocol.FilesField). False before its first HELLO reply, and
+        // false for a Buddy that predates it — the panel then says to update
+        // that machine rather than send a request nobody will answer.
+        public bool SpeaksFiles(string name)
+        {
+            lock (_gate)
+            {
+                var key = ExistingKey(name);
+                return key is not null && _servedBy.TryGetValue(key, out var relay) && _speaksFiles.Contains(relay);
+            }
+        }
+
+        // The machine serving this session, as the cache keys it. Null when
+        // nothing has offered the session yet.
+        public string? MachineFor(string name) => RelayFor(name);
+
+        // Fetches one file the far session's chat linked to.
+        //
+        // `have` is the stamp of the newest copy already cached here
+        // (PeerFileCache.CachedFile.Have), or null; when the far file still has
+        // that stamp the answer is Same and no bytes cross. Progress reports
+        // (bytes so far, total) as each verified piece lands — the total is the
+        // far side's `sz`, known from the first piece. Cancelling throws
+        // OperationCanceledException; everything else is a result.
+        public async Task<PeerFileResult> FetchFileAsync(
+            string name, string path, string? have,
+            IProgress<(long Got, long Total)>? progress = null,
+            CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (RelayFor(name) is not { } relay)
+            {
+                Log("file", $"n={name} -> err code={MirrorProtocol.ErrNoSession}");
+                return new PeerFileResult.Error(MirrorProtocol.ErrNoSession, null);
+            }
+
+            var fields = new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) };
+            if (MirrorProtocol.ParseFileStamp(have) is not null) fields[MirrorProtocol.HaveField] = have!;
+
+            var reply = await RequestAsync(relay, MirrorProtocol.ReadFile, fields, Encoding.UTF8.GetBytes(path),
+                TimeSpan.FromSeconds(MirrorProtocol.FetchTimeoutSeconds), progress: progress, ct: ct)
+                .ConfigureAwait(false);
+
+            ct.ThrowIfCancellationRequested();
+
+            var result = FileResultOf(reply.Ok, reply.ErrCode, reply.Reason, reply.Fields, reply.Payload);
+            Log("file", result switch
+            {
+                PeerFileResult.Bytes b => $"n={name} -> ok bytes={b.Data.LongLength}",
+                PeerFileResult.Same => $"n={name} -> same",
+                PeerFileResult.Error e => $"n={name} -> err code={e.Code}",
+                _ => $"n={name} -> ?"
+            });
+            return result;
+        }
+
+        // What a FILE reply means, pure so each arm is asserted without a far
+        // side that misbehaves on cue. A refusal is its code; a request nobody
+        // answered is ErrUnreachable; an OK carrying `same=1` is Same; bytes
+        // whose length disagrees with their own `sz` are ErrBadHash, since the
+        // stamp cached against them would be wrong for ever after.
+        internal static PeerFileResult FileResultOf(
+            bool ok, string? errCode, string? reason,
+            IReadOnlyDictionary<string, string>? fields, byte[]? payload)
+        {
+            if (!ok) return new PeerFileResult.Error(errCode ?? MirrorProtocol.ErrUnreachable, reason);
+
+            if (payload is null)
+                return fields is not null && fields.TryGetValue(MirrorProtocol.SameField, out var same) && same == "1"
+                    ? new PeerFileResult.Same()
+                    : new PeerFileResult.Error(MirrorProtocol.ErrUnsupported, reason);
+
+            var size = Num(fields, MirrorProtocol.SizeField, -1);
+            var mtime = Num(fields, MirrorProtocol.MtimeField, long.MinValue);
+            if (size != payload.LongLength || mtime == long.MinValue)
+                return new PeerFileResult.Error(MirrorProtocol.ErrBadHash, "the file arrived a different size than it said");
+
+            return new PeerFileResult.Bytes(payload, mtime, size, Num(fields, MirrorProtocol.ExecField, 0) == 1);
         }
 
         internal readonly record struct PromptOutcome(MirrorProtocol.WirePrompt? Prompt, string? Error);
@@ -1129,6 +1219,10 @@ namespace Orbweaver
             // without sending real, hash-checked payload each time.
             public DateTime Deadline;
             public TimeSpan Grace;
+
+            // CB-363: told (bytes so far, total) on every verified piece of a
+            // transfer that says its total in `sz`. Null for everything else.
+            public IProgress<(long Got, long Total)>? Progress;
         }
 
         private readonly Dictionary<string, Pending> _pending = new(StringComparer.Ordinal);
@@ -1195,7 +1289,8 @@ namespace Orbweaver
         private async Task<Reply> RequestAsync(
             string relay, string type,
             IReadOnlyDictionary<string, string>? fields, byte[]? payload,
-            TimeSpan timeout, string? id = null, bool awaitReply = true)
+            TimeSpan timeout, string? id = null, bool awaitReply = true,
+            IProgress<(long Got, long Total)>? progress = null, CancellationToken ct = default)
         {
             if (TimeoutOverrideForTests is { } shorter) timeout = shorter;
 
@@ -1211,7 +1306,8 @@ namespace Orbweaver
                     Relay = relay,
                     Assembly = new MirrorProtocol.MirrorAssembly(),
                     Deadline = DateTime.UtcNow + timeout,
-                    Grace = timeout
+                    Grace = timeout,
+                    Progress = progress
                 };
             }
 
@@ -1238,8 +1334,9 @@ namespace Orbweaver
 
                     if (left <= TimeSpan.Zero) break;
 
-                    var done = await Task.WhenAny(waiter.Task, Task.Delay(left)).ConfigureAwait(false);
+                    var done = await Task.WhenAny(waiter.Task, Task.Delay(left, ct)).ConfigureAwait(false);
                     if (done == waiter.Task) return waiter.Task.Result;
+                    ct.ThrowIfCancellationRequested();
 
                     // The delay won, but a chunk may have landed while it was
                     // running and pushed the deadline out. Looping re-reads it
@@ -1313,6 +1410,10 @@ namespace Orbweaver
             if (pending is not null)
             {
                 var result = pending.Assembly.Offer(frame);
+
+                if (pending.Progress is { } progress && frame.PayloadVerified
+                    && Num(frame.Fields, MirrorProtocol.SizeField, -1) is var total and >= 0)
+                    progress.Report((pending.Assembly.Received, total));
 
                 switch (result.State)
                 {
@@ -1459,5 +1560,21 @@ namespace Orbweaver
             fields is not null && fields.TryGetValue(key, out var v) && long.TryParse(v, out var n)
                 ? n
                 : fallback;
+    }
+    // What a FILE request came to (CB-363). Bytes carries the far file's own
+    // mtime (Unix ms) and size, which together are the stamp it is cached
+    // under, and whether it had an executable bit there; Same means the copy
+    // already cached here (the `have` sent) is still current; Error carries
+    // a MirrorProtocol code — the far side's refusal (ErrForbiddenPath,
+    // ErrNotFound, ErrTooLarge, ErrUnreadable, ErrRateLimited, ErrBusy,
+    // ErrBadFrame) or the near side's own (ErrNoSession, ErrUnreachable,
+    // ErrUnsupported, ErrBadHash) — and the far side's sentence when it sent one.
+    internal abstract record PeerFileResult
+    {
+        private PeerFileResult() { }
+
+        internal sealed record Bytes(byte[] Data, long MtimeMs, long Size, bool Exec) : PeerFileResult;
+        internal sealed record Same : PeerFileResult;
+        internal sealed record Error(string Code, string? Reason) : PeerFileResult;
     }
 }
