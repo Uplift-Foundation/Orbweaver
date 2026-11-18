@@ -389,7 +389,8 @@ jobs:
       # duration and below this step's timeout-minutes. Per suite, from four
       # green CI runs (2026-11-10, step time including the first attempt's
       # build): UiTests 165-271s → 10m here; UiScreenshots 496-513s → 15m
-      # there. Each retry attempt is a fresh host, so the clock restarts. If a
+      # there until CB-334 removed its four 120s waits (measured 50s locally
+      # after it; the screenshots job now uses 5m, ~6x that). Each retry attempt is a fresh host, so the clock restarts. If a
       # suite's healthy run time ever approaches its figure, raise it: a dump
       # firing on a healthy run is a false hang report at best, and a dump that
       # succeeds is expected (not yet observed here) to end the host with it.
@@ -551,7 +552,7 @@ jobs:
           # step above for what this is a belt against.
           $minimumExpectedTests = 100
           for ($attempt = 1; $attempt -le 3; $attempt++) {
-            dotnet test tests/UiScreenshots -c Release -- --report-xunit --report-xunit-filename ui-screenshots.xunit.xml --report-xunit-trx --report-xunit-trx-filename ui-screenshots.trx --minimum-expected-tests $minimumExpectedTests --hangdump --hangdump-timeout 15m --hangdump-type Mini
+            dotnet test tests/UiScreenshots -c Release -- --report-xunit --report-xunit-filename ui-screenshots.xunit.xml --report-xunit-trx --report-xunit-trx-filename ui-screenshots.trx --minimum-expected-tests $minimumExpectedTests --hangdump --hangdump-timeout 5m --hangdump-type Mini
             $testExitCode = $LASTEXITCODE
             $reportPath = "tests/UiScreenshots/bin/Release/net10.0/${{ matrix.rid }}/TestResults/ui-screenshots.xunit.xml"
             & ./tools/check-xunit-report.ps1 -ReportPath $reportPath -SuiteName "UiScreenshots" -MinimumExpectedTests $minimumExpectedTests -Attempt $attempt -MaxAttempts 3

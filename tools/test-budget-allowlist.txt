@@ -5,9 +5,5 @@
 #
 # Measured from run 44227575517's test-results artifacts (both rids).
 
-Orbweaver.Tests.RemoteMirrorPanelScreenshots.AMirrorThatFailedItsIntegrityCheckShowsTheRefusal | waits out a 120s production timeout (120.0-120.1s); CB-334
-Orbweaver.Tests.RemoteMirrorPanelScreenshots.ALiveViewShowsTheFarSessionsOwnConversation | waits out a 120s production timeout (120.0-120.1s); CB-334
-Orbweaver.Tests.RemoteMirrorPanelScreenshots.ALiveViewWithNoPaneOffersToMessageTheBackgroundJob | waits out a 120s production timeout (120.0-120.1s); CB-334
-Orbweaver.Tests.RemoteMirrorPanelScreenshots.AMirrorStillFetchingShowsHowLongItHasBeenWaiting | waits out a 120s production timeout (120.0-120.1s); CB-334
 Orbweaver.Tests.LoopbackHttpTests.RefusingPortRefusesConnectionsWhileHeld | macOS connection-refused wait of 75.0s (osx-arm64 only); CB-365
 Orbweaver.Tests.OrbArrangementSweepTests.EveryArrangementKeepsOrbsOnScreenAndApart | whole arrangement sweep in one test, 102.7s osx-arm64 / 87.7s win-x64; CB-366 splits it to run in parallel
