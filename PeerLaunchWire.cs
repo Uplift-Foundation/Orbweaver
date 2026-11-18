@@ -44,10 +44,12 @@ namespace Orbweaver
         // --- launch-info ---------------------------------------------------------
 
         internal static JsonElement EncodeInfo(PeerLaunchInfo info) =>
-            PeerProtocol.BodyOf(info.Allowed
-                ? info
-                // Switch off: nothing but the OS goes out, whatever the caller built.
-                : new PeerLaunchInfo(false, info.Os));
+            info.Allowed
+                ? PeerProtocol.BodyOf(info)
+                // Switch off: nothing but the OS goes out, whatever the caller
+                // built. An anonymous object rather than the record, because a
+                // record's non-nullable `terminal` would still be written.
+                : PeerProtocol.BodyOf(new { allowed = false, os = info.Os });
 
         internal static PeerLaunchInfo? ParseInfo(JsonElement body)
         {
