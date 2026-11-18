@@ -1493,7 +1493,7 @@ namespace Orbweaver
             // Snapshot the local form once, the first time it is left.
             if (_machine is null)
             {
-                _localFolders = ((IEnumerable<string>)_folderCombo.ItemsSource!).ToList();
+                _localFolders = (_folderCombo.ItemsSource as IEnumerable<string>)?.ToList();
                 _localFolder = _folderCombo.SelectedItem as string;
                 _localCli = _selectedCli;
                 _localOpenClaw = _openClawSelected;
@@ -1588,10 +1588,9 @@ namespace Orbweaver
                 ToolTip.SetTip(radio, _localTip[radio]);
             }
 
-            // Snapshotted the first time a remote machine was chosen, and a
-            // restore only ever follows one, so both are set.
-            _folderCombo.ItemsSource = _localFolders!;
-            _folderCombo.SelectedItem = _localFolder;
+            var folders = _localFolders ?? new List<string>();
+            _folderCombo.ItemsSource = folders;
+            _folderCombo.SelectedItem = _localFolder is { } f && folders.Contains(f) ? f : folders.FirstOrDefault();
             _browseButton.IsEnabled = true;
 
             // Put back what was chosen before the first remote pass, falling
@@ -1614,11 +1613,10 @@ namespace Orbweaver
         {
             // Start is disabled in each of these states; a stray click still says
             // why instead of launching.
-            var scope = _scope!;   // set with _machine, always
-            if (!scope.StartEnabled || _selectedCli is not { } cli
+            if (_scope is not { StartEnabled: true } scope || _selectedCli is not { } cli
                 || _folderCombo.SelectedItem is not string folder)
             {
-                _statusLine.Text = scope.Note ?? "Choose a CLI first.";
+                _statusLine.Text = _scope?.Note ?? "Choose a CLI first.";
                 return;
             }
 

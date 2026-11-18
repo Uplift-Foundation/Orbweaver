@@ -61,7 +61,7 @@ namespace Orbweaver
                 InfoState.NoAnswer => PeerLaunchCopy.Explain(PeerLaunchCodes.NoAnswer, null, "claude", Machine),
                 InfoState.NotAllowed => PeerLaunchCopy.Explain(PeerLaunchCodes.PeerLaunchOff, null, "claude", Machine),
                 InfoState.Ready when Info is not { Terminal: true } => PeerLaunchCopy.Explain(
-                    RelayReplies.NoTerminal, Info!.Os == "macos" ? "tmux isn't installed" : null, "claude", Machine),
+                    RelayReplies.NoTerminal, Info?.Os == "macos" ? "tmux isn't installed" : null, "claude", Machine),
                 InfoState.Ready when !AnyCli => PeerLaunchCopy.NoCli(Machine),
                 InfoState.Ready when Folders().Count == 0 => PeerLaunchCopy.NoFolder(Machine),
                 _ => null,
@@ -94,7 +94,7 @@ namespace Orbweaver
             }
 
             internal IReadOnlyList<PeerLaunchAccount> Accounts(string cli) =>
-                State == InfoState.Ready && Info!.Accounts is { } a ? a.Where(x => x.Cli == cli).ToList() : [];
+                State == InfoState.Ready && Info?.Accounts is { } a ? a.Where(x => x.Cli == cli).ToList() : [];
         }
 
         internal static Scope Loading(string machine) => new(InfoState.Loading, null, machine);
