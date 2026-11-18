@@ -285,7 +285,10 @@ namespace Orbweaver
 
             var state = RemoteControlSessions.MirrorStateFor(_account, _remoteName);
             if (state.Availability != RemoteMirrorClient.MirrorAvailability.Available) return;
-            if (state.Entry is not { } entry) return;
+
+            // Available is only ever returned with the entry (StateFor), so there is
+            // no missing-entry branch to take here.
+            var entry = state.Entry!;
 
             var canType = entry.HasPane;
             var canDeliver = entry.CanDeliver ?? false;
