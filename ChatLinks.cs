@@ -30,7 +30,13 @@ namespace Orbweaver
         // beside the launcher's own allowlist, keeps the two from drifting if
         // the parser's contract ever loosens.
         internal static bool IsLive(ChatMarkdown.MdSpan span) =>
-            span.Style == ChatMarkdown.MdStyle.Link && CloudSessionLink.IsOpenable(span.Url);
+            span.Style == ChatMarkdown.MdStyle.Link && (CloudSessionLink.IsOpenable(span.Url) || IsFileUrl(span.Url));
+
+        // Whether a destination is one of the file forms (CB-363) rather than
+        // a web address. The click handler asks it to choose between Open and
+        // OpenFile, and IsLive to decide whether a span is a link at all, so
+        // the two cannot disagree about which destinations are files.
+        internal static bool IsFileUrl(string? url) => FileLink.TryParse(url) is not null;
 
         // The style a span is drawn in: its own, except that a Link span with
         // nothing openable behind it is drawn as plain text — the same rule
@@ -84,6 +90,15 @@ namespace Orbweaver
         // and throws without a render interface. This class has no Avalonia
         // statics to trip over.
         internal static Func<string, bool> Open { get; set; } = CloudSessionLink.Open;
+
+        // Opens a local file a chat message named, or the cached copy of one
+        // fetched from another machine (CB-363). Given a decoded local path —
+        // never a raw destination — and returns whether something started.
+        // A seam for the same reason as Open: both UI suites set it to a no-op
+        // before any test runs, so no click in either can start a real
+        // application or a Finder window. FileLinkLauncher decides through
+        // FileLinkPolicy on its own, whatever it is handed here.
+        internal static Func<string, bool> OpenFile { get; set; } = FileLinkLauncher.OpenLocal;
 
         // A click opens a link only when it began and ended on the same one and
         // left nothing selected.
