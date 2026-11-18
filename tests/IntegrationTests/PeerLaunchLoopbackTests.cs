@@ -153,4 +153,30 @@ public class PeerLaunchLoopbackTests : IDisposable
         Assert.Equal(RelayReplies.LaunchFailed,
             (await client.LaunchAsync("receiver", new("claude", "/ok", "default"), CancellationToken.None)).Code);
     }
+
+    // Nadia's must-fix: a launch waits up to 30 s for the session to check in,
+    // and the link delivers one message at a time per connection. If the
+    // handler ran on that queue, nothing else from this peer would arrive.
+    [Fact]
+    public async Task ALaunchThatNeverFinishesDoesNotHoldUpTheNextMessageFromThatPeer()
+    {
+        var never = new TaskCompletionSource<PeerLaunchResult>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (_, client) = await Pair(Source(true), (_, _) => { entered.TrySetResult(); return never.Task; });
+
+        using var cts = new CancellationTokenSource();
+        var stuck = client.LaunchAsync("receiver", new("claude", "/ok", "default"), cts.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Negative control: the launch really is still pending, so the info
+        // answer below is not just arriving after it finished.
+        Assert.False(stuck.IsCompleted);
+
+        var info = await client.InfoAsync("receiver", CancellationToken.None);
+
+        Assert.True(info!.Allowed);
+
+        cts.Cancel();
+        never.TrySetResult(new PeerLaunchResult(true, "launched", "s", null));
+    }
 }

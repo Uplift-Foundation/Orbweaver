@@ -17,7 +17,7 @@ namespace Orbweaver
         [property: JsonPropertyName("allowed")] bool Allowed,
         [property: JsonPropertyName("os")] string Os,
         [property: JsonPropertyName("home")] string? Home = null,
-        [property: JsonPropertyName("terminal")] bool Terminal = false,
+        [property: JsonPropertyName("terminal")] bool? Terminal = null,
         [property: JsonPropertyName("clis")] IReadOnlyList<PeerLaunchCli>? Clis = null,
         [property: JsonPropertyName("accounts")] IReadOnlyList<PeerLaunchAccount>? Accounts = null,
         [property: JsonPropertyName("recents")] IReadOnlyList<string>? Recents = null);
@@ -66,5 +66,10 @@ namespace Orbweaver
         // Client-side only; a peer never sends these.
         public const string NoAnswer = "no_answer";
         public const string LinkLost = "link_lost";
+
+        // This desk could not sign the request, so nothing was sent. Not
+        // bad_signature, which would blame the far machine for something that
+        // never left this one.
+        public const string CannotSign = "cannot_sign";
     }
 }

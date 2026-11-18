@@ -132,15 +132,16 @@ public class PeerLaunchWireTests
     }
 
     [Fact]
-    public void ALaunchWithTheOptionalFieldsAbsentGetsEmptyOnes()
+    public void EmptyOptionalFieldsAreFineButAbsentOnesAreNot()
     {
-        var back = PeerLaunchWire.ParseLaunch(J(
-            """{"cwd":"/w","cli":"claude","account":"default","nonce":"n","expires_at":5,"sig":"s","cert":"c"}"""))!;
+        Assert.NotNull(PeerLaunchWire.ParseLaunch(PeerLaunchWire.EncodeLaunch(Req)));
 
-        Assert.Equal("", back.Persona);
-        Assert.Equal("", back.Model);
-        Assert.Equal("", back.ParentSessionId);
-        Assert.Equal("", back.FirstMessage);
+        foreach (var name in new[] { "persona", "model", "parent_session_id", "first_message" })
+        {
+            var obj = JsonSerializer.SerializeToNode(Req)!.AsObject();
+            obj.Remove(name);
+            Assert.Null(PeerLaunchWire.ParseLaunch(J(obj.ToJsonString())));
+        }
     }
 
     [Fact]

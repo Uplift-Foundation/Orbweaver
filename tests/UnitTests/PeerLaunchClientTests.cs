@@ -156,8 +156,32 @@ public class PeerLaunchClientTests
         var result = await rig.Client.LaunchAsync("mini", Spec, CancellationToken.None);
 
         Assert.False(result.Ok);
-        Assert.Equal(RelayReplies.BadSignature, result.Code);
+        Assert.Equal(PeerLaunchCodes.CannotSign, result.Code);
         Assert.Empty(rig.Sent);
+    }
+
+    [Fact]
+    public async Task ASignerThatThrowsIsAResultNotACrash()
+    {
+        var client = new PeerLaunchClient(new PeerLaunchClient.Seams(
+            (_, _) => Task.FromResult(true), () => [],
+            (_, _) => throw new TimeoutException("certificate still loading"), () => Now));
+
+        var result = await client.LaunchAsync("mini", Spec, CancellationToken.None);
+
+        Assert.Equal(new PeerLaunchResult(false, PeerLaunchCodes.CannotSign, null, "TimeoutException"), result);
+    }
+
+    [Fact]
+    public async Task ACancelledSigningStillPropagatesTheCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        var client = new PeerLaunchClient(new PeerLaunchClient.Seams(
+            (_, _) => Task.FromResult(true), () => [],
+            (_, _) => { cts.Cancel(); throw new OperationCanceledException(cts.Token); }, () => Now));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => client.LaunchAsync("mini", Spec, cts.Token));
     }
 
     [Theory]

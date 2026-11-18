@@ -70,14 +70,21 @@ namespace Orbweaver
                 _seams.Now().Add(Lifetime).ToUnixTimeSeconds(),
                 "", "");
 
-            var signed = await _seams.Sign(machine, unsigned).ConfigureAwait(false);
+            (string Sig, string Cert)? signed;
 
-            // Nothing was sent, so say so: this is the sender's own refusal,
-            // not the peer's. The code is the one the phone uses for a launch
-            // the signature could not cover.
+            try { signed = await _seams.Sign(machine, unsigned).ConfigureAwait(false); }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // The real signer throws TimeoutException while the
+                // certificate is still loading; that is a refusal to show,
+                // not a crash in the window.
+                return new PeerLaunchResult(false, PeerLaunchCodes.CannotSign, null, e.GetType().Name);
+            }
+
+            // Nothing was sent, so say so: this is the sender's own refusal.
             if (signed is not { } s)
-                return new PeerLaunchResult(false, RelayReplies.BadSignature, null,
-                    "this desktop could not sign the request");
+                return new PeerLaunchResult(false, PeerLaunchCodes.CannotSign, null,
+                    "no pairing for that machine");
 
             var body = PeerLaunchWire.EncodeLaunch(unsigned with { Sig = s.Sig, Cert = s.Cert });
 

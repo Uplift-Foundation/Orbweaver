@@ -208,12 +208,17 @@ namespace Orbweaver
 
             switch (message.Type)
             {
+                // Both answers leave the link's in-order queue (CB-322): a
+                // launch waits up to 30 s for the session to check in, and an
+                // info answer locates CLIs and tmux on disk. Awaited here they
+                // would hold every other message from this peer — roster,
+                // transcript windows, chat input — behind them.
                 case PeerProtocol.LaunchInfoGet:
-                    await AnswerLaunchInfoAsync(machine, message).ConfigureAwait(false);
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchInfoAsync(machine, message));
                     return;
 
                 case PeerProtocol.Launch:
-                    await AnswerLaunchAsync(machine, message).ConfigureAwait(false);
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchAsync(machine, message));
                     return;
 
                 case PeerProtocol.LaunchInfo:
@@ -270,17 +275,22 @@ namespace Orbweaver
             PeerLaunchInfoSource? source;
             lock (_gate) source = _launchInfo;
 
-            if (source is null || !MayAsk(machine)) return;
+            if (source is null) return;
 
-            await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.LaunchInfo, message.Id,
-                body: PeerLaunchWire.EncodeInfo(source.Build()))).ConfigureAwait(false);
+            // Nothing may escape: this runs unobserved, off the queue.
+            try
+            {
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.LaunchInfo, message.Id,
+                    body: PeerLaunchWire.EncodeInfo(source.Build()))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-launch-info-failed", $"from={machine} {e.GetType().Name}");
+            }
         }
 
         private async Task AnswerLaunchAsync(string machine, PeerProtocol.PeerMessage message)
         {
-            // Dropped silently like every other message from a stranger.
-            if (!MayAsk(machine)) return;
-
             Func<string, JsonElement, Task<PeerLaunchResult>>? handler;
             lock (_gate) handler = _launchHandler;
 
@@ -301,8 +311,15 @@ namespace Orbweaver
                     result = new PeerLaunchResult(false, RelayReplies.LaunchFailed, null, null);
                 }
 
-            await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.LaunchResult, message.Id,
-                body: PeerLaunchWire.EncodeResult(result))).ConfigureAwait(false);
+            try
+            {
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.LaunchResult, message.Id,
+                    body: PeerLaunchWire.EncodeResult(result))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-launch-reply-failed", $"from={machine} {e.GetType().Name}");
+            }
         }
 
         // --- who may ask -------------------------------------------------------------

@@ -102,22 +102,18 @@ namespace Orbweaver
 
             if (request is null) return null;
 
-            // The four optional fields may be absent; the rest may not.
-            var whole = Sane(request.Cwd, MaxText, true) && Sane(request.Cli, 32, true)
+            // Every field must be present: a missing one is a bad frame, never a
+            // default. Four of them may be empty (the desktop window sends no
+            // persona, model, parent or first message) but not absent.
+            var whole = request.Persona is not null && request.Model is not null
+                && request.ParentSessionId is not null && request.FirstMessage is not null
+                && Sane(request.Cwd, MaxText, true) && Sane(request.Cli, 32, true)
                 && Sane(request.Account, 256, true) && Sane(request.Nonce, 256, true)
                 && Sane(request.Sig, MaxText, true) && Sane(request.Cert, 32 * 1024, true)
-                && (request.FirstMessage is null || request.FirstMessage.Length <= 16 * 1024)
+                && request.FirstMessage.Length <= 16 * 1024
                 && request.ExpiresAt > 0;
 
-            return whole
-                ? request with
-                {
-                    Persona = request.Persona ?? "",
-                    Model = request.Model ?? "",
-                    ParentSessionId = request.ParentSessionId ?? "",
-                    FirstMessage = request.FirstMessage ?? ""
-                }
-                : null;
+            return whole ? request : null;
         }
 
         // --- launch-result -------------------------------------------------------
