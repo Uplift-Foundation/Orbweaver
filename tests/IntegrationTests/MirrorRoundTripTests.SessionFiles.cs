@@ -87,4 +87,37 @@ public partial class MirrorRoundTripTests
         }
         finally { RemoteControlSessions.ResetForTests(); }
     }
+
+    [Fact]
+    public async Task ASecondClickOnAnUnchangedFileCrossesNoBytesAndOpensTheSameCachedCopy()
+    {
+        var (harness, tree) = await FileHarnessAsync();
+        using var _ = tree;
+        try
+        {
+            var bytes = Random(MirrorProtocol.PictureChunkBytes + 7);
+            var path = tree.Write("report.pdf", bytes);
+            var session = SessionOver(harness);
+
+            var first = await session.FetchFileAsync(path, null, CancellationToken.None);
+            harness.ForgetFramesSoFar();
+            var second = await session.FetchFileAsync(path, null, CancellationToken.None);
+
+            Assert.True(first.Ok);
+            Assert.True(second.Ok);
+            Assert.Equal(first.LocalPath, second.LocalPath);
+            Assert.Equal(0, harness.ChunkFrames);
+
+            // Control: a changed file is pulled again, so "same" is not simply
+            // what a second click always gets.
+            var changed = Random(MirrorProtocol.PictureChunkBytes + 8);
+            tree.Write("report.pdf", changed);
+            var third = await session.FetchFileAsync(path, null, CancellationToken.None);
+            Assert.True(third.Ok);
+            Assert.NotEqual(first.LocalPath, third.LocalPath);
+            Assert.Equal(changed, File.ReadAllBytes(third.LocalPath!));
+            Assert.True(harness.ChunkFrames > 0);
+        }
+        finally { RemoteControlSessions.ResetForTests(); }
+    }
 }

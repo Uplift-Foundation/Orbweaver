@@ -25,7 +25,7 @@ public class ChatSessionFilesTests : IDisposable
 
     private RemoteControlChatSession Peer(
         Func<string, bool>? speaks = null,
-        Func<string, string, IProgress<(long Got, long Total)>?, CancellationToken, Task<PeerFileResult>>? fetch = null,
+        Func<string, string, string?, IProgress<(long Got, long Total)>?, CancellationToken, Task<PeerFileResult>>? fetch = null,
         IDownloadMarker? marker = null) =>
         new("rc:.claude:evidence", ".claude", "evidence")
         {
@@ -65,7 +65,7 @@ public class ChatSessionFilesTests : IDisposable
     public async Task AnOldPeerIsToldToUpdateAndNothingIsRequested()
     {
         var asked = 0;
-        var session = Peer(speaks: _ => false, fetch: (_, _, _, _) => { asked++; throw new InvalidOperationException(); });
+        var session = Peer(speaks: _ => false, fetch: (_, _, _, _, _) => { asked++; throw new InvalidOperationException(); });
         var result = await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
         Assert.Equal("update", result.Refusal);
         Assert.Equal(0, asked);
@@ -75,7 +75,7 @@ public class ChatSessionFilesTests : IDisposable
     public async Task AFilePeerAsksForTheRouteAndCachesTheBytes()
     {
         string? askedName = null, askedPath = null;
-        var session = Peer(fetch: (name, path, _, _) =>
+        var session = Peer(fetch: (name, path, _, _, _) =>
         {
             askedName = name;
             askedPath = path;
@@ -96,7 +96,7 @@ public class ChatSessionFilesTests : IDisposable
     [AvaloniaFact]
     public async Task TheServersExecutableBitSurvivesIntoTheResult()
     {
-        var session = Peer(fetch: (_, _, _, _) =>
+        var session = Peer(fetch: (_, _, _, _, _) =>
             Task.FromResult<PeerFileResult>(new PeerFileResult.Bytes(new byte[] { 1 }, 5, 1, Exec: true)));
         var result = await session.FetchFileAsync("/a/tool.pdf", null, CancellationToken.None);
         Assert.True(result.Ok);
@@ -108,7 +108,7 @@ public class ChatSessionFilesTests : IDisposable
     {
         IProgress<(long Got, long Total)>? seen = null;
         CancellationToken seenToken = default;
-        var session = Peer(fetch: (_, _, progress, ct) =>
+        var session = Peer(fetch: (_, _, _, progress, ct) =>
         {
             seen = progress;
             seenToken = ct;
@@ -139,7 +139,7 @@ public class ChatSessionFilesTests : IDisposable
     [InlineData("something_new", "failed")]
     public async Task AFarRefusalKeepsAnActionableCodeAndFlattensTheRest(string wire, string expected)
     {
-        var session = Peer(fetch: (_, _, _, _) =>
+        var session = Peer(fetch: (_, _, _, _, _) =>
             Task.FromResult<PeerFileResult>(new PeerFileResult.Error(wire, "far sentence")));
         var result = await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
         Assert.False(result.Ok);
@@ -148,9 +148,46 @@ public class ChatSessionFilesTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task ASameAnswerIsRefusedBecauseItsExecutableBitIsUnknown()
+    public async Task ARepeatClickOffersTheCachedStampAndOpensTheCachedCopyOnSame()
     {
-        var session = Peer(fetch: (_, _, _, _) => Task.FromResult<PeerFileResult>(new PeerFileResult.Same()));
+        var offered = new List<string?>();
+        PeerFileResult next = new PeerFileResult.Bytes(new byte[] { 7, 7 }, 1700000000000, 2, Exec: false);
+        var session = Peer(fetch: (_, _, have, _, _) =>
+        {
+            offered.Add(have);
+            return Task.FromResult(next);
+        });
+
+        var first = await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
+        next = new PeerFileResult.Same();
+        var second = await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
+
+        Assert.Null(offered[0]);
+        Assert.Equal("1700000000000-2", offered[1]);
+        Assert.True(second.Ok);
+        Assert.Equal(first.LocalPath, second.LocalPath);
+        Assert.False(second.Executable);
+    }
+
+    [AvaloniaFact]
+    public async Task ASameAnswerCarriesTheFarExecutableBitSoARepeatClickStillReveals()
+    {
+        PeerFileResult next = new PeerFileResult.Bytes(new byte[] { 7 }, 5, 1, Exec: false);
+        var session = Peer(fetch: (_, _, _, _, _) => Task.FromResult(next));
+        await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
+
+        // The far file gained an exec bit without its mtime or size changing.
+        next = new PeerFileResult.Same(Exec: true);
+        var again = await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
+
+        Assert.True(again.Ok);
+        Assert.True(again.Executable);
+    }
+
+    [AvaloniaFact]
+    public async Task ASameAnswerToARequestThatOfferedNothingIsRefused()
+    {
+        var session = Peer(fetch: (_, _, _, _, _) => Task.FromResult<PeerFileResult>(new PeerFileResult.Same()));
         var result = await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
         Assert.Equal("failed", result.Refusal);
     }
@@ -159,7 +196,7 @@ public class ChatSessionFilesTests : IDisposable
     public async Task ACacheThatCannotMarkTheFileIsAFailureNotAnOpenOfAnUnmarkedCopy()
     {
         var session = Peer(
-            fetch: (_, _, _, _) => Task.FromResult<PeerFileResult>(new PeerFileResult.Bytes(new byte[] { 1 }, 5, 1, false)),
+            fetch: (_, _, _, _, _) => Task.FromResult<PeerFileResult>(new PeerFileResult.Bytes(new byte[] { 1 }, 5, 1, false)),
             marker: new ThrowingMarker());
         var result = await session.FetchFileAsync("/a/x.pdf", null, CancellationToken.None);
         Assert.Equal("failed", result.Refusal);
