@@ -59,14 +59,22 @@ namespace Orbweaver
 
     internal static class FileLinkPolicy
     {
-        // The ticket's list plus the architect's additions. Compared without
-        // case, on the last extension only: "x.pdf.exe" is an .exe and
-        // "x.exe.pdf" is a pdf, which is how the OS reads them too.
-        private static readonly string[] DeniedExtensions =
+        // An allowlist, not a deny list (PM decision, CB-363): a deny list is
+        // a bet that nobody has registered a handler that runs something it
+        // forgot — .html and .svg run script in a browser, .py runs under the
+        // default handler on Windows, .docm carries macros, .iso mounts — and
+        // every such omission is a file opened that nobody chose. Only document,
+        // image, audio and video kinds that cannot execute on open are here;
+        // everything else is revealed, which costs one more click and nothing
+        // else. Compared without case, on the last extension only: "x.pdf.exe"
+        // is an .exe (revealed) and "x.exe.pdf" is a pdf (opened), which is how
+        // the OS reads them too.
+        private static readonly string[] AllowedExtensions =
         [
-            ".app", ".command", ".sh", ".exe", ".bat", ".cmd", ".ps1", ".lnk", ".scpt", ".pkg", ".msi",
-            ".jar", ".js", ".vbs", ".wsf", ".hta", ".scr", ".com", ".pif", ".reg", ".cpl", ".dll", ".url",
-            ".terminal", ".tool", ".workflow", ".action", ".inetloc", ".fileloc", ".webloc", ".dmg", ".desktop"
+            ".pdf", ".txt", ".md", ".markdown", ".rtf", ".csv", ".tsv", ".json", ".log", ".xml", ".yaml", ".yml",
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp", ".tiff", ".tif",
+            ".mp3", ".m4a", ".wav", ".mp4", ".mov", ".m4v",
+            ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".pages", ".numbers", ".key", ".eml"
         ];
 
         internal static FileLinkVerdict Decide(FileLink link, FileFacts facts, bool isWindows)
@@ -92,21 +100,21 @@ namespace Orbweaver
 
             if (facts.Executable) return FileLinkVerdict.Reveal("Executable files are shown, not run.");
 
-            if (IsDeniedExtension(link.Path)) return FileLinkVerdict.Reveal("Programs and scripts are shown, not run.");
+            if (!IsAllowedExtension(link.Path)) return FileLinkVerdict.Reveal("Only documents, images, audio and video are opened from chat; other files are shown.");
 
             return FileLinkVerdict.Open;
         }
 
-        internal static bool IsDeniedExtension(string path)
+        internal static bool IsAllowedExtension(string path)
         {
             var name = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
             var dot = name.LastIndexOf('.');
             if (dot < 0) return false;
 
             var extension = name[dot..];
-            foreach (var denied in DeniedExtensions)
+            foreach (var allowed in AllowedExtensions)
             {
-                if (string.Equals(extension, denied, StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.Equals(extension, allowed, StringComparison.OrdinalIgnoreCase)) return true;
             }
 
             return false;

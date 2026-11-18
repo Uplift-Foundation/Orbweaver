@@ -18,34 +18,57 @@ public class FileLinkPolicyTests
     private static FileLinkAction Win(string path, FileFacts? facts = null) =>
         FileLinkPolicy.Decide(new FileLink(path, true), facts ?? Plain, isWindows: true).Action;
 
+    // One row per allowlisted family (documents, text and data, images,
+    // audio, video, office, mail), upper-cased too: the allowlist is the only
+    // way to Open.
     [Theory]
-    [InlineData("/a/x.pdf")]
-    [InlineData("/a/x.PDF")]
-    [InlineData("/a/README.md")]
-    [InlineData("/a/x.exe.pdf")]       // reads as a pdf
-    [InlineData("/a/noextension")]
-    [InlineData("/a/.hidden")]         // ".hidden" is an extension-only name; not on the list
-    [InlineData("/a.b/noextension")]   // the dot belongs to the folder
-    [InlineData("/a/x.shx")]           // near-miss of .sh
-    [InlineData("/a/x.jsx")]           // near-miss of .js
-    public void OrdinaryFilesOpen(string path) =>
-        Assert.Equal(FileLinkAction.Open, Mac(path));
-
-    [Theory]
-    [InlineData(".app")] [InlineData(".command")] [InlineData(".sh")] [InlineData(".exe")] [InlineData(".bat")]
-    [InlineData(".cmd")] [InlineData(".ps1")] [InlineData(".lnk")] [InlineData(".scpt")] [InlineData(".pkg")]
-    [InlineData(".msi")] [InlineData(".jar")] [InlineData(".js")] [InlineData(".vbs")] [InlineData(".wsf")]
-    [InlineData(".hta")] [InlineData(".scr")] [InlineData(".com")] [InlineData(".pif")] [InlineData(".reg")]
-    [InlineData(".cpl")] [InlineData(".dll")] [InlineData(".url")] [InlineData(".terminal")] [InlineData(".tool")]
-    [InlineData(".workflow")] [InlineData(".action")] [InlineData(".inetloc")] [InlineData(".fileloc")]
-    [InlineData(".webloc")] [InlineData(".dmg")] [InlineData(".desktop")]
-    public void EveryDeniedExtensionIsRevealedNotOpened(string extension)
+    [InlineData(".pdf")] [InlineData(".txt")] [InlineData(".md")] [InlineData(".markdown")] [InlineData(".rtf")]
+    [InlineData(".csv")] [InlineData(".tsv")] [InlineData(".json")] [InlineData(".log")] [InlineData(".xml")]
+    [InlineData(".yaml")] [InlineData(".yml")]
+    [InlineData(".png")] [InlineData(".jpg")] [InlineData(".jpeg")] [InlineData(".gif")] [InlineData(".webp")]
+    [InlineData(".heic")] [InlineData(".bmp")] [InlineData(".tiff")] [InlineData(".tif")]
+    [InlineData(".mp3")] [InlineData(".m4a")] [InlineData(".wav")] [InlineData(".mp4")] [InlineData(".mov")] [InlineData(".m4v")]
+    [InlineData(".docx")] [InlineData(".xlsx")] [InlineData(".pptx")] [InlineData(".odt")] [InlineData(".ods")]
+    [InlineData(".odp")] [InlineData(".pages")] [InlineData(".numbers")] [InlineData(".key")] [InlineData(".eml")]
+    public void EveryAllowlistedExtensionOpens(string extension)
     {
-        Assert.Equal(FileLinkAction.Reveal, Mac("/a/x" + extension));
-        Assert.Equal(FileLinkAction.Reveal, Mac("/a/x" + extension.ToUpperInvariant()));
-        Assert.Equal(FileLinkAction.Reveal, Win("C:\\a\\x" + extension));
-        // The control: the same stem with an ordinary extension opens.
+        Assert.Equal(FileLinkAction.Open, Mac("/a/x" + extension));
+        Assert.Equal(FileLinkAction.Open, Mac("/a/x" + extension.ToUpperInvariant()));
+        Assert.Equal(FileLinkAction.Open, Win("C:\\a\\x" + extension));
+    }
+
+    // The controls, one per class: script in a browser, a script host, a Windows
+    // script/shell/console type, an installer, a disk image, a macro Office
+    // file, a bundle, and names with no usable extension. Each is Reveal, and
+    // each sits beside the .pdf that opens.
+    [Theory]
+    [InlineData("/a/x.html")] [InlineData("/a/x.htm")] [InlineData("/a/x.xhtml")] [InlineData("/a/x.svg")]
+    [InlineData("/a/x.webarchive")]
+    [InlineData("/a/x.py")] [InlineData("/a/x.pyw")] [InlineData("/a/x.rb")] [InlineData("/a/x.php")]
+    [InlineData("/a/x.vbe")] [InlineData("/a/x.jse")] [InlineData("/a/x.msc")] [InlineData("/a/x.chm")]
+    [InlineData("/a/x.jnlp")] [InlineData("/a/x.msix")] [InlineData("/a/x.xll")] [InlineData("/a/x.iqy")]
+    [InlineData("/a/x.iso")] [InlineData("/a/x.img")] [InlineData("/a/x.vhd")] [InlineData("/a/x.dmg")]
+    [InlineData("/a/x.docm")] [InlineData("/a/x.xlsm")] [InlineData("/a/x.pptm")] [InlineData("/a/x.dotm")]
+    [InlineData("/a/x.exe")] [InlineData("/a/x.sh")] [InlineData("/a/x.command")] [InlineData("/a/x.app")]
+    [InlineData("/a/x.ps1")] [InlineData("/a/x.bat")] [InlineData("/a/x.lnk")] [InlineData("/a/x.url")]
+    [InlineData("/a/x.webloc")] [InlineData("/a/x.jar")] [InlineData("/a/x.js")]
+    [InlineData("/a/noextension")]
+    [InlineData("/a/.hidden")]
+    [InlineData("/a.pdf/noextension")]   // the dot belongs to the folder
+    [InlineData("/a/x.pdfx")]            // near-miss of .pdf
+    [InlineData("/a/x.")]
+    public void AnythingNotOnTheAllowlistIsRevealedNotOpened(string path)
+    {
+        Assert.Equal(FileLinkAction.Reveal, Mac(path));
         Assert.Equal(FileLinkAction.Open, Mac("/a/x.pdf"));
+    }
+
+    [Fact]
+    public void AnUppercaseDeniedSpellingIsStillRevealed()
+    {
+        Assert.Equal(FileLinkAction.Reveal, Mac("/a/x.PDF.EXE"));
+        Assert.Equal(FileLinkAction.Reveal, Mac("/a/x.Exe"));
+        Assert.Equal(FileLinkAction.Reveal, Win("C:\\a\\x.HTML"));
     }
 
     [Fact]
@@ -56,11 +79,12 @@ public class FileLinkPolicyTests
         Assert.Equal(FileLinkAction.Open, Mac("/a/x.exe.pdf"));
     }
 
+    // A directory with an allowlisted name is still a directory.
     [Fact]
-    public void ADirectoryIsRevealedEvenWithAnOrdinaryName()
+    public void ADirectoryNamedLikeAPdfIsRevealed()
     {
-        Assert.Equal(FileLinkAction.Reveal, Mac("/a/Folder", new FileFacts(true, true, false)));
-        Assert.Equal(FileLinkAction.Open, Mac("/a/Folder"));
+        Assert.Equal(FileLinkAction.Reveal, Mac("/a/x.pdf", new FileFacts(true, true, false)));
+        Assert.Equal(FileLinkAction.Open, Mac("/a/x.pdf"));
     }
 
     [Fact]
@@ -92,10 +116,14 @@ public class FileLinkPolicyTests
         Assert.Equal(FileLinkAction.Open, Win("C:\\a\\x.pdf"));
     }
 
-    // On a Mac a trailing dot is just a name.
+    // On a Mac a trailing dot is not refused (that is a Windows rule), but the
+    // extension is then "." and off the allowlist, so it is shown, not opened.
     [Fact]
-    public void ATrailingDotIsOnlyAWindowsProblem() =>
-        Assert.Equal(FileLinkAction.Open, Mac("/a/x.pdf."));
+    public void ATrailingDotIsOnlyRefusedOnWindows()
+    {
+        Assert.Equal(FileLinkAction.Reveal, Mac("/a/x.pdf."));
+        Assert.Equal(FileLinkAction.Refuse, Win("C:\\a\\x.pdf."));
+    }
 
     [Fact]
     public void ASeparatorRunInsideThePathDoesNotTripTheTrailingRule() =>
@@ -127,6 +155,7 @@ public class FileLinkPolicyTests
     public void EveryNonOpenVerdictSaysWhy()
     {
         Assert.NotEmpty(FileLinkPolicy.Decide(new FileLink("/a/x.exe", false), Plain, false).Reason);
+        Assert.NotEmpty(FileLinkPolicy.Decide(new FileLink("/a/x.html", false), Plain, false).Reason);
         Assert.NotEmpty(FileLinkPolicy.Decide(new FileLink("/a/x.pdf", false), Missing, false).Reason);
         Assert.NotEmpty(FileLinkPolicy.Decide(new FileLink("/a/d", false), new FileFacts(true, true, false), false).Reason);
         Assert.NotEmpty(FileLinkPolicy.Decide(new FileLink("/a/x", false), new FileFacts(true, false, true), false).Reason);
@@ -179,6 +208,14 @@ public class FileLinkPolicyTests
             Assert.False(FileFacts.Probe(plain).Executable);
             Assert.True(FileFacts.Probe(exec).Executable);
             Assert.True(FileFacts.Probe(link).Executable);
+
+            // A link named like a pdf that points at a bundle directory is
+            // judged by the target: a directory, so Reveal.
+            var bundle = Path.Combine(dir, "Thing.app");
+            var bundleLink = Path.Combine(dir, "report.pdf.link");
+            Directory.CreateDirectory(bundle);
+            File.CreateSymbolicLink(bundleLink, bundle);
+            Assert.True(FileFacts.Probe(bundleLink).IsDirectory);
         }
         finally { Directory.Delete(dir, true); }
     }

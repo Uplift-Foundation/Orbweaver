@@ -18,7 +18,17 @@ public class FileLinkLauncherTests
         var info = Info(FileLinkVerdict.Open, "/a/My \"File\".pdf", mac: true, win: false)!;
         Assert.Equal("/usr/bin/open", info.FileName);
         Assert.False(info.UseShellExecute);
-        Assert.Equal(["/a/My \"File\".pdf"], info.ArgumentList);
+        Assert.Equal(["--", "/a/My \"File\".pdf"], info.ArgumentList);
+    }
+
+    // A name that looks like an option is one argument after "--", and the
+    // control shows "--" always precedes the path.
+    [Fact]
+    public void ADashLeadingNameCannotBeReadAsAnOption()
+    {
+        var info = Info(FileLinkVerdict.Open, "/a/-a.pdf", true, false)!;
+        Assert.Equal(["--", "/a/-a.pdf"], info.ArgumentList);
+        Assert.Equal(info.ArgumentList.Count - 2, info.ArgumentList.IndexOf("--"));
     }
 
     [Fact]
@@ -26,7 +36,7 @@ public class FileLinkLauncherTests
     {
         var info = Info(FileLinkVerdict.Reveal("x"), "/a/x.pdf", true, false)!;
         Assert.Equal("/usr/bin/open", info.FileName);
-        Assert.Equal(["-R", "/a/x.pdf"], info.ArgumentList);
+        Assert.Equal(["-R", "--", "/a/x.pdf"], info.ArgumentList);
     }
 
     [Fact]
@@ -52,9 +62,12 @@ public class FileLinkLauncherTests
     [Fact]
     public void AnOpenVerdictOnADeniedExtensionIsDowngradedToReveal()
     {
-        Assert.Equal(["-R", "/a/x.exe"], Info(FileLinkVerdict.Open, "/a/x.exe", true, false)!.ArgumentList);
+        Assert.Equal(["-R", "--", "/a/x.exe"], Info(FileLinkVerdict.Open, "/a/x.exe", true, false)!.ArgumentList);
         Assert.Equal("explorer.exe", Info(FileLinkVerdict.Open, "C:\\a\\x.exe", false, true)!.FileName);
-        Assert.Equal(["/a/x.pdf"], Info(FileLinkVerdict.Open, "/a/x.pdf", true, false)!.ArgumentList);
+        Assert.Equal(["--", "/a/x.pdf"], Info(FileLinkVerdict.Open, "/a/x.pdf", true, false)!.ArgumentList);
+        // Off the allowlist, not only the old deny list: .html is shown, not opened.
+        Assert.Equal("-R", Info(FileLinkVerdict.Open, "/a/x.html", true, false)!.ArgumentList[0]);
+        Assert.Equal("explorer.exe", Info(FileLinkVerdict.Open, "C:\\a\\x.svg", false, true)!.FileName);
     }
 
     [Fact]
@@ -94,12 +107,14 @@ public class FileLinkLauncherTests
     {
         Assert.True(FileLinkLauncher.Plan("/a/x.pdf", Plain, true, false, out var info, out var verdict));
         Assert.Equal(FileLinkAction.Open, verdict.Action);
-        Assert.Equal(["/a/x.pdf"], info!.ArgumentList);
+        Assert.Equal(["--", "/a/x.pdf"], info!.ArgumentList);
     }
 
     [Theory]
     [InlineData("/a/x.exe")]
     [InlineData("/a/x.pdf.exe")]
+    [InlineData("/a/x.html")]
+    [InlineData("/a/x.iso")]
     public void PlanRevealsADeniedFile(string path)
     {
         Assert.True(FileLinkLauncher.Plan(path, Plain, true, false, out var info, out var verdict));

@@ -21,8 +21,8 @@ namespace Orbweaver
         // program. Facts are not re-read — a launch that has just decided on
         // them is not made safer by a second stat that could disagree — so what
         // is re-checked is everything that needs only the path: its shape, the
-        // platform it belongs to, and the extension list. Open is downgraded
-        // to Reveal for a denied extension rather than refused, since the file
+        // platform it belongs to, and the extension allowlist. Open is downgraded
+        // to Reveal for an extension off the list rather than refused, since the file
         // is real and showing it is exactly what the policy would have said.
         internal static ProcessStartInfo? StartInfoFor(FileLinkVerdict verdict, string path, bool isMacOs, bool isWindows)
         {
@@ -35,12 +35,18 @@ namespace Orbweaver
             var local = link.Value.Path;
             if (isWindows && FileLinkPolicy.HasTrailingDotOrSpace(local)) return null;
 
-            var reveal = verdict.Action == FileLinkAction.Reveal || FileLinkPolicy.IsDeniedExtension(local);
+            var reveal = verdict.Action == FileLinkAction.Reveal || !FileLinkPolicy.IsAllowedExtension(local);
 
             if (isMacOs)
             {
                 var info = new ProcessStartInfo { FileName = "/usr/bin/open", UseShellExecute = false };
                 if (reveal) info.ArgumentList.Add("-R");
+
+                // "--" ends option parsing (confirmed against /usr/bin/open on
+                // macOS), so a name like "-a" can never be read as a flag. The
+                // path is always rooted at "/" here, which already cannot start
+                // with a dash; the terminator is the belt for that suspender.
+                info.ArgumentList.Add("--");
                 info.ArgumentList.Add(local);
                 return info;
             }
