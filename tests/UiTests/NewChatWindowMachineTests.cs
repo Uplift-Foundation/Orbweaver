@@ -36,13 +36,14 @@ public class NewChatWindowMachineTests : IDisposable
         public Dictionary<string, PeerLaunchInfo?> Answers = new();
         public PeerLaunchResult Result = new(true, "launched", "s1", null);
         public TaskCompletionSource<PeerLaunchResult>? PendingLaunch;
-        public bool IgnoreToken;
+        public Exception? ThrowInfo, ThrowLaunch;
         public List<(string machine, PeerLaunchSpec spec)> Launches = new();
 
         public IReadOnlyList<PeerMachine> Machines() => Peers;
 
         public Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct)
         {
+            if (ThrowInfo is { } boom) throw boom;
             if (Pending.TryGetValue(machine, out var tcs))
             {
                 ct.Register(() => tcs.TrySetCanceled(ct));
@@ -56,9 +57,9 @@ public class NewChatWindowMachineTests : IDisposable
             Launches.Add((machine, spec));
             if (PendingLaunch is { } tcs)
             {
-                if (!IgnoreToken) ct.Register(() => tcs.TrySetCanceled(ct));
                 return tcs.Task;
             }
+            if (ThrowLaunch is { } boom) throw boom;
             return Task.FromResult(Result);
         }
     }
@@ -94,6 +95,15 @@ public class NewChatWindowMachineTests : IDisposable
         NewChatWindow.PeerLauncherForTests = fake;
         NewChatWindow.PeerLinkOnForTests = linkOn;
 
+        var ctor = typeof(NewChatWindow).GetConstructor(
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            types: new[] { typeof(NewChatCli?), typeof(string), typeof(string) })!;
+        return (NewChatWindow)ctor.Invoke(new object?[] { null, null, null });
+    }
+
+    private static NewChatWindow RebuildWith(FakeLauncher f)
+    {
+        NewChatWindow.PeerLauncherForTests = f;
         var ctor = typeof(NewChatWindow).GetConstructor(
             BindingFlags.NonPublic | BindingFlags.Instance,
             types: new[] { typeof(NewChatCli?), typeof(string), typeof(string) })!;
@@ -382,39 +392,83 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.Empty(f.Launches);
     }
 
+    // Once the request is on the wire the far desk will start it, so the
+    // Machine row is locked until the answer is on screen.
     [AvaloniaFact]
-    public void ALaunchStillRunningWhenTheUserSwitchesAwayIsCancelledAndItsAnswerDropped()
+    public void TheMachineRowIsLockedWhileALaunchIsInFlight()
     {
         var f = Ready();
-        f.PendingLaunch = new();
+        var pending = f.PendingLaunch = new();
         var w = Make(f);
         Pick(w, 1);
         Click(w.StartButton);
         Assert.Equal("Starting on mini…", w.StatusLine.Text);
         Assert.False(w.StartButton.IsEnabled);
+        Assert.False(w.MachineCombo.IsEnabled);
 
-        Pick(w, 0);
-        f.PendingLaunch.TrySetResult(new PeerLaunchResult(true, "launched", "x", null));
+        pending.SetResult(new PeerLaunchResult(true, "launched", "x", null));
         Flush();
-        Assert.DoesNotContain("starting on mini", w.StatusLine.Text ?? "");
+        Assert.True(w.MachineCombo.IsEnabled);
+        Assert.True(w.StartButton.IsEnabled);
+        Assert.Contains("is starting on mini", w.StatusLine.Text);
+    }
+
+    [AvaloniaFact]
+    public void ALauncherThatThrowsOnInfoIsNoAnswerNotACrash()
+    {
+        var f = Ready();
+        var w = Make(f);
+        f.ThrowInfo = new TimeoutException("certificate still loading");
+        Pick(w, 1);
+        Assert.Contains("didn't answer", w.MachineNote.Text);
+        Assert.False(w.StartButton.IsEnabled);
+
+        f.ThrowInfo = null; // and the row still works afterwards
+        Pick(w, 2);
         Assert.True(w.StartButton.IsEnabled);
     }
 
     [AvaloniaFact]
-    public void ALaunchAnsweredAfterSwitchingToAnotherPeerIsDropped()
+    public void ALauncherThatThrowsOnLaunchShowsLaunchFailedWithTheExceptionType()
     {
         var f = Ready();
         var w = Make(f);
         Pick(w, 1);
-        // Nothing cancels this one: the fake ignores the token, as a real
-        // client might, so only the window's own check can drop the answer.
-        f.IgnoreToken = true;
-        var late = f.PendingLaunch = new();
+        f.ThrowLaunch = new TimeoutException("signer not ready");
         Click(w.StartButton);
-        Pick(w, 2);
-        late.TrySetResult(new PeerLaunchResult(true, "launched", "x", null));
-        Flush();
-        Assert.DoesNotContain("mini", w.StatusLine.Text ?? "");
+        Assert.Equal("mini could not start it (TimeoutException).", w.StatusLine.Text);
+        Assert.True(w.StartButton.IsEnabled);
+        Assert.True(w.MachineCombo.IsEnabled);
+    }
+
+    // This machine's "Codex not found" line under its row describes this
+    // machine. While another is chosen it is unreadable but keeps its height.
+    [AvaloniaFact]
+    public void ThisMachinesReasonLinesAreHiddenWhileARemoteMachineIsChosen()
+    {
+        var f = Ready();
+        f.Answers["mini"] = Info(installed: ["claude", "codex"]);
+        var w = Make(f);
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            Enabled(NewChatCli.ClaudeCode),
+            new NewChatOption(NewChatCli.Codex, Enabled: false, Reason: "Codex not found on this machine.", Warning: null),
+            Enabled(NewChatCli.Grok)
+        };
+        w = RebuildWith(f);
+        var opened = Height(w);
+        var line = w.ReasonTextFor(NewChatCli.Codex)!;
+        Assert.Equal(0.7, line.Opacity);
+
+        Pick(w, 1);
+        Assert.True(Radio(w, NewChatCli.Codex).IsEnabled);
+        Assert.Equal(0, line.Opacity);
+        Assert.Equal(opened, Height(w));
+
+        Pick(w, 0);
+        Assert.False(Radio(w, NewChatCli.Codex).IsEnabled);
+        Assert.Equal(0.7, line.Opacity);
+        Assert.Equal(opened, Height(w));
     }
 
     [AvaloniaFact]

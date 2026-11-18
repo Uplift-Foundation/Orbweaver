@@ -933,12 +933,14 @@ namespace Orbweaver
         // NewChatCli, or OpenClawTag for the fourth row), so a test can find
         // "the reason text for this row" the same way it finds the row
         // itself, without depending on sibling order in _cliList.Children.
+        private const double ReasonOpacity = 0.7;
+
         private static TextBlock ReasonText(string text, object tag) => new()
         {
             Text = text,
             Tag = tag,
             FontSize = 11,
-            Opacity = 0.7,
+            Opacity = ReasonOpacity,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Avalonia.Thickness(24, -2, 0, 4)
         };
@@ -1417,6 +1419,10 @@ namespace Orbweaver
 
         // ---- CB-357: the Machine row ------------------------------------
 
+        // The machine list is read once, when the window is built: a peer that
+        // comes online afterwards stays "offline" until the window is reopened.
+        // That is deliberate (a list that reshuffled under the cursor would be
+        // worse), not a missed refresh.
         private void BuildMachineRow(StackPanel root)
         {
             _peers = PeerLauncher;
@@ -1451,8 +1457,8 @@ namespace Orbweaver
         internal TextBlock MachineNote => _machineNote;
         internal StackPanel? MachineSection => _machineSection;
 
-        // Not private: a test drives a switch by setting the combo's selection,
-        // which comes here, and an offline pick must bounce back.
+        // A test drives a switch by setting the combo's selection, which comes
+        // here, and an offline pick must bounce back.
         private async void OnMachineChanged(object? sender, SelectionChangedEventArgs e)
         {
             if (_restoringMachine) return;
@@ -1499,6 +1505,10 @@ namespace Orbweaver
             PeerLaunchInfo? info;
             try { info = await _peers!.InfoAsync(entry.Name!, ct); }
             catch (OperationCanceledException) { return; }
+            // Anything else the launcher throws (a signer still loading its
+            // certificate, say) is no answer: the form says so and stays usable,
+            // rather than an async void taking the app down.
+            catch (Exception) { info = null; }
 
             // A newer pick (or a return to this machine) owns the form now.
             if (generation != _machineGeneration) return;
@@ -1510,6 +1520,11 @@ namespace Orbweaver
         private void ApplyScope(NewChatMachines.Scope scope)
         {
             _scope = scope;
+
+            // This machine's own "not found" / "hook not installed" lines under
+            // its rows describe this machine, not the one chosen. Opacity, never
+            // IsVisible: the lines keep their height (CB-207).
+            foreach (var line in _cliList.Children.OfType<TextBlock>()) line.Opacity = 0;
 
             // The reserved note line: the machine's own problem if it has one,
             // otherwise which CLIs it lacks and that OpenClaw stays here. The
@@ -1556,6 +1571,7 @@ namespace Orbweaver
         {
             _machine = null;
             _scope = null;
+            foreach (var line in _cliList.Children.OfType<TextBlock>()) line.Opacity = ReasonOpacity;
             _machineNote.Text = null;
             ToolTip.SetTip(_machineNote, null);
 
@@ -1605,22 +1621,24 @@ namespace Orbweaver
 
             var wire = RelayAccounts.CliName(cli);
             _startButton.IsEnabled = false;
+            // Once the request is on the wire the far desk will start it whatever
+            // happens here, so the form cannot be allowed to move to another
+            // machine and lose the answer: the Machine row is locked until the
+            // result is shown, and the launch is never cancelled.
+            _machineCombo.IsEnabled = false;
             _statusLine.Text = PeerLaunchCopy.Starting(machine);
 
             PeerLaunchResult result;
             try
             {
-                result = await _peers!.LaunchAsync(machine, new PeerLaunchSpec(wire, folder, account), _machineCts?.Token ?? CancellationToken.None);
+                result = await _peers!.LaunchAsync(machine, new PeerLaunchSpec(wire, folder, account), CancellationToken.None);
             }
-            catch (OperationCanceledException)
+            catch (Exception ex)
             {
-                return;
+                result = new PeerLaunchResult(false, RelayReplies.LaunchFailed, null, ex.GetType().Name);
             }
 
-            // The user moved to another machine while this was in flight; the
-            // form is theirs again and this answer is about something else.
-            if (_machine?.Name != machine || !ReferenceEquals(_scope, scope)) return;
-
+            _machineCombo.IsEnabled = true;
             _startButton.IsEnabled = true;
 
             // Nothing local is written: the last CLI, the last account and the
