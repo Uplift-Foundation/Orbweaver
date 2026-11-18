@@ -397,6 +397,11 @@ namespace Orbweaver
             // Getting there first is the whole point.
             Input.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
             Input.TextChanged += (_, _) => UpdateSlashSuggestions();
+            // The property's own change notification, not TextChanged: that one can
+            // be raised after the fact, so an edit made before Enter could land
+            // after the send had already recorded the count and look like one made
+            // during it, and the box would never clear.
+            Input.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) _inputEdits++; };
 
             // On the window rather than on Input, and ahead of it: a selection
             // in a bubble has to be copyable no matter which control the
@@ -3004,9 +3009,28 @@ namespace Orbweaver
         // IRemoteChatFetchWait). Disabling the box for that instant would add
         // a visible flicker for no protection worth having, and would need
         // its own recovery path if the awaited call never completed.
+        // Counts every change to the composer's text, so a send can tell whether
+        // the person touched the box after pressing Enter (CB-376).
+        private int _inputEdits;
+
+        // How many sends have run to the end of the decision below, so a test can
+        // wait for "the reply has been handled" rather than guess when.
+        internal int CompletedSends { get; private set; }
+
+        // The decision at the end of a send: the box is emptied only if the send
+        // went and the person has not written in it since. The reply to a send
+        // can arrive long after Enter (OpenClaw's waits for the gateway), and
+        // clearing unconditionally wiped whatever had been typed in the meantime:
+        // the next message, gone, and its Enter sent nothing. A counter rather
+        // than comparing the text, because sending "yes" and typing "yes" again
+        // while the first is in flight is an edit the text cannot show.
+        internal static bool ShouldClearComposerAfterSend(ChatSendOutcome outcome, bool editedSinceSend) =>
+            outcome == ChatSendOutcome.Sent && !editedSinceSend;
+
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
+            var editsAtSend = _inputEdits;
             // CB-306: a known command typed with a picture attached is refused,
             // not run and not sent — a control request carries no image, and a
             // command must never reach the model as prose. The note says why and
@@ -3028,7 +3052,8 @@ namespace Orbweaver
                     ? await withImages.SendWithImagesAsync(text, images)
                     : await session.SendAsync(text);
 
-            if (outcome == ChatSendOutcome.Sent) Input.Text = "";
+            if (ShouldClearComposerAfterSend(outcome, _inputEdits != editsAtSend)) Input.Text = "";
+            CompletedSends++;
         }
 
         // The button. Everything it decides beyond "am I already speaking" now
