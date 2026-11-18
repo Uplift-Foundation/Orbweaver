@@ -10,6 +10,11 @@ namespace Orbweaver.Tests;
 // shows, what a checker result should put on screen, the sentences the Settings
 // group writes, and which failure markers a finisher left behind. None of this
 // needs a window, which is why it is here and not in UiTests.
+// CB-386: in the Settings collection because WithNoCheckerACheckNowSaysSo...
+// writes OrbweaverSettings.SkippedUpdateVersion (through UpdateServices.Skip
+// with no checker) and reads it back, beside two Settings-collection classes
+// that set it to other values and to null; see SettingsSerialisationPinTests.
+[Collection("Settings")]
 public class UpdateUiLogicTests
 {
     // ---- UpdatePostInstallNotice.Decide ------------------------------------
