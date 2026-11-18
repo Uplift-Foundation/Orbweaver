@@ -1138,6 +1138,11 @@ namespace Orbweaver
         // more than one of these per peer (ErrBusy).
         public const long MaxFileBytes = 50L * 1024 * 1024;
 
+        // How long the far side's disk half of one FILE may take before it
+        // answers unreadable and frees the peer's slot; see
+        // RemoteMirrorServer.FileDeadline for why a read can block for good.
+        public const int FileReadDeadlineSeconds = 60;
+
         // Whether a HELLO reply's fields say the far Buddy serves FILE.
         public static bool SaysItServesFiles(IReadOnlyDictionary<string, string>? fields) =>
             fields is not null && fields.TryGetValue(FilesField, out var v) && v == "1";

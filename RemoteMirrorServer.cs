@@ -1020,7 +1020,7 @@ namespace Orbweaver
         // app restarts. Sixty seconds is far longer than any honest 50 MB read
         // from a local disk, and short enough that the panel's note is still
         // being looked at. Settable for tests.
-        internal TimeSpan FileDeadline { get; set; } = TimeSpan.FromSeconds(60);
+        internal TimeSpan FileDeadline { get; set; } = TimeSpan.FromSeconds(MirrorProtocol.FileReadDeadlineSeconds);
 
         // The last disk half that ran, abandoned or not, so a test can watch a
         // timed-out read finish later and see that it sends nothing.
