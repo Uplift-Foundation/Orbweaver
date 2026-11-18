@@ -75,12 +75,46 @@ public class LoopbackHttpTests
     }
 
     [Fact]
-    public void RefusingPortRefusesConnectionsWhileHeld()
+    public async Task RefusingPortRefusesImmediately()
     {
-        var (holder, port) = LoopbackHttp.RefusingPort();
-        using var _h = holder;
-        using var client = new TcpClient();
-        Assert.Throws<SocketException>(() => client.Connect(IPAddress.Loopback, port));
+        var port = LoopbackHttp.RefusingPort();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var outcome = await LoopbackHttp.ProbeAsync(port, TimeSpan.FromSeconds(5));
+        Assert.Equal(LoopbackHttp.ConnectOutcome.Refused, outcome);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"refusal took {sw.Elapsed}");
+    }
+
+    // Negative controls: a connect that is silently dropped, or that succeeds,
+    // must not classify as Refused — otherwise the test above proves nothing.
+    [Fact]
+    public async Task ADroppedConnectIsATimeoutNotARefusal()
+    {
+        var outcome = await LoopbackHttp.ClassifyAsync(ct => Task.Delay(Timeout.Infinite, ct), TimeSpan.FromMilliseconds(100));
+        Assert.Equal(LoopbackHttp.ConnectOutcome.TimedOut, outcome);
+    }
+
+    [Fact]
+    public async Task ARefusedSocketErrorClassifiesAsRefusedAndOthersPropagate()
+    {
+        Assert.Equal(LoopbackHttp.ConnectOutcome.Refused, await LoopbackHttp.ClassifyAsync(
+            _ => throw new SocketException((int)SocketError.ConnectionRefused), TimeSpan.FromSeconds(1)));
+        await Assert.ThrowsAsync<SocketException>(() => LoopbackHttp.ClassifyAsync(
+            _ => throw new SocketException((int)SocketError.HostUnreachable), TimeSpan.FromSeconds(1)));
+        Assert.Equal(LoopbackHttp.ConnectOutcome.Connected, await LoopbackHttp.ClassifyAsync(
+            _ => Task.CompletedTask, TimeSpan.FromSeconds(1)));
+    }
+
+    // The real-socket control: the pre-CB-365 shape. On macOS a bound-only port
+    // drops the SYN, and the probe must call that a timeout (on other OSes it
+    // refuses, so the claim is made only where it was measured).
+    [Fact]
+    public async Task OnMacAPortBoundButNotListeningDropsInsteadOfRefusing()
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        using var holder = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        holder.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)holder.LocalEndPoint!).Port;
+        Assert.Equal(LoopbackHttp.ConnectOutcome.TimedOut, await LoopbackHttp.ProbeAsync(port, TimeSpan.FromSeconds(1)));
     }
 
     [Fact]
