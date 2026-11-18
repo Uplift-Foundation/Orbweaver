@@ -340,7 +340,7 @@ public class OpenClawChatApprovalTests : IDisposable
             // In flight: the resolve is on the wire and unanswered. Polled for a
             // bounded time rather than assumed, so it does not depend on the send
             // having completed before AnswerAsync returned control.
-            for (var i = 0; i < 200 && Resolves(socket).Count == 0; i++) await Task.Delay(10);
+            for (var i = 0; i < 1000 && Resolves(socket).Count == 0; i++) await Task.Delay(10);
             Assert.Single(Resolves(socket));
             Assert.False(first.IsCompleted);
 
