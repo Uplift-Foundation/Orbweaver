@@ -19,33 +19,24 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
     private readonly List<PeerMirrorHost> _hosts = new();
     private readonly bool _saved = OrbweaverSettings.PeerLaunchInboundEnabled;
 
+    // The real server (PeerLaunchServer.Shared, through the production wiring)
+    // with one thing pinned: which CLIs are installed. The gate checks the CLI
+    // before the folder, so without this a runner with no claude answers
+    // unknown_cli where a developer's machine answers unknown_cwd. Every case
+    // is refused by the gate, so no launch seam is ever reached.
+    public PeerLaunchRealServerLoopbackTests() =>
+        NewChatLauncher.LocateFreshForTests = cli => cli == NewChatCli.ClaudeCode
+            ? (OperatingSystem.IsWindows() ? "C:\\c\\claude.exe" : "/bin/claude")
+            : null;
+
     public void Dispose()
     {
-        Assert.Equal(0, _started);
+        NewChatLauncher.LocateFreshForTests = null;
         OrbweaverSettings.PeerLaunchInboundEnabled = _saved;
         foreach (var host in _hosts) host.Dispose();
     }
 
     private static readonly PeerLaunchSpec Missing = new("claude", "/orbweaver-cb357/does/not/exist", "default");
-
-    private int _started;
-
-    // The real server with real settings, pairing and session source, and one
-    // thing pinned: the CLI lookup reports the CLI installed. The gate checks
-    // that before the folder, so without it a runner with no claude on PATH
-    // answers unknown_cli where a developer's machine answers unknown_cwd.
-    // The start seams count and refuse, so a launch that unexpectedly got
-    // through would show as _started > 0 rather than opening a terminal.
-    private PeerLaunchServer ServerWithCliInstalled() => new(PeerLaunchServer.RealSeams() with
-    {
-        Launch = new RelayRemote.LaunchSeams(
-            OperatingSystem.IsWindows(),
-            _ => OperatingSystem.IsWindows() ? "C:\\c\\claude.exe" : "/bin/claude",
-            Directory.Exists,
-            () => "/bin/zsh",
-            (_, _) => { _started++; return (null, "refused by the test"); },
-            _ => { _started++; return null; }),
-    });
 
     private async Task<PeerLaunchClient> Pair(
         DateTimeOffset? now = null,
@@ -72,7 +63,7 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
         var client = new PeerLaunchClient(seams);
 
         // The production wiring, not a copy of it.
-        PeerSessions.ServeLaunchOn(receiver, null, ServerWithCliInstalled().HandleAsync);
+        PeerSessions.ServeLaunchOn(receiver, null);
         sender.ServeLaunch(null, null, client);
 
         PeerIdentity.Remember(new PeerIdentity.Peer(PeerIdentity.OwnPin(), "receiver"));
@@ -153,5 +144,18 @@ public class PeerLaunchRealServerLoopbackTests : IDisposable
         // First is refused for the folder, which is after the nonce is spent.
         Assert.Equal(RelayReplies.UnknownCwd, (await Launch(client)).Code);
         Assert.Equal(RelayReplies.Replayed, (await Launch(client)).Code);
+    }
+
+    // The other half of the same ordering: with the CLI missing, the gate
+    // says so before it ever looks at the folder.
+    [Fact]
+    public async Task AMissingCliIsRefusedAsUnknownCliBeforeTheFolderIsLookedAt()
+    {
+        OrbweaverSettings.PeerLaunchInboundEnabled = true;
+        NewChatLauncher.LocateFreshForTests = _ => null;
+
+        var client = await Pair();
+
+        Assert.Equal(RelayReplies.UnknownCli, (await Launch(client)).Code);
     }
 }
