@@ -172,10 +172,21 @@ public class RelayV7FileTests : IAsyncLifetime
         Assert.Contains("\"code\":\"activity\"", Lines(LogPath)[0]);
         Assert.DoesNotContain("\"t\":\"activity\"", Lines(LogPath)[0]);
 
+        var replyAt = Now().ToUnixTimeMilliseconds();
+        lock (_clockGate) _clock += TimeSpan.FromSeconds(1);                          // time passes before the send completes
         released.SetResult();
         await Until(() => Lines(LogPath).Length == 2);
-        Assert.StartsWith("{\"t\":\"activity\"", Lines(LogPath)[1]);                // the order the old assertion forbade
-        AssertTheFrameAndItsReply(Lines(LogPath), first, reference);
+        var lines = Lines(LogPath);
+        Assert.StartsWith("{\"t\":\"activity\"", lines[1]);                           // the order the old assertion forbade
+        Assert.Equal(reference, JsonDocument.Parse(lines[1]).RootElement.GetProperty("ref").GetString());
+        Assert.Equal(reference, JsonDocument.Parse(lines[0]).RootElement.GetProperty("ref").GetString());
+
+        // CB-388: and the timestamps tell the true order. The frame was handed to
+        // the socket before the reply existed, so its at_ms is not after the
+        // reply's, although its line was written later; stamped when the line
+        // was written it would be a second later.
+        var sentAt = JsonDocument.Parse(lines[1]).RootElement.GetProperty("at_ms").GetInt64();
+        Assert.True(sentAt <= replyAt, $"the frame is stamped {sentAt}, after its reply at {replyAt}");
     }
 
     [Fact]
