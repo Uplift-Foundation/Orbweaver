@@ -156,6 +156,26 @@ public class RelayV7FileTests : IAsyncLifetime
         Assert.Contains(replyLine, lines);
     }
 
+    // CB-388: matching by content must not become matching loosely. Lines that
+    // are right in either order pass; a missing line, a wrong ref or a wrong
+    // timestamp each fail.
+    [Fact]
+    public void The_content_match_still_fails_on_a_missing_line_or_a_wrong_ref()
+    {
+        using var doc = JsonDocument.Parse($$"""{"t":"activity","ref":"act-1","seq":1}""");
+        var first = doc.RootElement.Clone();
+        var at = Now().ToUnixTimeMilliseconds();
+        var sent = first.GetRawText()[..^1] + ",\"at_ms\":" + at + "}";
+        var reply = $$"""{"ref":"act-1","code":"activity","at_ms":{{at}}}""";
+
+        AssertTheFrameAndItsReply([sent, reply], first, "act-1");
+        AssertTheFrameAndItsReply([reply, sent], first, "act-1");
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([sent], first, "act-1"));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([reply], first, "act-1"));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([sent, reply.Replace("act-1", "act-2")], first, "act-1"));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertTheFrameAndItsReply([sent, reply.Replace("\"at_ms\":" + at, "\"at_ms\":" + (at + 1))], first, "act-1"));
+    }
+
     [Fact]
     public async Task A_reply_that_lands_before_its_send_completes_is_still_one_line_each()
     {
