@@ -1,0 +1,8 @@
+# Changes to how the project is built, signed and released need a maintainer.
+# Every path here either runs with the signing secrets or decides what ships.
+/.github/workflows/      @wtvamp @KawikaMiller @lunarjuice
+/.github/CODEOWNERS      @wtvamp @KawikaMiller @lunarjuice
+/.github/release-notes/  @wtvamp @KawikaMiller @lunarjuice
+/tools/                  @wtvamp @KawikaMiller @lunarjuice
+# Carries <Version>, the single source of truth for the shipped version.
+/Orbweaver.csproj        @wtvamp @KawikaMiller @lunarjuice

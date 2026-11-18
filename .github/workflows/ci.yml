@@ -16,6 +16,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nothing here writes through the token: CI uploads artifacts (which uses the
+# runtime token, not GITHUB_TOKEN) and verify only runs `gh release download`
+# on a public release. Read-only is the whole need, and stating it means a
+# repo whose default token is ever widened does not widen these runs with it.
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -73,6 +80,11 @@ jobs:
 
       - name: Unit tests (merge-coverage.py)
         run: python tools/test-merge-coverage.py
+
+      # CB-317..320: every workflow declares its token permissions and the job
+      # that reads the signing secrets sits behind the `release` environment.
+      - name: Unit tests (workflow hardening)
+        run: python tools/test-workflow-hardening.py
 
       # CB-256: no unrecorded "Claude Buddy" may reappear. The tests prove the
       # checker; the second step runs it on this tree against the exact-count
