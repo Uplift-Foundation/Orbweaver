@@ -33,5 +33,8 @@ public class TestAppBuilder
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<Orbweaver.App>()
             .UseSkia()
-            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            // After the platform exists, so ChatPanel's type initialiser (brushes
+            // and all) runs against a set-up Avalonia rather than before one.
+            .AfterSetup(_ => ChatPanelTestAccess.PinSuiteMachineName());
 }

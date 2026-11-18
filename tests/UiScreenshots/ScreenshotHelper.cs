@@ -199,6 +199,45 @@ internal static class ScreenshotHelper
         using var decoded = SKBitmap.Decode(stream);
 
         if (decoded is not null) AssertTextIsLegible(visual, decoded, label);
+
+        AssertNoHostNameIsShown(visual, label);
+    }
+
+    // CB-374. Screenshots are published, and a header that falls back to naming
+    // "this machine" puts whichever machine ran the suite into the image - a CI
+    // runner's name, or a developer's own. Asked of every capture rather than of
+    // the one that was noticed, by reading what the visible TextBlocks say: any of
+    // the spellings the app derives from the host (the raw hostname, the cleaned
+    // tag, and the spaced form the header draws) is a leak. A capture that needs a
+    // machine name pins one with ChatPanelTestAccess.WithMachineName.
+    internal static void AssertNoHostNameIsShown(Visual root, string label)
+    {
+        foreach (var name in HostNameSpellings())
+        {
+            foreach (var block in root.GetSelfAndVisualDescendants().OfType<TextBlock>())
+            {
+                if (!block.IsVisible || string.IsNullOrWhiteSpace(block.Text)) continue;
+                if (block.Text.Contains(name, StringComparison.OrdinalIgnoreCase))
+                    throw new Xunit.Sdk.XunitException(
+                        $"{label}: a visible TextBlock shows this machine's name ({name}): \"{block.Text}\". "
+                      + "Pin a fixture name with ChatPanelTestAccess.WithMachineName.");
+            }
+        }
+    }
+
+    // Four characters and up, so a host called "mac" cannot flag every capture
+    // that says "machine". The set is what the app itself derives from the host.
+    internal static IReadOnlyList<string> HostNameSpellings()
+    {
+        var raw = new List<string> { Environment.MachineName };
+
+        try { raw.Add(MachineNames.Mine()); } catch { }
+
+        return raw
+            .SelectMany(n => new[] { n, MachineNames.Clean(n), MachineNames.Readable(MachineNames.Clean(n)) })
+            .Where(n => n.Length >= 4)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     // CB-171. A screenshot that nobody can read is worse than no screenshot,
