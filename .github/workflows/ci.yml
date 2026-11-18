@@ -209,6 +209,12 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-check-test-budget.py
 
+      # CB-375: every suite runs exactly once per rid. A missing matrix key is null,
+      # not an error, so a typo would skip a suite and leave everything green.
+      - name: Unit tests (ci.yml matrix)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-ci-matrix.py
+
       # Everything added after those three is xUnit, in tests/Tests.sln. Run
       # as separate `dotnet test` invocations rather than one pass over the
       # whole solution, so a red run in one attributes to a suite by its own
@@ -495,30 +501,35 @@ jobs:
         run: dotnet build tools/openclaw-probe -c Release --nologo
 
       - name: Build
+        id: publish
         if: ${{ !cancelled() && matrix.package }}
         run: dotnet publish Orbweaver.csproj -c Release -r ${{ matrix.rid }} -p:DebugType=none --nologo
 
+      # The packaging steps below wait on `publish`'s own outcome: !cancelled()
+      # lets them run after an earlier suite failed, but a failed publish must
+      # not be followed by a second, misleading packaging error.
+      #
       # Packaging is where the fiddly, platform-specific work lives (inside-out
       # codesigning, Inno Setup), so exercise it here rather than discovering a
       # break during a release. Signing and notarization are skipped: no secrets
       # are exposed to pull requests.
       - name: Package (macOS)
-        if: ${{ !cancelled() && matrix.package && runner.os == 'macOS' }}
+        if: ${{ !cancelled() && matrix.package && steps.publish.outcome == 'success' && runner.os == 'macOS' }}
         run: ./tools/build-macos-dmg.sh --rid ${{ matrix.rid }}
 
       - name: Install Inno Setup
-        if: ${{ !cancelled() && matrix.package && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && matrix.package && steps.publish.outcome == 'success' && runner.os == 'Windows' }}
         run: choco install innosetup --no-progress -y
 
       - name: Package (Windows)
-        if: ${{ !cancelled() && matrix.package && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && matrix.package && steps.publish.outcome == 'success' && runner.os == 'Windows' }}
         run: .\tools\build-windows-installer.ps1 -SkipPublish
         shell: pwsh
 
       # Not attached to a release, just kept so a failed build can be inspected
       # and so the installer can be smoke-tested from a PR.
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() && matrix.package }}
+        if: ${{ !cancelled() && matrix.package && steps.publish.outcome == 'success' }}
         with:
           name: unsigned-${{ matrix.rid }}
           path: |

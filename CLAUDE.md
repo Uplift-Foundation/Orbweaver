@@ -383,7 +383,7 @@ pwsh tools/check-xunit-report.ps1 -ReportPath tests/UiTests/bin/Release/net10.0/
 
 (`<rid>` is whatever `dotnet test` printed for your machine. **1050 is the
 value `ci.yml` actually sets today — read off `$minimumExpectedTests` in the
-`ui` step, not remembered.** This paragraph said 1005 until CB-141 checked
+"UI tests (xUnit, headless)" step, not remembered.** This paragraph said 1005 until CB-141 checked
 it against the file, and a floor 45 too low is the worst kind of wrong number:
 it reads as measured, it never fails, and it silently stops being the guard it
 claims to be. If you quote it again, quote it from `ci.yml`. Bump the floor
