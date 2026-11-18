@@ -115,7 +115,8 @@ public class RelayTestHooksTests : IDisposable
         fake.Raise("ph_1");
         expiry.SetResult();                                                               // the first offer runs out
 
-        while (fake.Offers < 2) await Task.Yield();                                       // the old test's wait
+        await Task.Run(async () => { while (fake.Offers < 2) await Task.Yield(); })       // the old test's wait, bounded
+            .WaitAsync(TimeSpan.FromSeconds(10));                                         // a timeout means no second offer was requested
         Assert.Equal("orbweaver://pair?o=off_1", File.ReadAllText(Path.Combine(_dir, RelayTestHooks.QrFile)));
 
         secondBegin.SetResult(new RelayLink.PairOffer("off_2", T0.AddMinutes(5), new byte[32], "orbweaver://pair?o=off_2"));
