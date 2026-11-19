@@ -716,15 +716,19 @@ namespace Orbweaver
         // CB-358: a finished session to one phone under its alert choice. A
         // member under "leads" (or "off") still rides the delta, numbered and
         // sealed like the rest, so the orb updates; only the push is left off.
-        // Every member finish under a non-"off" choice is counted against its
-        // lead for that lead's next done alert.
+        // Every member finish is counted against its lead, whatever the choice:
+        // "off" sends no lead alert, so the count is the members since the last
+        // alert that was actually sent, as the lead's next alert will say.
+        // A member's own count is for its members' summary, which a withheld
+        // member never sends, so it is dropped rather than left to grow.
         private string? FinishedFor(Channel c, RelayDelta d)
         {
             var row = _book.Find(d.SessionId)!;
             var member = RelayAlertRules.IsMember(row.ParentSessionId, id => _book.Find(id) is not null);
-            if (member && c.Alerts.DoneAlerts != DoneAlerts.Off)
+            if (member)
                 c.MembersDone[row.ParentSessionId!] = c.MembersDone.GetValueOrDefault(row.ParentSessionId!) + 1;
             if (RelayAlertRules.PushDone(c.Alerts, member)) return DoneFor(c, d);
+            c.MembersDone.Remove(d.SessionId);
             Note($"done push withheld for member {(member ? "yes" : "no")} alerts={c.Alerts.DoneAlerts}");
             return SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.DeltaForPush(d));
         }

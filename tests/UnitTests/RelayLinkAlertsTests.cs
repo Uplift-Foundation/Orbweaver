@@ -60,4 +60,59 @@ public partial class RelayLinkTests
         var done = link.OnScan([Row("s1"), Member("m1", "idle", "s1")]);
         Assert.Contains(done, f => J(f).GetProperty("push").GetString() == "done");
     }
+
+    [Fact]
+    public void Under_leads_an_amber_from_a_member_loses_its_push_only_when_its_toggle_is_off()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads","amber_members":false}"""));
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1")]);
+        var quiet = link.SendPrompt("req-1", "m1", "Allow?", "plain");
+        var prompt = Assert.Single(quiet, f => J(f).GetProperty("class").GetString() == "action");
+        Assert.False(J(prompt).TryGetProperty("e", out _), "a member's prompt with its toggle off carries no alert");
+
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads","amber_members":true}"""));
+        var loud = link.SendPrompt("req-2", "m1", "Allow?", "plain");
+        var alerting = Assert.Single(loud, f => J(f).GetProperty("class").GetString() == "action");
+        Assert.True(J(alerting).TryGetProperty("e", out _), "with the toggle on, the member's prompt alerts as before");
+    }
+
+    [Fact]
+    public void A_lead_alert_counts_its_members_once_and_the_next_one_starts_from_zero()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads"}"""));
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1")]);
+        link.OnScan([Row("s1"), Member("m1", "generating", "s1")]);
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1")]);
+        link.OnScan([Row("s1", "generating"), Member("m1", "idle", "s1")]);
+        var first = link.OnScan([Row("s1", "idle"), Member("m1", "idle", "s1")]);
+        Assert.EndsWith("· 1 member finished since", DoneLabel(link, phone, first));
+
+        link.OnScan([Row("s1", "generating"), Member("m1", "idle", "s1")]);
+        var second = link.OnScan([Row("s1", "idle"), Member("m1", "idle", "s1")]);
+        Assert.DoesNotContain("finished since", DoneLabel(link, phone, second));
+    }
+
+    [Fact]
+    public void Members_finishing_while_off_are_counted_for_the_leads_next_alert()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"off"}"""));
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "idle", "s1")]);
+        link.OnScan([Row("s1"), Member("m1", "generating", "s1"), Member("m2", "generating", "s1")]);
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "idle", "s1")]);
+
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads"}"""));
+        link.OnScan([Row("s1", "generating"), Member("m1", "idle", "s1"), Member("m2", "idle", "s1")]);
+        var leadDone = link.OnScan([Row("s1", "idle"), Member("m1", "idle", "s1"), Member("m2", "idle", "s1")]);
+        Assert.EndsWith("· 2 members finished since", DoneLabel(link, phone, leadDone));
+    }
+
+    private static string DoneLabel(RelayLink link, FakePhone phone, IReadOnlyList<string> frames)
+    {
+        var push = frames.Single(f => J(f).GetProperty("push").GetString() == "done");
+        var e = J(push).GetProperty("e").GetString()!;
+        return JsonDocument.Parse(Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, e)!)).RootElement.GetProperty("label").GetString()!;
+    }
 }
