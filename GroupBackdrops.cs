@@ -77,6 +77,11 @@ namespace Orbweaver
         // arrangement's own units before it reaches GroupOutline.
         internal const double PaddingDip = 10;
 
+        // CB-332: a group of one orb is a 10 DIP ring around a 36 DIP disc, which
+        // is hard to land a press on. Its hit area reaches this far from the disc
+        // instead; what is drawn stays at PaddingDip.
+        internal const double SoleHitPaddingDip = 24;
+
         // Slack around the silhouette's bounding box, so a stroke (twice as wide
         // when highlighted) is never clipped by the window edge.
         internal const double EdgeDip = 4;
@@ -314,6 +319,11 @@ namespace Orbweaver
         // against this so the padding lives only here.
         internal static Point[] OutlineOf(string groupId) =>
             Active.TryGetValue(groupId, out var w) ? w.Outline() : Array.Empty<Point>();
+
+        // The polygon that catches a press on a group's backdrop, in screen units:
+        // the silhouette, or for a group of one orb the wider CB-332 hit area.
+        internal static Point[] HitAreaOf(string groupId) =>
+            Active.TryGetValue(groupId, out var w) ? w.HitArea() : Array.Empty<Point>();
 
         // What a group's window is drawing this frame — mid-morph, the in-between
         // polygon rather than the target OutlineOf gives. For tests.
@@ -607,6 +617,7 @@ namespace Orbweaver
             private string _groupId = "";
             private List<(double X, double Y, double R)>? _discs;
             private Point[] _local = Array.Empty<Point>();
+            private Point[] _hit = Array.Empty<Point>();   // window-local; empty = the drawn outline is the hit area (CB-332)
             private (double X, double Y, double R)[] _localDiscs = Array.Empty<(double, double, double)>();   // the group's own
             private (double X, double Y, double R)[] _holes = Array.Empty<(double, double, double)>();       // plus other orbs reaching in
             private double _scale = 1;
@@ -737,13 +748,13 @@ namespace Orbweaver
 
                 var outline = GroupOutline.Silhouette(shape, discs, PaddingDip * scale, curve);
                 var outlineBounds = GroupOutline.Bounds(outline);
+                var hitAbsolute = HitOutline(shape, discs, scale, curve);
 
                 // The box is the outline's alone, plus room for the highlight's breathing.
                 // The caption is a window of its own (see CaptionWindow), because a
                 // Windows window region clips what it draws as well as what it hits,
                 // and the caption lies outside the silhouette.
-                var box = BoxFor(outlineBounds, scale);
-
+                var box = BoxFor(hitAbsolute.Length >= 3 ? outlineBounds.Union(GroupOutline.Bounds(hitAbsolute)) : outlineBounds, scale);
 
                 // A backdrop is never bigger than what it surrounds can need, and a
                 // window past Skia's render-target limit aborts the whole app on its
@@ -793,6 +804,19 @@ namespace Orbweaver
 
             private Point[] CurrentDisplayed() => Absolute(_local);
 
+            // The polygon that catches the pointer: wider than the drawn one for a
+            // group of one orb (CB-332), the drawn one otherwise.
+            private Point[] HitLocal => _hit.Length >= 3 ? _hit : _local;
+
+            internal Point[] HitArea() => Absolute(HitLocal);
+
+            // Absolute; empty unless the group is one orb.
+            private static Point[] HitOutline(
+                string shape, List<(double X, double Y, double R)> discs, double scale, GroupOutline.PlacedCurve? curve) =>
+                discs.Count == 1
+                    ? GroupOutline.Silhouette(shape, discs, SoleHitPaddingDip * scale, curve)
+                    : Array.Empty<Point>();
+
             // Sizes and places the window around `box` and re-derives everything
             // that is relative to its top-left; then draws `outline` in it.
             private void Place(Point[] outline, Rect box)
@@ -819,6 +843,11 @@ namespace Orbweaver
                 _local = new Point[outline.Length];
                 for (var i = 0; i < outline.Length; i++)
                     _local[i] = new Point(outline[i].X - _origin.X, outline[i].Y - _origin.Y);
+
+                var hit = HitOutline(_drawnShape, _discs!, _scale, _curve);
+                _hit = new Point[hit.Length];
+                for (var i = 0; i < hit.Length; i++)
+                    _hit[i] = new Point(hit[i].X - _origin.X, hit[i].Y - _origin.Y);
 
                 var scale = _scale;
                 var geometry = new StreamGeometry();
@@ -1051,7 +1080,7 @@ namespace Orbweaver
                 var local = new Point(cursor.X - _origin.X, cursor.Y - _origin.Y);
                 var bounds = new Rect(0, 0, Width * _scale, Height * _scale);
 
-                if (BackdropHitTest.ShouldCatch(local, bounds, _local, _holes, false, Catching) is not { } now) return null;
+                if (BackdropHitTest.ShouldCatch(local, bounds, HitLocal, _holes, false, Catching) is not { } now) return null;
                 Catching = now;
                 return now;
             }
@@ -1065,7 +1094,7 @@ namespace Orbweaver
                 // reaching us, but the poll can be a tick behind the cursor.
                 var p = e.GetPosition(this);
                 var px = new Point(p.X * _scale, p.Y * _scale);
-                if (!BackdropHitTest.InsideSilhouette(px, new Rect(0, 0, Width * _scale, Height * _scale), _local)) return;
+                if (!BackdropHitTest.InsideSilhouette(px, new Rect(0, 0, Width * _scale, Height * _scale), HitLocal)) return;
 
                 BackdropPressed?.Invoke(_groupId, e, this);
             }
@@ -1100,7 +1129,7 @@ namespace Orbweaver
             [ExcludeFromCodeCoverage]
             private void ApplyRegionNow() =>
                 BackdropNative.SetPolygonRegion(
-                    this, BackdropGeometry.PaddedRegionPoints(BackdropGeometry.RegionPolygon(_local, _regionBreathes = Breathes), default, 1, BackdropGeometry.RegionPad(_scale)),
+                    this, BackdropGeometry.PaddedRegionPoints(BackdropGeometry.RegionPolygon(HitLocal, _regionBreathes = Breathes), default, 1, BackdropGeometry.RegionPad(_scale)),
                     BackdropGeometry.RegionHoles(_holes, 1));
         }
 

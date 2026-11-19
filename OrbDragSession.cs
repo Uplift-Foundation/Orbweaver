@@ -104,7 +104,7 @@ namespace Orbweaver
             // only a lead drag is pulled towards what it would snap to (M1).
             if (!WholeGroup && _leadDrag)
             {
-                var (outcome, pullDip) = OrbDragCommit.PreviewWithPull(_host, _anchorId, _unitsPerDip);
+                var (outcome, pullDip) = OrbDragCommit.PreviewWithPull(_host, _anchorId, _unitsPerDip, _dx, _dy);
                 GroupBackdrops.SetLiftedLeaving(outcome is not SnapOutcome.NoChange);
                 _pullTargetX = pullDip.X * _unitsPerDip;
                 _pullTargetY = pullDip.Y * _unitsPerDip;
