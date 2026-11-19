@@ -99,15 +99,16 @@ namespace Orbweaver
         // During the move: the outcome if the user let go now. A Join highlights
         // the group; a Pair previews the provisional outline around both teams;
         // anything else clears both.
-        internal static SnapOutcome Preview(IOrbDragHost host, string pressedId, double unitsPerDip) =>
-            PreviewWithPull(host, pressedId, unitsPerDip).Outcome;
+        internal static SnapOutcome Preview(
+            IOrbDragHost host, string pressedId, double unitsPerDip, int dx = 0, int dy = 0) =>
+            PreviewWithPull(host, pressedId, unitsPerDip, dx, dy).Outcome;
 
         // The same, and also how far (M1) the team should be pulled towards its
         // target, in DIP: zero unless the outcome is a Join or a Pair.
         internal static (SnapOutcome Outcome, (double X, double Y) PullDip) PreviewWithPull(
-            IOrbDragHost host, string pressedId, double unitsPerDip)
+            IOrbDragHost host, string pressedId, double unitsPerDip, int dx = 0, int dy = 0)
         {
-            var d = Decision(host, pressedId, unitsPerDip);
+            var d = Decision(host, pressedId, unitsPerDip, dx, dy);
             var outcome = d.Outcome;
             host.HighlightGroup(outcome is SnapOutcome.Join join ? join.GroupId : null);
             if (outcome is SnapOutcome.Pair pair) host.PreviewPair(host.TeamIdsOf(pressedId), pair.RootId);
@@ -179,7 +180,7 @@ namespace Orbweaver
                 return new SnapOutcome.NoChange();
             }
 
-            var outcome = Decide(host, pressedId, unitsPerDip);
+            var outcome = Decide(host, pressedId, unitsPerDip, dx, dy);
             var left = host.GroupIdOf(pressedId);
             var team = host.TeamIdsOf(pressedId);
             var keys = team.Select(host.PositionKeyOf).ToList();
@@ -238,6 +239,13 @@ namespace Orbweaver
                     foreach (var key in keys) OrbweaverSettings.UnassignOrbGroup(key);
                     break;
 
+                // CB-332: a sole occupant dragged away from where it started is
+                // the menu's Leave group — main, explicitly (CB-281 for an auto
+                // group). A user group left empty is pruned by the table.
+                case SnapOutcome.LeaveSole:
+                    OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1), OrbGroups.Main);
+                    break;
+
                 case SnapOutcome.Leave:
                     var made = OrbweaverSettings.CreateOrbGroup();
                     OrbweaverSettings.AssignTeamToGroup(keys[0], keys.Skip(1), made.Id);
@@ -289,14 +297,14 @@ namespace Orbweaver
             return new OrbweaverSettings.OrbPlacement((int)Math.Round(x), (int)Math.Round(y));
         }
 
-        private static SnapOutcome Decide(IOrbDragHost host, string pressedId, double unitsPerDip) =>
-            Decision(host, pressedId, unitsPerDip).Outcome;
+        private static SnapOutcome Decide(IOrbDragHost host, string pressedId, double unitsPerDip, int dx, int dy) =>
+            Decision(host, pressedId, unitsPerDip, dx, dy).Outcome;
 
         private static (
             SnapOutcome Outcome,
             List<(double X, double Y, double R)> Moving,
             List<SnapCandidate> Candidates,
-            double JoinDip) Decision(IOrbDragHost host, string pressedId, double unitsPerDip)
+            double JoinDip) Decision(IOrbDragHost host, string pressedId, double unitsPerDip, int dx, int dy)
         {
             var s = unitsPerDip > 0 ? unitsPerDip : 1;
             var team = host.TeamIdsOf(pressedId);
@@ -319,9 +327,14 @@ namespace Orbweaver
             var size = radius > 0 ? radius / OrbSnap.BaseRadiusDip : 1;
             var joinDip = OrbSnap.JoinDip * size;
 
+            // CB-332: where the team stood when the press began — the discs
+            // now, less the pointer's travel — for a sole occupant, which has no
+            // other disc of its group to be measured against.
+            var startDiscs = moving.Select(m => (m.X - dx / s, m.Y - dy / s, m.R)).ToList();
+
             var outcome = OrbSnap.Decide(
                 moving, host.GroupIdOf(pressedId), candidates, host.IsFree,
-                joinDip, OrbSnap.LeaveDip * size);
+                joinDip, OrbSnap.LeaveDip * size, startDiscs);
 
             return (outcome, moving, candidates, joinDip);
         }

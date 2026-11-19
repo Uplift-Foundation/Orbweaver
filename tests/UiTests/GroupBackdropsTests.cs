@@ -379,6 +379,43 @@ public class GroupBackdropsTests : IDisposable
         Assert.NotEqual(after.Width, GroupBackdrops.StateOf("g-h")!.Value.Width);
     }
 
+    // CB-332: a group of one orb is easy to grab; the drawn silhouette is unchanged.
+    [AvaloniaFact]
+    public void AGroupOfOneOrbHasAHitAreaAtLeast24DipWideAndTheSameDrawnOutline()
+    {
+        var one = new List<OrbWindow> { Orb("solo", 300, 300) };
+        GroupBackdrops.Update(new[] { Spec("g-solo", "circle", one) });
+
+        var centre = new Point(one[0].Position.X + one[0].CentreDip, one[0].Position.Y + one[0].CentreDip);
+        var drawn = GroupOutline.SignedDistanceInside(centre, GroupBackdrops.OutlineOf("g-solo"));
+        var hit = GroupOutline.SignedDistanceInside(centre, GroupBackdrops.HitAreaOf("g-solo"));
+
+        Assert.Equal(one[0].OrbRadius + GroupBackdrops.PaddingDip, drawn, 0);
+        Assert.True(hit - one[0].OrbRadius >= GroupBackdrops.SoleHitPaddingDip - 0.5,
+            $"hit margin {hit - one[0].OrbRadius}");
+
+        // A press 20 DIP past the orb's edge — outside the drawn ring — catches.
+        var probe = new Point(centre.X + one[0].OrbRadius + 20, centre.Y);
+        Assert.True(GroupOutline.SignedDistanceInside(probe, GroupBackdrops.OutlineOf("g-solo")) < 0);
+        var told = new List<bool>();
+        GroupBackdrops.HitTestTick(probe, false, (_, catches) => told.Add(catches));
+        Assert.Equal(new[] { true }, told);
+
+        // And one 40 DIP past it does not.
+        GroupBackdrops.HitTestTick(new Point(centre.X + one[0].OrbRadius + 40, centre.Y), false, (_, catches) => told.Add(catches));
+        Assert.Equal(new[] { true, false }, told);
+    }
+
+    [AvaloniaFact]
+    public void AGroupOfSeveralOrbsKeepsTheDrawnOutlineAsItsHitArea()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.Update(new[] { Spec("g-a", "heart", a) });
+
+        Assert.Equal(GroupBackdrops.OutlineOf("g-a"), GroupBackdrops.HitAreaOf("g-a"));
+        Assert.Empty(GroupBackdrops.HitAreaOf("nope"));
+    }
+
     [AvaloniaFact]
     public void OutlineOfIsTheDrawnSilhouetteInScreenUnitsAndEmptyWithoutABackdrop()
     {
