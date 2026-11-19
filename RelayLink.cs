@@ -413,7 +413,7 @@ namespace Orbweaver
             // CB-358: the phone's alert choice. Class pair, under this pair's key,
             // as the watch key below; sent on change and on connect.
             else if (cls == "pair" && Json(plain) is { } prefsFrame && Str(prefsFrame, "t") == "prefs")
-                PrefsReceived(channel, from, prefsFrame);
+                return PrefsReceived(channel, from, Str(f, "id") ?? "", prefsFrame);
             // CB-323: the phone's watch key, added or removed. Class pair only,
             // out of a box that opened under this pair's key, as pair.revoke.
             else if (cls == "pair" && Json(plain) is { } keyFrame && RelayWatchKey.IsKeyFrame(Str(keyFrame, "t")))
@@ -448,15 +448,23 @@ namespace Orbweaver
 
         // CB-358: a malformed or unknown choice keeps the phone's last good one
         // (or the default), and says so in the log rather than guessing.
-        private void PrefsReceived(Channel c, string from, JsonElement body)
+        // The desktop answers every prefs frame, sealed under the pair key, with
+        // prefs.ok or prefs.err, echoing the envelope id as ref. A desktop too
+        // old to know the frame never answers, which is how the phone tells.
+        private IReadOnlyList<string> PrefsReceived(Channel c, string from, string envelopeId, JsonElement body)
         {
-            if (AlertPrefs.Parse(body) is not { } prefs)
+            var parsed = AlertPrefs.Parse(body);
+            var ok = parsed is not null;
+            if (parsed is { } prefs)
             {
-                Note($"prefs from {Safe(from)} malformed; ignored");
-                return;
+                c.Alerts = prefs;
+                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers}");
             }
-            c.Alerts = prefs;
-            Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers}");
+            else Note($"prefs from {Safe(from)} malformed; refused");
+            var reply = ok
+                ? new CanonicalJson().Str("t", "prefs.ok").Str("ref", envelopeId)
+                : new CanonicalJson().Str("t", "prefs.err").Str("ref", envelopeId).Str("code", "malformed");
+            return Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString())));
         }
 
         private byte[]? OpenFromPhone(Channel c, string cls, string ct)

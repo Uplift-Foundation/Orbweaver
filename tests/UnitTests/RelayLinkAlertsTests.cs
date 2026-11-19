@@ -13,14 +13,18 @@ public partial class RelayLinkTests
     private static RelaySession Member(string id, string state, string parent) => new(id, "claude", "proj", "/c", state, parent, null);
 
     [Fact]
-    public void A_prefs_frame_under_the_pair_key_sets_the_phone_choice_and_a_malformed_one_keeps_the_last()
+    public void A_prefs_frame_under_the_pair_key_is_acknowledged_and_a_malformed_one_is_refused_and_keeps_the_last()
     {
         var (link, _, phone, notes, _) = Paired();
-        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads","amber_members":false}"""));
+        var ok = link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads","amber_members":false}"""));
+        var okReply = phone.OpenFromDesktop(Assert.Single(ok));
+        Assert.Equal(("prefs.ok", "y"), (okReply.GetProperty("t").GetString(), okReply.GetProperty("ref").GetString()));
         Assert.Contains(notes, n => n.Contains("done_alerts=Leads") && n.Contains("amber_members=False"));
 
-        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"sometimes"}"""));
-        Assert.Contains(notes, n => n.Contains("prefs") && n.Contains("malformed"));
+        var bad = link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"sometimes"}"""));
+        var badReply = phone.OpenFromDesktop(Assert.Single(bad));
+        Assert.Equal(("prefs.err", "malformed"), (badReply.GetProperty("t").GetString(), badReply.GetProperty("code").GetString()));
+        Assert.Contains(notes, n => n.Contains("malformed"));
     }
 
     [Fact]
