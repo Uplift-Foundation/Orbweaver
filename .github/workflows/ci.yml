@@ -116,7 +116,7 @@ jobs:
       # macOS. setup-python guarantees `python` on both, which is the only
       # reason this step can be one line instead of a matrix branch.
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
