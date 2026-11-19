@@ -245,17 +245,31 @@ namespace Orbweaver
         // CB-316: the account readings the usage orbs just drew. Projected,
         // compared with what was last sent, and sent only when a number a phone
         // would draw changed — or once per account that crossed 80%, with the
-        // limit push. Called on the UI thread after each poll.
+        // limit push. Called after each poll: on the UI thread from the orbs,
+        // or on a pool thread from HeadlessUsage before the unlock (CB-391) —
+        // the tracker is under _gate and sends go through Dispatch, so either
+        // is safe.
         internal void OnUsage(IReadOnlyList<RelayUsage.Account> accounts)
         {
             IReadOnlyList<RelayUsageTracker.Send> sends;
             MirrorLog.Say("relay", RelayUsage.LogLine(accounts));
-            lock (_gate) sends = _usage.Next(accounts);
+            lock (_gate)
+            {
+                sends = _usage.Next(accounts);
+                _usageFrames += sends.Count;
+            }
             foreach (var send in sends)
                 Dispatch(() => _link.SendUsage(send.Plaintext, send.Crossing));
         }
 
         private readonly RelayUsageTracker _usage = new();
+        private int _usageFrames;
+
+        // The usage frame a phone coming online would be sent, and how many
+        // the tracker has let through: how CB-391's tests tell one frame from
+        // a duplicate across the unlock handover without a live socket.
+        internal string? LatestUsageFrame { get { lock (_gate) return _usage.Latest; } }
+        internal int UsageFramesSent { get { lock (_gate) return _usageFrames; } }
 
         // The relay's answer to each amber (request id, pushed / push_throttled /
         // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on

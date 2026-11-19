@@ -115,6 +115,13 @@ namespace Orbweaver
             {
                 if (_attached || _headless is not null) return;
                 _headless = new Timer(_ => HeadlessTick(), null, TimeSpan.Zero, HeadlessEvery);
+
+                // CB-391: and usage, for the same reason. The poll used to hang
+                // off SessionManager's DispatcherTimer too, so a Mac parked at
+                // the lock screen sent the phone no usage at all. Inside this
+                // guard so it starts once, only with the relay on, and never
+                // after Attach — see HeadlessUsage.
+                HeadlessUsage.Start();
             }
         }
 
@@ -203,6 +210,7 @@ namespace Orbweaver
                 _attached = false;
                 HeadlessPersonas.Clear();
             }
+            HeadlessUsage.ResetForTests();
             HeadlessScan = () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
             HeadlessEvery = TimeSpan.FromSeconds(3);
         }
@@ -215,6 +223,11 @@ namespace Orbweaver
                 _headless?.Dispose();
                 _headless = null;
             }
+            // CB-391: the pump, readings and Grok schedule the pre-unlock
+            // poll was running, handed to the orbs before UsageApplied is
+            // subscribed, so the cadence carries across and nothing is read
+            // twice. Null — nothing to adopt — when that poll never started.
+            sessions.AdoptUsage(HeadlessUsage.Handoff());
             sessions.SessionsScanned += OnScanned;
             AccountOrbs.UsageApplied += OnUsage;
             if (OrbweaverSettings.RelayEnabled) Enable();
