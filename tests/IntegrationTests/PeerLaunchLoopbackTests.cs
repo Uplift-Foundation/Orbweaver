@@ -86,6 +86,74 @@ public class PeerLaunchLoopbackTests : IDisposable
         });
     }
 
+    // CB-357 (reopened): list-dir over the real link, against a model
+    // filesystem under the real BrowseRules.
+    private static PeerBrowseServer Browse(bool allowed)
+    {
+        var fs = new Orbweaver.Tests.FakeBrowseFileSystem("/Users/dev", false, ["/", "/Users"], ["/System"]);
+        fs.Add("/").Add("/Users").Add("/Users/dev").Add("/Users/dev/Source").Add("/Users/dev/Source/app")
+            .Add("/Users/dev/Source/lib").Add("/Users/dev/Other");
+        return new PeerBrowseServer(new PeerBrowseServer.Seams(
+            () => allowed, fs, () => new BrowseSettings(["/Users/dev/Source"], false), TimeSpan.FromSeconds(5)));
+    }
+
+    private async Task<PeerLaunchClient> PairBrowse(PeerBrowseServer? browse)
+    {
+        var (receiver, client) = await Pair(null, null);
+        receiver.ServeLaunch(null, null, null, browse);
+        return client;
+    }
+
+    [Fact]
+    public async Task AFarMachinesFoldersAreWalkedOverTheRealLinkFromItsTopLevelDown()
+    {
+        var client = await PairBrowse(Browse(true));
+
+        var top = await client.ListDirAsync("receiver", "", CancellationToken.None);
+        Assert.Equal(["/Users/dev/Source"], top.Listing!.Items.Select(i => i.Path).ToArray());
+
+        var inside = await client.ListDirAsync("receiver", "/Users/dev/Source", CancellationToken.None);
+        Assert.Equal(["app", "lib"], inside.Listing!.Items.Select(i => i.Name).ToArray());
+        Assert.Equal("", inside.Listing.Parent);
+    }
+
+    [Fact]
+    public async Task APathOutsideTheRootsIsRefusedWithItsCodeAndTheSwitchOffRefusesEverything()
+    {
+        var client = await PairBrowse(Browse(true));
+        Assert.Equal(PeerDirResult.Fail("forbidden_path"),
+            await client.ListDirAsync("receiver", "/Users/dev/Other", CancellationToken.None));
+
+        var off = await PairBrowse(Browse(false));
+        Assert.Equal(PeerDirResult.Fail("peer_launch_off"),
+            await off.ListDirAsync("receiver", "/Users/dev/Source", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AServerThatThrowsBeforeItsGateLeavesTheAskerWithNoAnswerAndTheLinkUp()
+    {
+        var fs = new Orbweaver.Tests.FakeBrowseFileSystem("/h", false, [], []);
+        var broken = new PeerBrowseServer(new PeerBrowseServer.Seams(
+            () => throw new InvalidOperationException("settings unreadable"), fs,
+            () => new BrowseSettings([], false), TimeSpan.FromSeconds(1)));
+        var client = await PairBrowse(broken);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+        Assert.Equal(PeerLaunchCodes.NoAnswer, (await client.ListDirAsync("receiver", "", cts.Token)).Code);
+        Assert.Equal([new PeerMachine("receiver", true)], client.Machines());
+    }
+
+    [Fact]
+    public async Task ADeskWithNoBrowseServerIsNoAnswerAfterTheTimeout()
+    {
+        var (_, client) = await Pair(null, null);
+
+        // The default wait is 10 s; the older-peer silence is what is shown, on a short clock.
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(PeerDirResult.Fail(PeerLaunchCodes.NoAnswer),
+            await client.ListDirAsync("receiver", "", cts.Token));
+    }
+
     [Fact]
     public async Task InfoAndLaunchRoundTripOverTheRealLink()
     {

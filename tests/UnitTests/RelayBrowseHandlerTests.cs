@@ -65,6 +65,17 @@ public class RelayBrowseHandlerTests
     }
 
     [Fact]
+    public async Task A_child_that_is_not_privacy_protected_keeps_its_badge_on_the_phone()
+    {
+        var h = new Harness();
+        h.Fs.Add("/Users/dev/Source/app/.git");
+        await h.Ask("R1", "/Users/dev/Source");
+
+        var entry = h.Sent.Replies[0].Body.GetProperty("entries").EnumerateArray().Single();
+        Assert.True(entry.GetProperty("git").GetBoolean());
+    }
+
+    [Fact]
     public async Task Hidden_folders_come_only_when_the_request_asked_for_them()
     {
         var h = new Harness();

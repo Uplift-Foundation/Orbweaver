@@ -40,6 +40,30 @@ namespace Orbweaver
     // phone's refusal codes, or one of PeerLaunchCodes below.
     internal sealed record PeerLaunchResult(bool Ok, string Code, string? SessionId, string? Why);
 
+    // One folder in a far machine's listing. Path and Drive are set only at
+    // the top level (the roots); below it a folder is reached by Name.
+    internal sealed record PeerDirItem(
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("path")] string? Path = null,
+        [property: JsonPropertyName("drive")] string? Drive = null,
+        [property: JsonPropertyName("home")] bool Home = false,
+        [property: JsonPropertyName("git")] bool Git = false,
+        [property: JsonPropertyName("claude")] bool Claude = false,
+        [property: JsonPropertyName("persona")] bool Persona = false);
+
+    // A folder listing as the far desk's own browse rules produced it. Path is
+    // empty at the top level; Parent is empty at a root.
+    internal sealed record PeerDirListing(
+        string Path, string Parent, bool Truncated, IReadOnlyList<PeerDirItem> Items);
+
+    // What `list-dir` carried: a listing, or the one code that refused it. The
+    // codes are BrowseRules' (forbidden_path, unknown_path, unreadable, bad_frame)
+    // plus PeerLaunchCodes' (peer_launch_off, no_answer, link_lost).
+    internal sealed record PeerDirResult(bool Ok, string Code, PeerDirListing? Listing)
+    {
+        internal static PeerDirResult Fail(string code) => new(false, code, null);
+    }
+
     internal sealed record PeerMachine(string Name, bool Online);
 
     // The seam the window uses. The real one is PeerSessions.Launcher.
@@ -53,6 +77,10 @@ namespace Orbweaver
         Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct);
 
         Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct);
+
+        // The far desk's folders at `path` ("" is its top level). Never throws:
+        // every failure is a PeerDirResult with a code.
+        Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct);
     }
 
     internal static class PeerLaunchCodes

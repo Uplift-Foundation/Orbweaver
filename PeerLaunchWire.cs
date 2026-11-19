@@ -137,6 +137,66 @@ namespace Orbweaver
             return new PeerLaunchResult(parsed.Ok, parsed.Code!, parsed.SessionId, parsed.Why);
         }
 
+        // --- list-dir ------------------------------------------------------------
+
+        internal const int MaxDirItems = 500;
+
+        private sealed record ListDirRequestBody([property: JsonPropertyName("path")] string? Path);
+
+        private sealed record DirBody(
+            [property: JsonPropertyName("ok")] bool Ok,
+            [property: JsonPropertyName("code")] string? Code,
+            [property: JsonPropertyName("path")] string? Path,
+            [property: JsonPropertyName("parent")] string? Parent,
+            [property: JsonPropertyName("truncated")] bool Truncated,
+            [property: JsonPropertyName("items")] IReadOnlyList<PeerDirItem>? Items);
+
+        internal static JsonElement EncodeListDirRequest(string path) =>
+            PeerProtocol.BodyOf(new ListDirRequestBody(path));
+
+        // Null unless the path is present and shaped as the phone's list_dir
+        // path is (BrowseRules.PathShapeOk). Empty is the top level.
+        internal static string? ParseListDirRequest(JsonElement body)
+        {
+            if (body.ValueKind != JsonValueKind.Object) return null;
+
+            ListDirRequestBody? parsed;
+            try { parsed = body.Deserialize<ListDirRequestBody>(PeerProtocol.Json); }
+            catch (JsonException) { return null; }
+
+            // Deserializing an object never yields null, so only the path's own absence is a case.
+            return parsed!.Path is { } p && BrowseRules.PathShapeOk(p) ? p : null;
+        }
+
+        internal static JsonElement EncodeDir(PeerDirResult result) =>
+            PeerProtocol.BodyOf(result.Listing is { } l && result.Ok
+                ? new DirBody(true, result.Code, l.Path, l.Parent, l.Truncated, l.Items)
+                // A refusal carries its code and nothing else.
+                : new DirBody(false, result.Code, null, null, false, null));
+
+        internal static PeerDirResult? ParseDir(JsonElement body)
+        {
+            if (body.ValueKind != JsonValueKind.Object) return null;
+
+            DirBody? parsed;
+            try { parsed = body.Deserialize<DirBody>(PeerProtocol.Json); }
+            catch (JsonException) { return null; }
+
+            if (!Sane(parsed!.Code, 64, required: true)) return null;
+            if (!parsed.Ok) return PeerDirResult.Fail(parsed.Code!);
+
+            var items = parsed.Items ?? [];
+
+            if (!Sane(parsed.Path, MaxText, required: false) || !Sane(parsed.Parent, MaxText, required: false)
+                || items.Count > MaxDirItems
+                || items.Any(i => i is null || !Sane(i.Name, 1024, required: true)
+                    || !Sane(i.Path, MaxText, required: false) || !Sane(i.Drive, 8, required: false)))
+                return null;
+
+            return new PeerDirResult(true, parsed.Code!,
+                new PeerDirListing(parsed.Path ?? "", parsed.Parent ?? "", parsed.Truncated, items));
+        }
+
         // Present (when required), bounded, and free of control characters:
         // these strings end up in a window and in a signature.
         private static bool Sane(string? value, int max, bool required) =>

@@ -46,6 +46,7 @@ namespace Orbweaver
         private PeerLaunchInfoSource? _launchInfo;
         private Func<string, JsonElement, Task<PeerLaunchResult>>? _launchHandler;
         private PeerLaunchClient? _launchClient;
+        private PeerBrowseServer? _browse;
 
         internal PeerMirrorHost(OpenClawIdentitySeams? openClawIdentity = null)
         {
@@ -74,10 +75,12 @@ namespace Orbweaver
         internal void ServeLaunch(
             PeerLaunchInfoSource? info,
             Func<string, JsonElement, Task<PeerLaunchResult>>? handler,
-            PeerLaunchClient? client)
+            PeerLaunchClient? client,
+            PeerBrowseServer? browse = null)
         {
             lock (_gate)
             {
+                _browse = browse;
                 _launchInfo = info;
                 _launchHandler = handler;
                 _launchClient = client;
@@ -221,8 +224,13 @@ namespace Orbweaver
                     if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchAsync(machine, message));
                     return;
 
+                case PeerProtocol.ListDirGet:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerListDirAsync(machine, message));
+                    return;
+
                 case PeerProtocol.LaunchInfo:
                 case PeerProtocol.LaunchResult:
+                case PeerProtocol.ListDir:
                     if (MayAsk(machine)) LaunchClient?.OnReply(machine, message);
                     return;
             }
@@ -286,6 +294,26 @@ namespace Orbweaver
             catch (Exception e)
             {
                 MirrorLog.Say("peer-launch-info-failed", $"from={machine} {e.GetType().Name}");
+            }
+        }
+
+        private async Task AnswerListDirAsync(string machine, PeerProtocol.PeerMessage message)
+        {
+            PeerBrowseServer? server;
+            lock (_gate) server = _browse;
+
+            // No server wired is an older desk's silence: the asker times out.
+            if (server is null) return;
+
+            try
+            {
+                var result = await server.HandleAsync(message.Body ?? default).ConfigureAwait(false);
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.ListDir, message.Id,
+                    body: PeerLaunchWire.EncodeDir(result))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-list-dir-failed", $"from={machine} {e.GetType().Name}");
             }
         }
 
