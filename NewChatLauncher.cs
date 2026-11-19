@@ -171,14 +171,24 @@ namespace Orbweaver
         private static LaunchResult SpawnFailed(string displayName) =>
             new(LaunchOutcome.SpawnFailed, "Couldn't open a terminal for " + displayName + ".");
 
+        // CB-357: lets a test say which CLIs are installed, process-wide, so a
+        // gate that checks the CLI before the folder answers the same on a
+        // runner with no claude as on a developer's machine. When set, its
+        // answer is final, including null for "not installed". Anything that
+        // sets it belongs in the Settings collection and clears it afterwards.
+        internal static Func<NewChatCli, string?>? LocateFreshForTests;
+
         [ExcludeFromCodeCoverage]
-        internal static string? LocateFresh(NewChatCli cli) => cli switch
-        {
-            NewChatCli.ClaudeCode => ClaudeBinary.Locate(),
-            NewChatCli.Codex => CodexBinary.Locate(),
-            NewChatCli.Grok => GrokBinary.Locate(),
-            _ => null
-        };
+        internal static string? LocateFresh(NewChatCli cli) =>
+            LocateFreshForTests is { } fake
+                ? fake(cli)
+                : cli switch
+                {
+                    NewChatCli.ClaudeCode => ClaudeBinary.Locate(),
+                    NewChatCli.Codex => CodexBinary.Locate(),
+                    NewChatCli.Grok => GrokBinary.Locate(),
+                    _ => null
+                };
 
         // Pure and used by both this file and NewChatAvailability's reason
         // text, so the two never drift into naming a CLI differently.

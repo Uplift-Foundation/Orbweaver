@@ -192,8 +192,21 @@ namespace Orbweaver
         // _mirroring is set, so they cannot change after the banner is drawn —
         // the composer hint reads the same two fields and could not diverge from
         // it either.
-        internal static string LiveViewBannerFor(bool canType, bool canDeliver, string name)
+        //
+        // `empty` is CB-357's case: a session launched from another desktop is
+        // drawn before anyone has spoken to it, and "mirrors its own
+        // conversation" would describe a conversation that does not exist yet.
+        // The where-it-goes half still follows the same two facts.
+        internal static string LiveViewBannerFor(bool canType, bool canDeliver, string name, bool empty = false)
         {
+            if (empty)
+                return $"No messages yet in {name}. " + (canType
+                    ? "The first one you type here goes into its terminal."
+                    : canDeliver
+                        ? "It has no terminal, so the first message you send is delivered to its background job "
+                          + "and read at its next turn."
+                        : "It has no terminal and no messaging socket this machine can reach, so messages you send can't be delivered.");
+
             var mirror = $"Live view: this panel mirrors {name}'s own conversation from "
                        + "the other machine, a few seconds behind. ";
 
@@ -274,6 +287,10 @@ namespace Orbweaver
         // so it can be rewritten in place rather than found by position.
         private ChatTurn? _banner;
 
+        // Whether _banner was drawn over an empty window (CB-357), so a reach
+        // change rewrites it in the same voice instead of claiming a mirror.
+        private bool _bannerEmpty;
+
         public event Action? ComposerHintChanged;
 
         // What the far session can do changes after the panel has upgraded - it
@@ -305,7 +322,7 @@ namespace Orbweaver
             _canType = canType;
             _canDeliver = canDeliver;
 
-            if (_banner is not null) _banner.Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle);
+            if (_banner is not null) _banner.Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle, _bannerEmpty);
 
             ComposerHintChanged?.Invoke();
         }
@@ -543,6 +560,7 @@ namespace Orbweaver
             $"No live view: {Brand.DisplayName} on the other machine lists {remoteName} but can't show "
           + "its conversation, so there's nothing to read or type into here.";
 
+
         private void OnDelivered(RemoteMirrorClient.MirrorRows rows)
         {
             if (!rows.Name.Equals(_remoteName, StringComparison.OrdinalIgnoreCase)) return;
@@ -584,11 +602,12 @@ namespace Orbweaver
                     // Said once, at the top of the real conversation, so nobody
                     // mistakes a mirror for a chat thread and wonders why their
                     // half of it is missing.
+                    _bannerEmpty = mapped.Count == 0;
                     _banner = new ChatTurn
                     {
                         Role = ChatRole.System,
                         IsComplete = true,
-                        Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle)
+                        Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle, _bannerEmpty)
                     };
                     _history.Insert(0, _banner);
 

@@ -2601,6 +2601,8 @@ namespace Orbweaver
         // No platform gate. The relay is macOS-only because it lives in tmux;
         // this is a socket, and the whole reason for choosing SslStream over the
         // gateway's hand-rolled TLS was that it is the same on both.
+        internal const string PeerLaunchInboundLabel = "Allow other desktops to start sessions here";
+
         internal Control[] PeerLinkRows()
         {
             // Dropped before anything is built, for the reason the relay's is:
@@ -2633,6 +2635,15 @@ namespace Orbweaver
             };
 
             rows.Add(NoteRow(_peerLinkStatus));
+
+            // CB-357. Only under the link, because it is a thing the link
+            // carries; off by default, because it lets a paired machine run a
+            // process here rather than only look at what is running.
+            rows.Add(Row(PeerLaunchInboundLabel,
+                Switch(OrbweaverSettings.PeerLaunchInboundEnabled, value => OrbweaverSettings.PeerLaunchInboundEnabled = value),
+                "Lets a machine paired below start a Claude Code, Codex or Grok session on this one "
+                + "from its New Chat window. While this is off, other machines can't see this one's "
+                + "recent folders or accounts either."));
 
             rows.Add(Row("Let another machine pair with this one", PairingCodeButton(),
                 "Shows a code. Type it into the other machine's list below, next to this "

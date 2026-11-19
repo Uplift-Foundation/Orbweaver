@@ -312,7 +312,7 @@ namespace Orbweaver
                     StringComparer.OrdinalIgnoreCase);
                 foreach (var entry in entries)
                 {
-                    if (entry.HasTranscript) offered[EntryKey(entry)] = entry;
+                    if (Shows(entry)) offered[EntryKey(entry)] = entry;
                 }
 
                 var changed = false;
@@ -442,7 +442,7 @@ namespace Orbweaver
                 {
                     foreach (var entry in entries)
                     {
-                        if (!entry.HasTranscript)
+                        if (!Shows(entry))
                         {
                             _answeredNo.Add(EntryKey(entry));
                             continue;
@@ -652,6 +652,19 @@ namespace Orbweaver
             }
         }
 
+        // A roster entry is worth drawing when there is something to read or
+        // somewhere to type: a transcript, or a pane. A running session that
+        // has not been spoken to yet has only the pane.
+        internal static bool Shows(MirrorProtocol.MirrorRosterEntry entry) =>
+            entry.HasTranscript || entry.HasPane;
+
+        // Narrow on purpose: only when the roster itself said there was no
+        // transcript. If it said there was one and the server cannot read it,
+        // that stays a failure, or a later watch would replay a whole existing
+        // file as one delta.
+        internal static bool OpensEmpty(bool rosterHasTranscript, bool ok, string? errCode) =>
+            !rosterHasTranscript && !ok && errCode == MirrorProtocol.ErrNoTranscript;
+
         private async Task<bool> OpenCoreAsync(string name)
         {
             try
@@ -668,11 +681,13 @@ namespace Orbweaver
         {
             string relay;
             string cli;
+            bool rosterHasTranscript;
 
             lock (_gate)
             {
                 var key = ExistingKey(name);
                 if (key is null || !_roster.TryGetValue(key, out var entry)) return false;
+                rosterHasTranscript = entry.HasTranscript;
                 if (!_servedBy.TryGetValue(key, out var found)) return false;
 
                 if (_feeds.TryGetValue(name, out var already) && already.Loading) return true;
@@ -696,6 +711,27 @@ namespace Orbweaver
             lock (_gate)
             {
                 if (_feeds.TryGetValue(name, out var feed)) feed.Loading = false;
+            }
+
+            if (OpensEmpty(rosterHasTranscript, reply.Ok, reply.ErrCode))
+            {
+                // A session that is running but has not written its first
+                // message: Claude Code creates the transcript on the first
+                // turn. Nothing is wrong, so show an empty window and watch;
+                // the server's tick reads the file from the start once it
+                // appears, and that delta carries the same generation.
+                lock (_gate)
+                {
+                    if (_feeds.TryGetValue(name, out var feed)) { feed.BacklogFrom = 0; feed.Gen = 0; }
+                }
+
+                Deliver(new MirrorRows(name, MirrorDelivery.Window,
+                    new List<MirrorProtocol.MirrorTurn>(), cli, 0));
+
+                await RenewWatchAsync(name).ConfigureAwait(false);
+
+                Log("open", $"n={name} ok empty");
+                return true;
             }
 
             if (!reply.Ok || reply.Payload is null)

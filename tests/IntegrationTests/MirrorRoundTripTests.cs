@@ -1704,8 +1704,25 @@ public partial class MirrorRoundTripTests : IDisposable
             harness.Client.StateFor("private-thing").Availability);
     }
 
+    // Cannot read and cannot type: no transcript and no pane is settled.
     [Fact]
-    public async Task ASessionTheFarBuddyCannotReadIsSettledAsNoLiveView()
+    public async Task ASessionTheFarBuddyCannotReadOrTypeIntoIsSettledAsNoLiveView()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", Path.Combine(_dir, "does-not-exist.jsonl"));
+        harness.Paneless.Add("job-hunter");
+
+        await harness.Client.DiscoverAsync(harness.Peers, new[] { "job-hunter" });
+
+        Assert.Equal(
+            RemoteMirrorClient.MirrorAvailability.Unavailable,
+            harness.Client.StateFor("job-hunter").Availability);
+    }
+
+    // CB-357: the same missing file with a pane is a session that has not been
+    // spoken to yet, and is offered.
+    [Fact]
+    public async Task ASessionWithAPaneAndNoFileYetIsOfferedNotSettledAsNoLiveView()
     {
         var harness = new Harness(_dir);
         harness.AddSession("job-hunter", Path.Combine(_dir, "does-not-exist.jsonl"));
@@ -1713,7 +1730,7 @@ public partial class MirrorRoundTripTests : IDisposable
         await harness.Client.DiscoverAsync(harness.Peers, new[] { "job-hunter" });
 
         Assert.Equal(
-            RemoteMirrorClient.MirrorAvailability.Unavailable,
+            RemoteMirrorClient.MirrorAvailability.Available,
             harness.Client.StateFor("job-hunter").Availability);
     }
 
@@ -2955,6 +2972,130 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(tag, MachineNames.Tag());
     }
 
+    // --- a session with a pane and no transcript yet (CB-357) -------------------
+
+    private string NoFile(string name) => Path.Combine(_dir, name + "-never-written.jsonl");
+
+    [Fact]
+    public async Task APaneWithNoTranscriptYetIsOfferedAndTheOthersAreUnchanged()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        harness.AddSession("spoken", WriteTranscript("spoken.jsonl", Conversation(2)));
+        harness.AddSession("no-pane-no-file", NoFile("nopane"));
+        harness.Paneless.Add("no-pane-no-file");
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        var known = harness.Client.Known().Select(k => k.Entry.Name).ToList();
+        Assert.Contains("fresh", known);
+        Assert.Contains("spoken", known);
+
+        // The negative control: neither a transcript nor a pane is still not
+        // worth an orb.
+        Assert.DoesNotContain("no-pane-no-file", known);
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Unknown,
+            harness.Client.StateFor("no-pane-no-file").Availability);
+
+        var fresh = harness.Client.StateFor("fresh").Entry!;
+        Assert.False(fresh.HasTranscript);
+        Assert.True(fresh.HasPane);
+    }
+
+    [Fact]
+    public async Task APaneThatGoesAwayRemovesTheEntryOnTheNextRoster()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        var updates = 0;
+        harness.Client.RosterUpdated += () => updates++;
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+        Assert.Single(harness.Client.Known());
+        var before = updates;
+
+        harness.Paneless.Add("fresh");
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Empty(harness.Client.Known());
+        Assert.True(updates > before);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ASessionThatGainsItsTranscriptLaterOpensEmptyThenFills(bool emptyPathFilledLater)
+    {
+        var path = Path.Combine(_dir, "later.jsonl");
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", emptyPathFilledLater ? "" : path);
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.True(await harness.Client.OpenAsync("fresh"));
+
+        var window = Assert.Single(harness.Windows);
+        Assert.Empty(window.Turns);
+        Assert.Empty(harness.Failures);
+        Assert.Empty(harness.Deltas);
+
+        File.WriteAllText(path, string.Join("\n", Conversation(3)) + "\n");
+        if (emptyPathFilledLater) harness.Reshape("fresh", st => st.TranscriptPath = path);
+
+        await harness.Server.TickAsync();
+
+        var delta = Assert.Single(harness.Deltas);
+        Assert.NotEmpty(delta.Turns);
+        Assert.Single(harness.Windows);
+        Assert.Empty(harness.Failures);
+    }
+
+    // The negative control for the rule above: when the roster said there was
+    // a transcript, a file that is gone by the fetch is still a failure.
+    [Fact]
+    public async Task ATranscriptTheRosterPromisedButIsGoneStillFails()
+    {
+        var path = WriteTranscript("promised.jsonl", Conversation(2));
+        var harness = new Harness(_dir);
+        harness.AddSession("promised", path);
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+        Assert.True(harness.Client.StateFor("promised").Entry!.HasTranscript);
+
+        File.Delete(path);
+
+        Assert.False(await harness.Client.OpenAsync("promised"));
+        Assert.Single(harness.Failures);
+        Assert.Empty(harness.Windows);
+    }
+
+    [Fact]
+    public async Task TheFirstMessageToASessionWithNoTranscriptYetIsTyped()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Null(await harness.Client.SendInputAsync("fresh", "hello"));
+
+        var typed = Assert.Single(harness.Typed);
+        Assert.Equal(("fresh", "hello"), typed);
+    }
+
+    [Fact]
+    public async Task DiscoveryKeepsAPaneWithNoTranscriptAndDropsOneWithNeither()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        harness.AddSession("neither", NoFile("neither"));
+        harness.Paneless.Add("neither");
+
+        await harness.Client.DiscoverAsync(harness.Peers, new[] { "fresh", "neither" });
+
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Available,
+            harness.Client.StateFor("fresh").Availability);
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Unavailable,
+            harness.Client.StateFor("neither").Availability);
+    }
+
     // --- fixtures --------------------------------------------------------------------
 
     private string WriteTranscript(string name, IEnumerable<string> rows)
@@ -4008,8 +4149,10 @@ public partial class MirrorRoundTripTests : IDisposable
         harness.Server.Now = () => LiveAt.AddHours(23);
 
         // Read off what the server sent rather than what the client kept: the
-        // client keeps only rows with a transcript to show, and two of these
-        // deliberately have none.
+        // client keeps only rows with a transcript or a pane to show. The
+        // harness gives these team members a pane, so the client would now
+        // keep them; this test passes because it reads the server's output,
+        // not because the client drops them.
         await harness.Server.HandleAsync(Harness.NearRelay, OldHello("stale1"));
         var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "stale1"))!.ToList();
         var staleEntry = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(stale));
@@ -4211,6 +4354,16 @@ public partial class MirrorRoundTripTests : IDisposable
 
         public bool ReplyEnabled { get; init; } = true;
         public bool CanType { get; init; } = true;
+
+        // Sessions that have no pane to type into, by title, while every
+        // other session on the harness keeps one. Mutable, so a pane can
+        // disappear between two rosters.
+        public HashSet<string> Paneless { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        // The far status file changing under a test, as Claude Code's does
+        // when it fills in the transcript path after the first message.
+        public void Reshape(string name, Action<SessionStatus> shape) =>
+            shape(_sessions.First(s => s.Status.Title == name).Status);
         public bool TypeFails { get; init; }
 
         // CB-105's messaging fallback. Only wired at all when the constructor
@@ -4275,7 +4428,7 @@ public partial class MirrorRoundTripTests : IDisposable
                     ? throw new InvalidOperationException("the agent registry did not answer")
                     : _agents,
                 _ => ReplyEnabled,
-                _ => CanType,
+                status => CanType && !Paneless.Contains(status.Title),
                 (status, text) =>
                 {
                     Typed.Add((NameOf(status), text));

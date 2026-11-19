@@ -459,6 +459,82 @@ public class NewChatWindowScreenshots : IDisposable
         Assert.True(window.OpenExistingRadio.IsChecked);
     }
 
+    // CB-357: the Machine row. A fake launcher answers at once, so each capture
+    // is the form after the far machine's launch-info has been applied.
+    private sealed class FakePeers : IPeerLauncher
+    {
+        public PeerLaunchResult Result = new(true, "launched", "s1", null);
+
+        public IReadOnlyList<PeerMachine> Machines() =>
+            new[] { new PeerMachine("mini", true), new PeerMachine("Warren's PC", true), new PeerMachine("studio-imac", false) };
+
+        public Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct) =>
+            Task.FromResult<PeerLaunchInfo?>(new PeerLaunchInfo(true, "macos", "/Users/warren", true,
+                new[] { new PeerLaunchCli("claude", true), new PeerLaunchCli("codex", true), new PeerLaunchCli("grok", false) },
+                new[] { new PeerLaunchAccount("claude", "default", "Default"), new PeerLaunchAccount("claude", "/Users/warren/.claude-work", "~/.claude-work") },
+                new[] { "/Users/warren/Source/ledger", "/Users/warren/Source/ledger-web" }));
+
+        public Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct) =>
+            Task.FromResult(Result);
+    }
+
+    private static NewChatWindow PeerWindow(FakePeers peers)
+    {
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
+        };
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>();
+        NewChatWindow.PeerLauncherForTests = peers;
+        NewChatWindow.PeerLinkOnForTests = true;
+        return NewWindow();
+    }
+
+    // A remote machine selected: its recents, its accounts, its CLIs (Grok
+    // not installed there), OpenClaw greyed with the reason in the note line.
+    [AvaloniaFact]
+    public void MachineRowWithARemoteMachineSelected()
+    {
+        var window = PeerWindow(new FakePeers());
+        window.Show();
+        ScreenshotHelper.Flush();
+        window.MachineCombo.SelectedIndex = 1;
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-machine-remote.png");
+    }
+
+    // The offline peer listed: the dropdown open over the form, so the greyed
+    // "studio-imac — offline" entry is on screen.
+    [AvaloniaFact]
+    public void MachineRowWithAnOfflinePeerListed()
+    {
+        var window = PeerWindow(new FakePeers());
+        window.Show();
+        ScreenshotHelper.Flush();
+        window.MachineCombo.IsDropDownOpen = true;
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-machine-offline-peer.png");
+    }
+
+    // The far machine's refusal, inline in the status line.
+    [AvaloniaFact]
+    public void MachineRowWithARefusalShown()
+    {
+        var peers = new FakePeers { Result = new PeerLaunchResult(false, PeerLaunchCodes.PeerLaunchOff, null, null) };
+        var window = PeerWindow(peers);
+        window.Show();
+        ScreenshotHelper.Flush();
+        window.MachineCombo.SelectedIndex = 1;
+        ScreenshotHelper.Flush();
+        window.StartButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-machine-refused.png");
+    }
+
     private static void ClearSeams()
     {
         NewChatAvailability.CurrentForTests = null;
@@ -474,5 +550,7 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.ReopenOpenClawForTests = null;
         NewChatWindow.NowForTests = null;
         NewChatWindow.LastConnectFailureForTests = null;
+        NewChatWindow.PeerLauncherForTests = null;
+        NewChatWindow.PeerLinkOnForTests = null;
     }
 }
