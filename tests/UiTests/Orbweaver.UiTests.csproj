@@ -22,7 +22,7 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.2" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="17.14.2" />
     <!-- CB-279: MTP's hang dump, so a hang in this suite names the tests in
          flight instead of only hitting the job's timeout-minutes (CB-269 gave
@@ -42,7 +42,7 @@
          shape (Xunit.v3.TestIntrospectionHelper.GetTestCaseDetails) in a
          binary-incompatible way that fails every test at discovery. -->
     <PackageReference Include="xunit.v3" Version="3.2.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
     <!-- 12.1.1, matching the app: Orbweaver.csproj moved to Avalonia 12.1.1
          to reach the real fix for the FontManager concurrency race
          (AvaloniaUI/Avalonia#21269, never backported to 11.3.x) needed by
@@ -53,10 +53,10 @@
          suite's previous comment about staying ahead of the app's patch
          version (11.3.20 vs 11.3.7) no longer applies now that both are on
          the same major and CI-stability patches land continuously on 12.x. -->
-    <PackageReference Include="Avalonia" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Headless" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <PackageReference Include="Avalonia" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\Orbweaver.csproj" />
