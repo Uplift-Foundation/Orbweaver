@@ -250,4 +250,25 @@ public class LoneOrbGroupLeaveTests : IDisposable
         Assert.Null(OrbweaverSettings.OrbGroupMembershipFor(key));
         Assert.Equal(auto, ((IOrbDragHost)m).GroupIdOf("lone"));
     }
+
+    // The lead's call on hidden members: the visible orb is a sole occupant, so
+    // dragging it out takes it out, but the group is not pruned — its hidden
+    // members are still assigned to it and it comes back when they do.
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AGroupWhoseOtherMembersAreHiddenKeepsThemWhenItsVisibleOrbLeaves(bool arranged)
+    {
+        var (m, group, key) = Setup(arranged);
+        const string hidden = "key:cb332-hidden-member";
+        _keys.Add(hidden);
+        OrbweaverSettings.AssignTeamToGroup(hidden, Array.Empty<string>(), group);
+
+        var outcome = DragLead(m, "lone", 600, 0);
+
+        Assert.True(arranged ? outcome is SnapOutcome.LeaveSole : outcome is SnapOutcome.LeaveToFree);
+        Assert.NotEqual(group, ((IOrbDragHost)m).GroupIdOf("lone"));
+        Assert.Contains(OrbweaverSettings.OrbGroupList(), g => g.Id == group);
+        Assert.Equal(group, OrbweaverSettings.OrbGroupMembershipFor(hidden));
+    }
 }
