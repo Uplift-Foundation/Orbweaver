@@ -707,6 +707,50 @@ public class RelaySettingsAndServiceTests : IDisposable
         }
     }
 
+    // A Mac parked at the lock screen only ever runs ServeEarly, so the hooks
+    // have to start there or a headless mini can never be paired; and once
+    // they have, the Attach that follows an unlock must not start a second run.
+    [AvaloniaFact]
+    public async Task ServeEarly_runs_the_test_hooks_once_and_Attach_does_not_run_them_again()
+    {
+        RelayService.Factory = () => Client();
+        var ran = new List<IPairingClient>();
+        RelayService.HooksRunner = c => { ran.Add(c); return Task.CompletedTask; };
+        var dir = Path.Combine(_dir, "status-hooks-early");
+        Directory.CreateDirectory(dir);
+        var manager = new SessionManager(dir,
+            () => new Dictionary<string, string>(StringComparer.Ordinal),
+            () => new HashSet<string>(StringComparer.Ordinal),
+            dependents: _ => SessionDependents.Nothing,
+            paneOwners: claims => claims.ToDictionary(TmuxPaneKey.Of, _ => (string?)null),
+            agentViewer: _ => null,
+            teams: pids => pids.ToDictionary(p => p, _ => AgentTeam.None),
+            fileTeams: _ => new Dictionary<string, AgentTeam.Membership>(StringComparer.Ordinal));
+        try
+        {
+            RelayService.ResetHeadlessForTests();
+            OrbweaverSettings.RelayEnabled = false;
+            RelayService.HooksEnabled = () => false;
+            RelayService.ServeEarly();
+            Assert.Empty(ran);                                                 // control: off means off
+            Assert.Null(RelayService.Client);
+
+            RelayService.HooksEnabled = () => true;
+            RelayService.ServeEarly();                                         // relay off in settings, hooks on
+            Assert.Same(RelayService.Client, Assert.Single(ran));
+
+            RelayService.Attach(manager);
+            Assert.Single(ran);                                                // not started a second time
+        }
+        finally
+        {
+            RelayService.ResetHeadlessForTests();
+            RelayService.HooksEnabled = () => RelayTestHooks.Enabled(Environment.GetEnvironmentVariable);
+            RelayService.HooksRunner = RelayService.RunRealHooks;
+            await RelayService.DisableAsync();
+        }
+    }
+
     [AvaloniaFact]
     public void Defaults_name_this_platform_and_version()
     {
