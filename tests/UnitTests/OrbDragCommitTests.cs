@@ -789,6 +789,59 @@ public class OrbDragCommitTests
         Assert.Null(bare.AutoGroupIdOf("x"));
     }
 
+    // CB-332: a sole occupant is measured from where it started, scaled by size.
+    private static (FakeHost Host, string Orb, string Group) SoleScene(double radius, double movedX)
+    {
+        var orb = "sole-" + UniqueId();
+        var group = OrbweaverSettings.CreateOrbGroup().Id;
+        OrbweaverSettings.AssignTeamToGroup("key:" + orb, Array.Empty<string>(), group);
+        var host = new FakeHost();
+        host.Groups[orb] = group;
+        host.Discs[orb] = (movedX, 0, radius);
+        return (host, orb, group);
+    }
+
+    [Theory]
+    [InlineData(9, 54, false)]    // size 0.5: leave 36, gap 54 - 18 = 36, not >
+    [InlineData(9, 55, true)]     // gap 37 > 36
+    [InlineData(36, 100, false)]  // size 2: leave 144, gap 100 - 72 = 28
+    [InlineData(36, 250, true)]   // gap 178 > 144
+    public void ALoneOrbLeaveDistanceScalesWithItsSize(double radius, double dx, bool leaves)
+    {
+        var (host, orb, group) = SoleScene(radius, dx);
+
+        var outcome = OrbDragCommit.Release(host, orb, false, (int)dx, 0, 1);
+
+        Assert.Equal(leaves, outcome is SnapOutcome.LeaveSole);
+        Assert.Equal(leaves ? OrbGroups.Main : group, OrbweaverSettings.OrbGroupMembershipFor("key:" + orb));
+    }
+
+    [Fact]
+    public void ALoneTeamIsMeasuredAsOneAndEveryMemberLeavesWithIt()
+    {
+        var lead = "lead-" + UniqueId();
+        var member = "mem-" + UniqueId();
+        var group = OrbweaverSettings.CreateOrbGroup().Id;
+        OrbweaverSettings.AssignTeamToGroup("key:" + lead, new[] { "key:" + member }, group);
+        var host = new FakeHost();
+        host.Teams[lead] = new[] { lead, member };
+        host.Groups[lead] = group;
+        host.Groups[member] = group;
+
+        // Started at lead 0 / member 40; now moved 100: the lead is 24 edge to
+        // edge from where the member stood, so the team has not gone far.
+        host.Discs[lead] = (100, 0, 18);
+        host.Discs[member] = (140, 0, 18);
+        Assert.IsType<SnapOutcome.NoChange>(OrbDragCommit.Release(host, lead, false, 100, 0, 1));
+        Assert.Equal(group, OrbweaverSettings.OrbGroupMembershipFor("key:" + member));
+
+        host.Discs[lead] = (200, 0, 18);
+        host.Discs[member] = (240, 0, 18);
+        Assert.IsType<SnapOutcome.LeaveSole>(OrbDragCommit.Release(host, lead, false, 200, 0, 1));
+        Assert.Equal(OrbGroups.Main, OrbweaverSettings.OrbGroupMembershipFor("key:" + lead));
+        Assert.Equal(OrbGroups.Main, OrbweaverSettings.OrbGroupMembershipFor("key:" + member));
+    }
+
     // The interface's own default, with nothing overridden.
     private sealed class BareHost : IOrbDragHost
     {

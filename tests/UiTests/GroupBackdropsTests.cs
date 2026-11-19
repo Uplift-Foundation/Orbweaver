@@ -401,8 +401,8 @@ public class GroupBackdropsTests : IDisposable
         GroupBackdrops.HitTestTick(probe, false, (_, catches) => told.Add(catches));
         Assert.Equal(new[] { true }, told);
 
-        // And one 40 DIP past it does not.
-        GroupBackdrops.HitTestTick(new Point(centre.X + one[0].OrbRadius + 40, centre.Y), false, (_, catches) => told.Add(catches));
+        // And one 26 DIP past it does not.
+        GroupBackdrops.HitTestTick(new Point(centre.X + one[0].OrbRadius + 26, centre.Y), false, (_, catches) => told.Add(catches));
         Assert.Equal(new[] { true, false }, told);
     }
 
