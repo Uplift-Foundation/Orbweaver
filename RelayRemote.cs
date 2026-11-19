@@ -66,7 +66,16 @@ namespace Orbweaver
 
             // Lets the transcript settle after a turn ends before it is read.
             internal Func<Task>? Settle { get; init; }
+
+            // CB-339: the folder picker. Off by default so a test that does not care gets
+            // forbidden_path for a list_dir, as a desk with nothing to share would.
+            internal BrowseSeams? Browse { get; init; }
         }
+
+        // The filesystem a list_dir reads, the settings it reads them under (resolved on each
+        // request: the automatic roots follow the sessions), and how long a read may take before
+        // the phone is told `unreadable` rather than left waiting (its own timeout is 10 s).
+        internal sealed record BrowseSeams(IBrowseFileSystem Fs, Func<BrowseSettings> Settings, TimeSpan ReadTimeout);
 
         internal sealed record AccountSeams(
             Func<NewChatCli, IReadOnlyList<NewChatAccounts.Choice>> Choices,
@@ -239,9 +248,59 @@ namespace Orbweaver
             // Off the event pump: chunking a picture is milliseconds, but the
             // pump is the one place CB-322 says must never wait on a picture.
             PersonaImageRequest p => Task.Run(() => ImageAsync(phoneId, p)),
+            // CB-339: a folder listing, built off the pump with its own clock on the read.
+            ListDirRequest d => ListDirAsync(phoneId, d),
             // The only other kind RelayRequests makes.
             _ => Task.Run(() => Err(phoneId, request.Ref, RelayReplies.BadFrame, ((BadFrameRequest)request).SessionId)),
         };
+
+        private readonly BrowseRateLimiter _browseRate = new();
+
+        // frames-v11 resolve.steps 1 and 2 here (the rate limit, then the request's shape), 3 to 10 in
+        // BrowseRules. One reply per request: the listing's dir frames or exactly one err. The desk
+        // logs the ref and the outcome, never a path or a folder name.
+        private async Task ListDirAsync(string phoneId, ListDirRequest r)
+        {
+            if (!_browseRate.TryAccept(phoneId, _seams.Now().ToUnixTimeMilliseconds()))
+            {
+                Err(phoneId, r.Ref, RelayReplies.RateLimited);
+                return;
+            }
+            if (r.Path is null)
+            {
+                Err(phoneId, r.Ref, RelayReplies.BadFrame);
+                return;
+            }
+            if (_seams.Browse is not { } browse)
+            {
+                Err(phoneId, r.Ref, RelayReplies.ForbiddenPath);
+                return;
+            }
+
+            BrowseOutcome outcome;
+            try
+            {
+                outcome = await Task.Run(() => BrowseRules.Resolve(r.Path, r.Hidden, browse.Settings(), browse.Fs))
+                    .WaitAsync(browse.ReadTimeout).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                // A read that did not finish in time, or one the filesystem refused in a way the
+                // seam did not name: the phone is told the folder could not be read.
+                _seams.Log($"list_dir {RelayLink.Safe(r.Ref)} {e.GetType().Name}");
+                Err(phoneId, r.Ref, RelayReplies.Unreadable);
+                return;
+            }
+
+            if (outcome.Err is { } code)
+            {
+                Err(phoneId, r.Ref, code);
+                return;
+            }
+            var frames = BrowseFrames.Dir(r.Ref, outcome.Listing!);
+            _seams.Log($"list_dir {RelayLink.Safe(r.Ref)} {outcome.Listing!.Items.Count} entries");
+            foreach (var frame in frames) _send.Reply(phoneId, null, frame);
+        }
 
         private void Err(string phoneId, string reference, string code, string? sessionId = null, string? why = null)
         {
@@ -389,48 +448,22 @@ namespace Orbweaver
 
         // ---- launch ----------------------------------------------------------------
 
+        // The gate here, with the phone as signer; the account, the start and
+        // the check-in in LaunchRunner, which the peer path shares (CB-357).
         private async Task LaunchAsync(string phoneId, byte[] phoneIdPublic, LaunchRequest r)
         {
             var f = r.Fields;
-            var env = new LaunchGate.Environment(
-                _seams.Launch.IsWindows,
-                cli => _seams.Launch.Locate(cli) is not null,
-                _seams.Launch.DirectoryExists,
-                sid => Local(sid) is not null);
-            if (LaunchGate.Decide(r, phoneId, phoneIdPublic, _seams.Now(), _nonces, env) is { } refused)
+            var runner = Runner();
+            if (LaunchGate.Decide(r, phoneId, phoneIdPublic, _seams.Now(), _nonces, runner.Environment()) is { } refused)
             {
                 Err(phoneId, r.Ref, refused);
                 return;
             }
 
-            string? profileDir = null;
-            if (_seams.Accounts is { } accounts)
+            var outcome = await runner.RunAsync(f).ConfigureAwait(false);
+            if (outcome.SessionId is not { } sessionId)
             {
-                var launchCli = LaunchGate.CliFor(f.Cli);
-                if (!RelayAccounts.TryResolve(launchCli, f.Account, accounts.Choices(launchCli),
-                        accounts.Designated(launchCli), null, out profileDir))
-                {
-                    Err(phoneId, r.Ref, RelayReplies.UnknownAccount);
-                    return;
-                }
-            }
-            else if (f.Account.Length > 0)
-            {
-                Err(phoneId, r.Ref, RelayReplies.UnknownAccount);
-                return;
-            }
-
-            var before = Snapshot().Select(s => s.SessionId).ToHashSet(StringComparer.Ordinal);
-            if (Start(f, profileDir) is { } failed)
-            {
-                Err(phoneId, r.Ref, failed.Code, why: failed.Why);
-                return;
-            }
-
-            var sessionId = await AwaitNewSessionAsync(f, before).ConfigureAwait(false);
-            if (sessionId is null)
-            {
-                Err(phoneId, r.Ref, RelayReplies.NoSession);
+                Err(phoneId, r.Ref, outcome.Code, why: outcome.Why);
                 return;
             }
             Ok(phoneId, r.Ref, RelayReplies.Launched, sessionId);
@@ -450,60 +483,11 @@ namespace Orbweaver
             else Err(phoneId, r.Ref, RelayReplies.NotAtPrompt, sessionId, why);
         }
 
-        // Starts the CLI where the contract says — tmux on the Mac, its own
-        // conhost on Windows — or names why it could not.
-        private (string Code, string Why)? Start(LaunchFields f, string? profileDir)
-        {
-            var cli = LaunchGate.CliFor(f.Cli);
-            var binary = _seams.Launch.Locate(f.Cli)!;
-            var args = NewChatCommand.LaunchArgs(cli, f.Model, f.ParentSessionId, f.FirstMessage);
-            var name = NewChatLauncher.DisplayName(cli);
-            if (_seams.Launch.IsWindows)
-            {
-                var inArgv = NewChatCommand.PromptAsArgument(cli);
-                // A batch shim (an npm-style codex.cmd) would be run by cmd
-                // after all, and cmd would re-parse the message: refused rather
-                // than started.
-                if (inArgv && f.FirstMessage.Length > 0 && !binary.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                    return (RelayReplies.LaunchFailed, name + " here is a script, which cannot be handed a message safely.");
-                var start = profileDir is null
-                    ? NewChatCommand.ConsoleStartInfo(binary, f.Cwd, args, viaCmd: !inArgv)
-                    : NewChatCommand.ConsoleStartInfoForAccount(cli, binary, f.Cwd, args, profileDir, viaCmd: !inArgv);
-                if (start is null)
-                    return (RelayReplies.LaunchFailed, "That account's folder can't be carried safely into a console for " + name + ".");
-                return _seams.Launch.StartWindows(start) is null
-                    ? (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".")
-                    : null;
-            }
-            var (pane, why) = _seams.Launch.PlaceMac(NewChatCommand.LaunchLine(_seams.Launch.Shell(), binary, args, profileDir is null ? null : (cli, profileDir)), f.Cwd);
-            if (pane is not null) return null;
-            return why == TerminalScripts.NoTmuxWhy
-                ? (RelayReplies.NoTerminal, why)
-                : (RelayReplies.LaunchFailed, why ?? "Couldn't open a terminal for " + name + ".");
-        }
+        private LaunchRunner Runner() =>
+            new(new LaunchRunner.Seams(_seams.Launch, _seams.Accounts, Snapshot, _seams.Now, _seams.Delay));
 
-        // A new local session of that CLI in that folder, one that was not in
-        // the book before the launch. Polled every 500 ms for up to 30 s.
-        private async Task<string?> AwaitNewSessionAsync(LaunchFields f, HashSet<string> before)
-        {
-            var deadline = _seams.Now() + LaunchCheckIn;
-            while (true)
-            {
-                foreach (var (sid, status) in Snapshot())
-                    if (!before.Contains(sid) && status.IsLocalCli && MirrorProtocol.CliFor(status.Source) == f.Cli
-                        && SameFolder(status.Cwd, f.Cwd, _seams.Launch.IsWindows))
-                        return sid;
-                if (_seams.Now() >= deadline) return null;
-                await _seams.Delay(LaunchPoll).ConfigureAwait(false);
-            }
-        }
-
-        internal static bool SameFolder(string? a, string b, bool isWindows)
-        {
-            if (string.IsNullOrEmpty(a)) return false;
-            static string Trim(string p) => p.Length > 1 ? p.TrimEnd('/', '\\') : p;
-            return string.Equals(Trim(a), Trim(b), isWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-        }
+        // Kept where RelayRemote's callers already look for it.
+        internal static bool SameFolder(string? a, string b, bool isWindows) => LaunchRunner.SameFolder(a, b, isWindows);
 
         // The first message: once the new session is at its prompt (a
         // first-run trust dialog holds it until someone at the desk clears it),

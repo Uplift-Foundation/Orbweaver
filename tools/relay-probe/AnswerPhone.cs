@@ -38,6 +38,9 @@ using static Orbweaver.RelayCrypto;
 //   hold / answer … held                     snapshot the latest prompt now, answer it later
 //   replay                                   resend the last answer, same nonce
 //   wait <seconds>                           sleep before the next command
+//   list_dir <path> [hidden]                 CB-339: send a frames-v11 list_dir (empty path = the top level;
+//                                            quote a path with spaces) and print each dir/err reply with the
+//                                            milliseconds since the request, so a timeout or a stall shows
 //   unlink                                   unlink from the phone side and exit
 //   quit                                     exit without unlinking
 //
@@ -118,10 +121,15 @@ internal static class AnswerPhone
         JsonElement? held = null;                 // `hold` snapshots the latest prompt; `answer … held` answers it
         object? lastAnswer = null;
 
-        Task SendSealed(string plaintext, string cls = "action") =>
-            Send(new { v = 2, id = RelayLink.Ulid(DateTimeOffset.UtcNow), from = phoneId, to = desktopId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        async Task<string> SendSealed(string plaintext, string cls = "action")
+        {
+            var id = RelayLink.Ulid(DateTimeOffset.UtcNow);
+            await Send(new { v = 2, id, from = phoneId, to = desktopId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 @class = cls, push = "none", ck = "",
                 ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, sent++), Encoding.UTF8.GetBytes(plaintext), Aad(phoneId, desktopId, cls)) });
+            return id;
+        }
+        var listDirSentAt = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset>();   // request id -> when it went
 
         // Reader: print every frame; remember the last prompt.
         var done = new CancellationTokenSource();
@@ -151,7 +159,9 @@ internal static class AnswerPhone
                 }
                 if (cls != "action") continue;   // rosters and deltas: not this tool's business
                 var push = f.TryGetProperty("push", out var p) ? p.GetString() : "?";
-                Console.WriteLine($"{Now()} {cls} push={push} id={f.GetProperty("id").GetString()} {Encoding.UTF8.GetString(plain)}");
+                var took = msg.TryGetProperty("ref", out var refEl) && refEl.ValueKind == JsonValueKind.String && listDirSentAt.TryGetValue(refEl.GetString()!, out var at0)
+                    ? $" (+{(DateTimeOffset.UtcNow - at0).TotalMilliseconds:F0} ms since list_dir)" : "";
+                Console.WriteLine($"{Now()} {cls} push={push} id={f.GetProperty("id").GetString()} {Encoding.UTF8.GetString(plain)}{took}");
                 if (f.TryGetProperty("e", out var ee))
                 {
                     var pt = PushSeal.Open(phKa, ee.GetString());
@@ -202,6 +212,17 @@ internal static class AnswerPhone
                     var keyText = JsonSerializer.Serialize(new { t = "key." + op, kind = "watch", pub = Hex(watch.Public), at, sig = Base64Url(keySig) });
                     await SendSealed(keyText, "pair");
                     Console.WriteLine($"{Now()} sent {keyText}");
+                    break;
+                case "list_dir":
+                    // The canonical form frames-v11.json pins: t, path, then hidden only when true; non-ASCII and quotes as the relaxed escaper writes them.
+                    var ldPath = words.Count > 1 && words[1] != "hidden" ? words[1] : "";
+                    var ldText = words.Contains("hidden")
+                        ? JsonSerializer.Serialize(new { t = "list_dir", path = ldPath, hidden = true }, Relaxed)
+                        : JsonSerializer.Serialize(new { t = "list_dir", path = ldPath }, Relaxed);
+                    var ldSentAt = DateTimeOffset.UtcNow;
+                    var ldId = await SendSealed(ldText);
+                    listDirSentAt[ldId] = ldSentAt;
+                    Console.WriteLine($"{Now()} sent list_dir id={ldId} {ldText}");
                     break;
                 case "replay":
                     if (lastAnswer is null) { Console.WriteLine("no answer to replay"); break; }
@@ -263,6 +284,8 @@ internal static class AnswerPhone
         await Task.WhenAny(reader, Task.Delay(100));
         return 0;
     }
+
+    private static readonly JsonSerializerOptions Relaxed = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     private static object Typed(string field, string value) => field == "expires_at" ? long.Parse(value) : value;
 

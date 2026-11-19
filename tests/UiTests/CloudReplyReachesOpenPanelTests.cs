@@ -122,10 +122,13 @@ public class CloudReplyReachesOpenPanelTests : IDisposable
             else
             {
                 Interlocked.Increment(ref TranscriptReads);
+                // The write host's list, as measured: newest first, each row the
+                // payload of an event wrapper — so the reply comes before its echo.
                 var rows = Ran() && _sent is { } echo
-                    ? new[] { echo, AssistantTemplate.Replace("UUID", "a1").Replace("TEXT", ReplyText) }
+                    ? new[] { AssistantTemplate.Replace("UUID", "a1").Replace("TEXT", ReplyText), echo }
                     : Array.Empty<string>();
-                body = "{\"data\":[" + string.Join(",", rows) + "],\"has_more\":false,\"last_id\":null}";
+                body = "{\"data\":[" + string.Join(",", rows.Select(r => "{\"payload\":" + r + "}"))
+                       + "],\"next_cursor\":null}";
             }
 
             return Task.FromResult(new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""), body));

@@ -22,6 +22,7 @@
          that spoke to the gateway its own way could answer a question the app
          would answer differently, which is the one thing it must not do. -->
     <Compile Include="../../OrbweaverSettings.cs" />
+    <Compile Include="../../RelayedMessageDisplay.cs" />
     <!-- CB-276: the record OrbweaverSettings stores a hide as. Its own file,
          apart from HiddenOrbs.cs, which needs SessionManager. -->
     <Compile Include="../../HiddenOrb.cs" />

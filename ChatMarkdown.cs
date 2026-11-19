@@ -32,7 +32,10 @@ namespace Orbweaver
     //    unwrapped, which is what a tree wants as well.
     //  * No nested lists, no reference links, no HTML, no images. None of it
     //    turns up, and every rule here is a rule that can mis-fire.
-    //  * Links are http and https only. An inline link, an <autolink> and a
+    //  * Links are http and https, plus (CB-363) file destinations inside
+    //    "[label](dest)": see FileLink for the forms. A file link is only ever
+    //    an inline link — a bare path in prose or in an <autolink> is text —
+    //    and its span carries the raw destination. An inline link, an <autolink> and a
     //    bare URL in prose all become Link spans carrying their destination,
     //    but only when CloudSessionLink.IsOpenable would hand that destination
     //    to a browser. Anything else — a relative path, file:, a scheme some
@@ -514,9 +517,19 @@ namespace Orbweaver
 
         // The URL inside a link's parentheses: a "title" after it dropped,
         // CommonMark's <…> wrapping taken off, and then the launcher's rule.
+        //
+        // A file form (CB-363) is read first, because it is the one kind of
+        // destination whose spaces are legitimate: "/a/My File.pdf" is a path,
+        // where the same space in an http URL starts a title. For those the
+        // whole text is kept unless it ends in a quoted title, and the result
+        // is a link only if FileLink.TryParse accepts it — the raw destination
+        // is what the span carries, decoded later and once, by whoever opens it.
         private static string? Destination(string inner)
         {
             var dest = inner.Trim();
+
+            var file = FileDestination(dest);
+            if (file.IsFileForm) return file.Url;
 
             var space = dest.IndexOfAny([' ', '\t']);
             if (space >= 0) dest = dest[..space];
@@ -524,6 +537,46 @@ namespace Orbweaver
             if (dest.Length >= 2 && dest[0] == '<' && dest[^1] == '>') dest = dest[1..^1];
 
             return CloudSessionLink.IsOpenable(dest) ? dest : null;
+        }
+
+        // (isFileForm, destination): whether this is one of FileLink's forms,
+        // and when it is, the destination with any <…> wrapper or trailing
+        // "title" taken off — or null Url when the form is not acceptable.
+        private static (bool IsFileForm, string? Url) FileDestination(string dest)
+        {
+            var candidate = dest;
+
+            if (candidate.StartsWith('<'))
+            {
+                // <dest with spaces> "optional title": the wrapper is what
+                // lets CommonMark have spaces, so take what is inside.
+                var close = candidate.IndexOf('>');
+                if (close < 0) return (false, null);
+                candidate = candidate[1..close];
+            }
+            else
+            {
+                candidate = StripQuotedTitle(candidate);
+            }
+
+            if (!FileLink.LooksLikeFileForm(candidate)) return (false, null);
+
+            return (true, FileLink.TryParse(candidate) is null ? null : candidate);
+        }
+
+        // "x \"title\"", "x 'title'" — a quoted tail separated by whitespace.
+        // Anything else after a space is part of the path.
+        private static string StripQuotedTitle(string dest)
+        {
+            if (dest.Length < 4) return dest;
+
+            var quote = dest[^1];
+            if (quote != '"' && quote != '\'') return dest;
+
+            var open = dest.LastIndexOf(quote, dest.Length - 2);
+            if (open < 1 || !char.IsWhiteSpace(dest[open - 1])) return dest;
+
+            return dest[..open].TrimEnd();
         }
 
         // A bare URL starts at "http://" or "https://", and not in the middle

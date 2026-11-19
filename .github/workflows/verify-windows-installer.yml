@@ -32,6 +32,13 @@ on:
       - 'OrbweaverHook.ps1'
       - '.github/workflows/verify-windows-installer.yml'
 
+# Nothing here writes through the token: CI uploads artifacts (which uses the
+# runtime token, not GITHUB_TOKEN) and verify only runs `gh release download`
+# on a public release. Read-only is the whole need, and stating it means a
+# repo whose default token is ever widened does not widen these runs with it.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: windows-latest

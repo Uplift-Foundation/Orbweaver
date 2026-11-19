@@ -35,7 +35,7 @@ namespace Orbweaver
     // makes that free — the panel already redraws from History when it fires.
     internal sealed partial class RemoteControlChatSession :
         IRemoteChatSession, IRemoteChatComposer, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatBacklog,
-        IRemoteChatFetchWait, IRemoteChatMachine, IDisposable
+        IRemoteChatFetchWait, IRemoteChatMachine, IRemoteChatComposerChanges, IDisposable
     {
         private readonly List<ChatTurn> _history = new();
 
@@ -141,7 +141,7 @@ namespace Orbweaver
         // Said in the input box itself. "Message…" would be a lie by omission
         // here: this one leaves the machine, and in live view it is typed into
         // somebody else's terminal, which is worth being even plainer about.
-        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, FarTitle);
+        public string ComposerHint => ComposerHintFor(_mirroring, _canType, _canDeliver, FarTitle, _saidNoLiveView);
 
         // Pure and static so the three-way choice is a unit test rather than
         // a screenshot — the same arrangement WaitLabel and FetchingNote are
@@ -156,14 +156,67 @@ namespace Orbweaver
         // `mirroring && !canType` no longer automatically means "can't
         // send" — canDeliver says whether this machine can hand the text to
         // that session's own messaging socket instead.
-        internal static string ComposerHintFor(bool mirroring, bool canType, bool canDeliver, string name) =>
+        //
+        // **A settled "no live view" says so too (CB-380).** Not mirroring means two
+        // things: still being asked, where "Message ..." is fair because the answer may
+        // be yes, and answered no, where SendAsync can only refuse.
+        //
+        // **The last arm says so rather than inviting a send.** With neither a
+        // pane nor a socket a send goes to the far Buddy and comes back refused,
+        // and the live-view banner says it cannot be delivered (CB-372); a
+        // placeholder reading "Message …" one line below that was the same
+        // two-lines-disagreeing fault. The box stays enabled all the same, as
+        // IRemoteChatComposer explains: a draft can still be pasted, and
+        // SendAsync explains the refusal in the transcript.
+        internal static string ComposerHintFor(
+            bool mirroring, bool canType, bool canDeliver, string name, bool noLiveView = false) =>
             !mirroring
-                ? $"Message {name} on the other machine…"
+                ? noLiveView
+                    ? $"Can't message {name} from this machine"
+                    : $"Message {name} on the other machine…"
                 : canType
                     ? $"Type into {name}'s terminal on the other machine…"
                     : canDeliver
                         ? $"Message {name}'s background job on the other machine — it reads this at its next turn…"
-                        : $"Message {name} on the other machine…";
+                        : $"Can't message {name}: no terminal or messaging socket this machine can reach";
+
+        // The line at the top of a live view saying where what you send goes.
+        // Pure and static for the same reason ComposerHintFor is, and it follows
+        // the same two facts: the banner used to say "typed into its terminal"
+        // for every live view, including a background job with no terminal at
+        // all, while the composer directly below it said it would message the
+        // job (CB-372).
+        //
+        // Written once, at the first paint, and that is safe: _canType and
+        // _canDeliver are assigned only in TryUpgrade, which returns early once
+        // _mirroring is set, so they cannot change after the banner is drawn —
+        // the composer hint reads the same two fields and could not diverge from
+        // it either.
+        //
+        // `empty` is CB-357's case: a session launched from another desktop is
+        // drawn before anyone has spoken to it, and "mirrors its own
+        // conversation" would describe a conversation that does not exist yet.
+        // The where-it-goes half still follows the same two facts.
+        internal static string LiveViewBannerFor(bool canType, bool canDeliver, string name, bool empty = false)
+        {
+            if (empty)
+                return $"No messages yet in {name}. " + (canType
+                    ? "The first one you type here goes into its terminal."
+                    : canDeliver
+                        ? "It has no terminal, so the first message you send is delivered to its background job "
+                          + "and read at its next turn."
+                        : "It has no terminal and no messaging socket this machine can reach, so messages you send can't be delivered.");
+
+            var mirror = $"Live view: this panel mirrors {name}'s own conversation from "
+                       + "the other machine, a few seconds behind. ";
+
+            return canType
+                ? mirror + "Messages you type are typed into its terminal."
+                : canDeliver
+                    ? mirror + "It has no terminal, so messages you send are delivered to its background job "
+                      + "and read at its next turn."
+                    : mirror + "It has no terminal and no messaging socket this machine can reach, so messages you send can't be delivered.";
+        }
 
         // Whether the far session actually has an input line to type into.
         //
@@ -222,11 +275,56 @@ namespace Orbweaver
             {
                 MachineChanged?.Invoke();
                 TryUpgrade();
+                RefreshReach();
 
                 // The roster is what says the far session started or stopped
                 // waiting, which is what decides whether to ask for a form.
                 EnsurePromptPolling();
             });
+        }
+
+        // The banner turn this session inserted at the top of the live view, kept
+        // so it can be rewritten in place rather than found by position.
+        private ChatTurn? _banner;
+
+        // Whether _banner was drawn over an empty window (CB-357), so a reach
+        // change rewrites it in the same voice instead of claiming a mirror.
+        private bool _bannerEmpty;
+
+        public event Action? ComposerHintChanged;
+
+        // What the far session can do changes after the panel has upgraded - it
+        // gains a pane, a messaging socket comes or goes - and the roster says so
+        // on its next landing. TryUpgrade reads it once and returns early after
+        // that, so the banner and the composer hint went on saying what had been
+        // true at the upgrade until the app restarted (CB-379). A stale "can't" is
+        // the worse half of that: it stops people trying.
+        //
+        // Re-read on every roster landing rather than on reopening the panel,
+        // because the roster arrives whether or not a panel is open. Says nothing
+        // when nothing it shows has changed.
+        private void RefreshReach()
+        {
+            if (_disposed || !_mirroring) return;
+
+            var state = RemoteControlSessions.MirrorStateFor(_account, _remoteName);
+            // One guard: only an entry that is actually in the roster counts, and
+            // anything else means "change nothing". Available is returned with an
+            // entry today, but that is StateFor's property, not this method's, and a
+            // future change to it should be a quiet no-op here rather than a
+            // NullReferenceException on the UI thread.
+            if (state is not { Availability: RemoteMirrorClient.MirrorAvailability.Available, Entry: { } entry }) return;
+
+            var canType = entry.HasPane;
+            var canDeliver = entry.CanDeliver ?? false;
+            if (canType == _canType && canDeliver == _canDeliver) return;
+
+            _canType = canType;
+            _canDeliver = canDeliver;
+
+            if (_banner is not null) _banner.Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle, _bannerEmpty);
+
+            ComposerHintChanged?.Invoke();
         }
 
         private void TryUpgrade()
@@ -345,6 +443,10 @@ namespace Orbweaver
 
         internal string FarName => MachineName is { Length: > 0 } machine ? $"{FarTitle} on {machine}" : FarTitle;
 
+        // The title the panel names the far session by, for tests that compare the
+        // wording it builds from it.
+        internal string FarTitleForTests => FarTitle;
+
         // "the other machine", when the roster has not said which.
         internal string FarMachine => MachineName is { Length: > 0 } machine ? machine : "the other machine";
 
@@ -444,6 +546,12 @@ namespace Orbweaver
             // is gone (937de9ec): a session the far Buddy cannot show cannot be
             // written to from here either (see NoWayToSendNote).
             Note(NoLiveViewNote(FarTitle));
+
+            // The placeholder still invited a message at this point, and the send
+            // then ended in NoWayToSendNote (CB-380). Once the far Buddy has
+            // answered no, it says so; while it is still being asked it stays
+            // "Message ...", which is fair. Raised on the UI thread, like the note.
+            ComposerHintChanged?.Invoke();
         }
 
         // Said once, when the far Buddy has answered that it cannot show this
@@ -451,6 +559,7 @@ namespace Orbweaver
         internal static string NoLiveViewNote(string remoteName) =>
             $"No live view: {Brand.DisplayName} on the other machine lists {remoteName} but can't show "
           + "its conversation, so there's nothing to read or type into here.";
+
 
         private void OnDelivered(RemoteMirrorClient.MirrorRows rows)
         {
@@ -465,21 +574,7 @@ namespace Orbweaver
             // note on why, which is that the rows cost ten to thirty times as
             // much to relay as the turns they produce. So there is nothing to
             // parse here, only turns to adopt.
-            var mapped = rows.Turns
-                .Select(t => new
-                {
-                    t.Uuid,
-                    Turn = new ChatTurn
-                    {
-                        Role = MirrorProtocol.RoleOf(t.Role),
-                        Text = t.Text,
-                        IsComplete = true,
-                        At = t.At > 0
-                            ? DateTimeOffset.FromUnixTimeSeconds(t.At).ToLocalTime()
-                            : DateTimeOffset.Now
-                    }
-                })
-                .ToList();
+            var mapped = MirrorProtocol.AdoptTurns(rows.Turns);
 
             OnUi(() =>
             {
@@ -493,7 +588,12 @@ namespace Orbweaver
 
                     foreach (var row in mapped)
                     {
-                        if (row.Uuid is not null && !_seen.Add(row.Uuid)) continue;
+                        if (row.Key is not null && !_seen.Add(row.Key)) continue;
+
+                        // CB-356: a far side that sent the boundary and the
+                        // summary as separate turns still draws one row.
+                        if (CompactionNote.AbsorbIntoLast(_history, row.Turn) is not null) continue;
+
                         _history.Add(row.Turn);
                     }
 
@@ -502,14 +602,14 @@ namespace Orbweaver
                     // Said once, at the top of the real conversation, so nobody
                     // mistakes a mirror for a chat thread and wonders why their
                     // half of it is missing.
-                    _history.Insert(0, new ChatTurn
+                    _bannerEmpty = mapped.Count == 0;
+                    _banner = new ChatTurn
                     {
                         Role = ChatRole.System,
                         IsComplete = true,
-                        Text = $"Live view: this panel mirrors {FarTitle}'s own conversation from "
-                             + "the other machine, a few seconds behind. Messages you type are typed "
-                             + "into its terminal."
-                    });
+                        Text = LiveViewBannerFor(_canType, _canDeliver, FarTitle, _bannerEmpty)
+                    };
+                    _history.Insert(0, _banner);
 
                     _painted = true;
 
@@ -519,7 +619,16 @@ namespace Orbweaver
 
                 foreach (var row in mapped)
                 {
-                    if (row.Uuid is not null && !_seen.Add(row.Uuid)) continue;
+                    if (row.Key is not null && !_seen.Add(row.Key)) continue;
+
+                    // CB-356: the summary arriving a batch after its boundary
+                    // folds into the boundary's row.
+                    if (CompactionNote.AbsorbIntoLast(_history, row.Turn) is { } merged)
+                    {
+                        TurnUpdated?.Invoke(merged);
+                        continue;
+                    }
+
                     if (Reconcile(row.Turn)) continue;
 
                     Add(row.Turn);
@@ -571,29 +680,23 @@ namespace Orbweaver
             var turns = await client.LoadOlderAsync(_remoteName).ConfigureAwait(true);
             if (turns is null) return false;
 
-            var mapped = turns
-                .Select(t => new
-                {
-                    t.Uuid,
-                    Turn = new ChatTurn
-                    {
-                        Role = MirrorProtocol.RoleOf(t.Role),
-                        Text = t.Text,
-                        IsComplete = true,
-                        At = t.At > 0
-                            ? DateTimeOffset.FromUnixTimeSeconds(t.At).ToLocalTime()
-                            : DateTimeOffset.Now
-                    }
-                })
-                .ToList();
+            var mapped = MirrorProtocol.AdoptTurns(turns);
 
             var older = new List<ChatTurn>();
 
             foreach (var row in mapped)
             {
-                if (row.Uuid is not null && !_seen.Add(row.Uuid)) continue;
+                if (row.Key is not null && !_seen.Add(row.Key)) continue;
                 older.Add(row.Turn);
             }
+
+            var at = AfterBanner(_history);
+
+            // CB-356: a page that ends on a compaction boundary whose summary is
+            // already the first conversation turn shown. The shown turn takes the
+            // boundary's numbers and the page's copy is not inserted.
+            if (CompactionNote.AdoptAcrossSeam(older, _history, at) is { } adopted)
+                TurnUpdated?.Invoke(adopted);
 
             if (older.Count == 0)
             {
@@ -604,14 +707,17 @@ namespace Orbweaver
                 return HasMore;
             }
 
-            // After the live-view banner, which is the one thing that stays at
-            // the top: it describes the panel, not a moment in the conversation.
-            var at = _history.Count > 0 && _history[0].Role == ChatRole.System ? 1 : 0;
             _history.InsertRange(at, older);
 
             HistoryPrepended?.Invoke(older.Count);
             return true;
         }
+
+        // Where older turns go: after the live-view banner, which is the one
+        // thing that stays at the top, since it describes the panel rather than a
+        // moment in the conversation. Pure, so both arms are a unit test.
+        internal static int AfterBanner(IReadOnlyList<ChatTurn> history) =>
+            history.Count > 0 && history[0].Role == ChatRole.System ? 1 : 0;
 
         public event Action? HistoryReplaced;
 

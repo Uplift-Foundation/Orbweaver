@@ -1,0 +1,44 @@
+# Dependabot reads this file from the DEFAULT branch (main), not develop, so it
+# only takes effect at the next release. target-branch sends the PRs it opens to
+# develop, where gitflow wants them.
+#
+# Grouped so a weekly run is two PRs (one per ecosystem), not one per package.
+#
+# Deliberately pinned packages are ignored below. The reasons are in CLAUDE.md,
+# "Coverage" section: the two Microsoft.Testing extensions have to resolve the
+# exact Microsoft.Testing.Platform that xunit.v3 brings, and bumping any of
+# them alone throws TypeLoadException before one test runs. Bump them by hand,
+# together, and re-check all four pins.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directories:
+      - "/"
+      - "/tests/*"
+      - "/tools/*"
+    target-branch: develop
+    schedule:
+      interval: weekly
+    groups:
+      nuget:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "Microsoft.Testing.Extensions.CodeCoverage"
+      - dependency-name: "Microsoft.Testing.Extensions.HangDump"
+      - dependency-name: "Microsoft.Testing.Platform*"
+      - dependency-name: "xunit.v3*"
+      # Major bumps are a decision, not a weekly PR: Microsoft.NET.Test.Sdk 18.x
+      # may drag Microsoft.Testing.Platform 2.x in under the pins above,
+      # Avalonia.Headless.XUnit 12.x needs xunit v3 and the pinned platform, and
+      # openclaw-probe sits on Avalonia 11 on purpose. Do those by hand.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: develop
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

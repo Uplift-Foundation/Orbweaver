@@ -153,7 +153,24 @@ namespace Orbweaver
             // logged, typing let through (TypingGate.GuardedTypeAsync). Null is
             // off; LiveSeams reads the same marker file and environment
             // variable as the local panel's gate.
-            Func<bool>? Shadow = null);
+            Func<bool>? Shadow = null,
+
+            // CB-363: what a FILE request is answered against — the browse
+            // settings, the disk BrowseRules reads, and the file reader. Read
+            // once per request, off the frame loop. Null means this server does
+            // not serve files: HELLO does not say rf=1 and FILE is refused as
+            // unsupported, which is every harness built before this.
+            Func<PeerFileEnv>? Files = null,
+
+            // CB-363: the last roster already read, without reading it again.
+            // A FILE uses it only to find the session's working folder, and
+            // must never wait on `claude agents` to do that: RosterMemo holds
+            // its lock across one launch per config dir, measured at 1.6 to
+            // 6.1 s on the mini, inside the near side's 20 s of silence.
+            // Null on a harness that predates it, which reads Agents as before;
+            // a peek that has nothing yet answers null, and the request is then
+            // judged against the browse roots alone.
+            Func<IReadOnlyList<AgentRoster.Entry>?>? PeekAgents = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -249,7 +266,15 @@ namespace Orbweaver
                 profileDirs, readAgents ?? AgentRosterReader, now ?? (() => DateTime.UtcNow), RosterMemoTtl,
                 readLog ?? new RosterReadLog(MirrorLog.Say));
 
-            return one with { Agents = memo.Read, RosterSnapshot = memo.Snapshot };
+            return one with { Agents = memo.Read, RosterSnapshot = memo.Snapshot, PeekAgents = memo.Peek };
+        }
+
+        // CB-363: this machine's browse settings and disk, read per request.
+        [ExcludeFromCodeCoverage]
+        private static PeerFileEnv LiveFiles()
+        {
+            var fs = new BrowseFileSystem();
+            return new PeerFileEnv(BrowseSettingsSource.Current(fs), fs, PeerFileSource.Instance);
         }
 
         // The one line that launches `claude agents`, held apart so RosterMemo
@@ -320,6 +345,13 @@ namespace Orbweaver
             }
 
             internal IReadOnlyList<AgentRoster.Entry> Read() => Snapshot().Agents;
+
+            // The last roster read, however old, or null before the first. Never
+            // reads, and never takes _lock: that lock is held across the
+            // `claude agents` launches, and waiting on it is the very wait this
+            // exists to avoid. A reference read is atomic, and _merged is only
+            // ever replaced whole.
+            internal IReadOnlyList<AgentRoster.Entry>? Peek() => Volatile.Read(ref _merged);
 
             // The roster and the dirs it was read from, taken together under
             // one lock so they cannot come from two different reads.
@@ -477,7 +509,8 @@ namespace Orbweaver
                 CanReadPane: TerminalFocuser.CanReadPane,
                 PressKey: TerminalFocuser.SendPaneKey,
                 TypeLiteral: TerminalFocuser.SendPaneText,
-                Shadow: RealShadowOn);
+                Shadow: RealShadowOn,
+                Files: LiveFiles);
         }
 
         // CB-307: shadow mode, read the way the local panel's gate reads it —
@@ -588,6 +621,10 @@ namespace Orbweaver
 
                 case MirrorProtocol.Answer:
                     await AnswerAsync(fromPeer, frame).ConfigureAwait(false);
+                    break;
+
+                case MirrorProtocol.ReadFile:
+                    await FileAsync(fromPeer, frame).ConfigureAwait(false);
                     break;
             }
         }
@@ -832,6 +869,7 @@ namespace Orbweaver
             var hash = MirrorProtocol.Hash(raw);
             var reply = new Dictionary<string, string> { [MirrorProtocol.RosterHashField] = hash };
             if (_seams.CapturePane is not null && _seams.PressKey is not null) reply[MirrorProtocol.PromptsField] = "1";
+            if (_seams.Files is not null) reply[MirrorProtocol.FilesField] = "1";
 
             if (MirrorProtocol.RosterUnchanged(frame.Get(MirrorProtocol.RosterHashField), hash))
             {
@@ -933,6 +971,179 @@ namespace Orbweaver
                 new Dictionary<string, string> { [MirrorProtocol.AvatarIdField] = id! }, sub: null,
                 MirrorProtocol.PictureChunkBytes)
                 .ConfigureAwait(false);
+        }
+
+        // --- a file a chat linked to (CB-363) ------------------------------------
+
+        private readonly PeerFileGate _files = new();
+
+        // The FILE refusals answered on the frame loop, cheapest first: the
+        // rate limit (so a flood costs nothing more), the frame's own shape,
+        // and one file in flight per peer. Everything that touches the disk
+        // runs detached (FileInFlight), the SlashInFlight pattern, because a
+        // 50 MB read and two hundred pieces must not hold up an INPUT or a
+        // HELLO behind them on PeerLink's in-order loop.
+        //
+        // The log line names the id and the outcome and never the path: the
+        // path is somebody's file name, and a log is the wrong place to keep
+        // a record of which ones were asked for.
+        private async Task FileAsync(string fromPeer, MirrorProtocol.MirrorFrame frame)
+        {
+            if (_seams.Files is null)
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnsupported).ConfigureAwait(false);
+                return;
+            }
+
+            if (!_files.TryRate(fromPeer, new DateTimeOffset(Now()).ToUnixTimeMilliseconds()))
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrRateLimited).ConfigureAwait(false);
+                return;
+            }
+
+            var path = frame.PayloadVerified ? PeerFileRules.PathOf(frame.Payload) : null;
+            var name = frame.Text("n");
+            if (path is null || name is null || !PeerFileRules.ShapeOk(path))
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrBadFrame).ConfigureAwait(false);
+                return;
+            }
+
+            var lease = _files.TryBegin(fromPeer);
+            if (lease is null)
+            {
+                await FileRefuseAsync(fromPeer, frame.Id, MirrorProtocol.ErrBusy).ConfigureAwait(false);
+                return;
+            }
+
+            FileInFlight = Task.Run(async () =>
+            {
+                // The lease is let go BEFORE the answer's last frame is sent: the
+                // answer is the end of the request, and a peer that asks again the
+                // instant it lands must not find the slot still held (CB-384). The
+                // finally is only a backstop, for a path that never got that far; a
+                // lease releases once and only its own hold, so it cannot free a
+                // newer request's slot.
+                try { await ServeFileAsync(fromPeer, frame, name, path, lease).ConfigureAwait(false); }
+                finally { lease.Release(); }
+            });
+        }
+
+        // The last detached FILE, so a test can wait on it. Nothing in
+        // production reads it.
+        internal Task FileInFlight { get; private set; } = Task.CompletedTask;
+
+        internal Action<string, string> FileLog { get; set; } = (what, detail) => MirrorLog.Say(what, detail);
+
+        // How long the disk half of one FILE (stat, open, read) may take before
+        // it is given up on. A read can block for good on this fleet: a folder
+        // whose privacy grant was never given on a locked machine (CB-306's
+        // hang), an iCloud placeholder, a network share, or a FIFO swapped in
+        // after the stat, where open() itself never returns and no check after
+        // it can help. Without this the peer's one slot stays busy until the
+        // app restarts. Sixty seconds is far longer than any honest 50 MB read
+        // from a local disk, and short enough that the panel's note is still
+        // being looked at. Settable for tests.
+        internal TimeSpan FileDeadline { get; set; } = TimeSpan.FromSeconds(MirrorProtocol.FileReadDeadlineSeconds);
+
+        // The last disk half that ran, abandoned or not, so a test can watch a
+        // timed-out read finish later and see that it sends nothing.
+        internal Task FileWork { get; private set; } = Task.CompletedTask;
+
+        private readonly record struct FileOutcome(string? Err, PeerFileDecision? Decision, byte[]? Bytes);
+
+        private FileOutcome DecideAndRead(MirrorProtocol.MirrorFrame frame, string name, string path)
+        {
+            var env = _seams.Files!();
+
+            // The session's own folder counts as a root only for a session
+            // this machine offers; a name it does not know adds nothing. The
+            // roster is peeked, never re-read (see Seams.PeekAgents); with no
+            // roster yet the session adds no folder and the roots alone decide.
+            var agents = _seams.PeekAgents is { } peek ? peek() : _seams.Agents();
+            var cwd = agents is null ? null : Resolve(name, agents, _seams.LocalSessions())?.Status.Cwd;
+
+            var decision = PeerFileRules.Decide(path, frame.Get(MirrorProtocol.HaveField), cwd, env);
+            if (decision.Err is not null || decision.Same) return new FileOutcome(decision.Err, decision, null);
+            var (err, bytes) = PeerFileRules.Read(decision, env);
+            return new FileOutcome(err, decision, bytes);
+        }
+
+        // The lease is released just before the last frame of every answer goes out,
+        // never after (see FileAsync).
+        private async Task ServeFileAsync(
+            string fromPeer, MirrorProtocol.MirrorFrame frame, string name, string path, PeerFileGate.PeerFileLease lease)
+        {
+            // The disk half runs on its own task and is raced against the
+            // deadline. It only RETURNS an outcome — every frame is sent from
+            // here — so a read that wakes up long after it was abandoned has
+            // nobody to send to: its answer is simply never awaited. The thread
+            // it is blocked on cannot be taken back; the rate limit bounds how
+            // many a peer can strand that way.
+            var work = Task.Run(() => DecideAndRead(frame, name, path));
+            FileWork = work;
+
+            if (await Task.WhenAny(work, Task.Delay(FileDeadline)).ConfigureAwait(false) != work)
+            {
+                FileLog("file", $"id={frame.Id} -> timeout");
+                _ = work.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                lease.Release();
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnreadable, MirrorProtocol.ErrUnreadable).ConfigureAwait(false);
+                return;
+            }
+
+            FileOutcome outcome;
+            try
+            {
+                outcome = await work.ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                FileLog("file", $"id={frame.Id} -> err code={MirrorProtocol.ErrUnreadable} ({e.GetType().Name})");
+                lease.Release();
+                await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrUnreadable, MirrorProtocol.ErrUnreadable).ConfigureAwait(false);
+                return;
+            }
+
+            var err = outcome.Err;
+            var decision = outcome.Decision!;
+            var bytes = outcome.Bytes;
+
+            if (err is not null)
+            {
+                lease.Release();
+                await FileRefuseAsync(fromPeer, frame.Id, err).ConfigureAwait(false);
+                return;
+            }
+
+            if (decision.Same)
+            {
+                FileLog("file", $"id={frame.Id} -> same");
+                lease.Release();
+                await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id,
+                    new Dictionary<string, string>
+                    {
+                        [MirrorProtocol.SameField] = "1",
+                        [MirrorProtocol.ExecField] = decision.Stat.Exec ? "1" : "0",
+                    })).ConfigureAwait(false);
+                return;
+            }
+
+            FileLog("file", $"id={frame.Id} -> ok bytes={bytes!.LongLength}");
+            await SendTransferAsync(fromPeer, frame.Id, bytes,
+                new Dictionary<string, string>
+                {
+                    [MirrorProtocol.SizeField] = bytes.LongLength.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    [MirrorProtocol.MtimeField] = decision.Stat.MtimeMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    [MirrorProtocol.ExecField] = decision.Stat.Exec ? "1" : "0",
+                },
+                sub: null, MirrorProtocol.PictureChunkBytes, retain: false, beforeLast: lease.Release).ConfigureAwait(false);
+        }
+
+        private Task FileRefuseAsync(string toPeer, string id, string code)
+        {
+            FileLog("file", $"id={id} -> err code={code}");
+            return ErrAsync(toPeer, id, code, code);
         }
 
         // --- answering a dialog (CB-307 addendum item 3) -----------------------
@@ -2302,7 +2513,7 @@ namespace Orbweaver
         private async Task SendTransferAsync(
             string toPeer, string id, byte[] payload,
             Dictionary<string, string> fields, string? sub,
-            int chunkBytes = MirrorProtocol.ChunkBytes)
+            int chunkBytes = MirrorProtocol.ChunkBytes, bool retain = true, Action? beforeLast = null)
         {
             var pieces = MirrorProtocol.Split(payload, chunkBytes);
 
@@ -2316,17 +2527,51 @@ namespace Orbweaver
 
             if (sub is not null) transfer.Fields["sub"] = sub;
 
-            lock (_gate)
+            // Not kept for RESEND when the caller says so (CB-363): eight
+            // retained 50 MB files would pin 400 MB for the sake of a hash
+            // failure TLS all but rules out. A RESEND for one is answered
+            // bad-hash, and the near side asks for the file again.
+            if (retain)
             {
-                _transfers[id] = transfer;
-                _transferOrder.Enqueue(id);
+                lock (_gate)
+                {
+                    _transfers[id] = transfer;
+                    _transferOrder.Enqueue(id);
 
-                while (_transferOrder.Count > KeepTransfers)
-                    _transfers.Remove(_transferOrder.Dequeue());
+                    while (_transferOrder.Count > KeepTransfers)
+                        _transfers.Remove(_transferOrder.Dequeue());
+                }
             }
 
             for (var seq = 0; seq < pieces.Count; seq++)
             {
+                // Just before the piece that ends the transfer, so the peer's slot
+                // is free by the time it can act on the answer.
+                //
+                // The memory bound this leaves is at most TWO multi-piece transfers'
+                // buffers per peer, not one, plus single-piece answers queued
+                // behind a stalled send.
+                //
+                // Until this last send returns, this transfer still holds its
+                // payload and the Split copies of it, and a new request may by then
+                // have taken the slot and be reading its own file. A connection's
+                // sends go through one writer (PeerLink's per-peer Writing
+                // semaphore), so a newer MULTI-piece transfer's first frame queues
+                // behind this last send, and it only reaches its own release -
+                // before ITS last piece - once this send has returned and these
+                // buffers can go.
+                //
+                // That does not hold for an answer that is a single frame: a
+                // refusal, same, or a file small enough to be one piece releases
+                // before its only frame, and that frame is the one queued. So while
+                // this send is stalled any number of single-piece answers, each no
+                // larger than one chunk, can queue behind it. They are bounded by the
+                // per-peer rate bucket checked in FileAsync before the slot is taken,
+                // and each request has to arrive over this same connection. Releasing
+                // a single-piece answer after its send would tighten that and reopen
+                // the race this release exists to close, so it is left as is.
+                if (seq == pieces.Count - 1) beforeLast?.Invoke();
+
                 if (!await SendAsync(toPeer, Piece(id, transfer, seq)).ConfigureAwait(false))
                 {
                     // The relay refused or timed out. Stopping is right: the

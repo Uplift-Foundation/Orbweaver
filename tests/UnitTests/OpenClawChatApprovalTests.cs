@@ -305,22 +305,59 @@ public class OpenClawChatApprovalTests : IDisposable
 
     // Two clicks racing: the first marks the request answered, the second has
     // nothing to land on and says nothing.
+    //
+    // The gateway holds its answer to approval.resolve until the test releases
+    // the gate, so the first click is provably in flight when the second is made
+    // (CB-369). It used to answer at once and the gate was never awaited: if the
+    // first call finished before the second began, the second found the approval
+    // resolved and rightly said RequestChanged, and the test failed on a machine
+    // that was merely scheduling the two calls one after the other.
     [Fact]
     public async Task ASecondClickWhileTheFirstIsInFlightSendsNothing()
     {
-        var gate = new TaskCompletionSource();
-        var (socket, gateway) = await ConnectedAsync(r => r.Method == "approval.resolve" ? Applied(r) : null);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (socket, gateway) = await ConnectedAsync();
         using (gateway)
         {
+            var connect = socket.OnRequest!;
+            socket.OnRequest = r =>
+            {
+                if (r.Method != "approval.resolve") return connect(r);
+
+                // No immediate answer: it is pushed when the gate opens.
+                _ = gate.Task.ContinueWith(
+                    _ => socket.PushJson(System.Text.Json.JsonSerializer.Serialize(Applied(r))),
+                    TaskScheduler.Default);
+                return null;
+            };
+
             var chat = Chat();
             Request("a1");
             var option = Option(chat, "deny");
 
-            await Task.WhenAll(chat.AnswerAsync(option), chat.AnswerAsync(option));
+            var first = chat.AnswerAsync(option);
+
+            // In flight: the resolve is on the wire and unanswered. Polled for a
+            // bounded time rather than assumed, so it does not depend on the send
+            // having completed before AnswerAsync returned control.
+            for (var i = 0; i < 1000 && Resolves(socket).Count == 0; i++) await Task.Delay(10);
+            Assert.Single(Resolves(socket));
+            Assert.False(first.IsCompleted);
+
+            // The request has left the bar the moment the click landed, so there is
+            // nothing left to click (the other half of what _answering does; it
+            // comes back on a failed answer, see AFailureKeepsTheRequest...).
+            Assert.Null(chat.Prompt);
+
+            await chat.AnswerAsync(option);
 
             Assert.Single(Resolves(socket));
             Assert.DoesNotContain(OpenClawApprovalText.RequestChanged, Texts(chat));
-            gate.TrySetResult();
+
+            gate.SetResult();
+            await first;
+
+            Assert.Contains("Denied", Texts(chat));
         }
     }
 

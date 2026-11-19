@@ -459,6 +459,39 @@ public class SettingsWindowScreenshots
         }
     }
 
+    // CB-357: the same card with "Allow other desktops to start sessions
+    // here" switched on. The thing to compare across the two rids is the
+    // switch's state and that its help text wraps whole under the label.
+    [AvaloniaFact]
+    public void PeerLinkGroupWithLaunchInboundOn()
+    {
+        var wasEnabled = OrbweaverSettings.PeerLinkEnabled;
+        var wasInbound = OrbweaverSettings.PeerLaunchInboundEnabled;
+        try
+        {
+            OrbweaverSettings.PeerLinkEnabled = true;
+            OrbweaverSettings.PeerLaunchInboundEnabled = true;
+
+            var ctor = typeof(SettingsWindow).GetConstructor(
+                BindingFlags.NonPublic | BindingFlags.Instance,
+                types: Type.EmptyTypes)
+                ?? throw new MissingMethodException("SettingsWindow", ".ctor()");
+
+            var window = (Avalonia.Controls.Window)ctor.Invoke(null);
+
+            window.Show();
+            ScreenshotHelper.Flush();
+
+            CaptureGroup(window, "Let another machine pair with this one",
+                "Other machines", "settings-peer-link-launch-inbound.png");
+        }
+        finally
+        {
+            OrbweaverSettings.PeerLaunchInboundEnabled = wasInbound;
+            OrbweaverSettings.PeerLinkEnabled = wasEnabled;
+        }
+    }
+
     // CB-300: the same card with the sentence that says live sessions exist
     // under a Claude Code folder the link was never told to read. A new visible
     // state of an existing surface, and the thing to compare across the two

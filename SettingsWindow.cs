@@ -759,7 +759,7 @@ namespace Orbweaver
 
             // CB-314: beside the LAN link because it answers the same question —
             // where else can these sessions be seen — for a phone instead.
-            root.Children.Add(Group("paired-phones", "Paired phones", Card(PairedPhonesRows())));
+            root.Children.Add(Group("paired-phones", "Paired phones", Card(PairedPhonesRows()), Card(PhoneFolderRows())));
 
             // Last, before the Desktop app: it is about this app rather than any of
             // the agent CLIs above it, and it is a short group that should not
@@ -1124,8 +1124,43 @@ namespace Orbweaver
                 "How big the chat panel draws a conversation. "
                 + (OperatingSystem.IsMacOS()
                     ? "Cmd+ and Cmd- do the same thing from the panel itself, and Cmd+0 puts it back."
-                    : "Ctrl+ and Ctrl- do the same thing from the panel itself, and Ctrl+0 puts it back."))
+                    : "Ctrl+ and Ctrl- do the same thing from the panel itself, and Ctrl+0 puts it back.")),
+            Row("Teammate and peer messages", RelayedMessagesPicker(),
+                "How the chat panel shows a message a teammate or another session relayed into it. "
+                + "Collapsed is one dimmed line you can click open; Expanded opens each in full; "
+                + "Hidden leaves them out of the conversation altogether.")
         };
+
+        // CB-330's three-way choice. Written to the setting and pushed into every
+        // open panel, which re-evaluates its relayed rows in place — the same
+        // shape as TextSizeSlider, for the same reason: the panels are already
+        // on screen and have to hear about it.
+        private static readonly (string Label, RelayedMessageDisplay Value)[] RelayedMessageChoices =
+        {
+            ("Collapsed", RelayedMessageDisplay.Collapsed),
+            ("Expanded", RelayedMessageDisplay.Expanded),
+            ("Hidden", RelayedMessageDisplay.Hidden)
+        };
+
+        internal Control RelayedMessagesPicker()
+        {
+            var current = OrbweaverSettings.RelayedMessages;
+            var combo = new ComboBox
+            {
+                ItemsSource = RelayedMessageChoices.Select(c => c.Label).ToList(),
+                SelectedIndex = Array.FindIndex(RelayedMessageChoices, c => c.Value == current),
+                MinWidth = 132
+            };
+            combo.SelectionChanged += (_, _) =>
+            {
+                var index = combo.SelectedIndex;
+                if (index < 0) return;
+
+                OrbweaverSettings.RelayedMessages = RelayedMessageChoices[index].Value;
+                ChatPanel.ApplyRelayDisplay();
+            };
+            return combo;
+        }
 
         internal Control TextSizeSlider()
         {
@@ -2566,6 +2601,8 @@ namespace Orbweaver
         // No platform gate. The relay is macOS-only because it lives in tmux;
         // this is a socket, and the whole reason for choosing SslStream over the
         // gateway's hand-rolled TLS was that it is the same on both.
+        internal const string PeerLaunchInboundLabel = "Allow other desktops to start sessions here";
+
         internal Control[] PeerLinkRows()
         {
             // Dropped before anything is built, for the reason the relay's is:
@@ -2598,6 +2635,15 @@ namespace Orbweaver
             };
 
             rows.Add(NoteRow(_peerLinkStatus));
+
+            // CB-357. Only under the link, because it is a thing the link
+            // carries; off by default, because it lets a paired machine run a
+            // process here rather than only look at what is running.
+            rows.Add(Row(PeerLaunchInboundLabel,
+                Switch(OrbweaverSettings.PeerLaunchInboundEnabled, value => OrbweaverSettings.PeerLaunchInboundEnabled = value),
+                "Lets a machine paired below start a Claude Code, Codex or Grok session on this one "
+                + "from its New Chat window. While this is off, other machines can't see this one's "
+                + "recent folders or accounts either."));
 
             rows.Add(Row("Let another machine pair with this one", PairingCodeButton(),
                 "Shows a code. Type it into the other machine's list below, next to this "
@@ -2799,6 +2845,126 @@ namespace Orbweaver
             remove.Click += (_, _) => OnRemovePhoneClicked(client, phone.PhoneId);
             right.Children.Add(remove);
             return Row(phone.Name, right);
+        }
+
+        // ---- CB-339: the folders a paired phone's picker can browse ----------------------------
+
+        // The disk the rules read, and the folder dialog, are seams so a test supplies a model
+        // filesystem and an answer instead of the real disk and an OS dialog.
+        internal static Func<IBrowseFileSystem> BrowseFs { get; set; } = () => new BrowseFileSystem();
+        internal static Func<Control, Task<string?>> PickBrowseFolder { get; set; } = PickBrowseFolderAsync;
+
+        // What the last Add said when it refused, shown under the list until the next change.
+        private string? _browseRefusal;
+
+        // The current roots (the user's own list, else the automatic one), the home switch, and an
+        // Add that says why when it refuses. There is no switch that turns browsing off: a phone
+        // can always ask, within what these rows say it may see.
+        internal Control[] PhoneFolderRows()
+        {
+            var fs = BrowseFs();
+            var explicitRoots = OrbweaverSettings.PhoneBrowseRoots;
+            var roots = explicitRoots ?? BrowseSettingsSource.Current(fs).Roots;
+
+            var add = new Button { Content = "Add folder…", Name = "AddBrowseRootButton" };
+            add.Click += async (_, _) =>
+            {
+                if (await PickBrowseFolder(this) is { } picked) AddBrowseRoot(picked);
+            };
+            var rows = new List<Control>
+            {
+                Row("Folders the phone can browse", add,
+                    "A paired phone's New session screen can look inside these folders to pick a project. It sees "
+                    + "folder names only, never file contents, and system folders are never shown.")
+            };
+            rows.Add(NoteRow(new TextBlock
+            {
+                Name = "BrowseRootsMode",
+                Text = explicitRoots is null ? "Automatic, from recent sessions" : "Your list",
+                FontSize = 11,
+                Opacity = 0.55
+            }));
+            if (_browseRefusal is not null)
+                rows.Add(NoteRow(new TextBlock { Name = "BrowseRefusal", Text = _browseRefusal, FontSize = 12, TextWrapping = TextWrapping.Wrap }));
+
+            foreach (var folder in roots)
+            {
+                var remove = new Button { Content = "Remove", Name = "RemoveBrowseRoot:" + folder };
+                remove.Click += (_, _) => RemoveBrowseRoot(folder);
+                rows.Add(Row(folder, remove));
+            }
+            if (roots.Count == 0)
+                rows.Add(NoteRow(new TextBlock
+                {
+                    Name = "BrowseNoRoots",
+                    Text = "No folders. The phone sees nothing unless the switch below is on.",
+                    FontSize = 11,
+                    Opacity = 0.55,
+                    TextWrapping = TextWrapping.Wrap
+                }));
+
+            if (explicitRoots is not null)
+            {
+                var reset = new Button { Content = "Reset to automatic", Name = "ResetBrowseRootsButton" };
+                reset.Click += (_, _) => ResetBrowseRoots();
+                rows.Add(Row("Use the folders of recent sessions again", reset));
+            }
+
+            rows.Add(Row("Let the phone browse my whole home folder",
+                Switch(OrbweaverSettings.PhoneBrowseHome, value => OrbweaverSettings.PhoneBrowseHome = value),
+                "Off, the phone sees only the folders above. On, it can browse anywhere under your home folder, "
+                + "except system folders such as Library, .ssh and AppData."));
+            return rows.ToArray();
+        }
+
+        // The list as it stands, before an edit: what the rows show, so the first edit of an
+        // automatic list starts from what was on screen.
+        private List<string> CurrentBrowseRoots() =>
+            (OrbweaverSettings.PhoneBrowseRoots ?? BrowseSettingsSource.Current(BrowseFs()).Roots).ToList();
+
+        // Null when added; otherwise the sentence the card shows.
+        internal string? AddBrowseRoot(string path)
+        {
+            var fs = BrowseFs();
+            var current = CurrentBrowseRoots();
+            _browseRefusal = BrowseRules.Refusal(path, current, fs);
+            if (_browseRefusal is null)
+            {
+                current.Add(BrowseRules.StoredRoot(path, fs));
+                OrbweaverSettings.SetPhoneBrowseRoots(current);
+            }
+            var said = _browseRefusal;
+            Rebuild();
+            return said;
+        }
+
+        internal void RemoveBrowseRoot(string folder)
+        {
+            _browseRefusal = null;
+            OrbweaverSettings.SetPhoneBrowseRoots(CurrentBrowseRoots().Where(r => !string.Equals(r, folder, StringComparison.Ordinal)));
+            Rebuild();
+        }
+
+        internal void ResetBrowseRoots()
+        {
+            _browseRefusal = null;
+            OrbweaverSettings.SetPhoneBrowseRoots(null);
+            Rebuild();
+        }
+
+        // The OS folder dialog; there is no headless storage provider, so it is excluded and the
+        // flow around it is tested through PickBrowseFolder.
+        [ExcludeFromCodeCoverage]
+        private static async Task<string?> PickBrowseFolderAsync(Control owner)
+        {
+            var storageProvider = TopLevel.GetTopLevel(owner)?.StorageProvider;
+            if (storageProvider is null) return null;
+            var result = await storageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Choose a folder the phone can browse",
+                AllowMultiple = false
+            });
+            return result.Count == 0 ? null : result[0].TryGetLocalPath();
         }
 
         internal void OnRemovePhoneClicked(RelayClient client, string phoneId)

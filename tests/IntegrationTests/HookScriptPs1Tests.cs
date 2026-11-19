@@ -700,4 +700,128 @@ public class HookScriptPs1Tests
 
     [PwshFact]
     public void HostSessionIdIsStrippedAndClaudeOnly_Pwsh() => HostSessionIdIsStrippedAndClaudeOnlyCase("pwsh");
+
+    // CB-353: a mod's own MCP call (the jira-board refresh) fires PreToolUse
+    // under the host session's id. Built as raw text, not serialised from an
+    // object, so the field order is the real one: tool_input first,
+    // tool_use_id after it, which is what makes the hook's first-match
+    // `field()` unsafe for this key.
+    private static string PreToolUse(string sessionId, string toolInputText, string toolUseId) =>
+        "{\"session_id\":\"" + sessionId + "\",\"cwd\":\"/tmp/proj\",\"transcript_path\":\"\","
+        + "\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"mcp__x__y\","
+        + "\"tool_input\":{\"jql\":\"" + toolInputText + "\"},"
+        + "\"tool_use_id\":\"" + toolUseId + "\",\"mcp_server\":{\"name\":\"x\"}}";
+
+    private static string SeedStatus(string tempDir, string sessionId, string state)
+    {
+        Directory.CreateDirectory(StatusDir(tempDir));
+        var file = StatusFile(tempDir, sessionId);
+        File.WriteAllText(file, "state=" + state + "\n");
+        return file;
+    }
+
+    private static void PluginToolCall_LeavesTheStatusFileUntouchedCase(string exe, string seeded)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+        var file = SeedStatus(tempDir, "s-plugin", seeded);
+        var before = File.ReadAllText(file);
+        var stamp = File.GetLastWriteTimeUtc(file);
+
+        var result = RunHook(exe, "claude", "generating",
+            PreToolUse("s-plugin", "project = CB", "toolu_plugin_183911ef982d461e882ddda08c59a87e"), tempDir);
+
+        AssertSilentSuccess(result);
+        Assert.Equal(before, File.ReadAllText(file));
+        Assert.Equal(stamp, File.GetLastWriteTimeUtc(file));
+    }
+
+    private static void PluginToolCall_WithNoStatusFile_CreatesNoneCase(string exe)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+
+        var result = RunHook(exe, "claude", "generating",
+            PreToolUse("s-fresh", "project = CB", "toolu_plugin_abc"), tempDir);
+
+        AssertSilentSuccess(result);
+        Assert.False(File.Exists(StatusFile(tempDir, "s-fresh")));
+    }
+
+    private static void ModelToolCall_StillWritesGeneratingCase(string exe, string toolInput)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+        SeedStatus(tempDir, "s-model", "waiting");
+
+        var result = RunHook(exe, "claude", "generating",
+            PreToolUse("s-model", toolInput, "toolu_01ABCDEFGHJKLMNPQRSTUVWX"), tempDir);
+
+        AssertSilentSuccess(result);
+        Assert.Contains("generating", File.ReadAllText(StatusFile(tempDir, "s-model")));
+    }
+
+    private static void PluginToolCall_IsOnlySkippedForGenerating_WaitingStillWritesCase(string exe)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+
+        var result = RunHook(exe, "claude", "waiting",
+            PreToolUse("s-wait", "project = CB", "toolu_plugin_abc"), tempDir);
+
+        AssertSilentSuccess(result);
+        Assert.Contains("waiting", File.ReadAllText(StatusFile(tempDir, "s-wait")));
+    }
+
+    [WindowsPowerShellFact]
+    public void PluginToolCall_LeavesA_waiting_FileUntouched_Powershell51() => PluginToolCall_LeavesTheStatusFileUntouchedCase("powershell", "waiting");
+
+    [WindowsPowerShellFact]
+    public void PluginToolCall_LeavesA_idle_FileUntouched_Powershell51() => PluginToolCall_LeavesTheStatusFileUntouchedCase("powershell", "idle");
+
+    [WindowsPowerShellFact]
+    public void PluginToolCall_WithNoStatusFile_CreatesNone_Powershell51() => PluginToolCall_WithNoStatusFile_CreatesNoneCase("powershell");
+
+    [WindowsPowerShellFact]
+    public void ModelToolCall_StillWritesGenerating_Powershell51() => ModelToolCall_StillWritesGeneratingCase("powershell", "project = CB");
+
+    [WindowsPowerShellFact]
+    public void ModelToolCall_WhoseInputMentionsToolu_plugin_StillWritesGenerating_Powershell51() => ModelToolCall_StillWritesGeneratingCase("powershell", "fix toolu_plugin_ handling");
+
+    [WindowsPowerShellFact]
+    public void PluginToolCall_IsOnlySkippedForGenerating_WaitingStillWrites_Powershell51() => PluginToolCall_IsOnlySkippedForGenerating_WaitingStillWritesCase("powershell");
+
+    [PwshFact]
+    public void PluginToolCall_LeavesA_waiting_FileUntouched_Pwsh() => PluginToolCall_LeavesTheStatusFileUntouchedCase("pwsh", "waiting");
+
+    [PwshFact]
+    public void PluginToolCall_LeavesA_idle_FileUntouched_Pwsh() => PluginToolCall_LeavesTheStatusFileUntouchedCase("pwsh", "idle");
+
+    [PwshFact]
+    public void PluginToolCall_WithNoStatusFile_CreatesNone_Pwsh() => PluginToolCall_WithNoStatusFile_CreatesNoneCase("pwsh");
+
+    [PwshFact]
+    public void ModelToolCall_StillWritesGenerating_Pwsh() => ModelToolCall_StillWritesGeneratingCase("pwsh", "project = CB");
+
+    [PwshFact]
+    public void ModelToolCall_WhoseInputMentionsToolu_plugin_StillWritesGenerating_Pwsh() => ModelToolCall_StillWritesGeneratingCase("pwsh", "fix toolu_plugin_ handling");
+
+    [PwshFact]
+    public void PluginToolCall_IsOnlySkippedForGenerating_WaitingStillWrites_Pwsh() => PluginToolCall_IsOnlySkippedForGenerating_WaitingStillWritesCase("pwsh");
+
+    private static void NestedPluginToolUseIdCase(string exe)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("cb-hook-").FullName;
+        SeedStatus(tempDir, "s-nest", "idle");
+
+        var result = RunHook(exe, "claude", "generating",
+            "{\"session_id\":\"s-nest\",\"cwd\":\"/tmp/proj\",\"transcript_path\":\"\","
+        + "\"tool_input\":{\"echo\":{\"tool_use_id\":\"toolu_plugin_inner\"}},"
+        + "\"tool_use_id\":\"toolu_01ABCDEFGHJKLMNPQRSTUVWX\"}", tempDir);
+
+        AssertSilentSuccess(result);
+        Assert.Contains("generating", File.ReadAllText(StatusFile(tempDir, "s-nest")));
+    }
+
+    [WindowsPowerShellFact]
+    public void NestedPluginToolUseId_AheadOfTheTopLevelModelId_StillWritesGenerating_Powershell51() => NestedPluginToolUseIdCase("powershell");
+
+    [PwshFact]
+    public void NestedPluginToolUseId_AheadOfTheTopLevelModelId_StillWritesGenerating_Pwsh() => NestedPluginToolUseIdCase("pwsh");
 }

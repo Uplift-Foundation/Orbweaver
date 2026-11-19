@@ -70,20 +70,59 @@ public class RelayTestHooksTests : IDisposable
     {
         var fake = new Fake { AllowResult = false };
         var expiries = new List<TaskCompletionSource>();
+        // CB-381: the delay callback is called after the QR file is written and
+        // the offer logged (RelayTestHooks.RunAsync), so a second call is the
+        // moment the replacement offer is really on disk. `Fake.Offers` is not:
+        // it moves when BeginPairingAsync is entered, before the file is written.
+        var secondOfferWaiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var run = RelayTestHooks.RunAsync(fake, _dir, () => T0.AddMinutes(10),            // every offer already expired
-            (t, ct) => { var tcs = new TaskCompletionSource(); lock (expiries) expiries.Add(tcs); return tcs.Task.WaitAsync(ct); }, default);
+            (t, ct) =>
+            {
+                var tcs = new TaskCompletionSource();
+                lock (expiries) { expiries.Add(tcs); if (expiries.Count == 2) secondOfferWaiting.TrySetResult(); }
+                return tcs.Task.WaitAsync(ct);
+            }, default);
         fake.Raise("ph_1");
         Assert.Contains("allow not sent for ph_1", Events());
         Assert.False(run.IsCompleted);
 
         lock (expiries) expiries[0].SetResult();                                          // the offer runs out
-        await Task.Run(async () => { while (fake.Offers < 2) await Task.Delay(10); }).WaitAsync(TimeSpan.FromSeconds(10));
+        await secondOfferWaiting.Task.WaitAsync(TimeSpan.FromSeconds(10));              // a timeout here means no second offer was issued
         Assert.Equal("orbweaver://pair?o=off_2", File.ReadAllText(Path.Combine(_dir, RelayTestHooks.QrFile)));
+        Assert.Contains("offer off_2 expires", Events());                                // written before the same delay call
 
         fake.AllowResult = true;
         fake.Raise("ph_1");
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Contains("paired; test hooks done", Events());
+    }
+
+    // CB-381's cause, forced: while BeginPairingAsync for offer 2 is still in
+    // flight the counter already says 2 and the QR file still holds offer 1, so a
+    // test that waits on `Offers >= 2` and then reads the file fails whenever it
+    // looks inside that window. Holding the call open makes the window permanent.
+    [Fact]
+    public async Task The_offer_counter_moves_before_the_qr_file_does()
+    {
+        var fake = new Fake { AllowResult = false };
+        var secondBegin = new TaskCompletionSource<RelayLink.PairOffer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fake.Begin = n => n == 1
+            ? Task.FromResult(new RelayLink.PairOffer("off_1", T0.AddMinutes(5), new byte[32], "orbweaver://pair?o=off_1"))
+            : secondBegin.Task;
+        var expiry = new TaskCompletionSource();
+        var run = RelayTestHooks.RunAsync(fake, _dir, () => T0.AddMinutes(10),
+            (t, ct) => expiry.Task.WaitAsync(ct), default);
+        fake.Raise("ph_1");
+        expiry.SetResult();                                                               // the first offer runs out
+
+        await Task.Run(async () => { while (fake.Offers < 2) await Task.Yield(); })       // the old test's wait, bounded
+            .WaitAsync(TimeSpan.FromSeconds(10));                                         // a timeout means no second offer was requested
+        Assert.Equal("orbweaver://pair?o=off_1", File.ReadAllText(Path.Combine(_dir, RelayTestHooks.QrFile)));
+
+        secondBegin.SetResult(new RelayLink.PairOffer("off_2", T0.AddMinutes(5), new byte[32], "orbweaver://pair?o=off_2"));
+        fake.AllowResult = true;
+        fake.Raise("ph_1");
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Theory]

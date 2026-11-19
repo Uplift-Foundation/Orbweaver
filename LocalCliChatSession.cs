@@ -39,12 +39,13 @@ namespace Orbweaver
     //    point; nothing here pretends to be faster than it is.
     //  * Nothing is ever mutated in place, so TurnUpdated is raised only when a
     //    message sent from the panel is reconciled against the transcript row it
-    //    produced. The contract's "TurnUpdated carries the whole turn" holds
+    //    produced, or (CB-356) when a compaction's summary folds into the
+    //    boundary row read before it. The contract's "TurnUpdated carries the whole turn" holds
     //    trivially, since the whole turn is all there ever is.
     internal sealed class LocalCliChatSession :
         IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
         IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
-        IRemoteChatPeerInbound, IDisposable
+        IRemoteChatPeerInbound, IRemoteChatFiles, IDisposable
     {
         // How much of the tail to read when the panel first opens.
         //
@@ -361,6 +362,18 @@ namespace Orbweaver
             Pump();
         }
 
+        // CB-363: the file is on this computer already, so there is nothing to
+        // fetch — the path is handed back and ChatFileLinks asks the policy
+        // about the real file. One class backs Claude Code, Codex and Grok
+        // sessions alike (CliChatFormat), so all three get file links here.
+        public ChatFileHost FileHost => ChatFileHost.ThisMachine;
+
+        public string? FileHostName => null;
+
+        public Task<ChatFileResult> FetchFileAsync(
+            string path, IProgress<(long Done, long Total)>? progress, CancellationToken ct) =>
+            Task.FromResult(ChatFileResult.Local(path));
+
         public void Dispose()
         {
             _watcher?.Dispose();
@@ -462,6 +475,12 @@ namespace Orbweaver
                     if (m.Uuid is not null && !_seen.Add(m.Uuid)) continue;
                     older.Add(m.Turn);
                 }
+
+                // CB-356: a page that ends on a compaction boundary whose summary
+                // is already the first turn shown. The shown turn takes the
+                // boundary's numbers and the page's copy is not inserted.
+                if (CompactionNote.AdoptAcrossSeam(older, _history, 0) is { } adopted)
+                    TurnUpdated?.Invoke(adopted);
 
                 if (older.Count == 0) return;
 
@@ -2063,6 +2082,14 @@ namespace Orbweaver
         // on it; Add stays one-argument because everything else has no uuid.
         private void AddRow(ChatTurn turn, string? uuid)
         {
+            // CB-356: a compaction summary arriving in a later read than its
+            // boundary folds into the boundary's row rather than adding one.
+            if (CompactionNote.AbsorbIntoLast(_history, turn) is { } merged)
+            {
+                TurnUpdated?.Invoke(merged);
+                return;
+            }
+
             if (Reconcile(turn, uuid)) return;
 
             _history.Add(turn);

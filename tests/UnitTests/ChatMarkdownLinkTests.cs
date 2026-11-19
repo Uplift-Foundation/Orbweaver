@@ -37,7 +37,7 @@ public class ChatMarkdownLinkTests
         foreach (var span in ChatMarkdown.Inline(text))
         {
             if (span.Style == ChatMarkdown.MdStyle.Link)
-                Assert.True(CloudSessionLink.IsOpenable(span.Url), Render(text));
+                Assert.True(CloudSessionLink.IsOpenable(span.Url) || ChatLinks.IsFileUrl(span.Url), Render(text));
             else
                 Assert.Null(span.Url);
         }
@@ -89,15 +89,20 @@ public class ChatMarkdownLinkTests
     // A destination the launcher refuses keeps its label as plain text. Every
     // one of these is something Windows' ShellExecute would happily act on, or
     // a relative path that would resolve against nothing. Each sits beside the
-    // https control in the first row.
+    // https control in the first row. file: and vscode://file became links in
+    // CB-363 — FileLinkPolicy, not the parser, decides what a click does with
+    // an .exe — so those rows say true and the file-form controls live in
+    // ChatMarkdownFileLinkTests.
     [Theory]
     [InlineData("https://example.com/x", true)]
     [InlineData("http://example.com/x", true)]
-    [InlineData("file:///etc/hosts", false)]
-    [InlineData("file:///C:/Windows/System32/calc.exe", false)]
+    [InlineData("file:///etc/hosts", true)]
+    [InlineData("file://server/share/x.pdf", false)]
+    [InlineData("file:///C:/Windows/System32/calc.exe", true)]
     [InlineData("javascript:alert(1)", false)]
     [InlineData("ms-settings:privacy", false)]
-    [InlineData("vscode://file/x", false)]
+    [InlineData("vscode://file/x", true)]
+    [InlineData("vscode://file", false)]
     [InlineData("docs/openclaw-findings.md", false)]
     [InlineData("\\\\server\\share", false)]
     [InlineData("//server/share", false)]

@@ -9,7 +9,7 @@ internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatRoom,
     IRemoteChatReadOnly, IRemoteChatInterrupt,
     IRemoteChatMachine, IRemoteChatPeerInbound, IRemoteChatRunOptions, IRemoteChatPrompts,
-    IRemoteChatSlashCommands
+    IRemoteChatSlashCommands, IRemoteChatFiles
 {
     // CB-306: commands posed for a capture of the slash box. See the UiTests copy.
     public IReadOnlyList<SlashCommand> SlashCommands { get; set; } = Array.Empty<SlashCommand>();
@@ -145,4 +145,24 @@ internal sealed class FakeChatSession :
     public Task<bool> EnableInboundAsync() => Task.FromResult(true);
 
     public Task<ChatSendOutcome> ResendHeldAsync() => Task.FromResult(ChatSendOutcome.Sent);
+
+    // CB-363: files posed for a capture. See the UiTests copy.
+    public ChatFileHost FileHost { get; set; } = ChatFileHost.ThisMachine;
+
+    public string? FileHostName { get; set; }
+
+    public Func<string, ChatFileResult>? FileAnswer { get; set; }
+
+    public (long Done, long Total)? FileProgress { get; set; }
+
+    // Never completed by default for a capture of the "fetching" state.
+    public TaskCompletionSource<bool>? FileGate { get; set; }
+
+    public async Task<ChatFileResult> FetchFileAsync(
+        string path, IProgress<(long Done, long Total)>? progress, CancellationToken ct)
+    {
+        if (FileProgress is { } p) progress?.Report(p);
+        if (FileGate is not null) await FileGate.Task;
+        return FileAnswer?.Invoke(path) ?? ChatFileResult.Local(path);
+    }
 }

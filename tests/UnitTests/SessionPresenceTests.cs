@@ -1247,12 +1247,19 @@ public class SessionPresenceTests
     public void WithoutAWaitingRecordTheFilesStateStands(string state) =>
         Assert.Equal(state, SessionPresence.EffectiveState(state, recordWaiting: false));
 
-    // A working session stays working however the record reads: only idle is
-    // ever promoted, because the file already says more than the record would.
+    // CB-353: a generating file under a waiting record is waiting too. A mod's
+    // own tool call writes `generating` while the form is still on screen.
+    [Fact]
+    public void AGeneratingFileWithAWaitingRecordIsWaiting() =>
+        Assert.Equal("waiting", SessionPresence.EffectiveState("generating", recordWaiting: true));
+
+    // Waiting already says it, and a state this table has never heard of is
+    // left alone rather than promoted.
     [Theory]
-    [InlineData("generating")]
     [InlineData("waiting")]
-    public void AWaitingRecordDoesNotOverrideAStateThatSaysMore(string state) =>
+    [InlineData("")]
+    [InlineData("starting")]
+    public void AWaitingRecordDoesNotChangeAStateThatIsNotIdleOrGenerating(string state) =>
         Assert.Equal(state, SessionPresence.EffectiveState(state, recordWaiting: true));
 
     // The point of the whole promotion: a session on a dialog is waiting, and a

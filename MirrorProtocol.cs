@@ -64,6 +64,7 @@ namespace Orbweaver
         public const string Avatar = "AVATAR";     // client → server: a persona picture, by its id (CB-216)
         public const string Prompt = "PROMPT";     // client → server: what is that session waiting on? (CB-307 item 3)
         public const string Answer = "ANSWER";     // client → server: take this option of it (CB-307 item 3)
+        public const string ReadFile = "FILE";       // client → server: the bytes of one file a chat linked to (CB-363)
         public const string Ok = "OK";             // server → client: done
         public const string Err = "ERR";           // server → client: couldn't
 
@@ -491,6 +492,10 @@ namespace Orbweaver
             private int _of = -1;
             private string? _whole;
 
+            // The verified bytes held so far, for a progress bar (CB-363). A
+            // piece offered twice counts once, since it replaces itself.
+            public long Received { get; private set; }
+
             public AssemblyResult Offer(MirrorFrame frame)
             {
                 var seq = (int)frame.Num("seq", -1);
@@ -511,7 +516,10 @@ namespace Orbweaver
                 if (!frame.PayloadVerified)
                     return new AssemblyResult(AssemblyState.BadChunk, null, seq, "chunk failed its hash");
 
-                _pieces[seq] = frame.Payload ?? Array.Empty<byte>();
+                var bytes = frame.Payload ?? Array.Empty<byte>();
+                if (_pieces.TryGetValue(seq, out var before)) Received -= before.Length;
+                _pieces[seq] = bytes;
+                Received += bytes.Length;
 
                 if (_pieces.Count < _of)
                     return new AssemblyResult(AssemblyState.Incomplete, null, -1, null);
@@ -854,7 +862,136 @@ namespace Orbweaver
             [property: JsonPropertyName("r")] string Role,
             [property: JsonPropertyName("t")] string Text,
             [property: JsonPropertyName("u")] string? Uuid = null,
-            [property: JsonPropertyName("a")] long At = 0);
+            [property: JsonPropertyName("a")] long At = 0,
+            [property: JsonPropertyName("k")] MirrorRelay? Relay = null,
+            [property: JsonPropertyName("c")] MirrorCompaction? Compaction = null);
+
+        // CB-356: a CompactionNote, with short names like the rest of the frame.
+        // A new key rather than a new relay kind on purpose: MirrorRelay.ToRelayed
+        // reads an unknown kind as Peer, so an older receiver would label a
+        // compaction "From another session". With "c", an older receiver ignores
+        // the key and draws Text, which is the note's Line, as a system line.
+        // Omitted when null, so every other frame is byte for byte what it was.
+        public sealed record MirrorCompaction(
+            [property: JsonPropertyName("g")] string? Trigger,
+            [property: JsonPropertyName("b")] long? PreTokens,
+            [property: JsonPropertyName("o")] long? PostTokens,
+            [property: JsonPropertyName("m")] long? DurationMs,
+            [property: JsonPropertyName("s")] string? Summary,
+            [property: JsonPropertyName("h")] bool HasBoundary)
+        {
+            public static MirrorCompaction From(CompactionNote n) =>
+                new(n.Trigger, n.PreTokens, n.PostTokens, n.DurationMs, n.Summary, n.HasBoundary);
+
+            // A count the sender could not have produced (negative) is dropped
+            // the way the parser drops one, so the far side cannot put a number
+            // on screen this side's own parser would refuse.
+            public CompactionNote ToNote() =>
+                new(Trigger,
+                    PreTokens is >= 0 ? PreTokens : null,
+                    PostTokens is >= 0 ? PostTokens : null,
+                    DurationMs is >= 0 ? DurationMs : null,
+                    Summary ?? "",
+                    HasBoundary);
+        }
+
+        // CB-330: the fields of a RelayedMessage, with short names like the rest
+        // of the frame. Optional on MirrorTurn and omitted when null, so a frame
+        // without a relay is byte for byte what it was; a receiver that predates
+        // it ignores the unknown "k" and draws the turn's Text as a system line.
+        public sealed record MirrorRelay(
+            [property: JsonPropertyName("d")] int Kind,
+            [property: JsonPropertyName("n")] string? Name,
+            [property: JsonPropertyName("c")] string? Color,
+            [property: JsonPropertyName("y")] string Type,
+            [property: JsonPropertyName("v")] string Verb,
+            [property: JsonPropertyName("p")] string Preview,
+            [property: JsonPropertyName("f")] string FullText)
+        {
+            public static MirrorRelay From(RelayedMessage r) =>
+                new((int)r.Kind, r.Name, r.Color, r.PayloadType, r.Verb, r.Preview, r.FullText);
+
+            // A Kind this build does not know is read as Peer, the plainer row.
+            public RelayedMessage ToRelayed() =>
+                new(Kind == (int)RelayKind.Teammate ? RelayKind.Teammate : RelayKind.Peer,
+                    Name, Color, Type ?? "", Verb ?? "", Preview ?? "", FullText ?? "");
+        }
+
+        // One mirrored turn as the turn(s) this side draws, keyed for dedupe.
+        // Key is the row's uuid for its first turn and uuid#n for the n-th turn
+        // of the same row in the same frame: one transcript row can map to
+        // several turns (a row with several tags does), and keying by uuid alone
+        // would keep the first and drop the rest.
+        public sealed record MirroredRow(string? Key, ChatTurn Turn);
+
+        public static List<MirroredRow> AdoptTurns(IEnumerable<MirrorTurn> turns)
+        {
+            var result = new List<MirroredRow>();
+            var perUuid = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            void Add(string? uuid, ChatTurn turn)
+            {
+                var key = uuid;
+                if (uuid is not null)
+                {
+                    perUuid.TryGetValue(uuid, out var n);
+                    perUuid[uuid] = n + 1;
+                    if (n > 0) key = uuid + "#" + n;
+                }
+
+                result.Add(new MirroredRow(key, turn));
+            }
+
+            foreach (var t in turns)
+            {
+                var at = t.At > 0
+                    ? DateTimeOffset.FromUnixTimeSeconds(t.At).ToLocalTime()
+                    : DateTimeOffset.Now;
+
+                // CB-356: Text is rebuilt from the note rather than trusted, so the
+                // row's line and its fields cannot disagree.
+                if (t.Compaction is { } compaction)
+                {
+                    var note = compaction.ToNote();
+                    Add(t.Uuid, new ChatTurn
+                    {
+                        Role = ChatRole.System, Text = note.Line, IsComplete = true, At = at, Compaction = note
+                    });
+                    continue;
+                }
+
+                if (t.Relay is { } frame)
+                {
+                    var relay = frame.ToRelayed();
+                    Add(t.Uuid, new ChatTurn
+                    {
+                        Role = ChatRole.System, Text = t.Text, IsComplete = true, At = at, Relay = relay
+                    });
+                    continue;
+                }
+
+                // An older Orbweaver on the far side sends the raw wrapper as a
+                // user turn. Compact it here so the row looks the same whichever
+                // end is newer.
+                var role = RoleOf(t.Role);
+                if (role == ChatRole.User && RelayedMessage.Classify(t.Text) is { } old)
+                {
+                    foreach (var relay in old.Relays)
+                        Add(t.Uuid, new ChatTurn
+                        {
+                            Role = ChatRole.System, Text = relay.Line, IsComplete = true, At = at, Relay = relay
+                        });
+
+                    if (old.OwnText is not null)
+                        Add(t.Uuid, new ChatTurn { Role = ChatRole.User, Text = old.OwnText, IsComplete = true, At = at });
+                    continue;
+                }
+
+                Add(t.Uuid, new ChatTurn { Role = role, Text = t.Text, IsComplete = true, At = at });
+            }
+
+            return result;
+        }
 
         private static readonly JsonSerializerOptions TurnJson = new()
         {
@@ -900,7 +1037,9 @@ namespace Orbweaver
                     },
                     r.Turn.Text,
                     r.Uuid,
-                    r.Turn.At.ToUnixTimeSeconds()))
+                    r.Turn.At.ToUnixTimeSeconds(),
+                    r.Turn.Relay is { } relay ? MirrorRelay.From(relay) : null,
+                    r.Turn.Compaction is { } note ? MirrorCompaction.From(note) : null))
                 .ToList();
         }
 
@@ -951,6 +1090,85 @@ namespace Orbweaver
         public static bool SaysItAnswersPrompts(IReadOnlyDictionary<string, string>? fields) =>
             fields is not null && fields.TryGetValue(PromptsField, out var v) && v == "1";
         public const string FingerprintField = "fp";
+
+        // --- a file a chat linked to (CB-363) ----------------------------------
+        //
+        // A FILE request carries the session's route in `n` (base64, like every
+        // other request that names a session) and the path as the frame's
+        // PAYLOAD, not as a field: `p` is the payload's own key in this grammar,
+        // so a path sent as a free-text `p=` would be read as an unhashed
+        // payload and nulled. As the payload it is UTF-8, hash-checked, and
+        // still spells `p=<b64 path>` on the wire.
+        //
+        // `have=<mtimeMs>-<size>` is optional: the near side's newest cached
+        // copy. A far side whose file still has that stamp answers a bare
+        // `OK same=1` and sends nothing else.
+        //
+        // The answer is an ordinary CHUNK transfer in PictureChunkBytes pieces,
+        // every piece carrying `sz` (bytes), `mt` (mtime, Unix ms) and `x`
+        // ("1" when the file has an executable bit), so a near side reports
+        // progress from the first piece. A refusal is ERR with one of the
+        // codes below — underscored, the spelling the ticket and the phone's
+        // list_dir already use; BuildFrame only refuses `;` and `=`.
+
+        // Set to "1" on a HELLO reply by a Buddy that serves FILE. Missing is
+        // "no", the same rule as PromptsField, so a near side never sends a
+        // request an older far side would leave to time out.
+        public const string FilesField = "rf";
+        public const string HaveField = "have";
+        public const string SameField = "same";
+        public const string SizeField = "sz";
+        public const string MtimeField = "mt";
+        public const string ExecField = "x";
+
+        public const string ErrRateLimited = "rate_limited";
+        public const string ErrBadFrame = "bad_frame";
+        public const string ErrBusy = "busy";
+        public const string ErrForbiddenPath = "forbidden_path";
+        public const string ErrNotFound = "not_found";
+        public const string ErrTooLarge = "too_large";
+        public const string ErrUnreadable = "unreadable";
+
+        // Never on the wire: what the near side says when the far side could
+        // not be reached or never answered, as distinct from a refusal.
+        public const string ErrUnreachable = "unreachable";
+
+        // The largest file served. 50 MB is the ticket's proposal: a PDF or a
+        // screenshot clears it many times over, and a far side never holds
+        // more than one of these per peer (ErrBusy).
+        public const long MaxFileBytes = 50L * 1024 * 1024;
+
+        // How long the far side's disk half of one FILE may take before it
+        // answers unreadable and frees the peer's slot; see
+        // RemoteMirrorServer.FileDeadline for why a read can block for good.
+        //
+        // **It must stay below FetchTimeoutSeconds**, and a unit case pins
+        // that. Nothing is sent until the disk half is done, and the near side
+        // gives up after FetchTimeoutSeconds of silence, so a deadline at or
+        // above it can never be seen: the user is told `unreachable` while the
+        // far side is still reading, and a retry meets `busy`. It was 60 and
+        // was exactly that. 15 is still far beyond an honest 50 MB local read.
+        public const int FileReadDeadlineSeconds = 15;
+
+        // Whether a HELLO reply's fields say the far Buddy serves FILE.
+        public static bool SaysItServesFiles(IReadOnlyDictionary<string, string>? fields) =>
+            fields is not null && fields.TryGetValue(FilesField, out var v) && v == "1";
+
+        // The `have` stamp for a file of this mtime and size, and back.
+        public static string FileStamp(long mtimeMs, long size) => $"{mtimeMs}-{size}";
+
+        public static (long MtimeMs, long Size)? ParseFileStamp(string? stamp)
+        {
+            if (stamp is null || stamp.Length < 3) return null;
+            var dash = stamp.IndexOf('-', 1);
+            if (dash < 0) return null;
+            return long.TryParse(stamp.AsSpan(0, dash), System.Globalization.NumberStyles.AllowLeadingSign,
+                       System.Globalization.CultureInfo.InvariantCulture, out var mt)
+                   && long.TryParse(stamp.AsSpan(dash + 1), System.Globalization.NumberStyles.None,
+                       System.Globalization.CultureInfo.InvariantCulture, out var sz)
+                ? (mt, sz)
+                : null;
+        }
 
         // Bounds on what a PROMPT answer carries, so a screen full of
         // something odd cannot become a large frame or a panel of buttons.

@@ -95,7 +95,15 @@ namespace Orbweaver
         {
             RefreshedOnThreadForTests?.Invoke(Environment.CurrentManagedThreadId);
             Redraw(DateTimeOffset.UtcNow);
+
+            // CB-340: the phone hears a rename, a new icon or a Reset now, not
+            // at the next poll. The tracker sends only when the shape changed.
+            UsageApplied(RelayAccounts());
         }
+
+        // An account icon's bundle just finished building, which is the moment
+        // its hash can first be offered. Always from a worker thread.
+        private void OnIconBundleBuilt() => Dispatcher.UIThread.Post(() => UsageApplied(RelayAccounts()));
 
         // Which managed thread each redraw ran on, so a test can assert the
         // thing that matters (never a pool thread) without depending on when
@@ -256,8 +264,28 @@ namespace Orbweaver
         internal IReadOnlyList<RelayUsage.Account> RelayAccounts() =>
             _readings
                 .Where(p => SourceEnabled(p.Value.Source))
-                .Select(p => RelayUsage.From(p.Value, _emails.GetValueOrDefault(p.Key)))
+                .Select(p => RelayUsage.From(p.Value, _emails.GetValueOrDefault(p.Key), LookFor(
+                    p.Value,
+                    OrbweaverSettings.AccountOrbOverrideFor(PositionKey(p.Value.ConfigDir)),
+                    AccountOrbIcons.IconsDirectory,
+                    PersonaImageStore.Accounts.Offer)))
                 .ToList();
+
+        // CB-340 (frames-v12): the look this PC gives an account, as the phone
+        // is told it. Pure over its inputs. The initials are the two-letter
+        // glyph regardless of this PC's display setting, so the phone's derived
+        // letters do not change with a toggle on one machine; the icon hash is
+        // null until `offer` has a built bundle for the stored file.
+        internal static RelayUsage.Look LookFor(
+            AccountUsage reading, AccountOrbOverride? over, string iconsDir, Func<string, string?> offer)
+        {
+            var o = over?.Normalise();
+            var glyph = AccountOrbLooks.Resolve(reading.Label, o, twoLetter: true).Glyph;
+            var icon = AccountOrbIcons.IsSafeFileName(o?.IconFile)
+                ? offer(System.IO.Path.Combine(iconsDir, o!.IconFile!))
+                : null;
+            return new RelayUsage.Look(o?.Name, glyph, icon, o is null ? null : o.UpdatedAt ?? 0);
+        }
 
         internal void Redraw(DateTimeOffset now)
         {
@@ -304,6 +332,7 @@ namespace Orbweaver
             if (!_listening)
             {
                 AccountOrbCustomization.Changed += OnCustomizationChanged;
+                PersonaImageStore.Accounts.Built += OnIconBundleBuilt;
                 _listening = true;
             }
 
@@ -568,6 +597,7 @@ namespace Orbweaver
             if (_orbs.Count == 0 && _listening)
             {
                 AccountOrbCustomization.Changed -= OnCustomizationChanged;
+                PersonaImageStore.Accounts.Built -= OnIconBundleBuilt;
                 _listening = false;
             }
         }

@@ -57,6 +57,14 @@ namespace Orbweaver
         public const string OpenClawIdentityGet = "openclaw-identity-get";
         public const string OpenClawIdentity = "openclaw-identity";
 
+        // CB-357: starting a session on the far desktop. Same precedent as the
+        // OpenClaw pair above — an older peer ignores a type it does not know,
+        // so the version stays 1 and the asker simply gets no answer.
+        public const string LaunchInfoGet = "launch-info-get";
+        public const string LaunchInfo = "launch-info";
+        public const string Launch = "launch";
+        public const string LaunchResult = "launch-result";
+
         // Error codes, carried in `err`. The same set MirrorProtocol used, since
         // they describe the far machine's state rather than the transport: the
         // panel's wording for each is already written and tested.

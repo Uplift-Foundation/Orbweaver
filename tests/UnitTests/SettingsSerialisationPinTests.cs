@@ -51,6 +51,13 @@ public class SettingsSerialisationPinTests
         @"\b(AddClaudeCodeProfileDir|RemoveClaudeCodeProfileDir|LatestTranscriptForCwd)\s*\(|\bSourcesFor\s*\(|\bClaudeConfigRoots\.",
         RegexOptions.Compiled);
 
+    // CB-386: a call that writes or reads the skipped-update setting. With no
+    // checker, UpdateServices.Skip / ClearSkipped write
+    // OrbweaverSettings.SkippedUpdateVersion directly, so they touch it too.
+    private static readonly Regex TouchesSkippedUpdate = new(
+        @"\bSkippedUpdateVersion\b|\bUpdateServices\.(Skip|ClearSkipped)\s*\(",
+        RegexOptions.Compiled);
+
     private static readonly Regex ClassDeclaration = new(
         @"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);
 
@@ -81,7 +88,10 @@ public class SettingsSerialisationPinTests
     // declaration) touches the profile list. A nested helper class is
     // reported under its own name; the caller attributes it to its outer
     // test class, which is what carries [Collection].
-    internal static IReadOnlyList<string> ClassesThatTouchTheProfileList(string source)
+    internal static IReadOnlyList<string> ClassesThatTouchTheProfileList(string source) =>
+        ClassesThatTouch(source, Touches);
+
+    internal static IReadOnlyList<string> ClassesThatTouch(string source, Regex touches)
     {
         var code = WithoutLineComments(source);
         var declarations = ClassDeclaration.Matches(code).ToList();
@@ -91,21 +101,28 @@ public class SettingsSerialisationPinTests
         {
             var start = declarations[i].Index;
             var end = i + 1 < declarations.Count ? declarations[i + 1].Index : code.Length;
-            if (Touches.IsMatch(code[start..end])) found.Add(declarations[i].Groups[1].Value);
+            if (touches.IsMatch(code[start..end])) found.Add(declarations[i].Groups[1].Value);
         }
 
         return found;
     }
 
+    // xUnit reads [Collection] off the class itself, so a nested test class
+    // that declares its own is in that collection whatever its outer class is
+    // (UpdateCheckerTests+RealSettings); a nested helper with none falls back to
+    // the outer test class's.
     private static string? CollectionOf(Type type)
     {
-        var outer = type;
-        while (outer.DeclaringType is not null) outer = outer.DeclaringType;
+        for (var t = type; t is not null; t = t.DeclaringType)
+        {
+            var own = t.GetCustomAttributesData()
+                .Where(a => a.AttributeType.Name == "CollectionAttribute")
+                .Select(a => a.ConstructorArguments.FirstOrDefault().Value as string)
+                .FirstOrDefault();
+            if (own is not null) return own;
+        }
 
-        return outer.GetCustomAttributesData()
-            .Where(a => a.AttributeType.Name == "CollectionAttribute")
-            .Select(a => a.ConstructorArguments.FirstOrDefault().Value as string)
-            .FirstOrDefault();
+        return null;
     }
 
     [Fact]
@@ -146,6 +163,78 @@ public class SettingsSerialisationPinTests
 
         Assert.True(offenders.Count == 0,
             "Outside [Collection(\"Settings\")] but touching the profile list: " + string.Join(", ", offenders));
+    }
+
+    // CB-386: the same rule for the skipped-update setting. UpdateUiLogicTests
+    // wrote it from outside the collection while UpdateSettingsTests and
+    // UpdateCheckerTests (both in it) set it to other values and to null, and
+    // its Skip-then-assert could read the other class's value back.
+    [Fact]
+    public void EveryClassThatTouchesTheSkippedUpdateVersionIsInTheSettingsCollection()
+    {
+        var root = Path.Combine(FindRepoRoot(), "tests", "UnitTests");
+        var types = typeof(SettingsSerialisationPinTests).Assembly.GetTypes();
+        var checkedClasses = new List<string>();
+        var offenders = new List<string>();
+        var scanned = 0;
+
+        // How the classes are found: reflection cannot see what a test body
+        // calls, so this reads the test sources (tests/UnitTests/**/*.cs, found
+        // from Orbweaver.csproj upward) and maps each touching class back to its
+        // type. It fails if it scanned no files or matched none of the known
+        // touchers, so a moved directory cannot turn it into a pass.
+        foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+        {
+            if (file.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar) ||
+                file.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar)) continue;
+            if (Path.GetFileName(file) == nameof(SettingsSerialisationPinTests) + ".cs") continue;
+            scanned++;
+
+            foreach (var name in ClassesThatTouch(File.ReadAllText(file), TouchesSkippedUpdate))
+            {
+                var type = types.FirstOrDefault(t => t.Name == name);
+                if (type is null) continue;
+                // A touch after a nested helper class is attributed to that
+                // helper by the text scan; the collection and the report are the
+                // outer test class's.
+                var outer = type;
+                while (outer.DeclaringType is not null) outer = outer.DeclaringType;
+                checkedClasses.Add(outer.Name);
+                if (CollectionOf(type) != Settings) offenders.Add($"{outer.Name} ({Path.GetFileName(file)})");
+            }
+        }
+
+        // Not vacuous: the known touchers.
+        Assert.True(scanned > 100, $"scanned only {scanned} source files under {root}");
+        Assert.Contains(nameof(UpdateUiLogicTests), checkedClasses);
+        Assert.Contains(nameof(UpdateSettingsTests), checkedClasses);
+
+        Assert.True(offenders.Count == 0,
+            "Outside [Collection(\"Settings\")] but touching the skipped-update version: " + string.Join(", ", offenders));
+    }
+
+    [Fact]
+    public void TheSkippedUpdateDetectorFindsATouchAndIgnoresAComment()
+    {
+        const string source = """
+            public class Writes
+            {
+                void M() { OrbweaverSettings.SkippedUpdateVersion = null; }
+            }
+
+            public class Skips
+            {
+                void M() { UpdateServices.Skip(release); }
+            }
+
+            public class OnlyMentions
+            {
+                // SkippedUpdateVersion and UpdateServices.Skip( in a comment are not calls.
+                void M() { }
+            }
+            """;
+
+        Assert.Equal(new[] { "Writes", "Skips" }, ClassesThatTouch(source, TouchesSkippedUpdate));
     }
 
     // The detector, against a class it must flag and one it must not — so a

@@ -12,6 +12,10 @@ namespace Orbweaver
         // unsubscribe. Argument is the position key that was written.
         internal static event Action<string>? Changed;
 
+        // What stamps an override's UpdatedAt (CB-340). A seam so a test can pin
+        // the second a write happened without sleeping.
+        internal static Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
+
         internal static AccountOrbOverride? Current(string positionKey) =>
             string.IsNullOrEmpty(positionKey) ? null : OrbweaverSettings.AccountOrbOverrideFor(positionKey);
 
@@ -67,7 +71,13 @@ namespace Orbweaver
         private static void Write(string positionKey, Func<AccountOrbOverride, AccountOrbOverride> edit)
         {
             if (string.IsNullOrEmpty(positionKey)) return;
-            var next = edit(Current(positionKey) ?? new AccountOrbOverride(null, null, null));
+            var current = Current(positionKey);
+            var next = edit(current ?? new AccountOrbOverride(null, null, null));
+            // Stamped only when the look actually changed, and not for a write
+            // that empties the override (which removes it: a PC with no override
+            // reports none, so another PC's older one stands).
+            if (!AccountOrbOverride.SameLook(current, next))
+                next = next with { UpdatedAt = Clock().ToUnixTimeSeconds() };
             OrbweaverSettings.SetAccountOrbOverride(positionKey, next);
             Changed?.Invoke(positionKey);
         }

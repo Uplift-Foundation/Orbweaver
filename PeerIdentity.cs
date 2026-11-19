@@ -181,6 +181,33 @@ namespace Orbweaver
             }
         }
 
+        // CB-357: this machine's signature over `message`, with the DER of the
+        // certificate whose key made it, so a peer can check the certificate
+        // against the pin it paired with and then the signature against the
+        // certificate. RSA PKCS#1 v1.5 with SHA-256 — LaunchGate.PeerSigner
+        // verifies exactly that.
+        //
+        // Uses the one shared certificate rather than importing the key again:
+        // on macOS the key lives in the temporary keychain that load created,
+        // and TLS already signs with it there, so this is the same operation the
+        // handshake performs. Waits as long as a handshake would.
+        internal sealed record Signature(byte[] Sig, byte[] CertificateDer);
+
+        internal static async Task<Signature> SignAsync(byte[] message, CancellationToken ct = default)
+        {
+            var certificate = await HandshakeCertificateAsync(ct).ConfigureAwait(false);
+            return Sign(certificate, message);
+        }
+
+        internal static Signature Sign(X509Certificate2 certificate, byte[] message)
+        {
+            using var key = certificate.GetRSAPrivateKey()
+                ?? throw new CryptographicException("the peer certificate has no RSA private key");
+            return new Signature(
+                key.SignData(message, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1),
+                certificate.RawData);
+        }
+
         // What the far side will pin us by.
         //
         // Read straight out of the PKCS#12 bytes rather than through a loaded
@@ -222,7 +249,7 @@ namespace Orbweaver
         // one idea. Public so a test can assert a pin without a connection.
         internal static string PinOf(X509Certificate2 certificate) => PinOfDer(certificate.RawData);
 
-        private static string PinOfDer(byte[] der) => Convert.ToHexStringLower(SHA256.HashData(der));
+        internal static string PinOfDer(byte[] der) => Convert.ToHexStringLower(SHA256.HashData(der));
 
         // --- the machines we have paired with -------------------------------------
 

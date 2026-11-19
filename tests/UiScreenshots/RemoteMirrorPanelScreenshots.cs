@@ -1,3 +1,5 @@
+using Avalonia.Controls;
+using Xunit;
 using Avalonia.Headless.XUnit;
 
 namespace Orbweaver.Tests;
@@ -14,10 +16,14 @@ namespace Orbweaver.Tests;
 // The far Buddy is the real RemoteMirrorServer reading a real file in a temp
 // directory, reached through the real client and protocol — only the relay is
 // faked, same seam as MirrorRoundTripTests.
+[Collection("Settings")]
 public class RemoteMirrorPanelScreenshots : IDisposable
 {
     private const string Account = ".claude-board";
     private const string Name = "job-hunter";
+    // What the header calls this machine in the no-live-view capture.
+    private const string FixtureMachine = "fixture-machine";
+
     private const string FarRelay = "claude-buddy-rc--claude-mini";
     private const string NearRelay = "claude-buddy-rc--claude-laptop";
 
@@ -77,12 +83,58 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             ("assistant", "Set — this session's orb is green now."));
 
         var session = Open();
+        await HandshakeAsync();
+
+        ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("orb is green now"));
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view.png");
+    }
+
+    // CB-357: a session launched on the other machine and not yet spoken to.
+    // It has a terminal and no transcript, so the panel opens empty and says
+    // where the first message goes.
+    [AvaloniaFact]
+    public async Task AnEmptyPeerPanelIsReadyForTheFirstMessage()
+    {
+        _path = Path.Combine(_dir, "not-yet.jsonl");
+        var sessionId = Guid.NewGuid().ToString();
+        _agents.Add(new AgentRoster.Entry(Name, sessionId, 4242));
+        _sessions.Add((sessionId, new SessionStatus
+        {
+            Title = Name,
+            Cwd = _dir,
+            Source = SessionSource.ClaudeCode,
+            TranscriptPath = _path,
+            TmuxPane = "%1",
+            SessionPid = 4242
+        }));
+        Build(true, false);
+
+        var session = Open();
         await _client.DiscoverAsync(Peers, new[] { Name });
+
+        // The empty window arrives on a pool thread and is applied on the UI
+        // thread, so the fetching line is still showing when DiscoverAsync
+        // returns. Wait for the very state the UiTests case asserts: the
+        // panel mirrors, the history is the one "No messages yet" note, and
+        // the fetching line is gone. A condition, not a sleep.
+        var note = RemoteControlChatSession.LiveViewBannerFor(true, false, Name, empty: true);
+        for (var i = 0; i < 500 && !(session.IsMirroring
+                 && session.History.Count == 1 && session.History[0].Text == note); i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
+
+        if (!session.IsMirroring || session.History.Count != 1 || session.History[0].Text != note)
+            throw new InvalidOperationException("the empty peer panel never showed its note");
 
         ChatPanel.OpenFor(NewOrb(), session);
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
-            ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view.png");
+            ChatPanelTestAccess.Instance!, "chat-panel-remote-empty-peer.png");
     }
 
     // The fallback, and the reason it has to look different: there is no Buddy on
@@ -100,7 +152,25 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             Array.Empty<string>(),
             new[] { Name });
 
+        // With no far machine the header falls back to naming THIS one, which
+        // made the capture different on every machine that ran it and put the
+        // host's name in a published image (CB-374). Pinned to a fixture value,
+        // and asserted to be that value and not the host's.
+        using var machine = ChatPanelTestAccess.WithMachineName(FixtureMachine);
+
         ChatPanel.OpenFor(NewOrb(), session);
+
+        var shown = HeaderMachineText(ChatPanelTestAccess.Instance!);
+        Assert.Equal(MachineNames.Readable(FixtureMachine), shown);
+        Assert.NotEqual(MachineNames.Readable(MachineNames.Clean(Environment.MachineName)), shown);
+
+        Assert.True(await UntilAsync(() => session.History.Any(
+                t => t.Text == RemoteControlChatSession.NoLiveViewNote(session.DisplayName))),
+            "the panel never said there is no live view; history: "
+            + string.Join(" | ", session.History.Select(h => h.Text)));
+
+        // CB-380: and the placeholder says so too, rather than inviting a send.
+        Assert.StartsWith("Can't message", session.ComposerHint);
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-no-live-view.png");
@@ -120,9 +190,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
         _mangle = true;
 
         var session = Open();
-        await _client.DiscoverAsync(Peers, new[] { Name });
+        await HandshakeAsync();
 
         ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("failed its integrity check"));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-integrity-refusal.png");
@@ -151,9 +222,10 @@ public class RemoteMirrorPanelScreenshots : IDisposable
         _swallowFetch = true;
 
         var session = Open();
-        await _client.DiscoverAsync(Peers, new[] { Name });
+        await HandshakeAsync();
 
         ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text == RemoteControlChatSession.FetchingNote(session.DisplayName));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-fetching.png");
@@ -172,17 +244,44 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             ("assistant", "yes — deploying now"));
 
         var session = Open();
-        await _client.DiscoverAsync(Peers, new[] { Name });
+        await HandshakeAsync();
 
         ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("deploying now"));
         ScreenshotHelper.Flush();
         ScreenshotHelper.CaptureAlreadyShown(
             ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view-deliverable.png");
     }
 
+    // The third shape: no pane and no way to message it either. The banner says
+    // what sent text will meet, and the composer says so too instead of inviting a
+    // send - the two used to disagree (CB-372).
+    [AvaloniaFact]
+    public async Task ALiveViewWithNeitherPaneNorSocketSaysNothingCanBeDelivered()
+    {
+        Wire(canType: false, canDeliver: false,
+            ("user", "anyone there?"),
+            ("assistant", "the job finished an hour ago"));
+
+        var session = Open();
+        await HandshakeAsync();
+
+        ChatPanel.OpenFor(NewOrb(), session);
+        await PanelShowsAsync(session, t => t.Text.Contains("can't be delivered"));
+        Assert.StartsWith("Can't message", session.ComposerHint);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(
+            ChatPanelTestAccess.Instance!, "chat-panel-remote-live-view-undeliverable.png");
+    }
+
+    // The machine named in the header's quiet line, wherever the panel puts it.
+    private static string HeaderMachineText(ChatPanel panel) =>
+        panel.FindControl<TextBlock>("MetaMachineText")!.Text ?? "";
+
     // --- wiring -------------------------------------------------------------------
 
     private bool _mangle;
+    private bool _peerAllowed = true;
 
     // Swallows the FETCH so the request stays pending and the panel keeps
     // drawing its wait. A screenshot cannot sit through a real one, and holding the
@@ -190,6 +289,62 @@ public class RemoteMirrorPanelScreenshots : IDisposable
     // "in flight" a fact rather than a race.
     private bool _swallowFetch;
     private string _path = "";
+
+    // The handshake, bounded and checked. A Hello nobody answers would otherwise
+    // wait out RequestAsync's 120s and then let the test capture whatever the
+    // panel happened to show; here it is cut to seconds and the roster must say
+    // the session is available before anything is drawn (CB-334).
+    private async Task<RemoteMirrorClient.MirrorState> HandshakeAsync(int timeoutSeconds = 3)
+    {
+        // Bounds the Hello only. Put back afterwards, because the fetching test
+        // swallows its FETCH on purpose and that request has to stay pending
+        // for the life of the test, not expire seconds into a slow runner.
+        _client.TimeoutOverrideForTests = TimeSpan.FromSeconds(timeoutSeconds);
+        try { await _client.DiscoverAsync(Peers, new[] { Name }); }
+        finally { _client.TimeoutOverrideForTests = null; }
+
+        var state = _client.StateFor(Name);
+        Assert.True(state.Availability == RemoteMirrorClient.MirrorAvailability.Available,
+                $"the far Buddy never answered the Hello; roster says {state.Availability}");
+        return state;
+    }
+
+    // The panel reached the state the picture is named for: switched to live
+    // view, and holding a turn that says so. Without this a Hello that never
+    // completed still produced a green test and a PNG of "Checking whether...".
+    private static async Task PanelShowsAsync(RemoteControlChatSession session, Func<ChatTurn, bool> turn)
+    {
+        Assert.True(await UntilAsync(() => session.IsMirroring), "the panel never switched to live view");
+        var shown = await UntilAsync(() => session.History.Any(turn));
+        Assert.True(shown, "the panel never showed its state; history: "
+            + string.Join(" | ", session.History.Select(h => h.Text)));
+    }
+
+    // Negative control for HandshakeAsync: the exact CB-334 failure (the far
+    // Buddy refusing the peer, which it does silently) must fail fast here,
+    // not pass after 120s.
+    [AvaloniaFact]
+    public async Task AHelloTheFarBuddyNeverAnswersFailsTheHandshakeInSeconds()
+    {
+        Wire(("user", "hi"), ("assistant", "hello"));
+        _peerAllowed = false;
+
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() => HandshakeAsync(timeoutSeconds: 1));
+
+        Assert.Contains("never answered", failure.Message);
+    }
+
+    // Polls rather than sleeps: returns the moment the condition holds.
+    private static async Task<bool> UntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(25);
+        }
+        return condition();
+    }
 
     private RemoteControlChatSession Open()
     {
@@ -247,6 +402,11 @@ public class RemoteMirrorPanelScreenshots : IDisposable
             CanDeliver: status => canDeliver,
             Deliver: (status, text) =>
                 Task.FromResult(new DeliveryReceipt(DeliveryResult.Accepted, "idle")),
+            // Who may ask. The server refuses every peer by default (CB-344) and
+            // does so SILENTLY - a dropped frame, no reply - so a fixture that
+            // forgets this leaves each Hello waiting out its whole timeout while
+            // the panel sits on "Checking whether a live view..." (CB-334).
+            PeerAllowed: _ => _peerAllowed,
             // CB-252: never the developer's real persona files.
             UserConfigDirs: () => Array.Empty<string>()));
 

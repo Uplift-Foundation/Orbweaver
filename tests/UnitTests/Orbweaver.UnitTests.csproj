@@ -59,7 +59,10 @@
     <Compile Include="..\GlyphTests\GlyphSuite.cs" />
     <Compile Include="..\TranscriptTests\TranscriptSuite.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" />
+    <Compile Include="..\TranscriptTests\SidePanelFixtures.cs" />
     <Compile Include="..\TranscriptTests\Cb327Captures.cs" />
+    <Compile Include="..\TranscriptTests\Cb330Captures.cs" />
+    <Compile Include="..\TranscriptTests\Cb356Captures.cs" />
     <Compile Include="..\TranscriptTests\AskFormFixtures.cs" />
     <!-- CB-316: the desktop's v4 vector generator, so the unit suite proves it
          reproduces the committed frames-v4-vectors.json byte for byte. -->

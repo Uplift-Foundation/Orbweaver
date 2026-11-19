@@ -119,6 +119,8 @@ internal static class TestBootstrap
         // synthesized click is exactly what these tests make; tests that want
         // to see what would have opened swap in a recorder and put this back.
         ChatLinks.Open = _ => false;
+        ChatLinks.OpenFile = _ => false;
+        ChatLinks.RevealFile = _ => false;
 
         OrbweaverSettings.ReloadForTests();
     }

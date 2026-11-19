@@ -17,7 +17,7 @@ internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatImages, IRemoteChatSlashCommands,
     IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatFetchWait, IRemoteChatRoom,
     IRemoteChatReadOnly, IRemoteChatInterrupt, IRemoteChatPeerInbound, IRemoteChatGatewayKey,
-    IRemoteChatRunOptions, IRemoteChatSlashRunner
+    IRemoteChatRunOptions, IRemoteChatSlashRunner, IRemoteChatFiles
 {
     // CB-306: what RunSlashAsync was handed, in order, and what it answers.
     // Implemented unconditionally, like IsRoom, so one fake can show both
@@ -291,5 +291,33 @@ internal sealed class FakeChatSession :
         HasHeldMessage = false;
         InboundChanged?.Invoke();
         return Task.FromResult(ChatSendOutcome.Sent);
+    }
+
+    // CB-363: where this session's files live. ThisMachine by default, the
+    // answer of a local CLI session, so a test of a local click sets nothing;
+    // a test of a peer sets FileHost and FileHostName.
+    public ChatFileHost FileHost { get; set; } = ChatFileHost.ThisMachine;
+
+    public string? FileHostName { get; set; }
+
+    // What FetchFileAsync was asked for, in order, and what it answers. The
+    // default answer is the path itself, which is what a local session does.
+    public List<string> FetchedFiles { get; } = new();
+
+    public Func<string, ChatFileResult>? FileAnswer { get; set; }
+
+    // Progress to report before answering, so a test can see the note change
+    // while the fetch is still held open by FileGate.
+    public (long Done, long Total)? FileProgress { get; set; }
+
+    public TaskCompletionSource<bool>? FileGate { get; set; }
+
+    public async Task<ChatFileResult> FetchFileAsync(
+        string path, IProgress<(long Done, long Total)>? progress, CancellationToken ct)
+    {
+        FetchedFiles.Add(path);
+        if (FileProgress is { } p) progress?.Report(p);
+        if (FileGate is not null) await FileGate.Task;
+        return FileAnswer?.Invoke(path) ?? ChatFileResult.Local(path);
     }
 }

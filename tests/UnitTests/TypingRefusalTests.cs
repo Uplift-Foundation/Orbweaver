@@ -186,15 +186,43 @@ public class TypingRefusalTests
         Assert.Contains("next turn", said);
     }
 
-    // Neither a pane nor a delivery seam: the same wording as not mirroring at
-    // all, which is what this always said before CB-105 existed.
+    // Neither a pane nor a delivery seam: it used to say the same as not
+    // mirroring at all ("Message ..."), which invited a send the live-view banner
+    // says cannot be delivered. CB-372: it says so instead, and the not-mirroring
+    // wording is untouched.
     [Fact]
-    public void MirroringWithNoPaneAndNoDeliverySaysMessageAsBefore()
+    public void MirroringWithNoPaneAndNoDeliverySaysItCannotMessage()
     {
         var said = RemoteControlChatSession.ComposerHintFor(
             mirroring: true, canType: false, canDeliver: false, Remote);
 
-        Assert.Equal($"Message {Remote} on the other machine…", said);
+        Assert.Equal(
+            $"Can't message {Remote}: no terminal or messaging socket this machine can reach", said);
+        Assert.Equal(
+            $"Message {Remote} on the other machine…",
+            RemoteControlChatSession.ComposerHintFor(
+                mirroring: false, canType: false, canDeliver: false, Remote));
+    }
+
+    // CB-380: not mirroring has two meanings. Still being asked, "Message ..." is
+    // fair; once the far Buddy has answered no, the box says it cannot.
+    [Fact]
+    public void ASettledNoLiveViewSaysItCannotMessageWhileStillAskingStaysNeutral()
+    {
+        Assert.Equal(
+            $"Message {Remote} on the other machine…",
+            RemoteControlChatSession.ComposerHintFor(
+                mirroring: false, canType: false, canDeliver: false, Remote, noLiveView: false));
+
+        Assert.Equal(
+            $"Can't message {Remote} from this machine",
+            RemoteControlChatSession.ComposerHintFor(
+                mirroring: false, canType: false, canDeliver: false, Remote, noLiveView: true));
+
+        // Mirroring wins: a flag left over from before an upgrade changes nothing.
+        Assert.StartsWith("Type into",
+            RemoteControlChatSession.ComposerHintFor(
+                mirroring: true, canType: true, canDeliver: false, Remote, noLiveView: true));
     }
 
     // --- CB-105: the delivered-remotely note ------------------------------------
