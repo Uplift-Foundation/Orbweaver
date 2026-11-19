@@ -156,6 +156,9 @@ public class HeadlessUsageSettingsTests : IAsyncLifetime
         await _stub.NextT("hello");
         await Until(() => _client!.State == RelayClient.Status.Connected);
         await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1 }));
+        // The presence frame is handled on the client's receive loop; a tick
+        // that beats it finds no phone online and sends nothing at all.
+        await Until(() => _client!.IsOnline(phone.Id));
 
         RelayService.UsageFeed!.Tick();
 
@@ -193,6 +196,9 @@ public class HeadlessUsageSettingsTests : IAsyncLifetime
         await _stub.NextT("hello");
         await Until(() => _client!.State == RelayClient.Status.Connected);
         await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1 }));
+        // The presence frame is handled on the client's receive loop; a tick
+        // that beats it finds no phone online and sends nothing at all.
+        await Until(() => _client!.IsOnline(phone.Id));
 
         RelayService.UsageFeed!.Tick();
 
