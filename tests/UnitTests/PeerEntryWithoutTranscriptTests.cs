@@ -33,17 +33,27 @@ public class PeerEntryWithoutTranscriptTests
     [Fact]
     public void TheEmptyNoteSaysNoMessagesYetAndWhereTheFirstOneGoes()
     {
-        var note = RemoteControlChatSession.LiveViewNote("Mini work", true);
-        Assert.Contains("No messages yet", note);
-        Assert.Contains("Mini work", note);
-        Assert.Contains("terminal", note);
+        var note = RemoteControlChatSession.LiveViewBannerFor(canType: true, canDeliver: false, "Mini work", empty: true);
+        Assert.Equal("No messages yet in Mini work. The first one you type here goes into its terminal.", note);
         Assert.DoesNotContain("mirrors", note);
     }
 
-    [Fact]
-    public void TheNonEmptyNoteIsTheUsualLiveViewLine()
+    // The empty wording still follows CB-372's two reach facts: a session
+    // with no pane must not promise a terminal it does not have.
+    [Theory]
+    [InlineData(true, "background job")]
+    [InlineData(false, "can't be delivered")]
+    public void AnEmptyNoteWithNoPaneSaysWhereTheFirstMessageReallyGoes(bool canDeliver, string expected)
     {
-        var note = RemoteControlChatSession.LiveViewNote("Mini work", false);
-        Assert.StartsWith("Live view: this panel mirrors Mini work's own conversation", note);
+        var note = RemoteControlChatSession.LiveViewBannerFor(canType: false, canDeliver, "Mini work", empty: true);
+        Assert.StartsWith("No messages yet in Mini work. ", note);
+        Assert.Contains(expected, note);
+        Assert.DoesNotContain("type here", note);
     }
+
+    [Fact]
+    public void TheNonEmptyNoteIsTheUsualLiveViewLine() =>
+        Assert.Equal(
+            RemoteControlChatSession.LiveViewBannerFor(true, false, "Mini work"),
+            RemoteControlChatSession.LiveViewBannerFor(true, false, "Mini work", empty: false));
 }

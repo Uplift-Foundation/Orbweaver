@@ -199,9 +199,11 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         var session = await OpenAsync();
 
-        Assert.Contains("Message", session.ComposerHint);
-        Assert.DoesNotContain("terminal", session.ComposerHint);
+        // CB-372: no pane and no socket is not "Message…" any more. It says so,
+        // matching the banner above it that says the send cannot be delivered.
+        Assert.StartsWith("Can't message", session.ComposerHint);
         Assert.Contains(Name, session.ComposerHint);
+        Assert.DoesNotContain("Type into", session.ComposerHint);
     }
 
     // CB-105's third arm: no pane, but this machine can hand the text to the
@@ -221,6 +223,266 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Contains(Name, session.ComposerHint);
         Assert.Contains("background job", session.ComposerHint);
         Assert.DoesNotContain("terminal", session.ComposerHint);
+    }
+
+    // CB-372: the banner at the top of the live view said "typed into its
+    // terminal" for every live view, including the background job whose composer
+    // directly below it said it would message the job. It follows the same two
+    // facts the composer does.
+    [AvaloniaFact]
+    public async Task TheBannerSaysTypedIntoItsTerminalWhenThereIsAPane()
+    {
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Contains("typed into its terminal", session.History[0].Text);
+    }
+
+    [AvaloniaFact]
+    public async Task TheBannerSaysDeliveredToTheBackgroundJobWhenThereIsNoPaneButASocket()
+    {
+        _canType = false;
+        _canDeliver = true;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Contains("background job", session.History[0].Text);
+        Assert.DoesNotContain("typed into its terminal", session.History[0].Text);
+    }
+
+    [AvaloniaFact]
+    public async Task TheBannerSaysThereIsNothingToSendWhenThereIsNeitherPaneNorSocket()
+    {
+        _canType = false;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Contains("can't be delivered", session.History[0].Text);
+        Assert.DoesNotContain("typed into its terminal", session.History[0].Text);
+    }
+
+    // CB-379: what the far session can do changes after the panel has upgraded - a
+    // pane appears, a messaging socket comes or goes - and the roster says so on
+    // its next landing. The banner and composer were decided once, at the upgrade,
+    // so they kept saying what had been true. Driven the way production does it:
+    // the far side's answer changes and the client asks again (PeerSessions polls
+    // AskWhatTheyHaveAsync).
+    [AvaloniaTheory]
+    [InlineData(false, false, true, false)]  // none   -> pane
+    [InlineData(false, false, false, true)]  // none   -> socket
+    [InlineData(true, false, false, false)]  // pane   -> none
+    [InlineData(false, true, false, false)]  // socket -> none
+    [InlineData(false, true, true, false)]   // socket -> pane
+    [InlineData(true, false, false, true)]   // pane   -> socket
+    public async Task TheBannerAndComposerFollowTheFarSessionWhenItsReachChanges(
+        bool typeBefore, bool deliverBefore, bool typeAfter, bool deliverAfter)
+    {
+        _canType = typeBefore;
+        _canDeliver = deliverBefore;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        Assert.Equal(
+            RemoteControlChatSession.ComposerHintFor(true, typeBefore, deliverBefore, session.FarTitleForTests),
+            session.ComposerHint);
+        Assert.Equal(
+            RemoteControlChatSession.LiveViewBannerFor(typeBefore, deliverBefore, session.FarTitleForTests),
+            session.History[0].Text);
+
+        _canType = typeAfter;
+        _canDeliver = deliverAfter;
+        await _client.AskWhatTheyHaveAsync(Peers);
+
+        Assert.Equal(
+            RemoteControlChatSession.ComposerHintFor(true, typeAfter, deliverAfter, session.FarTitleForTests),
+            session.ComposerHint);
+        Assert.Equal(
+            RemoteControlChatSession.LiveViewBannerFor(typeAfter, deliverAfter, session.FarTitleForTests),
+            session.History[0].Text);
+
+        // One banner, still at the top, not a second one stacked under the first.
+        Assert.Single(session.History, t => t.Text.StartsWith("Live view:", StringComparison.Ordinal));
+    }
+
+    // The same change, seen where a person sees it: the open panel's placeholder
+    // and its banner bubble, not just the session's properties (CB-379).
+    [AvaloniaFact]
+    public async Task AnOpenPanelRedrawsItsPlaceholderWhenTheFarSessionGainsAPane()
+    {
+        _canType = false;
+        _canDeliver = false;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+
+        ChatPanel.OpenFor(new OrbWindow(session.SessionId), session);
+        var panel = ChatPanelTestAccess.Instance!;
+        var input = panel.FindControl<TextBox>("Input")!;
+
+        Assert.StartsWith("Can't message", input.Watermark);
+
+        _canType = true;
+        await _client.AskWhatTheyHaveAsync(Peers);
+
+        Assert.StartsWith("Type into", input.Watermark);
+
+        ChatPanel.HideFor(session.SessionId);
+    }
+
+    // --- CB-379: the refresh's own rules -------------------------------------
+
+    // Silence is not a no. A landing that does not mention this session (the far
+    // machine busy, a partial roster, the session briefly absent) keeps what the
+    // panel has: a healthy panel must not flip to "Can't message" on one bad poll.
+    [AvaloniaFact]
+    public async Task ARosterLandingWithoutTheSessionChangesNothingAndRaisesNothing()
+    {
+        _canType = true;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var raised = 0;
+        session.ComposerHintChanged += () => raised++;
+        var hint = session.ComposerHint;
+        var banner = session.History[0].Text;
+
+        _agents.Clear();
+        _sessions.Clear();
+        await _client.AskWhatTheyHaveAsync(Peers);
+
+        Assert.Equal(0, raised);
+        Assert.Equal(hint, session.ComposerHint);
+        Assert.Equal(banner, session.History[0].Text);
+    }
+
+    // Rosters land every poll. The same two values must not rewrite the banner or
+    // raise the event; a real change does, once.
+    [AvaloniaFact]
+    public async Task OnlyARealChangeRewritesTheBannerAndRaisesTheEvent()
+    {
+        _canType = false;
+        _canDeliver = false;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var raised = 0;
+        var rewrites = 0;
+        session.ComposerHintChanged += () => raised++;
+        session.History[0].PropertyChanged += (_, _) => rewrites++;
+
+        await _client.AskWhatTheyHaveAsync(Peers);
+        await _client.AskWhatTheyHaveAsync(Peers);
+        Assert.Equal((0, 0), (raised, rewrites));
+
+        _canType = true;
+        await _client.AskWhatTheyHaveAsync(Peers);
+        Assert.Equal((1, 1), (raised, rewrites));
+
+        await _client.AskWhatTheyHaveAsync(Peers);
+        Assert.Equal((1, 1), (raised, rewrites));
+    }
+
+    // The banner is painted again whenever the far transcript's window is replaced
+    // (a reopen, a /clear). The reference kept for rewriting has to be the turn that
+    // is in History now, not the first one ever inserted.
+    [AvaloniaFact]
+    public async Task TheBannerStillFollowsTheFarSessionAfterTheLiveViewIsRepainted()
+    {
+        _canType = false;
+        _canDeliver = false;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var first = session.History[0];
+
+        _canType = true;
+        await _client.AskWhatTheyHaveAsync(Peers);
+        Assert.Equal(RemoteControlChatSession.LiveViewBannerFor(true, false, Name), first.Text);
+
+        // Repaint: closing and reopening re-reads the window and replaces History.
+        session.PanelClosed();
+        session.PanelOpened();
+        await PumpUntilAsync(() => !ReferenceEquals(session.History.FirstOrDefault(), first));
+        var second = session.History[0];
+        Assert.NotSame(first, second);
+
+        _canType = false;
+        _canDeliver = true;
+        await _client.AskWhatTheyHaveAsync(Peers);
+
+        Assert.Equal(RemoteControlChatSession.LiveViewBannerFor(false, true, Name), second.Text);
+        Assert.Single(session.History, t => t.Text.StartsWith("Live view:", StringComparison.Ordinal));
+    }
+
+    // The panel is reused across sessions and sessions are never removed. A session
+    // the panel has moved away from must not redraw the composer of the one shown.
+    [AvaloniaFact]
+    public async Task ASessionThePanelHasMovedAwayFromDoesNotRedrawTheComposerNowShown()
+    {
+        _canType = false;
+        _canDeliver = false;
+
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        ChatPanel.OpenFor(new OrbWindow(session.SessionId), session);
+
+        var otherId = "other-" + Guid.NewGuid();
+        var other = new FakeChatSession { SessionId = otherId, ComposerHint = "the other session's hint" };
+        ChatPanel.OpenFor(new OrbWindow(otherId), other);
+
+        var input = ChatPanelTestAccess.Instance!.FindControl<TextBox>("Input")!;
+        Assert.Equal("the other session's hint", input.Watermark);
+
+        // Nothing observable changes if it leaks - the handler redraws whichever
+        // session is bound, with its own hint - so the subscription itself is what
+        // is checked: the panel has taken its handler off the session it left.
+        Assert.Equal(0, SubscribersOfComposerHintChanged(session));
+
+        _canType = true;
+        await _client.AskWhatTheyHaveAsync(Peers);
+
+        Assert.StartsWith("Type into", session.ComposerHint);
+        Assert.Equal("the other session's hint", input.Watermark);
+
+        ChatPanel.HideFor(otherId);
+        ChatPanel.HideFor(session.SessionId);
+    }
+
+    private static int SubscribersOfComposerHintChanged(RemoteControlChatSession session) =>
+        ((Delegate?)typeof(RemoteControlChatSession)
+            .GetField("ComposerHintChanged", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(session))?.GetInvocationList().Length ?? 0;
+
+    // The slash path reads the same live flags: an older far Buddy refuses a known
+    // command while there is no pane and types it once a pane appears.
+    [AvaloniaFact]
+    public async Task AnOlderFarBuddysSlashLineFollowsAPaneAppearing()
+    {
+        _oldFarRoster = true;
+        _canType = false;
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        Assert.Equal(ChatSendOutcome.Failed, await session.RunSlashAsync("/color green"));
+        Assert.Empty(_typed);
+
+        _canType = true;
+        await _client.AskWhatTheyHaveAsync(Peers);
+
+        Assert.Equal(ChatSendOutcome.Sent, await session.RunSlashAsync("/color green"));
+        Assert.Equal("/color green", Assert.Single(_typed).Text);
     }
 
     // A live view is a real transcript, so it can be paged back into — which is
@@ -260,6 +522,75 @@ public class RemoteMirrorChatSessionTests : IDisposable
         // the conversation, so older turns go in under it.
         Assert.Contains("Live view", session.History[0].Text);
     }
+
+    // CB-356: a page seam that falls between a compaction's boundary and its
+    // summary. The opening window starts with the summary, shown as an orphan;
+    // paging back delivers the boundary as the older page's last turn. The shown
+    // row takes the boundary's numbers and the page's copy is not inserted, so
+    // there is one row for the pair, and it is the same row the panel drew.
+    //
+    // Built on the uniform fixture of ALiveViewCanBePagedBackInto: one open
+    // finds the first row the window shows, and a second transcript puts the
+    // boundary just before it and the summary on it, each padded to the byte
+    // length of the row it replaces, so the far side windows it the same way.
+    // The precondition is asserted rather than assumed.
+    [AvaloniaFact]
+    public async Task APageSeamBetweenACompactionsHalvesStillShowsOneRow()
+    {
+        string PadTo(string row, int length)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(row)!.AsObject();
+            node["pad"] = "";
+            var bare = node.ToJsonString().Length;
+            Assert.True(bare <= length, $"a row of {bare} bytes cannot be padded to {length}");
+            node["pad"] = new string('p', length - bare);
+            return node.ToJsonString();
+        }
+
+        // Every row the same length, longer than either captured row, so the
+        // two can stand in for any pair of rows without moving the window.
+        const int RowBytes = 8000;
+        var rows = new List<string>();
+        for (var i = 0; rows.Count * (RowBytes + 1) < MirrorProtocol.InitialBytes * 8; i++)
+            rows.Add(PadTo(UserRow($"r{i}", $"message {i} " + new string('y', 300)), RowBytes));
+
+        WireRows(rows);
+        var probe = await OpenAsync();
+        var first = probe.History.Skip(1).First().Text;
+        var k = rows.FindIndex(r => r.Contains($"\"message {first.Split(' ')[1]} ", StringComparison.Ordinal));
+        Assert.True(k > 1, $"the opening window should not start at the top: {first}");
+
+        var capture = File.ReadAllLines(Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(Here())!, "..", "TranscriptTests", "Captures", "cb356", "auto-adjacent.jsonl")));
+        var seamed = new List<string>(rows)
+        {
+            [k - 1] = PadTo(capture[1], RowBytes),
+            [k] = PadTo(capture[2], RowBytes),
+        };
+
+        _agents.Clear();
+        _sessions.Clear();
+        WireRows(seamed);
+        var session = await OpenAsync();
+        var backlog = (IRemoteChatBacklog)session;
+
+        var shown = session.History[1];
+        Assert.True(shown.Compaction is { HasBoundary: false, HasSummary: true },
+            $"the opening window should start on the summary (row {k}), not on: {shown.Text[..Math.Min(20, shown.Text.Length)]}");
+
+        var updated = new List<ChatTurn>();
+        session.TurnUpdated += updated.Add;
+
+        Assert.True(await backlog.LoadOlderAsync(CancellationToken.None));
+
+        Assert.Same(shown, Assert.Single(session.History, t => t.Compaction is not null));
+        Assert.True(shown.Compaction is { HasBoundary: true, HasSummary: true, Trigger: "auto" });
+        Assert.Equal("Conversation compacted automatically · 246k → 21k tokens", shown.Text);
+        Assert.Same(shown, Assert.Single(updated));
+        Assert.Contains("Live view", session.History[0].Text);
+    }
+
+    private static string Here([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
 
     // --- typing -----------------------------------------------------------------
 
@@ -1221,7 +1552,7 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         var only = Assert.Single(session.History);
         Assert.Equal(ChatRole.System, only.Role);
-        Assert.Equal(RemoteControlChatSession.LiveViewNote(Name, true), only.Text);
+        Assert.Equal(RemoteControlChatSession.LiveViewBannerFor(true, false, Name, empty: true), only.Text);
         Assert.DoesNotContain(session.History, t => t.Text.Contains("Couldn't verify"));
 
         // The state the empty-panel screenshot waits for before it captures.
@@ -1278,7 +1609,79 @@ public class RemoteMirrorChatSessionTests : IDisposable
         var last = session.History[^1];
 
         Assert.Equal(RemoteControlChatSession.NoLiveViewNote(Name), last.Text);
-        Assert.Contains("Message", session.ComposerHint);
+        Assert.StartsWith("Can't message", session.ComposerHint);
+    }
+
+    // CB-380: the far Buddy has answered that it cannot show this session and the
+    // panel has said so. The placeholder used to go on inviting a message that the
+    // send then refused; it says so too once the answer is in, and the panel is
+    // told to redraw it because the answer usually lands after the panel is open.
+    [AvaloniaFact]
+    public async Task ASettledNoLiveViewNoLongerInvitesASendThatFails()
+    {
+        WireClientOnly();
+
+        var session = NewSession();
+        session.PanelOpened();
+
+        // Still being asked: the answer may be yes, so the neutral wording stands.
+        Assert.StartsWith("Message", session.ComposerHint);
+
+        var raised = 0;
+        session.ComposerHintChanged += () => raised++;
+
+        await _client.DiscoverAsync(Array.Empty<string>(), new[] { Name });
+        Assert.Equal(RemoteControlChatSession.NoLiveViewNote(Name), session.History[^1].Text);
+
+        Assert.Equal(1, raised);
+        Assert.StartsWith("Can't message", session.ComposerHint);
+        Assert.Equal($"Can't message {Name} from this machine", session.ComposerHint);
+
+        // ...and what it says is true: the send is refused.
+        OrbweaverSettings.PeerLinkEnabled = true;
+        Assert.Equal(ChatSendOutcome.Failed, await session.SendAsync("are you there?"));
+        Assert.Contains(session.History, t => t.Text == RemoteControlChatSession.NoWayToSendNote(Name));
+    }
+
+    // Seen where a person sees it: a panel opened before the answer lands redraws
+    // its placeholder when the answer is no.
+    [AvaloniaFact]
+    public async Task AnOpenPanelRedrawsItsPlaceholderWhenTheFarBuddyAnswersNoLiveView()
+    {
+        WireClientOnly();
+
+        var session = NewSession();
+        session.PanelOpened();
+        ChatPanel.OpenFor(new OrbWindow(session.SessionId), session);
+        var input = ChatPanelTestAccess.Instance!.FindControl<TextBox>("Input")!;
+        Assert.StartsWith("Message", input.Watermark);
+
+        await _client.DiscoverAsync(Array.Empty<string>(), new[] { Name });
+
+        Assert.StartsWith("Can't message", input.Watermark);
+
+        ChatPanel.HideFor(session.SessionId);
+    }
+
+    // The answer can change: a roster arriving after the panel gave up upgrades it,
+    // and the placeholder follows to the live-view wording.
+    [AvaloniaFact]
+    public async Task ARosterArrivingAfterNoLiveViewReplacesTheCantMessagePlaceholder()
+    {
+        _canType = true;
+        WireClientOnly();
+
+        var session = NewSession();
+        session.PanelOpened();
+        await _client.DiscoverAsync(Array.Empty<string>(), new[] { Name });
+        Assert.StartsWith("Can't message", session.ComposerHint);
+
+        // The far Buddy now has the session.
+        Wire("a", "b");
+        await _client.DiscoverAsync(Peers, new[] { Name });
+
+        Assert.True(session.IsMirroring);
+        Assert.StartsWith("Type into", session.ComposerHint);
     }
 
     // The sequence a user actually hit, and the one that must be asserted rather

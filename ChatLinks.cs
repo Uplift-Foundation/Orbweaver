@@ -29,8 +29,20 @@ namespace Orbweaver
         // as text that opens something on click is worse — and stating it once,
         // beside the launcher's own allowlist, keeps the two from drifting if
         // the parser's contract ever loosens.
-        internal static bool IsLive(ChatMarkdown.MdSpan span) =>
-            span.Style == ChatMarkdown.MdStyle.Link && CloudSessionLink.IsOpenable(span.Url);
+        //
+        // files says whether the session behind the bubble can open a file at
+        // all (IRemoteChatFiles). A cloud, OpenClaw or room session cannot, so
+        // there a file link is flattened to its label exactly as before CB-363
+        // rather than drawn as a link that does nothing.
+        internal static bool IsLive(ChatMarkdown.MdSpan span, bool files = true) =>
+            span.Style == ChatMarkdown.MdStyle.Link
+            && (CloudSessionLink.IsOpenable(span.Url) || (files && IsFileUrl(span.Url)));
+
+        // Whether a destination is one of the file forms (CB-363) rather than
+        // a web address. The click handler asks it to choose between Open and
+        // OpenFile, and IsLive to decide whether a span is a link at all, so
+        // the two cannot disagree about which destinations are files.
+        internal static bool IsFileUrl(string? url) => FileLink.TryParse(url) is not null;
 
         // The style a span is drawn in: its own, except that a Link span with
         // nothing openable behind it is drawn as plain text — the same rule
@@ -38,20 +50,20 @@ namespace Orbweaver
         // opens one. The parser never emits such a span today; this is the arm
         // that keeps a dead link off the screen if it ever does, and it lives
         // here rather than inline in the renderer so it is a unit case.
-        internal static ChatMarkdown.MdStyle StyleOf(ChatMarkdown.MdSpan span) =>
-            span.Style == ChatMarkdown.MdStyle.Link && !IsLive(span) ? ChatMarkdown.MdStyle.Normal : span.Style;
+        internal static ChatMarkdown.MdStyle StyleOf(ChatMarkdown.MdSpan span, bool files = true) =>
+            span.Style == ChatMarkdown.MdStyle.Link && !IsLive(span, files) ? ChatMarkdown.MdStyle.Normal : span.Style;
 
         // The link ranges of a line, in the same character offsets the block's
         // text layout reports: each span's text is concatenated into Runs in
         // order, so a running sum over span lengths is the layout's offset.
-        internal static IReadOnlyList<LinkRange> RangesOf(IReadOnlyList<ChatMarkdown.MdSpan> spans)
+        internal static IReadOnlyList<LinkRange> RangesOf(IReadOnlyList<ChatMarkdown.MdSpan> spans, bool files = true)
         {
             var ranges = new List<LinkRange>();
             var offset = 0;
 
             foreach (var span in spans)
             {
-                if (IsLive(span)) ranges.Add(new LinkRange(offset, span.Text.Length, span.Url!));
+                if (IsLive(span, files)) ranges.Add(new LinkRange(offset, span.Text.Length, span.Url!));
                 offset += span.Text.Length;
             }
 
@@ -84,6 +96,21 @@ namespace Orbweaver
         // and throws without a render interface. This class has no Avalonia
         // statics to trip over.
         internal static Func<string, bool> Open { get; set; } = CloudSessionLink.Open;
+
+        // Opens a local file a chat message named, or the cached copy of one
+        // fetched from another machine (CB-363). Given a decoded local path —
+        // never a raw destination — and returns whether something started.
+        // A seam for the same reason as Open: both UI suites set it to a no-op
+        // before any test runs, so no click in either can start a real
+        // application or a Finder window. FileLinkLauncher decides through
+        // FileLinkPolicy on its own, whatever it is handed here.
+        internal static Func<string, bool> OpenFile { get; set; } = FileLinkLauncher.OpenLocal;
+
+        // Shows a local file in Finder or Explorer without opening it (CB-363):
+        // for a file the policy would open but that is known elsewhere to be
+        // dangerous, such as a fetched copy of something executable. Same
+        // seam shape and the same no-op in both UI suites as OpenFile.
+        internal static Func<string, bool> RevealFile { get; set; } = FileLinkLauncher.RevealLocal;
 
         // A click opens a link only when it began and ended on the same one and
         // left nothing selected.

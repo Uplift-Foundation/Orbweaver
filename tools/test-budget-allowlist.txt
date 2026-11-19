@@ -1,0 +1,8 @@
+# CB-367: tests allowed to run past the per-test budget in tools/check-test-budget.py.
+# One per line: <Fully.Qualified.TestName> | <reason>. A reason is required, and
+# should name the ticket whose merge lets the entry be deleted. Entries that
+# nothing exceeds are warned about as stale.
+#
+# Measured from run 44227575517's test-results artifacts (both rids).
+
+Orbweaver.Tests.OrbArrangementSweepTests.EveryArrangementKeepsOrbsOnScreenAndApart | one ~100s CPU-bound sweep by design; splitting into parallel partitions was measured slower (median 183 vs 141s osx, 136 vs 109s win) and rejected under CB-366, so this entry is permanent

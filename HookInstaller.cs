@@ -25,6 +25,10 @@ namespace Orbweaver
         // to account for a WSL VM cold-booting.
         internal const int TimeoutMs = 20_000;
 
+        // How long Run waits for the output readers after the child has gone,
+        // whether it was killed for a timeout or exited by itself.
+        internal const int ReaderGraceMs = 2_000;
+
         // What every installer exits with when the app's saved profile list exists
         // but could not be read or parsed. The default profile is still wired
         // first; it is the extra ones that were not. Distinct so the card can say
@@ -238,6 +242,7 @@ namespace Orbweaver
                 var error = new StringBuilder();
                 var outputDrained = Drain(process.StandardOutput, output);
                 var errorDrained = Drain(process.StandardError, error);
+                var drains = new[] { outputDrained, errorDrained };
 
                 if (!(waitForExit ?? (p => p.WaitForExit(timeoutMs)))(process))
                 {
@@ -248,18 +253,37 @@ namespace Orbweaver
                     // wait for the last bytes; when a descendant the kill could
                     // not reach still holds them, the readers never finish, and
                     // what had already arrived is returned anyway.
-                    Task.WaitAll(new[] { outputDrained, errorDrained }, 2_000);
+                    WaitForDrains(drains, ReaderGraceMs);
                     return Finish(label, new HookInstallResult(
                         HookInstallOutcome.TimedOut, label,
-                        Output: Snapshot(output), Error: Snapshot(error)));
+                        Output: Snapshot(output), Error: Snapshot(error),
+                        OutputMayBeCutShort: ParkedAfterTheWait(drains).Count > 0));
                 }
 
                 var code = process.ExitCode;
-                outputDrained.GetAwaiter().GetResult();
-                errorDrained.GetAwaiter().GetResult();
+
+                // The child has exited, so its own writes are over and the readers
+                // only have to reach the end of what is already in the pipes. They
+                // can fail to when a descendant that outlived the child inherited
+                // them (CB-377): an installer that exits 0 after leaving a
+                // background process holding stdout would otherwise keep Run here
+                // until that process exits, 8 seconds in the reproduction on both
+                // macOS and Windows, with the exit code already known. The same
+                // bound as the timeout arm, and what arrived is returned. A reader
+                // that did finish still reports its failure; one left parked
+                // behind the descendant is a background thread and ends with it.
+                WaitForDrains(drains, ReaderGraceMs);
+
+                // Decided once: a reader alive at one look and gone at the next
+                // would otherwise be left out of Finish() (dropping its failure)
+                // while the flag said nothing was cut short.
+                var parked = ParkedAfterTheWait(drains);
+                foreach (var drain in drains)
+                    if (!parked.Contains(drain)) drain.Finish();
                 return Finish(label, new HookInstallResult(
                     code == 0 ? HookInstallOutcome.Ok : HookInstallOutcome.Failed,
-                    label, code, Snapshot(output), Snapshot(error)));
+                    label, code, Snapshot(output), Snapshot(error),
+                    OutputMayBeCutShort: parked.Count > 0));
             }
             catch (Exception ex)
             {
@@ -271,13 +295,76 @@ namespace Orbweaver
         // Appends everything the reader yields to into, as it arrives, until
         // end-of-stream. Locked because Snapshot can read while this writes: the
         // timeout arm returns without waiting for a reader that may never end.
-        private static async Task Drain(StreamReader reader, StringBuilder into)
+        //
+        // A dedicated thread doing blocking reads, not an async loop on the
+        // thread pool (CB-370). An async read's completion and every continuation
+        // after it need a pool thread, so on a busy pool bytes already sitting in
+        // the pipe were not in the buffer when the timeout arm took its snapshot:
+        // reproduced on the Windows PC by blocking the pool's workers, which gave
+        // a TimedOut result with empty Output after the full wait (the regression
+        // test fails the same way against the old loop on macOS too). A thread of
+        // our own never queues behind anyone. Background, so a descendant that
+        // holds the pipe open forever cannot keep the app alive.
+        private static PipeDrain Drain(StreamReader reader, StringBuilder into)
         {
-            var buffer = new char[4096];
-            int read;
-            while ((read = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+            var drain = new PipeDrain(reader, into);
+            drain.Start();
+            return drain;
+        }
+
+        // A drain still running after its wait is parked behind a pipe someone else
+        // holds open.
+        private static HashSet<PipeDrain> ParkedAfterTheWait(PipeDrain[] drains) =>
+            drains.Where(d => d.Thread.IsAlive).ToHashSet();
+
+        // Waits for all of the drains together, within one budget.
+        private static void WaitForDrains(PipeDrain[] drains, int budgetMs)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var d in drains)
+                d.Thread.Join(Math.Max(0, budgetMs - (int)clock.ElapsedMilliseconds));
+        }
+
+        // One reader thread. An exception is kept rather than thrown: unhandled
+        // on a thread of our own it would end the process, where a faulted Task
+        // used to surface as Threw. The normal-exit arm rethrows it (Finish); the
+        // timeout arm ignores it and keeps what arrived, since the dispose that
+        // follows a timeout can make a parked read throw late.
+        internal sealed class PipeDrain
+        {
+            private readonly StreamReader _reader;
+            private readonly StringBuilder _into;
+            private Exception? _failure;
+            internal Thread Thread { get; }
+
+            internal PipeDrain(StreamReader reader, StringBuilder into)
             {
-                lock (into) into.Append(buffer, 0, read);
+                _reader = reader;
+                _into = into;
+                Thread = new Thread(Loop) { IsBackground = true, Name = "hook-installer-drain" };
+            }
+
+            internal void Start() => Thread.Start();
+
+            private void Loop()
+            {
+                var buffer = new char[4096];
+                try
+                {
+                    int read;
+                    while ((read = _reader.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        lock (_into) _into.Append(buffer, 0, read);
+                    }
+                }
+                catch (Exception ex) { _failure = ex; }
+            }
+
+            internal void Finish()
+            {
+                Thread.Join();
+                if (_failure is not null)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(_failure).Throw();
             }
         }
 
@@ -390,7 +477,12 @@ namespace Orbweaver
     // (HookInstaller.StatusMessage) and the log (HookInstallerLog).
     internal sealed record HookInstallResult(
         HookInstallOutcome Outcome, string Script, int? ExitCode = null,
-        string Output = "", string Error = "")
+        string Output = "", string Error = "",
+        // True when Run gave up waiting for a reader because a descendant that
+        // outlived the installer still held the pipe (CB-377): what the installer
+        // said after that point, if anything, is not here. Only the log says so;
+        // the Settings card is deliberately unchanged.
+        bool OutputMayBeCutShort = false)
     {
         internal static HookInstallResult NotFound(string script) =>
             new(HookInstallOutcome.ScriptNotFound, script);

@@ -7,6 +7,9 @@ namespace Orbweaver.Tests;
 // release open one (CB-284). Built against hand-made spans rather than the
 // parser, so these cases say what the click handler does with whatever the
 // parser hands it — including a Link span the parser promises never to emit.
+// Shares ChatLinks.OpenFile, a process-wide seam, with ChatFileLinksTests: the two swap it, so they
+// must not run in parallel.
+[Collection("ChatLinksOpenFileSeam")]
 public class ChatLinksTests
 {
     private const string Url = "https://example.com/a_b";
@@ -25,10 +28,67 @@ public class ChatLinksTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("docs/x.md")]
-    [InlineData("file:///etc/hosts")]
     [InlineData("javascript:alert(1)")]
+    [InlineData("file://server/share/x")]
     public void ALinkSpanWithNothingOpenableBehindItIsNot(string? url) =>
         Assert.False(ChatLinks.IsLive(Link("here", url)));
+
+    // File links (CB-363): live, and told apart from web links by one rule
+    // that the renderer and the click handler share.
+    [Theory]
+    [InlineData("/Users/a/b.pdf")]
+    [InlineData("vscode://file//Users/a/b.pdf")]
+    [InlineData("C:\\Users\\a\\b.pdf")]
+    public void AFileLinkSpanIsLiveAndIsAFileUrl(string url)
+    {
+        Assert.True(ChatLinks.IsLive(Link("here", url)));
+        Assert.True(ChatLinks.IsFileUrl(url));
+        Assert.Equal(MdStyle.Link, ChatLinks.StyleOf(Link("here", url)));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("https://example.com/a")]
+    [InlineData("docs/x.md")]
+    public void ANonFileDestinationIsNotAFileUrl(string? url) =>
+        Assert.False(ChatLinks.IsFileUrl(url));
+
+    [Fact]
+    public void FileLinksAreFoundByRangesOf()
+    {
+        var ranges = ChatLinks.RangesOf([Text("see "), Link("doc", "/a/b.pdf")]);
+        Assert.Equal(new ChatLinks.LinkRange(4, 3, "/a/b.pdf"), Assert.Single(ranges));
+    }
+
+    // The seam exists, is settable, and is what a test swaps for a recorder.
+    [Fact]
+    public void RevealFileIsASettableSeam()
+    {
+        var before = ChatLinks.RevealFile;
+        try
+        {
+            string? seen = null;
+            ChatLinks.RevealFile = p => { seen = p; return true; };
+            Assert.True(ChatLinks.RevealFile("/a/b.pdf"));
+            Assert.Equal("/a/b.pdf", seen);
+        }
+        finally { ChatLinks.RevealFile = before; }
+    }
+
+    [Fact]
+    public void OpenFileIsASettableSeam()
+    {
+        var before = ChatLinks.OpenFile;
+        try
+        {
+            string? seen = null;
+            ChatLinks.OpenFile = p => { seen = p; return true; };
+            Assert.True(ChatLinks.OpenFile("/a/b.pdf"));
+            Assert.Equal("/a/b.pdf", seen);
+        }
+        finally { ChatLinks.OpenFile = before; }
+    }
 
     // The style is half the rule: an openable URL on a code span stays code.
     [Fact]

@@ -56,6 +56,7 @@ namespace Orbweaver.Tests
                 PaneScreen.Classify(SidePanelFixtures.IdleBoard) == PaneReading.Prompt);
             Cb327Captures.Run(Check);
             Cb330Captures.Run(Check);
+            Cb356Captures.Run(Check);
 
             // --- the transcript ---
 
@@ -425,10 +426,29 @@ namespace Orbweaver.Tests
                 && relative[0].Text == "see the findings for more",
                 Show(relative));
 
-            var scheme = Spans("[open](file:///etc/hosts)");
+            var scheme = Spans("[open](ms-settings:privacy)");
             Check("a non-http scheme is plain text",
                 scheme.Length == 1 && scheme[0].Style == ChatMarkdown.MdStyle.Normal && scheme[0].Url is null,
                 Show(scheme));
+
+            // File links (CB-363): the three an agent really emitted, home
+            // directory replaced. Each stays whole, spaces and parentheses
+            // included, and carries its raw destination.
+            const string D = "/Users/someone/Documents/GTD/Evidence/01_CASES/X/01_Filings/";
+            var f1 = Spans("[Response](vscode://file/" + D + "Opp/1_Response_Opposing_Extension_and_Alternative_Motion.pdf)");
+            Check("a vscode://file// link is a link",
+                f1.Length == 1 && f1[0].Style == ChatMarkdown.MdStyle.Link && f1[0].Text == "Response"
+                && FileLink.TryParse(f1[0].Url)?.Path == D + "Opp/1_Response_Opposing_Extension_and_Alternative_Motion.pdf",
+                Show(f1));
+            var f2 = Spans("[Stoel's motion](vscode://file" + D + "Stoel_Motion/2026.11.17%20Motion%20for%20Extension%20of%20Time%20(Adoreal-Thompson)%20env14901649.pdf)");
+            Check("an encoded link with parentheses is one link",
+                f2.Length == 1 && f2[0].Style == ChatMarkdown.MdStyle.Link
+                && FileLink.TryParse(f2[0].Url)?.Path == D + "Stoel_Motion/2026.11.17 Motion for Extension of Time (Adoreal-Thompson) env14901649.pdf",
+                Show(f2));
+            var f3 = Spans("[Checklist](vscode://file/" + D + "Opp/README.md)");
+            Check("a vscode://file/ link to a markdown file is a link",
+                f3.Length == 1 && f3[0].Style == ChatMarkdown.MdStyle.Link && f3[0].Url!.EndsWith("Opp/README.md"),
+                Show(f3));
 
             var bareUrl = Spans("go to https://example.com/a now");
             Check("a bare url is a link",

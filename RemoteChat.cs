@@ -121,6 +121,24 @@ namespace Orbweaver
         // rather than leaking the raw wrapper as the user's own bubble.
         public RelayedMessage? Relay { get; init; }
 
+        private CompactionNote? _compaction;
+
+        // CB-356: set when this turn is a Claude Code compaction. Role System,
+        // Text = Compaction.Line, IsComplete, for the same reason as Relay.
+        // Settable and notifying, unlike Relay: the boundary and the summary
+        // can arrive in different reads, and CompactionNote.TryAbsorb folds the
+        // second into the turn already on screen rather than adding a row.
+        public CompactionNote? Compaction
+        {
+            get => _compaction;
+            set
+            {
+                if (Equals(_compaction, value)) return;
+                _compaction = value;
+                Raise();
+            }
+        }
+
         // CB-270: drawn from a gateway rollup message; see HistoryTurn.FromRollup.
         public bool FromRollup { get; init; }
 
@@ -289,6 +307,24 @@ namespace Orbweaver
         // ImageBytes/ImageUrl above.
         public string? ImageNoteDetail { get; set; }
 
+        private string? _fileNote;
+
+        // CB-363: what a file link in this turn's text is doing or came to —
+        // "Fetching x.pdf from <machine>… 42%", then cleared on success or
+        // replaced by the refusal. Its own property rather than ImageNote
+        // because a picture's note and a file link's can be on screen at once,
+        // and the one that arrived last would silently erase the other.
+        public string? FileNote
+        {
+            get => _fileNote;
+            set
+            {
+                if (_fileNote == value) return;
+                _fileNote = value;
+                Raise();
+            }
+        }
+
         private byte[]? _imageBytes;
 
         // A picture already decoded, for the two cases where there is no
@@ -418,6 +454,19 @@ namespace Orbweaver
     public interface IRemoteChatComposer
     {
         string ComposerHint { get; }
+    }
+
+    // The empty box's wording changed after the panel read it.
+    //
+    // A remote session's hint follows what the far session can do (type into a
+    // pane, message a background job, neither), and that is learned from a roster
+    // that keeps landing - so it can change while the panel is up (CB-379). The
+    // panel re-reads ComposerHint when this is raised, on the UI thread like every
+    // other event on these interfaces. Separate from IRemoteChatComposer because
+    // most sessions' hints never change.
+    public interface IRemoteChatComposerChanges
+    {
+        event Action? ComposerHintChanged;
     }
 
     // A session that can be read and, right now, not written to *at all*.
@@ -867,5 +916,59 @@ namespace Orbweaver
         Task<ChatSendOutcome> ResendHeldAsync();
         // Raised on the UI thread.
         event Action? InboundChanged;
+    }
+
+    // CB-363: where a session's files live, and how to get one onto this
+    // machine so the OS can open it.
+    //
+    // Optional like every interface above: a cloud, OpenClaw or room session has
+    // no filesystem the panel can reach, so a file link in one of them is drawn
+    // as its label, exactly as before. Only a local CLI session (the file is
+    // already here) and a Remote Control session (the file is on the peer) say
+    // yes.
+    public enum ChatFileHost { ThisMachine, Peer }
+
+    // What a fetch came to. Exactly one of the three shapes: a path to hand the
+    // OS, a refusal code, or (ok with nothing to open) never. Kept as a record
+    // with a static constructor per shape so a caller cannot build the
+    // half-and-half the old tuple-returning code allowed.
+    public sealed record ChatFileResult
+    {
+        // The local path to open — the file itself for a local session, the
+        // cache entry for a peer's.
+        public string? LocalPath { get; init; }
+
+        // The serving side's executable bit, which the policy treats as
+        // "reveal, never open". Meaningless for a local path, where the
+        // policy reads the real file.
+        public bool Executable { get; init; }
+
+        // A refusal code from the peer (forbidden_path, not_found, too_large,
+        // rate_limited, busy, unreadable) or the client's own: "update" for a
+        // peer that does not speak FILE, "failed" for a transport error.
+        public string? Refusal { get; init; }
+
+        public bool Ok => Refusal is null && LocalPath is not null;
+
+        public static ChatFileResult Local(string path) => new() { LocalPath = path };
+        public static ChatFileResult Cached(string path, bool executable) =>
+            new() { LocalPath = path, Executable = executable };
+        public static ChatFileResult Refused(string code) => new() { Refusal = code };
+    }
+
+    public interface IRemoteChatFiles
+    {
+        ChatFileHost FileHost { get; }
+
+        // The machine's display name when FileHost is Peer; null otherwise, or
+        // before the roster has named it (the panel then says "on that
+        // machine" rather than guess).
+        string? FileHostName { get; }
+
+        // Brings the file at a path on the session's machine to this one.
+        // progress is bytes received and total bytes (0 when unknown); it is
+        // called on the caller's thread of choice and the panel marshals.
+        Task<ChatFileResult> FetchFileAsync(
+            string path, IProgress<(long Done, long Total)>? progress, CancellationToken ct);
     }
 }

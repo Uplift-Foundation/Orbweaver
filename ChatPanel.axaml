@@ -484,6 +484,14 @@
                                                Margin="0,2,0,0"
                                                FontSize="{Binding TimeSize}" Opacity="0.6"
                                                Foreground="{Binding Ink}"/>
+                                    <!-- CB-363: a file link's progress or
+                                         refusal, under the bubble's text. -->
+                                    <TextBlock Text="{Binding FileNote}"
+                                               IsVisible="{Binding HasFileNote}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,2,0,0"
+                                               FontSize="{Binding TimeSize}" Opacity="0.7"
+                                               Foreground="{Binding Ink}"/>
                                     <!-- Inside the bubble, trailing edge, the
                                          way a messaging app puts it. Hidden on
                                          system lines, which are notes about the
@@ -504,7 +512,7 @@
                                  click. Only the header line takes the click, so
                                  selecting text in the opened body does not close
                                  it again. -->
-                            <Border Name="RelayRow" IsVisible="{Binding IsRelay}"
+                            <Border Name="RelayRow" IsVisible="{Binding IsCompactRow}"
                                     Margin="0,2,0,2" Padding="2,1"
                                     MaxWidth="{Binding MaxBubbleWidth}"
                                     HorizontalAlignment="Left">
@@ -517,6 +525,16 @@
                                             <Ellipse Name="RelayDotMark" Width="{Binding RelayDotSize}" Height="{Binding RelayDotSize}"
                                                      Fill="{Binding RelayDot}"
                                                      IsVisible="{Binding HasRelayDot}"/>
+                                            <!-- CB-356: a compaction's mark. Drawn (two short
+                                                 chevrons pointing at each other), not a glyph, so
+                                                 the Fluent theme cannot substitute it. -->
+                                            <Path Name="CompactionIcon" Data="M 0,0 L 4,3 L 8,0 M 0,10 L 4,7 L 8,10"
+                                                  Stroke="#66FFFFFF" StrokeThickness="1.5"
+                                                  StrokeLineCap="Round" StrokeJoin="Round"
+                                                  Width="{Binding RelayDotSize}" Height="{Binding RelayDotSize}"
+                                                  Stretch="Uniform"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  IsVisible="{Binding IsCompaction}"/>
                                             <Border Name="RelayAvatarMark" Width="{Binding ChipSize}" Height="{Binding ChipSize}"
                                                     CornerRadius="{Binding ChipCorners}"
                                                     ClipToBounds="True"

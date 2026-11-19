@@ -69,6 +69,7 @@ namespace Orbweaver
                 .Append("  ").Append(label)
                 .Append("  ").Append(result.Outcome)
                 .Append(result.ExitCode is int code ? $"  exit {code}" : "")
+                .Append(result.OutputMayBeCutShort ? "  (output may be cut short: a descendant still held the pipe)" : "")
                 .AppendLine();
 
             Indent(text, "stdout", result.Output);

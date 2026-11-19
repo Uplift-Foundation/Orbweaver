@@ -44,7 +44,7 @@ public class ChatPanelOpenClawSlashTests : IDisposable
                     protocol = 4,
                     server = new { version = "2026.10.10" },
                     auth = new { scopes = Write },
-                    features = new { methods = new[] { "chat.send", "commands.list" } },
+                    features = new { methods = new[] { "chat.send", "commands.list", "send" } },
                     policy = new { tickIntervalMs = 15_000, maxPayload = 1_048_576L }
                 })
                 : FakeGatewaySocket.Ok(request.Id, new { runId = "r1", status = "started" });
@@ -59,13 +59,13 @@ public class ChatPanelOpenClawSlashTests : IDisposable
         return (socket, gateway);
     }
 
-    private (OpenClawChatSession Chat, ChatPanel Panel) OpenPanel()
+    private (OpenClawChatSession Chat, ChatPanel Panel) OpenPanel(OpenClawSessions.Delivery? delivery = null)
     {
         OrbweaverSettings.OpenClawReplyEnabled = true;
         OpenClawSessions.SetCommandsForTests(new OpenClawSessions.CommandCatalogue(
             OpenClawCommandCatalog.Parse(JsonDocument.Parse(OpenClawSlashFixtures.CommandsList).RootElement), Write));
 
-        var chat = new OpenClawChatSession(_sessionId, SessionKey, "Agent");
+        var chat = new OpenClawChatSession(_sessionId, SessionKey, "Agent") { Delivery = delivery };
         ChatPanel.OpenFor(NewOrb(), chat);
         Flush();
         return (chat, ChatPanelTestAccess.Instance!);
@@ -92,7 +92,12 @@ public class ChatPanelOpenClawSlashTests : IDisposable
         .Select(v => v.GetType().GetProperty("Name")!.GetValue(v) as string)
         .ToList();
 
-    private static void WaitFor(Func<bool> done)
+    // Fails, naming what it was waiting for, when the condition does not come
+    // true. It used to return quietly after the five seconds and let the test
+    // assert on whatever state it was in, which is how CB-376 read as a
+    // collections mismatch rather than "the second send never arrived".
+    private static void WaitFor(Func<bool> done,
+        [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(done))] string? what = null)
     {
         var until = DateTime.UtcNow.AddSeconds(5);
         while (!done() && DateTime.UtcNow < until)
@@ -101,6 +106,7 @@ public class ChatPanelOpenClawSlashTests : IDisposable
             Thread.Sleep(10);
         }
         Flush();
+        Assert.True(done(), "timed out waiting for: " + what);
     }
 
     [AvaloniaFact]
@@ -186,27 +192,177 @@ public class ChatPanelOpenClawSlashTests : IDisposable
     // The panel's known-name gate counts a command's aliases, so /t typed in full
     // is routed as the command it is; a path is a message and the runner never
     // sees it (no note, and the text goes out as typed).
+    //
+    // What tells the two routes apart on the wire is the mirror: on a
+    // conversation that lives in a chat channel, a message is first posted there
+    // ("send") and then asked of the agent ("chat.send"), while a recognised
+    // command is only ever the second (CB-306). So the session here has a
+    // delivery address, and the assertion is the order of the calls: a line
+    // routed the wrong way changes it. Both lines reaching chat.send, which is
+    // all this used to check, is true whichever way they were routed.
     [AvaloniaFact]
     public async Task ATypedAliasIsRoutedAsACommandAndAPathAsAMessage()
     {
         var (socket, gateway) = await ConnectedAsync();
         using (gateway)
         {
-            var (chat, panel) = OpenPanel();
+            var (chat, panel) = OpenPanel(new OpenClawSessions.Delivery("discord", "user:2000000000000000001", "quillbot"));
             var input = panel.FindControl<TextBox>("Input")!;
+            List<string> Wire() => socket.Requests
+                .Where(r => r.Method is "send" or "chat.send").Select(r => r.Method).ToList();
 
             Type(input, "/t high");
             Press(input, Key.Enter);
-            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+            WaitFor(() => Wire().Count == 1);
+            // The send's own clearing of the box comes after the request is
+            // recorded; typing before it ran is the race CB-376 was.
+            WaitFor(() => input.Text == "");
+            Assert.Equal(new[] { "chat.send" }, Wire());   // the alias: a command, not mirrored
 
             Type(input, "/tmp/build.log has the error");
             Press(input, Key.Enter);
-            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 2);
+            WaitFor(() => Wire().Count == 3);
 
+            Assert.Equal(new[] { "chat.send", "send", "chat.send" }, Wire());   // the path: mirrored, then sent
             Assert.Equal(new[] { "/t high", "/tmp/build.log has the error" },
                 socket.Requests.Where(r => r.Method == "chat.send")
                     .Select(r => r.Params.GetProperty("message").GetString()));
             Assert.DoesNotContain(chat.History, t => t.Role == ChatRole.System);
         }
     }
+
+    // CB-376: the reply to a send can arrive after the person has started the
+    // next message. The gateway's reply is held here, the next line typed, and
+    // only then let through.
+    private static async Task<(FakeGatewaySocket Socket, OpenClawGateway Gateway, Action ReleaseReply)> HeldReplyAsync()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        var original = socket.OnRequest!;
+        var hold = true;
+        socket.OnRequest = r => r.Method == "chat.send" && hold ? null : original(r);
+        return (socket, gateway, () =>
+        {
+            hold = false;
+            socket.PushJson(JsonSerializer.Serialize(FakeGatewaySocket.Ok(
+                socket.Requests.Last(r => r.Method == "chat.send").Id, new { runId = "r1", status = "started" })));
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task ALateReplyDoesNotWipeTheNextMessageTypedWhileItWasInFlight()
+    {
+        var (socket, gateway, release) = await HeldReplyAsync();
+        using (gateway)
+        {
+            var (_, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+
+            // The panel is reused between tests, so its count does not start at 0.
+            var done = panel.CompletedSendsForTests;
+            Type(input, "/t high");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+
+            Type(input, "/tmp/build.log has the error");
+            release();
+            WaitFor(() => panel.CompletedSendsForTests == done + 1);
+            Assert.Equal("/tmp/build.log has the error", input.Text);
+
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 2);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AnEditThatRestatesTheSentTextStillSurvivesTheReply()
+    {
+        var (socket, gateway, release) = await HeldReplyAsync();
+        using (gateway)
+        {
+            var (_, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+
+            var done = panel.CompletedSendsForTests;
+            Type(input, "/t high");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+
+            // The box holds "/t high" already, and setting a property to the value
+            // it has raises no change. This is an edit only because Type empties
+            // the box first and then enters the text (two real changes); if Type
+            // ever stops doing that, this stops testing the restated text.
+            Type(input, "/t high");
+            release();
+            WaitFor(() => panel.CompletedSendsForTests == done + 1);
+            Assert.Equal("/t high", input.Text);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task WithNoEditTheReplyClearsTheBox()
+    {
+        var (socket, gateway, release) = await HeldReplyAsync();
+        using (gateway)
+        {
+            var (_, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+
+            Type(input, "/t high");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+            Assert.Equal("/t high", input.Text);
+
+            release();
+            WaitFor(() => input.Text == "");
+        }
+    }
+
+    // Avalonia raises TextBox.TextChanged after the fact (it is posted), while
+    // the property change is synchronous. The count of edits must follow the
+    // property: text set and sent before the event has run is the text that was
+    // sent, not an edit made during the send, and the box has to clear.
+    [AvaloniaFact]
+    public async Task TextSentBeforeItsTextChangedEventHasRunStillClearsTheBox()
+    {
+        var (socket, gateway) = await ConnectedAsync();
+        using (gateway)
+        {
+            var (_, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+            input.Focus();
+            Flush();
+
+            input.Text = "/tmp/build.log has the error";   // no Flush: TextChanged is still queued
+            Press(input, Key.Enter);
+
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+            WaitFor(() => input.Text == "");
+        }
+    }
+
+    // The panel's own gate, alone: what it hands to the runner. A gate that
+    // accepted a path would be absorbed by the runner (which re-checks the
+    // catalogue), so nothing else notices. The runner and the rule are pinned on
+    // their own by OpenClawSlashCommandsTests and SlashRouteTests.
+    [AvaloniaFact]
+    public void TheGateKnowsAnAliasAndNotAPathAndNothingWithoutACatalogue()
+    {
+        var (_, panel) = OpenPanel();
+
+        Assert.True(panel.IsKnownSlashCommand("/t high"));
+        Assert.False(panel.IsKnownSlashCommand("/tmp/build.log has the error"));
+
+        OpenClawSessions.SetCommandsForTests(OpenClawSessions.CommandCatalogue.None);
+
+        Assert.False(panel.IsKnownSlashCommand("/t high"));
+        Assert.False(panel.IsKnownSlashCommand("/tmp/build.log has the error"));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(ChatSendOutcome.Sent, false, true)]
+    [InlineData(ChatSendOutcome.Sent, true, false)]
+    [InlineData(ChatSendOutcome.Failed, false, false)]
+    [InlineData(ChatSendOutcome.Failed, true, false)]
+    public void TheBoxIsClearedOnlyForASendThatWentAndWasNotEdited(ChatSendOutcome outcome, bool edited, bool clears) =>
+        Assert.Equal(clears, ChatPanel.ShouldClearComposerAfterSend(outcome, edited));
 }
