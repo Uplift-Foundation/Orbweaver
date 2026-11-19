@@ -124,6 +124,15 @@ public class RemoteFolderBrowserTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void ARowShowsWhatTheFarDeskFoundInTheFolder()
+    {
+        Assert.Equal("app", RemoteFolderBrowser.RowText(new PeerDirItem("app")));
+        Assert.Equal("app  ·  git, CLAUDE.md, persona",
+            RemoteFolderBrowser.RowText(new PeerDirItem("app", Git: true, Claude: true, Persona: true)));
+        Assert.Equal("proj (D:)  ·  git", RemoteFolderBrowser.RowText(new PeerDirItem("proj", "D:\\proj", "D:", Git: true)));
+    }
+
+    [AvaloniaFact]
     public async Task AWindowsPathIsJoinedWithABackslashAndARootKeepsItsFullPath()
     {
         var b = new RemoteFolderBrowser(Tree(), "pc");

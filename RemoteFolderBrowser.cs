@@ -106,6 +106,17 @@ namespace Orbweaver
             return listing.Path.TrimEnd('\\', '/') + sep + item.Name;
         }
 
+        // A folder's name, its drive where it has one, and what the far desk found in it.
+        internal static string RowText(PeerDirItem i)
+        {
+            var text = i.Drive is { Length: > 0 } d && i.Home is false ? i.Name + " (" + d + ")" : i.Name;
+            var marks = new List<string>();
+            if (i.Git) marks.Add("git");
+            if (i.Claude) marks.Add("CLAUDE.md");
+            if (i.Persona) marks.Add("persona");
+            return marks.Count == 0 ? text : text + "  ·  " + string.Join(", ", marks);
+        }
+
         internal Task OpenSelectedAsync() => _list.SelectedIndex is { } i and >= 0 ? OpenAsync(i) : Task.CompletedTask;
 
         internal async Task OpenAsync(int row)
@@ -146,7 +157,7 @@ namespace Orbweaver
 
             var rows = new List<string>();
             if (_hasUp) rows.Add(UpLabel);
-            rows.AddRange(listing.Items.Select(i => i.Drive is { Length: > 0 } d && i.Home is false ? i.Name + " (" + d + ")" : i.Name));
+            rows.AddRange(listing.Items.Select(RowText));
 
             _list.ItemsSource = rows;
             _where.Text = listing.Path.Length > 0 ? listing.Path : _machine;

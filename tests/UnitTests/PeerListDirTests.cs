@@ -237,49 +237,114 @@ public class PeerListDirTests
         public bool PersonaAt(string folder) { PersonaReads++; return inner.PersonaAt(folder); }
     }
 
-    [Fact]
-    public async Task ListingNeverReadsInsideTheChildrenItReturns()
+    // The reads made inside a folder, by the folder they were made in.
+    private sealed class ReadLog(FakeBrowseFileSystem inner) : IBrowseFileSystem
     {
-        // A home that holds folders the app may not be allowed to read: the markers
-        // would open each one, so the peer listing does not ask for them.
+        public readonly List<string> LookedIn = [];
+        public readonly List<string> PersonaAtFolders = [];
+        public string Home => inner.Home;
+        public bool IsWindows => inner.IsWindows;
+        public bool CaseInsensitive => inner.CaseInsensitive;
+        public IReadOnlyList<string> DeniedExact => inner.DeniedExact;
+        public IReadOnlyList<string> DeniedTrees => inner.DeniedTrees;
+        public BrowseEntry? Lookup(string parent, string name) { LookedIn.Add(parent); return inner.Lookup(parent, name); }
+        public bool DirectoryExists(string path) => inner.DirectoryExists(path);
+        public (IReadOnlyList<BrowseEntry> Entries, bool More)? Enumerate(string folder, int cap) => inner.Enumerate(folder, cap);
+        public bool HiddenAttribute(string folder, string name) => inner.HiddenAttribute(folder, name);
+        public bool PersonaAt(string folder) { PersonaAtFolders.Add(folder); return inner.PersonaAt(folder); }
+    }
+
+    private static (ReadLog Fs, PeerBrowseServer Server) HomeWithDocuments()
+    {
         var inner = new FakeBrowseFileSystem("/Users/dev", false, ["/", "/Users"], ["/System"]);
-        inner.Add("/").Add("/Users").Add("/Users/dev").Add("/Users/dev/Documents").Add("/Users/dev/Desktop");
-        inner.Add("/Users/dev/Documents/.git");
-        var fs = new CountingFs(inner);
+        inner.Add("/").Add("/Users").Add("/Users/dev").Add("/Users/dev/Documents").Add("/Users/dev/app")
+            .Add("/Users/dev/Documents/.git").Add("/Users/dev/app/.git")
+            .Add("/Users/dev/Library").Add("/Users/dev/Documents/notes")
+            .Add("/Users/dev/linked", BrowseKind.Link, target: "/Users/dev/Documents");
+        var fs = new ReadLog(inner);
         var server = new PeerBrowseServer(new PeerBrowseServer.Seams(
             () => true, fs, () => new BrowseSettings(["/Users/dev"], true), TimeSpan.FromSeconds(5)));
-
-        var top = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest(""));
-        var home = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev"));
-
-        Assert.Equal(["Desktop", "Documents"], home.Listing!.Items.Select(i => i.Name).ToArray());
-        Assert.Single(top.Listing!.Items);
-        Assert.Equal(0, fs.PersonaReads);
-        var listed = fs.Lookups;
-
-        // The same folder through the phone's rules does read them: the control.
-        BrowseRules.Resolve("/Users/dev", false, new BrowseSettings(["/Users/dev"], true), fs);
-        Assert.True(fs.PersonaReads > 0);
-        Assert.True(fs.Lookups > listed);
+        return (fs, server);
     }
 
     [Fact]
-    public void WithoutMarkersTheRulesListTheSameFoldersAndNoneOfTheMarkers()
+    public async Task AProtectedFolderListsWithNoBadgeAndIsNeverReadInsideWhileAPlainOneKeepsItsBadge()
     {
-        var fs = new FakeBrowseFileSystem("/h", false, [], []);
-        fs.Add("/").Add("/h").Add("/h/r").Add("/h/r/app").Add("/h/r/app/.git");
-        var settings = new BrowseSettings(["/h/r"], false);
+        var (fs, server) = HomeWithDocuments();
 
-        var with = BrowseRules.Resolve("/h/r", false, settings, fs).Listing!;
-        var without = BrowseRules.Resolve("/h/r", false, settings, fs, markers: false).Listing!;
-        var topWith = BrowseRules.Resolve("", false, settings, fs).Listing!;
-        var topWithout = BrowseRules.Resolve("", false, settings, fs, markers: false).Listing!;
+        var home = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev"));
 
-        Assert.True(with.Items[0].Git);
-        Assert.False(without.Items[0].Git);
-        Assert.Equal(with.Items.Select(i => i.Name), without.Items.Select(i => i.Name));
-        Assert.True(topWith.Items[0].Git is false);   // /h/r itself holds no .git
-        Assert.Equal(topWith.Items.Select(i => i.Path), topWithout.Items.Select(i => i.Path));
+        var items = home.Listing!.Items.ToDictionary(i => i.Name);
+        Assert.True(items["app"].Git);                       // the control: a plain child is read
+        Assert.False(items["Documents"].Git);
+        Assert.False(items["Library"].Git);
+        Assert.False(items["linked"].Git);                   // a link whose target is Documents
+        Assert.Contains("/Users/dev/app", fs.LookedIn);
+        Assert.DoesNotContain(fs.LookedIn, f => f.StartsWith("/Users/dev/Documents") || f.StartsWith("/Users/dev/Library"));
+        Assert.DoesNotContain(fs.PersonaAtFolders, f => f.StartsWith("/Users/dev/Documents") || f.StartsWith("/Users/dev/Library"));
+    }
+
+    [Fact]
+    public async Task OpeningAProtectedFolderStillListsItAndItsChildrenAreNotReadInsideEither()
+    {
+        var (fs, server) = HomeWithDocuments();
+
+        var docs = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Documents"));
+
+        Assert.True(docs.Ok);
+        Assert.Equal(["notes"], docs.Listing!.Items.Select(i => i.Name).ToArray());
+        Assert.DoesNotContain(fs.LookedIn, f => f.StartsWith("/Users/dev/Documents/notes"));
+    }
+
+    [Theory]
+    [InlineData("/Users/dev/Desktop", true)]
+    [InlineData("/Users/dev/Documents", true)]
+    [InlineData("/Users/dev/Downloads", true)]
+    [InlineData("/Users/dev/Library", true)]
+    [InlineData("/Users/dev/Library/Mail", true)]
+    [InlineData("/Users/dev/Movies", true)]
+    [InlineData("/Users/dev/Music", true)]
+    [InlineData("/Users/dev/Pictures", true)]
+    [InlineData("/Users/dev/documents", true)]            // the filesystem's own case rule
+    [InlineData("/Volumes", true)]
+    [InlineData("/Volumes/Backup/app", true)]
+    [InlineData("/Users/dev/app", false)]
+    [InlineData("/Users/dev/Documents2", false)]          // a prefix is not the folder
+    [InlineData("/Users/other/Documents", false)]         // another user's home is not this one's
+    [InlineData("/VolumesX", false)]
+    public void TheProtectedFoldersAreTheMacOsPrivacyOnesUnderHomeAndTheVolumes(string path, bool expected) =>
+        Assert.Equal(expected, ProtectedFolders.IsProtected(
+            new FakeBrowseFileSystem("/Users/dev", false, [], []), path, []));
+
+    [Fact]
+    public void AVolumeTheUserChoseAsARootIsNotHeldBackButOtherVolumesAre()
+    {
+        var fs = new FakeBrowseFileSystem("/Users/dev", false, [], []);
+        string[] roots = ["/Volumes/Ext/projects"];
+
+        Assert.False(ProtectedFolders.IsProtected(fs, "/Volumes/Ext/projects/alpha", roots));
+        Assert.True(ProtectedFolders.IsProtected(fs, "/Volumes/Other/x", roots));
+        Assert.True(ProtectedFolders.IsProtected(fs, "/Users/dev/Documents/x", ["/Users/dev/Documents/x"]));   // home names are not exempted
+    }
+
+    [Fact]
+    public void WindowsHasNoSuchPromptSoAFolderCalledDocumentsIsReadAsUsual()
+    {
+        var fs = new FakeBrowseFileSystem("C:\\Users\\dev", true, [], []);
+        Assert.False(ProtectedFolders.IsProtected(fs, "C:\\Users\\dev\\Documents", []));
+        Assert.False(ProtectedFolders.IsProtected(fs, "/Volumes/x", []));
+    }
+
+    [Fact]
+    public async Task APeerListingCarriesTheBadgesAcrossTheWire()
+    {
+        var (_, server) = HomeWithDocuments();
+
+        var home = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev"));
+        var back = PeerLaunchWire.ParseDir(PeerLaunchWire.EncodeDir(home))!;
+
+        Assert.True(back.Listing!.Items.Single(i => i.Name == "app").Git);
+        Assert.False(back.Listing.Items.Single(i => i.Name == "Documents").Git);
     }
 
     [Fact]

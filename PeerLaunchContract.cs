@@ -46,7 +46,10 @@ namespace Orbweaver
         [property: JsonPropertyName("name")] string Name,
         [property: JsonPropertyName("path")] string? Path = null,
         [property: JsonPropertyName("drive")] string? Drive = null,
-        [property: JsonPropertyName("home")] bool Home = false);
+        [property: JsonPropertyName("home")] bool Home = false,
+        [property: JsonPropertyName("git")] bool Git = false,
+        [property: JsonPropertyName("claude")] bool Claude = false,
+        [property: JsonPropertyName("persona")] bool Persona = false);
 
     // A folder listing as the far desk's own browse rules produced it. Path is
     // empty at the top level; Parent is empty at a root.

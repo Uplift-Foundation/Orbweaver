@@ -35,7 +35,7 @@ namespace Orbweaver
             BrowseOutcome outcome;
             try
             {
-                outcome = await Task.Run(() => BrowseRules.Resolve(path, false, _seams.Settings(), _seams.Fs, markers: false))
+                outcome = await Task.Run(() => BrowseRules.Resolve(path, false, _seams.Settings(), _seams.Fs))
                     .WaitAsync(_seams.ReadTimeout).ConfigureAwait(false);
             }
             catch (Exception e)
@@ -49,7 +49,7 @@ namespace Orbweaver
 
             var l = outcome.Listing!;
             var items = l.Items.Take(PeerLaunchWire.MaxDirItems)
-                .Select(i => new PeerDirItem(i.Name, i.Path, i.Drive, i.Home)).ToList();
+                .Select(i => new PeerDirItem(i.Name, i.Path, i.Drive, i.Home, i.Git, i.Claude, i.Persona)).ToList();
 
             return new PeerDirResult(true, "ok", new PeerDirListing(l.Path, l.Parent, l.Truncated, items));
         }
