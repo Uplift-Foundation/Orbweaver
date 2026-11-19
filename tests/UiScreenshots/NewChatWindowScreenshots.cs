@@ -481,7 +481,8 @@ public class NewChatWindowScreenshots : IDisposable
 
         // CB-357 (reopened): a far machine's folders, one level under its root.
         public Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct) =>
-            Task.FromResult(path.Length == 0
+            Task.FromResult(path == "/Users/forbidden" ? PeerDirResult.Fail("forbidden_path")
+                : path.Length == 0
                 ? new PeerDirResult(true, "ok", new PeerDirListing("", "", false,
                     [new PeerDirItem("warren", "/Users/warren", null, true), new PeerDirItem("Source", "/Users/warren/Source")]))
                 : new PeerDirResult(true, "ok", new PeerDirListing(path, "/Users/warren", false,
@@ -515,6 +516,20 @@ public class NewChatWindowScreenshots : IDisposable
 
         Assert.True(browser.ChooseButton.IsEnabled);
         Assert.Equal("/Users/warren/Source", browser.Chosen);
+        browser.Close();
+    }
+
+    // The same browser after the far desk refused a folder.
+    [AvaloniaFact]
+    public async Task RemoteFolderBrowserRefused()
+    {
+        var browser = new RemoteFolderBrowser(new FakePeers(), "mini");
+        browser.Show();
+        await browser.NavigateAsync("");
+        await browser.NavigateAsync("/Users/forbidden");
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        ScreenshotHelper.Capture(browser, "new-chat-remote-folder-browser-refused.png");
         browser.Close();
     }
 

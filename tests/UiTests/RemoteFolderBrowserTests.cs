@@ -304,6 +304,40 @@ public class RemoteFolderBrowserTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task WalkingAndRefusingNeverResizeTheDialogAndAnErrorKeepsTheLastChoice()
+    {
+        var peers = Tree();
+        peers.Dirs["/Users/dev/Source"] = PeerDirResult.Fail("peer_launch_off");
+        var b = new RemoteFolderBrowser(peers, "mini");
+        var (w, h) = (b.Width, b.Height);
+
+        await b.NavigateAsync("");
+        await b.OpenAsync(0);
+        await b.OpenAsync(1);                         // refused
+
+        Assert.Equal((w, h), (b.Width, b.Height));
+        Assert.False(b.CanResize);
+        Assert.Equal(PeerLaunchCopy.ExplainBrowse("peer_launch_off", "mini"), b.StatusText);
+        Assert.Equal("/Users/dev", b.Chosen);         // still the folder we were in
+    }
+
+    [AvaloniaFact]
+    public void ARemoteFolderIsNotCarriedToAnotherMachineAndStartUsesIt()
+    {
+        var w = MakeWindow(Tree());
+        w.MachineCombo.SelectedIndex = 1;
+        Flush();
+        NewChatWindow.ChooseRemoteFolderForTests = _ => Task.FromResult<string?>("/Users/dev/Source/app");
+        ClickBrowse(w);
+        Assert.Equal("/Users/dev/Source/app", w.FolderCombo.SelectedItem);
+        Assert.True(w.StartButton.IsEnabled);
+
+        w.MachineCombo.SelectedIndex = 0;             // back to this machine
+        Flush();
+        Assert.DoesNotContain("/Users/dev/Source/app", (IEnumerable<string>)w.FolderCombo.ItemsSource!);
+    }
+
+    [AvaloniaFact]
     public void BrowsingARemoteMachineAddsTheFolderToTheComboAndSelectsIt()
     {
         var w = MakeWindow(Tree());

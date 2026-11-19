@@ -158,6 +158,51 @@ public class PeerListDirTests
         Assert.Equal(PeerDirResult.Fail(RelayReplies.ForbiddenPath), result);
     }
 
+    [Theory]
+    [InlineData("/Users/dev/Other")]            // exists, outside the roots
+    [InlineData("/Users/dev/Nowhere")]          // does not exist, outside the roots
+    [InlineData("/Users/dev/Source/../Other")]  // traversal out of a root
+    [InlineData("~/Other")]                     // home form, outside the roots
+    public async Task ForbiddenReadsTheSameWhetherOrNotThePathExists(string path)
+    {
+        var (server, _, _) = Server(true);
+
+        var result = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest(path));
+
+        // One code and one shape: no way to tell a real folder from an absent one.
+        Assert.Equal(PeerDirResult.Fail(RelayReplies.ForbiddenPath), result);
+    }
+
+    [Fact]
+    public async Task ALinkOutOfARootIsForbiddenAndALinkWithinItIsListed()
+    {
+        var (server, fs, _) = Server(true);
+        fs.Add("/Users/dev/Source/escape", BrowseKind.Link, target: "/Users/dev/Other");
+        fs.Add("/Users/dev/Source/inside", BrowseKind.Link, target: "/Users/dev/Source/app");
+
+        Assert.Equal(PeerDirResult.Fail(RelayReplies.ForbiddenPath),
+            await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Source/escape")));
+
+        var listing = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Source"));
+        Assert.Contains("inside", listing.Listing!.Items.Select(i => i.Name));
+        Assert.DoesNotContain("escape", listing.Listing.Items.Select(i => i.Name));
+    }
+
+    [Fact]
+    public async Task TheServerFollowsTheSettingsItIsGivenOnEveryRequest()
+    {
+        var (_, fs, _) = Server(true);
+        var settings = new BrowseSettings(["/Users/dev/Source"], false);
+        var server = new PeerBrowseServer(new PeerBrowseServer.Seams(() => true, fs, () => settings, TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(RelayReplies.ForbiddenPath,
+            (await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Other"))).Code);
+
+        settings = new BrowseSettings(["/Users/dev/Source", "/Users/dev/Other"], false);
+
+        Assert.True((await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Other"))).Ok);
+    }
+
     [Fact]
     public async Task AMissingFolderInsideTheRootsIsUnknownPath()
     {
