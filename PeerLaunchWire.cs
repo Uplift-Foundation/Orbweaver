@@ -164,7 +164,8 @@ namespace Orbweaver
             try { parsed = body.Deserialize<ListDirRequestBody>(PeerProtocol.Json); }
             catch (JsonException) { return null; }
 
-            return parsed?.Path is { } p && BrowseRules.PathShapeOk(p) ? p : null;
+            // Deserializing an object never yields null, so only the path's own absence is a case.
+            return parsed!.Path is { } p && BrowseRules.PathShapeOk(p) ? p : null;
         }
 
         internal static JsonElement EncodeDir(PeerDirResult result) =>
@@ -181,7 +182,7 @@ namespace Orbweaver
             try { parsed = body.Deserialize<DirBody>(PeerProtocol.Json); }
             catch (JsonException) { return null; }
 
-            if (parsed is null || !Sane(parsed.Code, 64, required: true)) return null;
+            if (!Sane(parsed!.Code, 64, required: true)) return null;
             if (!parsed.Ok) return PeerDirResult.Fail(parsed.Code!);
 
             var items = parsed.Items ?? [];

@@ -80,6 +80,14 @@ public class PeerListDirTests
         Assert.Null(PeerLaunchWire.ParseDir(J(json)));
 
     [Fact]
+    public void AnOkResultWithNoListingEncodesAsARefusalWithItsCode() =>
+        Assert.Equal(PeerDirResult.Fail("ok"), PeerLaunchWire.ParseDir(PeerLaunchWire.EncodeDir(new PeerDirResult(true, "ok", null))));
+
+    [Fact]
+    public void ARefusalWithAnUnsaneCodeIsNull() =>
+        Assert.Null(PeerLaunchWire.ParseDir(J("{\"ok\":false,\"code\":\"a\\u0001\"}")));
+
+    [Fact]
     public void TooManyItemsIsNull() =>
         Assert.Null(PeerLaunchWire.ParseDir(PeerLaunchWire.EncodeDir(Listing(PeerLaunchWire.MaxDirItems + 1))));
 
@@ -210,6 +218,87 @@ public class PeerListDirTests
 
         Assert.Equal(RelayReplies.UnknownPath,
             (await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Source/nope"))).Code);
+    }
+
+    // Wraps the model filesystem and counts the reads made inside listed children, which
+    // is what the per-folder markers cost.
+    private sealed class CountingFs(FakeBrowseFileSystem inner) : IBrowseFileSystem
+    {
+        public int Lookups, PersonaReads;
+        public string Home => inner.Home;
+        public bool IsWindows => inner.IsWindows;
+        public bool CaseInsensitive => inner.CaseInsensitive;
+        public IReadOnlyList<string> DeniedExact => inner.DeniedExact;
+        public IReadOnlyList<string> DeniedTrees => inner.DeniedTrees;
+        public BrowseEntry? Lookup(string parent, string name) { Lookups++; return inner.Lookup(parent, name); }
+        public bool DirectoryExists(string path) => inner.DirectoryExists(path);
+        public (IReadOnlyList<BrowseEntry> Entries, bool More)? Enumerate(string folder, int cap) => inner.Enumerate(folder, cap);
+        public bool HiddenAttribute(string folder, string name) => inner.HiddenAttribute(folder, name);
+        public bool PersonaAt(string folder) { PersonaReads++; return inner.PersonaAt(folder); }
+    }
+
+    [Fact]
+    public async Task ListingNeverReadsInsideTheChildrenItReturns()
+    {
+        // A home that holds folders the app may not be allowed to read: the markers
+        // would open each one, so the peer listing does not ask for them.
+        var inner = new FakeBrowseFileSystem("/Users/dev", false, ["/", "/Users"], ["/System"]);
+        inner.Add("/").Add("/Users").Add("/Users/dev").Add("/Users/dev/Documents").Add("/Users/dev/Desktop");
+        inner.Add("/Users/dev/Documents/.git");
+        var fs = new CountingFs(inner);
+        var server = new PeerBrowseServer(new PeerBrowseServer.Seams(
+            () => true, fs, () => new BrowseSettings(["/Users/dev"], true), TimeSpan.FromSeconds(5)));
+
+        var top = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest(""));
+        var home = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev"));
+
+        Assert.Equal(["Desktop", "Documents"], home.Listing!.Items.Select(i => i.Name).ToArray());
+        Assert.Single(top.Listing!.Items);
+        Assert.Equal(0, fs.PersonaReads);
+        var listed = fs.Lookups;
+
+        // The same folder through the phone's rules does read them: the control.
+        BrowseRules.Resolve("/Users/dev", false, new BrowseSettings(["/Users/dev"], true), fs);
+        Assert.True(fs.PersonaReads > 0);
+        Assert.True(fs.Lookups > listed);
+    }
+
+    [Fact]
+    public void WithoutMarkersTheRulesListTheSameFoldersAndNoneOfTheMarkers()
+    {
+        var fs = new FakeBrowseFileSystem("/h", false, [], []);
+        fs.Add("/").Add("/h").Add("/h/r").Add("/h/r/app").Add("/h/r/app/.git");
+        var settings = new BrowseSettings(["/h/r"], false);
+
+        var with = BrowseRules.Resolve("/h/r", false, settings, fs).Listing!;
+        var without = BrowseRules.Resolve("/h/r", false, settings, fs, markers: false).Listing!;
+        var topWith = BrowseRules.Resolve("", false, settings, fs).Listing!;
+        var topWithout = BrowseRules.Resolve("", false, settings, fs, markers: false).Listing!;
+
+        Assert.True(with.Items[0].Git);
+        Assert.False(without.Items[0].Git);
+        Assert.Equal(with.Items.Select(i => i.Name), without.Items.Select(i => i.Name));
+        Assert.True(topWith.Items[0].Git is false);   // /h/r itself holds no .git
+        Assert.Equal(topWith.Items.Select(i => i.Path), topWithout.Items.Select(i => i.Path));
+    }
+
+    [Fact]
+    public async Task AnUnreadableAnswerLogsWhetherItWasATimeoutOrAThrowAndNeverThePath()
+    {
+        var (_, fs, _) = Server(true);
+        var log = new List<string>();
+        var settings = new BrowseSettings(["/Users/dev/Source"], false);
+
+        fs.OnRead = _ => new IOException("gone");
+        var throws = new PeerBrowseServer(new PeerBrowseServer.Seams(
+            () => true, fs, () => settings, TimeSpan.FromSeconds(5), log.Add));
+        await throws.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Source"));
+
+        var slow = new PeerBrowseServer(new PeerBrowseServer.Seams(
+            () => true, fs, () => { Thread.Sleep(300); return settings; }, TimeSpan.FromMilliseconds(20), log.Add));
+        await slow.HandleAsync(PeerLaunchWire.EncodeListDirRequest(""));
+
+        Assert.Equal(["peer-list-dir-unreadable IOException", "peer-list-dir-unreadable TimeoutException"], log);
     }
 
     [Fact]

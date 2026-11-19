@@ -413,14 +413,18 @@ namespace Orbweaver
 
         // ---- the request ------------------------------------------------------------------
 
+        // `markers` false skips the three per-folder markers (git, CLAUDE.md, persona), which cost one read
+        // inside every listed child. The phone draws them; the peer folder browser (CB-357) does not, and
+        // on a desk whose home holds folders the app is not allowed to read, the reads are the slow part.
         // Steps 3 to 10 of resolve.steps; the rate limit and the request's shape (steps 1 and 2) are
         // answered before this is reached.
-        internal static BrowseOutcome Resolve(string path, bool hidden, BrowseSettings settings, IBrowseFileSystem fs)
+        internal static BrowseOutcome Resolve(
+            string path, bool hidden, BrowseSettings settings, IBrowseFileSystem fs, bool markers = true)
         {
             var roots = Roots(settings, fs);
 
             // 3. top.
-            if (path.Length == 0) return new BrowseOutcome(null, Top(roots, fs), "");
+            if (path.Length == 0) return new BrowseOutcome(null, Top(roots, fs, markers), "");
 
             // 4. home, 5. absolute.
             var expanded = ExpandHome(path, fs);
@@ -459,7 +463,8 @@ namespace Orbweaver
             candidates.Sort((a, b) => Compare(a.Name, b.Name));
             var truncated = read.More || candidates.Count > BrowseLimits.MaxEntries;
             var items = candidates.Take(BrowseLimits.MaxEntries)
-                .Select(c => Markers(fs, c.Canonical, new BrowseItem(c.Name, Hidden: c.Hidden))).ToList();
+                .Select(c => markers ? Markers(fs, c.Canonical, new BrowseItem(c.Name, Hidden: c.Hidden))
+                    : new BrowseItem(c.Name, Hidden: c.Hidden)).ToList();
             var parent = Equal(canonical, outer.Path, fs) ? "" : ParentOf(canonical, fs);
             return new BrowseOutcome(null, new BrowseListing(canonical, parent, outer.Path, items, truncated), canonical);
         }
@@ -489,12 +494,13 @@ namespace Orbweaver
 
         // listing.top: the roots that exist, the home folder first, then the project roots sorted by
         // path. A Windows desk's every entry carries its drive, which is how a phone groups them.
-        private static BrowseListing Top(List<Root> roots, IBrowseFileSystem fs)
+        private static BrowseListing Top(List<Root> roots, IBrowseFileSystem fs, bool markers)
         {
             var ordered = roots.Where(r => r.Home)
                 .Concat(roots.Where(r => !r.Home).OrderBy(r => r.Path, Comparer<string>.Create(Compare))).ToList();
-            var items = ordered.Select(r => Markers(fs, r.Path, new BrowseItem(
-                LastComponent(r.Path, fs), r.Path, fs.IsWindows ? r.Path[..2] : null, r.Home))).ToList();
+            var items = ordered.Select(r => new BrowseItem(
+                LastComponent(r.Path, fs), r.Path, fs.IsWindows ? r.Path[..2] : null, r.Home))
+                .Select(i => markers ? Markers(fs, i.Path!, i) : i).ToList();
             return new BrowseListing("", "", "", items, false);
         }
 

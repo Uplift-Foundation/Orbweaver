@@ -18,7 +18,8 @@ namespace Orbweaver
             Func<bool> Allowed,
             IBrowseFileSystem Fs,
             Func<BrowseSettings> Settings,
-            TimeSpan ReadTimeout);
+            TimeSpan ReadTimeout,
+            Action<string>? Log = null);
 
         private readonly Seams _seams;
 
@@ -34,11 +35,13 @@ namespace Orbweaver
             BrowseOutcome outcome;
             try
             {
-                outcome = await Task.Run(() => BrowseRules.Resolve(path, false, _seams.Settings(), _seams.Fs))
+                outcome = await Task.Run(() => BrowseRules.Resolve(path, false, _seams.Settings(), _seams.Fs, markers: false))
                     .WaitAsync(_seams.ReadTimeout).ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception e)
             {
+                // Which of a timeout and a throw it was, never the path.
+                _seams.Log?.Invoke("peer-list-dir-unreadable " + e.GetType().Name);
                 return PeerDirResult.Fail(RelayReplies.Unreadable);
             }
 
@@ -59,7 +62,8 @@ namespace Orbweaver
         {
             var fs = new BrowseFileSystem();
             return new PeerBrowseServer(new Seams(
-                allowed, fs, () => BrowseSettingsSource.Current(fs), TimeSpan.FromSeconds(8)));
+                allowed, fs, () => BrowseSettingsSource.Current(fs), TimeSpan.FromSeconds(8),
+                line => MirrorLog.Say("peer", line)));
         }
     }
 }

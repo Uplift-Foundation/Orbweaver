@@ -130,6 +130,20 @@ public class PeerLaunchLoopbackTests : IDisposable
     }
 
     [Fact]
+    public async Task AServerThatThrowsBeforeItsGateLeavesTheAskerWithNoAnswerAndTheLinkUp()
+    {
+        var fs = new Orbweaver.Tests.FakeBrowseFileSystem("/h", false, [], []);
+        var broken = new PeerBrowseServer(new PeerBrowseServer.Seams(
+            () => throw new InvalidOperationException("settings unreadable"), fs,
+            () => new BrowseSettings([], false), TimeSpan.FromSeconds(1)));
+        var client = await PairBrowse(broken);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+        Assert.Equal(PeerLaunchCodes.NoAnswer, (await client.ListDirAsync("receiver", "", cts.Token)).Code);
+        Assert.Equal([new PeerMachine("receiver", true)], client.Machines());
+    }
+
+    [Fact]
     public async Task ADeskWithNoBrowseServerIsNoAnswerAfterTheTimeout()
     {
         var (_, client) = await Pair(null, null);

@@ -151,6 +151,7 @@ public class RemoteFolderBrowserTests : IDisposable
         await b.NavigateAsync("");
         await b.OpenSelectedAsync();                  // listed, still nothing selected
         await b.OpenAsync(9);                         // past the end
+        await b.OpenAsync(-1);                        // before the start (no Up row at the top)
         Assert.Equal([""], peers.Asked);
 
         b.List.SelectedIndex = 0;
