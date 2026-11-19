@@ -711,7 +711,11 @@ namespace Orbweaver
         // get one. Held apart from _accountOrbs because it runs on its own,
         // much longer floor: GrokUsageRefresher.MinimumInterval, not the five
         // minutes the account-orb read itself uses.
-        private readonly GrokUsageRefreshScheduler _grokRefresh = new();
+        //
+        // Not readonly since CB-391: a Mac that launched locked hands over the
+        // scheduler its pre-unlock poll was using (AdoptUsage), so the floor
+        // carries rather than restarting at the unlock.
+        private GrokUsageRefreshScheduler _grokRefresh = new();
         private readonly Dictionary<string, SessionStatus> _statuses = new();
         private readonly List<string> _order = new(); // stable stacking order
 
@@ -737,6 +741,21 @@ namespace Orbweaver
         // For tests that need to put account orbs on screen without a real
         // usage poll behind them.
         internal AccountOrbs AccountOrbsForTests => _accountOrbs;
+
+        internal GrokUsageRefreshScheduler GrokRefreshForTests => _grokRefresh;
+
+        // Where the pre-unlock poll points its pump at the unlock (CB-391).
+        internal Action<IReadOnlyList<AccountUsage>> UsageDelivery => _accountOrbs.Deliver;
+
+        // CB-391: what HeadlessUsage was polling with before the unlock, if it
+        // was polling at all. The orbs take its pump and readings; this takes
+        // the Grok refresh schedule.
+        internal void AdoptUsage(UsageHandoff? handoff)
+        {
+            if (handoff is null) return;
+            _accountOrbs.Adopt(handoff.Pump, handoff.Readings);
+            _grokRefresh = handoff.Grok;
+        }
 
         private DeferredWatcher? _watcher;
         private DeferredWatcher? _legacyWatcher;
