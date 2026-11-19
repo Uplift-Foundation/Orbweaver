@@ -57,7 +57,8 @@ namespace Orbweaver
                     () => OrbweaverSettings.PeerLaunchInboundEnabled,
                     () => RemoteControlSessions.LocalSessions().Select(s => s.Status).ToList()),
                 PeerLaunchServer.Shared.HandleAsync,
-                client);
+                client,
+                PeerBrowseServer.ForThisDesk(() => OrbweaverSettings.PeerLaunchInboundEnabled));
 
         // What New Chat asks to start a session on another desktop: null until
         // the link is running.

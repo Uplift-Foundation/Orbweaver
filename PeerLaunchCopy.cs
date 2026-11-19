@@ -37,6 +37,18 @@ namespace Orbweaver
         internal static string Launched(string cli, string machine) =>
             CliName(cli) + " is starting on " + machine + ". Its orb appears when " + machine + " next reports its sessions.";
 
+        // CB-357: why a far machine's folder listing was refused, in the same
+        // voice as Explain. The browse codes are the far desk's own (the phone's
+        // list_dir codes); the peer ones fall through to Explain.
+        internal static string ExplainBrowse(string code, string machine) => code switch
+        {
+            RelayReplies.ForbiddenPath => machine + " doesn't share that folder.",
+            RelayReplies.UnknownPath => "That folder doesn't exist on " + machine + ".",
+            RelayReplies.Unreadable => machine + " could not read that folder.",
+            RelayReplies.RateLimited => machine + " is busy. Try again in a moment.",
+            _ => Explain(code, null, "claude", machine),
+        };
+
         // One sentence per refusal code. The phone's own explanations (its
         // ClientFrames.explain), with "the desk" replaced by the machine's name,
         // so the same failure reads the same on whichever device asked. `why` is

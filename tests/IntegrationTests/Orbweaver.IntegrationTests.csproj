@@ -31,6 +31,8 @@
          can be driven through OpenClawGateway here without a second copy of
          it to keep in step. -->
     <Compile Include="..\UnitTests\FakeGatewaySocket.cs" Link="FakeGatewaySocket.cs" />
+    <!-- CB-357: the folder-browse model filesystem, for the list-dir round trip. -->
+    <Compile Include="..\UnitTests\FakeBrowseFileSystem.cs" Link="FakeBrowseFileSystem.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
     <Compile Include="..\TranscriptTests\SidePanelFixtures.cs" Link="SidePanelFixtures.cs" />
     <Compile Include="..\UnitTests\TinyGif.cs" Link="TinyGif.cs" />

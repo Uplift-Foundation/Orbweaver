@@ -53,6 +53,15 @@ public class NewChatWindowMachineTests : IDisposable
             return Task.FromResult(Answers.GetValueOrDefault(machine));
         }
 
+        public Dictionary<(string machine, string path), PeerDirResult> Dirs = new();
+        public List<(string machine, string path)> Listed = new();
+
+        public Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct)
+        {
+            Listed.Add((machine, path));
+            return Task.FromResult(Dirs.TryGetValue((machine, path), out var r) ? r : PeerDirResult.Fail(PeerLaunchCodes.NoAnswer));
+        }
+
         public Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct)
         {
             Launches.Add((machine, spec));
@@ -204,7 +213,7 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.Equal(NewChatCli.ClaudeCode, w.SelectedCli);
         Assert.False(w.OpenClawSelected);
         Assert.Equal(["/srv/app", "/srv/lib"], (w.FolderCombo.ItemsSource as IEnumerable<string>)!.ToArray());
-        Assert.False(w.BrowseButton.IsEnabled);
+        Assert.True(w.BrowseButton.IsEnabled);
         Assert.True(w.AccountSection.IsVisible);
         Assert.Equal(["Default", "Work"], (w.AccountCombo.ItemsSource as IEnumerable<NewChatAccounts.Choice>)!.Select(c => c.Label).ToArray());
         Assert.Equal("Codex isn't installed on mini. Grok isn't installed on mini. " + PeerLaunchCopy.OpenClawLocalOnly, w.MachineNote.Text);

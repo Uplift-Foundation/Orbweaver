@@ -1,7 +1,9 @@
 using System.Linq;
 using System.Reflection;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Xunit;
 
@@ -476,6 +478,14 @@ public class NewChatWindowScreenshots : IDisposable
 
         public Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct) =>
             Task.FromResult(Result);
+
+        // CB-357 (reopened): a far machine's folders, one level under its root.
+        public Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct) =>
+            Task.FromResult(path.Length == 0
+                ? new PeerDirResult(true, "ok", new PeerDirListing("", "", false,
+                    [new PeerDirItem("warren", "/Users/warren", null, true), new PeerDirItem("Source", "/Users/warren/Source")]))
+                : new PeerDirResult(true, "ok", new PeerDirListing(path, "/Users/warren", false,
+                    [new PeerDirItem("ledger"), new PeerDirItem("ledger-web"), new PeerDirItem("orbweaver"), new PeerDirItem("scratch")])));
     }
 
     private static NewChatWindow PeerWindow(FakePeers peers)
@@ -489,6 +499,23 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.PeerLauncherForTests = peers;
         NewChatWindow.PeerLinkOnForTests = true;
         return NewWindow();
+    }
+
+    // CB-357 (reopened): the remote folder browser, one level into the far
+    // machine's Source folder, with the Choose button live.
+    [AvaloniaFact]
+    public async Task RemoteFolderBrowserInsideAFolder()
+    {
+        var browser = new RemoteFolderBrowser(new FakePeers(), "mini");
+        browser.Show();
+        await browser.NavigateAsync("/Users/warren/Source");
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        ScreenshotHelper.Capture(browser, "new-chat-remote-folder-browser.png");
+
+        Assert.True(browser.ChooseButton.IsEnabled);
+        Assert.Equal("/Users/warren/Source", browser.Chosen);
+        browser.Close();
     }
 
     // A remote machine selected: its recents, its accounts, its CLIs (Grok

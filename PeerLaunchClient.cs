@@ -18,6 +18,9 @@ namespace Orbweaver
     internal sealed class PeerLaunchClient : IPeerLauncher
     {
         internal static readonly TimeSpan InfoTimeout = TimeSpan.FromSeconds(5);
+        // The far desk gives up reading a folder after 8 s and says so; this is
+        // a little longer so its answer wins over our own clock.
+        internal static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(10);
         // The receiver waits up to 30 s for the new session to check in.
         internal static readonly TimeSpan LaunchTimeout = TimeSpan.FromSeconds(45);
 
@@ -39,6 +42,7 @@ namespace Orbweaver
         {
             internal TimeSpan InfoWait { get; init; } = InfoTimeout;
             internal TimeSpan LaunchWait { get; init; } = LaunchTimeout;
+            internal TimeSpan ListWait { get; init; } = ListTimeout;
             internal Func<string> NewNonce { get; init; } = RandomNonce;
         }
 
@@ -104,7 +108,25 @@ namespace Orbweaver
             return parsed ?? new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, "unreadable reply");
         }
 
-        // Fed by PeerMirrorHost for `launch-info` and `launch-result`.
+        public async Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct)
+        {
+            var reply = await AskAsync(
+                machine, PeerProtocol.ListDirGet, PeerLaunchWire.EncodeListDirRequest(path),
+                PeerProtocol.ListDir, _seams.ListWait, ct).ConfigureAwait(false);
+
+            if (reply is null)
+            {
+                bool lost;
+                lock (_gate) lost = _lost.Contains(machine);
+                return PeerDirResult.Fail(lost ? PeerLaunchCodes.LinkLost : PeerLaunchCodes.NoAnswer);
+            }
+
+            return reply.Body is { } b && PeerLaunchWire.ParseDir(b) is { } parsed
+                ? parsed
+                : PeerDirResult.Fail(PeerLaunchCodes.NoAnswer);
+        }
+
+        // Fed by PeerMirrorHost for `launch-info`, `launch-result` and `list-dir`.
         internal void OnReply(string machine, PeerProtocol.PeerMessage message)
         {
             Pending? pending;

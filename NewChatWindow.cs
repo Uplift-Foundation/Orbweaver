@@ -129,6 +129,10 @@ namespace Orbweaver
         // of the real OS folder picker.
         internal static Func<Task<string?>>? ChooseFolderForTests;
 
+        // CB-357 (reopened): the same seam for a remote machine's Browse…,
+        // handed the machine's name. Without it the real remote browser opens.
+        internal static Func<string, Task<string?>>? ChooseRemoteFolderForTests;
+
         // The OpenClaw slot's four seams, one per real call it makes —
         // availability, the agent list, starting the conversation, and
         // finding the orb the scan eventually creates for it. Same shape as
@@ -1326,8 +1330,18 @@ namespace Orbweaver
 
         private async Task BrowseForFolder()
         {
-            var seam = ChooseFolderForTests;
-            var picked = seam is not null ? await seam() : await PickFolderAsync();
+            string? picked;
+
+            if (_machine?.Name is { } machine)
+            {
+                var remote = ChooseRemoteFolderForTests;
+                picked = remote is not null ? await remote(machine) : await PickRemoteFolderAsync(machine);
+            }
+            else
+            {
+                var seam = ChooseFolderForTests;
+                picked = seam is not null ? await seam() : await PickFolderAsync();
+            }
 
             if (picked is not { Length: > 0 }) return;
 
@@ -1335,6 +1349,18 @@ namespace Orbweaver
             if (!items.Contains(picked)) items.Insert(0, picked);
             _folderCombo.ItemsSource = items;
             _folderCombo.SelectedItem = picked;
+        }
+
+        // Opens the far machine's folder browser. Excluded for the reason
+        // PickFolderAsync is: a modal ShowDialog cannot run in the headless
+        // suite. The browser itself is driven directly (RemoteFolderBrowserTests)
+        // and the combo through ChooseRemoteFolderForTests.
+        [ExcludeFromCodeCoverage]
+        private async Task<string?> PickRemoteFolderAsync(string machine)
+        {
+            if (PeerLauncher is not { } peers) return null;
+
+            return await new RemoteFolderBrowser(peers, machine).ShowDialog<string?>(this);
         }
 
         // Excluded from coverage: opens the OS's own folder picker, the same
@@ -1566,7 +1592,10 @@ namespace Orbweaver
             var folders = scope.Folders().ToList();
             _folderCombo.ItemsSource = folders;
             _folderCombo.SelectedIndex = folders.Count > 0 ? 0 : -1;
-            _browseButton.IsEnabled = false;
+            // A ready remote machine can be browsed (its own rules decide what
+            // it shows); while it is loading, silent or refusing there is no one
+            // to ask.
+            _browseButton.IsEnabled = scope.State == NewChatMachines.InfoState.Ready;
 
             BuildAccountCombo();
             UpdateTargetSectionVisibility();
