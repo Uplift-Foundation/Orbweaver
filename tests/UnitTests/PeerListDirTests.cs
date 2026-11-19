@@ -359,9 +359,13 @@ public class PeerListDirTests
             () => true, fs, () => settings, TimeSpan.FromSeconds(5), log.Add));
         await throws.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Source"));
 
+        // Held until released, not slept: a loaded runner can delay the timeout's own timer past any
+        // sleep, and the read must not be able to finish before the bound fires.
+        using var gate = new ManualResetEventSlim();
         var slow = new PeerBrowseServer(new PeerBrowseServer.Seams(
-            () => true, fs, () => { Thread.Sleep(300); return settings; }, TimeSpan.FromMilliseconds(20), log.Add));
+            () => true, fs, () => { gate.Wait(); return settings; }, TimeSpan.FromMilliseconds(20), log.Add));
         await slow.HandleAsync(PeerLaunchWire.EncodeListDirRequest(""));
+        gate.Set();
 
         Assert.Equal(["peer-list-dir-unreadable IOException", "peer-list-dir-unreadable TimeoutException"], log);
     }
@@ -375,11 +379,13 @@ public class PeerListDirTests
         Assert.Equal(PeerDirResult.Fail(RelayReplies.Unreadable),
             await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Source")));
 
+        using var gate = new ManualResetEventSlim();
         var slow = new PeerBrowseServer(new PeerBrowseServer.Seams(
-            () => true, fs, () => { Thread.Sleep(500); return new BrowseSettings(["/Users/dev/Source"], false); },
+            () => true, fs, () => { gate.Wait(); return new BrowseSettings(["/Users/dev/Source"], false); },
             TimeSpan.FromMilliseconds(20)));
         Assert.Equal(PeerDirResult.Fail(RelayReplies.Unreadable),
             await slow.HandleAsync(PeerLaunchWire.EncodeListDirRequest("")));
+        gate.Set();
     }
 
     [Fact]

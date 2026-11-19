@@ -70,6 +70,18 @@ public class RemoteFolderBrowserTests : IDisposable
 
     private static void Flush() => Dispatcher.UIThread.RunJobs();
 
+    // Waits for a state, not for a time: the handlers under test are async void.
+    private static async Task Until(Func<bool> done)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            Flush();
+            await Task.Delay(10);
+        }
+        Assert.True(done(), "state not reached");
+    }
+
     private static void Click(Button b) => b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     [AvaloniaFact]
@@ -80,8 +92,7 @@ public class RemoteFolderBrowserTests : IDisposable
 
         typeof(RemoteFolderBrowser).GetMethod("OnOpened", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(b, [EventArgs.Empty]);
-        await Task.Delay(100);
-        Flush();
+        await Until(() => b.Listing is not null);
 
         Assert.Equal([""], peers.Asked);
         Assert.Equal("Choose a folder on mini", b.Title);
@@ -228,13 +239,11 @@ public class RemoteFolderBrowserTests : IDisposable
         {
             RoutedEvent = InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Enter,
         });
-        await Task.Delay(100);
-        Assert.Equal("/Users/dev", b.Listing!.Path);
+        await Until(() => b.Listing!.Path == "/Users/dev");
 
         b.List.SelectedIndex = 1;
         b.List.RaiseEvent(new Avalonia.Input.TappedEventArgs(InputElement.DoubleTappedEvent, null!));
-        await Task.Delay(100);
-        Assert.Equal("/Users/dev/Source", b.Listing!.Path);
+        await Until(() => b.Listing!.Path == "/Users/dev/Source");
 
         // Click handlers close the dialog; with no owner window shown Close is a no-op,
         // so the proof is that neither throws.
@@ -266,7 +275,6 @@ public class RemoteFolderBrowserTests : IDisposable
     private static void ClickBrowse(NewChatWindow w)
     {
         Click(w.BrowseButton);
-        Thread.Sleep(50);
         Flush();
     }
 
