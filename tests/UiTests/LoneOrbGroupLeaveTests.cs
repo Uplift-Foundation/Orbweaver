@@ -15,6 +15,8 @@ public class LoneOrbGroupLeaveTests : IDisposable
     private readonly List<string> _groups = new();
     private readonly List<string> _keys = new();
     private readonly OrbweaverSettings.OrbPlacement? _mainAnchor = OrbweaverSettings.ArrangeAnchor;
+    private readonly AutoGroupBy _by = OrbweaverSettings.AutoGroupBy;
+    private readonly bool _outlines = OrbweaverSettings.GroupOutlinesEnabled;
 
     public LoneOrbGroupLeaveTests() => Directory.CreateDirectory(_dir);
 
@@ -24,6 +26,10 @@ public class LoneOrbGroupLeaveTests : IDisposable
         foreach (var key in _keys) { OrbweaverSettings.UnassignOrbGroup(key); OrbweaverSettings.ClearOrbPosition(key); }
         foreach (var id in _groups) OrbweaverSettings.DeleteOrbGroup(id);
         OrbweaverSettings.ArrangeAnchor = _mainAnchor;
+        OrbweaverSettings.AutoGroupBy = _by;
+        OrbweaverSettings.GroupOutlinesEnabled = _outlines;
+        foreach (var g in OrbweaverSettings.OrbGroupList().Where(g => OrbAutoGroups.IsAuto(g.Id)).ToList())
+            OrbweaverSettings.DeleteOrbGroup(g.Id);
         GroupBackdrops.Update(Array.Empty<BackdropSpec>());
         GroupBackdrops.ParkAll();
         try { Directory.Delete(_dir, recursive: true); } catch { }
@@ -79,9 +85,13 @@ public class LoneOrbGroupLeaveTests : IDisposable
         return session.End();
     }
 
-    [AvaloniaFact]
-    public void ALoneOrbDraggedFarEnoughLeavesItsGroupWhenArranged()
+    // The distance comes from the start discs, never the drawn outline.
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ALoneOrbDraggedFarEnoughLeavesItsGroupWhenArranged(bool outlines)
     {
+        OrbweaverSettings.GroupOutlinesEnabled = outlines;
         var (m, group, key) = Setup(arranged: true);
         Assert.Equal(group, ((IOrbDragHost)m).GroupIdOf("lone"));
 
@@ -94,9 +104,12 @@ public class LoneOrbGroupLeaveTests : IDisposable
         Assert.DoesNotContain(OrbweaverSettings.OrbGroupList(), g => g.Id == group);
     }
 
-    [AvaloniaFact]
-    public void ALoneOrbDraggedFarEnoughGoesLooseWhenFree()
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ALoneOrbDraggedFarEnoughGoesLooseWhenFree(bool outlines)
     {
+        OrbweaverSettings.GroupOutlinesEnabled = outlines;
         var (m, group, key) = Setup(arranged: false);
 
         var outcome = DragLead(m, "lone", 600, 0);
@@ -160,5 +173,81 @@ public class LoneOrbGroupLeaveTests : IDisposable
         Assert.Equal(group, ((IOrbDragHost)m).GroupIdOf("lone"));
         Assert.NotEqual(before, OrbweaverSettings.OrbGroupList().Single(g => g.Id == group).Anchor);
         Assert.NotEqual(start, w.Position);
+    }
+
+    [AvaloniaFact]
+    public void DroppedWithinJoinDistanceOfAnotherGroupTheLoneOrbJoinsAndItsGroupIsPruned()
+    {
+        // Arranged: main is a snap target (free mode pairs loose teams instead).
+        var (m, group, key) = Setup(arranged: true);
+        IOrbDragHost host = m;
+        var lone = host.DiscOf("lone");
+        var other = host.DiscOf("other");
+
+        // Dropped on the other orb: far from where it started, yet it joins.
+        var outcome = DragLead(m, "lone", (int)Math.Round(other.X - lone.X), (int)Math.Round(other.Y - lone.Y));
+
+        Assert.Equal(new SnapOutcome.Join(OrbGroups.Main), outcome);
+        Assert.Equal(OrbGroups.Main, host.GroupIdOf("lone"));
+        Assert.DoesNotContain(OrbweaverSettings.OrbGroupList(), g => g.Id == group);
+    }
+
+    // CB-281: an auto group with one orb in it. Grouping by CLI makes every
+    // orb here the sole occupant of its own auto group.
+    private (SessionManager M, string Auto, string Key) AutoSetup(bool arranged)
+    {
+        OrbweaverSettings.ArrangeAnchor = null;
+        OrbweaverSettings.AutoGroupBy = AutoGroupBy.Cli;
+        foreach (var (id, cli) in new[] { ("lone", "claude"), ("other", "codex") })
+            File.WriteAllText(Path.Combine(_dir, id + ".txt"),
+                System.Text.Json.JsonSerializer.Serialize(new SessionStatus
+                {
+                    Cli = cli, Cwd = "/Users/user/cb332-auto-" + id, Title = "",
+                    SessionPid = Environment.ProcessId, TermProgram = "iTerm.app", Tty = "/dev/ttys004",
+                }));
+        OrbweaverSettings.ClaudeCodeEnabled = true;
+        OrbweaverSettings.CodexEnabled = true;
+        OrbweaverSettings.GrokEnabled = true;
+        var m = new SessionManager(_dir) { AutoGroupRepoRootOf = _ => null };
+        m.ScanAndUpdate();
+        var key = OrbGroupMenu.KeyOf("lone", m.AllStatuses);
+        _keys.Add(key);
+        _keys.Add(OrbGroupMenu.KeyOf("other", m.AllStatuses));
+        var auto = OrbAutoGroups.IdFor(AutoGroupBy.Cli, "claude");
+        Assert.Equal(auto, ((IOrbDragHost)m).GroupIdOf("lone"));
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor(key));
+        if (arranged) m.ArrangeOrbsInPattern();
+        Glide(m);
+        Assert.Equal(arranged, m.IsArranged);
+        OrbDragHost.Current = m;
+        return (m, auto, key);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ALoneOrbDraggedOutOfItsAutoGroupIsWrittenIntoMainAndStaysThere(bool arranged)
+    {
+        var (m, auto, key) = AutoSetup(arranged);
+
+        var outcome = DragLead(m, "lone", -5000, 0);
+
+        Assert.True(arranged ? outcome is SnapOutcome.LeaveSole : outcome is SnapOutcome.LeaveToFree);
+        // Explicit, not forgotten: forgetting it would let the classifier put it back.
+        Assert.Equal(OrbGroups.Main, OrbweaverSettings.OrbGroupMembershipFor(key));
+        m.ScanAndUpdate();
+        Assert.Equal(OrbGroups.Main, ((IOrbDragHost)m).GroupIdOf("lone"));
+        Assert.NotEqual(auto, ((IOrbDragHost)m).GroupIdOf("lone"));
+    }
+
+    [AvaloniaFact]
+    public void ALoneOrbNudgedInItsAutoGroupStaysAutomaticWithNothingWritten()
+    {
+        var (m, auto, key) = AutoSetup(arranged: false);
+
+        Assert.IsType<SnapOutcome.NoChange>(DragLead(m, "lone", 20, 0));
+
+        Assert.Null(OrbweaverSettings.OrbGroupMembershipFor(key));
+        Assert.Equal(auto, ((IOrbDragHost)m).GroupIdOf("lone"));
     }
 }
