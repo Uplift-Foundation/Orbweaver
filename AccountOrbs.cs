@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Threading;
 
@@ -43,7 +42,10 @@ namespace Orbweaver
         private const int EdgeMargin = 16;
         private const int OrbPitch = 80;
 
-        private readonly IUsageSource _source;
+        // CB-391: the cadence lives in the pump, which is replaceable because
+        // a Mac that launched locked hands over the one HeadlessUsage was
+        // already ticking — see Adopt.
+        private UsagePump _pump;
         private readonly Dictionary<string, AccountOrbWindow> _orbs = new(StringComparer.Ordinal);
         private readonly Dictionary<string, UsageCard> _cards = new(StringComparer.Ordinal);
         private readonly Dictionary<string, AccountUsage> _readings = new(StringComparer.Ordinal);
@@ -55,18 +57,41 @@ namespace Orbweaver
         private AccountOrbWindow? _hovered;
         private AccountOrbWindow? _pendingShow;
 
-        private DateTimeOffset _lastPoll = DateTimeOffset.MinValue;
-
-        // How long to wait before the next poll, which is no longer a constant.
-        // Starts fast: a freshly launched app knows nothing about whether this
-        // account is mid-burst, and that is the one moment it must not assume
-        // calm. See UsagePollCadence for why it moves at all.
-        private TimeSpan _interval = UsagePollCadence.Fast;
-
-        private bool _polling;
         private bool _visible = true;
 
-        internal AccountOrbs(IUsageSource source) => _source = source;
+        // The floor, the cadence (starting fast: a freshly launched app knows
+        // nothing about whether this account is mid-burst — see
+        // UsagePollCadence) and the in-flight flag all live in the pump.
+        internal AccountOrbs(IUsageSource source)
+        {
+            _pump = new UsagePump(source);
+            _pump.SwapSink(Deliver);
+        }
+
+        // A finished read, from the pool thread the pump read it on, onto the
+        // UI thread where the orbs live. Posted even when already on it, so a
+        // read that lands during the unlock handover runs after Attach has
+        // returned and the adopted readings are in place (CB-391).
+        internal void Deliver(IReadOnlyList<AccountUsage> readings) =>
+            Dispatcher.UIThread.Post(() => Apply(readings, DateTimeOffset.UtcNow));
+
+        // CB-391: the unlock on a Mac that launched locked. HeadlessUsage has
+        // been polling for the phone with this pump, and its Handoff has
+        // already pointed the pump at Deliver. The pump is taken as it is —
+        // its floor and cadence are not copied, so the first poll here comes
+        // when the headless one would have, and a read still in flight cannot
+        // be joined by a second. The readings already taken are drawn at once
+        // rather than after the next poll. No UsageApplied: the phone was sent
+        // exactly these.
+        internal void Adopt(UsagePump pump, IReadOnlyDictionary<string, AccountUsage> readings)
+        {
+            _pump = pump;
+
+            foreach (var (key, reading) in readings) _readings[key] = reading;
+            if (_readings.Count > 0) Redraw(DateTimeOffset.UtcNow);
+        }
+
+        internal UsagePump PumpForTests => _pump;
 
         // The position-store key for an account.
         //
@@ -151,7 +176,7 @@ namespace Orbweaver
         // same reason AccountOrbWindow.WeeklyColour is: a headless test can then
         // assert on the decision itself rather than on how long a real poll
         // happened to wait, which is not a thing a test can sit through.
-        internal TimeSpan PollInterval => _interval;
+        internal TimeSpan PollInterval => _pump.Interval;
 
         // A settings change, said out loud by whoever flipped the switch.
         //
@@ -171,13 +196,12 @@ namespace Orbweaver
 
             SetVisible(visible);
             PruneDisabledSources();
-            _lastPoll = DateTimeOffset.MinValue;
 
-            // ...and back to the fast cadence alongside it, for the same reason
-            // the floor is cleared: a switch that just came on is a user
-            // watching for something to appear, and whatever backing-off the
-            // previous source had earned says nothing about the new one.
-            _interval = UsagePollCadence.Fast;
+            // The floor cleared, and back to the fast cadence alongside it: a
+            // switch that just came on is a user watching for something to
+            // appear, and whatever backing-off the previous source had earned
+            // says nothing about the new one.
+            _pump.Reset();
         }
 
         // Called on SessionManager's existing two-second tick.
@@ -205,26 +229,11 @@ namespace Orbweaver
                 return;
             }
 
-            if (_polling || now - _lastPoll < _interval) return;
-
-            _lastPoll = now;
-            _polling = true;
-
-            // Off the UI thread, because this starts a process per account and
-            // waits seconds for each. On the dispatcher it would freeze every orb
-            // on the screen for as long as the slowest account took to answer.
-            Task.Run(() =>
-            {
-                IReadOnlyList<AccountUsage> readings;
-                try { readings = _source.Read(); }
-                catch { readings = Array.Empty<AccountUsage>(); }
-
-                Dispatcher.UIThread.Post(() =>
-                {
-                    _polling = false;
-                    Apply(readings, DateTimeOffset.UtcNow);
-                });
-            });
+            // Off the UI thread inside the pump, because this starts a process
+            // per account and waits seconds for each. On the dispatcher it would
+            // freeze every orb on the screen for as long as the slowest account
+            // took to answer.
+            _pump.Tick(now);
         }
 
         internal void Apply(IReadOnlyList<AccountUsage> readings, DateTimeOffset now)
@@ -234,20 +243,8 @@ namespace Orbweaver
             // is gone. Any one account moving is enough to keep the whole poll
             // fast: the sources are read together, so there is no such thing as
             // polling one of them harder than the others.
-            var changed = false;
-
-            foreach (var reading in readings)
-            {
-                var key = reading.ConfigDir ?? string.Empty;
-
-                changed |= UsagePollCadence.DrawnValuesDiffer(
-                    _readings.TryGetValue(key, out var before) ? before : null,
-                    reading);
-
-                _readings[key] = reading;
-            }
-
-            _interval = UsagePollCadence.Next(_interval, changed);
+            var changed = MergeReadings(_readings, readings);
+            _pump.Interval = UsagePollCadence.Next(_pump.Interval, changed);
 
             // Accounts that answered nothing keep the orb they had. A poll that
             // failed is not news about usage, and removing the orb would make a
@@ -261,10 +258,43 @@ namespace Orbweaver
         // where the card knows it. RelayService forwards them to the relay.
         internal static event Action<IReadOnlyList<RelayUsage.Account>> UsageApplied = delegate { };
 
-        internal IReadOnlyList<RelayUsage.Account> RelayAccounts() =>
-            _readings
+        internal IReadOnlyList<RelayUsage.Account> RelayAccounts() => RelayAccountsOf(_readings, _emails);
+
+        // The merge at the top of Apply, shared with HeadlessUsage (CB-391) so
+        // the locked-Mac poll keys readings and decides "changed" by the same
+        // rule rather than a paraphrase of it. Whether anything a person can
+        // see moved is decided before each reading overwrites the old one —
+        // after that the evidence is gone. Any one account moving is enough:
+        // the sources are read together, so there is no polling one harder.
+        internal static bool MergeReadings(
+            Dictionary<string, AccountUsage> held, IReadOnlyList<AccountUsage> readings)
+        {
+            var changed = false;
+
+            foreach (var reading in readings)
+            {
+                var key = reading.ConfigDir ?? string.Empty;
+
+                changed |= UsagePollCadence.DrawnValuesDiffer(
+                    held.TryGetValue(key, out var before) ? before : null,
+                    reading);
+
+                held[key] = reading;
+            }
+
+            return changed;
+        }
+
+        // The phone's view of a set of readings, for the orbs and for
+        // HeadlessUsage alike, so both halves of an unlock project the same
+        // shape and the relay's tracker sees the handover as no change. UI-free:
+        // settings are only read here, never written.
+        internal static IReadOnlyList<RelayUsage.Account> RelayAccountsOf(
+            IReadOnlyDictionary<string, AccountUsage> readings,
+            IReadOnlyDictionary<string, string?>? emails = null) =>
+            readings
                 .Where(p => SourceEnabled(p.Value.Source))
-                .Select(p => RelayUsage.From(p.Value, _emails.GetValueOrDefault(p.Key), LookFor(
+                .Select(p => RelayUsage.From(p.Value, emails?.GetValueOrDefault(p.Key), LookFor(
                     p.Value,
                     OrbweaverSettings.AccountOrbOverrideFor(PositionKey(p.Value.ConfigDir)),
                     AccountOrbIcons.IconsDirectory,
@@ -560,7 +590,7 @@ namespace Orbweaver
             foreach (var key in _readings.Keys.ToList()) Remove(key);
         }
 
-        private static bool AnyEnabled() =>
+        internal static bool AnyEnabled() =>
             OrbweaverSettings.AccountUsageEnabled
             || OrbweaverSettings.GrokAccountUsageEnabled
             || OrbweaverSettings.CodexAccountUsageEnabled;

@@ -62,9 +62,18 @@ public class PersonaPoolFileTests : IDisposable
         File.WriteAllBytes(Path.Combine(dir, name + ".png"), Png());
     }
 
-    private static LocalPersona.Persona Resolve(string cwd, string[] configDirs, string? pool, string agent) =>
+    // Bounded at this test's own scratch root, never null. On Windows the temp
+    // directory is under the developer's home, so an unbounded walk from a
+    // scratch project climbs into the real ~/CLAUDE.md and the persona it
+    // imports, and every test here expecting "no persona" or its own fixture
+    // is handed the developer's instead. LocalPersona.WalkCeilingVariable
+    // guards the suites that go through Candidates(); this class calls
+    // CandidatesBelow directly, so it has to pass the ceiling itself. Nine of
+    // these failed on a real Windows box and never on CI, whose runner's home
+    // holds no persona.
+    private LocalPersona.Persona Resolve(string cwd, string[] configDirs, string? pool, string agent) =>
         LocalPersona.ResolveFrom(
-            LocalPersona.CandidatesBelow(cwd, configDirs, SessionSource.ClaudeCode, agent, ceiling: null, poolRoot: pool),
+            LocalPersona.CandidatesBelow(cwd, configDirs, SessionSource.ClaudeCode, agent, ceiling: _root, poolRoot: pool),
             cwd);
 
     [Fact]
