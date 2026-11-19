@@ -28,6 +28,20 @@ public class TurnSoundsTests : IDisposable
     // gap.
     private static readonly DateTime Past = new(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
+    // Fires whatever is still pending at a logical moment past every gap these
+    // tests open, then waits for the chime chain itself, instead of sleeping
+    // three real seconds and hoping both the pending timer and the chain's
+    // thread-pool continuation got scheduled in that time. On a loaded CI
+    // runner they did not, once: Windows saw an empty list where A's live
+    // Glass had been enqueued. Same shape the CB-240 tests below already use.
+    // If the real timer got there first it took the pending events and this
+    // fire finds nothing; either way every chime is enqueued before the await.
+    private static async Task FireDueAndDrainAsync(DateTime t0)
+    {
+        TurnSounds.FirePending(t0 + TurnSoundPolicy.MinimumGap + TimeSpan.FromSeconds(1));
+        await TurnSounds.ChimesEnqueuedSoFar();
+    }
+
     public TurnSoundsTests() => TurnSounds.ResetForTests();
 
     public void Dispose()
@@ -418,7 +432,7 @@ public class TurnSoundsTests : IDisposable
         TurnSounds.Deliver(new[] { NeedsAttention("key-b", "session-b") }, NoSummary, t0.AddSeconds(0.5));
         TurnSounds.Deliver(new[] { Finished("key-c", "session-c") }, NoSummary, t0.AddSeconds(1));
 
-        await Task.Delay(TimeSpan.FromSeconds(3.5));
+        await FireDueAndDrainAsync(t0);
 
         lock (played)
         {
@@ -491,7 +505,7 @@ public class TurnSoundsTests : IDisposable
 
         TurnSounds.CancelPendingFor("session-x");
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         lock (played)
         {
@@ -523,7 +537,7 @@ public class TurnSoundsTests : IDisposable
         TurnSounds.CancelPendingFor("session-x");
         TurnSounds.CancelPendingFor("session-y");
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         lock (played)
         {
@@ -558,7 +572,7 @@ public class TurnSoundsTests : IDisposable
             new[] { NeedsAttention("key-b", "session-b") }, NoSummary, start.AddMilliseconds(100),
             currentStateFor: id => id == "session-b" ? "generating" : "idle");
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(start);
 
         lock (played)
         {
@@ -588,7 +602,7 @@ public class TurnSoundsTests : IDisposable
             new[] { NeedsAttention("key-b", "session-b") }, NoSummary, start.AddMilliseconds(100),
             currentStateFor: _ => "waiting"); // still exactly where it was deferred from
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(start);
 
         lock (played)
         {
@@ -617,7 +631,7 @@ public class TurnSoundsTests : IDisposable
             new[] { Finished("key-b", "session-b") }, NoSummary, start.AddMilliseconds(100),
             currentStateFor: _ => "idle"); // known, but nowhere near "waiting" — irrelevant for Finished
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(start);
 
         lock (played)
         {
@@ -646,7 +660,7 @@ public class TurnSoundsTests : IDisposable
         TurnSounds.Deliver(new[] { Finished("key-x", "session-x") }, NoSummary, start.AddSeconds(0.3));
         TurnSounds.Deliver(new[] { NeedsAttention("key-y", "session-y") }, NoSummary, start.AddSeconds(0.6));
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(start);
 
         lock (played)
         {
@@ -683,7 +697,7 @@ public class TurnSoundsTests : IDisposable
         // Muted after B was already deferred, before its timer fires.
         OrbweaverSettings.NeedsAttentionSound = "off";
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(start);
 
         lock (played)
         {
@@ -835,7 +849,7 @@ public class TurnSoundsTests : IDisposable
             NoSummary, t0.AddSeconds(0.5),
             currentStateFor: id => id == "session-b" ? "generating" : "waiting"); // b answered, d still waiting
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         lock (played)
         {
@@ -874,7 +888,7 @@ public class TurnSoundsTests : IDisposable
             NoSummary, t0.AddSeconds(0.5),
             currentStateFor: id => id == "session-b" ? "generating" : "idle"); // b answered, c just known
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         var finishedSound = SystemSoundCatalog.Resolve(SystemSoundCatalog.DefaultFinishedSoundName,
             SystemSoundCatalog.DefaultDirectory, SystemSoundCatalog.DefaultExtensions);
@@ -911,7 +925,7 @@ public class TurnSoundsTests : IDisposable
             new[] { NeedsAttention("key-b", "session-b"), NeedsAttention("key-d", "session-d") },
             NoSummary, t0.AddSeconds(0.5), currentStateFor: _ => "waiting");
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         // A's live Glass, plus exactly one Ping — never two.
         lock (played) Assert.Equal(2, played.Count);
@@ -945,7 +959,7 @@ public class TurnSoundsTests : IDisposable
             NoSummary, t0.AddSeconds(0.5),
             currentStateFor: _ => "generating"); // neither is "waiting" any more
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         // Just A's own live Glass — nothing from a scan with nothing left
         // valid in it.
@@ -980,7 +994,7 @@ public class TurnSoundsTests : IDisposable
             NoSummary, t0.AddSeconds(0.5),
             currentStateFor: id => id is "session-b" or "session-d" ? "waiting" : "idle");
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         var attentionSound = SystemSoundCatalog.Resolve(SystemSoundCatalog.DefaultAttentionSoundName,
             SystemSoundCatalog.DefaultDirectory, SystemSoundCatalog.DefaultExtensions);
@@ -1012,7 +1026,7 @@ public class TurnSoundsTests : IDisposable
             new[] { NeedsAttention("key-b", "session-b"), NeedsAttention("key-d", "session-d") },
             NoSummary, t0.AddSeconds(0.5), currentStateFor: _ => "generating");
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await FireDueAndDrainAsync(t0);
 
         lock (played) Assert.Single(played);
     }
