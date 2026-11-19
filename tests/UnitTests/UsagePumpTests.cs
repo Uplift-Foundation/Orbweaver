@@ -64,7 +64,7 @@ public class UsagePumpTests
         source.Readings.Add(Usage("/a"));
         var pump = new UsagePump(source, work => work());
         IReadOnlyList<AccountUsage>? got = null;
-        pump.Sink = r => got = r;
+        pump.SwapSink(r => got = r);
 
         pump.Tick(Now);
 
@@ -111,7 +111,7 @@ public class UsagePumpTests
         var source = new FakeSource { Throw = new InvalidOperationException("no claude") };
         var pump = new UsagePump(source, work => work());
         IReadOnlyList<AccountUsage>? got = null;
-        pump.Sink = r => got = r;
+        pump.SwapSink(r => got = r);
 
         pump.Tick(Now);
 
@@ -145,10 +145,10 @@ public class UsagePumpTests
         var pump = new UsagePump(source, held.Run);
         var old = 0;
         var fresh = 0;
-        pump.Sink = _ => old++;
+        pump.SwapSink(_ => old++);
 
         pump.Tick(Now);
-        pump.Sink = _ => fresh++;
+        pump.SwapSink(_ => fresh++);
         held.Release();
 
         Assert.Equal(0, old);
@@ -172,7 +172,7 @@ public class UsagePumpTests
         var pump = new UsagePump(source);
         var done = new System.Threading.ManualResetEventSlim();
         var thread = -1;
-        pump.Sink = _ => { thread = Environment.CurrentManagedThreadId; done.Set(); };
+        pump.SwapSink(_ => { thread = Environment.CurrentManagedThreadId; done.Set(); });
 
         pump.Tick(Now);
 
@@ -180,32 +180,28 @@ public class UsagePumpTests
         Assert.NotEqual(Environment.CurrentManagedThreadId, thread);
     }
 
-    // --- UsageLateReadings: a read that finished in the handover gap --------
-
+    // A read that throws is reported to the failure hook, and still
+    // delivered as an empty read so the flag is cleared.
     [Fact]
-    public void Late_readings_are_held_until_a_target_is_attached_then_delivered_once()
+    public void A_throwing_source_is_reported_to_the_failure_hook()
     {
-        var late = new UsageLateReadings();
-        var a = new List<AccountUsage> { Usage("/a") };
-        late.Accept(a);
+        var source = new FakeSource { Throw = new TimeoutException("slow claude") };
+        Exception? seen = null;
+        var pump = new UsagePump(source, work => work(), e => seen = e);
 
-        var got = new List<IReadOnlyList<AccountUsage>>();
-        late.Attach(got.Add);
-        Assert.Equal([a], got);
+        pump.Tick(Now);
 
-        // Attached: the next one goes straight through, and the held one is
-        // not delivered again.
-        var b = new List<AccountUsage> { Usage("/b") };
-        late.Accept(b);
-        Assert.Equal([a, b], got);
+        Assert.IsType<TimeoutException>(seen);
     }
 
+    // The swap happens under the pump's lock, so CurrentSinkForTests says
+    // what a completing read would call at that instant.
     [Fact]
-    public void Late_readings_with_nothing_held_deliver_nothing_on_attach()
+    public void SwapSink_changes_what_a_completing_read_would_call()
     {
-        var late = new UsageLateReadings();
-        var got = 0;
-        late.Attach(_ => got++);
-        Assert.Equal(0, got);
+        var pump = new UsagePump(new FakeSource());
+        Action<IReadOnlyList<AccountUsage>> sink = _ => { };
+        pump.SwapSink(sink);
+        Assert.Same(sink, pump.CurrentSinkForTests);
     }
 }

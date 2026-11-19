@@ -65,30 +65,30 @@ namespace Orbweaver
         internal AccountOrbs(IUsageSource source)
         {
             _pump = new UsagePump(source);
-            _pump.Sink = UiSink;
+            _pump.SwapSink(Deliver);
         }
 
         // A finished read, from the pool thread the pump read it on, onto the
-        // UI thread where the orbs live.
-        private void UiSink(IReadOnlyList<AccountUsage> readings) =>
+        // UI thread where the orbs live. Posted even when already on it, so a
+        // read that lands during the unlock handover runs after Attach has
+        // returned and the adopted readings are in place (CB-391).
+        internal void Deliver(IReadOnlyList<AccountUsage> readings) =>
             Dispatcher.UIThread.Post(() => Apply(readings, DateTimeOffset.UtcNow));
 
         // CB-391: the unlock on a Mac that launched locked. HeadlessUsage has
-        // been polling for the phone with this pump; from now on it feeds the
-        // orbs instead. The pump is taken as it is — its floor and cadence are
-        // not copied, so the first poll here comes when the headless one
-        // would have, and a read still in flight cannot be joined by a second.
-        // The readings already taken are drawn at once rather than after the
-        // next poll. No UsageApplied: the phone was sent exactly these.
-        internal void Adopt(UsagePump pump, IReadOnlyDictionary<string, AccountUsage> readings, UsageLateReadings? late = null)
+        // been polling for the phone with this pump, and its Handoff has
+        // already pointed the pump at Deliver. The pump is taken as it is —
+        // its floor and cadence are not copied, so the first poll here comes
+        // when the headless one would have, and a read still in flight cannot
+        // be joined by a second. The readings already taken are drawn at once
+        // rather than after the next poll. No UsageApplied: the phone was sent
+        // exactly these.
+        internal void Adopt(UsagePump pump, IReadOnlyDictionary<string, AccountUsage> readings)
         {
             _pump = pump;
-            pump.Sink = UiSink;
 
             foreach (var (key, reading) in readings) _readings[key] = reading;
             if (_readings.Count > 0) Redraw(DateTimeOffset.UtcNow);
-
-            late?.Attach(UiSink);
         }
 
         internal UsagePump PumpForTests => _pump;

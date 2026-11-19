@@ -27,6 +27,7 @@ namespace Orbweaver
         private readonly object _gate = new();
         private readonly IUsageSource _source;
         private readonly Action<Action> _offThread;
+        private readonly Action<Exception>? _failed;
 
         private DateTimeOffset _lastPoll = DateTimeOffset.MinValue;
 
@@ -40,19 +41,30 @@ namespace Orbweaver
         // offThread defaults to the pool, because a read starts a process per
         // account and waits seconds for each. A test hands in an inline or a
         // captured runner instead, so nothing here ever has to be slept on.
-        internal UsagePump(IUsageSource source, Action<Action>? offThread = null)
+        // failed hears a read that threw; the read still counts as empty.
+        internal UsagePump(IUsageSource source, Action<Action>? offThread = null, Action<Exception>? failed = null)
         {
             _source = source;
             _offThread = offThread ?? (work => Task.Run(work));
+            _failed = failed;
         }
 
-        // Where a finished read goes. Read when the read finishes, not when it
-        // starts, so a sink swapped while a read is in flight — the unlock
-        // handover — receives that read rather than the one it replaced.
-        internal Action<IReadOnlyList<AccountUsage>> Sink
+        // Where finished reads go from now on. The sink is read under the same
+        // lock when a read finishes, not when it starts, so the swap is atomic
+        // with completion: a read in flight at the unlock handover lands in
+        // exactly one place — the old sink if it finished first, the new one
+        // otherwise.
+        internal void SwapSink(Action<IReadOnlyList<AccountUsage>> sink)
+        {
+            lock (_gate) _sink = sink;
+        }
+
+        // The sink a completing read would call right now. Lets a test stand
+        // in the one interleaving a runner cannot reach: a read that took the
+        // old sink an instant before the swap and calls it an instant after.
+        internal Action<IReadOnlyList<AccountUsage>> CurrentSinkForTests
         {
             get { lock (_gate) return _sink; }
-            set { lock (_gate) _sink = value; }
         }
 
         internal TimeSpan Interval
@@ -95,7 +107,11 @@ namespace Orbweaver
         {
             IReadOnlyList<AccountUsage> readings;
             try { readings = _source.Read(); }
-            catch { readings = Array.Empty<AccountUsage>(); }
+            catch (Exception e)
+            {
+                readings = Array.Empty<AccountUsage>();
+                _failed?.Invoke(e);
+            }
 
             Action<IReadOnlyList<AccountUsage>> sink;
             lock (_gate)
@@ -105,57 +121,6 @@ namespace Orbweaver
             }
 
             sink(readings);
-        }
-    }
-
-    // What HeadlessUsage gives AccountOrbs at the unlock: the pump itself (not
-    // its numbers), the readings already taken, the Grok refresh schedule so
-    // its twenty-minute floor carries, and Late, which holds a read that was
-    // already on its way to the headless sink when the handover happened.
-    internal sealed record UsageHandoff(
-        UsagePump Pump,
-        IReadOnlyDictionary<string, AccountUsage> Readings,
-        GrokUsageRefreshScheduler Grok,
-        UsageLateReadings Late);
-
-    // A read that finished between the handover and the adopter pointing the
-    // pump at itself. The pump reads its sink once a read completes, so a read
-    // that completes in that gap still goes to the headless sink, which then
-    // passes it here. Held until Attach names a target, then delivered: never
-    // dropped, never sent to the phone a second time.
-    internal sealed class UsageLateReadings
-    {
-        private readonly object _gate = new();
-        private readonly List<IReadOnlyList<AccountUsage>> _held = new();
-        private Action<IReadOnlyList<AccountUsage>>? _target;
-
-        internal void Accept(IReadOnlyList<AccountUsage> readings)
-        {
-            Action<IReadOnlyList<AccountUsage>> target;
-            lock (_gate)
-            {
-                if (_target is null)
-                {
-                    _held.Add(readings);
-                    return;
-                }
-                target = _target;
-            }
-
-            target(readings);
-        }
-
-        internal void Attach(Action<IReadOnlyList<AccountUsage>> target)
-        {
-            List<IReadOnlyList<AccountUsage>> held;
-            lock (_gate)
-            {
-                _target = target;
-                held = new List<IReadOnlyList<AccountUsage>>(_held);
-                _held.Clear();
-            }
-
-            foreach (var readings in held) target(readings);
         }
     }
 }

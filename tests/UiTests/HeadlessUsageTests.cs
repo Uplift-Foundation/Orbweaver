@@ -18,9 +18,8 @@ namespace Orbweaver.Tests;
 // what is a frame, the real SessionManager and AccountOrbs, and a settings
 // file of its own. What is faked is the usage source, the runner a read goes
 // to (inline, or held so "in flight" is a state rather than a race), the
-// clock and the Grok refresh. The headless timer is set never to fire, and
-// HeadlessUsage.Tick is called by hand, except in the one case that checks the
-// timer itself is wired.
+// clock and the Grok refresh. The usage timer is set never to fire, and the
+// feed's Tick is called by hand, except where a case checks the timer itself.
 [Collection("Settings")]
 public class HeadlessUsageTests : IDisposable
 {
@@ -34,6 +33,11 @@ public class HeadlessUsageTests : IDisposable
     private RelayClient? _client;
     private DateTimeOffset _now = T0;
 
+    private Action<Action> _run = work => work();
+    private int _refreshes;
+    private Action<IReadOnlyList<RelayUsage.Account>>? _send;
+    private Func<DateTimeOffset>? _clock;
+
     public HeadlessUsageTests()
     {
         Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", Path.Combine(_dir, "settings"));
@@ -43,14 +47,24 @@ public class HeadlessUsageTests : IDisposable
         RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
         RelayService.Factory = () => _client = Client();
 
-        HeadlessUsage.Source = () => _source;
-        HeadlessUsage.OffThread = work => work();
-        HeadlessUsage.Now = () => _now;
-        HeadlessUsage.Every = Timeout.InfiniteTimeSpan;
-        HeadlessUsage.GrokRefresh = () => throw new InvalidOperationException("no test may start Grok");
+        // The production wiring around a fake source: the real settings
+        // switches, the real projection, the real RelayService.OnUsage and the
+        // real MirrorLog. Only the source, the runner, the clock and the Grok
+        // refresh are the test's.
+        RelayService.UsageFactory = () => new HeadlessUsage(HeadlessUsage.Production(_source) with
+        {
+            OffThread = work => _run(work),
+            Now = () => (_clock ?? (() => _now))(),
+            RefreshGrok = () => _refreshes++,
+            Send = a => (_send ?? RelayService.OnUsage)(a),
+        });
+        RelayService.UsageFirstTick = Timeout.InfiniteTimeSpan;
+        RelayService.UsageEvery = Timeout.InfiniteTimeSpan;
 
         MirrorLog.Heard += OnHeard;
     }
+
+    private static HeadlessUsage Feed() => RelayService.UsageFeed!;
 
     public void Dispose()
     {
@@ -177,8 +191,7 @@ public class HeadlessUsageTests : IDisposable
         _source.Readings = [Usage("/acct/a", label: "parked-board")];
 
         RelayService.ServeEarly();
-        Assert.True(HeadlessUsage.Started);
-        HeadlessUsage.Tick();
+        Feed().Tick();
 
         Assert.Equal(1, _source.Reads);
         Assert.NotNull(_client);
@@ -196,40 +209,67 @@ public class HeadlessUsageTests : IDisposable
         UsageOn(claude: false);
 
         RelayService.ServeEarly();
-        HeadlessUsage.Tick();
+        Feed().Tick();
 
-        Assert.True(HeadlessUsage.Started);
         Assert.Equal(0, _source.Reads);
         Assert.Equal(0, Heard("usage accounts"));
     }
 
-    // Negative control: the relay off, usage on. Before the unlock the phone
-    // is the only consumer, so nothing starts.
+    // Negative control: the relay off, usage and Grok refresh on. Before the
+    // unlock the phone is the only consumer, so nothing starts at all.
     [AvaloniaFact]
     public void ServeEarly_with_the_relay_off_polls_no_usage()
     {
+        var made = 0;
+        RelayService.UsageFactory = () => { made++; return null!; };
         OrbweaverSettings.RelayEnabled = false;
-        UsageOn();
+        UsageOn(grok: true);
+        OrbweaverSettings.GrokAutoRefreshEnabled = true;
 
         RelayService.ServeEarly();
-        HeadlessUsage.Tick();
 
-        Assert.False(HeadlessUsage.Started);
+        Assert.Null(RelayService.UsageFeed);
+        Assert.Equal(0, made);
         Assert.Equal(0, _source.Reads);
+        Assert.Equal(0, _refreshes);
     }
 
-    // The timer is really wired: with a short period and no hand-driven tick,
-    // a read still happens — on the production runner and clock, which every
-    // other case here replaces. Only the source and the Grok refresh stay fake.
+    // A second ServeEarly does not start a second feed.
+    [AvaloniaFact]
+    public void ServeEarly_twice_starts_one_feed()
+    {
+        OrbweaverSettings.RelayEnabled = true;
+        RelayService.ServeEarly();
+        var first = RelayService.UsageFeed;
+
+        RelayService.ServeEarly();
+
+        Assert.Same(first, RelayService.UsageFeed);
+    }
+
+    // Production's first wait and period, which the rest of this class
+    // replaces: 5 s, then the UI tick's 2 s (plan 11427 §3).
+    [AvaloniaFact]
+    public void The_usage_timer_defaults_to_a_5s_first_tick_then_2s()
+    {
+        RelayService.ResetHeadlessForTests();
+        Assert.Equal(TimeSpan.FromSeconds(5), RelayService.UsageFirstTick);
+        Assert.Equal(TimeSpan.FromSeconds(2), RelayService.UsageEvery);
+    }
+
+    // The timer is really wired, on the production runner and clock that every
+    // other case here replaces. Only the source and the Grok refresh are fake.
     [AvaloniaFact]
     public void The_headless_usage_timer_ticks_on_its_own()
     {
-        HeadlessUsage.ResetForTests();
-        HeadlessUsage.Source = () => _source;
-        HeadlessUsage.GrokRefresh = () => throw new InvalidOperationException("no test may start Grok");
+        RelayService.UsageFactory = () => new HeadlessUsage(HeadlessUsage.Production(_source) with
+        {
+            RefreshGrok = () => _refreshes++,
+        });
+        RelayService.UsageFirstTick = TimeSpan.FromMilliseconds(20);
+        RelayService.UsageEvery = TimeSpan.FromMilliseconds(20);
         OrbweaverSettings.RelayEnabled = true;
         UsageOn();
-        HeadlessUsage.Every = TimeSpan.FromMilliseconds(20);
 
         RelayService.ServeEarly();
 
@@ -248,129 +288,98 @@ public class HeadlessUsageTests : IDisposable
         _source.Readings = [Usage("/acct/a", session: 10)];
         RelayService.ServeEarly();
 
-        HeadlessUsage.Tick();
-        Assert.Equal(UsagePollCadence.Fast, HeadlessUsage.PumpForTests!.Interval);
+        Feed().Tick();
+        Assert.Equal(UsagePollCadence.Fast, Feed().Pump.Interval);
         Assert.Equal(1, _client!.UsageFramesSent);
 
-        _now = _now.AddSeconds(1);                                  // before the floor: no read
-        HeadlessUsage.Tick();
-        Assert.Equal(1, _source.Reads);
-
         _now = T0 + UsagePollCadence.Fast;                          // same numbers again
-        HeadlessUsage.Tick();
+        Feed().Tick();
         Assert.Equal(2, _source.Reads);
-        Assert.Equal(TimeSpan.FromSeconds(120), HeadlessUsage.PumpForTests!.Interval);
+        Assert.Equal(TimeSpan.FromSeconds(120), Feed().Pump.Interval);
         Assert.Equal(1, _client.UsageFramesSent);
 
         _now += TimeSpan.FromSeconds(120);                          // a number moved
         _source.Readings = [Usage("/acct/a", session: 25)];
-        HeadlessUsage.Tick();
-        Assert.Equal(3, _source.Reads);
-        Assert.Equal(UsagePollCadence.Fast, HeadlessUsage.PumpForTests!.Interval);
+        Feed().Tick();
+        Assert.Equal(UsagePollCadence.Fast, Feed().Pump.Interval);
         Assert.Equal(2, _client.UsageFramesSent);
     }
 
-    // An icon bundle finishing is the first moment its hash can reach the
-    // phone, so the readings already held are projected and sent again. With
-    // nothing held, or after the handover, there is nothing to send from here.
+    // The real icon-bundle event reaches the feed: a hash first offerable now
+    // goes to the phone without waiting for the next poll.
     [AvaloniaFact]
     public void Headless_usage_resends_when_an_icon_bundle_is_built()
     {
         OrbweaverSettings.RelayEnabled = true;
         UsageOn();
         var sent = new List<IReadOnlyList<RelayUsage.Account>>();
-        HeadlessUsage.Send = sent.Add;
-        RelayService.ServeEarly();
-
-        HeadlessUsage.IconBuiltForTests();                         // nothing held yet
-        Assert.Empty(sent);
-
+        _send = sent.Add;
         _source.Readings = [Usage("/acct/a")];
-        HeadlessUsage.Tick();
+        RelayService.ServeEarly();
+        Feed().Tick();
         Assert.Single(sent);
 
-        HeadlessUsage.IconBuiltForTests();
-        Assert.Equal(2, sent.Count);
+        RaiseAccountIconBuilt();
 
-        Assert.NotNull(HeadlessUsage.Handoff());
-        HeadlessUsage.IconBuiltForTests();
         Assert.Equal(2, sent.Count);
     }
 
-    // Every path off the timer swallows and logs: a Timer discards what it
-    // throws, and a silent timer is undiagnosable.
-    [AvaloniaFact]
-    public void Headless_usage_tick_survives_a_throwing_sink_clock_and_icon_resend()
+    private static void RaiseAccountIconBuilt()
     {
-        OrbweaverSettings.RelayEnabled = true;
-        UsageOn();
-        _source.Readings = [Usage("/acct/a")];
-        HeadlessUsage.Send = _ => throw new IOException("relay down");
-        RelayService.ServeEarly();
-
-        HeadlessUsage.Tick();                                      // the sink throws
-        HeadlessUsage.IconBuiltForTests();                         // the resend throws
-        HeadlessUsage.Now = () => throw new InvalidOperationException("clock");
-        HeadlessUsage.Tick();                                      // the tick throws
-
-        Assert.Equal(2, Heard("headless usage failed: IOException"));
-        Assert.Equal(1, Heard("headless usage failed: InvalidOperationException"));
-        Assert.False(HeadlessUsage.PumpForTests!.Polling);
+        var field = typeof(PersonaImageStore).GetField("Built",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        ((Action?)field.GetValue(PersonaImageStore.Accounts))?.Invoke();
     }
 
-    // Grok's forced refresh runs before the unlock too, gated by the same two
-    // switches as after it — and the control: one switch alone starts nothing.
+    // Grok's forced refresh runs before the unlock too, through the real
+    // settings switches — and the control: one switch alone starts nothing.
     [AvaloniaFact]
     public void Grok_refresh_runs_headless_only_with_both_switches()
     {
-        var refreshes = 0;
         void Run(bool usage, bool auto)
         {
             RelayService.ResetHeadlessForTests();
             RelayService.HeadlessScan = () => [];
             RelayService.HeadlessEvery = Timeout.InfiniteTimeSpan;
-            HeadlessUsage.Source = () => _source;
-            HeadlessUsage.OffThread = work => work();
-            HeadlessUsage.Now = () => _now;
-            HeadlessUsage.Every = Timeout.InfiniteTimeSpan;
-            HeadlessUsage.GrokRefresh = () => refreshes++;
+            RelayService.UsageFactory = () => new HeadlessUsage(HeadlessUsage.Production(_source) with
+            {
+                OffThread = work => work(), Now = () => _now, RefreshGrok = () => _refreshes++,
+            });
+            RelayService.UsageFirstTick = Timeout.InfiniteTimeSpan;
             OrbweaverSettings.RelayEnabled = true;
             UsageOn(claude: true, grok: usage);
             OrbweaverSettings.GrokAutoRefreshEnabled = auto;
             RelayService.ServeEarly();
-            HeadlessUsage.Tick();
+            Feed().Tick();
         }
 
         Run(usage: true, auto: false);
-        Assert.Equal(0, refreshes);
+        Assert.Equal(0, _refreshes);
         Run(usage: false, auto: true);
-        Assert.Equal(0, refreshes);
+        Assert.Equal(0, _refreshes);
         Run(usage: true, auto: true);
-        Assert.Equal(1, refreshes);
-
-        _now = _now.AddMinutes(1);                                 // inside the 20-minute floor
-        HeadlessUsage.Tick();
-        Assert.Equal(1, refreshes);
+        Assert.Equal(1, _refreshes);
     }
 
+    // The log line a failure leaves, through the real MirrorLog.
     [AvaloniaFact]
-    public void Tick_before_Start_and_after_Handoff_does_nothing_and_Start_after_Handoff_is_refused()
+    public void A_headless_usage_failure_is_said_in_the_mirror_log()
     {
+        OrbweaverSettings.RelayEnabled = true;
         UsageOn();
-        HeadlessUsage.Tick();                                      // never started
-        Assert.Equal(0, _source.Reads);
-        Assert.Null(HeadlessUsage.Handoff());                      // nothing to hand over
+        _clock = () => throw new InvalidOperationException("clock");
+        RelayService.ServeEarly();
 
-        HeadlessUsage.Start();                                     // the handover already happened
-        Assert.False(HeadlessUsage.Started);
-        HeadlessUsage.Tick();
-        Assert.Equal(0, _source.Reads);
-        Assert.Null(HeadlessUsage.Handoff());                      // and only once
+        Feed().Tick();
+
+        Assert.Equal(1, Heard("relay headless usage failed: InvalidOperationException"));
     }
 
     // ---- the unlock ------------------------------------------------------------
 
-    // The orbs draw what was already read, at once, without reading again.
+    // The orbs draw what was already read, at once, without reading again or
+    // telling the phone anything; the feed is gone; and both halves project
+    // the same readings to the same shape.
     [AvaloniaFact]
     public void Attach_hands_the_readings_to_the_orbs()
     {
@@ -378,37 +387,51 @@ public class HeadlessUsageTests : IDisposable
         UsageOn();
         _source.Readings = [Usage("/acct/a")];
         RelayService.ServeEarly();
-        HeadlessUsage.Tick();
-        var pump = HeadlessUsage.PumpForTests;
+        Feed().Tick();
+        var pump = Feed().Pump;
+        var applied = 0;
+        void OnApplied(IReadOnlyList<RelayUsage.Account> _) => applied++;
+        AccountOrbs.UsageApplied += OnApplied;
+        try
+        {
+            var manager = Manager();
+            RelayService.Attach(manager);
 
-        var manager = Manager();
-        RelayService.Attach(manager);
-
-        var orbs = manager.AccountOrbsForTests;
-        Assert.True(orbs.Orbs.ContainsKey("/acct/a"));
-        Assert.Same(pump, orbs.PumpForTests);
-        Assert.Equal(1, _source.Reads);
-        Assert.False(HeadlessUsage.Started);
+            var orbs = manager.AccountOrbsForTests;
+            Assert.True(orbs.Orbs.ContainsKey("/acct/a"));
+            Assert.Same(pump, orbs.PumpForTests);
+            Assert.Equal(1, _source.Reads);
+            Assert.Equal(0, applied);
+            Assert.Null(RelayService.UsageFeed);
+            Assert.Equal(
+                AccountOrbs.RelayAccountsOf(new Dictionary<string, AccountUsage> { ["/acct/a"] = Usage("/acct/a") }).Select(a => a.Shape),
+                orbs.RelayAccounts().Select(a => a.Shape));
+        }
+        finally { AccountOrbs.UsageApplied -= OnApplied; }
     }
 
-    // The Grok schedule carries too, so its 20-minute floor is not reset by
-    // an unlock.
+    // The Grok schedule carries, last refresh and all: the UI side does not
+    // refresh again inside the floor — and does at it, which shows the
+    // handover did not simply switch refresh off.
     [AvaloniaFact]
-    public void Attach_hands_the_Grok_schedule_to_the_session_manager()
+    public void Attach_hands_the_Grok_last_refresh_to_the_session_manager()
     {
         OrbweaverSettings.RelayEnabled = true;
-        UsageOn();
+        UsageOn(grok: true);
+        OrbweaverSettings.GrokAutoRefreshEnabled = true;
         RelayService.ServeEarly();
-        var manager = Manager();
-        var before = manager.GrokRefreshForTests;
+        Feed().Tick();
+        Assert.Equal(1, _refreshes);
 
+        var manager = Manager();
         RelayService.Attach(manager);
 
-        Assert.NotSame(before, manager.GrokRefreshForTests);
+        Assert.False(manager.GrokRefreshForTests.Tick(T0.AddMinutes(5), true, true));
+        Assert.True(manager.GrokRefreshForTests.Tick(T0 + GrokUsageRefresher.MinimumInterval, true, true));
     }
 
     // One pump, one floor: a tick of the adopted orbs before the floor reads
-    // nothing; at it, exactly once.
+    // nothing; at it, exactly once. The old feed's tick does nothing.
     [AvaloniaFact]
     public void Attach_does_not_double_poll()
     {
@@ -416,7 +439,8 @@ public class HeadlessUsageTests : IDisposable
         UsageOn();
         _source.Readings = [Usage("/acct/a")];
         RelayService.ServeEarly();
-        HeadlessUsage.Tick();
+        var feed = Feed();
+        feed.Tick();
 
         var manager = Manager();
         RelayService.Attach(manager);
@@ -430,7 +454,8 @@ public class HeadlessUsageTests : IDisposable
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(2, _source.Reads);
 
-        HeadlessUsage.Tick();                                      // the headless side is done
+        _now = T0.AddHours(1);
+        feed.Tick();
         Assert.Equal(2, _source.Reads);
     }
 
@@ -444,7 +469,7 @@ public class HeadlessUsageTests : IDisposable
         UsageOn();
         _source.Readings = [Usage("/acct/a", session: 10)];
         RelayService.ServeEarly();
-        HeadlessUsage.Tick();
+        Feed().Tick();
         Assert.Equal(1, _client!.UsageFramesSent);
 
         var manager = Manager();
@@ -458,59 +483,42 @@ public class HeadlessUsageTests : IDisposable
         Assert.Equal(2, _client.UsageFramesSent);
     }
 
-    // A read started headless and finishing after the unlock reaches the orbs
-    // through the dispatcher, once, and is not sent from the headless side.
+    // A read started headless and finishing after the unlock goes to Deliver,
+    // which posts: it lands after Attach has returned, on top of the readings
+    // already adopted, once, and is never sent from the headless side.
     [AvaloniaFact]
-    public void A_read_in_flight_at_Attach_reaches_the_orbs_once()
+    public void A_read_in_flight_at_Attach_reaches_the_orbs_once_after_the_adopted_readings()
     {
-        var held = new Held();
-        HeadlessUsage.OffThread = held.Run;
         OrbweaverSettings.RelayEnabled = true;
         UsageOn();
         _source.Readings = [Usage("/acct/a")];
         RelayService.ServeEarly();
-        HeadlessUsage.Tick();
-        Assert.True(HeadlessUsage.PumpForTests!.Polling);
+        var feed = Feed();
+        feed.Tick();                                               // /acct/a, read and sent headless
+
+        var held = new Held();
+        _run = held.Run;
+        _now = T0 + UsagePollCadence.Fast;
+        _source.Readings = [Usage("/acct/a"), Usage("/acct/b")];
+        feed.Tick();                                               // in flight at the unlock
+        Assert.True(feed.Pump.Polling);
+        Assert.Equal(1, _client!.UsageFramesSent);
 
         var manager = Manager();
         RelayService.Attach(manager);
         var orbs = manager.AccountOrbsForTests;
         orbs.Tick(T0.AddHours(1));                                 // in flight: no second read
         Assert.Single(held.Pending);
-        Assert.Empty(orbs.Orbs);
+        Assert.Equal(["/acct/a"], orbs.Orbs.Keys);
 
         held.Release();
+        Assert.Equal(["/acct/a"], orbs.Orbs.Keys);                 // posted, not yet run
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(1, _source.Reads);
-        Assert.True(orbs.Orbs.ContainsKey("/acct/a"));
-        Assert.Empty(HeadlessUsage.ReadingsForTests);              // never merged headless
-        Assert.Equal(1, _client!.UsageFramesSent);                 // the orbs' Apply, once
-    }
-
-    // The narrow gap: the read finishes after Handoff but before the orbs
-    // have pointed the pump at themselves. It is held, then drawn on adoption.
-    [AvaloniaFact]
-    public void A_read_finishing_between_Handoff_and_Adopt_is_held_then_drawn()
-    {
-        var held = new Held();
-        HeadlessUsage.OffThread = held.Run;
-        OrbweaverSettings.RelayEnabled = true;
-        UsageOn();
-        _source.Readings = [Usage("/acct/a")];
-        RelayService.ServeEarly();
-        HeadlessUsage.Tick();
-
-        var handoff = HeadlessUsage.Handoff();
-        held.Release();                                            // lands in the gap
-        Assert.Empty(HeadlessUsage.ReadingsForTests);
-
-        var manager = Manager();
-        manager.AdoptUsage(handoff);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(manager.AccountOrbsForTests.Orbs.ContainsKey("/acct/a"));
-        Assert.Equal(1, _source.Reads);
+        Assert.Equal(2, _source.Reads);
+        Assert.Equal(["/acct/a", "/acct/b"], orbs.Orbs.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.False(feed.ReadingsForTests.ContainsKey("/acct/b")); // never merged headless
+        Assert.Equal(2, _client.UsageFramesSent);                  // the orbs' Apply, once
     }
 
     // The null arm: no feed (relay off) leaves the orbs with their own pump.
@@ -520,20 +528,23 @@ public class HeadlessUsageTests : IDisposable
         OrbweaverSettings.RelayEnabled = false;
         var manager = Manager();
         var own = manager.AccountOrbsForTests.PumpForTests;
+        var grok = manager.GrokRefreshForTests;
 
         RelayService.Attach(manager);
 
         Assert.Same(own, manager.AccountOrbsForTests.PumpForTests);
+        Assert.Same(grok, manager.GrokRefreshForTests);
     }
 
-    // Started but nothing read yet: the pump is adopted, nothing is drawn.
+    // Started but nothing read yet — the ordinary unlocked launch, which the
+    // 5 s first tick exists for: the pump is adopted, nothing is drawn.
     [AvaloniaFact]
     public void Attach_before_any_headless_read_adopts_the_pump_and_draws_nothing()
     {
         OrbweaverSettings.RelayEnabled = true;
         UsageOn();
         RelayService.ServeEarly();
-        var pump = HeadlessUsage.PumpForTests;
+        var pump = Feed().Pump;
 
         var manager = Manager();
         RelayService.Attach(manager);
@@ -542,18 +553,22 @@ public class HeadlessUsageTests : IDisposable
         Assert.Empty(manager.AccountOrbsForTests.Orbs);
     }
 
-    // Adopt without a late-readings holder (the parameter's default).
+    // The test reset disposes the feed, so a timer one test started cannot
+    // tick into the next.
     [AvaloniaFact]
-    public void Adopt_without_late_readings_draws_what_it_was_given()
+    public void ResetHeadlessForTests_disposes_the_usage_feed()
     {
+        OrbweaverSettings.RelayEnabled = true;
         UsageOn();
-        var manager = Manager();
-        var pump = new UsagePump(_source, work => work());
+        RelayService.UsageFirstTick = TimeSpan.FromMilliseconds(100);
+        RelayService.UsageEvery = TimeSpan.FromMilliseconds(20);
+        RelayService.ServeEarly();
+        Assert.NotNull(RelayService.UsageFeed);
 
-        manager.AccountOrbsForTests.Adopt(pump,
-            new Dictionary<string, AccountUsage> { ["/acct/a"] = Usage("/acct/a") });
+        RelayService.ResetHeadlessForTests();
+        Thread.Sleep(300);
 
-        Assert.True(manager.AccountOrbsForTests.Orbs.ContainsKey("/acct/a"));
-        Assert.Same(pump, manager.AccountOrbsForTests.PumpForTests);
+        Assert.Null(RelayService.UsageFeed);
+        Assert.Equal(0, _source.Reads);
     }
 }

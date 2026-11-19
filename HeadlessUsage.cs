@@ -17,46 +17,48 @@ namespace Orbweaver
     // one every one to five minutes.
     //
     // This is the same poll with no window in it: a UsagePump ticked from a
-    // plain Timer, readings merged and projected by AccountOrbs' own static
-    // rules, and the result handed to the relay the way AccountOrbs.Apply hands
-    // it. Started by ServeEarly, so only while the relay is on — before the
-    // unlock the phone is the only thing that could see a reading, and a
-    // locked Mac with the relay off has no reason to start `claude -p` every
-    // minute. At the unlock RelayService.Attach takes the pump, the readings
-    // and the Grok schedule off this class and gives them to the orbs, so the
-    // cadence carries straight across and no read is ever doubled.
+    // plain Timer, readings merged by AccountOrbs' own static rule and
+    // projected by the one projection both halves share. RelayService starts
+    // one from ServeEarly, so only while the relay is on — before the unlock
+    // the phone is the only thing that could see a reading, and a locked Mac
+    // with the relay off has no reason to start `claude -p` every minute. At
+    // the unlock Handoff points the pump at the orbs and gives them the pump,
+    // the readings and the Grok schedule, so the cadence carries straight
+    // across and no read is ever doubled (plan amendment 11430).
     //
     // No Dispatcher, no Avalonia, no settings writes anywhere on this path —
     // the dispatcher is not pumping before the unlock, and every settings
-    // setter defers its save through a DispatcherTimer.
-    internal static class HeadlessUsage
+    // setter defers its save through a DispatcherTimer. Every dependency comes
+    // in through Seams, so the unit suite drives it with no process, no clock
+    // and no settings behind it.
+    internal sealed class HeadlessUsage : IDisposable
     {
-        private static readonly object Gate = new();
-        private static readonly Dictionary<string, AccountUsage> Readings = new(StringComparer.Ordinal);
+        internal sealed record Seams(
+            IUsageSource Source,
+            Func<bool> AnyEnabled,
+            Func<(bool Usage, bool AutoRefresh)> GrokSwitches,
+            Func<IReadOnlyDictionary<string, AccountUsage>, IReadOnlyList<RelayUsage.Account>> Project,
+            Action<IReadOnlyList<RelayUsage.Account>> Send,
+            Action RefreshGrok,
+            Action<Action> OffThread,
+            Func<DateTimeOffset> Now,
+            Action<string> Log);
 
-        private static Timer? _timer;
-        private static UsagePump? _pump;
-        private static GrokUsageRefreshScheduler? _grok;
-        private static UsageLateReadings? _late;
-        private static bool _handedOff;
-
-        // Seams, each replaced by tests: the source a read goes to, where it
-        // runs, the Grok refresh, the clock, and the tick period. The defaults
-        // start real `claude`, `codex` and Grok processes, which no test may.
-        internal static Func<IUsageSource> Source { get; set; } = RealSource;
-        internal static Action<Action> OffThread { get; set; } = DefaultOffThread;
-        internal static Action GrokRefresh { get; set; } = RealGrokRefresh;
-        internal static Func<DateTimeOffset> Now { get; set; } = DefaultNow;
-
-        // Where a projection goes: the relay, the same call AccountOrbs'
-        // UsageApplied reaches after the unlock.
-        internal static Action<IReadOnlyList<RelayUsage.Account>> Send { get; set; } = RelayService.OnUsage;
-
-        // SessionManager's two-second tick, so both sides of the unlock are
-        // asked "is it time?" equally often.
-        internal static TimeSpan Every { get; set; } = DefaultEvery;
-
-        private static readonly TimeSpan DefaultEvery = TimeSpan.FromSeconds(2);
+        // The wiring the app runs with, around whatever source it is given.
+        // Every arm but the source and the Grok refresh is ordinary glue and is
+        // exercised by the UI suite through `Production(fake) with { … }`; the
+        // two that start real `claude`, `codex` and Grok processes are the
+        // excluded methods below.
+        internal static Seams Production(IUsageSource source) => new(
+            source,
+            AccountOrbs.AnyEnabled,
+            () => (OrbweaverSettings.GrokAccountUsageEnabled, OrbweaverSettings.GrokAutoRefreshEnabled),
+            readings => AccountOrbs.RelayAccountsOf(readings),
+            RelayService.OnUsage,
+            RealGrokRefresh,
+            work => Task.Run(work),
+            () => DateTimeOffset.UtcNow,
+            line => MirrorLog.Say("relay", line));
 
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static IUsageSource RealSource() =>
@@ -65,175 +67,180 @@ namespace Orbweaver
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static void RealGrokRefresh() => GrokUsageRefresher.Refresh();
 
-        private static void DefaultOffThread(Action work) => Task.Run(work);
+        private readonly object _gate = new();
+        private readonly Seams _seams;
+        private readonly UsagePump _pump;
+        private readonly GrokUsageRefreshScheduler _grok = new();
+        private readonly Dictionary<string, AccountUsage> _readings = new(StringComparer.Ordinal);
 
-        private static DateTimeOffset DefaultNow() => DateTimeOffset.UtcNow;
+        private Timer? _timer;
+        private bool _listening;
 
-        internal static bool Started { get { lock (Gate) return _pump is not null && !_handedOff; } }
+        // Set by Handoff: where a read that took the headless sink an instant
+        // before the swap goes instead. Non-null means handed over.
+        private Action<IReadOnlyList<AccountUsage>>? _deliver;
 
-        // From ServeEarly, inside its own guard. Once only, and never after a
-        // handover: a feed restarted behind the orbs' back would be a second
-        // poll against the same accounts.
-        internal static void Start()
+        internal HeadlessUsage(Seams seams)
         {
-            lock (Gate)
+            _seams = seams;
+            _pump = new UsagePump(seams.Source, seams.OffThread,
+                e => seams.Log($"headless usage read failed: {e.GetType().Name}"));
+            _pump.SwapSink(OnReadings);
+        }
+
+        internal UsagePump Pump => _pump;
+
+        internal IReadOnlyDictionary<string, AccountUsage> ReadingsForTests
+        {
+            get { lock (_gate) return new Dictionary<string, AccountUsage>(_readings, StringComparer.Ordinal); }
+        }
+
+        // The timer, and the icon-bundle event a hash reaches the phone by.
+        // The first tick waits (5 s in production) so an ordinary unlocked
+        // launch, whose Attach follows within a second or two, hands over an
+        // untouched pump rather than one with a read already in flight.
+        internal void Start(TimeSpan firstTick, TimeSpan every)
+        {
+            lock (_gate)
             {
-                if (_pump is not null || _handedOff) return;
-                var pump = new UsagePump(Source(), OffThread);
-                pump.Sink = readings => OnReadings(pump, readings);
-                _pump = pump;
-                _grok = new GrokUsageRefreshScheduler();
-                PersonaImageStore.Accounts.Built += OnIconBuilt;
-                _timer = new Timer(_ => Tick(), null, Every, Every);
+                if (_deliver is not null || _timer is not null) return;
+                PersonaImageStore.Accounts.Built += Reproject;
+                _listening = true;
+                _timer = new Timer(_ => Tick(), null, firstTick, every);
             }
         }
 
         // One timer tick. Never throws — it runs on a Timer that discards
         // exceptions, and a timer that has silently stopped is undiagnosable
         // (the rule RelayService.HeadlessTick already follows).
-        internal static void Tick()
+        internal void Tick()
         {
             try
             {
-                if (!AccountOrbs.AnyEnabled()) return;
-
-                var now = Now();
-                UsagePump pump;
-                bool refresh;
-                lock (Gate)
+                if (!_seams.AnyEnabled())
                 {
-                    if (_handedOff || _pump is null) return;
-                    pump = _pump;
-
-                    // The same two switches SessionManager.Start asks. The
-                    // refresh is a pty launch with no window in it, so a locked
-                    // Mac can run it as well as an unlocked one.
-                    refresh = _grok!.Tick(
-                        now,
-                        OrbweaverSettings.GrokAccountUsageEnabled,
-                        OrbweaverSettings.GrokAutoRefreshEnabled);
+                    // AccountOrbs.Tick closes every orb here. With no orbs to
+                    // close, the equivalent is to forget what was read, so a
+                    // switch turned back on starts clean.
+                    lock (_gate) if (_deliver is null) _readings.Clear();
+                    return;
                 }
 
-                pump.Tick(now);
+                var now = _seams.Now();
+                bool refresh;
+                lock (_gate)
+                {
+                    if (_deliver is not null) return;
 
-                // Off this thread for SessionManager's reason: the refresh holds
-                // a real Grok process open for seconds.
-                if (refresh) OffThread(GrokRefresh);
+                    // The same two switches and the same twenty-minute floor
+                    // SessionManager.Start uses; the scheduler goes to it at
+                    // the unlock so the floor carries.
+                    var (usage, auto) = _seams.GrokSwitches();
+                    refresh = _grok.Tick(now, usage, auto);
+                }
+
+                _pump.Tick(now);
+
+                // Off this thread for SessionManager's reason: the refresh
+                // holds a real Grok process open for seconds. It is a pty
+                // launch with no window in it, so a locked Mac can run it.
+                if (refresh) _seams.OffThread(_seams.RefreshGrok);
             }
-            catch (Exception e) { Say(e); }
+            catch (Exception e) { Fail(e); }
         }
 
-        // A finished read: merged and projected exactly as AccountOrbs.Apply
-        // does it, the cadence moved by the same rule, and the result given to
-        // the relay — which is what logs `relay usage accounts …` and decides,
-        // through the tracker the early client already holds, whether the
-        // phone needs a frame at all.
+        // A finished read: merged by AccountOrbs' rule, the cadence moved by
+        // the same rule Apply uses, and the projection sent to the relay —
+        // which logs `relay usage accounts …` and lets the tracker on the
+        // early client decide whether the phone needs a frame.
         //
-        // A read that finishes after the handover goes on to the orbs through
-        // Late instead, so it is neither dropped nor sent from here as well.
-        private static void OnReadings(UsagePump pump, IReadOnlyList<AccountUsage> readings)
+        // The merge is under the gate Handoff takes. A read that took this
+        // sink just before the swap and arrives just after it would otherwise
+        // be merged into readings Handoff has already copied, and the orbs
+        // would never see it; instead it goes on to them.
+        private void OnReadings(IReadOnlyList<AccountUsage> readings)
         {
             try
             {
+                Action<IReadOnlyList<AccountUsage>>? deliver;
                 IReadOnlyList<RelayUsage.Account>? accounts = null;
-                UsageLateReadings? late;
-                lock (Gate)
+                lock (_gate)
                 {
-                    late = _late;
-                    if (late is null)
+                    deliver = _deliver;
+                    if (deliver is null)
                     {
-                        var changed = AccountOrbs.MergeReadings(Readings, readings);
-                        pump.Interval = UsagePollCadence.Next(pump.Interval, changed);
-                        accounts = AccountOrbs.RelayAccountsOf(Readings);
+                        var changed = AccountOrbs.MergeReadings(_readings, readings);
+                        _pump.Interval = UsagePollCadence.Next(_pump.Interval, changed);
+                        accounts = _seams.Project(_readings);
                     }
                 }
 
-                if (late is not null) late.Accept(readings);
-                else Send(accounts!);
+                if (deliver is not null) deliver(readings);
+                else _seams.Send(accounts!);
             }
-            catch (Exception e) { Say(e); }
+            catch (Exception e) { Fail(e); }
         }
 
         // An account icon's bundle finished building, which is the first
         // moment its hash can be offered to the phone. AccountOrbs answers the
         // same event the same way once it owns the readings.
-        private static void OnIconBuilt()
+        internal void Reproject()
         {
             try
             {
                 IReadOnlyList<RelayUsage.Account> accounts;
-                lock (Gate)
+                lock (_gate)
                 {
-                    if (_handedOff || Readings.Count == 0) return;
-                    accounts = AccountOrbs.RelayAccountsOf(Readings);
+                    if (_deliver is not null || _readings.Count == 0) return;
+                    accounts = _seams.Project(_readings);
                 }
 
-                Send(accounts);
+                _seams.Send(accounts);
             }
-            catch (Exception e) { Say(e); }
+            catch (Exception e) { Fail(e); }
         }
 
-        // The unlock. Stops the timer and gives back everything the orbs need
-        // to carry on where this left off, or null when the feed never started
-        // (the relay was off, or the Mac was unlocked at launch and Attach ran
-        // before ServeEarly's timer did anything worth handing over).
-        internal static UsageHandoff? Handoff()
+        // The unlock (plan amendment 11430). Under the gate: stop the timer,
+        // stop listening, and swap the pump's sink to `deliver` under the
+        // pump's own lock, so a read in flight lands in exactly one place.
+        // Returns what the orbs and SessionManager take over, or null if this
+        // was already handed over.
+        internal UsageHandoff? Handoff(Action<IReadOnlyList<AccountUsage>> deliver)
         {
-            lock (Gate)
+            lock (_gate)
             {
-                if (_handedOff) return null;
-                _handedOff = true;
-                _timer?.Dispose();
-                _timer = null;
-                if (_pump is null) return null;
-
-                PersonaImageStore.Accounts.Built -= OnIconBuilt;
-                _late = new UsageLateReadings();
+                if (_deliver is not null) return null;
+                _deliver = deliver;
+                StopLocked();
+                _pump.SwapSink(deliver);
                 return new UsageHandoff(
                     _pump,
-                    new Dictionary<string, AccountUsage>(Readings, StringComparer.Ordinal),
-                    _grok!,
-                    _late);
+                    new Dictionary<string, AccountUsage>(_readings, StringComparer.Ordinal),
+                    _grok);
             }
         }
 
-        private static void Say(Exception e) =>
-            MirrorLog.Say("relay", $"headless usage failed: {e.GetType().Name}");
-
-        // Called from RelayService.ResetHeadlessForTests, so a timer started by
-        // one test cannot tick into the next.
-        internal static void ResetForTests()
+        public void Dispose()
         {
-            lock (Gate)
-            {
-                _timer?.Dispose();
-                _timer = null;
-                if (_pump is not null && !_handedOff) PersonaImageStore.Accounts.Built -= OnIconBuilt;
-                _pump = null;
-                _grok = null;
-                _late = null;
-                _handedOff = false;
-                Readings.Clear();
-            }
-
-            Source = RealSource;
-            OffThread = DefaultOffThread;
-            GrokRefresh = RealGrokRefresh;
-            Now = DefaultNow;
-            Send = RelayService.OnUsage;
-            Every = DefaultEvery;
+            lock (_gate) StopLocked();
         }
 
-        // A test's way to raise the icon-built event's handler without
-        // building a real bundle.
-        internal static void IconBuiltForTests() => OnIconBuilt();
-
-        internal static IReadOnlyDictionary<string, AccountUsage> ReadingsForTests
+        private void StopLocked()
         {
-            get { lock (Gate) return new Dictionary<string, AccountUsage>(Readings, StringComparer.Ordinal); }
+            _timer?.Dispose();
+            _timer = null;
+            if (_listening) PersonaImageStore.Accounts.Built -= Reproject;
+            _listening = false;
         }
 
-        internal static UsagePump? PumpForTests { get { lock (Gate) return _pump; } }
-
+        private void Fail(Exception e) => _seams.Log($"headless usage failed: {e.GetType().Name}");
     }
+
+    // What the orbs and SessionManager take over at the unlock: the pump
+    // itself (its floor and cadence are never copied), the readings already
+    // taken, and the Grok schedule so its twenty-minute floor carries.
+    internal sealed record UsageHandoff(
+        UsagePump Pump,
+        IReadOnlyDictionary<string, AccountUsage> Readings,
+        GrokUsageRefreshScheduler Grok);
 }

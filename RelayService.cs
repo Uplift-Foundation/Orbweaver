@@ -121,13 +121,31 @@ namespace Orbweaver
                 // the lock screen sent the phone no usage at all. Inside this
                 // guard so it starts once, only with the relay on, and never
                 // after Attach — see HeadlessUsage.
-                HeadlessUsage.Start();
+                _usage = UsageFactory();
+                _usage.Start(UsageFirstTick, UsageEvery);
             }
         }
 
         private static readonly object HeadlessGate = new();
         private static Timer? _headless;
         private static bool _attached;
+
+        // CB-391: the pre-unlock usage poll, while there is one. Under
+        // HeadlessGate with the roster timer, and gone after Attach.
+        private static HeadlessUsage? _usage;
+
+        internal static HeadlessUsage? UsageFeed { get { lock (HeadlessGate) return _usage; } }
+
+        internal static Func<HeadlessUsage> UsageFactory { get; set; } = RealUsage;
+
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static HeadlessUsage RealUsage() => new(HeadlessUsage.Production(HeadlessUsage.RealSource()));
+
+        // The UI tick's two seconds, after a 5 s first wait (plan 11427 §3).
+        internal static readonly TimeSpan DefaultUsageFirstTick = TimeSpan.FromSeconds(5);
+        internal static readonly TimeSpan DefaultUsageEvery = TimeSpan.FromSeconds(2);
+        internal static TimeSpan UsageFirstTick { get; set; } = DefaultUsageFirstTick;
+        internal static TimeSpan UsageEvery { get; set; } = DefaultUsageEvery;
 
         // honourOrbLifetime: true, so the phone is sent what the orbs would
         // show once the UI is up, not more; the live scan takes over at that
@@ -209,25 +227,32 @@ namespace Orbweaver
                 _headless = null;
                 _attached = false;
                 HeadlessPersonas.Clear();
+                _usage?.Dispose();
+                _usage = null;
             }
-            HeadlessUsage.ResetForTests();
+            UsageFactory = RealUsage;
+            UsageFirstTick = DefaultUsageFirstTick;
+            UsageEvery = DefaultUsageEvery;
             HeadlessScan = () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
             HeadlessEvery = TimeSpan.FromSeconds(3);
         }
 
         internal static void Attach(SessionManager sessions)
         {
+            HeadlessUsage? usage;
             lock (HeadlessGate)
             {
                 _attached = true;
                 _headless?.Dispose();
                 _headless = null;
+                usage = _usage;
+                _usage = null;
             }
             // CB-391: the pump, readings and Grok schedule the pre-unlock
             // poll was running, handed to the orbs before UsageApplied is
             // subscribed, so the cadence carries across and nothing is read
             // twice. Null — nothing to adopt — when that poll never started.
-            sessions.AdoptUsage(HeadlessUsage.Handoff());
+            sessions.AdoptUsage(usage?.Handoff(sessions.UsageDelivery));
             sessions.SessionsScanned += OnScanned;
             AccountOrbs.UsageApplied += OnUsage;
             if (OrbweaverSettings.RelayEnabled) Enable();
