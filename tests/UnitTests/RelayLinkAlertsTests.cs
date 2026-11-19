@@ -115,4 +115,24 @@ public partial class RelayLinkTests
         var e = J(push).GetProperty("e").GetString()!;
         return JsonDocument.Parse(Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, e)!)).RootElement.GetProperty("label").GetString()!;
     }
+
+    [Fact]
+    public void A_withheld_members_own_count_does_not_resurface_when_it_later_alerts()
+    {
+        // m2 is a member of m1, which is a member of s1. Under "leads" m2 and m1 both finish withheld, so m1's
+        // own count (m2's finish) must be dropped: m1 never sends a summary. Switching to "all" then has m1
+        // alert itself, and that alert must not carry the count it earned while withheld.
+        var (link, _, phone, _, _) = Paired();
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads"}"""));
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "idle", "m1")]);
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "generating", "m1")]);
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "idle", "m1")]);
+        link.OnScan([Row("s1"), Member("m1", "generating", "s1"), Member("m2", "idle", "m1")]);
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "idle", "m1")]);
+
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"all"}"""));
+        link.OnScan([Row("s1"), Member("m1", "generating", "s1"), Member("m2", "idle", "m1")]);
+        var m1Alert = link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "idle", "m1")]);
+        Assert.DoesNotContain("finished since", DoneLabel(link, phone, m1Alert));
+    }
 }
