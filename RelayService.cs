@@ -102,6 +102,11 @@ namespace Orbweaver
         // scanned yet.
         internal static void ServeEarly()
         {
+            // CB-314's scripted pairing, here as well as in Attach: a Mac parked
+            // at the lock screen never reaches Attach, so the always-locked mini
+            // could never be paired headless at all. Before the RelayEnabled
+            // check because the hooks turn the relay on themselves.
+            StartHooksOnce();
             if (!OrbweaverSettings.RelayEnabled) return;
             Enable();
             // A connection with nothing behind it is a machine the phone lists
@@ -230,6 +235,7 @@ namespace Orbweaver
                 _usage?.Dispose();
                 _usage = null;
             }
+            Interlocked.Exchange(ref _hooksStarted, 0);
             UsageFactory = RealUsage;
             UsageFirstTick = DefaultUsageFirstTick;
             UsageEvery = DefaultUsageEvery;
@@ -256,8 +262,18 @@ namespace Orbweaver
             sessions.SessionsScanned += OnScanned;
             AccountOrbs.UsageApplied += OnUsage;
             if (OrbweaverSettings.RelayEnabled) Enable();
-            // CB-314's scripted pairing, only with the explicit env opt-in.
-            if (HooksEnabled()) _ = HooksRunner(Enable());
+            StartHooksOnce();
+        }
+
+        // CB-314's scripted pairing, only with the explicit env opt-in, and once
+        // per process: ServeEarly may already have started it before Attach.
+        private static int _hooksStarted;
+
+        private static void StartHooksOnce()
+        {
+            if (!HooksEnabled()) return;
+            if (Interlocked.Exchange(ref _hooksStarted, 1) != 0) return;
+            _ = HooksRunner(Enable());
         }
 
         internal static Func<bool> HooksEnabled { get; set; } = () => RelayTestHooks.Enabled(Environment.GetEnvironmentVariable);
