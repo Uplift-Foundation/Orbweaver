@@ -47,6 +47,23 @@ Those are the `model:` values the Agent and Workflow tools accept; `effort:` is 
 
 **If the PM isn't confident the requirement and plan support autonomous implementation, it asks a human before spending a team.** Ask on GitHub with a link to the CB ticket, and — the Jira site needs its own login separate from GitHub's — enough of the requirement inline that the question stands alone for someone who can't open the link. Repo admins are the escalation point (`wtvamp`, `lunarjuice` at time of writing; `gh api repos/Uplift-Foundation/Orbweaver/collaborators` is the live list). If it *is* confident, it hands straight to the architects and engineers and no human is in the loop.
 
+### Speed: the clock is part of done
+
+**A bounded bug should land in 30–40 minutes end to end, and a feature in an afternoon.** Past about two hours on any ticket, tell Warren where the time is going rather than carrying on. CB-391 is why this section exists. Its cause was diagnosed to the line before any agent was spawned, and it still headed for two hours. None of that time went on building. It went on process that repeated work or waited on itself:
+
+- **QA reran the full suites locally, on two machines, after CI had already passed them on both rids.** About fifteen minutes.
+- **A thirty-minute log-rate soak was planned**, where counting concurrent child processes for three minutes answers the same question.
+- **An architect stage ran for a bug whose fix was already known**, and a duplicate architect then produced a second plan for the team to reconcile.
+- **The engineer rebuilt beyond the fixes asked for**, which reset both the architect's review and QA's coverage run.
+
+So, for every ticket:
+
+1. **Staff to the uncertainty, not to the org chart.** The architect stage is for a new subsystem, a change to a contract someone else reads (hook, transcript, relay frames), or a cause nobody has found yet. For a bug or a bounded change whose shape is known, the lead writes the plan into the ticket and spawns the engineer and QA together, in one message. QA writes its test matrix while the engineer builds.
+2. **CI green on both rids is the suite gate.** Nobody reruns the full suites locally once CI has passed them at the same sha; see **Test cadence**. What QA adds on top is what CI cannot do: coverage of added lines, installs, and the real-machine proof.
+3. **The real-machine proof is short and paired.** It is one observation that shows the change working where it matters, plus the negative control that would have failed had the setup been wrong, measured in minutes. **Size every observation window to about three times the event's own cadence, never to a round number of minutes.** On CB-391 a usage line arrived 16 s after launch, so a usage-off control proves its point in about 90 s, and a planned ten-minute window measured nothing those 90 s had not. A soak or a rate comparison over half an hour is a post-merge check, if it is run at all. It is never a merge gate.
+4. **One fix round per batch.** QA sends its findings as one batch. The engineer pushes exactly what that batch lists and nothing else, because every unrequested change resets every review and run taken at the old sha. A redesign the engineer thinks is better goes to the lead as a question first.
+5. **Overlap the waits.** Open the PR at the first working push so CI runs while QA reviews. Install while CI runs, with **one install owner per ticket** so two agents never race for the same machine. The lead answers a teammate the moment it reports; a gate never waits on the lead.
+
 ### Build and QA, in a loop
 
 Engineers and architects build, QA tests, back and forth until it stops coming back. QA's half is **Every feature ships with its tests** below — unit, integration and UI covering 100% of the lines the branch adds — so "QA passed" means those are green, not that somebody had a look. Which runs QA repeats each round, and which it leaves to CI, is **Test cadence** below.
@@ -300,7 +317,7 @@ dotnet test tests/UnitTests --collect:"XPlat Code Coverage"
 None of the commands below is meant to run on every round trip. A full local pass — `dotnet test tests/Tests.sln`, the UI suite in Release through CB-119's guard, the screenshots, `tools/coverage.sh` — costs many minutes and a feature takes many rounds, while CI runs the full regression on both rids anyway. Which run belongs when:
 
 - **While iterating**, run only the test classes the change can affect. The VSTest suites (`tests/UnitTests`, `tests/IntegrationTests`) take `--filter "FullyQualifiedName~<Class>"`; the MTP suites (`tests/UiTests`, `tests/UiScreenshots`) take `--filter-class <Namespace.Class>` or `--filter-method`, never `--filter` (CB-270 — check the total in the summary line to confirm the filter took). Add the matching console suite for any change to geometry (`ArrangementTests`), transcript parsing (`TranscriptTests`) or orb initials (`GlyphTests`).
-- **Once before pushing**, the full pass: `dotnet test tests/Tests.sln`, `dotnet test tests/UiTests -c Release` through CB-119's guard, and `tests/UiScreenshots` only if a visible surface changed — against the commit you are about to push.
+- **Before the first push, nothing beyond the targeted runs.** Push early and let CI run the full pass on both rids; it is the regression suite and it runs anyway. Run the full local pass (`dotnet test tests/Tests.sln`, `dotnet test tests/UiTests -c Release` through CB-119's guard, and `tests/UiScreenshots` if a visible surface changed) only when CI cannot give you that answer, for example when CI is down or you are chasing a failure CI reported, and run it against the commit you are about to push.
 - **Once per PR**, `./tools/coverage.sh --base upstream/develop` (`origin/develop` where that is the remote's name) for the PR body's figure. It rebuilds everything and runs all four suites: a number to quote, not a loop to iterate in.
 - **QA** re-runs the targeted tests for whatever it sent back and whatever the fix touched, and leaves the full regression to CI rather than repeating the full local pass every round.
 
