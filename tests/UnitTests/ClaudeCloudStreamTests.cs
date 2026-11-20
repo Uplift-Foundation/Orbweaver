@@ -1016,6 +1016,22 @@ public class ClaudeCloudStreamTests
     private static CloudStreamEvent Durable(long seq) =>
         new(CloudStreamEventKind.Durable, "client_event", seq, "{}");
 
+    // Where a run starts. A panel that has handled something resumes from it,
+    // so a turn that ran while the panel was hidden is replayed into it rather
+    // than skipped; with nothing handled, or nothing older than the server's
+    // newest to resume from, it starts from the newest as it always did.
+    [Theory]
+    [InlineData(2495L, 2530L, 2495L)]
+    [InlineData(null, 2530L, 2530L)]
+    [InlineData(2530L, 2530L, 2530L)]
+    [InlineData(2600L, 2530L, 2530L)]
+    [InlineData(2495L, null, null)]
+    [InlineData(null, null, null)]
+    public void ARunStartsFromWhatThePanelLastSawIfThereIsAnything(long? lastSeen, long? newest, long? expected)
+    {
+        Assert.Equal(expected, ClaudeCloudStreamPolicy.StartFrom(newest, lastSeen));
+    }
+
     [Fact]
     public void OnlyANewerDurableEventMovesTheResumePoint()
     {

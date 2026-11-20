@@ -258,15 +258,24 @@ namespace Orbweaver
             var readings = new List<AccountUsage>();
             foreach (var grokHome in GrokUsageAccounts.Homes(home, OrbweaverSettings.GrokHomes))
             {
-                var label = GrokUsageAccounts.LabelFrom(ReadAuth(grokHome), grokHome);
-                var line = LatestCreditsLine(grokHome);
-                var usage = GrokUsageParse.FromCreditsConfig(
-                    line, grokHome, label, DateTimeOffset.UtcNow);
-                if (usage is not null) readings.Add(usage);
+                if (Assemble(ReadAuth(grokHome), grokHome, LatestCreditsLine(grokHome), DateTimeOffset.UtcNow)
+                    is { } usage)
+                    readings.Add(usage);
             }
 
             return readings;
         }
+
+        // One home's reading, with the label and the CB-340 account id taken
+        // from the same auth.json text. Split from Read so it is testable
+        // without a Grok install.
+        internal static AccountUsage? Assemble(
+            string? authJson, string grokHome, string? creditsLine, DateTimeOffset now) =>
+            GrokUsageParse.FromCreditsConfig(
+                creditsLine, grokHome, GrokUsageAccounts.LabelFrom(authJson, grokHome), now)
+                is { } usage
+                ? usage with { AccountId = AccountIdentity.Grok(authJson) }
+                : null;
 
         [ExcludeFromCodeCoverage]
         private static string? ReadAuth(string grokHome)

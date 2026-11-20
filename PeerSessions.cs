@@ -46,6 +46,47 @@ namespace Orbweaver
         // connection per interval, which is nothing.
         internal static readonly TimeSpan ReconnectEvery = TimeSpan.FromSeconds(10);
 
+        // The one place the answering half is wired. The info source reads the
+        // switch on every answer, and PeerLaunchServer.Shared reads the same
+        // accessor on every launch, so flipping it needs no restart. Shared is
+        // process-wide on purpose: a server per link restart would hand a
+        // replayed nonce a fresh window.
+        internal static void ServeLaunchOn(PeerMirrorHost host, PeerLaunchClient? client) =>
+            host.ServeLaunch(
+                PeerLaunchInfoSource.ForThisDesk(
+                    () => OrbweaverSettings.PeerLaunchInboundEnabled,
+                    () => RemoteControlSessions.LocalSessions().Select(s => s.Status).ToList()),
+                PeerLaunchServer.Shared.HandleAsync,
+                client,
+                PeerBrowseServer.ForThisDesk(() => OrbweaverSettings.PeerLaunchInboundEnabled));
+
+        // What New Chat asks to start a session on another desktop: null until
+        // the link is running.
+        internal static IPeerLauncher? Launcher => Host?.LaunchClient;
+
+        // Paired machines, each marked online when the link is connected to it.
+        // A name the link has not named yet (an inbound "(inbound …)" entry) is
+        // not a machine anyone can pick.
+        internal static IReadOnlyList<PeerMachine> MachinesFrom(
+            IEnumerable<string> paired, Func<string, bool> connected) =>
+            paired.Where(name => !PeerLink.IsUnnamed(name))
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Select(name => new PeerMachine(name, connected(name)))
+                .ToList();
+
+        // The real seams: the link to send on, the pairing file for names and
+        // pins, the shared certificate to sign with. Excluded because each is
+        // one line into something that touches the keychain or a socket;
+        // MachinesFrom and PeerLaunchClient.SignerFor are what is tested.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        private static PeerLaunchClient LaunchClientFor(PeerMirrorHost host) => new(new PeerLaunchClient.Seams(
+            host.Link.SendAsync,
+            () => MachinesFrom(PeerIdentity.Peers().Keys, host.Link.IsConnected),
+            PeerLaunchClient.SignerFor(
+                machine => PeerIdentity.PeerFor(machine)?.Pin,
+                message => PeerIdentity.SignAsync(message)),
+            () => DateTimeOffset.UtcNow));
+
         // The running link's host, or — only in a test, only when no real one
         // is running — the stand-in UseClientForTests installed. The real host
         // always wins, so a test cannot shadow a live link.
@@ -167,6 +208,11 @@ namespace Orbweaver
             host.Serve(
                 () => PeerRosterDirs.Configured(),
                 RemoteControlSessions.LocalSessions);
+
+            // CB-357: both halves of "start a session on another desktop" in
+            // one call, so there is no moment where this desk answers info but
+            // not launches.
+            ServeLaunchOn(host, LaunchClientFor(host));
 
             // A roster landing is what puts an orb on screen and what tells an
             // open panel to look again. Both, in that order: the panel reads the

@@ -18,7 +18,13 @@ namespace Orbweaver
         internal const int BackfillLines = 200;
         private const string Ellipsis = "…";
 
-        internal readonly record struct WireLine(string Role, string Text, long At, bool Error, bool Cut);
+        // CB-356: Kind, Body and BodyCut are set only on a compaction line, so
+        // every other line, and every pinned vector, is byte for byte what it was.
+        internal readonly record struct WireLine(
+            string Role, string Text, long At, bool Error, bool Cut,
+            string? Kind = null, string? Body = null, bool BodyCut = false);
+
+        internal const string CompactionKind = "compaction";
 
         internal static string RoleOf(ChatRole role) => role switch
         {
@@ -27,7 +33,21 @@ namespace Orbweaver
             _ => "system",
         };
 
-        internal static WireLine From(ChatTurn turn) => Line(RoleOf(turn.Role), turn.Text, turn.At.ToUnixTimeSeconds(), turn.IsError);
+        internal static WireLine From(ChatTurn turn)
+        {
+            var line = Line(RoleOf(turn.Role), turn.Text, turn.At.ToUnixTimeSeconds(), turn.IsError);
+            if (turn.Compaction is not { } note) return line;
+
+            // CB-356: text is the note's Line, so a phone that ignores kind shows
+            // a muted aside that reads correctly. The summary rides as body,
+            // under the same 8,000-byte cut as text: 76 of 77 real summaries are
+            // over it, and the full text is on the desktop. Spreading it over
+            // several lines would break "one line is one row of the parser's
+            // output", which paging and the diff both lean on.
+            if (!note.HasSummary) return line with { Kind = CompactionKind };
+            var (body, cut) = CutText(note.Summary);
+            return line with { Kind = CompactionKind, Body = body, BodyCut = cut };
+        }
 
         internal static WireLine Line(string role, string text, long at, bool error = false)
         {
@@ -51,9 +71,14 @@ namespace Orbweaver
             return (Encoding.UTF8.GetString(bytes, 0, keep) + Ellipsis, true);
         }
 
-        internal static string LineJson(WireLine l) =>
-            new CanonicalJson().Str("role", l.Role).Str("text", l.Text).Num("at", l.At)
-                .Flag("error", l.Error).Flag("cut", l.Cut).ToString();
+        internal static string LineJson(WireLine l)
+        {
+            var json = new CanonicalJson().Str("role", l.Role).Str("text", l.Text).Num("at", l.At)
+                .Flag("error", l.Error).Flag("cut", l.Cut);
+            if (l.Kind is { } kind) json = json.Str("kind", kind);
+            if (l.Body is { } body) json = json.Str("body", body).Flag("body_cut", l.BodyCut);
+            return json.ToString();
+        }
 
         private static string Header(string sessionId, long fromLine, long total, bool live, bool reset) =>
             "{\"t\":\"window\",\"session_id\":" + CanonicalJson.Quote(sessionId)
@@ -109,6 +134,23 @@ namespace Orbweaver
         {
             var room = MaxWindowBytes - Encoding.UTF8.GetByteCount(Header(sessionId, long.MaxValue, total, live, reset)) - 2;
             if (Encoding.UTF8.GetByteCount(LineJson(line)) <= room) return line;
+
+            // CB-356: a compaction line's body goes before its text. The text is
+            // the row's one-line label, the body the part the desktop still has.
+            if (line.Body is { Length: > 0 } fullBody)
+            {
+                var body = line.BodyCut ? fullBody[..^1] : fullBody;
+                int blo = 0, bhi = body.Length - 1;
+                while (blo < bhi)
+                {
+                    var mid = (blo + bhi + 1) / 2;
+                    var candidate = line with { Body = Prefix(body, mid) + Ellipsis, BodyCut = true };
+                    if (Encoding.UTF8.GetByteCount(LineJson(candidate)) <= room) blo = mid; else bhi = mid - 1;
+                }
+                line = line with { Body = (blo == 0 ? "" : Prefix(body, blo)) + Ellipsis, BodyCut = true };
+                if (Encoding.UTF8.GetByteCount(LineJson(line)) <= room) return line;
+            }
+
             // A cut text always ends with the ellipsis CutText appended.
             var text = line.Cut ? line.Text[..^1] : line.Text;
             // At least one character always fits (a window's header is a few
@@ -185,7 +227,13 @@ namespace Orbweaver
         // The same row as far as the diff is concerned: role and text, exactly
         // frames-v4's window.diff_rule (Mobile #31). Not `at` (see Diff); and
         // cut follows from the text, so it needs no compare of its own.
-        internal static bool Same(WireLine a, WireLine b) => a.Role == b.Role && a.Text == b.Text;
+        //
+        // CB-356: kind and body too. A boundary line whose summary arrives in a
+        // later read keeps the same text, so without the body the phone would
+        // never be sent the summary. Both are null on every other line, so the
+        // rule there is unchanged.
+        internal static bool Same(WireLine a, WireLine b) =>
+            a.Role == b.Role && a.Text == b.Text && a.Kind == b.Kind && a.Body == b.Body;
 
         // Where the window a change produces starts: the previous count, or
         // one before it for a restated last row. Null for none and reset.

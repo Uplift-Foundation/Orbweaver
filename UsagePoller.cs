@@ -274,23 +274,31 @@ namespace Orbweaver
             foreach (var configDir in
                      UsageAccounts.ConfigDirs(home, OrbweaverSettings.ClaudeCodeProfileDirs))
             {
-                var label = UsageAccounts.LabelFrom(
-                    ReadAccountFile(home, configDir), configDir);
-
+                var accountJson = ReadAccountFile(home, configDir);
                 var stdout = RunOne(claude, configDir);
-                var usage = UsageParse.FromStream(
-                    stdout, configDir, label, DateTimeOffset.UtcNow);
 
                 // A failed read contributes nothing rather than a blank reading.
                 // BackgroundJobs.Merge makes the argument at length: a partial
                 // answer is a confident claim about an account nobody managed to
                 // ask, and here it would mean drawing an empty gauge for an
                 // account that might be at 99%.
-                if (usage is not null) readings.Add(usage);
+                if (Assemble(accountJson, configDir, stdout, DateTimeOffset.UtcNow) is { } usage)
+                    readings.Add(usage);
             }
 
             return readings;
         }
+
+        // One account's reading out of the two things Read fetches: its identity
+        // file and the CLI's answer. The label and the CB-340 account id come
+        // from the same file text, so they cannot describe different accounts.
+        // Split from Read so the assembly is testable without a claude binary.
+        internal static AccountUsage? Assemble(
+            string? accountJson, string? configDir, string? stdout, DateTimeOffset now) =>
+            UsageParse.FromStream(stdout, configDir, UsageAccounts.LabelFrom(accountJson, configDir), now)
+                is { } usage
+                ? usage with { AccountId = AccountIdentity.Claude(accountJson) }
+                : null;
 
         [ExcludeFromCodeCoverage]
         private static string? ReadAccountFile(string home, string? configDir)

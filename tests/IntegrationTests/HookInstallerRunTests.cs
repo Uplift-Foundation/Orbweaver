@@ -70,19 +70,161 @@ public class HookInstallerRunTests : IDisposable
         Assert.Contains("      err", log);
     }
 
+    // A wait that reports a timeout as soon as the child has made `ready`
+    // exist, for the hang tests below. The kill and everything after it are
+    // real; what this replaces is the one-second wall clock the hang test used
+    // to race (CB-293), which a cold CI runner could lose by not having said
+    // "started" yet. A child that exits before it is ready gets `true`, so
+    // the run comes back Ok or Failed and the test fails saying so.
+    //
+    // The Windows children reach `ready` by `cd /d` into its directory rather
+    // than by quoting its path: ArgumentList escapes an embedded quote as \",
+    // which cmd does not understand, so `type nul > "<path>"` silently wrote
+    // nowhere. `cd /d` takes the rest of its command unquoted, spaces and all.
+    internal static Func<System.Diagnostics.Process, bool> TimesOutOnce(string ready) => process =>
+    {
+        var limit = System.Diagnostics.Stopwatch.StartNew();
+        while (!File.Exists(ready))
+        {
+            if (process.HasExited) return true;
+            if (limit.Elapsed > TimeSpan.FromSeconds(60)) return false;
+            Thread.Sleep(10);
+        }
+        return false;
+    };
+
     [Fact]
     public void AChildThatHangsIsKilledAndReportedAsTimedOutWithWhatItSaid()
     {
+        var ready = Path.Combine(_root, "ready");
         var (file, args) = OperatingSystem.IsWindows()
-            ? ("cmd.exe", new[] { "/c", "echo started& ping -n 30 127.0.0.1 > nul" })
-            : ("/bin/sh", new[] { "-c", "echo started; sleep 30" });
+            ? ("cmd.exe", new[] { "/c", $"echo started& cd /d {_root}& type nul > ready& ping -n 30 127.0.0.1 > nul" })
+            : ("/bin/sh", new[] { "-c", $"echo started; : > '{ready}'; sleep 30" });
 
-        var result = HookInstaller.Run(file, args, "fake-installer", timeoutMs: 1_000);
+        // A handle of our own on the child, since Run disposes its own: TimedOut
+        // and a null exit code come from the wait alone, so without this a Run
+        // that never killed anything would pass too.
+        System.Diagnostics.Process? child = null;
+        var wait = TimesOutOnce(ready);
+        var result = HookInstaller.Run(file, args, "fake-installer",
+            waitForExit: p => { child = System.Diagnostics.Process.GetProcessById(p.Id); return wait(p); });
 
         Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
         Assert.Null(result.ExitCode);
         Assert.Contains("started", result.Output);
         Assert.Contains("fake-installer  TimedOut", Log());
+        using (child)
+        {
+            Assert.NotNull(child);
+            // An upper bound for a kill that has already been sent, not a race:
+            // a living child (`ping -n 30`, `sleep 30`) fails it by 25 seconds.
+            Assert.True(child.WaitForExit(5_000), "the timed-out child was not killed");
+        }
+    }
+
+    // What the timeout arm is for, when the kill cannot close the pipes: a
+    // descendant orphaned before the kill is outside the tree it takes, keeps
+    // stdout open, and the readers never reach end-of-stream. What the child
+    // had already said must still come back. Before CB-293 Run kept output only
+    // from a reader that had *finished*, so this returned "" — the hang it was
+    // meant to explain, explained by nothing.
+    [Fact]
+    public void WhatAChildSaidSurvivesAnOrphanHoldingThePipesOpen()
+    {
+        var ready = Path.Combine(_root, "ready");
+        var (file, args) = OperatingSystem.IsWindows()
+            // The inner cmd starts ping and exits at once, so ping's parent is
+            // gone and Kill(true) — which walks parent ids — never reaches it.
+            ? ("cmd.exe", new[] { "/c", $"echo started& cmd /c start /b ping -n 8 127.0.0.1& cd /d {_root}& type nul > ready& ping -n 30 127.0.0.1 > nul" })
+            : ("/bin/sh", new[] { "-c", $"echo started; (sleep 6 &); : > '{ready}'; sleep 30" });
+
+        var result = HookInstaller.Run(file, args, "fake-installer", waitForExit: TimesOutOnce(ready));
+
+        Assert.Equal(HookInstallOutcome.TimedOut, result.Outcome);
+        Assert.Contains("started", result.Output);
+        Assert.True(result.OutputMayBeCutShort);   // the orphan still holds the pipe at the bound
+    }
+
+    // CB-377. An installer that exits by itself after leaving a descendant that
+    // holds its output pipes must not keep Run waiting for the descendant: the
+    // exit code is known and what was said has arrived. Before the fix Run
+    // returned only when the descendant did (about 8 seconds for an 8 second
+    // sleeper, on macOS and on the Windows PC).
+    //
+    // The proof is order, not speed: when Run returns, the orphan is still
+    // running. A Run that waited for it would return after it had gone. The
+    // test finds the orphan by pid and kills it in its own finally so the suite
+    // leaves no sleeper or ping behind.
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(3, false)]
+    public void AnExitWithADescendantStillHoldingTheOutputReturnsWhileItIsAlive(int exitCode, bool succeeds)
+    {
+        var tag = "9" + Environment.ProcessId % 1000;   // Windows: a ping buffer size no other ping here uses
+        var pidFile = Path.Combine(_root, "orphan.pid");
+        var (file, args) = OperatingSystem.IsWindows()
+            ? ("cmd.exe", new[] { "/c", $"echo hello& cmd /c start /b ping -n 13 -l {tag} 127.0.0.1 >nul& exit {exitCode}" })
+            : ("/bin/sh", new[] { "-c", $"echo hello; sleep 12 & echo $! > '{pidFile}'; exit {exitCode}" });
+
+        var orphans = new List<int>();
+        try
+        {
+            var result = HookInstaller.Run(file, args, "fake-installer", timeoutMs: 60_000);
+
+            // Collected after Run returns, and used in the finally either way.
+            orphans = OperatingSystem.IsWindows() ? WindowsPingPids(tag) : [int.Parse(File.ReadAllText(pidFile).Trim())];
+
+            Assert.Equal(succeeds ? HookInstallOutcome.Ok : HookInstallOutcome.Failed, result.Outcome);
+            Assert.Equal(exitCode, result.ExitCode);
+            Assert.Contains("hello", result.Output);
+            Assert.True(result.OutputMayBeCutShort);
+            Assert.True(orphans.Count > 0 && orphans.All(IsRunning),
+                "Run returned only after the descendant was gone, so it waited for it");
+            Assert.Contains("(output may be cut short", Log());
+        }
+        finally
+        {
+            foreach (var pid in orphans)
+            {
+                try { System.Diagnostics.Process.GetProcessById(pid).Kill(); } catch { }
+            }
+        }
+    }
+
+    // The bound must not truncate a healthy run: no descendant, several hundred
+    // kilobytes (far more than a pipe buffer) written before exiting 0, and
+    // every byte of it arrives with the flag clear.
+    [Fact]
+    public void ALargeOutputFromAnInstallerThatLeavesNothingBehindArrivesWhole()
+    {
+        var (file, args, expected) = OperatingSystem.IsWindows()
+            ? ("cmd.exe", new[] { "/c", "for /l %i in (1,1,6000) do @echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, 6000 * 66)
+            : ("/bin/sh", new[] { "-c", "head -c 400000 /dev/zero | tr '\\0' x; exit 0" }, 400_000);
+
+        var result = HookInstaller.Run(file, args, "fake-installer", timeoutMs: 60_000);
+
+        Assert.Equal(HookInstallOutcome.Ok, result.Outcome);
+        Assert.False(result.OutputMayBeCutShort);
+        Assert.Equal(expected, result.Output.Count(c => c is 'x' or 'a'));
+    }
+
+    private static bool IsRunning(int pid)
+    {
+        try { return !System.Diagnostics.Process.GetProcessById(pid).HasExited; }
+        catch (ArgumentException) { return false; }
+    }
+
+    // Windows has no pid file from `start /b`, so the orphan is found by the
+    // ping buffer size the test gave it.
+    private static List<int> WindowsPingPids(string tag)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            "-NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\"Name='PING.EXE'\\\" | Where-Object { $_.CommandLine -like '*-l " + tag + " *' } | ForEach-Object { $_.ProcessId }\"")
+        { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+        using var ps = System.Diagnostics.Process.Start(psi)!;
+        var text = ps.StandardOutput.ReadToEnd();
+        ps.WaitForExit();
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => int.Parse(l.Trim())).ToList();
     }
 
     // The drain-order fix: the old Run read stdout to the end and only then

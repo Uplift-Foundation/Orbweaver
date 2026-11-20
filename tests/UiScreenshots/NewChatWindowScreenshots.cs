@@ -1,7 +1,9 @@
 using System.Linq;
 using System.Reflection;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Xunit;
 
@@ -459,6 +461,122 @@ public class NewChatWindowScreenshots : IDisposable
         Assert.True(window.OpenExistingRadio.IsChecked);
     }
 
+    // CB-357: the Machine row. A fake launcher answers at once, so each capture
+    // is the form after the far machine's launch-info has been applied.
+    private sealed class FakePeers : IPeerLauncher
+    {
+        public PeerLaunchResult Result = new(true, "launched", "s1", null);
+
+        public IReadOnlyList<PeerMachine> Machines() =>
+            new[] { new PeerMachine("mini", true), new PeerMachine("Warren's PC", true), new PeerMachine("studio-imac", false) };
+
+        public Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct) =>
+            Task.FromResult<PeerLaunchInfo?>(new PeerLaunchInfo(true, "macos", "/Users/warren", true,
+                new[] { new PeerLaunchCli("claude", true), new PeerLaunchCli("codex", true), new PeerLaunchCli("grok", false) },
+                new[] { new PeerLaunchAccount("claude", "default", "Default"), new PeerLaunchAccount("claude", "/Users/warren/.claude-work", "~/.claude-work") },
+                new[] { "/Users/warren/Source/ledger", "/Users/warren/Source/ledger-web" }));
+
+        public Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct) =>
+            Task.FromResult(Result);
+
+        // CB-357 (reopened): a far machine's folders, one level under its root.
+        public Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct) =>
+            Task.FromResult(path == "/Users/forbidden" ? PeerDirResult.Fail("forbidden_path")
+                : path.Length == 0
+                ? new PeerDirResult(true, "ok", new PeerDirListing("", "", false,
+                    [new PeerDirItem("warren", "/Users/warren", null, true), new PeerDirItem("Source", "/Users/warren/Source")]))
+                : new PeerDirResult(true, "ok", new PeerDirListing(path, "/Users/warren", false,
+                    [new PeerDirItem("ledger"), new PeerDirItem("ledger-web"), new PeerDirItem("orbweaver"), new PeerDirItem("scratch")])));
+    }
+
+    private static NewChatWindow PeerWindow(FakePeers peers)
+    {
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
+        };
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>();
+        NewChatWindow.PeerLauncherForTests = peers;
+        NewChatWindow.PeerLinkOnForTests = true;
+        return NewWindow();
+    }
+
+    // CB-357 (reopened): the remote folder browser, one level into the far
+    // machine's Source folder, with the Choose button live.
+    [AvaloniaFact]
+    public async Task RemoteFolderBrowserInsideAFolder()
+    {
+        var browser = new RemoteFolderBrowser(new FakePeers(), "mini");
+        browser.Show();
+        await browser.NavigateAsync("/Users/warren/Source");
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        ScreenshotHelper.Capture(browser, "new-chat-remote-folder-browser.png");
+
+        Assert.True(browser.ChooseButton.IsEnabled);
+        Assert.Equal("/Users/warren/Source", browser.Chosen);
+        browser.Close();
+    }
+
+    // The same browser after the far desk refused a folder.
+    [AvaloniaFact]
+    public async Task RemoteFolderBrowserRefused()
+    {
+        var browser = new RemoteFolderBrowser(new FakePeers(), "mini");
+        browser.Show();
+        await browser.NavigateAsync("");
+        await browser.NavigateAsync("/Users/forbidden");
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        ScreenshotHelper.Capture(browser, "new-chat-remote-folder-browser-refused.png");
+        browser.Close();
+    }
+
+    // A remote machine selected: its recents, its accounts, its CLIs (Grok
+    // not installed there), OpenClaw greyed with the reason in the note line.
+    [AvaloniaFact]
+    public void MachineRowWithARemoteMachineSelected()
+    {
+        var window = PeerWindow(new FakePeers());
+        window.Show();
+        ScreenshotHelper.Flush();
+        window.MachineCombo.SelectedIndex = 1;
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-machine-remote.png");
+    }
+
+    // The offline peer listed: the dropdown open over the form, so the greyed
+    // "studio-imac — offline" entry is on screen.
+    [AvaloniaFact]
+    public void MachineRowWithAnOfflinePeerListed()
+    {
+        var window = PeerWindow(new FakePeers());
+        window.Show();
+        ScreenshotHelper.Flush();
+        window.MachineCombo.IsDropDownOpen = true;
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-machine-offline-peer.png");
+    }
+
+    // The far machine's refusal, inline in the status line.
+    [AvaloniaFact]
+    public void MachineRowWithARefusalShown()
+    {
+        var peers = new FakePeers { Result = new PeerLaunchResult(false, PeerLaunchCodes.PeerLaunchOff, null, null) };
+        var window = PeerWindow(peers);
+        window.Show();
+        ScreenshotHelper.Flush();
+        window.MachineCombo.SelectedIndex = 1;
+        ScreenshotHelper.Flush();
+        window.StartButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-machine-refused.png");
+    }
+
     private static void ClearSeams()
     {
         NewChatAvailability.CurrentForTests = null;
@@ -474,5 +592,7 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.ReopenOpenClawForTests = null;
         NewChatWindow.NowForTests = null;
         NewChatWindow.LastConnectFailureForTests = null;
+        NewChatWindow.PeerLauncherForTests = null;
+        NewChatWindow.PeerLinkOnForTests = null;
     }
 }

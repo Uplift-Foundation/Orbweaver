@@ -684,6 +684,18 @@ namespace Orbweaver
             return new Decision(wait, count >= UnmeasuredFailuresBeforeFallback, new State(wait, count));
         }
 
+        // Where a run starts: the newest durable event the server has, unless
+        // this session has already handled an older one, in which case from
+        // there — everything after it is what the panel missed while it was
+        // shut. The replay is bounded by the server, not by this: measured
+        // (2026-11-17) a stream opened from 0 on a 2,547-event session began at
+        // 1,531, so a panel shut for weeks costs at most that window, and every
+        // replayed row reconciles by uuid against what the panel already holds.
+        // Nothing seen, or a sequence the server no longer has (newer than its
+        // newest, or no newest at all), starts from the newest as before.
+        internal static long? StartFrom(long? newest, long? lastSeen) =>
+            lastSeen is { } seen && newest is { } now && seen < now ? seen : newest;
+
         // The sequence number to resume from after this event: a durable
         // event's, if it is newer. Only durable events move it — an ephemeral
         // event is never replayed, so resuming from one would skip nothing and

@@ -805,6 +805,68 @@ public partial class ClaudeCloudEventsTests
         await Close(chat);
     }
 
+    // The defect as it was met (2026-11-17): a message sent from the panel, the
+    // panel hidden mid-turn — it hides whenever it loses focus, so clicking into
+    // the browser to watch the reply is enough — and opened again once the turn
+    // is over. The reopened stream used to start from the server's newest event,
+    // so the echo, the reply and the turn's end were all skipped; the history
+    // read that was meant to cover the gap could not reach them either. The
+    // panel showed the message twice, no reply, and a box still saying
+    // "queued after this turn". Reproduced live against a real session before
+    // this test was written, and gone live with the fix.
+    [Fact]
+    public async Task APanelHiddenMidTurnIsReplayedWhatItMissedWhenReopened()
+    {
+        var (chat, api, stream, _) = Streaming();
+        chat.PanelOpened();
+        var first = await stream.NextOpenAsync();
+
+        Assert.Equal(ChatSendOutcome.Sent, await chat.SendAsync("hello"));
+        var uuid = PayloadUuid(api.Posts.Single());
+        first.TryWrite(Durable(42, "user", payload: UserRow(uuid, "hello")));
+        await Until(() => chat.StreamEventsSeen == 1);
+        Assert.Equal((long?)42, chat.LastDurableSequence);
+
+        // Hidden mid-turn. The reply and the end of the turn land meanwhile, so
+        // by the reopen the server's newest event is well past the panel's.
+        await Close(chat);
+        api.Newest = () => new CloudApiResult(CloudOutcomes.OutcomeFor(200, ""), "{\"data\":[{\"sequence_num\":\"44\"}]}");
+
+        chat.PanelOpened();
+        var second = await stream.NextOpenAsync();
+
+        // From what the panel last saw, not from "now".
+        Assert.Equal((long?)42, stream.Opens[1].From);
+
+        // The server replays from there: the reply, then the turn's end.
+        second.TryWrite(Durable(43, "assistant", payload: AssistantRow("a1", "the reply")));
+        second.TryWrite(Durable(44, "result", "success"));
+        await Until(() => !chat.CanInterrupt);
+
+        Assert.Equal(new[] { ChatRole.User, ChatRole.Assistant }, chat.History.Select(t => t.Role));
+        Assert.Equal("the reply", chat.History[^1].Text);
+        Assert.Equal((long?)44, chat.LastDurableSequence);
+        await Close(chat);
+    }
+
+    // The resume point only moves forward: an older durable event — a replay
+    // overlapping what was already handled — does not wind it back, so the
+    // next reopen does not replay more than it has to.
+    [Fact]
+    public async Task AnOlderEventDoesNotWindTheResumePointBack()
+    {
+        var (chat, _, stream, _) = Streaming();
+        chat.PanelOpened();
+        var events = await stream.NextOpenAsync();
+
+        events.TryWrite(Durable(50, "system", "status", "idle"));
+        events.TryWrite(Durable(45, "system", "status", "idle"));
+        await Until(() => chat.StreamEventsSeen == 2);
+
+        Assert.Equal((long?)50, chat.LastDurableSequence);
+        await Close(chat);
+    }
+
     // A malformed id never gets as far as asking where to start.
     [Fact]
     public async Task AMalformedIdIsNotStreamed()

@@ -84,7 +84,7 @@ namespace Orbweaver
             "muted", "turnSoundsEnabled", "turnFinishedSound", "needsAttentionSound", "orbTurnSounds",
             "orbColors", "claudeCodeProfileDirs", "codexHomes", "grokHomes", "profiles", "orbPositions",
             "collapsedSettingsSections",
-            "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale",
+            "chatPanelSizes", "pinnedChatPanels", "arrangeAnchor", "chatTextScale", "relayedMessages",
             "orbSize", "orbSizes", "orbMemberOffsets", "accountOrbOverrides",
             "speechVolume", "alertVolume",
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
@@ -110,7 +110,7 @@ namespace Orbweaver
             "personaPoolDir",
             "remoteControlEnabled", "remoteControlProfileDir", "remoteControlProfileDirs",
             "remoteControlIdleMinutes", "remoteControlServeOnLaunch",
-            "peerLinkEnabled", "peerLinkPort",
+            "peerLinkEnabled", "peerLinkPort", "peerLaunchInboundEnabled",
             // CB-314: the phone relay. Read, written and listed here, all three:
             // a model property alone is never persisted (measured on the
             // installed app: pairing set it, a restart lost it, and the relay
@@ -124,6 +124,8 @@ namespace Orbweaver
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
             "phoneLaunchProfiles",
+            // CB-339: what a paired phone's folder picker may browse. See PhoneBrowseRoots.
+            "phoneBrowseRoots", "phoneBrowseHome",
             // Every hotkey override. toggleOrbsHotkey was missing from this
             // list from CB-155 until the new-chat hotkey was added beside it;
             // Save's ContainsKey guard kept that from throwing, but it meant
@@ -542,6 +544,12 @@ namespace Orbweaver
             // point of it.
             public bool PeerLinkEnabled { get; set; }
 
+            // CB-357: whether another paired desktop may start a session on
+            // this one over the peer link. Off by default and separate from
+            // PeerLinkEnabled, because seeing another machine's sessions and
+            // letting it run a process here are different amounts of trust.
+            public bool PeerLaunchInboundEnabled { get; set; }
+
             // CB-314: whether this desktop keeps its connection to the phone
             // relay. Off until the user first chooses "Pair phone…", so an
             // install that never pairs a phone never opens the socket.
@@ -907,6 +915,16 @@ namespace Orbweaver
             // the CLI's own default directory. Saved as "phoneLaunchProfiles".
             public Dictionary<string, string> PhoneLaunchProfiles { get; init; } = new(StringComparer.Ordinal);
 
+            // CB-339: the project roots a paired phone's folder picker may browse. Null means
+            // automatic (derived on each request from the folders sessions recently ran in); a
+            // list, which may be empty, is the user's own. Saved as "phoneBrowseRoots".
+            public List<string>? PhoneBrowseRoots { get; set; }
+
+            // CB-339: "Let the phone browse my whole home folder". Off by default; a desk with no
+            // roots and this off answers the top level with an empty listing. Saved as
+            // "phoneBrowseHome".
+            public bool PhoneBrowseHome { get; set; }
+
             // Auto-organize: which shape and how much space between orbs.
             public string ArrangeShape
             {
@@ -935,6 +953,10 @@ namespace Orbweaver
             // How much bigger or smaller than shipped the chat panel draws its
             // text. A multiplier, not a point size — see ChatZoom.
             public double ChatTextScale { get; set; } = ChatZoom.Default;
+
+            // CB-330: how the chat panel draws a message a teammate or another
+            // session relayed into it. Collapsed unless told otherwise.
+            public RelayedMessageDisplay RelayedMessages { get; set; } = RelayedMessageDisplay.Collapsed;
 
             // How big every session orb is drawn, as a multiplier over the
             // shipped 56-DIP orb — see OrbSizing. An orb's own entry in
@@ -1592,6 +1614,31 @@ namespace Orbweaver
             Save();
         }
 
+        // CB-339: the folders a paired phone may browse. Null is automatic, "derived from recent
+        // sessions", and is what the file holds until the user edits the list; an empty list is a
+        // deliberate "none". Entries are stored as given, in order.
+        internal static IReadOnlyList<string>? PhoneBrowseRoots
+        {
+            get
+            {
+                Load();
+                lock (Gate) return _model.PhoneBrowseRoots?.ToList();
+            }
+        }
+
+        internal static void SetPhoneBrowseRoots(IEnumerable<string>? roots)
+        {
+            Load();
+            lock (Gate) _model.PhoneBrowseRoots = roots?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+            Save();
+        }
+
+        internal static bool PhoneBrowseHome
+        {
+            get { Load(); lock (Gate) return _model.PhoneBrowseHome; }
+            set { Load(); lock (Gate) _model.PhoneBrowseHome = value; Save(); }
+        }
+
         internal static void SetNewChatLastProfile(NewChatCli cli, string? profileDir)
         {
             var value = string.IsNullOrWhiteSpace(profileDir) ? null : profileDir;
@@ -1626,6 +1673,12 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.PeerLinkEnabled; }
             set { Load(); lock (Gate) _model.PeerLinkEnabled = value; Save(); }
+        }
+
+        public static bool PeerLaunchInboundEnabled
+        {
+            get { Load(); lock (Gate) return _model.PeerLaunchInboundEnabled; }
+            set { Load(); lock (Gate) _model.PeerLaunchInboundEnabled = value; Save(); }
         }
 
         public static bool RelayEnabled
@@ -1905,6 +1958,16 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return ChatZoom.Clamp(_model.ChatTextScale); }
             set { Load(); lock (Gate) _model.ChatTextScale = ChatZoom.Clamp(value); Save(); }
+        }
+
+        // CB-330: Collapsed (a one-line row, the default), Expanded (the full text
+        // open) or Hidden (no row at all) for relayed teammate and peer messages.
+        // Always one of the three: an unknown word in the file reads as Collapsed
+        // (RelayedMessageWords.Parse), so there is nothing to clamp on the way out.
+        public static RelayedMessageDisplay RelayedMessages
+        {
+            get { Load(); lock (Gate) return _model.RelayedMessages; }
+            set { Load(); lock (Gate) _model.RelayedMessages = value; Save(); }
         }
 
         // Every session orb's size, as a multiplier over the shipped orb.
@@ -2619,7 +2682,9 @@ namespace Orbweaver
                         RemoteControlServeOnLaunch =
                             root["remoteControlServeOnLaunch"]?.GetValue<bool>() ?? false,
                         PeerLinkEnabled = root["peerLinkEnabled"]?.GetValue<bool>() ?? false,
+                        PeerLaunchInboundEnabled = Bool(root["peerLaunchInboundEnabled"], false),
                         RelayEnabled = root["relayEnabled"]?.GetValue<bool>() ?? false,
+                        PhoneBrowseHome = Bool(root["phoneBrowseHome"], false),
                         PeerLinkPort = root["peerLinkPort"]?.GetValue<int>() ?? 0,
                         AutoCheckForUpdates = Bool(root["autoCheckForUpdates"], true),
                         IncludePrereleaseUpdates = Bool(root["includePrereleaseUpdates"], false),
@@ -2658,6 +2723,10 @@ namespace Orbweaver
                         // setting that caused it.
                         ChatTextScale = ChatZoom.Clamp(
                             root["chatTextScale"]?.GetValue<double>() ?? ChatZoom.Default),
+
+                        // Text() and a parse that falls back to Collapsed: a
+                        // hand-edited 7 or "sideways" costs this one choice.
+                        RelayedMessages = RelayedMessageWords.Parse(Text(root["relayedMessages"])),
 
                         // Number() rather than GetValue<double>(): a new key,
                         // so it gets the defence Number's comment describes
@@ -2711,6 +2780,13 @@ namespace Orbweaver
                                 model.NewChatLastProfiles[cliName] = profileDir;
                             }
                         }
+                    }
+
+                    if (root["phoneBrowseRoots"] is JsonArray browseRoots)
+                    {
+                        model.PhoneBrowseRoots = [];
+                        foreach (var node in browseRoots)
+                            if (Text(node) is { } browseRoot) model.PhoneBrowseRoots.Add(browseRoot);
                     }
 
                     if (root["phoneLaunchProfiles"] is JsonObject phoneProfiles)
@@ -2946,7 +3022,10 @@ namespace Orbweaver
                             if (node is not JsonObject entry) continue;
 
                             var parsed = new AccountOrbOverride(
-                                Text(entry["initials"]), Text(entry["name"]), Text(entry["iconFile"])).Normalise();
+                                Text(entry["initials"]), Text(entry["name"]), Text(entry["iconFile"]),
+                                // CB-340: absent in a file written before the
+                                // stamp existed; the phone is told 0 for it.
+                                Number(entry["updatedAt"]) is double stamp && stamp >= 0 ? (long)stamp : null).Normalise();
 
                             // An entry that overrides nothing is dropped, as
                             // SetAccountOrbOverride would have on the way in.
@@ -3259,12 +3338,16 @@ namespace Orbweaver
                     var accountOverrides = new JsonObject();
                     foreach (var (key, o) in _model.AccountOrbOverrides)
                     {
-                        accountOverrides[key] = new JsonObject
+                        var written = new JsonObject
                         {
                             ["initials"] = o.Initials,
                             ["name"] = o.Name,
                             ["iconFile"] = o.IconFile
                         };
+                        // Only when stamped, so a file nobody has edited since
+                        // CB-340 stays byte for byte what it was.
+                        if (o.UpdatedAt is { } at) written["updatedAt"] = at;
+                        accountOverrides[key] = written;
                     }
 
                     var orbSizes = new JsonObject();
@@ -3302,6 +3385,13 @@ namespace Orbweaver
 
                     var newChatRecentFolders = new JsonArray();
                     foreach (var folder in _model.NewChatRecentFolders) newChatRecentFolders.Add(folder);
+
+                    JsonArray? phoneBrowseRoots = null;
+                    if (_model.PhoneBrowseRoots is { } browseList)
+                    {
+                        phoneBrowseRoots = new JsonArray();
+                        foreach (var folder in browseList) phoneBrowseRoots.Add(folder);
+                    }
 
                     var speakArgs = new JsonArray();
                     foreach (var argument in _model.SpeakCommandArgs) speakArgs.Add(argument);
@@ -3350,6 +3440,7 @@ namespace Orbweaver
                         ["openclawNativeShape"] = _model.OpenClawNativeShape,
                         ["remoteControlEnabled"] = _model.RemoteControlEnabled,
                         ["peerLinkEnabled"] = _model.PeerLinkEnabled,
+                        ["peerLaunchInboundEnabled"] = _model.PeerLaunchInboundEnabled,
                         ["relayEnabled"] = _model.RelayEnabled,
                         ["peerLinkPort"] = _model.PeerLinkPort,
                         ["autoCheckForUpdates"] = _model.AutoCheckForUpdates,
@@ -3392,6 +3483,7 @@ namespace Orbweaver
                         ["arrangeShape"] = _model.ArrangeShape,
                         ["arrangeSpacing"] = _model.ArrangeSpacing,
                         ["chatTextScale"] = _model.ChatTextScale,
+                        ["relayedMessages"] = RelayedMessageWords.Name(_model.RelayedMessages),
                         ["orbSize"] = _model.OrbSize,
                         ["speechVolume"] = _model.SpeechVolume,
                         ["alertVolume"] = _model.AlertVolume,
@@ -3422,6 +3514,8 @@ namespace Orbweaver
                             nameof(NewChatCli.ClaudeCode), out var claudeLastProfile) ? claudeLastProfile : null,
                         ["newChatLastProfiles"] = NewChatLastProfilesNode(_model.NewChatLastProfiles),
                         ["phoneLaunchProfiles"] = NewChatLastProfilesNode(_model.PhoneLaunchProfiles),
+                        ["phoneBrowseRoots"] = phoneBrowseRoots,
+                        ["phoneBrowseHome"] = _model.PhoneBrowseHome,
                         // Grouped rather than three top-level keys: it reads as
                         // one setting in the file the way it reads as one card in
                         // the window. A null entry — which is what a colour left

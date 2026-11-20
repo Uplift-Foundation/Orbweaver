@@ -222,35 +222,54 @@ namespace Orbweaver
                 TerminalFocuser.SendTextAndSubmit,
                 Task.Delay,
                 TerminalFocuser.TmuxPaneHolds)),
-            new RelayRemote.LaunchSeams(
-                OperatingSystem.IsWindows(),
-                cli => NewChatLauncher.LocateFresh(LaunchGate.CliFor(cli)),
-                Directory.Exists,
-                () => Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } sh ? sh : "/bin/zsh",
-                TerminalLauncher.PlaceForPhone,
-                TerminalLauncher.StartConsole),
+            LaunchRunner.DefaultLaunchSeams(),
             line => MirrorLog.Say("relay", line))
         {
             // CB-321: pictures are answered only from a finished bundle.
-            Images = hash => PersonaImageStore.Shared.ById(hash),
+            Images = hash => PersonaImageStore.Find(hash, PersonaImageStore.Shared, PersonaImageStore.Accounts),
             Accounts = new RelayRemote.AccountSeams(RelayAccounts.Choices, OrbweaverSettings.PhoneLaunchProfileFor),
             Summarize = RelayAccounts.Summarize,
             Settle = () => Task.Delay(500),
+            Browse = DefaultBrowseSeams(),
         };
+
+        // CB-339: the real folder picker seam: the real disk, the settings as they are on each
+        // request, and a read that gives up before the phone's own 10 s timeout does.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        private static RelayRemote.BrowseSeams DefaultBrowseSeams()
+        {
+            var fs = new BrowseFileSystem();
+            return new RelayRemote.BrowseSeams(fs, () => BrowseSettingsSource.Current(fs), TimeSpan.FromSeconds(8));
+        }
 
         // CB-316: the account readings the usage orbs just drew. Projected,
         // compared with what was last sent, and sent only when a number a phone
         // would draw changed — or once per account that crossed 80%, with the
-        // limit push. Called on the UI thread after each poll.
+        // limit push. Called after each poll: on the UI thread from the orbs,
+        // or on a pool thread from HeadlessUsage before the unlock (CB-391) —
+        // the tracker is under _gate and sends go through Dispatch, so either
+        // is safe.
         internal void OnUsage(IReadOnlyList<RelayUsage.Account> accounts)
         {
             IReadOnlyList<RelayUsageTracker.Send> sends;
-            lock (_gate) sends = _usage.Next(accounts);
+            MirrorLog.Say("relay", RelayUsage.LogLine(accounts));
+            lock (_gate)
+            {
+                sends = _usage.Next(accounts);
+                _usageFrames += sends.Count;
+            }
             foreach (var send in sends)
                 Dispatch(() => _link.SendUsage(send.Plaintext, send.Crossing));
         }
 
         private readonly RelayUsageTracker _usage = new();
+        private int _usageFrames;
+
+        // The usage frame a phone coming online would be sent, and how many
+        // the tracker has let through: how CB-391's tests tell one frame from
+        // a duplicate across the unlock handover without a live socket.
+        internal string? LatestUsageFrame { get { lock (_gate) return _usage.Latest; } }
+        internal int UsageFramesSent { get { lock (_gate) return _usageFrames; } }
 
         // The relay's answer to each amber (request id, pushed / push_throttled /
         // push_no_token, APNs ms): gate (a) timing, and the proof a repeat on
@@ -477,9 +496,15 @@ namespace Orbweaver
             {
                 var wait = _options.PaceFrames ? pacer.Reserve(_now()) : TimeSpan.Zero;
                 if (wait > TimeSpan.Zero) await _delay(wait, token).ConfigureAwait(false);
+                // CB-388: stamped before the send, written after it. The line is
+                // still only logged once the send completed (CB-323: sent, not
+                // queued), but a reply can be received and logged while the
+                // writer is still inside SendAsync, so a stamp taken afterwards
+                // would put the frame later than its own reply.
+                var sentAt = _now();
                 await socket.SendAsync(frame, token).ConfigureAwait(false);
                 // CB-323: logged as sent once it is, not when it was queued.
-                if (_options.ActivityLog is { } log && RelayActivityLog.IsActivityFrame(frame)) log.Sent(frame, _now());
+                if (_options.ActivityLog is { } log && RelayActivityLog.IsActivityFrame(frame)) log.Sent(frame, sentAt);
             }
         }
 
@@ -536,6 +561,9 @@ namespace Orbweaver
 
         // The accounts a launch may name, from each scan; the link sends it only when it changed.
         internal void OnAccounts(string plaintext) => Dispatch(() => _link.SendAccounts(plaintext));
+
+        // CB-339: the caps frame, from each scan; the link sends it only when its bytes changed.
+        internal void OnCaps(string plaintext) => Dispatch(() => _link.SendCaps(plaintext));
 
         // A session finished: its summary, to the phones watching it. Off the event pump, because
         // the summariser is a model call; a failure costs that summary only.

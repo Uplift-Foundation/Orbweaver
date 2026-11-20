@@ -1465,6 +1465,61 @@ public partial class RelayLinkTests : IDisposable
         Assert.Empty(link.SendAccounts(a));
     }
 
+    // CB-339 frames-v11: caps follows accounts on connect, on its own ck, and an unchanged one is not resent.
+    [Fact]
+    public void Caps_go_to_online_phones_only_when_their_bytes_change_and_follow_accounts_on_connect()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var accounts = """{"t":"accounts","accounts":[]}""";
+
+        var sent = link.SendCaps(BrowseFrames.Caps).Single();
+        Assert.Equal(("state", RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), "caps")), (J(sent).GetProperty("class").GetString(), CkOf(sent)));
+        Assert.Equal(BrowseFrames.Caps, phone.OpenFromDesktop(sent).GetRawText());
+        Assert.Empty(link.SendCaps(BrowseFrames.Caps));                         // unchanged: nothing
+
+        link.SendAccounts(accounts);
+        link.OnFrame(Presence(phone.Id, false));
+        var wider = """{"t":"caps","caps":["list_dir","later"]}""";
+        Assert.Empty(link.SendCaps(wider));                                     // offline: kept, not sent
+        var back = link.OnFrame(Presence(phone.Id, true));
+        Assert.Equal(["roster", "accounts", "caps"], back.Select(f => phone.OpenFromDesktop(f).GetProperty("t").GetString()).ToArray());
+        Assert.Equal(wider, phone.OpenFromDesktop(back.Last()).GetRawText());   // the kept one, on connect
+
+        link.Disconnected();                                                    // before welcome nothing goes
+        Assert.Empty(link.SendCaps(BrowseFrames.Caps));
+    }
+
+    // CB-339 (lead): v4 transcript windows and v5 picture windows are 48,000 bytes and fit the relay's
+    // 65,536-byte frame only because the desk writes the base64 `ct` literally. Nothing pinned that.
+    // The default System.Text.Json encoder writes every `+` as \u002B and `/` as \/, about 1 in 32
+    // characters of random-looking ciphertext, and a 48,000-byte window then comes out near 70 KB
+    // and closes the socket with MessageTooBig (measured on a real transcript, CB-316).
+    [Fact]
+    public void The_envelope_writes_ct_literally_so_the_largest_v4_window_and_v11_dir_chunk_fit_the_relay_frame()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var window = link.SendWindow(phone.Id, "s1", new string('w', TranscriptWatch.MaxWindowBytes)).Single();
+        var dir = link.SendReply(phone.Id, null, new string('d', BrowseLimits.MaxDirPlaintextBytes)).Single();
+
+        foreach (var envelope in new[] { window, dir })
+        {
+            var ct = J(envelope).GetProperty("ct").GetString()!;
+            Assert.Contains(ct, c => c is '+' or '/');                                    // the positive control: there is something to escape
+            Assert.DoesNotContain("\\u002B", envelope, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("\\/", envelope);
+            Assert.Contains(ct, envelope);                                                // ct appears verbatim
+
+            // The negative control: the default encoder WOULD have escaped this very ct.
+            var escaped = System.Text.Json.JsonSerializer.Serialize(ct);
+            Assert.Contains("\\u002B", escaped);
+            Assert.True(Encoding.UTF8.GetByteCount(escaped) > Encoding.UTF8.GetByteCount(ct) + 1000);
+        }
+
+        Assert.True(Encoding.UTF8.GetByteCount(window) <= RelayLink.MaxFrameBytes, "a max-size v4 window envelope");
+        Assert.True(Encoding.UTF8.GetByteCount(dir) <= RelayLink.MaxFrameBytes, "a max-size v11 dir chunk envelope");
+        Assert.True(TranscriptWatch.MaxWindowBytes > BrowseLimits.MaxDirPlaintextBytes);  // dir has the extra margin v4 does not
+    }
+
     [Fact]
     public void A_summary_goes_only_to_the_online_phones_named_under_the_sessions_summary_ck()
     {

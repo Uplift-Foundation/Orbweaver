@@ -39,6 +39,15 @@ namespace Orbweaver
         private RemoteMirrorClient? _client;
         private RemoteMirrorServer? _server;
 
+        // CB-357. The answering half is two seams rather than a type of this
+        // file's own: this desk's facts for `launch-info`, and the receiving
+        // server's decision for `launch`. The asking half is the client the
+        // window talks to; replies and dropped links are routed to it here.
+        private PeerLaunchInfoSource? _launchInfo;
+        private Func<string, JsonElement, Task<PeerLaunchResult>>? _launchHandler;
+        private PeerLaunchClient? _launchClient;
+        private PeerBrowseServer? _browse;
+
         internal PeerMirrorHost(OpenClawIdentitySeams? openClawIdentity = null)
         {
             _openClawIdentity = openClawIdentity ?? new OpenClawIdentitySeams(
@@ -48,10 +57,35 @@ namespace Orbweaver
                 KnownPeer: PeerIdentity.PeerFor,
                 OwnCertificate: PeerIdentity.HandshakeCertificateAsync));
             _link.PeerDisconnected += OpenClawSessions.ForgetPeerProfileVoices;
+            _link.PeerDisconnected += machine => LaunchClient?.OnDisconnected(machine);
             _link.PeerConnected += _ => OpenClawSessions.RequestPeerProfileVoices();
         }
 
         internal PeerLink Link => _link;
+
+        internal PeerLaunchClient? LaunchClient
+        {
+            get { lock (_gate) return _launchClient; }
+        }
+
+        // Wires CB-357 in. Any argument may be null: a desk with no handler
+        // answers a `launch` as switched off, and one with no info source
+        // stays silent to `launch-info-get`, which an asker reads as an older
+        // peer.
+        internal void ServeLaunch(
+            PeerLaunchInfoSource? info,
+            Func<string, JsonElement, Task<PeerLaunchResult>>? handler,
+            PeerLaunchClient? client,
+            PeerBrowseServer? browse = null)
+        {
+            lock (_gate)
+            {
+                _browse = browse;
+                _launchInfo = info;
+                _launchHandler = handler;
+                _launchClient = client;
+            }
+        }
 
         // The client a panel talks to, when the link is what is carrying the
         // mirror. Null until Serve has built one.
@@ -175,6 +209,32 @@ namespace Orbweaver
                 return;
             }
 
+            switch (message.Type)
+            {
+                // Both answers leave the link's in-order queue (CB-322): a
+                // launch waits up to 30 s for the session to check in, and an
+                // info answer locates CLIs and tmux on disk. Awaited here they
+                // would hold every other message from this peer — roster,
+                // transcript windows, chat input — behind them.
+                case PeerProtocol.LaunchInfoGet:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchInfoAsync(machine, message));
+                    return;
+
+                case PeerProtocol.Launch:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchAsync(machine, message));
+                    return;
+
+                case PeerProtocol.ListDirGet:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerListDirAsync(machine, message));
+                    return;
+
+                case PeerProtocol.LaunchInfo:
+                case PeerProtocol.LaunchResult:
+                case PeerProtocol.ListDir:
+                    if (MayAsk(machine)) LaunchClient?.OnReply(machine, message);
+                    return;
+            }
+
             var text = message.Body?.ValueKind == JsonValueKind.String
                 ? message.Body.Value.GetString()
                 : null;
@@ -215,6 +275,78 @@ namespace Orbweaver
                     if (server is not null) await server.HandleAsync(machine, frame).ConfigureAwait(false);
                     else MirrorLog.Say("peer-dropped", $"t={frame.Type} no server bound");
                     break;
+            }
+        }
+
+        private async Task AnswerLaunchInfoAsync(string machine, PeerProtocol.PeerMessage message)
+        {
+            PeerLaunchInfoSource? source;
+            lock (_gate) source = _launchInfo;
+
+            if (source is null) return;
+
+            // Nothing may escape: this runs unobserved, off the queue.
+            try
+            {
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.LaunchInfo, message.Id,
+                    body: PeerLaunchWire.EncodeInfo(source.Build()))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-launch-info-failed", $"from={machine} {e.GetType().Name}");
+            }
+        }
+
+        private async Task AnswerListDirAsync(string machine, PeerProtocol.PeerMessage message)
+        {
+            PeerBrowseServer? server;
+            lock (_gate) server = _browse;
+
+            // No server wired is an older desk's silence: the asker times out.
+            if (server is null) return;
+
+            try
+            {
+                var result = await server.HandleAsync(message.Body ?? default).ConfigureAwait(false);
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.ListDir, message.Id,
+                    body: PeerLaunchWire.EncodeDir(result))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-list-dir-failed", $"from={machine} {e.GetType().Name}");
+            }
+        }
+
+        private async Task AnswerLaunchAsync(string machine, PeerProtocol.PeerMessage message)
+        {
+            Func<string, JsonElement, Task<PeerLaunchResult>>? handler;
+            lock (_gate) handler = _launchHandler;
+
+            PeerLaunchResult result;
+
+            if (handler is null)
+                result = new PeerLaunchResult(false, PeerLaunchCodes.PeerLaunchOff, null, null);
+            else
+                try
+                {
+                    result = await handler(machine, message.Body ?? default).ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    // A throwing handler must still answer: the asker is
+                    // waiting up to 45 s on this id.
+                    MirrorLog.Say("peer-launch-failed", $"from={machine} {e.GetType().Name}");
+                    result = new PeerLaunchResult(false, RelayReplies.LaunchFailed, null, null);
+                }
+
+            try
+            {
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.LaunchResult, message.Id,
+                    body: PeerLaunchWire.EncodeResult(result))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-launch-reply-failed", $"from={machine} {e.GetType().Name}");
             }
         }
 

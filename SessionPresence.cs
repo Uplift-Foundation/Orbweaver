@@ -233,12 +233,16 @@ namespace Orbweaver
         // agree; the duplicate rule, not this one, is what protects members.
         // CB-307 addendum: Claude Code's own record says the TUI is waiting on a
         // dialog while the hook's status file still says `idle`, because no hook
-        // fires for a modal screen. Promote `idle` to `waiting` on that evidence
-        // and nothing else: `generating` and `waiting` already say more, and a
-        // record that does not say `waiting` decides nothing (its `busy` was
-        // measured two days stale on a session at its prompt).
+        // fires for a modal screen. CB-353: it can equally say `generating`, because
+        // a mod's own background tool call (the jira-board pane re-reading Jira
+        // every minute) fires PreToolUse under the host session's id and writes
+        // `generating` while the form is still on screen; the record stayed
+        // `waiting` through it. So a record that says `waiting` promotes both
+        // `idle` and `generating`. `waiting` already says it, and a record that
+        // does not say `waiting` decides nothing (its `busy` was measured two days
+        // stale on a session at its prompt).
         internal static string EffectiveState(string fileState, bool recordWaiting) =>
-            recordWaiting && fileState == "idle" ? "waiting" : fileState;
+            recordWaiting && fileState is "idle" or "generating" ? "waiting" : fileState;
 
         internal static OrbPresence WithQuiet(
             OrbPresence current, LocalSessionShape shape, string state,

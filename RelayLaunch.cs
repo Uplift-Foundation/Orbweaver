@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -9,9 +10,18 @@ namespace Orbweaver
     // is started. Pure — the filesystem, the CLI locator and the roster come in
     // as functions — so every refusal is a unit case and the vectors' signature
     // negatives replay against the shipped verifier.
+    //
+    // CB-357 gave it a second signer: another desktop over the peer link. The
+    // rules after the signature are the same for both, so the only thing that
+    // differs is which key, which domain and which nonce key — LaunchSigner.
     internal static class LaunchGate
     {
         internal const string Domain = "orbweaver-launch-v1";
+
+        // The peer link's launch domain, distinct from the phone's so that a
+        // signature made for one can never verify as the other, even if the
+        // same body were signed with the same key.
+        internal const string PeerDomain = "orbweaver-peer-launch-v1";
         internal const int TtlSlackSeconds = 300;
         internal const int MaxModelLength = 64;
 
@@ -48,9 +58,69 @@ namespace Orbweaver
 
         internal static byte[] Message(string body) => [.. Encoding.UTF8.GetBytes(Domain), .. Encoding.UTF8.GetBytes(body)];
 
+        // What a desktop signs to launch on another: the domain, then the
+        // receiving desk's own pin, then the same body the phone signs. The pin
+        // is fixed length (64 hex), so the concatenation is unambiguous, and it
+        // binds the launch to one receiver: a desk that also trusts the sender
+        // cannot be handed a launch meant for somebody else.
+        internal static byte[] PeerMessage(string receiverPin, string body) =>
+            [.. Encoding.UTF8.GetBytes(PeerDomain), .. Encoding.UTF8.GetBytes(receiverPin), .. Encoding.UTF8.GetBytes(body)];
+
         internal static bool Verify(byte[] phoneIdPublic, LaunchFields f, string sig) =>
-            RelayCrypto.Verify(phoneIdPublic, Message(Body(f)), RelayCrypto.FromBase64Url(sig))
-            && RelayCrypto.FromBase64Url(f.Nonce) is { Length: AnswerGate.NonceLength };
+            Verify(new PhoneSigner("", phoneIdPublic), f, sig);
+
+        // Who signed a launch, and therefore how it is checked and whose nonce
+        // window it is recorded in. Phones and peers never share a nonce key —
+        // a peer's is prefixed — so one cannot spend the other's nonces.
+        internal abstract record LaunchSigner(string NonceKey)
+        {
+            internal abstract bool Signed(LaunchFields f, byte[]? sig);
+        }
+
+        internal sealed record PhoneSigner(string PhoneId, byte[] IdPublic) : LaunchSigner(PhoneId)
+        {
+            internal override bool Signed(LaunchFields f, byte[]? sig) =>
+                RelayCrypto.Verify(IdPublic, Message(Body(f)), sig);
+        }
+
+        // PinnedPin: the pin this desk paired with for the machine the link says
+        // is asking, or "" when it has none. OwnPin: this desk's own pin, which
+        // the sender must have signed. CertDer: the certificate the request
+        // carried.
+        //
+        // The certificate is believed only because it hashes to the pin a
+        // person paired with — never for anything it says about itself — and
+        // only then is its public key used. RSA PKCS#1 v1.5 with SHA-256, the
+        // padding the certificate's own self-signature already uses.
+        internal sealed record PeerSigner(string PinnedPin, string OwnPin, byte[] CertDer) : LaunchSigner(PeerNoncePrefix + PinnedPin)
+        {
+            internal override bool Signed(LaunchFields f, byte[]? sig)
+            {
+                if (sig is null || sig.Length == 0 || OwnPin.Length == 0) return false;
+                if (!PeerIdentity.Trusts(PinnedPin.Length == 0 ? null : new PeerIdentity.Peer(PinnedPin, ""),
+                        PeerIdentity.PinOfDer(CertDer))) return false;
+                try
+                {
+                    using var cert = X509CertificateLoader.LoadCertificate(CertDer);
+                    using var key = cert.GetRSAPublicKey();
+                    return key is not null && key.VerifyData(PeerMessage(OwnPin, Body(f)), sig,
+                        HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+                }
+                catch (CryptographicException)
+                {
+                    // Pinned bytes that are not a certificate. Unreachable without
+                    // a SHA-256 preimage of a real certificate's pin, but a
+                    // refusal rather than a crash.
+                    return false;
+                }
+            }
+        }
+
+        internal const string PeerNoncePrefix = "peer:";
+
+        internal static bool Verify(LaunchSigner signer, LaunchFields f, string sig) =>
+            RelayCrypto.FromBase64Url(f.Nonce) is { Length: AnswerGate.NonceLength }
+            && signer.Signed(f, RelayCrypto.FromBase64Url(sig));
 
         // What the gate needs to know about this desktop.
         internal sealed record Environment(
@@ -64,10 +134,14 @@ namespace Orbweaver
         // answer gate does: a replay of a launch refused for a later rule is
         // still a replay.
         internal static string? Decide(LaunchRequest r, string phoneId, byte[] phoneIdPublic, DateTimeOffset now,
+            NonceWindow nonces, Environment env) =>
+            Decide(r, new PhoneSigner(phoneId, phoneIdPublic), now, nonces, env);
+
+        internal static string? Decide(LaunchRequest r, LaunchSigner signer, DateTimeOffset now,
             NonceWindow nonces, Environment env)
         {
-            if (!Verify(phoneIdPublic, r.Fields, r.Sig)) return RelayReplies.BadSignature;
-            return Rules(r.Fields, phoneId, now, nonces, env);
+            if (!Verify(signer, r.Fields, r.Sig)) return RelayReplies.BadSignature;
+            return Rules(r.Fields, signer.NonceKey, now, nonces, env);
         }
 
         // Everything after the signature, in check_order.

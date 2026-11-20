@@ -121,8 +121,13 @@ namespace Orbweaver
         ExtraUsage? Extra,
         DateTimeOffset ReadAt,
         AccountUsageSource Source = AccountUsageSource.ClaudeCode,
-        DateTimeOffset? ObservedAt = null)
+        DateTimeOffset? ObservedAt = null,
+        string? AccountId = null)
     {
+        // CB-340: AccountIdentity's id for this account, or null when the CLI's
+        // identity file offered none. Carried so the phone can merge one
+        // account's readings across PCs; never drawn, and deliberately not part
+        // of DrawnValuesDiffer — no ring depends on it.
         // How long a reading is trusted before its orb is dimmed.
         //
         // Three missed polls, not one. The poller runs every five minutes, and a

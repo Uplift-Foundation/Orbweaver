@@ -88,13 +88,192 @@ namespace Orbweaver
 
         // At launch: listen to the scan, and connect if the user has paired
         // before. Nothing connects for someone who never used the feature.
+        // The relay connection on its own, before the screen-lock wait
+        // (Program.Main's serveOnLaunch), for the reason the peer link and
+        // OpenClaw start there: it is a WebSocket on pool threads with no
+        // display anywhere in it. Behind the wait, a Mac that restarted while
+        // locked never connected at all, so it vanished from the phone until
+        // someone typed a password at it. 1.0.7's auto-update restarted the
+        // mini into exactly that and both stayed down for hours. Attach still
+        // calls Enable once the UI is up; Enable hands back the client this
+        // started, so the scan wiring joins the existing connection rather
+        // than opening a second one. Until then the phone sees the machine
+        // online with an empty roster, which is the truth: nothing has been
+        // scanned yet.
+        internal static void ServeEarly()
+        {
+            // CB-314's scripted pairing, here as well as in Attach: a Mac parked
+            // at the lock screen never reaches Attach, so the always-locked mini
+            // could never be paired headless at all. Before the RelayEnabled
+            // check because the hooks turn the relay on themselves.
+            StartHooksOnce();
+            if (!OrbweaverSettings.RelayEnabled) return;
+            Enable();
+            // A connection with nothing behind it is a machine the phone lists
+            // with no orbs, which is what the mini did all night on 1.0.8's
+            // first cut. The live scan only starts with the UI, so until then
+            // the roster is fed from SessionManager.HeadlessSnapshot, the
+            // window-free scan the peer link already serves this machine's
+            // sessions from for the same reason (CB-24). A plain Timer, not a
+            // DispatcherTimer, because the dispatcher does not pump here.
+            lock (HeadlessGate)
+            {
+                if (_attached || _headless is not null) return;
+                _headless = new Timer(_ => HeadlessTick(), null, TimeSpan.Zero, HeadlessEvery);
+
+                // CB-391: and usage, for the same reason. The poll used to hang
+                // off SessionManager's DispatcherTimer too, so a Mac parked at
+                // the lock screen sent the phone no usage at all. Inside this
+                // guard so it starts once, only with the relay on, and never
+                // after Attach — see HeadlessUsage.
+                _usage = UsageFactory();
+                _usage.Start(UsageFirstTick, UsageEvery);
+            }
+        }
+
+        private static readonly object HeadlessGate = new();
+        private static Timer? _headless;
+        private static bool _attached;
+
+        // CB-391: the pre-unlock usage poll, while there is one. Under
+        // HeadlessGate with the roster timer, and gone after Attach.
+        private static HeadlessUsage? _usage;
+
+        internal static HeadlessUsage? UsageFeed { get { lock (HeadlessGate) return _usage; } }
+
+        internal static Func<HeadlessUsage> UsageFactory { get; set; } = RealUsage;
+
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static HeadlessUsage RealUsage() => new(HeadlessUsage.Production(HeadlessUsage.RealSource()));
+
+        // The UI tick's two seconds, after a 5 s first wait (plan 11427 §3).
+        internal static readonly TimeSpan DefaultUsageFirstTick = TimeSpan.FromSeconds(5);
+        internal static readonly TimeSpan DefaultUsageEvery = TimeSpan.FromSeconds(2);
+        internal static TimeSpan UsageFirstTick { get; set; } = DefaultUsageFirstTick;
+        internal static TimeSpan UsageEvery { get; set; } = DefaultUsageEvery;
+
+        // honourOrbLifetime: true, so the phone is sent what the orbs would
+        // show once the UI is up, not more; the live scan takes over at that
+        // point and the two should not disagree about what exists.
+        internal static Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> HeadlessScan { get; set; } =
+            () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
+
+        internal static TimeSpan HeadlessEvery { get; set; } = TimeSpan.FromSeconds(3);
+
+        // One headless scan into the relay, until Attach hands the roster to
+        // the live scan. Under the gate so a tick can never run alongside, or
+        // after, the first live OnScanned. Never throws: it runs on a timer
+        // that discards exceptions, and a silent timer is undiagnosable.
+        internal static void HeadlessTick()
+        {
+            lock (HeadlessGate)
+            {
+                if (_attached) return;
+                try
+                {
+                    var snapshot = HeadlessScan();
+                    ResolveHeadlessPersonas(snapshot);
+                    OnScanned(snapshot);
+                }
+                catch (Exception e) { MirrorLog.Say("relay", $"headless scan failed: {e.GetType().Name}"); }
+            }
+        }
+
+        // The roster's personas come from LocalPersonas, and only the live
+        // scan's ApplyPersona fills it. The headless feed above sent the
+        // phone a parked Mac's orbs with no personas at all until this ran.
+        // The same rules as ApplyPersona: candidates per (cwd, source, agent)
+        // for one pass, the persona kept while its files' signature holds so
+        // a tick every three seconds is not a re-resolve every three seconds,
+        // and a session's persona forgotten once the session has gone, as
+        // the live scan forgets it. Under HeadlessGate, from HeadlessTick.
+        private static readonly Dictionary<string, (string Signature, LocalPersona.Persona Persona)> HeadlessPersonas =
+            new(StringComparer.Ordinal);
+
+        internal static void ResolveHeadlessPersonas(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
+        {
+            var dirs = UserConfigDirs();
+            var candidatesByKey = new Dictionary<(string, SessionSource, string), IReadOnlyList<LocalPersona.Candidate>>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (sessionId, status) in snapshot)
+            {
+                if (!status.IsLocalCli || string.IsNullOrWhiteSpace(status.Cwd)) continue;
+                seen.Add(sessionId);
+                var key = (status.Cwd, status.Source, status.Agent);
+                if (!candidatesByKey.TryGetValue(key, out var candidates))
+                    candidatesByKey[key] = candidates = LocalPersona.Candidates(status.Cwd, dirs, status.Source, status.Agent);
+
+                var paths = candidates.Select(c => c.Path);
+                var known = HeadlessPersonas.TryGetValue(sessionId, out var k) ? k : default;
+                if (known.Persona is not null
+                    && known.Signature == LocalPersona.Signature(paths.Concat(known.Persona.Watched)))
+                {
+                    LocalPersonas.Set(sessionId, known.Persona);
+                    continue;
+                }
+
+                var persona = LocalPersona.ResolveFrom(candidates, status.Cwd);
+                HeadlessPersonas[sessionId] = (LocalPersona.Signature(paths.Concat(persona.Watched)), persona);
+                LocalPersonas.Set(sessionId, persona);
+            }
+
+            foreach (var gone in HeadlessPersonas.Keys.Where(id => !seen.Contains(id)).ToList())
+            {
+                HeadlessPersonas.Remove(gone);
+                LocalPersonas.Forget(gone);
+            }
+        }
+
+        internal static void ResetHeadlessForTests()
+        {
+            lock (HeadlessGate)
+            {
+                _headless?.Dispose();
+                _headless = null;
+                _attached = false;
+                HeadlessPersonas.Clear();
+                _usage?.Dispose();
+                _usage = null;
+            }
+            Interlocked.Exchange(ref _hooksStarted, 0);
+            UsageFactory = RealUsage;
+            UsageFirstTick = DefaultUsageFirstTick;
+            UsageEvery = DefaultUsageEvery;
+            HeadlessScan = () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
+            HeadlessEvery = TimeSpan.FromSeconds(3);
+        }
+
         internal static void Attach(SessionManager sessions)
         {
+            HeadlessUsage? usage;
+            lock (HeadlessGate)
+            {
+                _attached = true;
+                _headless?.Dispose();
+                _headless = null;
+                usage = _usage;
+                _usage = null;
+            }
+            // CB-391: the pump, readings and Grok schedule the pre-unlock
+            // poll was running, handed to the orbs before UsageApplied is
+            // subscribed, so the cadence carries across and nothing is read
+            // twice. Null — nothing to adopt — when that poll never started.
+            sessions.AdoptUsage(usage?.Handoff(sessions.UsageDelivery));
             sessions.SessionsScanned += OnScanned;
             AccountOrbs.UsageApplied += OnUsage;
             if (OrbweaverSettings.RelayEnabled) Enable();
-            // CB-314's scripted pairing, only with the explicit env opt-in.
-            if (HooksEnabled()) _ = HooksRunner(Enable());
+            StartHooksOnce();
+        }
+
+        // CB-314's scripted pairing, only with the explicit env opt-in, and once
+        // per process: ServeEarly may already have started it before Attach.
+        private static int _hooksStarted;
+
+        private static void StartHooksOnce()
+        {
+            if (!HooksEnabled()) return;
+            if (Interlocked.Exchange(ref _hooksStarted, 1) != 0) return;
+            _ = HooksRunner(Enable());
         }
 
         internal static Func<bool> HooksEnabled { get; set; } = () => RelayTestHooks.Enabled(Environment.GetEnvironmentVariable);
@@ -131,6 +310,8 @@ namespace Orbweaver
             // The accounts a phone's launch may name, read off the settings at each scan.
             try { client.OnAccounts(RelayAccounts.Frame(RelayAccounts.From(RelayAccounts.Choices))); }
             catch (Exception e) { MirrorLog.Say("relay", $"accounts frame not built: {e.GetType().Name}"); }
+            // CB-339: what this desk can do (the folder picker), after accounts.
+            client.OnCaps(BrowseFrames.Caps);
             // CB-315: and the prompt watcher, off this thread — it captures panes.
             _ = client.OnStatuses(snapshot);
         }

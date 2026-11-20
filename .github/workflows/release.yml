@@ -13,8 +13,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Read-only by default; only `publish` creates the release and needs write.
+# macos holds the signing secrets and must never also hold a write token.
 permissions:
-  contents: write   # needed to create the release and upload assets
+  contents: read
 
 jobs:
   # Runs first and gates everything else. A tag whose number disagrees with the
@@ -40,6 +42,12 @@ jobs:
 
   macos:
     needs: check-version
+    # The only job that maps the MACOS_* signing and notarization secrets, so
+    # it is the only one gated by the `release` environment. Those secrets live
+    # on the environment, which requires a reviewer's approval and only deploys
+    # from v* tags and e2e/* branches: a branch someone pushed cannot read the
+    # Developer ID certificate just by editing this file.
+    environment: release
     # Both architectures build on the arm64 runner: .NET cross-publishes osx-x64
     # happily, and codesign/notarytool do not care which host they run on. One
     # runner image instead of pinning a legacy Intel image that keeps getting
@@ -214,6 +222,8 @@ jobs:
   publish:
     needs: [macos, windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create the release and upload assets
     # Only a tag push publishes; workflow_dispatch runs stop after building.
     if: startsWith(github.ref, 'refs/tags/v')
 

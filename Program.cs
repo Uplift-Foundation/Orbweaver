@@ -164,6 +164,13 @@ namespace Orbweaver
                     // screen-lock wait. Does nothing unless claudeCloudEnabled
                     // is on.
                     ClaudeCloudSessions.Restart();
+
+                    // The phone relay too, for the same reason again: a
+                    // WebSocket on pool threads. Behind the wait, a Mac that
+                    // restarted locked (1.0.7's auto-update on the mini) was
+                    // invisible to the phone until it was unlocked. Does
+                    // nothing unless relayEnabled is on. See ServeEarly.
+                    RelayService.ServeEarly();
                 },
 
                 // Avalonia's macOS render timer is a CVDisplayLink, and

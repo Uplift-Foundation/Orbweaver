@@ -25,7 +25,7 @@ namespace Orbweaver.Tests;
 // The whole class rather than just those tests, since xUnit serialises by
 // collection and a class cannot be half in one.
 [Collection("ConfigDirEnv")]
-public class MirrorRoundTripTests : IDisposable
+public partial class MirrorRoundTripTests : IDisposable
 {
     private readonly string _dir;
     private readonly string? _previousConfigDir;
@@ -69,6 +69,112 @@ public class MirrorRoundTripTests : IDisposable
             MirrorProtocol.TurnsFrom(rows, MirrorProtocol.CliClaudeCode),
             delivered.Turns);
     }
+
+    // CB-330: a teammate message is a relay turn on this side of the link, not a
+    // user bubble. The rows are the real captures, written to a real transcript
+    // on the far disk, sent through the real server and client; what arrives is
+    // what this machine's own parser produces, relay and all.
+    [Fact]
+    public async Task ARelayedTeammateMessageArrivesAsARelayTurnNotAUserBubble()
+    {
+        var rows = new[] { "lead-idle-result", "lead-multi-terminated-and-approved", "synthetic-control-user-quotes-wrapper" }
+            .Select(n => File.ReadAllText(Path.Combine(Cb330Dir(), n + ".jsonl")).TrimEnd('\n'))
+            .ToList();
+        var path = WriteTranscript("relay.jsonl", rows);
+
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", path);
+
+        Assert.True(await harness.HandshakeAsync("job-hunter"));
+        Assert.True(await harness.Client.OpenAsync("job-hunter"));
+
+        var delivered = Assert.Single(harness.Windows);
+
+        Assert.Equal(MirrorProtocol.TurnsFrom(rows, MirrorProtocol.CliClaudeCode), delivered.Turns);
+
+        // 1 idle + 4 in the multi row + the control.
+        Assert.Equal(6, delivered.Turns.Count);
+        Assert.All(delivered.Turns.Take(5), t =>
+        {
+            Assert.Equal("s", t.Role);
+            Assert.NotNull(t.Relay);
+            Assert.DoesNotContain("Another Claude session", t.Text);
+        });
+        Assert.Equal("hana-moriyama", delivered.Turns[0].Relay!.Name);
+
+        // The control is a person quoting the wrapper: still theirs, no relay.
+        Assert.Equal("u", delivered.Turns[5].Role);
+        Assert.Null(delivered.Turns[5].Relay);
+
+        // And the session adopts all five relay turns, not just the first of a
+        // row that shares one uuid.
+        var adopted = MirrorProtocol.AdoptTurns(delivered.Turns);
+        Assert.Equal(5, adopted.Count(a => a.Turn.Relay is not null));
+        Assert.Equal(adopted.Count, adopted.Select(a => a.Key).Distinct().Count());
+    }
+
+    private static string Cb330Dir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "TranscriptTests", "Captures", "cb330"));
+
+    // CB-356: a compaction on the far disk arrives as one compaction turn, not
+    // a user bubble holding the summary. The rows are the real capture.
+    [Fact]
+    public async Task ACompactionArrivesAsOneCompactionTurnNotAUserBubble()
+    {
+        var rows = File.ReadAllLines(Path.Combine(Cb356Dir(), "auto-attachments-between.jsonl")).ToList();
+        var path = WriteTranscript("compacted.jsonl", rows);
+
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", path);
+
+        Assert.True(await harness.HandshakeAsync("job-hunter"));
+        Assert.True(await harness.Client.OpenAsync("job-hunter"));
+
+        var delivered = Assert.Single(harness.Windows);
+        Assert.Equal(MirrorProtocol.TurnsFrom(rows, MirrorProtocol.CliClaudeCode), delivered.Turns);
+        Assert.Equal(new[] { "a", "s", "a" }, delivered.Turns.Select(t => t.Role));
+        Assert.DoesNotContain(delivered.Turns, t => t.Role == "u");
+
+        var adopted = MirrorProtocol.AdoptTurns(delivered.Turns);
+        var compaction = Assert.Single(adopted, a => a.Turn.Compaction is not null).Turn.Compaction!;
+        Assert.Equal(("auto", 168548L, 16159L, true), (compaction.Trigger, compaction.PreTokens, compaction.PostTokens, compaction.HasSummary));
+        Assert.DoesNotContain("This session is being continued", compaction.Summary);
+    }
+
+    // The boundary and the summary appended in two separate writes reach the
+    // far side as two updates, one half each. The receiving session folds them
+    // with TryAbsorb (pinned in the UI suite); what this pins is that each half
+    // crosses the wire as itself rather than as a user bubble or nothing.
+    [Fact]
+    public async Task ACompactionWrittenInTwoPiecesArrivesAsTheTwoHalves()
+    {
+        var capture = File.ReadAllLines(Path.Combine(Cb356Dir(), "auto-adjacent.jsonl"));
+        var path = WriteTranscript("live-compaction.jsonl", new[] { capture[0] });
+
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", path);
+        await harness.HandshakeAsync("job-hunter");
+        await harness.Client.OpenAsync("job-hunter");
+
+        File.AppendAllText(path, capture[1] + "\n");
+        await harness.Server.TickAsync();
+        File.AppendAllText(path, capture[2] + "\n");
+        await harness.Server.TickAsync();
+
+        Assert.Equal(2, harness.Deltas.Count);
+        var boundary = Assert.Single(MirrorProtocol.AdoptTurns(harness.Deltas[0].Turns)).Turn;
+        var summary = Assert.Single(MirrorProtocol.AdoptTurns(harness.Deltas[1].Turns)).Turn;
+        Assert.True(boundary.Compaction is { HasBoundary: true, HasSummary: false });
+        Assert.True(summary.Compaction is { HasBoundary: false, HasSummary: true });
+
+        Assert.True(CompactionNote.TryAbsorb(boundary, summary));
+        Assert.Equal(boundary.Compaction,
+            Assert.Single(MirrorProtocol.AdoptTurns(MirrorProtocol.TurnsFrom(capture.Take(3), MirrorProtocol.CliClaudeCode)),
+                a => a.Turn.Compaction is not null).Turn.Compaction);
+    }
+
+    private static string Cb356Dir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "TranscriptTests", "Captures", "cb356"));
 
     // A conversation big enough to need many frames, which is where chunking,
     // ordering and the whole-payload hash all have to hold at once.
@@ -565,6 +671,53 @@ public class MirrorRoundTripTests : IDisposable
 
         Assert.Equal(second, Assert.Single(read.Lines));
         Assert.Equal(first.Length + 1, read.From);
+    }
+
+    // CB-330: AdoptTurns keys the n-th turn of a row as uuid#n, so a row that maps
+    // to several turns must always reach the session whole, or the keys of a
+    // later frame would shift. A frame is cut by ReadRange, which skips a partial
+    // first line and drops a partial last one, so a row is sent whole or not at
+    // all. Windows that start and end mid-row, then the full file: no row is
+    // partly delivered, none is duplicated and none is dropped.
+    [Fact]
+    public void AMidRowCutNeverSendsPartOfARowAndALaterFullReadKeepsEveryTurn()
+    {
+        static string Multi(string uuid, params string[] texts) =>
+            "{\"type\":\"assistant\",\"uuid\":\"" + uuid + "\",\"timestamp\":\"2026-11-16T10:00:00Z\","
+            + "\"message\":{\"role\":\"assistant\",\"content\":["
+            + string.Join(",", texts.Select(t => "{\"type\":\"text\",\"text\":\"" + t + "\"}")) + "]}}";
+
+        var r1 = Multi("m1", "a1", "a2", "a3");
+        var r2 = Multi("m2", "b1", "b2", "b3");
+        var r3 = Multi("m3", "c1", "c2", "c3");
+        var path = Path.Combine(_dir, "multi.jsonl");
+        File.WriteAllText(path, r1 + "\n" + r2 + "\n" + r3 + "\n");
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+        // From the middle of row 1 to the middle of row 3: only row 2 is whole.
+        var partial = RemoteMirrorServer.ReadRange(fs, r1.Length / 2, r1.Length + 1 + r2.Length + 1 + r3.Length / 2, alignStart: true);
+        Assert.Equal(r2, Assert.Single(partial.Lines));
+
+        var seen = new HashSet<string>();
+        var texts = new List<string>();
+
+        void Deliver(IEnumerable<string> lines)
+        {
+            foreach (var row in MirrorProtocol.AdoptTurns(MirrorProtocol.TurnsFrom(lines, MirrorProtocol.CliClaudeCode)))
+                if (row.Key is null || seen.Add(row.Key))
+                    texts.Add(row.Turn.Text);
+        }
+
+        Deliver(partial.Lines);
+        Assert.Equal(new[] { "b1", "b2", "b3" }, texts);
+
+        var full = RemoteMirrorServer.ReadRange(fs, 0, fs.Length, alignStart: true);
+        Deliver(full.Lines);
+
+        // Every turn of every row exactly once; the overlap on row 2 was not
+        // duplicated and the other rows lost nothing.
+        Assert.Equal(new[] { "b1", "b2", "b3", "a1", "a2", "a3", "c1", "c2", "c3" }, texts);
     }
 
     [Fact]
@@ -1551,8 +1704,25 @@ public class MirrorRoundTripTests : IDisposable
             harness.Client.StateFor("private-thing").Availability);
     }
 
+    // Cannot read and cannot type: no transcript and no pane is settled.
     [Fact]
-    public async Task ASessionTheFarBuddyCannotReadIsSettledAsNoLiveView()
+    public async Task ASessionTheFarBuddyCannotReadOrTypeIntoIsSettledAsNoLiveView()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("job-hunter", Path.Combine(_dir, "does-not-exist.jsonl"));
+        harness.Paneless.Add("job-hunter");
+
+        await harness.Client.DiscoverAsync(harness.Peers, new[] { "job-hunter" });
+
+        Assert.Equal(
+            RemoteMirrorClient.MirrorAvailability.Unavailable,
+            harness.Client.StateFor("job-hunter").Availability);
+    }
+
+    // CB-357: the same missing file with a pane is a session that has not been
+    // spoken to yet, and is offered.
+    [Fact]
+    public async Task ASessionWithAPaneAndNoFileYetIsOfferedNotSettledAsNoLiveView()
     {
         var harness = new Harness(_dir);
         harness.AddSession("job-hunter", Path.Combine(_dir, "does-not-exist.jsonl"));
@@ -1560,7 +1730,7 @@ public class MirrorRoundTripTests : IDisposable
         await harness.Client.DiscoverAsync(harness.Peers, new[] { "job-hunter" });
 
         Assert.Equal(
-            RemoteMirrorClient.MirrorAvailability.Unavailable,
+            RemoteMirrorClient.MirrorAvailability.Available,
             harness.Client.StateFor("job-hunter").Availability);
     }
 
@@ -1862,6 +2032,33 @@ public class MirrorRoundTripTests : IDisposable
         // Logged by key and fingerprint, never by what an option says.
         Assert.Contains(log, l => l.EndsWith("key=2 -> ok"));
         Assert.DoesNotContain(log, l => prompt.Options.Any(o => l.Contains(o.Label)));
+    }
+
+    // CB-353: a far pane with the jira-board mod docked beside the chat serves the clean
+    // prompt, identical to the one its hand-cut twin serves, and pressing a key on it works.
+    [Theory]
+    [InlineData("FormTwoTabMulti")]
+    [InlineData("FormTwoTabSingle")]
+    [InlineData("PermissionBoard")]
+    public async Task AFarPaneWithASidePanelServesTheSamePromptAsItsHandCutTwin(string name)
+    {
+        var screen = SidePanelFixtures.All.First(f => f.Name == name).Screen;
+        var harness = new Harness(_dir) { Screen = screen };
+        harness.AddSession("evidence", WriteTranscript("side.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var withPanel = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        harness.Screen = SidePanelFixtures.HandCut(screen);
+        var twin = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        Assert.Equal(twin.Fingerprint, withPanel.Fingerprint);
+        Assert.Equal(twin.Title, withPanel.Title);
+        Assert.Equal(twin.Options.Select(o => (o.Key, o.Label)), withPanel.Options.Select(o => (o.Key, o.Label)));
+        Assert.DoesNotContain(withPanel.Options, o => o.Label.Contains('│'));
+
+        // The fingerprint is what the answer is checked against, so it works end to end.
+        harness.Screen = screen;
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", withPanel.Options[0].Key, withPanel.Fingerprint));
     }
 
     // An answer chosen from a screen that has since moved on presses nothing.
@@ -2773,6 +2970,130 @@ public class MirrorRoundTripTests : IDisposable
         Assert.DoesNotContain(':', tag);
         Assert.True(tag.Length <= 20);
         Assert.Equal(tag, MachineNames.Tag());
+    }
+
+    // --- a session with a pane and no transcript yet (CB-357) -------------------
+
+    private string NoFile(string name) => Path.Combine(_dir, name + "-never-written.jsonl");
+
+    [Fact]
+    public async Task APaneWithNoTranscriptYetIsOfferedAndTheOthersAreUnchanged()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        harness.AddSession("spoken", WriteTranscript("spoken.jsonl", Conversation(2)));
+        harness.AddSession("no-pane-no-file", NoFile("nopane"));
+        harness.Paneless.Add("no-pane-no-file");
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        var known = harness.Client.Known().Select(k => k.Entry.Name).ToList();
+        Assert.Contains("fresh", known);
+        Assert.Contains("spoken", known);
+
+        // The negative control: neither a transcript nor a pane is still not
+        // worth an orb.
+        Assert.DoesNotContain("no-pane-no-file", known);
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Unknown,
+            harness.Client.StateFor("no-pane-no-file").Availability);
+
+        var fresh = harness.Client.StateFor("fresh").Entry!;
+        Assert.False(fresh.HasTranscript);
+        Assert.True(fresh.HasPane);
+    }
+
+    [Fact]
+    public async Task APaneThatGoesAwayRemovesTheEntryOnTheNextRoster()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        var updates = 0;
+        harness.Client.RosterUpdated += () => updates++;
+
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+        Assert.Single(harness.Client.Known());
+        var before = updates;
+
+        harness.Paneless.Add("fresh");
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Empty(harness.Client.Known());
+        Assert.True(updates > before);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ASessionThatGainsItsTranscriptLaterOpensEmptyThenFills(bool emptyPathFilledLater)
+    {
+        var path = Path.Combine(_dir, "later.jsonl");
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", emptyPathFilledLater ? "" : path);
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.True(await harness.Client.OpenAsync("fresh"));
+
+        var window = Assert.Single(harness.Windows);
+        Assert.Empty(window.Turns);
+        Assert.Empty(harness.Failures);
+        Assert.Empty(harness.Deltas);
+
+        File.WriteAllText(path, string.Join("\n", Conversation(3)) + "\n");
+        if (emptyPathFilledLater) harness.Reshape("fresh", st => st.TranscriptPath = path);
+
+        await harness.Server.TickAsync();
+
+        var delta = Assert.Single(harness.Deltas);
+        Assert.NotEmpty(delta.Turns);
+        Assert.Single(harness.Windows);
+        Assert.Empty(harness.Failures);
+    }
+
+    // The negative control for the rule above: when the roster said there was
+    // a transcript, a file that is gone by the fetch is still a failure.
+    [Fact]
+    public async Task ATranscriptTheRosterPromisedButIsGoneStillFails()
+    {
+        var path = WriteTranscript("promised.jsonl", Conversation(2));
+        var harness = new Harness(_dir);
+        harness.AddSession("promised", path);
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+        Assert.True(harness.Client.StateFor("promised").Entry!.HasTranscript);
+
+        File.Delete(path);
+
+        Assert.False(await harness.Client.OpenAsync("promised"));
+        Assert.Single(harness.Failures);
+        Assert.Empty(harness.Windows);
+    }
+
+    [Fact]
+    public async Task TheFirstMessageToASessionWithNoTranscriptYetIsTyped()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        await harness.Client.AskWhatTheyHaveAsync(harness.Peers);
+
+        Assert.Null(await harness.Client.SendInputAsync("fresh", "hello"));
+
+        var typed = Assert.Single(harness.Typed);
+        Assert.Equal(("fresh", "hello"), typed);
+    }
+
+    [Fact]
+    public async Task DiscoveryKeepsAPaneWithNoTranscriptAndDropsOneWithNeither()
+    {
+        var harness = new Harness(_dir);
+        harness.AddSession("fresh", NoFile("fresh"));
+        harness.AddSession("neither", NoFile("neither"));
+        harness.Paneless.Add("neither");
+
+        await harness.Client.DiscoverAsync(harness.Peers, new[] { "fresh", "neither" });
+
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Available,
+            harness.Client.StateFor("fresh").Availability);
+        Assert.Equal(RemoteMirrorClient.MirrorAvailability.Unavailable,
+            harness.Client.StateFor("neither").Availability);
     }
 
     // --- fixtures --------------------------------------------------------------------
@@ -3828,8 +4149,10 @@ public class MirrorRoundTripTests : IDisposable
         harness.Server.Now = () => LiveAt.AddHours(23);
 
         // Read off what the server sent rather than what the client kept: the
-        // client keeps only rows with a transcript to show, and two of these
-        // deliberately have none.
+        // client keeps only rows with a transcript or a pane to show. The
+        // harness gives these team members a pane, so the client would now
+        // keep them; this test passes because it reads the server's output,
+        // not because the client drops them.
         await harness.Server.HandleAsync(Harness.NearRelay, OldHello("stale1"));
         var known = MirrorProtocol.DecodeRoster(ReassembledPayload(harness.ToClient, "stale1"))!.ToList();
         var staleEntry = known.Single(e => e.Route == RemoteMirrorServer.RouteFor(stale));
@@ -3990,11 +4313,12 @@ public class MirrorRoundTripTests : IDisposable
         // it types the line as ordinary text, which is what such a Buddy did.
         public bool FarPredatesSlash { get; set; }
 
-        public int ChunkFrames { get; private set; }
+        private int _chunkFrames;
+        public int ChunkFrames => Volatile.Read(ref _chunkFrames);
 
         // The handshake pays for its own roster chunk, and a test about the
         // *window* should not have to subtract it.
-        public void ForgetFramesSoFar() => ChunkFrames = 0;
+        public void ForgetFramesSoFar() => Interlocked.Exchange(ref _chunkFrames, 0);
         public int Resends { get; private set; }
 
         // CB-307 addendum: the far pane's screen and Claude Code's own record,
@@ -4030,6 +4354,16 @@ public class MirrorRoundTripTests : IDisposable
 
         public bool ReplyEnabled { get; init; } = true;
         public bool CanType { get; init; } = true;
+
+        // Sessions that have no pane to type into, by title, while every
+        // other session on the harness keeps one. Mutable, so a pane can
+        // disappear between two rosters.
+        public HashSet<string> Paneless { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        // The far status file changing under a test, as Claude Code's does
+        // when it fills in the transcript path after the first message.
+        public void Reshape(string name, Action<SessionStatus> shape) =>
+            shape(_sessions.First(s => s.Status.Title == name).Status);
         public bool TypeFails { get; init; }
 
         // CB-105's messaging fallback. Only wired at all when the constructor
@@ -4082,7 +4416,8 @@ public class MirrorRoundTripTests : IDisposable
 
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
             LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
-            bool noPressKey = false, bool noCanReadPane = false)
+            bool noPressKey = false, bool noCanReadPane = false, Func<PeerFileEnv>? files = null,
+            Func<IReadOnlyList<AgentRoster.Entry>?>? peekAgents = null)
         {
             _dir = dir;
 
@@ -4093,7 +4428,7 @@ public class MirrorRoundTripTests : IDisposable
                     ? throw new InvalidOperationException("the agent registry did not answer")
                     : _agents,
                 _ => ReplyEnabled,
-                _ => CanType,
+                status => CanType && !Paneless.Contains(status.Title),
                 (status, text) =>
                 {
                     Typed.Add((NameOf(status), text));
@@ -4155,7 +4490,11 @@ public class MirrorRoundTripTests : IDisposable
                     Literal.Add(text);
                     if (AfterType?.Invoke(text) is { } next) Screen = next;
                     return Task.FromResult(true);
-                }));
+                },
+                // CB-363: null unless a test serves files, so every harness
+                // above keeps a far side that never says rf=1.
+                Files: files,
+                PeekAgents: peekAgents));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -4272,6 +4611,9 @@ public class MirrorRoundTripTests : IDisposable
             _sessions.Where(s => s.Status.Title == title).Select(s => s.SessionId);
 
         public void AddSession(string name, string transcriptPath) => AddSession(name, transcriptPath, null);
+
+        // CB-363: the registry as it stands, for a peek that has a roster.
+        public IReadOnlyList<AgentRoster.Entry> AgentsNow => _agents.ToList();
 
         // CB-306: the same, with the status shaped by the test (an OpenClaw
         // spawn's entrypoint and workspace cwd).
@@ -4395,7 +4737,7 @@ public class MirrorRoundTripTests : IDisposable
 
             if (frame.Type == MirrorProtocol.Chunk)
             {
-                ChunkFrames++;
+                Interlocked.Increment(ref _chunkFrames);
 
                 if (MangleChunks || (MangleOnce && !_mangledAlready))
                 {
@@ -4413,8 +4755,19 @@ public class MirrorRoundTripTests : IDisposable
             }
 
             await Client.OnFrameAsync(FarRelay, frame);
+
+            // CB-384: the client acting on a frame the moment it lands, while the
+            // far side is still inside the send that delivered it.
+            if (AfterDelivered is { } after) await after(frame);
+
             return true;
         }
+
+        // Called after every frame reaches the client, from inside the courier. A
+        // test uses it to make the client's next request the instant a reply
+        // arrives - what a fast client does - which is a race in production and a
+        // certainty here.
+        public Func<MirrorProtocol.MirrorFrame, Task>? AfterDelivered { get; set; }
 
         // Rebuilds the frame around different bytes, which recomputes that
         // piece's digest — BuildFrame appends it — while carrying the original

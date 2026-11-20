@@ -64,13 +64,18 @@ namespace Orbweaver
         // The launch's optional account names one this desktop does not list.
         internal const string UnknownAccount = "unknown_account";
 
+        // CB-339 (frames-v11 errors_added.sealed_err_codes): the folder picker's four. forbidden_path is
+        // the one answer for everything outside the roots, whether or not the folder exists.
+        internal const string ForbiddenPath = "forbidden_path", UnknownPath = "unknown_path",
+            Unreadable = "unreadable", RateLimited = "rate_limited";
+
         internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched];
 
         internal static readonly string[] ErrCodes =
         [
             BadFrame, UnknownSession, NotAtPrompt, Untypeable, TypingFailed, BadInput, BadSignature, Expired, Replayed,
             UnknownCli, UnknownCwd, BadModel, UnsupportedPersona, UnknownParent, UnsupportedParent, NoTerminal,
-            LaunchFailed, NoSession, UnknownImage, UnknownAccount,
+            LaunchFailed, NoSession, UnknownImage, UnknownAccount, ForbiddenPath, UnknownPath, Unreadable, RateLimited,
         ];
 
         // Only these four carry the desktop's own sentence; every other code's
@@ -105,6 +110,12 @@ namespace Orbweaver
 
     internal sealed record LaunchRequest(string Ref, LaunchFields Fields, string Sig) : RelayRequest(Ref);
 
+    // CB-339: a phone asking for a folder's subfolders. Path is null when the shape was wrong
+    // (frames-v11 list_dir.rules), because the contract's order is rate limit FIRST and shape second:
+    // a flood of malformed frames must cost the desk one counter, so the handler, not the parser,
+    // answers bad_frame.
+    internal sealed record ListDirRequest(string Ref, string? Path, bool Hidden) : RelayRequest(Ref);
+
     // A v4 type whose shape is wrong: answered `err bad_frame`, and nothing
     // else happens. SessionId when the frame named one, so the reply can too.
     internal sealed record BadFrameRequest(string Ref, string? SessionId) : RelayRequest(Ref);
@@ -115,7 +126,7 @@ namespace Orbweaver
 
     internal static class RelayRequests
     {
-        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image"];
+        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image", "list_dir"];
 
         // Null when the plaintext is not a v4 request at all (an answer, or a
         // type this desktop does not know) — those keep their existing paths.
@@ -145,6 +156,18 @@ namespace Orbweaver
                     return PersonaFrames.IsHash(Str(f, "hash"))
                         ? new PersonaImageRequest(reference, Str(f, "hash")!)
                         : new BadFrameRequest(reference, null);
+                // CB-339: `path` a string within the cap and free of control characters, `hidden`
+                // absent or a boolean (false is read as absent, though no sender writes it).
+                case "list_dir":
+                    var hidden = false;
+                    var shapeOk = true;
+                    if (f.TryGetProperty("hidden", out var h))
+                    {
+                        if (h.ValueKind is JsonValueKind.True or JsonValueKind.False) hidden = h.ValueKind == JsonValueKind.True;
+                        else shapeOk = false;
+                    }
+                    var path = Str(f, "path");
+                    return new ListDirRequest(reference, shapeOk && path is not null && BrowseRules.PathShapeOk(path) ? path : null, hidden);
                 default:
                     return ParseLaunch(f, reference);
             }

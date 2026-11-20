@@ -55,9 +55,26 @@ Those are the `model:` values the Agent and Workflow tools accept (`fable`, `opu
 
 If it *is* confident, it hands straight to the architects and engineers, and the feature proceeds without a human in the loop.
 
+### Speed: the clock is part of done
+
+**A bounded bug should land in 30–40 minutes end to end, and a feature in an afternoon.** Past about two hours on any ticket, tell Warren where the time is going rather than carrying on. CB-391 is why this section exists. Its cause was diagnosed to the line before any agent was spawned, and it still headed for two hours. None of that time went on building. It went on process that repeated work or waited on itself:
+
+- **QA reran the full suites locally, on two machines, after CI had already passed them on both rids.** About fifteen minutes.
+- **A thirty-minute log-rate soak was planned**, where counting concurrent child processes for three minutes answers the same question.
+- **An architect stage ran for a bug whose fix was already known**, and a duplicate architect then produced a second plan for the team to reconcile.
+- **The engineer rebuilt beyond the fixes asked for**, which reset both the architect's review and QA's coverage run.
+
+So, for every ticket:
+
+1. **Staff to the uncertainty, not to the org chart.** The architect stage is for a new subsystem, a change to a contract someone else reads (hook, transcript, relay frames), or a cause nobody has found yet. For a bug or a bounded change whose shape is known, the lead writes the plan into the ticket and spawns the engineer and QA together, in one message. QA writes its test matrix while the engineer builds.
+2. **CI green on both rids is the suite gate.** Nobody reruns the full suites locally once CI has passed them at the same sha; see **Test cadence**. What QA adds on top is what CI cannot do: coverage of added lines, installs, and the real-machine proof.
+3. **The real-machine proof is short and paired.** It is one observation that shows the change working where it matters, plus the negative control that would have failed had the setup been wrong, measured in minutes. **Size every observation window to about three times the event's own cadence, never to a round number of minutes.** On CB-391 a usage line arrived 16 s after launch, so a usage-off control proves its point in about 90 s, and a planned ten-minute window measured nothing those 90 s had not. A soak or a rate comparison over half an hour is a post-merge check, if it is run at all. It is never a merge gate.
+4. **One fix round per batch.** QA sends its findings as one batch. The engineer pushes exactly what that batch lists and nothing else, because every unrequested change resets every review and run taken at the old sha. A redesign the engineer thinks is better goes to the lead as a question first.
+5. **Overlap the waits.** Open the PR at the first working push so CI runs while QA reviews. Install while CI runs, with **one install owner per ticket** so two agents never race for the same machine. The lead answers a teammate the moment it reports; a gate never waits on the lead.
+
 ### Build and QA, in a loop
 
-Engineers and architects build, QA agents test, and the work goes back and forth until it stops coming back. The substance of QA's half is **Every feature ships with its tests** below — unit, integration and UI, covering 100% of the lines the branch adds — so "QA passed" means those exist and are green, not that somebody had a look.
+Engineers and architects build, QA agents test, and the work goes back and forth until it stops coming back. The substance of QA's half is **Every feature ships with its tests** below — unit, integration and UI, covering 100% of the lines the branch adds — so "QA passed" means those exist and are green, not that somebody had a look. *Which* runs QA repeats each round, and which it leaves to CI, is **Test cadence** below.
 
 **A feature works on Windows and macOS, or it is not a feature.** CI enforces the shape of that already: the matrix is `macos-latest`/`osx-arm64` and `windows-latest`/`win-x64`, and every suite runs on both legs. Parity is more than a green build, though — a feature no install path wires up is equally unfinished. Before calling it done, check `tools/build-macos-dmg.sh`, `tools/build-macos-app.sh`'s Resources copy, `tools/Orbweaver.iss`, `tools/install-hooks.sh`/`.ps1` and the README's install section, and satisfy yourself that any platform-specific gate is real (WSL) rather than accidental.
 
@@ -127,6 +144,10 @@ So the sequence below runs to the end, in one go, by whoever started it:
 5. **Merge it to `main`.**
 6. **Push the tag** — `git tag -a v<version> <merge-sha> && git push upstream v<version>`. This is the step that actually builds, signs, notarizes and publishes the installers; `release.yml` is tag-driven and nothing before it ships anything.
 7. **Merge `main` back into `develop`**, so the bump and notes are not lost at the next release.
+
+**The `macos` job now pauses for the `release` environment, and approving it is part of cutting the release, not a checkpoint.** After step 6 the run waits on a required reviewer before the signing secrets are released to it. List the pending deployment with `gh api repos/Uplift-Foundation/Orbweaver/actions/runs/<id>/pending_deployments`, then approve it by POSTing the environment id from that listing: `gh api -X POST repos/Uplift-Foundation/Orbweaver/actions/runs/<id>/pending_deployments -F 'environment_ids[]=<environment id>' -f state=approved -f comment='<why>'`. The environment only deploys from `v*` tags and `e2e/*` branches, so a stuck run on any other ref is that restriction working, not a bug.
+
+Direct pushes to `main` and `develop` are refused by the rulesets (a PR with both CI legs green is the only way in), and only admins can create `v*` tags. The notarized end-to-end dispatch recipe has to run from an `e2e/*` branch for the same reason: the `release` environment will not deploy from anything else.
 
 **Do not stop between 4 and 7 to ask whether to proceed.** Cutting a release is already the decision to publish one; a second confirmation before the tag buys nothing and strands the release at exactly the point this section exists to prevent. The one thing worth pausing for is a *red* CI leg, which is a real answer to a real question. "Should I merge the release I was asked to cut" is not.
 
@@ -311,9 +332,20 @@ dotnet test tests/UnitTests --collect:"XPlat Code Coverage"
 
 **Nothing in the repository collects coverage today, and the flag fails silently without that package.** `--collect:"XPlat Code Coverage"` against a project with no `coverlet.collector` reference creates an empty `TestResults/` directory, prints no warning and exits 0 — a run that measured nothing, and reads exactly like one that measured everything. Add the package to whichever suite you are measuring and take it back out before you push, unless you are deliberately wiring collection into all three suites and CI, which is its own change and needs its own reasoning.
 
+## Test cadence: targeted while iterating, full once before push
+
+**Every command in this file is real, and none of them is meant to run on every round trip.** A full local pass — `dotnet test tests/Tests.sln`, the UI suite in Release through CB-119's guard, the screenshots, `tools/coverage.sh` — costs many minutes, and a feature takes many rounds; run all of it each time and most of a feature's wall clock is spent re-proving code nobody touched, while CI is going to run the full regression on both rids anyway. Which run belongs when:
+
+- **While iterating**, run only the test classes the change can affect. VSTest suites (`tests/UnitTests`, `tests/IntegrationTests`) take `--filter "FullyQualifiedName~<Class>"`; the MTP suites (`tests/UiTests`, `tests/UiScreenshots`) take `--filter-class <Namespace.Class>` or `--filter-method`, never `--filter` (CB-270, and read the total in the summary line to confirm the filter took). Add the matching console suite for any change to geometry (`ArrangementTests`), transcript parsing (`TranscriptTests`) or orb initials (`GlyphTests`) — CI fails on them whether or not `dotnet test` did.
+- **Before the first push, nothing beyond the targeted runs.** Push early and let CI run the full pass on both rids; it is the regression suite and it runs anyway. Run the full local pass (`dotnet test tests/Tests.sln`, `dotnet test tests/UiTests -c Release` through CB-119's guard, and `tests/UiScreenshots` if a visible surface changed) only when CI cannot give you that answer, for example when CI is down or you are chasing a failure CI reported, and run it against the commit you are about to push.
+- **Once per PR**, `./tools/coverage.sh --base upstream/develop` (or `origin/develop` where that is the remote's name) for the PR body's coverage figure. It rebuilds everything and runs all four suites, so it is a number to quote, not a loop to iterate in.
+- **QA** re-runs the targeted tests for whatever it sent back, plus whatever the fix touched, and leaves the full regression to CI. Repeating the full local pass every round is what this section exists to stop: CI on both rids is the regression suite, and a QA round that duplicates it only delays the answer.
+
+None of this relaxes what a run has to prove. A targeted run is a statement about the classes it named, and a PR body says which cadence step produced each figure — "full Release UI suite through the guard on <sha>" and "`UiTests` `--filter-class ChatPanelTests` only" are different claims and are worded differently.
+
 ## Testing UI behavior
 
-Orb *geometry* has a test suite — `dotnet run --project tests/ArrangementTests`. It walks every shape at every end of the spacing slider and orb size, mixed sizes included, across a range of orb counts and team shapes (nested teams, everything in one team, lead cycles, a lead that points at nothing) on three screen sizes, and asserts that nothing leaves the work area, nothing is drawn on top of anything else, and no team member ends up too far from its lead to be read as one. Run it after any change to `OrbArrangement`; it exits non-zero and prints the exact case that failed.
+Orb *geometry* has a test suite — `dotnet run --project tests/ArrangementTests`. It walks every shape at every end of the spacing slider and orb size, mixed sizes included, across a range of orb counts and team shapes (nested teams, everything in one team, lead cycles, a lead that points at nothing) on three screen sizes, and asserts that nothing leaves the work area, nothing is drawn on top of anything else, and no team member ends up too far from its lead to be read as one. Run it after any change to `OrbArrangement` (it is the console suite **Test cadence** names for geometry, so it belongs in the iterating loop, not only the final pass); it exits non-zero and prints the exact case that failed.
 
 That exists because the arrangement was fixed by eye half a dozen times and each fix broke a case the previous one had fixed. Keep the geometry in `OrbArrangement` — pure, no windows, no settings — so it stays testable, with `SessionManager` only mapping orbs onto its inputs and its answers back.
 
@@ -350,16 +382,16 @@ The wrong sentence survived because it read like a finding and was never checked
 
 ## The automated suite
 
-Three more suites, all xUnit rather than the bespoke console-exe pattern above, live in `tests/UnitTests`, `tests/IntegrationTests` and `tests/UiTests`. One command runs all three: `dotnet test tests/Tests.sln`. They join the three suites above rather than replacing them — `Tests.sln` holds only the xUnit projects, so it can't accidentally try to `dotnet test` an exe with no test SDK reference, and `Orbweaver.sln` stays app-only. CI (`.github/workflows/ci.yml`) runs every one of them, plus `tests/UiScreenshots`, on both runners, before packaging — a failing test blocks the build the same way a failed `dotnet publish` already did.
+Three more suites, all xUnit rather than the bespoke console-exe pattern above, live in `tests/UnitTests`, `tests/IntegrationTests` and `tests/UiTests`. One command runs all three: `dotnet test tests/Tests.sln`. They join the three suites above rather than replacing them — `Tests.sln` holds only the xUnit projects, so it can't accidentally try to `dotnet test` an exe with no test SDK reference, and `Orbweaver.sln` stays app-only. CI (`.github/workflows/ci.yml`) runs every one of them, plus `tests/UiScreenshots`, on both runners, as parallel jobs (CB-367, CB-375: five per rid on Windows — `checks`, `unit`, `ui`, `screenshots`, `package` — and three on macOS, `checks-screenshots`, `unit-package` and `ui`, because five macOS jobs per run queued behind each other), all one `suite` job in `ci.yml` whose matrix says which suites an instance runs, with a final `build` job that keeps the two required check names and is red unless every one of them is green. `package` no longer waits for the suites, so an installer is uploaded even from a red run; the `build` gate is what blocks, not the order. Every job that runs `unit`, `ui` or `screenshots` also fails a single test that runs past 30 s unless `tools/test-budget-allowlist.txt` names it with a reason (`tools/check-test-budget.py`) — that is what makes a test waiting out a production timeout (CB-334) a red build instead of a slow green one.
 
-**Run the UI suite in Release before pushing, because CI does and `dotnet test` does not.**
+**Run the UI suite in Release once before pushing, because CI does and `dotnet test` does not.** That is the before-push step of **Test cadence**; while iterating, a targeted `--filter-class` run is enough, and the full Release pass is not repeated every round.
 
 ```bash
 dotnet test tests/Tests.sln            # Debug — what everyone runs
 dotnet test tests/UiTests -c Release   # what CI actually runs
 ```
 
-**Run CB-119's guard locally too — `dotnet test`'s own exit code is not enough.** During CB-120's work it fired three times (twice for an implementer, once for a reviewer), each time a test count one short with zero failures and zero skips, clean on immediate rerun — a higher rate than the 2-in-28 originally measured, and none of the three was caught, because the guard only ran in CI:
+**Run CB-119's guard locally too, on that same before-push run — `dotnet test`'s own exit code is not enough.** During CB-120's work it fired three times (twice for an implementer, once for a reviewer), each time a test count one short with zero failures and zero skips, clean on immediate rerun — a higher rate than the 2-in-28 originally measured, and none of the three was caught, because the guard only ran in CI:
 
 ```bash
 dotnet test tests/UiTests -c Release -- --report-xunit --report-xunit-filename ui-tests.xunit.xml
@@ -368,7 +400,7 @@ pwsh tools/check-xunit-report.ps1 -ReportPath tests/UiTests/bin/Release/net10.0/
 
 (`<rid>` is whatever `dotnet test` printed for your machine. **1050 is the
 value `ci.yml` actually sets today — read off `$minimumExpectedTests` in the
-UiTests step, not remembered.** This paragraph said 1005 until CB-141 checked
+"UI tests (xUnit, headless)" step, not remembered.** This paragraph said 1005 until CB-141 checked
 it against the file, and a floor 45 too low is the worst kind of wrong number:
 it reads as measured, it never fails, and it silently stops being the guard it
 claims to be. If you quote it again, quote it from `ci.yml`. Bump the floor
@@ -410,6 +442,8 @@ All three new suites need settings.json out of the way, since even constructing 
 ./tools/coverage.sh                            # whole-app line and branch coverage
 ./tools/coverage.sh --base upstream/develop    # ...and just the lines you added
 ```
+
+Run it **once per PR**, for the body's figure — see **Test cadence**. It rebuilds everything and runs all four suites, so it is not part of the edit-and-retest loop.
 
 **Two collectors, not one, and it has to stay that way.** `tests/UnitTests` and `tests/IntegrationTests` run on VSTest and use `coverlet.collector`; `tests/UiTests` and `tests/UiScreenshots` run on the Microsoft Testing Platform (both moved to xUnit v3 for `Avalonia.Headless.XUnit` 12.x — see their csprojs) where VSTest data collectors do not apply at all, so they use `Microsoft.Testing.Extensions.CodeCoverage`'s own coverage switch instead. That package is **pinned to 17.14.2** in both, for the same reason everything else in those csprojs is pinned: 18.x depends on `Microsoft.Testing.Platform` 2.x while xunit.v3 3.2.2 brings the `mtp-v1` packages, and the mix throws `TypeLoadException` for `IDataConsumer` before one test runs. `Microsoft.Testing.Extensions.HangDump` (CB-279, what `--hangdump` in `ci.yml` needs) is pinned to **1.9.1** in both for the same reason — exactly the `Microsoft.Testing.Platform` xunit.v3 3.2.2 resolves. Bump xunit.v3 and you have to re-check all four pins.
 

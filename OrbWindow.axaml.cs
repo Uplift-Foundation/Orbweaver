@@ -33,7 +33,7 @@ namespace Orbweaver
         // guesses; correct one by reading the escape sequence Claude Code
         // writes for that color (`tmux capture-pane -p -e`, look for
         // `38;5;<n>`) if one ever looks off.
-        private static readonly Dictionary<string, Color> AgentColors = new(StringComparer.OrdinalIgnoreCase)
+        internal static readonly Dictionary<string, Color> AgentColors = new(StringComparer.OrdinalIgnoreCase)
         {
             ["red"] = Color.Parse("#D75F5F"),     // 167
             ["orange"] = Color.Parse("#D7875F"),  // 173

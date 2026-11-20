@@ -27,7 +27,10 @@ namespace Orbweaver
     // snapshot and the kills is not in the snapshot and survives as an orphan
     // of launchd. That leak is harmless — it was never stopped, so it cannot
     // trigger the SIGHUP — and is the price of not freezing the tree to get a
-    // stable view of it. Everywhere else (Windows) this is exactly
+    // stable view of it. CB-383 measured its size: a root forking in a tight
+    // loop left 145 and 181 survivors over 100 kills, one forking every 5 ms 6 to
+    // 10 (docs/sighup-findings.md has the table, and the
+    // variants that were tried and why none was adopted). Everywhere else (Windows) this is exactly
     // `Process.Kill(true)`, which has no process groups to disturb.
     internal static class ProcessTreeKill
     {

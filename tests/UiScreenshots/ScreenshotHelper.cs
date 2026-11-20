@@ -49,10 +49,19 @@ internal static class ScreenshotHelper
     // (headless hit-testing has the same caveat, per tests/UiTests's
     // OrbFlyoutTests) still needs a timer tick to actually run a paint pass
     // over whatever just got invalidated.
+    //
+    // Pumped MinFrames + 1 times (CB-286): a chat panel stays at opacity 0 until
+    // its reveal gate has seen MinFrames settled frames, and a capture before
+    // that is a blank rectangle. Deliberately not the fail-open cap, so a gate
+    // that never settles shows up as a blank capture instead of being papered over.
     public static void Flush()
     {
-        Dispatcher.UIThread.RunJobs();
-        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        for (var i = 0; i < ChatPanelReveal.MinFrames + 1; i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        }
+
         Dispatcher.UIThread.RunJobs();
     }
 
@@ -190,6 +199,77 @@ internal static class ScreenshotHelper
         using var decoded = SKBitmap.Decode(stream);
 
         if (decoded is not null) AssertTextIsLegible(visual, decoded, label);
+
+        AssertNoHostNameIsShown(visual, label);
+    }
+
+    // CB-374. Screenshots are published, and a header that falls back to naming
+    // "this machine" puts whichever machine ran the suite into the image - a CI
+    // runner's name, or a developer's own. Asked of every capture rather than of
+    // the one that was noticed, by reading the visible text: any of the spellings
+    // the app derives from the host (the raw hostname, the cleaned tag, and the
+    // spaced form the header draws) is a leak. A capture that needs a machine name
+    // pins one with ChatPanelTestAccess.WithMachineName.
+    //
+    // WHAT IT SEES: the text of every visible TextBlock (its Text, and the runs in
+    // its Inlines when Text is empty) and the Text of every visible TextBox.
+    // WHAT IT CANNOT SEE: a tooltip, text drawn into an image or by a custom
+    // control that paints its own glyphs, text inside a nested inline (a Span or
+    // Bold holding Runs - only top-level Runs are read), and anything outside the
+    // captured visual.
+    // It is a case-insensitive substring match, so a host whose name is also a
+    // word the fixtures use ("build", say) would fail captures that leak nothing;
+    // the message names the spelling it matched, which is what to look at.
+    internal static void AssertNoHostNameIsShown(Visual root, string label)
+    {
+        foreach (var name in HostNameSpellings())
+        {
+            foreach (var (shown, source) in VisibleTexts(root))
+            {
+                if (shown.Contains(name, StringComparison.OrdinalIgnoreCase))
+                    throw new Xunit.Sdk.XunitException(
+                        $"{label}: a visible {source} shows this machine's name ({name}): \"{shown}\". "
+                      + "Pin a fixture name with ChatPanelTestAccess.WithMachineName.");
+            }
+        }
+    }
+
+    private static IEnumerable<(string Text, string Source)> VisibleTexts(Visual root)
+    {
+        foreach (var visual in root.GetSelfAndVisualDescendants())
+        {
+            switch (visual)
+            {
+                case TextBlock { IsVisible: true } block:
+                    if (!string.IsNullOrWhiteSpace(block.Text))
+                        yield return (block.Text, "TextBlock");
+                    else if (block.Inlines is { Count: > 0 } inlines)
+                    {
+                        var joined = string.Concat(inlines.Select(i => (i as Avalonia.Controls.Documents.Run)?.Text));
+                        if (!string.IsNullOrWhiteSpace(joined)) yield return (joined, "TextBlock (inline runs)");
+                    }
+                    break;
+
+                case TextBox { IsVisible: true } box when !string.IsNullOrWhiteSpace(box.Text):
+                    yield return (box.Text, "TextBox");
+                    break;
+            }
+        }
+    }
+
+    // Four characters and up, so a host called "mac" cannot flag every capture
+    // that says "machine". The set is what the app itself derives from the host.
+    internal static IReadOnlyList<string> HostNameSpellings()
+    {
+        var raw = new List<string> { Environment.MachineName };
+
+        try { raw.Add(MachineNames.Mine()); } catch { }
+
+        return raw
+            .SelectMany(n => new[] { n, MachineNames.Clean(n), MachineNames.Readable(MachineNames.Clean(n)) })
+            .Where(n => n.Length >= 4)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     // CB-171. A screenshot that nobody can read is worse than no screenshot,

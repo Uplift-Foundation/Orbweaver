@@ -160,6 +160,20 @@ namespace Orbweaver
 
         private readonly ObservableCollection<TurnView> _turns = new();
 
+        // CB-286's reveal gate, and the scale of the screen Reposition last
+        // placed this panel on — what the gate waits for RenderScaling to
+        // match. NaN until a Reposition has run, which the gate reads as
+        // "nothing to compare".
+        private readonly ChatPanelReveal _reveal;
+        private double _targetScale = double.NaN;
+
+        // False from Bind until the panel has been laid out at its final size.
+        internal bool IsRevealed => Chrome.Opacity > 0;
+
+        // The width each row was last told it has, read by the CB-286 tests to
+        // see whether a freshly bound transcript was laid out for the new size.
+        internal IReadOnlyList<double> TurnAvailableWidths => _turns.Select(t => t.AvailableWidth).ToList();
+
         // Pictures pasted since the last send, waiting to go out with
         // whatever gets typed next. Not part of a session's own draft store
         // below — a paste is only ever meant for the message being composed
@@ -236,6 +250,8 @@ namespace Orbweaver
 
         public ChatPanel()
         {
+            _relayHost.Avatar = ResolveRelayAvatar;
+            _relayHost.OrdinalOf = RelayOrdinal;
             InitializeComponent();
 
             // Drawn rather than typed — see SymbolMarks. The same gear the
@@ -381,6 +397,11 @@ namespace Orbweaver
             // Getting there first is the whole point.
             Input.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
             Input.TextChanged += (_, _) => UpdateSlashSuggestions();
+            // The property's own change notification, not TextChanged: that one can
+            // be raised after the fact, so an edit made before Enter could land
+            // after the send had already recorded the count and look like one made
+            // during it, and the box would never clear.
+            Input.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) _inputEdits++; };
 
             // On the window rather than on Input, and ahead of it: a selection
             // in a bubble has to be copyable no matter which control the
@@ -401,6 +422,14 @@ namespace Orbweaver
             // was left at. Done here rather than in Bind because it is about
             // the window, not about which session is in it.
             ApplyTextScale();
+
+            _reveal = new ChatPanelReveal(
+                settled: () => ChatPanelReveal.IsSettled(
+                    new Size(Width, Height), Bounds.Size, RenderScaling, _targetScale),
+                hide: () => Chrome.Opacity = 0,
+                reveal: () => Chrome.Opacity = 1,
+                nextFrame: cb => RequestAnimationFrame(_ => cb()),
+                startDeadline: cb => DispatcherTimer.RunOnce(cb, TimeSpan.FromMilliseconds(400)));
 
             Opened += (_, _) =>
             {
@@ -704,6 +733,11 @@ namespace Orbweaver
             _pendingImages.Clear();
             Attachments.IsVisible = false;
 
+            // CB-330: what the reader opened belongs to this conversation's rows; a
+            // panel reused for the next one starts them all closed again.
+            _relayHost.Choices.Clear();
+            _relayHost.CompactionChoices.Clear();
+
             _session.TurnAdded -= OnTurnAdded;
             _session.TurnUpdated -= OnTurnUpdated;
             _session.StateChanged -= OnStateChanged;
@@ -725,6 +759,7 @@ namespace Orbweaver
             // conversation is open next — a refusal from one cloud session
             // taking the box away from an unrelated one.
             if (_session is IRemoteChatReadOnly wasReadOnly) wasReadOnly.ReadOnlyChanged -= OnReadOnlyChanged;
+            if (_session is IRemoteChatComposerChanges wasHinted) wasHinted.ComposerHintChanged -= OnComposerHintChanged;
             if (_session is IRemoteChatInterrupt wasInterruptible) wasInterruptible.InterruptChanged -= OnInterruptChanged;
             if (_session is IRemoteChatRunOptions wasRunnable) wasRunnable.RunOptionsChanged -= OnRunOptionsChanged;
 
@@ -820,6 +855,8 @@ namespace Orbweaver
             // Whatever this agent's panel was last dragged to. Before the
             // transcript is built and before Reposition(), because the height
             // decides whether the panel goes above or below the orb.
+            _targetScale = double.NaN;
+            _reveal.Begin();
             ApplySavedSize(orb);
 
             session.TurnAdded += OnTurnAdded;
@@ -870,6 +907,7 @@ namespace Orbweaver
             // the roster's schedule rather than the panel's. Both are re-read by
             // ApplyComposerAffordances below for the initial state.
             if (session is IRemoteChatReadOnly readOnlyNow) readOnlyNow.ReadOnlyChanged += OnReadOnlyChanged;
+            if (session is IRemoteChatComposerChanges hinted) hinted.ComposerHintChanged += OnComposerHintChanged;
             if (session is IRemoteChatInterrupt interruptible) interruptible.InterruptChanged += OnInterruptChanged;
             if (session is IRemoteChatRunOptions runnable) runnable.RunOptionsChanged += OnRunOptionsChanged;
             ApplyRunOptions(session);
@@ -921,7 +959,7 @@ namespace Orbweaver
             OnStateChanged(session.State);
 
             _turns.Clear();
-            foreach (var turn in session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+            foreach (var turn in session.History) AddTurnView(turn);
 
             HideSlashSuggestions();
 
@@ -939,6 +977,7 @@ namespace Orbweaver
             Reposition();
 
             if (!IsVisible) Show();
+            _reveal.Start();
 
             // Show() then Activate(): an accessory app can be activated
             // programmatically or by a click on one of its windows, and this one
@@ -1059,6 +1098,9 @@ namespace Orbweaver
         // Raised on the UI thread by contract (see IRemoteChatReadOnly), and only
         // by the session currently bound: Unbind takes both subscriptions off.
         private void OnReadOnlyChanged() => ApplyComposerAffordances(_session);
+
+        // The remote session's hint followed a roster change (CB-379): same redraw.
+        private void OnComposerHintChanged() => ApplyComposerAffordances(_session);
 
         private void OnInterruptChanged() => ApplyStop(_session);
 
@@ -2161,6 +2203,7 @@ namespace Orbweaver
             if (screen is null) return;
 
             var scale = screen.Scaling;
+            _targetScale = scale;
             var work = screen.WorkingArea;
 
             // Width and Height are the resize target (see the XAML comment),
@@ -2349,7 +2392,7 @@ namespace Orbweaver
 
         // Every rule that spans more than one bubble, applied to a block as
         // TurnView builds it.
-        private void Adopt(SelectableTextBlock block)
+        private void Adopt(SelectableTextBlock block, ChatTurn turn)
         {
             // Only one bubble may hold a selection at a time, so that the copy
             // gesture is never ambiguous about which of two highlighted
@@ -2367,7 +2410,7 @@ namespace Orbweaver
             // the two items need to know.
             block.ContextFlyout = _bubbleMenu;
 
-            AdoptLinks(block);
+            AdoptLinks(block, turn);
         }
 
         // A pointing hand over a link, because it is the one thing in a bubble
@@ -2388,7 +2431,7 @@ namespace Orbweaver
         // own handler, so it hit-tests the layout the person was looking at
         // rather than the one the selection reset is about to throw away (see
         // LinkUnder).
-        private static void AdoptLinks(SelectableTextBlock block)
+        private void AdoptLinks(SelectableTextBlock block, ChatTurn turn)
         {
             var normalCursor = block.Cursor;
             string? pressed = null;
@@ -2402,7 +2445,8 @@ namespace Orbweaver
 
                 // The destination, not the label: [google.com](https://evil.example)
                 // has to be readable for what it is before anyone clicks it.
-                ToolTip.SetTip(block, url);
+                // A file link says where the file is as well (CB-363).
+                ToolTip.SetTip(block, TipFor(url));
             }
 
             block.AddHandler(
@@ -2428,7 +2472,7 @@ namespace Orbweaver
                     // release, so a drag's selection is already in place.
                     var hasSelection = !string.IsNullOrEmpty(block.SelectedText);
 
-                    if (ChatLinks.ShouldOpen(pressed, released, hasSelection)) ChatLinks.Open(released!);
+                    if (ChatLinks.ShouldOpen(pressed, released, hasSelection)) OpenLink(released!, turn);
                     pressed = null;
                 },
                 RoutingStrategies.Bubble,
@@ -2448,6 +2492,48 @@ namespace Orbweaver
                 (_, _) => Hover(null),
                 RoutingStrategies.Direct,
                 handledEventsToo: true);
+        }
+
+        // The tooltip for a link: the destination for a web address; for a
+        // file, its decoded path and the machine it is on (CB-363).
+        private string? TipFor(string? url)
+        {
+            if (url is null || FileLink.TryParse(url) is not { } link || _session is not IRemoteChatFiles files) return url;
+            return ChatFileLinkText.Tooltip(link.Path, files.FileHost, files.FileHostName);
+        }
+
+        // One click on a live link: a web address goes to the browser seam, a
+        // file to the orchestrator, whose progress and refusals land on the
+        // turn's own note row.
+        private void OpenLink(string url, ChatTurn turn)
+        {
+            if (!ChatLinks.IsFileUrl(url))
+            {
+                ChatLinks.Open(url);
+                return;
+            }
+
+            if (FileLinksFor() is not { } links || FileLink.TryParse(url) is not { } link) return;
+
+            _ = links.ClickAsync(link.Path, note => turn.FileNote = note);
+        }
+
+        // One orchestrator per bound session, so its in-flight guard is
+        // per session and a rebind starts clean.
+        private ChatFileLinks? _fileLinks;
+        private IRemoteChatFiles? _fileLinksFor;
+
+        private ChatFileLinks? FileLinksFor()
+        {
+            if (_session is not IRemoteChatFiles files) return null;
+
+            if (!ReferenceEquals(files, _fileLinksFor))
+            {
+                _fileLinks = new ChatFileLinks(files);
+                _fileLinksFor = files;
+            }
+
+            return _fileLinks;
         }
 
         // The destination of the link under a point in a block's own
@@ -2928,31 +3014,59 @@ namespace Orbweaver
         // IRemoteChatFetchWait). Disabling the box for that instant would add
         // a visible flicker for no protection worth having, and would need
         // its own recovery path if the awaited call never completed.
+        // Counts every change to the composer's text, so a send can tell whether
+        // the person touched the box after pressing Enter (CB-376).
+        private int _inputEdits;
+
+        // For tests only: how many sends have run to the end of the decision below
+        // (a send that threw counts too), so a test can wait for "the reply has
+        // been handled" rather than guess when. Nothing in the app reads it, and
+        // nothing should come to.
+        internal int CompletedSendsForTests { get; private set; }
+
+        // The decision at the end of a send: the box is emptied only if the send
+        // went and the person has not written in it since. The reply to a send
+        // can arrive long after Enter (OpenClaw's waits for the gateway), and
+        // clearing unconditionally wiped whatever had been typed in the meantime:
+        // the next message, gone, and its Enter sent nothing. A counter rather
+        // than comparing the text, because sending "yes" and typing "yes" again
+        // while the first is in flight is an edit the text cannot show.
+        internal static bool ShouldClearComposerAfterSend(ChatSendOutcome outcome, bool editedSinceSend) =>
+            outcome == ChatSendOutcome.Sent && !editedSinceSend;
+
         private async Task SendAndClearOnSuccessAsync(
             IRemoteChatSession session, string text, List<string> images)
         {
-            // CB-306: a known command typed with a picture attached is refused,
-            // not run and not sent — a control request carries no image, and a
-            // command must never reach the model as prose. The note says why and
-            // the text stays for a retry without the picture. An unknown "/word"
-            // or a path with a picture is not a command and still sends below.
-            if (images.Count > 0 && session is IRemoteChatSlashRunner && IsKnownSlashCommand(text))
+            var editsAtSend = _inputEdits;
+            try
             {
-                OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = SlashCommandAndPictureNote });
-                return;
+                // CB-306: a known command typed with a picture attached is refused,
+                // not run and not sent — a control request carries no image, and a
+                // command must never reach the model as prose. The note says why and
+                // the text stays for a retry without the picture. An unknown "/word"
+                // or a path with a picture is not a command and still sends below.
+                if (images.Count > 0 && session is IRemoteChatSlashRunner && IsKnownSlashCommand(text))
+                {
+                    OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = SlashCommandAndPictureNote });
+                    return;
+                }
+
+                // A line that names a command this session knows goes to the runner,
+                // which routes it — control request, pass-through, or a refusal note
+                // with nothing sent. Anything else (a path, an unknown word, ordinary
+                // prose) sends as before.
+                var outcome = images.Count == 0 && session is IRemoteChatSlashRunner runner && IsKnownSlashCommand(text)
+                    ? await runner.RunSlashAsync(text)
+                    : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
+                        ? await withImages.SendWithImagesAsync(text, images)
+                        : await session.SendAsync(text);
+
+                if (ShouldClearComposerAfterSend(outcome, _inputEdits != editsAtSend)) Input.Text = "";
             }
-
-            // A line that names a command this session knows goes to the runner,
-            // which routes it — control request, pass-through, or a refusal note
-            // with nothing sent. Anything else (a path, an unknown word, ordinary
-            // prose) sends as before.
-            var outcome = images.Count == 0 && session is IRemoteChatSlashRunner runner && IsKnownSlashCommand(text)
-                ? await runner.RunSlashAsync(text)
-                : images.Count > 0 && session is IRemoteChatImages { CanSendImages: true } withImages
-                    ? await withImages.SendWithImagesAsync(text, images)
-                    : await session.SendAsync(text);
-
-            if (outcome == ChatSendOutcome.Sent) Input.Text = "";
+            finally
+            {
+                CompletedSendsForTests++;
+            }
         }
 
         // The button. Everything it decides beyond "am I already speaking" now
@@ -3045,6 +3159,114 @@ namespace Orbweaver
             }
         }
 
+        // CB-330. The one place a TurnView is built, so "Hidden" is one rule and
+        // not four. Null is a relayed turn the setting says not to draw.
+        private TurnView? NewTurnView(ChatTurn turn) =>
+            turn.Relay is not null && !RelayRow.IsShown(OrbweaverSettings.RelayedMessages)
+                ? null
+                : new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey(), _relayHost,
+                    filesLive: _session is IRemoteChatFiles);
+
+        private bool AddTurnView(ChatTurn turn)
+        {
+            if (NewTurnView(turn) is not { } view) return false;
+            _turns.Add(view);
+            return true;
+        }
+
+        // What every relayed row of this panel shares: where a reader's click is
+        // remembered, how the setting is read, and who a name resolves to. A
+        // field rather than a static so two panels keep their own clicks.
+        private readonly RelayHost _relayHost = new();
+
+        private sealed class RelayHost
+        {
+            // Keyed on (when, what): the transcript gives a relayed turn no id
+            // of its own, and RelayedMessage's value equality is what lets the
+            // choice survive a rebuild of the row or a re-map of the history.
+            public readonly Dictionary<(DateTimeOffset, RelayedMessage, int), bool> Choices = new();
+
+            // CB-356: the same for a compaction row. Never governed by the relay
+            // setting, so there is no default to ask: absent means collapsed.
+            public readonly Dictionary<(DateTimeOffset, CompactionNote), bool> CompactionChoices = new();
+
+            // How many turns before this one in the history are the same relay at
+            // the same time. Zero when the turn is not in the history (yet).
+            public Func<ChatTurn, int> OrdinalOf = _ => 0;
+            public Func<RelayedMessageDisplay> Display = () => OrbweaverSettings.RelayedMessages;
+            public Func<string, Bitmap?> Avatar = _ => null;
+        }
+
+        // Tests supply faces here: the default lookup reaches into SessionManager,
+        // which needs a live scan to have anything to find.
+        internal static Func<string, Bitmap?>? RelayAvatarForTests;
+
+        // CB-330: the setting changed under panels that are already open.
+        // Collapsed and Expanded only re-ask each row, so a row the reader
+        // opened by hand stays as they left it. Hidden removes the rows, and
+        // leaving Hidden rebuilds from history, because the turns that were
+        // never drawn have nothing to be re-asked.
+        internal static void ApplyRelayDisplay()
+        {
+            foreach (var panel in Panels) panel.ApplyRelayDisplayHere();
+        }
+
+        private void ApplyRelayDisplayHere()
+        {
+            var shown = RelayRow.IsShown(OrbweaverSettings.RelayedMessages);
+
+            if (!shown)
+            {
+                for (var i = _turns.Count - 1; i >= 0; i--)
+                {
+                    if (_turns[i].IsRelay) _turns.RemoveAt(i);
+                }
+                return;
+            }
+
+            if (_session is not null && _turns.Count(t => t.IsRelay) < _session.History.Count(t => t.Relay is not null))
+            {
+                _turns.Clear();
+                foreach (var turn in _session.History) AddTurnView(turn);
+                return;
+            }
+
+            foreach (var turn in _turns) turn.RelayDisplayChanged();
+        }
+
+        // The default face lookup: a live session this one leads whose agent
+        // name is the relayed name (or the persona it is an instance of) and
+        // that is the only one called that. The lead's own face never lands on a
+        // member's message because only sessions that *answer to* this one are
+        // considered (CB-288's lesson). First frame only, for SpeakerAvatar's
+        // reason: a scrolling list of rows is no place for a timer each.
+        private Bitmap? ResolveRelayAvatar(string name)
+        {
+            if (RelayAvatarForTests is { } seam) return seam(name);
+
+            var manager = SessionManager.Instance;
+            return manager is null ? null : FaceFor(name, _session?.SessionId, manager.AllStatuses);
+        }
+
+        // The lookup with the live session table passed in, so it can be driven
+        // without a SessionManager.
+        internal static Bitmap? FaceFor(
+            string name, string? leadSessionId, IEnumerable<KeyValuePair<string, SessionStatus>> statuses)
+        {
+            var id = RelayRow.MemberSessionId(name, leadSessionId, statuses);
+            var path = id is null ? null : LocalPersonas.For(id)?.AvatarPath;
+            return path is null || id is null
+                ? null
+                : OpenClawAvatars.ForFile(LocalPersonas.AvatarKey(id), path)?.Frames.FirstOrDefault();
+        }
+
+        private void Relay_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+
+            if ((sender as Control)?.DataContext is TurnView turn) turn.ToggleRelay();
+        }
+
         private void OnHistoryPrepended(int count)
         {
             if (_session is null) return;
@@ -3052,9 +3274,14 @@ namespace Orbweaver
             // Inserted at the front in order, rather than rebuilding the whole
             // list: rebuilding would discard every already-fetched picture and
             // start them downloading again.
+            //
+            // CB-330: positions are counted in rows actually drawn, not in
+            // history turns — under Hidden a relayed turn has no row, so the
+            // two stop being the same number.
+            var at = 0;
             for (var i = 0; i < count && i < _session.History.Count; i++)
             {
-                _turns.Insert(i, new TurnView(_session.History[i], _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+                if (NewTurnView(_session.History[i]) is { } view) _turns.Insert(at++, view);
             }
         }
 
@@ -3063,7 +3290,7 @@ namespace Orbweaver
             if (_session is null) return;
 
             _turns.Clear();
-            foreach (var turn in _session.History) _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+            foreach (var turn in _session.History) AddTurnView(turn);
 
             // Re-read rather than left at what Bind found.
             //
@@ -3084,7 +3311,9 @@ namespace Orbweaver
 
         private void OnTurnAdded(ChatTurn turn)
         {
-            _turns.Add(new TurnView(turn, _defaultBubble, _soleSpeaker, Adopt, _textScale, AskingKey()));
+            // CB-330: a relayed message under Hidden has no row, and arriving is
+            // not a reason to move the view either.
+            if (!AddTurnView(turn)) return;
 
             // Your own turn always brings the view with it; everything else
             // respects where you were reading.
@@ -3097,11 +3326,35 @@ namespace Orbweaver
             ScrollToEndIfPinned();
         }
 
+        private int RelayOrdinal(ChatTurn turn)
+        {
+            if (_session is null || turn.Relay is null) return 0;
+
+            var n = 0;
+            foreach (var earlier in _session.History)
+            {
+                if (ReferenceEquals(earlier, turn)) return n;
+                if (earlier.Relay is not null && earlier.At == turn.At && earlier.Relay.Equals(turn.Relay)) n++;
+            }
+
+            return 0;
+        }
+
         // CB-270: a run's live rows replaced by what history says at its end.
         // The rows that take their place arrive as ordinary TurnAdded.
-        private void OnTurnsRemoved(int from, int count)
+        //
+        // from is a history index, and under Hidden the rows are not one per
+        // history turn, so it is turned into a row position by counting the
+        // turns before it that were drawn (CB-330). The removed turns are gone
+        // from History by now and cannot be asked; the only session that raises
+        // this is the gateway's, whose turns are never relays, so each had a row.
+        internal void OnTurnsRemoved(int from, int count)
         {
-            for (var i = 0; i < count && from < _turns.Count; i++) _turns.RemoveAt(from);
+            var at = from;
+            if (_session is not null && !RelayRow.IsShown(OrbweaverSettings.RelayedMessages))
+                at = _session.History.Take(from).Count(t => t.Relay is null);
+
+            for (var i = 0; i < count && at < _turns.Count; i++) _turns.RemoveAt(at);
         }
 
         private void OnTurnUpdated(ChatTurn turn)
@@ -3726,6 +3979,12 @@ namespace Orbweaver
             // Bind rebuilds from History anyway, so there is nothing to keep.
             Unbind();
 
+            // Left at opacity 0 on purpose: the next Bind begins a new reveal
+            // anyway, and a panel that flashed visible while hiding would be
+            // the same defect from the other end.
+            _reveal.Cancel();
+            Chrome.Opacity = 0;
+
             _owner?.SetChatOpen(false);
             Hide();
         }
@@ -3742,7 +4001,8 @@ namespace Orbweaver
             private readonly ChatTurn _turn;
             private readonly Speaker? _soleSpeaker;
             private readonly Color? _defaultBubble;
-            private readonly Action<SelectableTextBlock> _adopt;
+            private readonly Action<SelectableTextBlock, ChatTurn> _adopt;
+            private readonly bool _filesLive;
             private readonly TextScale _scale;
 
             // soleSpeaker is who is talking when the transcript does not say.
@@ -3761,9 +4021,14 @@ namespace Orbweaver
             // it, to say a route was re-keyed (CB-277).
             private readonly string? _askingKey;
 
+            private readonly RelayHost? _relayHost;
+
             public TurnView(ChatTurn turn, Color? defaultBubble, Speaker? soleSpeaker,
-                Action<SelectableTextBlock> adopt, TextScale scale, string? askingKey = null)
+                Action<SelectableTextBlock, ChatTurn> adopt, TextScale scale, string? askingKey = null,
+                RelayHost? relayHost = null, bool filesLive = false)
             {
+                _filesLive = filesLive;
+                _relayHost = relayHost;
                 _askingKey = askingKey;
                 _turn = turn;
                 _defaultBubble = defaultBubble;
@@ -3780,6 +4045,24 @@ namespace Orbweaver
                     {
                         _body = null;
                         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Body)));
+                    }
+
+                    // CB-356: a live merge hands a boundary-only row its summary.
+                    // The cached line and body describe the old note.
+                    if (e.PropertyName == nameof(ChatTurn.Compaction))
+                    {
+                        _relayLine = null;
+                        _relayBody = null;
+                        _relayKey = null;
+                        foreach (var name in new[]
+                                 {
+                                     nameof(IsCompaction), nameof(IsCompactRow), nameof(CanExpand),
+                                     nameof(IsRelayExpanded), nameof(ChevronAngle),
+                                     nameof(RelayLine), nameof(RelayBody)
+                                 })
+                        {
+                            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                        }
                     }
 
                     // CB-270: a tool line learns it failed only when the result
@@ -3831,6 +4114,12 @@ namespace Orbweaver
                             new System.ComponentModel.PropertyChangedEventArgs(nameof(ImageNoteDetail)));
                     }
 
+                    if (e.PropertyName == nameof(ChatTurn.FileNote))
+                    {
+                        PropertyChanged?.Invoke(this,
+                            new System.ComponentModel.PropertyChangedEventArgs(nameof(HasFileNote)));
+                    }
+
                     PropertyChanged?.Invoke(this, e);
                 };
 
@@ -3871,9 +4160,14 @@ namespace Orbweaver
             // delta, and reparsing on read would reparse per layout pass too.
             private Control? _body;
 
-            public Control Body => _body ??= BuildBody();
+            // A relay draws its own row, so the bubble's body is left empty
+            // rather than built and thrown away (and so it cannot reset _blocks
+            // out from under the relay body's selectable runs).
+            public Control Body => _body ??= IsCompactRow ? new Border() : BuildBody();
 
-            private Control BuildBody()
+            private Control BuildBody() => BuildBodyOf(_turn.Text);
+
+            private Control BuildBodyOf(string text)
             {
                 // Thrown away with the body they belong to. A streaming turn
                 // rebuilds its body per delta (see the PropertyChanged hook
@@ -3884,13 +4178,13 @@ namespace Orbweaver
 
                 var stack = new StackPanel { Spacing = 4 };
 
-                foreach (var block in ChatMarkdown.Parse(_turn.Text))
+                foreach (var block in ChatMarkdown.Parse(text))
                     stack.Children.Add(BuildBlock(block));
 
                 // A turn whose text is only whitespace still needs something to
                 // hand back; HasText hides it either way.
                 if (stack.Children.Count == 0)
-                    stack.Children.Add(Line(_turn.Text));
+                    stack.Children.Add(Line(text));
 
                 return stack;
             }
@@ -3942,7 +4236,7 @@ namespace Orbweaver
                 // more than one bubble — that only one may hold a selection,
                 // and that they share a single context menu — and neither is a
                 // TurnView's to enforce from inside one row.
-                _adopt(block);
+                _adopt(block, _turn);
 
                 return block;
             }
@@ -4067,7 +4361,7 @@ namespace Orbweaver
                 // reply rebuilds its blocks wholesale and the ranges have to go
                 // wherever the block goes. Left null on a line with no link, so
                 // the handlers' first question is answered without a lookup.
-                var links = ChatLinks.RangesOf(spans);
+                var links = ChatLinks.RangesOf(spans, _filesLive);
                 if (links.Count > 0) block.Tag = links;
 
                 foreach (var span in spans)
@@ -4076,7 +4370,7 @@ namespace Orbweaver
 
                     // See ChatLinks.StyleOf: what looks like a link is exactly
                     // what opens one.
-                    switch (ChatLinks.StyleOf(span))
+                    switch (ChatLinks.StyleOf(span, _filesLive))
                     {
                         case ChatMarkdown.MdStyle.Bold:
                             run.FontWeight = FontWeight.SemiBold;
@@ -4138,6 +4432,10 @@ namespace Orbweaver
             public string? ImageNote => _turn.ImageNote;
 
             public bool HasImageNote => !string.IsNullOrEmpty(_turn.ImageNote);
+
+            public string? FileNote => _turn.FileNote;
+
+            public bool HasFileNote => !string.IsNullOrEmpty(_turn.FileNote);
 
             public string? ImageNoteDetail => _turn.ImageNoteDetail;
 
@@ -4838,18 +5136,226 @@ namespace Orbweaver
             public void Rescaled()
             {
                 _body = null;
+                _relayLine = null;
+                _relayBody = null;
 
                 foreach (var name in new[]
                          {
                              nameof(Body), nameof(Size), nameof(SpeakerNameSize), nameof(TimeSize),
-                             nameof(ChipSize), nameof(ChipCorners), nameof(ChipTextSize)
+                             nameof(ChipSize), nameof(ChipCorners), nameof(ChipTextSize),
+                             nameof(RelayLine), nameof(RelayBody), nameof(RelayDotSize)
                          })
                 {
                     PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
                 }
             }
 
-            public FontStyle Style => IsSystem ? FontStyle.Italic : FontStyle.Normal;
+            // ---- CB-330: a message a teammate or another session relayed ----
+            //
+            // A relayed turn is a System turn carrying a RelayedMessage. Role
+            // System is what makes everything that has never heard of relays
+            // degrade into a quiet line instead of a user bubble, and IsRelay is
+            // what lets this row draw something better than that line.
+
+            public bool IsRelay => _turn.Relay is not null;
+
+            // The bubble template is for everything that is not a relay; a relay
+            // draws its own row beside it (ChatPanel.axaml).
+            public bool IsBubble => !IsCompactRow;
+
+            // CB-356: a Claude Code compaction, one row of the same family as a
+            // relay. Not governed by the relay setting: it is always shown and
+            // always starts collapsed.
+            public bool IsCompaction => _turn.Compaction is not null;
+
+            public bool IsCompactRow => IsRelay || IsCompaction;
+
+            private RelayedMessageDisplay RelaySetting => _relayHost?.Display() ?? RelayedMessageDisplay.Collapsed;
+
+            // Nothing to open for a row with no body — "shut down" says it all —
+            // so it has no chevron and a click does nothing.
+            public bool CanExpand => IsCompaction
+                ? _turn.Compaction!.HasSummary
+                : !string.IsNullOrWhiteSpace(_turn.Relay?.FullText);
+
+            // (when, what, which of the identical ones). Two idle notifications
+            // with the same text in the same second are equal as records, and one
+            // key would open both. The ordinal is how many equal turns precede this
+            // one in the history; it is stable across a re-map of the same history
+            // and is read once, since a turn never moves relative to those before it.
+            private (DateTimeOffset, RelayedMessage, int)? _relayKey;
+
+            private (DateTimeOffset, RelayedMessage, int)? RelayKey =>
+                _relayKey ??= _turn.Relay is { } relay
+                    ? (_turn.At, relay, _relayHost?.OrdinalOf(_turn) ?? 0)
+                    : null;
+
+            private bool? RelayChoice =>
+                _relayHost is not null && RelayKey is { } key && _relayHost.Choices.TryGetValue(key, out var chosen)
+                    ? chosen
+                    : null;
+
+            public bool IsRelayExpanded => CanExpand
+                && (IsCompaction ? CompactionChoice : RelayRow.IsExpanded(RelaySetting, RelayChoice));
+
+            // The key includes the note, so a live merge (which replaces it) drops a
+            // choice made before it. That loses nothing: a boundary-only row has no
+            // summary, cannot be expanded, and so has no choice to lose.
+            private bool CompactionChoice =>
+                _relayHost is not null && _turn.Compaction is { } note
+                && _relayHost.CompactionChoices.TryGetValue((_turn.At, note), out var chosen) && chosen;
+
+            public double ChevronAngle => IsRelayExpanded ? 90 : 0;
+
+            // The reader's click. Recorded against the row's key so it outlives
+            // this TurnView: the panel rebuilds its rows on a history replace and
+            // a click should not be forgotten by that.
+            public void ToggleRelay()
+            {
+                if (_turn.Compaction is { } note)
+                {
+                    if (!CanExpand || _relayHost is null) return;
+
+                    _relayHost.CompactionChoices[(_turn.At, note)] = !IsRelayExpanded;
+                    RelayDisplayChanged();
+                    return;
+                }
+
+                if (!CanExpand || _relayHost is null || RelayKey is not { } key) return;
+
+                _relayHost.Choices[key] = !IsRelayExpanded;
+                RelayDisplayChanged();
+            }
+
+            // Asked again after the choice or the setting moved.
+            public void RelayDisplayChanged()
+            {
+                _relayLine = null;
+                foreach (var name in new[]
+                         {
+                             nameof(IsRelayExpanded), nameof(ChevronAngle),
+                             nameof(RelayLine), nameof(RelayBody)
+                         })
+                {
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+                }
+            }
+
+            private static readonly IBrush RelayNeutralDot = new SolidColorBrush(Color.Parse("#66FFFFFF"));
+            private static readonly IBrush RelayDim = new SolidColorBrush(Color.Parse("#66FFFFFF"));
+
+            // The face when a live member resolves, else a dot in the colour the
+            // payload named, else a neutral one. The face is looked up lazily and
+            // once: a resolver that reaches into SessionManager has no business
+            // running per layout pass.
+            private Bitmap? _relayAvatar;
+            private bool _relayAvatarResolved;
+
+            public Bitmap? RelayAvatar
+            {
+                get
+                {
+                    if (_relayAvatarResolved) return _relayAvatar;
+                    _relayAvatarResolved = true;
+
+                    if (_relayHost is not null && _turn.Relay is { Kind: RelayKind.Teammate, Name: { Length: > 0 } name })
+                        _relayAvatar = _relayHost.Avatar(name);
+
+                    return _relayAvatar;
+                }
+            }
+
+            public bool HasRelayAvatar => RelayAvatar is not null;
+
+            public bool HasRelayDot => !IsCompaction && !HasRelayAvatar;
+
+            public IBrush RelayDot =>
+                RelayRow.DotColor(_turn.Relay?.Color) is { } c ? new SolidColorBrush(c) : RelayNeutralDot;
+
+            public double RelayDotSize => 8 * Scale;
+
+            // "Teammate", the name in bold, the verb — as runs of one TextBlock
+            // so the whole thing trims to a single line with an ellipsis, rather
+            // than three controls that each decide for themselves how to cut.
+            // Built here rather than bound for the same reason Body is.
+            private Control? _relayLine;
+
+            // Null for an ordinary turn: the relay row shares the bubble's template and
+            // is only hidden there, so this is bound for every row.
+            public Control? RelayLine => IsCompactRow ? _relayLine ??= BuildRelayLine() : null;
+
+            private Control BuildRelayLine()
+            {
+                if (_turn.Compaction is { } note) return BuildCompactionLine(note);
+
+                var relay = _turn.Relay!;
+                var text = new TextBlock
+                {
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextWrapping = TextWrapping.NoWrap,
+                    FontSize = 10.5 * Scale,
+                    Foreground = SystemInk,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+                if (relay.Kind == RelayKind.Teammate && !string.IsNullOrEmpty(relay.Name))
+                {
+                    text.Inlines!.Add(new Run("Teammate "));
+                    text.Inlines.Add(new Run("@" + relay.Name) { FontWeight = FontWeight.Bold });
+                    if (relay.Verb.Length > 0) text.Inlines.Add(new Run(" " + relay.Verb));
+                }
+                else
+                {
+                    text.Inlines!.Add(new Run(relay.Label));
+
+                    // Which session it came from: with two sessions messaging a
+                    // lead, rows that all say "From another session" cannot be told
+                    // apart. A plain run, like every other piece of this line.
+                    if (relay.Kind == RelayKind.Peer && !string.IsNullOrEmpty(relay.Name))
+                        text.Inlines.Add(new Run(" \u00B7 " + relay.Name));
+                }
+
+                // The dimmed preview is what the row says while it is closed; open,
+                // the body says it, and repeating it above itself is noise.
+                if (relay.Preview.Length > 0 && !IsRelayExpanded)
+                    text.Inlines.Add(new Run("  " + relay.Preview) { Foreground = RelayDim });
+
+                return text;
+            }
+
+            // The expanded text, as Markdown, built the first time it is opened
+            // and not before: a lead with a team can hold hundreds of these.
+            private Control? _relayBody;
+
+            public Control? RelayBody =>
+                IsRelayExpanded ? _relayBody ??= BuildRelayBody() : null;
+
+            private Control BuildRelayBody() =>
+                BuildBodyOf(_turn.Compaction is { } note ? note.Summary : _turn.Relay!.FullText);
+
+            // The label in the normal weight, then the detail dimmed, as runs of
+            // one TextBlock so it trims to one line like a relay's.
+            private Control BuildCompactionLine(CompactionNote note)
+            {
+                var text = new TextBlock
+                {
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextWrapping = TextWrapping.NoWrap,
+                    FontSize = 10.5 * Scale,
+                    Foreground = SystemInk,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+                text.Inlines!.Add(new Run(note.Label));
+                if (note.Detail.Length > 0)
+                    text.Inlines.Add(new Run("  " + note.Detail) { Foreground = RelayDim });
+
+                return text;
+            }
+
+            // A system note is italic because it is the app talking; an opened
+            // relay body is somebody's words, so it is upright (CB-330).
+            public FontStyle Style => IsSystem && !IsCompactRow ? FontStyle.Italic : FontStyle.Normal;
 
             public bool ShowTime => !IsSystem;
 

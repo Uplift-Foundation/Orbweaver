@@ -62,12 +62,16 @@ namespace Orbweaver
         // A false positive costs nothing: a tool result whose text happens to
         // contain one of these parses to no turns anyway, because it has no text
         // blocks of its own. A false negative would silently drop a message, so
-        // the test that matters is that these three strings are exactly the row
-        // types MapRow handles.
+        // the test that matters is that these four strings are exactly the row
+        // types MapRow handles. CB-356: the system row MapRow handles is only the
+        // compaction boundary, so it is matched by its subtype, which holds
+        // whatever order the row's keys are written in, rather than by
+        // "type":"system", which would pass every turn_duration row too.
         public static bool IsInteresting(string line) =>
             line.Contains("\"type\":\"assistant\"", StringComparison.Ordinal)
             || line.Contains("\"type\":\"user\"", StringComparison.Ordinal)
-            || line.Contains("\"type\":\"queue-operation\"", StringComparison.Ordinal);
+            || line.Contains("\"type\":\"queue-operation\"", StringComparison.Ordinal)
+            || line.Contains("\"subtype\":\"compact_boundary\"", StringComparison.Ordinal);
 
         private static void MapRow(JsonElement root, List<Row> into)
         {
@@ -91,6 +95,12 @@ namespace Orbweaver
                     MapAssistant(root, uuid, at, into);
                     return;
 
+                // CB-356: the first half of a compaction. Always a row, even
+                // with no metadata; the summary that follows folds into it.
+                case "system" when Str(root, "subtype") == "compact_boundary":
+                    into.Add(new Row(uuid, CompactionTurn(CompactionNote.FromBoundary(root), at)));
+                    return;
+
                 // Sent while the session was busy. Claude Code holds it and
                 // picks it up at the end of the turn, and showing that is the
                 // difference between "did that send?" and knowing it did.
@@ -98,6 +108,15 @@ namespace Orbweaver
                 {
                     var queued = Str(root, "content");
                     if (string.IsNullOrWhiteSpace(queued) || IsNoise(queued)) return;
+
+                    // CB-330: no real queued row has carried a relay wrapper (0 of
+                    // 493 measured), but the same text arriving here would leak
+                    // exactly as it did on the plain user path.
+                    if (RelayedMessage.Classify(queued) is { } relayed)
+                    {
+                        AddClassified(relayed, uuid, at, into);
+                        return;
+                    }
 
                     into.Add(new Row(uuid, new ChatTurn
                     {
@@ -143,10 +162,26 @@ namespace Orbweaver
             // isMeta with origin.kind "peer" and its text wrapped in a sentence
             // of provenance. It is the user's own sentence as far as the panel
             // is concerned, so it is unwrapped and kept, uuid and all.
-            var meta = Bool(root, "isMeta");
-            if (meta && !IsPeerOrigin(root)) return;
             if (!root.TryGetProperty("message", out var message)) return;
             if (!message.TryGetProperty("content", out var content)) return;
+
+            // CB-356: the summary a compaction resumes from. Keyed on
+            // isCompactSummary alone (isVisibleInTranscriptOnly is missing from
+            // the partial-summary shape) and handled before the isMeta test, so
+            // it never reaches the user-text path. It folds into the boundary
+            // when that boundary's turn is still the last one: attachment rows
+            // in between produce no turn and so do not break the pair, while
+            // anything that did produce a turn makes this an orphan.
+            if (Bool(root, "isCompactSummary"))
+            {
+                var summary = CompactionTurn(CompactionNote.FromSummary(SummaryText(content)), at);
+                if (into.Count == 0 || !CompactionNote.TryAbsorb(into[^1].Turn, summary))
+                    into.Add(new Row(uuid, summary));
+                return;
+            }
+
+            var meta = Bool(root, "isMeta");
+            if (meta && !IsPeerOrigin(root)) return;
 
             if (meta)
             {
@@ -154,15 +189,15 @@ namespace Orbweaver
                 // every isMeta row was before: better a missing bubble than the
                 // provenance boilerplate shown as if the user had typed it.
                 if (content.ValueKind == JsonValueKind.String
-                    && UnwrapPeerMessage(content.SafeString() ?? "") is { } ours)
-                    AddText(ours, ChatRole.User, uuid, at, into);
+                    && RelayedMessage.Classify(content.SafeString() ?? "", meta: true) is { } peer)
+                    AddClassified(peer, uuid, at, into);
 
                 return;
             }
 
             if (content.ValueKind == JsonValueKind.String)
             {
-                AddText(content.SafeString(), ChatRole.User, uuid, at, into);
+                AddUserText(content.SafeString(), uuid, at, into);
                 return;
             }
 
@@ -227,8 +262,66 @@ namespace Orbweaver
                 // block found in the real row this was measured against, so
                 // that is where the decoded picture rides too.
                 var carries = image is not null && i == textBlocks.Count - 1;
-                AddText(textBlocks[i], ChatRole.User, uuid, at, into, carries ? image : null);
+                if (carries) AddText(textBlocks[i], ChatRole.User, uuid, at, into, image);
+                else AddUserText(textBlocks[i], uuid, at, into);
             }
+        }
+
+        // CB-356: Role System and Text = Line, so anything that does not know
+        // about Compaction draws a one-line note.
+        private static ChatTurn CompactionTurn(CompactionNote note, DateTimeOffset at) => new()
+        {
+            Role = ChatRole.System,
+            Text = note.Line,
+            IsComplete = true,
+            At = at,
+            Compaction = note
+        };
+
+        // A string on every real summary (77 of 77); the text blocks of an array
+        // joined with blank lines in case one is ever written that way.
+        private static string SummaryText(JsonElement content)
+        {
+            if (content.ValueKind == JsonValueKind.String) return content.SafeString() ?? "";
+            if (content.ValueKind != JsonValueKind.Array) return "";
+
+            var parts = new List<string>();
+            foreach (var block in content.EnumerateArray())
+                if (Str(block, "type") == "text" && Str(block, "text") is { } text)
+                    parts.Add(text);
+            return string.Join("\n\n", parts);
+        }
+
+        // CB-330: a user row's text may be a message a teammate or another session
+        // relayed rather than anything the user typed. Those become compact system
+        // rows; the user's own words, and anything that is not the measured
+        // wrapper, go through AddText exactly as before.
+        private static void AddUserText(string? text, string? uuid, DateTimeOffset at, List<Row> into)
+        {
+            if (text is not null && RelayedMessage.Classify(text) is { } relayed)
+                AddClassified(relayed, uuid, at, into);
+            else
+                AddText(text, ChatRole.User, uuid, at, into);
+        }
+
+        // One system turn per relay, in tag order, all sharing the row's uuid, the
+        // way a row with several text blocks already yields several turns.
+        private static void AddClassified(Classified classified, string? uuid, DateTimeOffset at, List<Row> into)
+        {
+            foreach (var relay in classified.Relays)
+            {
+                into.Add(new Row(uuid, new ChatTurn
+                {
+                    Role = ChatRole.System,
+                    Text = relay.Line,
+                    IsComplete = true,
+                    At = at,
+                    Relay = relay
+                }));
+            }
+
+            if (classified.OwnText is not null)
+                AddText(classified.OwnText, ChatRole.User, uuid, at, into);
         }
 
         // Claude Code writes "[Image #1]", "[Image #2]" and so on directly
@@ -987,7 +1080,9 @@ namespace Orbweaver
         // had hidden it, because generating them trimmed exactly those rows.
         internal static string[] ScreenLines(string screen)
         {
-            var lines = screen.Replace("\r", "").Split('\n');
+            // CB-353: a docked side panel is cut off first, because the rows
+            // under a form are blank only once the panel's text is gone.
+            var lines = PaneColumns.StripSidePanel(screen.Replace("\r", "").Split('\n'));
             var end = lines.Length;
             while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
             return end == lines.Length ? lines : lines[..end];

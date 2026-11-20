@@ -86,7 +86,11 @@ internal sealed class RelayStub : IAsyncDisposable
         while (!_stop.IsCancellationRequested)
         {
             HttpListenerContext ctx;
-            try { ctx = await _listener.GetContextAsync(); }
+            // Raced against _stop as well as ended by Close(): on macOS the
+            // managed HttpListener does not always fault a pending
+            // GetContextAsync when it is closed, and the loop then outlived
+            // DisposeAsync's ten-second bound on a loaded CI runner.
+            try { ctx = await _listener.GetContextAsync().WaitAsync(_stop.Token); }
             catch (Exception) { return; }
             _ = Task.Run(() => Handle(ctx));
         }

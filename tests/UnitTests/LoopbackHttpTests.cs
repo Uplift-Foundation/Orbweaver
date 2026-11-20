@@ -75,12 +75,46 @@ public class LoopbackHttpTests
     }
 
     [Fact]
-    public void RefusingPortRefusesConnectionsWhileHeld()
+    public async Task RefusingPortRefusesWhileHeld()
     {
-        var (holder, port) = LoopbackHttp.RefusingPort();
-        using var _h = holder;
-        using var client = new TcpClient();
-        Assert.Throws<SocketException>(() => client.Connect(IPAddress.Loopback, port));
+        // Not "immediately": a loopback refusal takes ~2s on Windows. What holds
+        // on both is Refused rather than TimedOut, well inside the 75s timeout.
+        using var refusing = LoopbackHttp.RefusingPort();
+        var outcome = await LoopbackHttp.ProbeAsync(refusing.Port, TimeSpan.FromSeconds(10));
+        Assert.Equal(LoopbackHttp.ConnectOutcome.Refused, outcome);
+    }
+
+    // Negative controls: a connect that is silently dropped, or that succeeds,
+    // must not classify as Refused — otherwise the test above proves nothing.
+    [Fact]
+    public async Task ADroppedConnectIsATimeoutNotARefusal()
+    {
+        var outcome = await LoopbackHttp.ClassifyAsync(ct => Task.Delay(Timeout.Infinite, ct), TimeSpan.FromMilliseconds(100));
+        Assert.Equal(LoopbackHttp.ConnectOutcome.TimedOut, outcome);
+    }
+
+    [Fact]
+    public async Task ARefusedSocketErrorClassifiesAsRefusedAndOthersPropagate()
+    {
+        Assert.Equal(LoopbackHttp.ConnectOutcome.Refused, await LoopbackHttp.ClassifyAsync(
+            _ => throw new SocketException((int)SocketError.ConnectionRefused), TimeSpan.FromSeconds(1)));
+        await Assert.ThrowsAsync<SocketException>(() => LoopbackHttp.ClassifyAsync(
+            _ => throw new SocketException((int)SocketError.HostUnreachable), TimeSpan.FromSeconds(1)));
+        Assert.Equal(LoopbackHttp.ConnectOutcome.Connected, await LoopbackHttp.ClassifyAsync(
+            _ => Task.CompletedTask, TimeSpan.FromSeconds(1)));
+    }
+
+    // The real-socket control: the pre-CB-365 shape. On macOS a bound-only port
+    // drops the SYN, and the probe must call that a timeout. Opt-in
+    // (RUN_OS_PROBE_TESTS=1) and macOS-only: Windows refuses a bound-only
+    // port (after ~2s), so the claim is macOS's.
+    [MacDropsBoundOnlyFact]
+    public async Task OnMacAPortBoundButNotListeningDropsInsteadOfRefusing()
+    {
+        using var holder = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        holder.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)holder.LocalEndPoint!).Port;
+        Assert.Equal(LoopbackHttp.ConnectOutcome.TimedOut, await LoopbackHttp.ProbeAsync(port, TimeSpan.FromSeconds(1)));
     }
 
     [Fact]
@@ -91,5 +125,21 @@ public class LoopbackHttpTests
         var calls = 0;
         Assert.Throws<HttpListenerException>(() => LoopbackHttp.Start(() => { calls++; return heldPort; }));
         Assert.Equal(51, calls);
+    }
+}
+
+internal sealed class MacDropsBoundOnlyFactAttribute : FactAttribute
+{
+    public MacDropsBoundOnlyFactAttribute()
+    {
+        // Opt-in, via a variable deliberately outside the ORBWEAVER_ family so a
+        // test-only switch does not have to be registered in the app's BrandEnv
+        // list (BrandEnvTests pins that list's length). This asserts the OS's own behaviour, not ours, and waits out a
+        // probe timeout on every run. The control that guards RefusingPort() is
+        // that a bound-only port fails RefusingPortRefusesWhileHeld.
+        if (Environment.GetEnvironmentVariable("RUN_OS_PROBE_TESTS") != "1")
+            Skip = "documents macOS's own behaviour (a bound-only port drops the SYN); set RUN_OS_PROBE_TESTS=1 to run it";
+        else if (!OperatingSystem.IsMacOS())
+            Skip = "only macOS silently drops the SYN on a bound-only port; Windows refuses it";
     }
 }

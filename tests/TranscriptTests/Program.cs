@@ -74,6 +74,20 @@ if (args.Length > 0)
             var first = t.Turn.Text.Split('\n')[0];
             if (first.Length > 96) first = first[..96] + "…";
             Console.WriteLine($"{t.Turn.Role,-9} {first}");
+
+            // CB-330: the fields a relayed turn carries, so a real transcript can
+            // be checked against what the panel will draw, not only its text.
+            if (t.Turn.Relay is { } r)
+                Console.WriteLine(
+                    $"          relay: kind={r.Kind} name={r.Name ?? "-"} color={r.Color ?? "-"} "
+                    + $"type={r.PayloadType} verb=\"{r.Verb}\" preview=\"{r.Preview}\"");
+
+            // CB-356: the fields a compaction turn carries.
+            if (t.Turn.Compaction is { } c)
+                Console.WriteLine(
+                    $"          compaction: trigger={c.Trigger ?? "-"} pre={c.PreTokens?.ToString() ?? "-"} "
+                    + $"post={c.PostTokens?.ToString() ?? "-"} boundary={c.HasBoundary} "
+                    + $"summary={c.Summary.Length} chars uuid={t.Uuid ?? "-"}");
         }
 
         return 0;
