@@ -152,11 +152,26 @@ namespace Orbweaver
         internal static TimeSpan UsageFirstTick { get; set; } = DefaultUsageFirstTick;
         internal static TimeSpan UsageEvery { get; set; } = DefaultUsageEvery;
 
-        // honourOrbLifetime: true, so the phone is sent what the orbs would
-        // show once the UI is up, not more; the live scan takes over at that
-        // point and the two should not disagree about what exists.
+        // CB-393: honourOrbLifetime is false, the rule Remote Control's own
+        // headless fallback already uses. The phone is sent what is *there*,
+        // not what the orbs still draw: orb lifetime ("Keep orbs for") is a
+        // display preference that tidies a screen, and CB-314's first cut
+        // honoured it, so a session idle past the lifetime with its process
+        // alive vanished from the phone for seven hours. Superseded,
+        // process-gone, husk and the pid-less/WSL rules still apply, so only
+        // expiry stops dropping a session. The desktop's orbs are unchanged.
+        internal static List<(string SessionId, SessionStatus Status)> RelayScan(
+            string? statusDir = null,
+            Func<Dictionary<string, string>?>? jobListing = null,
+            Func<int, bool>? isRunning = null,
+            DateTime? nowUtc = null,
+            bool? onWindows = null) =>
+            SessionManager.HeadlessSnapshot(
+                statusDir, jobListing, isRunning, nowUtc,
+                honourOrbLifetime: false, onWindows: onWindows);
+
         internal static Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> HeadlessScan { get; set; } =
-            () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
+            () => RelayScan();
 
         internal static TimeSpan HeadlessEvery { get; set; } = TimeSpan.FromSeconds(3);
 
@@ -239,7 +254,7 @@ namespace Orbweaver
             UsageFactory = RealUsage;
             UsageFirstTick = DefaultUsageFirstTick;
             UsageEvery = DefaultUsageEvery;
-            HeadlessScan = () => SessionManager.HeadlessSnapshot(honourOrbLifetime: true);
+            HeadlessScan = () => RelayScan();
             HeadlessEvery = TimeSpan.FromSeconds(3);
         }
 
