@@ -35,10 +35,11 @@ namespace Orbweaver.Tests
         // Keychain, RELAY_URL, which points a build at a stub relay, and
         // RELAY_TEST_HOOKS, the scripted pairing for an end-to-end harness.
         // CB-323 adds ACTIVITY_LOG, the hour gate's desktop activity log.
+        // CB-394 adds HOOK_LOOKUP_TIMEOUT_DS, the status hook's lookup deadline.
         [Fact]
-        public void TheListHoldsThirtyDistinctVariables()
+        public void TheListHoldsThirtyOneDistinctVariables()
         {
-            Assert.Equal(30, BrandEnv.All.Count);
+            Assert.Equal(31, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

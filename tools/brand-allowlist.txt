@@ -32,7 +32,7 @@ OpenClawSessions.cs	1	legacy mirror prefix: room history written before the rena
 OrbGlyph.cs	1	comment records what happened under the old name; rewriting it would falsify the record (the initials bug was found on a project named claude-buddy)
 OrbWindow.axaml.cs	1	sample data: a repository path or session name; the GitHub repository keeps its name (comment example)
 OrbweaverHook.ps1	1	fixture: a real transcript line quoted verbatim, whose customTitle was the repo's old name
-OrbweaverHook.sh	1	fixture: a real transcript line quoted verbatim, whose customTitle was the repo's old name
+OrbweaverHook.sh	2	fixture: a real transcript line quoted verbatim, whose customTitle was the repo's old name and the CLAUDE_BUDDY_ shim
 Program.cs	2	legacy arm: names the pre-rename thing a phase 2 migration recognises (the legacy bundle and executable startup steps)
 README.md	7	'Formerly Claude Buddy', the Programs\ClaudeBuddy upgrade folder, the old exe name, the old env spelling note, and a sample repo path
 RemoteControlSessions.cs	1	comment records what happened under the old name; rewriting it would falsify the record (the 'two Claude Buddys' complaint)
