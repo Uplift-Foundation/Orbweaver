@@ -184,7 +184,9 @@ trap 'hook_log end " elapsed=$((SECONDS - HOOK_T0))s timed_out=${HOOK_TIMED_OUT:
 # treats whatever it could not resolve as unknown, and the run costs one
 # timeout, not one per candidate. ORBWEAVER_HOOK_LOOKUP_TIMEOUT_DS is the
 # deadline in tenths of a second (default 20, i.e. 2 s); a test shortens it.
-HOOK_LOOKUP_DS="${ORBWEAVER_HOOK_LOOKUP_TIMEOUT_DS:-20}"
+brand_env() { local n="ORBWEAVER_$1" l="CLAUDE_BUDDY_$1"; printf '%s' "${!n:-${!l:-}}"; }
+HOOK_LOOKUP_DS="$(brand_env HOOK_LOOKUP_TIMEOUT_DS)"
+[ -n "$HOOK_LOOKUP_DS" ] || HOOK_LOOKUP_DS=20
 case "$HOOK_LOOKUP_DS" in ''|*[!0-9]*) HOOK_LOOKUP_DS=20 ;; esac
 bounded() {
     BOUNDED_OUT=""
