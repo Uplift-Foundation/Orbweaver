@@ -169,7 +169,7 @@ trap 'hook_log end " elapsed=$((SECONDS - HOOK_T0))s timed_out=${HOOK_TIMED_OUT:
 # timeout(1), and a command substitution cannot be bounded from inside: it
 # waits for the pipe to close, which a hung child holds open. So the command
 # runs in the background with its output in a file, and the shell polls it
-# every 0.1 s (sleep takes fractions on macOS and on Linux) and kills it at the
+# every 0.01 s at first, then every 0.1 s (sleep takes fractions on macOS and on Linux) and kills it at the
 # deadline. Nothing but bash, sleep, kill, pkill and mktemp, all in the base
 # system on macOS and in WSL.
 #
@@ -189,7 +189,7 @@ case "$HOOK_LOOKUP_DS" in ''|*[!0-9]*) HOOK_LOOKUP_DS=20 ;; esac
 bounded() {
     BOUNDED_OUT=""
     [ -z "$HOOK_TIMED_OUT" ] || return 125
-    local step="$1" out pid n=0 rc
+    local step="$1" out pid n=0 f=0 rc
     shift
     out=$(mktemp "$DIR/.lookup.XXXXXX" 2>/dev/null) || return 1
     "$@" < /dev/null > "$out" 2>/dev/null &
@@ -203,8 +203,18 @@ bounded() {
             rm -f "$out"
             return 124
         fi
-        sleep 0.1
-        n=$((n + 1))
+        # Fine phase first: ps, lsof and a live tmux answer in a few ms, and a
+        # flat 0.1 s step made every one of the 6 to 15 lookups a Codex hook
+        # runs cost about 130 ms (CB-394 review). 30 ticks of 0.01 s cover
+        # the fast answers; only a slow one falls through to the coarse step,
+        # which is what the deadline is counted in.
+        if [ "$f" -lt 30 ]; then
+            sleep 0.01
+            f=$((f + 1))
+        else
+            sleep 0.1
+            n=$((n + 1))
+        fi
     done
     { wait "$pid"; } 2>/dev/null
     rc=$?
