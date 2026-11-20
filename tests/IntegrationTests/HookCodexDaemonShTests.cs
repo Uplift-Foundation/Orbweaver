@@ -53,7 +53,7 @@ public class HookCodexDaemonShTests
         os.execv("/bin/sleep", ["codex", "30"])
         """;
 
-    private sealed record Run(int ExitCode, string Stdout, string Stderr, int ParentPid, SessionStatus? Status);
+    private sealed record Run(int ExitCode, string Stdout, string Stderr, int ParentPid, SessionStatus? Status, string Log = "");
 
     private static string Python() => PythonUnixFactAttribute.Python3Path()
         ?? throw new InvalidOperationException("python3 disappeared after the skip check");
@@ -78,7 +78,7 @@ public class HookCodexDaemonShTests
         return p;
     }
 
-    private static Run RunHook(string tmp, string title, string[] decoys, string folder)
+    private static Run RunHook(string tmp, string title, string[] decoys, string folder, Action<ProcessStartInfo>? configure = null)
     {
         var fake = Path.Combine(tmp, "fake-parent.py");
         var pidFile = Path.Combine(tmp, "parent.pid");
@@ -98,6 +98,7 @@ public class HookCodexDaemonShTests
         psi.Environment.Remove("GROK_SESSION_ID");
         psi.Environment.Remove("GROK_HOOK_EVENT");
         psi.Environment.Remove("GROK_WORKSPACE_ROOT");
+        configure?.Invoke(psi);
 
         using var p = Process.Start(psi)!;
         try
@@ -113,7 +114,8 @@ public class HookCodexDaemonShTests
         var file = Path.Combine(tmp, "orbweaver", "cx1.txt");
         var status = File.Exists(file) ? JsonSerializer.Deserialize<SessionStatus>(File.ReadAllText(file)) : null;
         var parent = File.Exists(pidFile) && int.TryParse(File.ReadAllText(pidFile).Trim(), out var pid) ? pid : 0;
-        return new Run(p.ExitCode, stdout, stderr, parent, status);
+        var logFile = Path.Combine(tmp, "orbweaver", "hook.log");
+        return new Run(p.ExitCode, stdout, stderr, parent, status, File.Exists(logFile) ? File.ReadAllText(logFile) : "");
     }
 
     private static void Silent(Run r)
@@ -178,5 +180,123 @@ public class HookCodexDaemonShTests
         Silent(r);
         Assert.Equal(r.ParentPid, r.Status!.SessionPid);
         Assert.Equal(("%42", "/tmp/not-this-session.sock"), (r.Status.TmuxPane, r.Status.TmuxSocket));
+    }
+
+    // ---- CB-394: the Codex-daemon lookups are bounded, and every run is logged.
+
+    // A tool on PATH ahead of the real one. `exec sleep` so the hung process is
+    // the one the hook's deadline kills, not a shell with a child left behind.
+    private static string FakeBin(string tmp, string name, string body)
+    {
+        var bin = Directory.CreateDirectory(Path.Combine(tmp, "fakebin")).FullName;
+        var path = Path.Combine(bin, name);
+        File.WriteAllText(path, "#!/bin/bash\n" + body + "\n");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return bin;
+    }
+
+    private static Action<ProcessStartInfo> Path1(string bin, string deciseconds = "5") => psi =>
+    {
+        psi.Environment["PATH"] = bin + Path.PathSeparator + psi.Environment["PATH"];
+        psi.Environment["ORBWEAVER_HOOK_LOOKUP_TIMEOUT_DS"] = deciseconds;
+    };
+
+    [PythonUnixFact]
+    public void A_hanging_tmux_still_writes_the_status_within_the_deadline_with_no_pane()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb394-").FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(tmp, "project")).FullName;
+        var bin = FakeBin(tmp, "tmux", "exec sleep 60");
+        using var tui = StartTui(tmp, folder);
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            var r = RunHook(tmp, "codex", ["app-server", "--listen", "unix://"], folder, Path1(bin));
+            sw.Stop();
+            Silent(r);
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(20), $"hook took {sw.Elapsed}");
+            Assert.Equal(tui.Id, r.Status!.SessionPid);                 // ps and lsof still answered
+            Assert.Equal(("", "", "", ""), (r.Status.TmuxPane, r.Status.TmuxSocket, r.Status.TmuxBin, r.Status.TermProgram));
+            Assert.Contains(" start ", r.Log);
+            Assert.Contains(" end ", r.Log);
+            Assert.Contains("timed_out=tmux", r.Log);
+        }
+        finally { tui.Kill(); }
+    }
+
+    // The control: a tmux that answers fills the pane fields, so the test above
+    // is about the hang and not about a setup that never reached tmux.
+    [PythonUnixFact]
+    public void A_tmux_that_answers_fills_the_pane_fields()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb394-").FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(tmp, "project")).FullName;
+        using var tui = StartTui(tmp, folder);
+        try
+        {
+            var bin = FakeBin(tmp, "tmux", $"echo '{tui.Id} %7 /tmp/cb394.sock'");
+            var r = RunHook(tmp, "codex", ["app-server", "--listen", "unix://"], folder, Path1(bin));
+            Silent(r);
+            Assert.Equal(tui.Id, r.Status!.SessionPid);
+            Assert.Equal(("%7", "/tmp/cb394.sock", "tmux"), (r.Status.TmuxPane, r.Status.TmuxSocket, r.Status.TermProgram));
+            Assert.Contains("timed_out=none", r.Log);
+        }
+        finally { tui.Kill(); }
+    }
+
+    // A hung lsof means the folder's TUIs cannot be counted, so no pid is
+    // recorded; the second TUI also exercises the skip-after-timeout path.
+    [PythonUnixFact]
+    public void A_hanging_lsof_records_no_pid_and_still_writes_the_status()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb394-").FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(tmp, "project")).FullName;
+        var elsewhere = Directory.CreateDirectory(Path.Combine(tmp, "other")).FullName;
+        var bin = FakeBin(tmp, "lsof", "exec sleep 60");
+        using var tui = StartTui(tmp, folder);
+        using var other = StartTui(tmp, elsewhere);
+        try
+        {
+            var r = RunHook(tmp, "codex", ["app-server", "--listen", "unix://"], folder, Path1(bin));
+            Silent(r);
+            Assert.Equal(0, r.Status!.SessionPid);
+            Assert.Equal("", r.Status.TmuxPane);
+            Assert.Contains("timed_out=lsof", r.Log);
+        }
+        finally { tui.Kill(); other.Kill(); }
+    }
+
+    // A tmux that answers with nothing for the TUI's pid makes the ancestor
+    // walk step through ps -o ppid (the bounded ppid lookup) until it runs out.
+    [PythonUnixFact]
+    public void A_tmux_that_knows_no_ancestor_leaves_the_pane_empty()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb394-").FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(tmp, "project")).FullName;
+        var bin = FakeBin(tmp, "tmux", "echo '1 %9 /tmp/none.sock'");
+        using var tui = StartTui(tmp, folder);
+        try
+        {
+            var r = RunHook(tmp, "codex", ["app-server", "--listen", "unix://"], folder, Path1(bin, "not-a-number"));
+            Silent(r);
+            Assert.Equal(tui.Id, r.Status!.SessionPid);
+            Assert.Equal("", r.Status.TmuxPane);
+        }
+        finally { tui.Kill(); }
+    }
+
+    // Size-bounded: an oversize log moves aside and a fresh one starts.
+    [PythonUnixFact]
+    public void The_run_log_is_size_bounded()
+    {
+        var tmp = Directory.CreateTempSubdirectory("cb394-").FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(tmp, "project")).FullName;
+        Directory.CreateDirectory(Path.Combine(tmp, "orbweaver"));
+        File.WriteAllText(Path.Combine(tmp, "orbweaver", "hook.log"), new string('x', 70_000) + "\n");
+        var r = RunHook(tmp, "codex", ["--model", "gpt-5"], folder);
+        Silent(r);
+        Assert.True(File.Exists(Path.Combine(tmp, "orbweaver", "hook.log.1")));
+        Assert.DoesNotContain("xxxx", r.Log);
+        Assert.Equal(2, r.Log.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);   // start + end
     }
 }

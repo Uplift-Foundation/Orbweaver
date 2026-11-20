@@ -141,6 +141,78 @@ AUTO_COLOR=0
 [ -f "$DIR/.auto-color" ] && AUTO_COLOR=1
 FILE="$DIR/$SESSION_ID.txt"
 
+# Run log (CB-394). One start line and one end line per run, so a stall can be
+# attributed to a step instead of guessed at. It is a file, never stdout or
+# stderr — Codex reads stdout as permission JSON — and every write is wrapped
+# so a log that cannot be written changes nothing. Size-bounded: past 64 KiB
+# the log is moved to hook.log.1 (replacing the previous one), so the two
+# together never exceed about 128 KiB. The name does not end in .txt, which is
+# all the app's watcher and scan look at.
+HOOK_LOG="$DIR/hook.log"
+HOOK_LOG_MAX=65536
+HOOK_TIMED_OUT=""
+HOOK_T0=$SECONDS
+hook_log() {
+    {
+        mkdir -p "$DIR"
+        if [ -f "$HOOK_LOG" ] && [ "$(wc -c < "$HOOK_LOG")" -gt "$HOOK_LOG_MAX" ]; then
+            mv -f "$HOOK_LOG" "$HOOK_LOG.1"
+        fi
+        printf '%s pid=%s %s agent=%s state=%s session=%s%s\n' \
+            "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$$" "$1" "$AGENT" "$STATE" "$SESSION_ID" "$2" >> "$HOOK_LOG"
+    } 2>/dev/null || true
+}
+hook_log start ""
+trap 'hook_log end " elapsed=$((SECONDS - HOOK_T0))s timed_out=${HOOK_TIMED_OUT:-none}"' EXIT
+
+# Bounded wait for the Codex-daemon lookups (CB-394). stock macOS has no
+# timeout(1), and a command substitution cannot be bounded from inside: it
+# waits for the pipe to close, which a hung child holds open. So the command
+# runs in the background with its output in a file, and the shell polls it
+# every 0.1 s (sleep takes fractions on macOS and on Linux) and kills it at the
+# deadline. Nothing but bash, sleep, kill, pkill and mktemp, all in the base
+# system on macOS and in WSL.
+#
+#   bounded <step> <command...>   leaves the command's stdout in BOUNDED_OUT
+#                                 (empty on any failure) and returns its status;
+#                                 124 on timeout, with the step named in the log.
+#
+# Called directly, never inside $( ): a command substitution is a subshell, and
+# the timed-out flag it set would die with it.
+#
+# After one timeout every later lookup is skipped (return 125): the caller
+# treats whatever it could not resolve as unknown, and the run costs one
+# timeout, not one per candidate. ORBWEAVER_HOOK_LOOKUP_TIMEOUT_DS is the
+# deadline in tenths of a second (default 20, i.e. 2 s); a test shortens it.
+HOOK_LOOKUP_DS="${ORBWEAVER_HOOK_LOOKUP_TIMEOUT_DS:-20}"
+case "$HOOK_LOOKUP_DS" in ''|*[!0-9]*) HOOK_LOOKUP_DS=20 ;; esac
+bounded() {
+    BOUNDED_OUT=""
+    [ -z "$HOOK_TIMED_OUT" ] || return 125
+    local step="$1" out pid n=0 rc
+    shift
+    out=$(mktemp "$DIR/.lookup.XXXXXX" 2>/dev/null) || return 1
+    "$@" < /dev/null > "$out" 2>/dev/null &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ "$n" -ge "$HOOK_LOOKUP_DS" ]; then
+            pkill -KILL -P "$pid" 2>/dev/null
+            kill -KILL "$pid" 2>/dev/null
+            { wait "$pid"; } 2>/dev/null
+            HOOK_TIMED_OUT="$step"
+            rm -f "$out"
+            return 124
+        fi
+        sleep 0.1
+        n=$((n + 1))
+    done
+    { wait "$pid"; } 2>/dev/null
+    rc=$?
+    BOUNDED_OUT=$(cat "$out" 2>/dev/null)
+    rm -f "$out"
+    return "$rc"
+}
+
 if [ "$STATE" = "ended" ]; then
     rm -f "$FILE"
     exit 0
@@ -640,22 +712,30 @@ if [ -n "$CODEX_DAEMON" ]; then
     WANT=$(cd "$CWD" 2>/dev/null && pwd -P)
     FOUND=""; COUNT=0
     if [ -n "$WANT" ]; then
-        for CAND in $(ps -axo pid=,comm= 2>/dev/null | awk '{ n=$2; sub(/.*\//, "", n); if (n == "codex") print $1 }'); do
-            case "$(ps -o args= -p "$CAND" 2>/dev/null)" in *" app-server"*) continue ;; esac
-            CANDCWD=$(lsof -a -p "$CAND" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+        bounded ps-scan ps -axo pid=,comm=
+        for CAND in $(printf '%s\n' "$BOUNDED_OUT" | awk '{ n=$2; sub(/.*\//, "", n); if (n == "codex") print $1 }'); do
+            bounded ps-args ps -o args= -p "$CAND"
+            case "$BOUNDED_OUT" in *" app-server"*) continue ;; esac
+            bounded lsof lsof -a -p "$CAND" -d cwd -Fn
+            CANDCWD=$(printf '%s\n' "$BOUNDED_OUT" | sed -n 's/^n//p' | head -1)
             [ -n "$CANDCWD" ] || continue
             CANDCWD=$(cd "$CANDCWD" 2>/dev/null && pwd -P)
             if [ "$CANDCWD" = "$WANT" ]; then FOUND="$CAND"; COUNT=$((COUNT + 1)); fi
         done
     fi
+    # A candidate that could not be read may have been the second one in this
+    # folder, so a count taken across a timeout proves nothing: record no pid.
+    [ -z "$HOOK_TIMED_OUT" ] || COUNT=0
     if [ "$COUNT" = "1" ]; then
         SESSION_PID="$FOUND"
-        T=$(ps -o tty= -p "$FOUND" 2>/dev/null | tr -d ' ')
+        bounded ps-tty ps -o tty= -p "$FOUND"
+        T=$(printf '%s' "$BOUNDED_OUT" | tr -d ' ')
         [ -n "$T" ] && [ "$T" != "??" ] && TTY="$T"
         TMUX_CMD=$(command -v tmux 2>/dev/null)
         if [ -n "$TMUX_CMD" ]; then
             # Space-separated on purpose: a tab here would be rewritten to "_" for a non-UTF-8 client (CB-335), a space is not.
-            PANES=$("$TMUX_CMD" list-panes -a -F '#{pane_pid} #{pane_id} #{socket_path}' 2>/dev/null)
+            bounded tmux "$TMUX_CMD" list-panes -a -F '#{pane_pid} #{pane_id} #{socket_path}'
+            PANES="$BOUNDED_OUT"
             A="$FOUND"
             for _ in 1 2 3 4 5 6 7 8; do
                 LINE=$(printf '%s\n' "$PANES" | awk -v p="$A" '$1 == p { print; exit }')
@@ -666,7 +746,8 @@ if [ -n "$CODEX_DAEMON" ]; then
                     TERM_PROGRAM="tmux"
                     break
                 fi
-                A=$(ps -o ppid= -p "$A" 2>/dev/null | tr -d ' ')
+                bounded ps-ppid ps -o ppid= -p "$A"
+                A=$(printf '%s' "$BOUNDED_OUT" | tr -d ' ')
                 { [ -z "$A" ] || [ "$A" = "0" ] || [ "$A" = "1" ]; } && break
             done
         fi

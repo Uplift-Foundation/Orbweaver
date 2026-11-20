@@ -148,10 +148,34 @@ if (-not (Test-Path $dir)) {
 
 $file = Join-Path $dir "$sessionId.txt"
 
+# Run log (CB-394), the twin of the bash hook's hook.log: a start line and an
+# end line per run, to a file and never to the console (Codex reads stdout as
+# permission JSON). Past 64 KiB it moves to hook.log.1, replacing the previous
+# one. Every write is swallowed, so an unwritable log changes nothing.
+$hookLog = Join-Path $dir 'hook.log'
+$hookT0 = [DateTime]::UtcNow
+function Write-HookLog([string]$what, [string]$extra) {
+    try {
+        if ((Test-Path $hookLog) -and (Get-Item $hookLog).Length -gt 65536) {
+            Move-Item -Path $hookLog -Destination "$hookLog.1" -Force
+        }
+        $line = '{0} pid={1} {2} agent={3} state={4} session={5}{6}' -f (Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz'), $PID, $what, $Agent, $State, $sessionId, $extra
+        [System.IO.File]::AppendAllText($hookLog, $line + "`n", (New-Object System.Text.UTF8Encoding($false)))
+    } catch {}
+}
+Write-HookLog 'start' ''
+
 if ($State -eq 'ended') {
     Remove-Item -Path $file -Force
+    Write-HookLog 'end' (' elapsed={0}ms' -f [int]([DateTime]::UtcNow - $hookT0).TotalMilliseconds)
     exit 0
 }
+
+# Each Codex-daemon CIM query is bounded by the cmdlet's own deadline: no
+# helper process, nothing to install. A query that times out writes an error the
+# script's SilentlyContinue discards and returns nothing, which reads as "no TUI
+# found" and records no pid -- the safe direction.
+$lookupTimeoutSec = 3
 
 # Identify the terminal hosting this session so a click on the orb can jump
 # to it. Windows Terminal advertises itself via WT_SESSION (which flows
@@ -350,7 +374,7 @@ try {
 if ($codexDaemon) {
     $termPid = 0; $termProgram = ''; $termId = ''; $sessionPid = 0
     try {
-        $tuis = @(Get-CimInstance Win32_Process -Filter "Name like 'codex%'" |
+        $tuis = @(Get-CimInstance Win32_Process -Filter "Name like 'codex%'" -OperationTimeoutSec $lookupTimeoutSec |
             Where-Object { "$($_.Name)" -like 'codex.exe*' -and "$($_.CommandLine)" -notmatch '(?i)\sapp-server(\s|$)' })
         if ($tuis.Count -eq 1) {
             $sessionPid = [int]$tuis[0].ProcessId
@@ -359,7 +383,7 @@ if ($codexDaemon) {
                 $p = Get-Process -Id $cur.ProcessId -ErrorAction SilentlyContinue
                 if ($p -and $p.MainWindowHandle -ne 0) { $termPid = [int]$cur.ProcessId; break }
                 if (-not $cur.ParentProcessId) { break }
-                $cur = Get-CimInstance Win32_Process -Filter "ProcessId=$($cur.ParentProcessId)"
+                $cur = Get-CimInstance Win32_Process -Filter "ProcessId=$($cur.ParentProcessId)" -OperationTimeoutSec $lookupTimeoutSec
             }
         }
     } catch {}
@@ -502,3 +526,4 @@ $status = @{
 # System.Text.Json treats a leading BOM as an invalid start of value, which
 # would make the app skip the file and drop the orb entirely.
 [System.IO.File]::WriteAllText($file, $status, (New-Object System.Text.UTF8Encoding($false)))
+Write-HookLog 'end' (' elapsed={0}ms' -f [int]([DateTime]::UtcNow - $hookT0).TotalMilliseconds)
