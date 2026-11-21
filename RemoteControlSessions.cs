@@ -560,6 +560,52 @@ namespace Orbweaver
             Republish();
         }
 
+        // CB-402: whether the rows the scan is drawing have fallen out of step
+        // with what the link's client knows now.
+        //
+        // The rows used to be rebuilt only when a roster reply changed
+        // something, so anything that left them stale stayed stale: every later
+        // reply from a steady peer said "nothing changed", and nothing asked
+        // again. A peer orb that dropped out of one roster and came straight
+        // back was seen to stay gone for six minutes that way, until the app was
+        // restarted, while the roster had it the whole time. How the rows got
+        // stale was never pinned down; this makes sure they cannot stay so.
+        //
+        // Keys only, deliberately. Seen is stamped at every rebuild and the
+        // lifetime rule reads it, so rebuilding on every tick would quietly
+        // exempt every peer orb from "Keep orbs for". A set that agrees is left
+        // exactly as it is.
+        internal static bool OutOfStep(IEnumerable<Remote> held, IEnumerable<Remote> fresh) =>
+            KeySignature(held) != KeySignature(fresh);
+
+        // Run once per dial tick, after the rosters have been asked for. Cheap:
+        // a few dozen rows, compared by key.
+        internal static void RepublishIfOutOfStep()
+        {
+            var client = PeerSessions.Host?.Client;
+            if (client is null) return;
+
+            var fresh = RemotesFromRoster(
+                OrbweaverSettings.DefaultRemoteControlProfileDir,
+                ShownByOpenClawSettings(
+                    client.Known(),
+                    OrbweaverSettings.OpenClawEnabled,
+                    OpenClawSessions.OwnerIndexSnapshot().AgentWorkspaces.Values.ToList(),
+                    OrbweaverSettings.OpenClawHeartbeatMode, OrbweaverSettings.OpenClawCronMode,
+                    OrbweaverSettings.OpenClawNativeMode),
+                Now());
+
+            IReadOnlyList<Remote> held;
+            lock (Gate) held = _peerRows;
+
+            if (!OutOfStep(held, fresh)) return;
+
+            // Said every time, because it should never be said at all: a line
+            // here is the stale-rows path caught in the act.
+            MirrorLog.Say("rc-resync", $"held={held.Count} known={fresh.Count}");
+            RepublishFromLink();
+        }
+
         // CB-402: the rows' keys as one string, so a republish is logged when the
         // set changed and not on every tick.
         private static string? _republishSignature;
