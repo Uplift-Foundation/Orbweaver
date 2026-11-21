@@ -63,6 +63,8 @@ namespace Orbweaver
         public const string LaunchInfoGet = "launch-info-get";
         public const string LaunchInfo = "launch-info";
         public const string Launch = "launch";
+        // CB-397: the signed answer to a trust question the far desk asked.
+        public const string LaunchTrust = "launch-trust";
         // CB-357 (reopened): browsing the far desktop's folders, same shape as
         // the launch-info pair and just as silent from an older peer.
         public const string ListDirGet = "list-dir-get";

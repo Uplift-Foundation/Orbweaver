@@ -32,6 +32,8 @@
     <!-- CB-314: the phone relay's contract vectors, copied from Orbweaver-Mobile contracts/ (see Fixtures/relay/SOURCE.md). -->
     <Content Include="Fixtures\relay\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-313: real terminal captures, shared with tools/screen-read-probe. -->
+    <!-- CB-397: the CB-327 Claude Code folder-trust captures (tmux capture-pane -p, byte for byte). -->
+    <Content Include="Fixtures\trust\*" Link="TrustFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\screens\*" Link="ScreenReadFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

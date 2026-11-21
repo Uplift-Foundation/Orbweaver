@@ -22,7 +22,27 @@ namespace Orbweaver
 
         // Code is RelayReplies.Launched with the new session's id, or the
         // refusal's code with an optional sentence a person can act on.
-        internal sealed record Outcome(string Code, string? Why, string? SessionId);
+        // Held is set only with PeerLaunchCodes.TrustNeeded: the pane the CLI
+        // is asking in and the roster as it was before the start.
+        internal sealed record Outcome(string Code, string? Why, string? SessionId, HeldTrust? Held = null);
+
+        internal sealed record HeldTrust(string Pane, IReadOnlySet<string> Before, bool Hooks = false);
+
+        // CB-397: what to do when the pane the CLI was started in is asking
+        // whether to trust the folder. None never reads the pane (Windows,
+        // and any caller with no trust seams). Report says so and leaves the
+        // pane for the desk (the phone). Ask hands the question to the
+        // launching desktop. Close is Ask for a desktop that cannot ask: it
+        // says so and closes the pane.
+        internal enum TrustPolicy { None, Report, Ask, Close }
+
+        // The three things that touch a real terminal, kept behind seams so a
+        // suite never starts or reads one. CaptureAndPress is CB-315's: the
+        // approved look, then the key, as one tmux invocation.
+        internal sealed record TrustSeams(
+            Func<string, Task<string?>> ReadPane,
+            Func<string, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>> CaptureAndPress,
+            Func<string, Task> ClosePane);
 
         private readonly Seams _seams;
 
@@ -46,14 +66,109 @@ namespace Orbweaver
         // Account, start, check-in, in that order. The roster is read before
         // the start, so a session that was already running in that folder is
         // never mistaken for the new one.
-        internal async Task<Outcome> RunAsync(LaunchFields f)
+        internal async Task<Outcome> RunAsync(LaunchFields f, TrustPolicy policy = TrustPolicy.None)
         {
             if (!TryAccount(f, out var profileDir)) return new(RelayReplies.UnknownAccount, null, null);
 
             var before = _seams.Snapshot().Select(s => s.SessionId).ToHashSet(StringComparer.Ordinal);
-            if (Start(f, profileDir) is { } failed) return new(failed.Code, failed.Why, null);
+            if (Start(f, profileDir, out var pane) is { } failed) return new(failed.Code, failed.Why, null);
 
-            return await AwaitNewSessionAsync(f, before).ConfigureAwait(false) is { } sessionId
+            // Windows never reads: there is no seam that can read a console by
+            // the pid StartWindows returns (CB-397 plan, point 6).
+            var reads = policy != TrustPolicy.None && !_seams.Launch.IsWindows && _seams.Launch.Trust is not null && pane is not null;
+            var (sessionId, prompt) = await AwaitNewSessionAsync(f, before, reads ? pane : null).ConfigureAwait(false);
+            if (sessionId is not null) return new(RelayReplies.Launched, null, sessionId);
+            if (prompt is null) return new(RelayReplies.NoSession, null, null);
+
+            var cli = LaunchGate.CliFor(f.Cli);
+            var name = NewChatLauncher.DisplayName(cli);
+            if (policy == TrustPolicy.Report)
+                return new(RelayReplies.LaunchFailed, name + " is asking whether to trust that folder. Answer it on the desk.", null);
+
+            if (prompt.Kind == TrustPrompt.Kind.Answerable && policy == TrustPolicy.Ask)
+                return new(PeerLaunchCodes.TrustNeeded, null, null, new HeldTrust(pane!, before, prompt.Hooks));
+
+            await CloseIfStillAskingAsync(f.Cwd, cli, pane!, prompt.Kind).ConfigureAwait(false);
+            return new(RelayReplies.LaunchFailed, prompt.Kind == TrustPrompt.Kind.Answerable
+                ? name + " is asking whether to trust that folder. Update this machine to answer from here."
+                : name + " is asking whether to trust that folder. Answer it once on that machine.", null);
+        }
+
+        // The physical spelling of a folder, once per use; a resolver that
+        // throws or is absent leaves the string as asked. What is started is
+        // never changed: only the comparison gets a second spelling.
+        private string ResolveFolder(string cwd)
+        {
+            try { return _seams.Launch.Resolve?.Invoke(cwd) ?? cwd; }
+            catch (Exception) { return cwd; }
+        }
+
+        // Closes the pane only while it still shows a trust prompt for the
+        // launched folder. If the screen shows anything else, somebody answered it at that desk and
+        // the session is theirs; the same look also guards a pane id reused
+        // after a tmux server restart. Reads and kills are two processes
+        // apart, which is the named residual window.
+        internal async Task CloseIfStillAskingAsync(string cwd, NewChatCli cli, string pane, TrustPrompt.Kind expected = TrustPrompt.Kind.Answerable)
+        {
+            if (_seams.Launch.Trust is not { } trust) return;
+            var screen = await trust.ReadPane(pane).ConfigureAwait(false);
+            // The reading that led here, not "any trust prompt": Answerable for
+            // the launched folder (either spelling) for a held question, and
+            // the same Unanswerable reading for the close RunAsync makes on a
+            // pane this very launch started. A reused pane id showing
+            // somebody else's Claude prompt is Unanswerable, so it is never
+            // killed on the held-question paths.
+            if (TrustPrompt.Read(screen, cwd, cli, ResolveFolder(cwd)).Kind == expected)
+                await trust.ClosePane(pane).ConfigureAwait(false);
+        }
+
+        // Answers Trust, never trusting where the cursor happens to be: Enter
+        // is sent only after a fresh capture shows the marker on "Yes, I trust
+        // this folder" for the launched folder.
+        internal async Task<Outcome> AnswerTrustAsync(LaunchFields f, HeldTrust held)
+        {
+            var trust = _seams.Launch.Trust!;
+            var cli = LaunchGate.CliFor(f.Cli);
+            var resolved = ResolveFolder(f.Cwd);
+            TrustPrompt.Reading Look(string? screen) => TrustPrompt.Read(screen, f.Cwd, cli, resolved);
+            static Outcome Failed(string why) => new(RelayReplies.LaunchFailed, why, null);
+
+            var first = Look(await trust.ReadPane(held.Pane).ConfigureAwait(false));
+            if (first.Kind != TrustPrompt.Kind.Answerable)
+            {
+                // A read that merely failed also lands here, and the record is
+                // already taken: nothing else will ever close a pane still on the prompt.
+                await CloseIfStillAskingAsync(f.Cwd, cli, held.Pane).ConfigureAwait(false);
+                return Failed("The trust question was no longer on screen.");
+            }
+
+            if (first.Marker == TrustPrompt.Option.No)
+            {
+                await trust.CaptureAndPress(held.Pane, "Down", s => Look(s) is { Kind: TrustPrompt.Kind.Answerable, Marker: TrustPrompt.Option.No }).ConfigureAwait(false);
+
+                var onYes = false;
+                for (var i = 0; i < 20 && !onYes; i++)
+                {
+                    onYes = Look(await trust.ReadPane(held.Pane).ConfigureAwait(false)) is { Kind: TrustPrompt.Kind.Answerable, Marker: TrustPrompt.Option.Yes };
+                    if (!onYes) await _seams.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+                }
+                if (!onYes)
+                {
+                    await CloseIfStillAskingAsync(f.Cwd, cli, held.Pane).ConfigureAwait(false);
+                    return Failed("Couldn't select Yes on that machine.");
+                }
+            }
+
+            var (pressed, _) = await trust.CaptureAndPress(held.Pane, "Enter", s => Look(s) is { Kind: TrustPrompt.Kind.Answerable, Marker: TrustPrompt.Option.Yes }).ConfigureAwait(false);
+            if (!pressed)
+            {
+                await CloseIfStillAskingAsync(f.Cwd, cli, held.Pane).ConfigureAwait(false);
+                return Failed("The trust question changed before it could be answered.");
+            }
+
+            // After Enter the pane is never closed by us: it is past the
+            // question and belongs to the session.
+            return await AwaitNewSessionAsync(f, held.Before, null).ConfigureAwait(false) is { SessionId: { } sessionId }
                 ? new(RelayReplies.Launched, null, sessionId)
                 : new(RelayReplies.NoSession, null, null);
         }
@@ -80,8 +195,9 @@ namespace Orbweaver
 
         // Starts the CLI where the contract says — tmux on the Mac, its own
         // conhost on Windows — or names why it could not.
-        private (string Code, string Why)? Start(LaunchFields f, string? profileDir)
+        private (string Code, string Why)? Start(LaunchFields f, string? profileDir, out string? pane)
         {
+            pane = null;
             var launch = _seams.Launch;
             var cli = LaunchGate.CliFor(f.Cli);
             var binary = launch.Locate(f.Cli)!;
@@ -104,7 +220,8 @@ namespace Orbweaver
                     ? (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".")
                     : null;
             }
-            var (pane, why) = launch.PlaceMac(NewChatCommand.LaunchLine(launch.Shell(), binary, args, profileDir is null ? null : (cli, profileDir)), f.Cwd);
+            var (placed, why) = launch.PlaceMac(NewChatCommand.LaunchLine(launch.Shell(), binary, args, profileDir is null ? null : (cli, profileDir)), f.Cwd);
+            pane = placed;
             if (pane is not null) return null;
             return why == TerminalScripts.NoTmuxWhy
                 ? (RelayReplies.NoTerminal, why)
@@ -113,16 +230,31 @@ namespace Orbweaver
 
         // A new local session of that CLI in that folder, one that was not in
         // the book before the launch. Polled every 500 ms for up to 30 s.
-        private async Task<string?> AwaitNewSessionAsync(LaunchFields f, HashSet<string> before)
+        //
+        // With a pane, the pane is also read once a second from 1 s in, after
+        // the roster check so a session that checks in always wins, and a trust
+        // prompt ends the wait with the reading (CB-397).
+        private async Task<(string? SessionId, TrustPrompt.Reading? Prompt)> AwaitNewSessionAsync(
+            LaunchFields f, IReadOnlySet<string> before, string? pane)
         {
             var deadline = _seams.Now() + RelayRemote.LaunchCheckIn;
-            while (true)
+            var cli = LaunchGate.CliFor(f.Cli);
+            var resolved = ResolveFolder(f.Cwd);
+            for (var tick = 1; ; tick++)
             {
                 foreach (var (sid, status) in _seams.Snapshot())
                     if (!before.Contains(sid) && status.IsLocalCli && MirrorProtocol.CliFor(status.Source) == f.Cli
-                        && SameFolder(status.Cwd, f.Cwd, _seams.Launch.IsWindows))
-                        return sid;
-                if (_seams.Now() >= deadline) return null;
+                        && (SameFolder(status.Cwd, f.Cwd, _seams.Launch.IsWindows)
+                            || SameFolder(status.Cwd, resolved, _seams.Launch.IsWindows)))
+                        return (sid, null);
+
+                if (pane is not null && tick >= 3 && tick % 2 == 1)
+                {
+                    var reading = TrustPrompt.Read(await _seams.Launch.Trust!.ReadPane(pane).ConfigureAwait(false), f.Cwd, cli, resolved);
+                    if (reading.Kind != TrustPrompt.Kind.None) return (null, reading);
+                }
+
+                if (_seams.Now() >= deadline) return (null, null);
                 await _seams.Delay(RelayRemote.LaunchPoll).ConfigureAwait(false);
             }
         }
@@ -156,7 +288,33 @@ namespace Orbweaver
             () => System.Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } sh ? sh : "/bin/zsh",
             PlaceMac,
             StartWindows,
-            UserHome);
+            UserHome,
+            DefaultTrustSeams(),
+            FolderResolver.ResolveReal);
+
+        // The three real calls: read a pane, press a key under CB-315's
+        // approval, close a pane. A status carrying only a pane id routes to
+        // tmux on its default socket, which is what PlaceForPhone starts on.
+        // Each looks TrustForTests up when it is called, like the start does.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static TrustSeams DefaultTrustSeams() => new(ReadPane, PressKey, ClosePane);
+
+        // Null in production and unset by anything but a test, so a suite can
+        // never read or kill a real pane.
+        internal static TrustSeams? TrustForTests;
+
+        private static Task<string?> ReadPane(string pane) =>
+            TrustForTests is { } fake ? fake.ReadPane(pane) : TmuxScreenReader.Instance.ReadAsync(PaneStatus(pane));
+
+        private static Task<(bool Pressed, string? Before)> PressKey(string pane, string key, Func<string?, bool> approved) =>
+            TrustForTests is { } fake ? fake.CaptureAndPress(pane, key, approved) : TerminalFocuser.CaptureAndPress(PaneStatus(pane), key, approved);
+
+        private static Task ClosePane(string pane) =>
+            TrustForTests is { } fake ? fake.ClosePane(pane) : Task.Run(() => TerminalFocuser.TryRun(
+                TerminalFocuser.ResolveTmuxBinary(null) ?? "tmux", out _, TerminalScripts.TmuxKillPaneArgs(pane)));
+
+        internal static SessionStatus PaneStatus(string pane) =>
+            new() { Source = SessionSource.ClaudeCode, TmuxPane = pane };
 
         // Looked up when the start is called, not when the seams are built:
         // PeerLaunchServer.Shared builds its seams once per process, so an

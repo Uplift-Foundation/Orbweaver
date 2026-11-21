@@ -58,10 +58,14 @@ namespace Orbweaver
                 OwnCertificate: PeerIdentity.HandshakeCertificateAsync));
             _link.PeerDisconnected += OpenClawSessions.ForgetPeerProfileVoices;
             _link.PeerDisconnected += machine => LaunchClient?.OnDisconnected(machine);
+            _link.PeerDisconnected += machine => _launchDisconnected?.Invoke(machine);
             _link.PeerConnected += _ => OpenClawSessions.RequestPeerProfileVoices();
         }
 
         internal PeerLink Link => _link;
+
+        private Func<string, JsonElement, Task<PeerLaunchResult>>? _trustHandler;
+        private Action<string>? _launchDisconnected;
 
         internal PeerLaunchClient? LaunchClient
         {
@@ -76,10 +80,14 @@ namespace Orbweaver
             PeerLaunchInfoSource? info,
             Func<string, JsonElement, Task<PeerLaunchResult>>? handler,
             PeerLaunchClient? client,
-            PeerBrowseServer? browse = null)
+            PeerBrowseServer? browse = null,
+            Func<string, JsonElement, Task<PeerLaunchResult>>? trustHandler = null,
+            Action<string>? onDisconnected = null)
         {
             lock (_gate)
             {
+                _trustHandler = trustHandler;
+                _launchDisconnected = onDisconnected;
                 _browse = browse;
                 _launchInfo = info;
                 _launchHandler = handler;
@@ -224,6 +232,13 @@ namespace Orbweaver
                     if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchAsync(machine, message));
                     return;
 
+                // CB-397: the signed answer to a trust question. Off the
+                // link's queue for the same reason: it can wait 30 s for a
+                // check-in. Answered as a launch-result on the same id.
+                case PeerProtocol.LaunchTrust:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchAsync(machine, message, trust: true));
+                    return;
+
                 case PeerProtocol.ListDirGet:
                     if (MayAsk(machine)) _ = Task.Run(() => AnswerListDirAsync(machine, message));
                     return;
@@ -317,10 +332,10 @@ namespace Orbweaver
             }
         }
 
-        private async Task AnswerLaunchAsync(string machine, PeerProtocol.PeerMessage message)
+        private async Task AnswerLaunchAsync(string machine, PeerProtocol.PeerMessage message, bool trust = false)
         {
             Func<string, JsonElement, Task<PeerLaunchResult>>? handler;
-            lock (_gate) handler = _launchHandler;
+            lock (_gate) handler = trust ? _trustHandler : _launchHandler;
 
             PeerLaunchResult result;
 

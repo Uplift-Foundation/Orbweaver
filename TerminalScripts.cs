@@ -58,6 +58,10 @@ namespace Orbweaver
             return full;
         }
 
+        // CB-397: closes the one pane a launch started. The pane id is tmux's
+        // own ("%12"); nothing else is ever passed.
+        internal static string[] TmuxKillPaneArgs(string pane) => ["kill-pane", "-t", pane];
+
         // One argument, safe to hand to `sh -c`.
         //
         // Single-quoted, with any embedded quote closed and reopened the shell
