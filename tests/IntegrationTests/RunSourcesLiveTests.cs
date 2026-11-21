@@ -50,6 +50,8 @@ public class RunSourcesLiveTests : IDisposable
     [Fact]
     public void Another_process_resolves_to_the_image_it_runs()
     {
+        // On Windows this is QueryFullProcessImageName; MainModule answered
+        // ntdll.dll for a process read during its start (measured on CI).
         // Not a renamed copy: macOS kills a copied Apple platform binary at launch
         // (measured: exit 137), so the child runs from where it lives and the
         // check is that the OS names that file. The codex-name rule on top is

@@ -178,7 +178,7 @@ public class RunSourcesTests
     public void A_grok_reading_comes_from_the_summary_beside_the_updates_file()
     {
         var d = new Desk();
-        d.Write("/g/sess/summary.json", """{"current_model_id":"grok-4.7","reasoning_effort":"high"}""");
+        d.Write(RunSources.GrokSummaryOf("/g/sess/updates.jsonl")!, """{"current_model_id":"grok-4.7","reasoning_effort":"high"}""");
         var r = d.Sources.ReadingFor(Of(SessionSource.Grok, "/g/sess/updates.jsonl"))!;
         Assert.Equal(("grok-4.7", "high"), (r.Model, r.Effort));
         Assert.Null(RunSources.GrokSummaryOf("updates.jsonl"));
@@ -238,7 +238,7 @@ public class RunSourcesTests
         };
         var s = Of(SessionSource.Codex, "/x/.codex-b/sessions/2026/11/21/rollout-1.jsonl");
         Assert.Equal("gpt-6-luna", Assert.Single(d.Sources.CatalogueFor(s)!.Models).Id);
-        Assert.Equal("/x/.codex-b", d.CodexAsked.Single());
+        Assert.Equal(Path.GetFullPath("/x/.codex-b"), Path.GetFullPath(d.CodexAsked.Single()!));
     }
 
     [Theory]
@@ -247,13 +247,14 @@ public class RunSourcesTests
     [InlineData("", null)]
     [InlineData(null, null)]
     public void The_codex_home_is_the_folder_above_sessions(string? path, string? home) =>
-        Assert.Equal(home, RunSources.CodexHomeOf(path));
+        // Through the platform's own separators: on Windows the answer is written with backslashes.
+        Assert.Equal(home is null ? null : Path.GetFullPath(home), RunSources.CodexHomeOf(path) is { } h ? Path.GetFullPath(h) : null);
 
     [Fact]
     public void A_grok_catalogue_is_its_models_cache_read_again_only_when_it_moves()
     {
         var d = new Desk();
-        d.Write("/home/u/.grok/models_cache.json",
+        d.Write(Path.Combine("/home/u", ".grok", "models_cache.json"),
             """{"models":{"grok-4.7":{"info":{"name":"Grok 4.7","supports_reasoning_effort":true,"reasoning_efforts":[{"id":"high"},{"id":"low"}]}}}}""");
         Assert.Equal("grok-4.7", Assert.Single(d.Sources.CatalogueFor(Of(SessionSource.Grok, "/g/updates.jsonl"))!.Models).Id);
         d.Sources.CatalogueFor(Of(SessionSource.Grok, "/g/updates.jsonl"));
