@@ -816,7 +816,12 @@ namespace Orbweaver
         string? ElsewhereLabel = null,
         // CB-307 item 3: "Question 2 of 4" for a multi-question form, or null
         // when the form's current question cannot be told from the screen.
-        string? Progress = null);
+        string? Progress = null,
+        // CB-400: the rows of a screen that is not a dialog at all (`/mobile`'s QR
+        // screen) as drawn, so a panel can show them. Non-null means the prompt is
+        // such an overlay: one `Close` option that presses Escape. Null for every
+        // dialog.
+        IReadOnlyList<string>? Body = null);
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can
