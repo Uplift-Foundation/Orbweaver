@@ -169,8 +169,9 @@ public class PromptWireTests
         Assert.NotNull(RemoteMirrorClient.PromptOutcomeOf(true, null, good).Prompt);
         Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoPrompt),
             RemoteMirrorClient.PromptOutcomeOf(false, MirrorProtocol.ErrNoPrompt, null));
-        // Never answered: no code at all.
-        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error);
+        // Never answered: no code at all. No-reply, never unsupported — a
+        // timeout says nothing about what the far side can do (CB-406).
+        Assert.Equal(MirrorProtocol.ErrNoReply, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error);
         // An OK whose payload is not a prompt.
         Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrUnsupported),
             RemoteMirrorClient.PromptOutcomeOf(true, null, "nope"u8.ToArray()));
@@ -181,7 +182,9 @@ public class PromptWireTests
     {
         Assert.Null(RemoteMirrorClient.AnswerErrorOf(true, null));
         Assert.Equal(MirrorProtocol.ErrBadKey, RemoteMirrorClient.AnswerErrorOf(false, MirrorProtocol.ErrBadKey));
-        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.AnswerErrorOf(false, null));
+        Assert.Equal(MirrorProtocol.ErrNoReply, RemoteMirrorClient.AnswerErrorOf(false, null));
+        // A real refusal from the far side still says so.
+        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.AnswerErrorOf(false, MirrorProtocol.ErrUnsupported));
     }
 
     [Fact]

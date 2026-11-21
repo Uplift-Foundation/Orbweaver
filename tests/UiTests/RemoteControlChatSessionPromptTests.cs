@@ -242,6 +242,58 @@ public class RemoteControlChatSessionPromptTests
         Assert.Equal(1, h.Asks);
     }
 
+    // CB-406, the measured bug: a PROMPT that queued ten seconds behind other
+    // peer traffic on the far side timed out, the timeout read as unsupported,
+    // and the panel stopped asking for good — the form vanished and the
+    // question could not be answered from the MacBook at all. Driven through
+    // the real mapping of a no-reply outcome, not a hand-picked reply kind.
+    [AvaloniaFact]
+    public async Task APromptThatTimesOutKeepsTheFormAndTheAsking()
+    {
+        var h = new Harness();
+        var timedOut = MapFetch(new RemoteMirrorClient.PromptOutcome(null, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(timedOut);
+        h.Replies.Enqueue(timedOut);
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Tick(); await h.Settle();
+        h.Tick(); await h.Settle();
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Tick(); await h.Settle();
+        Assert.Equal(4, h.Asks);
+        Assert.Equal("Which exhibit?", h.Session.Prompt!.Title);
+    }
+
+    // And the answer half: an ANSWER with no reply is a failure to retry, not
+    // "can't take an answer from here", and the asking carries on.
+    [AvaloniaFact]
+    public async Task AnAnswerThatTimesOutCanBeTriedAgain()
+    {
+        var h = new Harness();
+        for (var i = 0; i < 4; i++) h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+
+        h.NextAnswer = new AnswerReply(MapAnswerCode(RemoteMirrorClient.AnswerErrorOf(false, null)));
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Contains(h.Session.History, t => t.Text.Contains("Couldn't answer that on evidence", StringComparison.Ordinal));
+        Assert.DoesNotContain(h.Session.History, t => t.Text.Contains("can't take an answer from here", StringComparison.Ordinal));
+
+        // Asked again at once rather than given up on: the same form is back.
+        Assert.True(h.Asks >= 2);
+        Assert.NotNull(h.Session.Prompt);
+
+        h.NextAnswer = new AnswerReply(AnswerKind.Done);
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        Assert.Equal(2, h.Answers.Count);
+    }
+
     [AvaloniaFact]
     public async Task NothingReadableClearsTheFormAndATransientFailureLeavesItAlone()
     {
@@ -507,6 +559,7 @@ public class RemoteControlChatSessionPromptTests
             (MirrorProtocol.ErrNoPane, PromptReplyKind.Unsupported),
             (MirrorProtocol.ErrReplyOff, PromptReplyKind.Unsupported),
             (MirrorProtocol.ErrNoSession, PromptReplyKind.Transient),
+            (MirrorProtocol.ErrNoReply, PromptReplyKind.Transient),
             ("something-new", PromptReplyKind.Transient),
             (null, PromptReplyKind.Transient),
         };
@@ -527,6 +580,7 @@ public class RemoteControlChatSessionPromptTests
             (MirrorProtocol.ErrUnsupported, AnswerKind.Unsupported),
             (MirrorProtocol.ErrNoPane, AnswerKind.Unsupported),
             (MirrorProtocol.ErrReplyOff, AnswerKind.Unsupported),
+            (MirrorProtocol.ErrNoReply, AnswerKind.Failed),
             ("something-new", AnswerKind.Failed),
         };
 

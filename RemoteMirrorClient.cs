@@ -1104,13 +1104,15 @@ namespace Orbweaver
         }
 
         // What a PROMPT reply means, pure so each arm is asserted without a
-        // far side that misbehaves on cue: a refusal is its code, a request
-        // that never got an answer (no code at all) reads as unsupported, and
-        // so does an OK whose payload is not a prompt — the panel then offers
-        // the terminal rather than buttons it cannot trust.
+        // far side that misbehaves on cue: a refusal is its code, and an OK
+        // whose payload is not a prompt reads as unsupported — the panel then
+        // offers the terminal rather than buttons it cannot trust. A request
+        // that never got an answer (no code at all) is ErrNoReply, not
+        // unsupported: a timeout is a fact about this one request, and
+        // unsupported is final (CB-406).
         internal static PromptOutcome PromptOutcomeOf(bool ok, string? errCode, byte[]? payload)
         {
-            if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrUnsupported);
+            if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrNoReply);
 
             return MirrorProtocol.DecodePrompt(payload) is { } prompt
                 ? new PromptOutcome(prompt, null)
@@ -1118,9 +1120,10 @@ namespace Orbweaver
         }
 
         // And an ANSWER reply: null when it was taken, otherwise the code, with
-        // no code at all (never answered) read as unsupported.
+        // no code at all (never answered) read as ErrNoReply — retryable, for
+        // the same reason as above.
         internal static string? AnswerErrorOf(bool ok, string? errCode) =>
-            ok ? null : errCode ?? MirrorProtocol.ErrUnsupported;
+            ok ? null : errCode ?? MirrorProtocol.ErrNoReply;
 
         // Take one option of the dialog Fingerprint names. Null on success,
         // otherwise the far side's code — ErrPromptChanged means the screen
