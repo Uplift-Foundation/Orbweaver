@@ -33,13 +33,45 @@ namespace Orbweaver
             [property: JsonPropertyName("nonce")] string Nonce,
             [property: JsonPropertyName("expires_at")] long ExpiresAt,
             [property: JsonPropertyName("sig")] string Sig,
-            [property: JsonPropertyName("cert")] string Cert);
+            [property: JsonPropertyName("cert")] string Cert,
+            // CB-397: unsigned; only says this desk can show the trust question.
+            [property: JsonPropertyName("can_trust"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool CanTrust = false);
 
         private sealed record ResultBody(
             [property: JsonPropertyName("ok")] bool Ok,
             [property: JsonPropertyName("code")] string? Code,
             [property: JsonPropertyName("session_id")] string? SessionId,
-            [property: JsonPropertyName("why")] string? Why);
+            [property: JsonPropertyName("why")] string? Why,
+            [property: JsonPropertyName("trust"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PeerLaunchTrust? Trust = null);
+
+        // CB-397: the body of `launch-trust`. The folder, CLI and account are
+        // not here; see PeerTrustAnswer.
+        internal sealed record TrustRequest(
+            [property: JsonPropertyName("token")] string Token,
+            [property: JsonPropertyName("answer")] string Answer,
+            [property: JsonPropertyName("nonce")] string Nonce,
+            [property: JsonPropertyName("expires_at")] long ExpiresAt,
+            [property: JsonPropertyName("sig")] string Sig,
+            [property: JsonPropertyName("cert")] string Cert);
+
+        internal static JsonElement EncodeTrust(TrustRequest request) => PeerProtocol.BodyOf(request);
+
+        internal static TrustRequest? ParseTrust(JsonElement body)
+        {
+            if (body.ValueKind != JsonValueKind.Object) return null;
+
+            TrustRequest? request;
+            try { request = body.Deserialize<TrustRequest>(PeerProtocol.Json); }
+            catch (JsonException) { return null; }
+
+            var whole = request is not null
+                && Sane(request.Token, 64, true) && Sane(request.Nonce, 256, true)
+                && Sane(request.Sig, MaxText, true) && Sane(request.Cert, 32 * 1024, true)
+                && request.Answer is PeerTrustAnswer.Trust or PeerTrustAnswer.Cancel
+                && request.ExpiresAt > 0;
+
+            return whole ? request : null;
+        }
 
         // --- launch-info ---------------------------------------------------------
 
@@ -119,7 +151,7 @@ namespace Orbweaver
         // --- launch-result -------------------------------------------------------
 
         internal static JsonElement EncodeResult(PeerLaunchResult result) =>
-            PeerProtocol.BodyOf(new ResultBody(result.Ok, result.Code, result.SessionId, result.Why));
+            PeerProtocol.BodyOf(new ResultBody(result.Ok, result.Code, result.SessionId, result.Why, result.Trust));
 
         internal static PeerLaunchResult? ParseResult(JsonElement body)
         {
@@ -134,7 +166,18 @@ namespace Orbweaver
                 || !Sane(parsed.Why, MaxText, required: false))
                 return null;
 
-            return new PeerLaunchResult(parsed.Ok, parsed.Code!, parsed.SessionId, parsed.Why);
+            // A question belongs to trust_needed and to nothing else, and it
+            // is believed only whole: a half-read question is no answer.
+            var trust = parsed.Trust;
+            if (parsed.Code == PeerLaunchCodes.TrustNeeded)
+            {
+                if (trust is null || !Sane(trust.Token, 64, true) || !Sane(trust.Cli, 32, true)
+                    || !Sane(trust.Cwd, MaxText, true) || trust.ExpiresAt <= 0)
+                    return null;
+            }
+            else trust = null;
+
+            return new PeerLaunchResult(parsed.Ok, parsed.Code!, parsed.SessionId, parsed.Why, trust);
         }
 
         // --- list-dir ------------------------------------------------------------

@@ -21,10 +21,11 @@ public class PeerLaunchHostRoutingTests
         var client = new PeerLaunchClient(new PeerLaunchClient.Seams(
             (_, _) => { delivered++; return Task.FromResult(true); }, () => [],
             (_, _) => Task.FromResult<(string, string)?>(null), () => DateTimeOffset.UtcNow));
-        host.ServeLaunch(info, (_, _) => { handled++; return Task.FromResult(new PeerLaunchResult(true, "launched", "s", null)); }, client);
+        host.ServeLaunch(info, (_, _) => { handled++; return Task.FromResult(new PeerLaunchResult(true, "launched", "s", null)); }, client,
+            trustHandler: (_, _) => { handled++; return Task.FromResult(new PeerLaunchResult(true, "launched", "s", null)); });
 
         foreach (var type in new[]
-            { PeerProtocol.LaunchInfoGet, PeerProtocol.Launch, PeerProtocol.LaunchInfo, PeerProtocol.LaunchResult })
+            { PeerProtocol.LaunchInfoGet, PeerProtocol.Launch, PeerProtocol.LaunchInfo, PeerProtocol.LaunchResult, PeerProtocol.LaunchTrust })
             await host.DeliverAsync("ghost", PeerProtocol.Message(type, "id1", body: JsonSerializer.SerializeToElement(new { })));
 
         Assert.Equal((0, 0, 0), (built, handled, delivered));
@@ -39,7 +40,7 @@ public class PeerLaunchHostRoutingTests
         Assert.Null(host.LaunchClient);
 
         foreach (var type in new[]
-            { PeerProtocol.LaunchInfoGet, PeerProtocol.Launch, PeerProtocol.LaunchInfo, PeerProtocol.LaunchResult })
+            { PeerProtocol.LaunchInfoGet, PeerProtocol.Launch, PeerProtocol.LaunchInfo, PeerProtocol.LaunchResult, PeerProtocol.LaunchTrust })
             await host.DeliverAsync("ghost", PeerProtocol.Message(type, "id1"));
     }
 }

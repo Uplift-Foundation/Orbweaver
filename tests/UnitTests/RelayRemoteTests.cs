@@ -180,11 +180,15 @@ public class RelayRemoteTests
         public List<NewChatAccounts.Choice> AccountChoices = [new("Default", null), new("~/.claude-uplift", ".claude-uplift"), new("~/.codex-b", ".codex-b")];
         public string? Designated;
         public string Home = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "cb397-home"));
+        // CB-397: what the launched pane shows; null means no trust seams at all.
+        public string? PaneShows;
+        public readonly List<string> PaneClosed = [];
         public Func<SessionStatus, string, Task<string?>> Summarizer = (_, reply) => Task.FromResult<string?>("summary of " + reply);
 
         public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42,
-            bool accounts = true, bool summarizes = true)
+            bool accounts = true, bool summarizes = true, string? paneShows = null)
         {
+            PaneShows = paneShows;
             Windows = windows;
             Binary = binary;
             MacPlace = place ?? ("%1", null);
@@ -204,7 +208,11 @@ public class RelayRemoteTests
                     () => "/bin/zsh",
                     (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
                     psi => { WindowsStarts.Add(psi); return WindowsPid; },
-                    () => Home),
+                    () => Home,
+                    PaneShows is null ? null : new LaunchRunner.TrustSeams(
+                        _ => Task.FromResult<string?>(PaneShows),
+                        (_, _, _) => Task.FromResult((false, (string?)null)),
+                        pane => { PaneClosed.Add(pane); return Task.CompletedTask; })),
                 Log.Add)
             {
                 Images = h => Bundles.GetValueOrDefault(h),
@@ -466,6 +474,25 @@ public class RelayRemoteTests
         await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "grok", cwd: "C:\\w", message: "say % & hi"));
         Assert.Equal(["launched", "typed"], Codes(w));
         Assert.Equal(["C:\\g\\grok.exe", "--", "say % & hi"], w.WindowsStarts.Single().ArgumentList);
+    }
+
+    // CB-397: the phone keeps today's rule that first-run dialogs are desk-only, and a
+    // launch that lands on a trust prompt now says so instead of "never checked in".
+    // The pane is left open for the desk, nothing is pressed, and the contract's arrays
+    // are exactly what they were.
+    [Fact]
+    public async Task A_phone_launch_that_lands_on_a_trust_prompt_says_so_and_leaves_the_pane()
+    {
+        var screen = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TrustFixtures", "tmux-claude-trustdialog.txt"));
+        var w = new World(paneShows: screen);
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "/private/tmp/cb327-scratch/proj", message: ""));
+
+        var reply = w.Sent.Replies.Single().Body;
+        Assert.Equal("launch_failed", reply.GetProperty("code").GetString());
+        Assert.Equal("Claude Code is asking whether to trust that folder. Answer it on the desk.", reply.GetProperty("why").GetString());
+        Assert.Empty(w.PaneClosed);
+        Assert.DoesNotContain("trust_needed", RelayReplies.ErrCodes);
+        Assert.DoesNotContain("trust_needed", RelayReplies.CodesWithWhy);
     }
 
     [Fact]
