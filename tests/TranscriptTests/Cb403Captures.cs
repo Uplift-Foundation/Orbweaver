@@ -26,6 +26,7 @@ namespace Orbweaver.Tests
             {
                 "team-idle-w24", "team-draft-w24", "team-after-send-w24",
                 "team-sel-main-w24", "team-sel-teammate-w24", "team-sel-stopped-w80",
+                "team-sel-teammate-w110",
             })
             {
                 var (reading, why) = PaneScreen.Read(Load(name));
@@ -38,6 +39,7 @@ namespace Orbweaver.Tests
             {
                 "teammate-view-w24", "teammate-view-draft-w24",
                 "teammate-view-sel-teammate-w24", "teammate-view-sel-main-w24",
+                "teammate-view-w110",
             })
             {
                 var (reading, why) = PaneScreen.Read(Load(name));
@@ -76,6 +78,8 @@ namespace Orbweaver.Tests
             check("cb403: an unselected row is not a selected team row", !PaneScreen.IsSelectedTeamRow("◯ scratch-two 1m 54s"));
             check("cb403: `◯ main` is the lead out of view", PaneScreen.IsUnviewedMain("◯ main"));
             check("cb403: `❯ ◯ main` is the lead out of view", PaneScreen.IsUnviewedMain("❯ ◯ main"));
+            check("cb403: a padded `◯ main` is still the lead out of view", PaneScreen.IsUnviewedMain("  ◯ main      "));
+            check("cb403: a padded `❯ ◯ main` is still the lead out of view", PaneScreen.IsUnviewedMain("❯ ◯ main      "));
             check("cb403: `⏺ main` is the lead in view", !PaneScreen.IsUnviewedMain("⏺ main"));
             check("cb403: a teammate's row is not the lead's", !PaneScreen.IsUnviewedMain("◯ mainframe 2m"));
             check("cb403: a pure rule has no title", PaneScreen.TitleOf("────────────────────────").Length == 0);

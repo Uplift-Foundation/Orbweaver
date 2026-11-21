@@ -234,7 +234,10 @@ namespace Orbweaver
         // `◯ main`, selected or not: the lead's own row without the filled mark.
         internal static bool IsUnviewedMain(string line)
         {
-            var rest = line.StartsWith('❯') ? line[1..].TrimStart() : line;
+            // Trimmed here as well as by the caller: a reader that pads rows to
+            // the pane's width must not turn this refusal off.
+            var rest = line.Trim();
+            if (rest.StartsWith('❯')) rest = rest[1..].TrimStart();
             return rest == "◯ main";
         }
 

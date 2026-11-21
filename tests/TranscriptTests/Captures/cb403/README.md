@@ -21,6 +21,8 @@ comes from anybody's working session.
 | `teammate-view-draft-w24` | a pasted draft in that box | landed in the teammate's box; not sent | unknown, `teammate-view` |
 | `teammate-view-sel-teammate-w24` | just after Enter, `❯` still on the row | as above | unknown, `teammate-view` |
 | `teammate-view-sel-main-w24` | Down arrow inside the teammate's view: `❯ ◯ main` | not typed into | unknown, `teammate-view` |
+| `team-sel-teammate-w110` | QA's own throwaway session, 110x23, three teammates, one with a long description: two Down arrows | not typed into | prompt |
+| `teammate-view-w110` | the same session, Enter on a teammate's row | not typed into | unknown, `teammate-view` |
 | `background-dialog-w24` | Left arrow at the prompt | a dialog | dialog |
 
 Before CB-403 the three `team-sel-*` screens read unknown (`no-box-top`), which
