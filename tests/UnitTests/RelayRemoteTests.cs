@@ -179,6 +179,7 @@ public class RelayRemoteTests
 
         public List<NewChatAccounts.Choice> AccountChoices = [new("Default", null), new("~/.claude-uplift", ".claude-uplift"), new("~/.codex-b", ".codex-b")];
         public string? Designated;
+        public string Home = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "cb397-home"));
         public Func<SessionStatus, string, Task<string?>> Summarizer = (_, reply) => Task.FromResult<string?>("summary of " + reply);
 
         public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42,
@@ -202,7 +203,8 @@ public class RelayRemoteTests
                     _ => DirExists,
                     () => "/bin/zsh",
                     (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
-                    psi => { WindowsStarts.Add(psi); return WindowsPid; }),
+                    psi => { WindowsStarts.Add(psi); return WindowsPid; },
+                    () => Home),
                 Log.Add)
             {
                 Images = h => Bundles.GetValueOrDefault(h),
@@ -825,8 +827,10 @@ public class RelayRemoteTests
         await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, account: ".claude-uplift"));
 
         Assert.Equal(["launched", "typed"], Codes(w));
-        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, ".claude-uplift")), w.MacStarts.Single().Command);
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, Path.Combine(w.Home, ".claude-uplift"))), w.MacStarts.Single().Command);
+        Assert.True(Path.IsPathRooted(Path.Combine(w.Home, ".claude-uplift")));
         Assert.Contains("env CLAUDE_CONFIG_DIR=", w.MacStarts.Single().Command);
+        Assert.Contains(Path.Combine(w.Home, ".claude-uplift"), w.MacStarts.Single().Command);
     }
 
     [Fact]
@@ -868,7 +872,7 @@ public class RelayRemoteTests
 
         Assert.Equal(["launched", "typed"], Codes(w));
         var start = w.WindowsStarts.Single();
-        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=.claude-uplift\" && \"C:\\bin\\claude.exe\""], start.ArgumentList);
+        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=" + Path.Combine(w.Home, ".claude-uplift") + "\" && \"C:\\bin\\claude.exe\""], start.ArgumentList);
     }
 
     [Fact]

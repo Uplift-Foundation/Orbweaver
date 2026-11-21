@@ -37,7 +37,8 @@ namespace Orbweaver
             Func<string, bool> DirectoryExists,
             Func<string> Shell,
             Func<string, string, (string? Pane, string? Why)> PlaceMac,
-            Func<ProcessStartInfo, int?> StartWindows);
+            Func<ProcessStartInfo, int?> StartWindows,
+            Func<string>? Home = null);
 
         internal sealed record Seams(
             Func<DateTimeOffset> Now,
