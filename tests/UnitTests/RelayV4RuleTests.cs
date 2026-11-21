@@ -28,7 +28,7 @@ public class RelayV4RuleTests
     }
 
     [Fact]
-    public void Err_carries_why_only_on_the_four_codes_that_have_one()
+    public void Err_carries_why_only_on_the_codes_that_have_one()
     {
         Assert.Equal("""{"t":"err","ref":"r","code":"untypeable","session_id":"s"}""",
             RelayReplies.Err("r", RelayReplies.Untypeable, "s", "ignored"));
@@ -36,10 +36,10 @@ public class RelayV4RuleTests
             RelayReplies.Err("r", RelayReplies.NoTerminal, null, "tmux is not installed"));
         Assert.Equal("""{"t":"err","ref":"r","code":"not_at_prompt","session_id":"s"}""",
             RelayReplies.Err("r", RelayReplies.NotAtPrompt, "s"));
-        Assert.Equal(4, RelayReplies.OkCodes.Length);
+        Assert.Equal(5, RelayReplies.OkCodes.Length);
         // 18 from v4, plus v5's unknown_image (CB-321), the launch account's unknown_account and
-        // frames-v11's four folder-picker codes (CB-339).
-        Assert.Equal(24, RelayReplies.ErrCodes.Length);
+        // frames-v11's four folder-picker codes (CB-339), and frames-v13's four set_run codes (CB-404).
+        Assert.Equal(28, RelayReplies.ErrCodes.Length);
         Assert.Contains(RelayReplies.ForbiddenPath, RelayReplies.ErrCodes);
         Assert.Contains(RelayReplies.UnknownAccount, RelayReplies.ErrCodes);
     }

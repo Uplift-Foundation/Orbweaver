@@ -552,7 +552,7 @@ namespace Orbweaver
         internal const string CapsCk = "caps";
 
         internal static readonly string Caps =
-            new CanonicalJson().Str("t", "caps").Array("caps", [CanonicalJson.Quote("list_dir")]).ToString();
+            new CanonicalJson().Str("t", "caps").Array("caps", [CanonicalJson.Quote("list_dir"), CanonicalJson.Quote(RunFrames.Cap)]).ToString();
 
         private static string Entry(BrowseItem e)
         {

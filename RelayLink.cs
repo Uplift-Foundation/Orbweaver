@@ -768,6 +768,16 @@ namespace Orbweaver
             return Collect(SealTo(c, "chat", RelayCrypto.Ck(c.CkKey, sessionId), Encoding.UTF8.GetBytes(plaintext)));
         }
 
+        // CB-404: a frames-v13 run frame to the phone watching. class state, ck
+        // Ck("run:" + session_id), so the relay keeps only the newest per session
+        // and the roster's ck is untouched. Online only, as windows are: run
+        // frames go to watchers, and a watch dies with its phone.
+        internal IReadOnlyList<string> SendRun(string phoneId, string sessionId, string plaintext)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c) || !c.Online) return [];
+            return Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, RunFrames.CkFor(sessionId)), Encoding.UTF8.GetBytes(plaintext)));
+        }
+
         // The usage frame to every online phone — or, carrying a limit crossing,
         // to every paired phone with push limit and that phone's own e, since
         // the alert has to reach a phone that is not open. Remembered either

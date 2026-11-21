@@ -204,6 +204,9 @@ namespace Orbweaver
 
             public bool ImageWindow(string phoneId, string hash, string plaintext) =>
                 client.Dispatch(() => client._link.SendImageWindow(phoneId, hash, plaintext));
+
+            public void Run(string phoneId, string sessionId, string plaintext) =>
+                client.Dispatch(() => client._link.SendRun(phoneId, sessionId, plaintext));
         }
 
         // The real desk: the session's own transcript and parser, the
