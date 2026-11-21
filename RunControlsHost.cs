@@ -54,7 +54,9 @@ namespace Orbweaver
         private readonly Seams _seams;
         private readonly object _gate = new();
         private readonly Dictionary<string, IReadOnlyList<RunPending>> _pending = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, string> _failures = new(StringComparer.Ordinal);
+        // Per session, the last failure of each field (CB-404 review: a failure
+        // belongs under the control it is about).
+        private readonly Dictionary<string, List<RunFailure>> _failures = new(StringComparer.Ordinal);
 
         internal RunControlsHost(Seams seams) => _seams = seams;
 
@@ -90,7 +92,9 @@ namespace Orbweaver
             var reading = _seams.ReadingFor(status) ?? RunReading.None;
             var catalogue = _seams.CatalogueFor(status) ?? RunCatalogue.Empty;
             var pending = Reconcile(status, cli, reading, catalogue);
-            return RunControlsResolver.Resolve(cli, RouteFor(status, cli), reading, catalogue, pending);
+            IReadOnlyList<RunFailure> failures;
+            lock (_gate) failures = _failures.TryGetValue(Key(status), out var f) ? f.ToList() : [];
+            return RunControlsResolver.Resolve(cli, RouteFor(status, cli), reading, catalogue, pending, failures: failures);
         }
 
         // The last pending set a reading contradicted or that timed out, once:
@@ -99,8 +103,8 @@ namespace Orbweaver
         {
             lock (_gate)
             {
-                if (!_failures.Remove(Key(status), out var failure)) return null;
-                return failure;
+                if (!_failures.Remove(Key(status), out var failures) || failures.Count == 0) return null;
+                return failures[^1].Why;
             }
         }
 
@@ -117,7 +121,12 @@ namespace Orbweaver
                 moved = kept.Count != pending.Count;
                 if (kept.Count == 0) _pending.Remove(Key(status));
                 else _pending[Key(status)] = kept;
-                if (failures.Count > 0) _failures[Key(status)] = failures[^1];
+                if (failures.Count > 0)
+                {
+                    var list = _failures.GetValueOrDefault(Key(status)) ?? new List<RunFailure>();
+                    foreach (var f in failures) { list.RemoveAll(x => x.Field == f.Field); list.Add(f); }
+                    _failures[Key(status)] = list;
+                }
             }
             if (moved) Changed?.Invoke(Key(status));
             return still;
@@ -163,7 +172,7 @@ namespace Orbweaver
                 {
                     _pending[Key(status)] = RunPendingRules.With(
                         _pending.GetValueOrDefault(Key(status)) ?? [], new RunPending(field, value, _seams.Now()));
-                    _failures.Remove(Key(status));
+                    if (_failures.TryGetValue(Key(status), out var list)) list.RemoveAll(x => x.Field == field);
                 }
                 Changed?.Invoke(Key(status));
             }

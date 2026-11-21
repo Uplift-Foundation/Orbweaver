@@ -1293,6 +1293,14 @@ namespace Orbweaver
                 };
                 panel.Children.Add(RunStatus);
 
+                // CB-404: a change a reading contradicted, or that never showed
+                // up, is said once the flyout opens, effort's after model's.
+                if ((options.EffortFailure ?? options.ModelFailure) is { } failed)
+                {
+                    RunStatus.Text = options.ModelFailure is { } m && options.EffortFailure is { } e ? m + "\n" + e : failed;
+                    RunStatus.IsVisible = true;
+                }
+
                 return panel;
             }
             finally
