@@ -46,6 +46,9 @@ public class RemoteOmitReturnTests
             manager.ScanAndUpdate();
             Assert.Contains("rc:.claude:sid:369c40f8", Orbs(manager).Keys);
             Assert.Contains("rc:.claude:sid:20b839b3", Orbs(manager).Keys);
+            var back = Orbs(manager)["rc:.claude:sid:369c40f8"];
+            Assert.True(back.IsVisible, "the returning orb window exists but is not shown");
+            Assert.True(back.Opacity > 0.5, $"opacity {back.Opacity}");
         }
         finally
         {
