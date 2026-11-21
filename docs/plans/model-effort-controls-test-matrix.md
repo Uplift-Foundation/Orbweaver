@@ -26,7 +26,7 @@ Source: contracts/frames-v13.json (`phone_rules`, `desktop_rules`, `back_compat`
 
 1. Disabled control shown with its reason as text, never hidden. Neg: desk without `run_options` cap -> no controls at all.
 2. `ok set` is not confirmation: control shows applying until a reading confirms; the desk's `failed` sentence shows if it does not. Neg: desk accepts, never confirms -> pick dropped with sentence.
-3. While one change is pending both controls are disabled; a second set_run is refused `unavailable`.
+3. (Changed, Mobile a407b9a) A pending change does NOT disable anything: a control awaiting a reading shows applying and can be changed again (same-field change replaces the pending one); the other control stays usable. Refused `unavailable` only if a change arrives while the desk is still running an earlier one for that session (seconds). Phone disables both controls only from tap until the desk's reply. Real-machine case: on a Claude session set effort, send NO turn, change the model: it must go through with effort still showing applying. Neg: a second set_run during the desk's in-flight run -> `unavailable`.
 4. Typed route (bridge setting off) and Codex < 0.164 show "Changing this also changes the default for new sessions on <machine>." Neg: bridge route shows no such line.
 5. Dial drag across the bottom gap stays at the end it left, never jumps lowest to highest.
 6. New phone + old desk: no controls. Old phone + new desk: nothing changes (code-read only; exercise against a built old phone).
