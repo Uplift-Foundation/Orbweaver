@@ -277,6 +277,14 @@ namespace Orbweaver
     [ExcludeFromCodeCoverage]
     internal static class RunSourcesLive
     {
+        // Set by every test assembly's TestBootstrap in a [ModuleInitializer],
+        // before any test can construct a session and read its run options:
+        // the probes below start real `claude -p`, `codex app-server` and
+        // `codex --version` processes, and a suite must never launch one. The
+        // TextToSpeech.SilenceForTests pattern: a guard at the boundary, not a
+        // seam each caller has to remember. Production never sets it.
+        internal static bool ProbesOffForTests;
+
         internal static readonly RunSources Shared = new(new RunSources.Seams(
             path =>
             {
@@ -303,12 +311,12 @@ namespace Orbweaver
                 try { return File.ReadAllText(path); }
                 catch { return null; }
             },
-            root => Task.Run(() => ClaudeListModels(root)),
-            home => Task.Run(() => CodexBinary.Path is { } codex
+            root => ProbesOffForTests ? Task.FromResult<string?>(null) : Task.Run(() => ClaudeListModels(root)),
+            home => ProbesOffForTests ? Task.FromResult<string?>(null) : Task.Run(() => CodexBinary.Path is { } codex
                 ? CodexAppServerUsage.Ask(codex, home, CodexAppServerUsage.ModelListRequest)
                 : null),
-            ExecutableOf,
-            exe => Task.Run(() => RunSources.ParseCliVersion(VersionText(exe))),
+            pid => ProbesOffForTests ? null : ExecutableOf(pid),
+            exe => ProbesOffForTests ? Task.FromResult<Version?>(null) : Task.Run(() => RunSources.ParseCliVersion(VersionText(exe))),
             () => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             () => DateTimeOffset.UtcNow));
 
