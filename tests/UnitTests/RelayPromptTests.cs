@@ -489,4 +489,13 @@ public class RelayPromptRuleTests
     {
         Assert.Null(PromptFingerprint.Of(PaneFixtures.MobileAfterEsc));
     }
+
+    [Fact]
+    public void The_quiet_key_is_written_after_text_only_when_set()
+    {
+        var plain = PromptFrames.Prompt("r", "s", "question", "claude", "", "p", [], "h", 1, multi: true, text: true);
+        Assert.DoesNotContain("quiet", plain);
+        var quiet = PromptFrames.Prompt("r", "s", "question", "claude", "", "p", [], "h", 1, multi: true, text: true, quiet: true);
+        Assert.EndsWith(",\"text\":true,\"quiet\":true}", quiet);
+    }
 }

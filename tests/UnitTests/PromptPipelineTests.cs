@@ -1681,4 +1681,27 @@ public class PromptPipelineTests
         Assert.Null(sender.Prompts.Single(x => x.Sid == "so").Push);
         Assert.NotNull(sender.Prompts.Single(x => x.Sid == "sd").Push);
     }
+
+    // The frame says which prompts are silent: `quiet` is present and true on an overlay
+    // and absent altogether on a permission prompt or a question, and a replay is the
+    // minted plaintext byte for byte, so it carries the flag too.
+    [Fact]
+    public async Task Only_an_overlays_frame_carries_quiet_and_a_replay_carries_it_unchanged()
+    {
+        var sender = new Sender();
+        var p = TwoSessionPipeline(sender);
+        await p.OnScannedAsync(TwoSessions());
+        var overlay = sender.Prompts.Single(x => x.Sid == "so");
+        var dialog = sender.Prompts.Single(x => x.Sid == "sd");
+        Assert.True(JsonDocument.Parse(overlay.Prompt).RootElement.GetProperty("quiet").GetBoolean());
+        Assert.False(JsonDocument.Parse(dialog.Prompt).RootElement.TryGetProperty("quiet", out _));
+
+        _pane.Screen = PaneFixtures.MacColourQuestion;
+        await _p.OnScannedAsync(Snap());
+        Assert.False(JsonDocument.Parse(_sent.Prompts[0].Prompt).RootElement.TryGetProperty("quiet", out _));
+
+        await p.ResendPendingToAsync("ph_a");
+        Assert.Equal(overlay.Prompt, sender.PromptsTo.Single(x => x.Sid == "so").Prompt);
+        Assert.Contains("\"quiet\":true", sender.PromptsTo.Single(x => x.Sid == "so").Prompt);
+    }
 }

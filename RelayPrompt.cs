@@ -343,7 +343,7 @@ namespace Orbweaver
 
         // CB-323 frames-v7-questions: multi and text, present only as true.
         internal static string Prompt(string requestId, string sessionId, string kind, string cli, string tool,
-            string preview, IReadOnlyList<PromptOption> options, string screenHash, long expiresAt, bool multi = false, bool text = false)
+            string preview, IReadOnlyList<PromptOption> options, string screenHash, long expiresAt, bool multi = false, bool text = false, bool quiet = false)
         {
             var j = new JsonObject
             {
@@ -360,6 +360,11 @@ namespace Orbweaver
             };
             if (multi) j["multi"] = true;
             if (text) j["text"] = true;
+            // CB-400: an overlay is a screen opened on purpose at the desk and never
+            // alerts. Android notifies from the socket, and a replayed permission prompt
+            // also travels with push none, so the envelope's push cannot say which prompts
+            // are silent; this key does. Absent (not false) on every other prompt.
+            if (quiet) j["quiet"] = true;
             return j.ToJsonString(Json);
         }
 

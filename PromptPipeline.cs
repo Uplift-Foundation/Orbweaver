@@ -269,7 +269,7 @@ namespace Orbweaver
             // out with nothing to answer.
             var multi = form is { MultiSelect: true } && options.Count > 0;
             var text = form is { MultiSelect: false, IsReview: false, FreeTextKey: not null } && options.Count > 0;
-            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text);
+            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text, quiet: fp.Overlay);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
             var push = fp.Overlay ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null && !fp.Overlay ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
