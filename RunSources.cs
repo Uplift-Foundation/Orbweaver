@@ -374,16 +374,44 @@ namespace Orbweaver
             }
         }
 
-        // The process's own image, through the OS (proc_pidpath on macOS, the
-        // process image on Windows, /proc/<pid>/exe on Linux), never by name.
+        // The process's own image, through the OS, never by name. On Windows that
+        // is QueryFullProcessImageName: Process.MainModule read during start-up
+        // answered ntdll.dll on the CI runner (measured), because it is the
+        // first loaded module and not the image. Elsewhere MainModule is the
+        // image (proc_pidpath on macOS, /proc/<pid>/exe on Linux).
         internal static string? ExecutableOf(int pid)
         {
+            if (OperatingSystem.IsWindows()) return WindowsImageOf(pid);
             try
             {
                 using var p = Process.GetProcessById(pid);
                 return p.MainModule?.FileName;
             }
             catch { return null; }
+        }
+
+        private const uint ProcessQueryLimitedInformation = 0x1000;
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern bool QueryFullProcessImageName(IntPtr process, uint flags, System.Text.StringBuilder name, ref uint size);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        private static string? WindowsImageOf(int pid)
+        {
+            var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+            if (handle == IntPtr.Zero) return null;
+            try
+            {
+                var name = new System.Text.StringBuilder(1024);
+                var size = (uint)name.Capacity;
+                return QueryFullProcessImageName(handle, 0, name, ref size) ? name.ToString(0, (int)size) : null;
+            }
+            finally { CloseHandle(handle); }
         }
 
         internal static string? VersionText(string exe)
