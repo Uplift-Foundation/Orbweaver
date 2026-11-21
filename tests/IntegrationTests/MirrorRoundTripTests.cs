@@ -829,7 +829,9 @@ public partial class MirrorRoundTripTests : IDisposable
         var line = Assert.Single(log, l => l.Contains(MirrorProtocol.ErrNotAtPrompt));
         Assert.Contains("why=" + outcome.Why, line);
         Assert.Contains(" lines=", line);
-        Assert.EndsWith(" check=no-prompt-mark", line);
+        // CB-400: the Allow tab has the `▔` edge and an `Esc to cancel` footer, so it is now
+        // named as a pane to leave rather than "no prompt mark". Still refused, still not typed.
+        Assert.EndsWith(" check=overlay", line);
         Assert.DoesNotContain("please carry on", string.Join("\n", log));
 
         // And the near panel's sentence quotes it.
@@ -2795,7 +2797,7 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Contains("shadow=1", line.Detail);
         Assert.Contains(shape switch
         {
-            "dialog" => "kind=unreadable",
+            "dialog" => "kind=other",
             "record-waiting" => "kind=record-waiting",
             _ => "kind=allowed",
         }, line.Detail);

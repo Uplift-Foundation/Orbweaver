@@ -61,12 +61,17 @@ namespace Orbweaver.Tests
             // Negative controls: every one was Unknown on develop and must stay so.
             foreach (var name in new[]
             {
-                "form4-w23", "model-w23", "model-w32", "permissions-w23", "permissions-w32", "trust-w32", "trust-w100",
+                "form4-w23", "model-w23", "model-w32", "permissions-w23", "trust-w32", "trust-w100",
             })
             {
                 var (reading, why) = PaneScreen.Read(Load(name));
                 check($"{name} is never a prompt or a dialog", reading == PaneReading.Unknown, $"{reading} ({why})");
             }
+
+            // CB-400: the 32-column /permissions capture has the `▔` edge and an `Esc to cancel`
+            // footer, so it is a pane Esc leaves: still never a prompt, now named as an overlay.
+            var (permReading, permWhy) = PaneScreen.Read(Load("permissions-w32"));
+            check("permissions-w32 is a pane to leave, never a prompt", permReading == PaneReading.Dialog && permWhy == "overlay", $"{permReading} ({permWhy})");
 
             // --- the forms ---
 

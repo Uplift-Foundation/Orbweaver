@@ -244,7 +244,7 @@ namespace Orbweaver
             // It goes to the phone as "Open on desk": the same prompt with no
             // options, and the gate refuses anything an answer names.
             var questionOptions = form is not null ? QuestionOptions(form)
-                : fp.Overlay ? [new PromptOption(OverlayScreen.CloseKey, OverlayScreen.CloseLabel, OptionKinds.Option, null)]
+                : fp.Overlay ? [new PromptOption(fp.Prompt.Options[0].Key, fp.Prompt.Options[0].Label, OptionKinds.Option, null)]
                 : null;
             var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true) || questionOptions is { Count: 0 };
             var options = deskOnly ? [] : questionOptions ?? fp.Prompt.Options.Select(o =>

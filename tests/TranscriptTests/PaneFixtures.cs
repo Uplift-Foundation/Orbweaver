@@ -2012,7 +2012,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 ────────────────────────────────────────────────────────────────────────────────
 ❯ 
 ────────────────────────────────────────────────────────────────────────────────
-  Fable 5.2 | ~/scratchdir | 4% (7d:22%) | [.claude-board]
+  Fable 5.2 | ~/scratchdir | 4% (7d:22%) | [.xxxxxxxxxxxx]
   ⏵⏵ bypass permissions on (shift+tab to cycle)
 """"");
 
@@ -2237,7 +2237,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
   ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
   │ ⌕ Search…                                                                                    │
   ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-    cb400qa-work
+    xxxxxxxxxxxx
 
   ❯ Setup health check
     1 minute ago · HEAD · 3.8MB
@@ -2251,7 +2251,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
  ▐▛███▛█   Claude Code v2.1.330
 ▝▜██████▀  Fable 5.2 · Claude Team
- ▝▝   ▝▝   /private/tmp/cb400qa-work · /rc
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
 
   ⎿  SessionStart:startup says: 👋 here. Most recently touched: scan2.sh.
 
@@ -2568,6 +2568,673 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
     Save to file       Save the conversation to a file in the current directory
 
   ↑/↓ to navigate · Enter to select · Esc to cancel
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /mcp list: footer `Esc to close`, 45-row body. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/mcp-list.txt)
+        internal static readonly string McpList = Lf("""""
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: mcp.sh.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  MCP servers
+  44 servers
+
+    User MCPs (/Users/xxxxxxxxxxxxxx/.xxxxxxxxxxxx/.claude.json)
+  ❯ ⚠ xxxxxxxxx-xxxxxxx                                needs sign-in
+    ⚠ xxxxxxxxx-xxxxxxxxx                              needs sign-in
+    ✔ xxxxxxxxx-xxxxxx                                 26 tools
+    ✔ xxxxxxx                                          10 tools
+    ✔ xxxxx                                            16 tools
+    ✔ xxxxxx                                           13 tools
+    ✔ xxxx_xxxx                                        4 tools
+    ✔ xxxxxxxxxx                                       25 tools
+
+    claude.ai
+    ⚠ xxxxxx.xx xxxxxx.xx                              needs sign-in
+    ⚠ xxxxxx.xx xxxxxx                                 needs sign-in
+    ⚠ xxxxxx.xx xxxxx                                  needs sign-in
+    ✔ xxxxxx.xx xxxxxx xxxx                            11 tools
+    ✔ xxxxxx.xx xxxxxx xxxx                            8 tools
+    ✔ xxxxxx.xx xxxxx                                  31 tools
+    ✔ xxxxxx.xx xxxxxx xxxxxxxx                        9 tools
+    ✔ xxxxxx.xx xxxxxx xxxxx                           15 tools
+    ⚠ xxxxxx.xx xxxxxxxxx                              needs sign-in
+    ✔ xxxxxx.xx xxxxxxxx                               5 tools
+    → Show unused connectors                           11 hidden
+    xxxxxx.xx xxxxx · ◯ hidden — same URL as your server 'xxxxx'
+      To use this connector instead, run claude mcp remove maton
+    xxxxxx.xx xxxx… · ◯ hidden — same URL as your server 'xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxx'
+      To use this connector instead, disable the plugin server in /plugin
+
+    Plugin MCPs (/plugin to manage)
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxx            needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxx            needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxx              needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxx               needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxxxx          needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxx             couldn't load tools · connected
+    ✔ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxx             5 tools
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxxxxx         needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxx-xxxxxxxxxx   needs sign-in
+    ✔ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxx             17 tools
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxxx-xxx       needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxx              needs sign-in
+    ↓ 3 more
+  Learn more: https://code.claude.com/docs/en/mcp
+
+  ↑/↓ to navigate · Enter to view · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /mcp detail page: footer `Esc to go back`. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/mcp-detail.txt)
+        internal static readonly string McpDetail = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: mcp.sh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  xxxxxxxxx-xxxxxxx
+  MCP server
+
+  Status:           ⚠ needs sign-in
+  URL:              https://xxx.xxxxxxxxx.xxx/xx/xxx
+  Config location:  /xxxxx/xxxxxxxxxxxxxx/.xxxxxx-xxxxx/.xxxxxx.xxxx
+
+  ❯ Authenticate
+    Disable in this project
+    Back
+
+  ↑/↓ to navigate · Enter to select · Esc to go back
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /mcp after one Esc on the detail page: back on the list. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/mcp-after-esc1.txt)
+        internal static readonly string McpAfterEsc1 = Lf("""""
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: mcp.sh.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  MCP servers
+  44 servers
+
+    User MCPs (/Users/xxxxxxxxxxxxxx/.xxxxxxxxxxxx/.claude.json)
+  ❯ ⚠ xxxxxxxxx-xxxxxxx                                needs sign-in
+    ⚠ xxxxxxxxx-xxxxxxxxx                              needs sign-in
+    ✔ xxxxxxxxx-xxxxxx                                 26 tools
+    ✔ xxxxxxx                                          10 tools
+    ✔ xxxxx                                            16 tools
+    ✔ xxxxxx                                           13 tools
+    ✔ xxxx_xxxx                                        4 tools
+    ✔ xxxxxxxxxx                                       25 tools
+
+    claude.ai
+    ⚠ xxxxxx.xx xxxxxx.xx                              needs sign-in
+    ⚠ xxxxxx.xx xxxxxx                                 needs sign-in
+    ⚠ xxxxxx.xx xxxxx                                  needs sign-in
+    ✔ xxxxxx.xx xxxxxx xxxx                            11 tools
+    ✔ xxxxxx.xx xxxxxx xxxx                            8 tools
+    ✔ xxxxxx.xx xxxxx                                  31 tools
+    ✔ xxxxxx.xx xxxxxx xxxxxxxx                        9 tools
+    ✔ xxxxxx.xx xxxxxx xxxxx                           15 tools
+    ⚠ xxxxxx.xx xxxxxxxxx                              needs sign-in
+    ✔ xxxxxx.xx xxxxxxxx                               5 tools
+    → Show unused connectors                           11 hidden
+    xxxxxx.xx xxxxx · ◯ hidden — same URL as your server 'xxxxx'
+      To use this connector instead, run claude mcp remove maton
+    xxxxxx.xx xxxx… · ◯ hidden — same URL as your server 'xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxx'
+      To use this connector instead, disable the plugin server in /plugin
+
+    Plugin MCPs (/plugin to manage)
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxx            needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxx            needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxx              needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxx               needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxxxx          needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxx             couldn't load tools · connected
+    ✔ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxx             5 tools
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxxxxx         needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxx-xxxxxxxxxx   needs sign-in
+    ✔ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxx             17 tools
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxxxxx-xxx       needs sign-in
+    ⚠ xxxxxx:xxxxxx-xxx-xxxxxxxxxx:xxxxxx              needs sign-in
+    ↓ 3 more
+  Learn more: https://code.claude.com/docs/en/mcp
+
+  ↑/↓ to navigate · Enter to view · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /mcp after the second Esc: the idle prompt. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/mcp-after-esc2.txt)
+        internal static readonly string McpAfterEsc2 = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: mcp.sh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.2 | ~/xxxxxxxxxxxx | 41% (7d:28%) | [.xxxxxxxxxxxx]
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /config after one Esc: footer now `Esc to close`. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/ctl-config-esc1.txt)
+        internal static readonly string ConfigAfterEsc1 = Lf("""""
+
+  ⎿  Kept model as Fable 5.2
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Settings  Status   Config   Usage   Stats
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search settings…                                                                           │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ Auto-compact                                    on
+    Idle compaction                                 on
+    Continue automatically at usage limit           on
+    Switch models when a message is flagged         Not asked yet ›
+    Show tips                                       on
+    Claude-drafted feedback                         notify
+    Reduce motion                                   off
+    Thinking mode                                   on
+    Thinking can't be turned off for Fable 5.2
+    Prompt suggestions                              on
+    Session recap                                   on
+    Rewind code (checkpoints)                       on
+    Dynamic workflows                               on
+    Ultracode keyword trigger                       on
+    Dynamic workflow size                           medium (default)
+    Artifacts                                       on
+    Verbose output                                  off
+    Terminal progress bar                           on
+    Show turn duration                              on
+    Time format                                     auto ›
+    Default permission mode                         Bypass Permissions
+    Worktree base ref                               fresh
+    Use auto mode during plan                       on
+    Respect .gitignore in file picker               on
+    Skip the /copy picker                           off
+    Copy on select                                  on
+    Auto-scroll                                     on
+    Open agents view by default                     off
+    ← opens agents                                  on
+    Auto-update channel                             latest ›
+    Theme                                           Auto (match terminal) ›
+    Local notifications                             Auto
+    Push when actions required                      on
+    Push when Claude decides                        on
+    Output style                                    default ›
+    Language                                        Default (English) ›
+    Editor mode                                     normal
+    Question auto-continue timeout                  never
+    Show last response in external editor           off
+    ↓ 20 more
+
+  ↑/↓ to navigate · Space to toggle · / to search · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /plugin. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/other-plugin.txt)
+        internal static readonly string OtherPluginScreen = Lf("""""
+
+❯ /model
+  ⎿  Kept model as Fable 5.2
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Plugins  Discover   Installed   Marketplaces   Errors   Stats
+
+  2 mods active · jira-board, team-progress
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search plugins…                                                                            │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+   All 3862 · Anthropic Directory 3779 · claude-plugins-official 315  (ctrl+s to filter by
+   marketplace)
+
+  ❯ [ ] frontend-design                                Anthropic Directory · 1.3M installs
+        Frontend design skill for UI/UX implementation
+    [ ] Superpowers                                    Anthropic Directory · 1.1M installs
+        Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven…
+    [ ] code-review                                    Anthropic Directory · 477.6K installs
+        Automated code review for pull requests using multiple specialized agents with confiden…
+    [ ] context7                                       Anthropic Directory · 441.5K installs
+        Upstash Context7 MCP server for up-to-date documentation lookup. Connects to Context7's…
+    [ ] skill-creator                                  Anthropic Directory · 429K installs
+        Create new skills, improve existing skills, and measure skill performance. Use when use…
+    [ ] code-simplifier                                Anthropic Directory · 371.4K installs
+        Agent that simplifies and refines code for clarity, consistency, and maintainability wh…
+    [ ] playwright                                     Anthropic Directory · 358.1K installs
+        Browser automation and end-to-end testing MCP server by Microsoft. Enables Claude to in…
+    [ ] github                                         Anthropic Directory · 345.4K installs
+        Official GitHub MCP server for repository management. Create issues, manage pull reques…
+    [ ] claude-md-management                           Anthropic Directory · 314K installs
+        Tools to maintain and improve CLAUDE.md files - audit quality, capture session learning…
+    [ ] Vercel                                         Anthropic Directory · 293K installs
+        Build and deploy web apps and agents
+    [ ] feature-dev                                    Anthropic Directory · 269.2K installs
+        Comprehensive feature development workflow with specialized agents for codebase explora…
+    [ ] Security Guidance                              Anthropic Directory · 268.9K installs
+        Security review for Claude-generated code. Pattern-based warnings on edits, LLM-powered…
+    [ ] typescript-lsp                                 claude-plugins-official · 228.2K installs
+        TypeScript/JavaScript language server for enhanced code intelligence
+    [ ] claude-code-setup                              Anthropic Directory · 221.5K installs
+        Analyze codebases and recommend tailored Claude Code automations such as hooks, skills,…
+    [ ] ralph-loop                                     Anthropic Directory · 199.3K installs
+        Continuous self-referential AI loops for interactive iterative development, implementin…
+    [ ] figma                                          claude-plugins-official · 184.2K installs
+        Figma design platform integration. Access design files, extract component information, …
+
+    ↓ 3846 more
+
+  ↑/↓ to navigate · ←/→ to switch · Space to toggle · / to search · Enter to select · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /stats. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/other-stats.txt)
+        internal static readonly string OtherStatsScreen = Lf("""""
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: scan2.sh.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Settings  Status   Config   Usage   Stats
+
+   Overview   Models
+
+
+      Nov Dec Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov
+      ······································░·········░░▒·
+  Mon ················································▓▓··
+      ················································█▒█▒
+  Wed ···············································▓█░░▒
+      ···············································▓█▓·▒
+  Fri ···············································██▒·█
+      ·····································▒·········▓·░·▓
+
+      Less ░ ▒ ▓ █ More
+
+  All time · Last 7 days · Last 30 days
+
+  Favorite model: Opus 5.5        Total tokens: 11.0b
+
+  Sessions: 142                   Longest session: 2d 20h 8m
+  Active days: 27/99              Longest streak: 10 days
+  Most active day: Oct 27         Current streak: 5 days
+  Input 107.9k · Output 34.8m · Cache read 10.8b · Cache write 165.4m
+
+  Your longest session is ~34x longer than a half marathon (average time)
+
+  ↓ to navigate · ←/→ to switch · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /usage. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/other-usage.txt)
+        internal static readonly string OtherUsageScreen = Lf("""""
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: scan2.sh.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Settings  Status   Config   Usage   Stats
+
+  Current session
+  ██████████████████▌                                37% used
+  Resets 5pm (America/Los_Angeles)
+
+  Current week (all models)
+  ██████████████                                     28% used
+  Resets Nov 25 at 8pm (America/Los_Angeles)
+
+  Current week (Fable)
+  █████████████▌                                     27% used
+  Resets Nov 25 at 8pm (America/Los_Angeles)
+
+  What's contributing to your usage?
+  Approximate · sessions on this computer only
+
+  Last 24h · shares overlap
+
+  84%  Start fresh when you switch tasks · run /clear
+  46%  Run fewer sessions at once · up to 7 at once
+  23%  Trim ~/Source/Orbweaver/CLAUDE.md · 19k tokens per request
+
+  MCP servers             % of usage
+  atlassian-xxxxxx                3%
+
+  Loops                                      every  runs  tokens  per run last run
+  /loop until the story is done            dynamic     1  365.5k   365.5k   4h ago
+
+  Session
+  Estimated cost:         $0.0000
+  Total duration (API):   0s
+  Total duration (wall):  22s
+  Total code changes:     0 lines added, 0 lines removed
+  Usage:                  0 input, 0 output, 0 cache read, 0 cache write
+
+  ←/→ to switch · d to show day · w to show week · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /release-notes. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/other-release-notes.txt)
+        internal static readonly string OtherReleaseNotesScreen = Lf("""""
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: scan2.sh.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Release notes
+
+  ❯ All versions      446 versions
+    Version 2.1.330   142 items
+    Version 2.1.329   130 items
+    Version 2.1.328   144 items
+    Version 2.1.327   173 items
+    Version 2.1.326   367 items
+    Version 2.1.325   139 items
+    Version 2.1.323   294 items
+    Version 2.1.322   1 item
+    Version 2.1.321   118 items
+    Version 2.1.319   146 items
+    Version 2.1.318   84 items
+    Version 2.1.317   87 items
+    Version 2.1.316   55 items
+    Version 2.1.314   119 items
+    Version 2.1.312   39 items
+    Version 2.1.311   92 items
+    Version 2.1.310   26 items
+    Version 2.1.309   79 items
+    Version 2.1.308   1 item
+    Version 2.1.307   43 items
+    Version 2.1.306   2 items
+    Version 2.1.305   38 items
+    Version 2.1.304   76 items
+    Version 2.1.303   1 item
+    Version 2.1.302   63 items
+    Version 2.1.301   51 items
+    Version 2.1.300   88 items
+    Version 2.1.299   190 items
+    Version 2.1.296   79 items
+    Version 2.1.295   143 items
+    Version 2.1.294   2 items
+    Version 2.1.293   56 items
+    Version 2.1.292   92 items
+    Version 2.1.291   2 items
+    Version 2.1.290   190 items
+    Version 2.1.289   27 items
+    Version 2.1.288   89 items
+    Version 2.1.287   106 items
+    Version 2.1.286   88 items
+    Version 2.1.285   136 items
+    Version 2.1.284   100 items
+    ↓ 405 more
+
+  ↑/↓ to navigate · Enter to view · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /status. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/other-status.txt)
+        internal static readonly string OtherStatusScreen = Lf("""""
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: scan.sh.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Settings  Status   Config   Usage   Stats
+
+  Version:           2.1.330
+  Session name:      /rename to add a name
+  Session ID:        00000000-0000-0000-0000-000000000000
+  Session kind:      interactive
+  Peer address:      uds:/tmp/cc-socks/00000.sock
+  cwd:               /private/tmp/xxxxxxxxxxxx
+  Login method:      Claude Team account
+  Organization:      The XXXXXX Foundation
+  Email:             xxxxx@xxxxxxx.xxx
+
+  Model:             fable (claude-fable-5-2)
+  MCP servers:       16 connected, 28 need auth · /mcp
+  Setting sources:   User settings
+                     Your organization may apply global configuration to Claude Code. These
+                     settings are centrally managed by your IT administrator.
+  Auto mode server:  Disabled
+
+  ←/→ to switch · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /hooks. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/other-hooks.txt)
+        internal static readonly string OtherHooksScreen = Lf("""""
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Hooks
+  27 hooks on 12 events
+
+  This menu is read-only. To add or change a hook, edit settings.json or ask Claude. Learn more
+
+    PreToolUse  before tool execution
+  ❯ [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+    [User] bash "$HOME/.claude/orbweaver/OrbweaverHook.sh" g…   .* · command
+
+    PostToolUse  after tool execution
+    [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+    [User] bash "$HOME/.claude/scripts/watch-ci-in-tmux.sh"     Bash · command
+
+    Notification  when notifications are sent
+    [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+    [User] bash "$HOME/.claude/orbweaver/OrbweaverHook.sh" g…   elicitation_complete · command
+    [User] bash "$HOME/.claude/orbweaver/OrbweaverHook.sh" w…   elicitation_dialog · command
+    [User] bash "$HOME/.claude/orbweaver/OrbweaverHook.sh" w…   permission_prompt · command
+
+    UserPromptSubmit  when the user submits a prompt
+    [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+    [User] bash "$HOME/.claude/orbweaver/OrbweaverHook.sh" g…   command
+    [User] bash "$HOME/.claude/scripts/tmux-rename-from-sess…   command
+
+    SessionStart  when a new session is started
+    [User] /Users/xxxxxxxxxxxxxx/.claude/scripts/share-claud…   command
+    [User] python3 /Users/xxxxxxxxxxxxxx/Source/xxxxxxxxxxxx…   command
+    [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+    [User] python3 /Users/xxxxxxxxxxxxxx/Source/xxxxxxxxxxxx…   command
+    [User] bash "$HOME/.claude/orbweaver/OrbweaverHook.sh" i…   command
+
+    Stop  right before Claude concludes its response
+    [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+    [User] bash "$HOME/.claude/orbweaver/OrbweaverHook.sh" i…   command
+    [User] bash "$HOME/.claude/scripts/tmux-rename-from-sess…   command
+
+    StopFailure  when the turn ends due to an API error
+    [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+
+    SubagentStart  when a subagent (Agent tool call) is started
+    [User] python3 /Users/xxxxxxxxxxxxxx/Source/xxxxxxxxxxxx…   command
+
+    SubagentStop  right before a subagent (Agent tool call) concludes its response
+    [User] /Users/xxxxxxxxxxxxxx/.config/iterm2/cc-status       command
+    ↓ 6 more
+
+  ↑/↓ to navigate · Enter to view · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /permissions with the search box. Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/other-permissions.txt)
+        internal static readonly string OtherPermissionsScreen = Lf("""""
+
+  ⎿  Context usage
+     ⛁ ⛁ ⛁ ⛁ ⛀ ⛀ ⛁ ⛀ ⛁ ⛁ ⛁ ⛀ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Fable 5.2
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   claude-fable-5-2
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   45.5k/1m tokens (5%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Estimated usage by category
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System prompt: 4.4k tokens (0.4%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System tools: 17.7k tokens (2%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP tools: 1k tokens (0.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP server instructions: 5.8k tokens (0.6%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝   ⛁ Custom agents: 150 tokens (<0.1%)
+                                               ⛁ Memory files: 6.6k tokens (0.7%)
+                                               ⛁ Skills: 9.6k tokens (1%)
+                                               ⛁ Messages: 291 tokens (<0.1%)
+                                               ⛶ Free space: 921.5k tokens (92%)
+                                               ⛝ Autocompact buffer: 33k tokens (3%)
+
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Permissions  Recently blocked   Allow   Ask   Deny   Auto mode   Workspace
+
+  Claude Code won't ask before using allowed tools.
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                    │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ Add a new rule…
+    xxxx(xxxx xx xxxxx:*)
+    xxxx(xxxx xxxx -- xxxx xx xxxxx:*)
+    xxxx(xxxxxxx -x ' *)
+    xxxx(xxxxxxx *)
+    xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    xxxxxxxxxx-xxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxx
+    ↓ 9 more
+
+  ↓ to navigate · ←/→ to switch · / to search · Esc to close
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: a real permission prompt (negative control: no overlay edge). Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/real-permission-prompt-2.1.330.txt)
+        internal static readonly string RealPermissionPrompt2330 = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: pp.sh.
+
+❯ Use the Bash tool to run exactly: touch /tmp/xxxxxxxxxxxx/probe-file
+
+⏺ I'm Claude Code, your coding agent for this working directory. No persona is configured for this
+  session, so it's just me. The most recent activity here is a handful of shell scripts touched
+  today (pp.sh, m4.sh, scan.sh and others), though I can't tell what changed in them.
+
+  Running your command now.
+
+  Creating the probe file
+  ⎿  $ touch /tmp/xxxxxxxxxxxx/probe-file
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Create the probe file
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ touch /tmp/xxxxxxxxxxxx/probe-file
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to /tmp/xxxxxxxxxxxx from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: a real question form (negative control: no overlay edge). Personal values replaced by same-length placeholders; the layout is untouched. (cb400-captures/real-question-form-2.1.330.txt)
+        internal static readonly string RealQuestionForm2330 = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: pp.sh.
+
+❯ Use the Bash tool to run exactly: touch /tmp/xxxxxxxxxxxx/probe-file
+
+⏺ I'm Claude Code, your coding agent for this working directory. No persona is configured for this
+  session, so it's just me. The most recent activity here is a handful of shell scripts touched
+  today (pp.sh, m4.sh, scan.sh and others), though I can't tell what changed in them.
+
+  Running your command now.
+
+  Did not run 1 call
+  ⎿  $ touch /tmp/xxxxxxxxxxxx/probe-file
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Use the AskUserQuestion tool to ask me which color I prefer, with two options red and blue. Do
+  nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Color
+
+Which color do you prefer?
+
+❯ 1. Red
+     You prefer red.
+  2. Blue
+     You prefer blue.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
 """"");
     }
 }

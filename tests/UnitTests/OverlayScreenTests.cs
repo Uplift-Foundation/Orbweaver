@@ -21,7 +21,7 @@ public class OverlayScreenTests
             ["Get the Claude app on your phone", "Scan the QR code, or visit claude.ai/mobile", "Find this session in the Code tab of the Claude app"],
             o.Caption);
         Assert.Equal(15, o.Body.Count(r => r.Any(c => c is '█' or '▀' or '▄')));
-        Assert.DoesNotContain(o.Body, r => r.Contains(OverlayScreen.Footer));
+        Assert.DoesNotContain(o.Body, r => r.Contains("Esc to close"));
         // The common indent (the title's two columns) is stripped; the QR keeps its own two more.
         Assert.Equal("Get the Claude app on your phone", o.Body[0]);
         Assert.StartsWith("  █▀▀▀▀▀█", o.Body.First(r => r.Contains('█')));
@@ -129,10 +129,10 @@ public class OverlayScreenTests
     }
 
     [Fact]
-    public void A_body_with_no_letters_has_an_empty_title()
+    public void A_body_with_no_letters_takes_its_first_row_as_the_title_and_has_no_caption()
     {
         var o = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  ██▀▀\n  Esc to close\n")!;
-        Assert.Equal("", o.Title);
+        Assert.Equal("██▀▀", o.Title);
         Assert.Empty(o.Caption);
     }
 
@@ -161,7 +161,7 @@ public class OverlayScreenTests
         var far = "▔▔▔▔▔▔▔▔▔▔▔▔\n  Title\n" + string.Join("\n", Enumerable.Repeat("  some prose here", 70)) + "\n  Esc to close\n";
         var o = OverlayScreen.Read(far)!;
         Assert.Equal("Title", o.Title);
-        Assert.Equal(60, o.Body.Count);
+        Assert.Equal(61, o.Body.Count);                    // 60 rows and the cut marker
         var two = "▔▔▔▔▔▔▔▔▔▔▔▔\n  Old\n▔▔▔▔▔▔▔▔▔▔▔▔\n  New\n  Esc to close\n";
         Assert.Equal("New", OverlayScreen.Read(two)!.Title);
     }
@@ -185,39 +185,21 @@ public class OverlayScreenTests
     // Every other Claude Code screen QA captured that draws `Esc to close` reads as an
     // overlay with its own title; /resume wraps its footer over two lines and still
     // matches because `Esc to close` is the last segment of the last line.
-    [Theory]
-    [InlineData(nameof(PaneFixtures.OtherHelpScreen))]
-    [InlineData(nameof(PaneFixtures.OtherIdeScreen))]
-    [InlineData(nameof(PaneFixtures.OtherResumeScreen))]
-    [InlineData(nameof(PaneFixtures.OtherMemoryScreen))]
-    public void Other_Esc_to_close_screens_read_as_overlays(string name)
-    {
-        Assert.False(string.IsNullOrWhiteSpace(OverlayScreen.Read(Fixture(name))!.Title));
-        Assert.Equal((PaneReading.Dialog, "overlay"), PaneScreen.Read(Fixture(name)));
-    }
-
-    [Theory]
-    [InlineData(nameof(PaneFixtures.OtherConfigScreen))]
-    [InlineData(nameof(PaneFixtures.OtherModelScreen))]
-    [InlineData(nameof(PaneFixtures.OtherThemeScreen))]
-    [InlineData(nameof(PaneFixtures.OtherRewindScreen))]
-    [InlineData(nameof(PaneFixtures.OtherExportScreen))]
-    public void Screens_without_an_Esc_to_close_footer_are_not_overlays(string name) =>
-        Assert.Null(OverlayScreen.Read(Fixture(name)));
-
-    // A navigated list is not excluded any more: the footer decides.
+    // The older /permissions tab captures (`▔` edge, footer `Esc to cancel`) are panes
+    // Esc leaves, so they read as Cancel; the Recently-blocked tab with blocked items ends
+    // `Esc to approve 1 blocked`, which approves rather than leaves, so it reads null.
     [Theory]
     [InlineData(nameof(PaneFixtures.PermissionsAllow))]
     [InlineData(nameof(PaneFixtures.PermissionsRecentlyBlockedEmpty))]
-    [InlineData(nameof(PaneFixtures.MiniRecentlyBlockedPopulatedStripped))]
-    public void A_permissions_tab_is_not_an_overlay(string name) => Assert.Null(OverlayScreen.Read(Fixture(name)));
+    public void An_older_permissions_tab_is_a_pane_labelled_Cancel(string name)
+    {
+        var o = OverlayScreen.Read(Fixture(name))!;
+        Assert.Equal(("Permissions", "Cancel"), (o.Title, o.Label));
+    }
 
     [Fact]
-    public void A_navigated_list_that_does_say_Esc_to_close_is_an_overlay()
-    {
-        Assert.NotNull(OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  Permissions  Recently blocked\n  ←/→ to switch\n  Esc to close\n"));
-        Assert.Null(OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  Recently blocked\n  Enter to approve · r to retry · Esc to approve 1 blocked\n"));
-    }
+    public void The_recently_blocked_tab_that_approves_is_not_a_pane() =>
+        Assert.Null(OverlayScreen.Read(PaneFixtures.MiniRecentlyBlockedPopulatedStripped));
 
     [Fact]
     public void Two_looks_at_one_overlay_with_different_content_hash_the_same()
@@ -243,4 +225,111 @@ public class OverlayScreenTests
 
     private static string Fixture(string name) =>
         (string)typeof(PaneFixtures).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+
+    // ---- addendum 3: every pane Esc leaves, labelled by its footer's verb -------
+
+    // The architect's table of what each real capture yields: the button's label, the
+    // title, and how many body and caption rows. Same-length scrubbing of personal
+    // values leaves every count as captured.
+    [Theory]
+    [InlineData(nameof(PaneFixtures.MobileOverlay80x50), "Close", "Get the Claude app on your phone", 22, 3)]
+    [InlineData(nameof(PaneFixtures.WinMobileOverlay), "Close", "Get the Claude app on your phone", 22, 3)]
+    [InlineData(nameof(PaneFixtures.MobileOverlay40x50), "Close", "Get the Claude app on your phone", 24, 5)]
+    [InlineData(nameof(PaneFixtures.MobileOverlay28x50), "Close", "Get the Claude app on", 43, 7)]
+    [InlineData(nameof(PaneFixtures.MobileOverlay80x14), "Close", "Get the Claude app on your phone", 10, 2)]
+    [InlineData(nameof(PaneFixtures.McpList), "Close", "MCP servers", 45, 42)]
+    [InlineData(nameof(PaneFixtures.McpAfterEsc1), "Close", "MCP servers", 45, 42)]
+    [InlineData(nameof(PaneFixtures.McpDetail), "Go back", null, 10, 8)]
+    [InlineData(nameof(PaneFixtures.OtherHelpScreen), "Close", "Help", 19, 14)]
+    [InlineData(nameof(PaneFixtures.OtherStatusScreen), "Close", "Settings", 18, 16)]
+    [InlineData(nameof(PaneFixtures.OtherUsageScreen), "Close", "Settings", 35, 26)]
+    [InlineData(nameof(PaneFixtures.OtherStatsScreen), "Close", "Settings", 26, 14)]
+    [InlineData(nameof(PaneFixtures.OtherConfigScreen), "Go back", "Settings", 45, 42)]
+    [InlineData(nameof(PaneFixtures.ConfigAfterEsc1), "Close", "Settings", 45, 42)]
+    [InlineData(nameof(PaneFixtures.OtherReleaseNotesScreen), "Close", "Release notes", 45, 44)]
+    [InlineData(nameof(PaneFixtures.OtherPermissionsScreen), "Close", "Permissions", 17, 13)]
+    [InlineData(nameof(PaneFixtures.OtherHooksScreen), "Close", "Hooks", 45, 35)]
+    [InlineData(nameof(PaneFixtures.OtherPluginScreen), "Close", "Plugins", 44, 38)]
+    [InlineData(nameof(PaneFixtures.OtherMemoryScreen), "Close", "Memory", 9, 6)]
+    [InlineData(nameof(PaneFixtures.OtherResumeScreen), "Close", "Resume session", 8, 5)]
+    [InlineData(nameof(PaneFixtures.OtherIdeScreen), "Close", "Connect to an IDE", 4, 3)]
+    [InlineData(nameof(PaneFixtures.OtherExportScreen), "Cancel", "Export conversation", 4, 3)]
+    [InlineData(nameof(PaneFixtures.OtherRewindScreen), "Cancel", "Rewind", 11, 7)]
+    [InlineData(nameof(PaneFixtures.OtherThemeScreen), "Cancel", "Theme", 20, 15)]
+    public void Every_pane_Esc_leaves_reads_with_the_label_of_its_footer(string name, string label, string? title, int body, int caption)
+    {
+        var o = OverlayScreen.Read(Fixture(name))!;
+        Assert.Equal(label, o.Label);
+        if (title is not null) Assert.Equal(title, o.Title);
+        Assert.Equal((body, caption), (o.Body.Count, o.Caption.Count));
+        Assert.Equal(label, Assert.Single(ChatTranscript.ParseDialog(Fixture(name))!.Options).Label);
+        Assert.Equal("overlay", PaneScreen.Read(Fixture(name)).Check);
+    }
+
+    [Theory]
+    [InlineData(nameof(PaneFixtures.MobileAfterEsc))]
+    [InlineData(nameof(PaneFixtures.WinAfterEsc))]
+    [InlineData(nameof(PaneFixtures.McpAfterEsc2))]
+    public void The_idle_prompt_after_leaving_is_not_a_pane(string name) => Assert.Null(OverlayScreen.Read(Fixture(name)));
+
+    // /model is numbered, so ParseDialogCore reads it first and answers by digit.
+    [Fact]
+    public void A_numbered_model_picker_is_the_dialog_not_an_overlay() =>
+        Assert.Null(OverlayScreen.Read(PaneFixtures.OtherModelScreen));
+
+    // Esc on a permission prompt denies it and Esc on a question form abandons it, so
+    // these must never read as a pane: none has the `▔` edge.
+    [Theory]
+    [InlineData(nameof(PaneFixtures.RealPermissionPrompt2330))]
+    [InlineData(nameof(PaneFixtures.RealQuestionForm2330))]
+    [InlineData(nameof(PaneFixtures.MiniAskForm))]
+    [InlineData(nameof(PaneFixtures.MacModelSwitchDialog))]
+    [InlineData(nameof(PaneFixtures.MiniExitDialog))]
+    public void An_answerable_dialog_or_form_is_never_a_pane(string name) => Assert.Null(OverlayScreen.Read(Fixture(name)));
+
+    [Fact]
+    public void A_pane_whose_footer_names_another_verb_is_not_a_pane()
+    {
+        foreach (var verb in new[] { "Esc to approve 1 blocked", "Esc to clear", "esc to interrupt", "Esc to" })
+            Assert.Null(OverlayScreen.Read($"▔▔▔▔▔▔▔▔▔▔▔▔\n  Recently blocked\n  Enter to approve · r to retry · {verb}\n"));
+        Assert.Equal("Cancel", OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  A title\n  ↑/↓ · Esc to cancel\n")!.Label);
+    }
+
+    // The title is cut at the first run of two spaces, so a tab bar gives its first tab.
+    [Fact]
+    public void A_tab_bar_title_is_cut_at_its_first_gap_and_the_caption_collapses_gaps()
+    {
+        var o = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  Settings   Status    Config\n  a     b\n  Esc to close\n")!;
+        Assert.Equal("Settings", o.Title);
+        Assert.Equal(["Settings Status Config", "a b"], o.Caption);
+    }
+
+    // A footer that wrapped over two lines: the wrapped first half (it holds a
+    // separator) is not part of the body, and the last segment of the last line decides.
+    [Fact]
+    public void A_wrapped_footer_is_not_body()
+    {
+        var o = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  A title\n  content row\n\n  ←/→ to switch · d to show day ·\n  w to show week · Esc to close\n")!;
+        Assert.Equal(["A title", "content row"], o.Body.Where(r => r.Length > 0));
+    }
+
+    [Fact]
+    public void A_body_cut_at_either_bound_ends_with_the_marker_and_a_whole_one_does_not()
+    {
+        var tall = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n" + string.Join("\n", Enumerable.Range(0, 80).Select(i => "  line " + i)) + "\n  Esc to close\n")!;
+        Assert.Equal(61, tall.Body.Count);
+        Assert.Equal(OverlayScreen.CutMarker, tall.Body[^1]);
+        var wide = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n  r" + new string('x', 250) + "\n  Esc to close\n")!;
+        Assert.Equal(OverlayScreen.CutMarker, wide.Body[^1]);
+        Assert.Equal(200, wide.Body[1].Length);
+        Assert.DoesNotContain(OverlayScreen.CutMarker, OverlayScreen.Read(PaneFixtures.OtherHooksScreen)!.Body);
+    }
+
+    [Fact]
+    public void A_screen_that_goes_from_Go_back_to_Close_is_a_different_prompt()
+    {
+        Assert.NotEqual(PromptFingerprint.Of(PaneFixtures.OtherConfigScreen)!.Hash, PromptFingerprint.Of(PaneFixtures.ConfigAfterEsc1)!.Hash);
+        Assert.EndsWith("\nEscape. Go back", PromptFingerprint.Of(PaneFixtures.OtherConfigScreen)!.Canonical);
+        Assert.NotEqual(PromptFingerprint.Of(PaneFixtures.McpList)!.Hash, PromptFingerprint.Of(PaneFixtures.McpDetail)!.Hash);
+    }
 }
