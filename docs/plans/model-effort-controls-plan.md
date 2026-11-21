@@ -269,6 +269,34 @@ header row. Changes:
 
 ### 4.4 Relay contract (frames v13, Orbweaver-Mobile `contracts/`)
 
+**Superseded by the contract itself.** `contracts/frames-v13.json` in
+Orbweaver-Mobile (branch `feature/model-effort-controls`) is now the
+authority, with `frames-v13-vectors.json` and `effort-dial-vectors.json`; where
+the sketch below disagrees, the contract wins. What changed, and why:
+
+- `pending` is the pending id, not `true`: the dial draws its pointer at the
+  chosen level with the confirmed level still marked, which needs both.
+- No `label` beside `id`: the label is the matching choice's.
+- Two additions: a per-field `failed` sentence (how a phone learns that a
+  change it was told `ok` for did not take) and `saves_default` (F1's warning).
+- `bad_field` is `bad_frame`, and `failed` is `set_failed`. The codes are
+  `bad_frame`, `unknown_session`, `unavailable`, `bad_value`, `set_failed`, in
+  that check order.
+- Ids have their own grammar (1 to 64 printable ASCII characters, no space,
+  quote or backslash), not `launch.model`'s, which would refuse a Claude alias
+  with brackets. The desk hands a route only a value found in its own choices.
+- A change that only waits for a reading does not block the next one. A set
+  is refused `unavailable` only while the host is running another change to
+  that session. Claude Code and Grok confirm effort with the next turn, so a
+  pending can last minutes, and the model list must not freeze that long.
+- The phone accepts a `run` frame only between `ok watching` and the watch's
+  end, which discards a stale frame the relay stored while it was away.
+- The dial's drag keeps an unclamped running angle; that, not a clamp in
+  `IndexFor`, is what stops a drag across the gap wrapping (section 4.7's
+  `IndexFor(angle)` alone would flip highest to lowest at bottom centre).
+
+The sketch as first planned:
+
 Copy frames-v11's shape. Additive; `hello.proto` stays 2; the relay needs no
 change because it forwards sealed frames blind.
 
