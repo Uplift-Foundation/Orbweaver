@@ -314,7 +314,7 @@ namespace Orbweaver
                     if (Str(f, "peer_id") is { } peer && _channels.TryGetValue(peer, out var c) && c.Online)
                     {
                         Note($"resync from {peer}: fresh roster");
-                        PhoneNeedsPrompts(peer);
+                        if (Welcomed) PhoneNeedsPrompts(peer);
                         return Collect(RosterFor(c));
                     }
                     // Said, not silent: a phone stuck waiting on a roster
@@ -366,7 +366,9 @@ namespace Orbweaver
             c.Online = online;
             PresenceChanged();
             if (wentOffline) PhoneWentOffline(id);
-            if (cameOnline) PhoneNeedsPrompts(id);
+            // Not before the welcome: SendPromptTo would send nothing, and the
+            // welcome replay covers every phone then anyway.
+            if (cameOnline && Welcomed) PhoneNeedsPrompts(id);
             return cameOnline ? RosterAndUsage(c) : [];
         }
 
@@ -952,7 +954,8 @@ namespace Orbweaver
             return WithActivity(frames);
         }
 
-        // CB-401: the same prompt again, to one phone, quietly. Push "none" and
+        // CB-401: the same prompt (request_id and plaintext; the ciphertext is
+        // fresh, it takes the next counter) again, to one phone, quietly. Push "none" and
         // no e: it already alerted when minted, and the phone is online now.
         internal IReadOnlyList<string> SendPromptTo(string phoneId, string requestId, string sessionId, string prompt)
         {

@@ -342,7 +342,7 @@ public class PromptPipelineTests
         _sent.Online = true;
         await _p.ResendPendingAsync();            // the welcome
         Assert.Equal(3, _sent.Prompts.Count);
-        Assert.Equal(minted, _sent.Prompts[2]);   // same request id, same bytes
+        Assert.Equal(minted, _sent.Prompts[2]);   // same request id, same plaintext
         Assert.Contains($"prompt-resent {minted.Rid}", _log);
     }
 
@@ -387,7 +387,7 @@ public class PromptPipelineTests
         await _p.ResendPendingToAsync("phone-b");
 
         var again = Assert.Single(_sent.PromptsTo);
-        Assert.Equal(("phone-b", minted.Rid, minted.Sid, minted.Prompt), again);   // same id, same bytes
+        Assert.Equal(("phone-b", minted.Rid, minted.Sid, minted.Prompt), again);   // same id, same plaintext
         Assert.Single(_sent.Prompts);                                              // nobody else, and no push path
         Assert.Contains($"prompt-resent {minted.Rid} to phone-b", _log);
     }
@@ -415,6 +415,47 @@ public class PromptPipelineTests
         Assert.True(_p.PendingFor("s1")!.Answered);
         await _p.ResendPendingToAsync("phone-b");
         Assert.Empty(_sent.PromptsTo);
+    }
+
+    [Fact]
+    public async Task Every_pending_session_is_replayed_with_its_own_request_id()
+    {
+        await _p.OnScannedAsync([("s1", Status()), ("s2", Status())]);
+        Assert.Equal(2, _sent.Prompts.Count);
+
+        await _p.ResendPendingToAsync("phone-b");
+
+        Assert.Equal(2, _sent.PromptsTo.Count);
+        Assert.Equal(["s1", "s2"], _sent.PromptsTo.Select(x => x.Sid).Order());
+        Assert.Equal(2, _sent.PromptsTo.Select(x => x.Rid).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task A_replay_changes_nothing_about_the_pending_prompt()
+    {
+        await _p.OnScannedAsync(Snap());
+        var before = _p.PendingFor("s1")!;
+        await _p.ResendPendingToAsync("phone-b");
+        var after = _p.PendingFor("s1")!;
+        Assert.Equal((before.RequestId, before.ExpiresAt, false), (after.RequestId, after.ExpiresAt, after.Answered));
+        await _p.OnScannedAsync(Snap());                                   // same dialog: still no new prompt
+        Assert.Single(_sent.Prompts);
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());         // and it is still answerable
+        Assert.Equal(["1"], _pane.Keys);
+    }
+
+    // CB-401, accepted: after a desk reconnect an online phone gets each prompt
+    // from the welcome replay and again from this one — the same request_id,
+    // which its PromptBook replaces, so the second copy is harmless.
+    [Fact]
+    public async Task A_welcome_replay_and_a_phone_replay_carry_the_same_request_id()
+    {
+        await _p.OnScannedAsync(Snap());
+        await _p.ResendPendingAsync();
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Equal(_sent.Prompts[1].Rid, _sent.PromptsTo.Single().Rid);
+        Assert.Equal(_sent.Prompts[1].Prompt, _sent.PromptsTo.Single().Prompt);
+        Assert.NotNull(_sent.Prompts[1].Push);                             // the welcome path still pushes
     }
 
     [Fact]

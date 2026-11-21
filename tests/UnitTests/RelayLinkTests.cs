@@ -1042,6 +1042,19 @@ public partial class RelayLinkTests : IDisposable
     }
 
     [Fact]
+    public void Presence_and_resync_before_the_welcome_ask_for_nothing()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.Disconnected();                                                // not welcomed, phone marked offline
+        var asked = new List<string>();
+        link.PhoneNeedsPrompts += asked.Add;
+
+        link.OnFrame(Presence(phone.Id, true));
+        link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""");
+        Assert.Empty(asked);
+    }
+
+    [Fact]
     public void A_resync_from_an_online_paired_phone_asks_for_the_pending_prompts()
     {
         var (link, _, phone, _, _) = Paired();

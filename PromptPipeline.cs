@@ -312,7 +312,7 @@ namespace Orbweaver
         };
 
         // On every welcome, every pending prompt goes out again — same
-        // request_id, same bytes — unless it was answered or has expired, which
+        // request_id, same plaintext — unless it was answered or has expired, which
         // no phone could act on. Every one, not only those minted while the
         // relay was down: a frame written in the instant a socket drops is lost
         // with it and looks delivered, and a session blocked on someone who was
@@ -342,9 +342,14 @@ namespace Orbweaver
         // the desk's socket never dropped, so a prompt sent in the instant
         // before the phone reconnected is delivered to nobody, and nothing
         // would ever send it again (an AskUserQuestion's Q1 was lost this way
-        // on 2026-11-21; the phone only saw Q2). Same request_id, same bytes,
+        // on 2026-11-21; the phone only saw Q2). Same request_id and plaintext,
         // and no push: the phone is looking at the app, and its PromptBook
         // replaces by request_id, so a prompt it already holds is harmless.
+        // That is also why a desk reconnect sends an online phone each prompt
+        // twice — Disconnected marks every phone offline, so its presence on
+        // the next welcome counts as coming online: once from the welcome
+        // replay (with push) and once from this one (quiet). Accepted rather
+        // than deduped; the second copy only replaces the first.
         internal async Task ResendPendingToAsync(string phoneId)
         {
             await _gate.WaitAsync().ConfigureAwait(false);
