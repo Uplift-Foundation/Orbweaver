@@ -41,6 +41,11 @@ namespace Orbweaver
         // "capture=threw:<exception type>", or "lines=<n> check=<PaneScreen.Read's word>". Never
         // any of the screen's text. Null when the screen was not read.
         internal string? Diagnostic { get; init; }
+
+        // Refused because Claude Code's own record says `waiting` (a dialog or
+        // CB-400's overlay). The wait never re-reads one of these: what the
+        // session is waiting on needs a person, not two more seconds.
+        internal bool FromWaitingRecord { get; init; }
     }
 
     internal static class TypingGate
@@ -133,9 +138,11 @@ namespace Orbweaver
         {
             var wait = delay ?? (t => Task.Delay(t));
             var verdict = await JudgeAsync(status, recordStatus, capturePane, paneReadable).ConfigureAwait(false);
-
+            // Any refusal that came from a `waiting` record — the plain dialog
+            // wording or CB-400's named overlay — is final at once: the record
+            // is Claude Code's own word, and what it is waiting on needs a person.
             for (var spent = TimeSpan.Zero;
-                 !verdict.Allowed && verdict.Why != WaitingWhy && spent < RetryWindow;
+                 !verdict.Allowed && !verdict.FromWaitingRecord && spent < RetryWindow;
                  spent += RetryInterval)
             {
                 await wait(RetryInterval).ConfigureAwait(false);
@@ -169,8 +176,8 @@ namespace Orbweaver
                 // branch never allows, and a screen that cannot be read, or is
                 // anything but an overlay, keeps today's wording.
                 if (paneReadable && capturePane is not null && await OverlayTitleAsync(status, capturePane).ConfigureAwait(false) is { } title)
-                    return new TypingVerdict(false, OverlayWhy(title));
-                return new TypingVerdict(false, WaitingWhy);
+                    return new TypingVerdict(false, OverlayWhy(title)) { FromWaitingRecord = true };
+                return new TypingVerdict(false, WaitingWhy) { FromWaitingRecord = true };
             }
 
             // No screen to read: the record is the only guard (see the header).

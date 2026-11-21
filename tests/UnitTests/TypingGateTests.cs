@@ -145,7 +145,7 @@ public class TypingGateTests
 
     [Fact]
     public async Task AnUnreadableRouteIsStillRefusedWhenTheRecordSaysWaiting() =>
-        Assert.Equal(new TypingVerdict(false, TypingGate.WaitingWhy),
+        Assert.Equal(new TypingVerdict(false, TypingGate.WaitingWhy) { FromWaitingRecord = true },
             await new Reads { Record = "waiting" }.Judge(readable: false));
 
     [Theory]
@@ -446,7 +446,25 @@ public class GuardedTypeTests
         Assert.False(typed);
         Assert.Equal(TypingGate.WaitingWhy, refusal);
         Assert.Equal(0, waits);
-        Assert.Equal(0, pane.Captures);
+        // At most CB-400's one read to name an overlay; never the wait's re-reads.
+        Assert.True(pane.Captures <= 1);
+    }
+
+    [Fact]
+    public async Task AWaitingOverlayRefusesAtOnceWithoutWaiting()
+    {
+        var waits = 0;
+        var captures = 0;
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", (_, _) => Task.FromResult(true), _ => "waiting",
+            _ => { captures++; return Task.FromResult<string?>(PaneFixtures.MobileOverlay80x50); }, _ => true,
+            delay: _ => { waits++; return Task.CompletedTask; });
+
+        Assert.False(typed);
+        Assert.Equal(TypingGate.OverlayWhy("Get the Claude app on your phone"), refusal);
+        Assert.Equal(0, waits);
+        Assert.Equal(1, captures);
     }
 
     [Fact]
