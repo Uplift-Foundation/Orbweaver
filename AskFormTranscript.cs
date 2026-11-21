@@ -321,7 +321,7 @@ namespace Orbweaver
             return -1;
         }
 
-        internal const string TypeRowLabel = "Type something.";
+        internal const string TypeRowLabel = ChatTranscript.FreeTextRowLabel;
 
         // The rows a label wrapped onto: those under its option row up to the next
         // option or the end bound, stopping at a blank row, a scroll marker or a rule,

@@ -864,8 +864,22 @@ namespace Orbweaver
                 return o with { Label = label };
             }).ToList();
 
-            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key;
-            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key;
+            // A pane about twelve columns wide wraps even these two fixed rows ("Type
+            // somethi ng.", "Chat" / "about this"), and a form whose free-text row was
+            // missed here was declined as no form at all (CB-407). So each is also found
+            // by its letters with spaces ignored, "Chat about this" by being the last
+            // row right under the free-text row and a start of that label; and a row
+            // found that way is given its whole label.
+            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key
+                ?? options.FirstOrDefault(o => LettersStart(o.Label, FreeTextLabel))?.Key;
+            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key
+                ?? (freeText is not null && int.TryParse(freeText, out var freeKey)
+                    ? options.FirstOrDefault(o => o.Key == (freeKey + 1).ToString() && o == options[^1] && LettersStart(ChatAboutLabel, o.Label))?.Key
+                    : null);
+            options = options.Select(o =>
+                o.Key == freeText && !o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal) ? o with { Label = FreeTextRowLabel }
+                : o.Key == chatAbout && !o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal) ? o with { Label = ChatAboutLabel }
+                : o).ToList();
 
             // The Submit tab's own screen: "Review your answers", the answers as
             // "● question" / "→ answer" pairs, then Submit answers / Cancel.
@@ -960,6 +974,13 @@ namespace Orbweaver
         internal const string NextRowLabel = "Next";
 
         internal const string FreeTextLabel = "Type something";
+        internal const string FreeTextRowLabel = "Type something.";
+
+        // Whether `text` begins with `wanted`, comparing letters only: every space gone,
+        // because a narrow pane breaks the rows inside words.
+        internal static bool LettersStart(string text, string wanted) =>
+            Regex.Replace(text, @"\s+", "").StartsWith(Regex.Replace(wanted, @"\s+", ""), StringComparison.Ordinal)
+            && Regex.Replace(text, @"\s+", "").Length >= 3;
         internal const string ChatAboutLabel = "Chat about this";
 
         private static bool IsTabBar(string line) =>

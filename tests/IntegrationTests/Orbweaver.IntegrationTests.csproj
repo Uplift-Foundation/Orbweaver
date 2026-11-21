@@ -39,6 +39,7 @@
     <Compile Include="..\UnitTests\FakeBrowseFileSystem.cs" Link="FakeBrowseFileSystem.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
     <Compile Include="..\TranscriptTests\SidePanelFixtures.cs" Link="SidePanelFixtures.cs" />
+    <Compile Include="..\TranscriptTests\Cb407Captures.cs" Link="Cb407Captures.cs" />
     <Compile Include="..\UnitTests\TinyGif.cs" Link="TinyGif.cs" />
     <!-- CB-270 Stage 3: the captured native runs, as one scrubbed constant. -->
     <Compile Include="..\UnitTests\OpenClawNativeRunFixture.cs" Link="OpenClawNativeRunFixture.cs" />

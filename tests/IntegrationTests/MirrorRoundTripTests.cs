@@ -2038,6 +2038,36 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.DoesNotContain(log, l => prompt.Options.Any(o => l.Contains(o.Label)));
     }
 
+    // CB-407: a form squeezed to twelve columns with its top still on screen. Its free-text
+    // row wrapped ("Type somethi ng."), the form reader missed it and declined, and the far
+    // side served the screen as a plain dialog: title "prefer?", options "Apple Apple", "Type
+    // somethi ng.", "Chat". The question and labels are the transcript's, whole, at any width,
+    // and the fingerprint is the 80-column form's, so an answer made at either lands.
+    [Fact]
+    public async Task ATwelveColumnFormIsServedWithTheTranscriptsQuestionAndLabels()
+    {
+        var harness = new Harness(_dir) { Screen = Cb407Captures.Screen("mirror-form-12col-pane") };
+        harness.AddSession("evidence", Cb407Captures.PathOf("mirror-form-12col-transcript-row.jsonl"));
+        await harness.HandshakeAsync("evidence");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.Null(error);
+        Assert.Equal("Which fruit do you prefer?", prompt!.Title);
+        Assert.Equal(["Apple", "Banana", "Cherry", "Type something.", "Chat about this"], prompt.Options.Select(o => o.Label));
+        Assert.Equal(["1", "2", "3", "4", "5"], prompt.Options.Select(o => o.Key));
+        Assert.Equal("4", prompt.FreeTextKey);
+
+        // The same question at 80 columns, with its own transcript row, is the same prompt.
+        harness.Screen = Cb407Captures.Screen("mirror-form-80col-pane");
+        var wide = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        Assert.Equal(wide.Fingerprint, prompt.Fingerprint);
+
+        harness.Screen = Cb407Captures.Screen("mirror-form-12col-pane");
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint));
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
     // CB-353: a far pane with the jira-board mod docked beside the chat serves the clean
     // prompt, identical to the one its hand-cut twin serves, and pressing a key on it works.
     [Theory]
