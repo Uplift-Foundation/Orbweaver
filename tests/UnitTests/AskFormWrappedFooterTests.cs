@@ -101,4 +101,56 @@ public class AskFormWrappedFooterTests
         // The rollout screen with the merge transcript: the questions do not agree.
         Assert.Null(Read(Cb407Captures.Screen("askform-12x23"), Merge).Fp);
     }
+
+    // ---- answering at twelve columns -------------------------------------------
+
+    private static SessionStatus Status(string rows) =>
+        new() { State = "waiting", Source = SessionSource.ClaudeCode, TranscriptPath = Cb407Captures.PathOf(rows) };
+
+    private static string FingerprintOf(string screen, string rows) =>
+        MirrorProtocol.PromptFromScreen(screen, AskFormTranscript.CallFor(screen, Cb407Captures.PathOf(rows)))!.Fingerprint;
+
+    // The form read at twelve columns is answerable: a digit it offers is pressed once, through
+    // the same re-read the other widths use.
+    [Fact]
+    public async Task An_answer_at_twelve_columns_presses_the_digit_it_names_once()
+    {
+        var screen = Cb407Captures.Screen("askform-12x23");
+        var pressed = new List<string>();
+
+        var code = await FormAnswer.AnswerAsync(Status("askform-rollout.jsonl"), _ => Task.FromResult<string?>(screen),
+            (_, key) => { pressed.Add(key); return Task.FromResult(true); }, null,
+            FingerprintOf(screen, "askform-rollout.jsonl"), "3", null, null);
+
+        Assert.Null(code);
+        Assert.Equal(["3"], pressed);
+    }
+
+    // Controls: once the screen is another form, or none, the same answer presses nothing; a
+    // key the form never offered is refused; and the answer made at 12 columns still lands when
+    // the pane has been widened to 24, because the form is the same prompt.
+    [Fact]
+    public async Task A_stale_or_unoffered_answer_at_twelve_columns_presses_nothing()
+    {
+        var screen = Cb407Captures.Screen("askform-12x23");
+        var fp = FingerprintOf(screen, "askform-rollout.jsonl");
+        var pressed = new List<string>();
+        Task<bool> Press(SessionStatus _, string key) { pressed.Add(key); return Task.FromResult(true); }
+
+        // another form on screen (the merge question): a different prompt, so the answer is refused
+        Assert.Equal(MirrorProtocol.ErrPromptChanged, await FormAnswer.AnswerAsync(Status("askform-rollout.jsonl"),
+            _ => Task.FromResult<string?>(Cb407Captures.Screen("askform-single-12x23")), Press, null, fp, "3", null, null));
+        // the prompt gone
+        Assert.Equal(MirrorProtocol.ErrNoPrompt, await FormAnswer.AnswerAsync(Status("askform-rollout.jsonl"),
+            _ => Task.FromResult<string?>(PaneFixtures.MacPromptAfterEsc), Press, null, fp, "3", null, null));
+        // a key the form does not have
+        Assert.Equal(MirrorProtocol.ErrBadKey, await FormAnswer.AnswerAsync(Status("askform-rollout.jsonl"),
+            _ => Task.FromResult<string?>(screen), Press, null, fp, "9", null, null));
+        Assert.Empty(pressed);
+
+        var widened = Cb407Captures.Screen("askform-24x23");
+        Assert.Null(await FormAnswer.AnswerAsync(Status("askform-rollout.jsonl"),
+            _ => Task.FromResult<string?>(widened), Press, null, fp, "3", null, null));
+        Assert.Equal(["3"], pressed);
+    }
 }
