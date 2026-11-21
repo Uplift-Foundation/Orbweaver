@@ -58,6 +58,8 @@ public class PromptPipelineTests
         public readonly List<string?> ResolvedPushes = new();
         void IPromptSender.Resolved(string r, string s, string by, string? push) { Resolved.Add((r, s, by)); ResolvedPushes.Add(push); }
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
+        public readonly List<(string Phone, string Rid, string Sid, string Prompt)> PromptsTo = new();
+        bool IPromptSender.PromptTo(string ph, string r, string s, string p) { PromptsTo.Add((ph, r, s, p)); return Online; }
     }
 
     // CB-321 addendum 2: a sender whose roster gives each session a persona.
@@ -372,6 +374,54 @@ public class PromptPipelineTests
         Assert.True(_p.PendingFor("s1")!.Answered);
         await _p.ResendPendingAsync();
         Assert.Single(_sent.Prompts);
+    }
+
+    // ---- CB-401: a phone that comes online later ------------------------------
+
+    [Fact]
+    public async Task A_pending_prompt_is_resent_to_the_named_phone_only_and_without_a_push()
+    {
+        await _p.OnScannedAsync(Snap());
+        var minted = Assert.Single(_sent.Prompts);
+
+        await _p.ResendPendingToAsync("phone-b");
+
+        var again = Assert.Single(_sent.PromptsTo);
+        Assert.Equal(("phone-b", minted.Rid, minted.Sid, minted.Prompt), again);   // same id, same bytes
+        Assert.Single(_sent.Prompts);                                              // nobody else, and no push path
+        Assert.Contains($"prompt-resent {minted.Rid} to phone-b", _log);
+    }
+
+    [Fact]
+    public async Task A_resend_to_a_phone_says_when_the_frame_was_not_sent()
+    {
+        await _p.OnScannedAsync(Snap());
+        _sent.Online = false;
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Contains(_log, l => l.EndsWith("to phone-b (not sent)"));
+    }
+
+    [Fact]
+    public async Task An_expired_or_answered_prompt_is_not_resent_to_a_phone()
+    {
+        await _p.OnScannedAsync(Snap());
+        _now = _now.AddSeconds(1800);                                  // expired
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Empty(_sent.PromptsTo);
+
+        _now = _now.AddSeconds(-1800);
+        _pane.Stuck = true;
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());     // answered (no effect), still pending
+        Assert.True(_p.PendingFor("s1")!.Answered);
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Empty(_sent.PromptsTo);
+    }
+
+    [Fact]
+    public async Task A_resend_to_a_phone_with_nothing_pending_sends_nothing()
+    {
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Empty(_sent.PromptsTo);
     }
 
     // ---- first-run screens -----------------------------------------------------

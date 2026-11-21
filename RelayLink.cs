@@ -123,6 +123,11 @@ namespace Orbweaver
         // ---- events -----------------------------------------------------------
 
         internal event Action WelcomeReceived = delegate { };
+        // CB-401: a paired phone came online or asked to resync, so it needs
+        // the prompts still pending. Raised after its roster frames are
+        // returned, and the client defers it past the lock, so the replay
+        // lands behind the roster that names the session.
+        internal event Action<string> PhoneNeedsPrompts = delegate { };
         internal event Action Unauthorized = delegate { };
         internal event Action<string> Refused = delegate { };                    // version, or any hello error but unauthorized
         internal event Action<PairRequest> PairRequested = delegate { };
@@ -309,6 +314,7 @@ namespace Orbweaver
                     if (Str(f, "peer_id") is { } peer && _channels.TryGetValue(peer, out var c) && c.Online)
                     {
                         Note($"resync from {peer}: fresh roster");
+                        PhoneNeedsPrompts(peer);
                         return Collect(RosterFor(c));
                     }
                     // Said, not silent: a phone stuck waiting on a roster
@@ -360,6 +366,7 @@ namespace Orbweaver
             c.Online = online;
             PresenceChanged();
             if (wentOffline) PhoneWentOffline(id);
+            if (cameOnline) PhoneNeedsPrompts(id);
             return cameOnline ? RosterAndUsage(c) : [];
         }
 
@@ -943,6 +950,15 @@ namespace Orbweaver
                     frames.Add(frame);
             }
             return WithActivity(frames);
+        }
+
+        // CB-401: the same prompt again, to one phone, quietly. Push "none" and
+        // no e: it already alerted when minted, and the phone is online now.
+        internal IReadOnlyList<string> SendPromptTo(string phoneId, string requestId, string sessionId, string prompt)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
+            return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
+                System.Text.Encoding.UTF8.GetBytes(prompt), requestId));
         }
 
         // resolved to every paired phone, so a sheet open on any of them closes:

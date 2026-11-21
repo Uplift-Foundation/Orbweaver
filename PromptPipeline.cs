@@ -21,6 +21,10 @@ namespace Orbweaver
         // with a quiet "Answered at the desk" alert.
         void Resolved(string requestId, string sessionId, string by, string? pushPlaintext);
         void Refusal(string phoneId, string requestId, string sessionId, string code);
+        // CB-401: one prompt, to one phone, with no push — the replay for a
+        // phone that came online (or resynced) after the prompt was minted.
+        // True when a frame was produced.
+        bool PromptTo(string phoneId, string requestId, string sessionId, string prompt);
         // CB-321 addendum 2: the persona this session's amber speaks as (its
         // roster row's), or null. A sender that knows no roster names none.
         PushPersona? PersonaFor(string sessionId) => null;
@@ -328,6 +332,30 @@ namespace Orbweaver
                     if (live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
                     var sent = _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
                     _seams.Log($"prompt-resent {live.Pending.RequestId}{(sent ? "" : " (still not sent)")}");
+                }
+            }
+            finally { _gate.Release(); }
+        }
+
+        // CB-401: a phone that comes online or resyncs gets every pending
+        // prompt, to it alone. The desk-welcome replay above cannot cover it:
+        // the desk's socket never dropped, so a prompt sent in the instant
+        // before the phone reconnected is delivered to nobody, and nothing
+        // would ever send it again (an AskUserQuestion's Q1 was lost this way
+        // on 2026-11-21; the phone only saw Q2). Same request_id, same bytes,
+        // and no push: the phone is looking at the app, and its PromptBook
+        // replaces by request_id, so a prompt it already holds is harmless.
+        internal async Task ResendPendingToAsync(string phoneId)
+        {
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var now = _seams.Now().ToUnixTimeSeconds();
+                foreach (var live in _live.Values)
+                {
+                    if (live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
+                    var sent = _send.PromptTo(phoneId, live.Pending.RequestId, live.Pending.SessionId, live.Prompt);
+                    _seams.Log($"prompt-resent {live.Pending.RequestId} to {phoneId}{(sent ? "" : " (not sent)")}");
                 }
             }
             finally { _gate.Release(); }
