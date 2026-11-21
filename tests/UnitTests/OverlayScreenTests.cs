@@ -191,4 +191,13 @@ public class OverlayScreenTests
         Assert.Equal((PaneReading.Dialog, "dialog"), PaneScreen.Read(PaneFixtures.MacModelSwitchDialog));
         Assert.Equal(PaneReading.Prompt, PaneScreen.Read(PaneFixtures.MobileAfterEsc).Reading);
     }
+
+    [Fact]
+    public void The_Windows_console_capture_reads_the_same_and_its_control_does_not()
+    {
+        var o = OverlayScreen.Read(PaneFixtures.WinMobileOverlay)!;
+        Assert.Equal("Get the Claude app on your phone", o.Title);
+        Assert.Equal(3, o.Caption.Count);
+        Assert.Null(OverlayScreen.Read(PaneFixtures.WinAfterEsc));
+    }
 }

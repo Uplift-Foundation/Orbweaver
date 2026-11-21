@@ -2015,5 +2015,73 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
   Fable 5.2 | ~/scratchdir | 4% (7d:22%) | [.claude-board]
   ⏵⏵ bypass permissions on (shift+tab to cycle)
 """"");
+
+        // CB-400, Windows box, Claude Code 2.1.319, conhost 120x30: `/mobile`, 3-space indent. (cb400-captures/win-mobile-overlay-30rows.txt)
+        internal static readonly string WinMobileOverlay = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Sonnet 5.5 · Claude Team
+ ▝▝   ▝▝   ~\cb400qa\work · /rc
+
+‼ 1 MCP server needs authentication · run /mcp
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Get the Claude app on your phone
+
+   Scan the QR code, or visit claude.ai/mobile
+   Esc to close
+
+
+     █▀▀▀▀▀█ ▄███ ▄▀█ ██▀▄ █▀▀▀▀▀█
+     █ ███ █ ▀▄ ▀  █ ▄▀█   █ ███ █
+     █ ▀▀▀ █ █▀▄▀▄▄▀█  █▄▄ █ ▀▀▀ █
+     ▀▀▀▀▀▀▀ █ █ ▀ ▀▄▀▄█▄▀ ▀▀▀▀▀▀▀
+     ▀▀ █▄ ▀▀▄▄ ▀██▀ ▄ █ ▄▄█▀▀▄▀▀▄
+     ▄ █   ▀█ ▄▄▄▄█▀ ▄▀▄▀ █ █▀▀██
+     ▀ ▄ ██▀  ▄▀█▄▀▄▀▀█ ███▀▀ ▀ ▀▀
+     ▀ ▀▀▄ ▀▀██ █▄▄█▄ █▄▄█▀▀▄▀█▀█▀
+     ▀██▀▀▄▀ ▀ █▄█▄▄▀▄█  ▀▄▄▄ ▄ ▀▄
+     ▀ ▀ ▄▀▀ ██▄▄█    █ ▄▄█  █  ██
+     ▀ ▀▀▀▀▀▀▄ ▄▀██▀▀█▄▄██▀▀▀█ █▄▄
+     █▀▀▀▀▀█ ▀▄█▄▄█ ▄   ▄█ ▀ █▄▄▀▄
+     █ ███ █ ▄▀▄▀█▄▄  █▄▄▀▀███▄▄ ▀
+     █ ▀▀▀ █ ▄ █▀ ██▄ ▄▀▄█▄  █▀▀▄▀
+     ▀▀▀▀▀▀▀ ▀▀▀ ▀  ▀▀▀  ▀▀  ▀▀ ▀
+
+   Find this session in the Code tab of the Claude app
+""""");
+
+        // CB-400, Windows box, after ESC: the control. (cb400-captures/win-after-esc.txt)
+        internal static readonly string WinAfterEsc = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Sonnet 5.5 · Claude Team
+ ▝▝   ▝▝   ~\cb400qa\work · /rc
+
+‼ 1 MCP server needs authentication · run /mcp
+
+> /mobile
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                           ◐ medium · /effort · √ Update installed · Restart to update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Sonnet 5.5 | ~/work | 18% (7d:41%) | [.claude]
+  ⏵⏵ auto mode on (shift+tab to cycle)
+""""");
     }
 }

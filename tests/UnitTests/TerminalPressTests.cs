@@ -136,11 +136,12 @@ public class TerminalPressTests
     }
 
     [Fact]
-    public void A_console_escape_is_vk_escape_down_then_up()
+    public void A_console_escape_is_a_plain_esc_character_record_with_no_virtual_key()
     {
         var r = TerminalPress.ConsoleRecords(TerminalPress.Bytes("Escape")!);
         Assert.Equal(2, r.Count);
-        Assert.All(r, x => Assert.Equal((0x1B, '\u001b'), (x.VirtualKeyCode, x.Char)));
+        // The form QA measured closing the real overlay on the Windows box; VK 0x1B was never tried.
+        Assert.All(r, x => Assert.Equal((0, '\u001b'), (x.VirtualKeyCode, x.Char)));
         Assert.Equal([1, 0], r.Select(x => x.KeyDown));
     }
 

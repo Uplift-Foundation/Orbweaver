@@ -104,7 +104,7 @@ namespace Orbweaver
                         EventType = TerminalFocuser.NativeMethods.KeyEvent,
                         KeyDown = down,
                         RepeatCount = 1,
-                        VirtualKeyCode = c == '\r' ? (ushort)0x0D : c == '\u001b' ? (ushort)0x1B : (ushort)0,
+                        VirtualKeyCode = c == '\r' ? (ushort)0x0D : (ushort)0,
                         Char = c,
                     });
             return records;
