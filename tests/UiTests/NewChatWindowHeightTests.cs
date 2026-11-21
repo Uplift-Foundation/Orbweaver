@@ -46,6 +46,9 @@ public class NewChatWindowHeightTests : IDisposable
         NewChatWindow.ReopenRowsForTests = null;
         NewChatWindow.NowForTests = null;
         NewChatWindow.LastConnectFailureForTests = null;
+        NewChatWindow.PeerLauncherForTests = null;
+        NewChatWindow.PeerLinkOnForTests = null;
+        NewChatWindow.TrustWaitForTests = null;
     }
 
     private static void FreshSettings()
@@ -474,6 +477,87 @@ public class NewChatWindowHeightTests : IDisposable
         var height = ContentHeight(window);
 
         Assert.True(window.ExistingGhost.IsVisible);
+        Assert.True(height > 400, $"content measured {height}");
+        Assert.True(height <= 700, $"content measured {height}, over the 700 dip bound");
+    }
+
+    // CB-397: the window that HAS the Machine row is the only one where the trust question is ever
+    // asked, in its tallest state: the gateway present, every extra account missing its folder, a
+    // remote machine chosen, and the question open with the hooks line. The invariant is that the
+    // question adds NO height: the window measures exactly what the same window measures with the
+    // trust layers hidden. It is not an absolute bound, because a window with the Machine row already
+    // exceeded 700 on Windows before this feature (789 measured on develop, 660 on the Mac); the
+    // absolute 700 bound is held above for the windows without the row, on both rids.
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheTrustQuestionAddsNoHeightToAWindowWithAMachineRow(bool asking)
+    {
+        var peers = new NewChatWindowMachineTests.FakeLauncher
+        {
+            Peers = [new("mini", true)],
+            Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null,
+                new PeerLaunchTrust("T", "claude", "/srv/app", 1_800_000_000, Hooks: true)),
+        };
+        peers.Answers["mini"] = NewChatWindowMachineTests.Info();
+        NewChatWindow.PeerLauncherForTests = peers;
+        NewChatWindow.PeerLinkOnForTests = true;
+
+        // The baseline: the same window with the trust layers hidden before its first measure.
+        var bare = EverythingAvailableWithMissingHomes();
+        Assert.NotNull(bare.MachineSection);
+        bare.TrustGhost.IsVisible = false;
+        var baseline = ContentHeight(bare);
+
+        var window = EverythingAvailableWithMissingHomes();
+        Assert.True(window.TrustGhost.IsVisible);
+
+        if (asking)
+        {
+            window.MachineCombo.SelectedIndex = 1;
+            Flush();
+            window.StartButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Flush();
+            Assert.True(window.TrustPanel.IsVisible);
+            Assert.True(window.TrustHooks.IsVisible);
+        }
+
+        var height = ContentHeight(window);
+
+        Assert.True(baseline > 400, $"baseline measured {baseline}");
+        Assert.True(height == baseline, $"content measured {height} with the trust layers, {baseline} without: the question must add no height");
+    }
+
+    // The with-row window's absolute bound, where it is true: the Mac measures 660 here, and a
+    // with-row window measures 789 on Windows at develop (CB-357), so this one is Mac-only and
+    // shows as skipped there rather than passing without checking.
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OnTheMacAWindowWithAMachineRowFitsA720WorkAreaWithOrWithoutTheQuestion(bool asking)
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "a with-row window already measures 789 dip headless on Windows at develop (CB-357)");
+        var peers = new NewChatWindowMachineTests.FakeLauncher
+        {
+            Peers = [new("mini", true)],
+            Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null,
+                new PeerLaunchTrust("T", "claude", "/srv/app", 1_800_000_000, Hooks: true)),
+        };
+        peers.Answers["mini"] = NewChatWindowMachineTests.Info();
+        NewChatWindow.PeerLauncherForTests = peers;
+        NewChatWindow.PeerLinkOnForTests = true;
+        var window = EverythingAvailableWithMissingHomes();
+        if (asking)
+        {
+            window.MachineCombo.SelectedIndex = 1;
+            Flush();
+            window.StartButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Flush();
+            Assert.True(window.TrustPanel.IsVisible);
+        }
+
+        var height = ContentHeight(window);
+
         Assert.True(height > 400, $"content measured {height}");
         Assert.True(height <= 700, $"content measured {height}, over the 700 dip bound");
     }

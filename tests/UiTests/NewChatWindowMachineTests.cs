@@ -710,6 +710,22 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.False(Make(null).TrustGhost.IsVisible);
     }
 
+    // The question takes the folder picker's place (it is a layer of the same slot), and the picker
+    // is back, usable, once the question ends.
+    [AvaloniaFact]
+    public void The_question_takes_the_folder_pickers_place_and_gives_it_back()
+    {
+        var w = StartAsked(Asking());
+        Assert.Equal(0, w.FolderSection.Opacity);
+        Assert.False(w.FolderSection.IsHitTestVisible);
+        Assert.False(w.FolderSection.IsEnabled);
+
+        Click(w.TrustNo);
+        Assert.Equal(1, w.FolderSection.Opacity);
+        Assert.True(w.FolderSection.IsHitTestVisible);
+        Assert.True(w.FolderSection.IsEnabled);
+    }
+
     [AvaloniaFact]
     public void Trust_is_sent_once_even_if_clicked_twice_and_a_launch_ends_the_question()
     {
@@ -918,5 +934,56 @@ public class NewChatWindowMachineTests : IDisposable
         var w2 = Make(Ready());
         onClosed.Invoke(w2, new object[] { EventArgs.Empty });
         Assert.Empty(quiet.Trusts);
+    }
+
+    // The folder picker is unreachable by keyboard and pointer while the question is open, and it
+    // comes back enabled with the folder that was chosen, whichever way the question ends.
+    [AvaloniaTheory]
+    [InlineData("trusted")]
+    [InlineData("cancelled")]
+    [InlineData("expired")]
+    [InlineData("could-not-answer")]
+    [InlineData("link-lost")]
+    [InlineData("answer-throws")]
+    public void The_folder_picker_is_out_of_reach_while_asked_and_back_with_its_selection_after_every_ending(string ending)
+    {
+        var wait = new TaskCompletionSource();
+        NewChatWindow.TrustWaitForTests = _ => wait.Task;
+        var f = Asking();
+        f.TrustResult = ending switch
+        {
+            "trusted" => new PeerLaunchResult(true, "launched", "s", null),
+            "cancelled" => new PeerLaunchResult(false, PeerLaunchCodes.TrustCancelled, null, null),
+            "could-not-answer" => new PeerLaunchResult(false, "launch_failed", null, "gone"),
+            "link-lost" => new PeerLaunchResult(false, PeerLaunchCodes.LinkLost, null, null),
+            _ => f.TrustResult,
+        };
+        if (ending == "answer-throws") f.ThrowTrust = new InvalidOperationException();
+
+        var w = Make(f);
+        Pick(w, 1);
+        w.FolderCombo.SelectedIndex = 1;
+        var chosen = w.FolderCombo.SelectedItem;
+        Click(w.StartButton);
+
+        Assert.True(w.TrustPanel.IsVisible);
+        Assert.False(w.FolderSection.IsEnabled);
+        Assert.False(w.FolderSection.IsHitTestVisible);
+        Assert.False(w.FolderCombo.IsEffectivelyEnabled);
+        Assert.False(w.BrowseButton.IsEffectivelyEnabled);
+
+        switch (ending)
+        {
+            case "expired": wait.SetResult(); Flush(); break;
+            case "cancelled": Click(w.TrustNo); break;
+            default: Click(w.TrustYes); break;
+        }
+
+        Assert.False(w.TrustPanel.IsVisible);
+        Assert.True(w.FolderSection.IsEnabled);
+        Assert.True(w.FolderSection.IsHitTestVisible);
+        Assert.Equal(1, w.FolderSection.Opacity);
+        Assert.True(w.FolderCombo.IsEffectivelyEnabled);
+        Assert.Equal(chosen, w.FolderCombo.SelectedItem);
     }
 }

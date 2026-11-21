@@ -278,7 +278,6 @@ namespace Orbweaver
         private readonly Button _trustYes = new() { Content = "Trust" };
         private readonly Button _trustNo = new() { Content = "Cancel" };
         private readonly StackPanel _trustPanel = new() { Spacing = 6, IsVisible = false };
-        private Grid? _trustSlot;
         private readonly StackPanel _trustGhost = new() { Spacing = 6, Opacity = 0, IsHitTestVisible = false, IsEnabled = false, IsVisible = false };
         private PeerLaunchTrust? _trustAsked;
         private string? _trustMachine;
@@ -516,7 +515,10 @@ namespace Orbweaver
 
             _agentSection.Children.Add(_existingPane);
 
-            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _existingGhost, _folderSection, _agentSection));
+            // CB-397: the trust question is a layer of this slot, not a slot of its own. With a gateway
+            // the slot is already as tall as the Open existing list, so the question costs no height;
+            // a separate reserve added 130 dip and put a window with a Machine row over the 720 work area.
+            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _existingGhost, _trustGhost, _folderSection, _agentSection, _trustPanel));
 
             _startButton.Click += async (_, _) => await StartClicked();
             root.Children.Add(_startButton);
@@ -524,12 +526,6 @@ namespace Orbweaver
             root.Children.Add(_statusLine);
 
             BuildTrustPanel();
-            // Hidden outright until a Machine row exists: an empty slot still takes the
-            // root panel's spacing, which is what pushed a window with no peers over the
-            // 720 work-area bound by a dip on Windows.
-            _trustSlot = ReservedSlot(_trustGhost, _trustPanel);
-            _trustSlot.IsVisible = _trustGhost.IsVisible;
-            root.Children.Add(_trustSlot);
 
             return root;
         }
@@ -756,7 +752,6 @@ namespace Orbweaver
                 _accountGhost.IsVisible = true;
                 _folderGhost.IsVisible = true;
                 _trustGhost.IsVisible = true;
-                if (_trustSlot is not null) _trustSlot.IsVisible = true;
             }
             _agentGhost.IsVisible = openClawUsable;
             _existingGhost.IsVisible = openClawUsable;
@@ -1784,6 +1779,11 @@ namespace Orbweaver
             _trustHooks.Text = question.Hooks ? PeerLaunchCopy.TrustHooks(machine) : null;
             _trustYes.IsEnabled = true;
             _trustNo.IsEnabled = true;
+            // The question takes the folder picker's place; Opacity and hit-testing rather than
+            // IsVisible, which the picker's own visibility rules keep rewriting.
+            _folderSection.Opacity = 0;
+            _folderSection.IsHitTestVisible = false;
+            _folderSection.IsEnabled = false;   // and out of the tab order
             _trustPanel.IsVisible = true;
             _statusLine.Text = PeerLaunchCopy.TrustAsking(cli, machine);
             _ = ExpireTrustAsync(question);
@@ -1802,6 +1802,9 @@ namespace Orbweaver
         {
             _trustAsked = null;
             _trustPanel.IsVisible = false;
+            _folderSection.Opacity = 1;
+            _folderSection.IsHitTestVisible = true;
+            _folderSection.IsEnabled = true;
             _machineCombo.IsEnabled = true;
             _startButton.IsEnabled = true;
         }
