@@ -2921,10 +2921,10 @@ namespace Orbweaver
             PromptOptions.FontSize = 11 * scale;
             PromptProgress.FontSize = 10 * scale;
 
-            // CB-400: line height tracks the size exactly so a QR's half-block rows
-            // keep touching at every scale; the family is what makes columns line up.
+            // CB-400: the family is what makes columns line up, and the line height is
+            // PromptBodyLineHeight's call.
             PromptBody.FontSize = 8 * scale;
-            PromptBody.LineHeight = PromptBody.FontSize;
+            ApplyPromptBodyLineHeight();
             PromptBodyScroll.MaxHeight = 180 * scale;
             PromptFreeTextBox.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
@@ -3589,6 +3589,8 @@ namespace Orbweaver
 
             PromptTitle.Text = prompt.Title;
             PromptBody.Text = body;
+            _promptBodyHasBlocks = body is not null && body.Any(IsBlockGlyph);
+            ApplyPromptBodyLineHeight();
             PromptBodyCard.IsVisible = body is not null;
             PromptElsewhere.Text = prompt.ElsewhereLabel ?? "Answer in the terminal";
 
@@ -3606,6 +3608,22 @@ namespace Orbweaver
 
             PromptBox.IsVisible = true;
         }
+
+        // Whether the body on show is drawn with block glyphs (U+2580 to U+259F: the half
+        // blocks of a QR, the logo's blocks).
+        private bool _promptBodyHasBlocks;
+
+        internal static bool IsBlockGlyph(char c) => c is >= '\u2580' and <= '\u259F';
+
+        // A body with block glyphs keeps its line height equal to the font size, so a QR's
+        // half-block rows touch and its modules stay square. Any other body gets a little more:
+        // with the height pinned, a glyph the mono face lacks (a prompt arrow, a tick) comes from
+        // a fallback font with taller metrics, and on Windows it overran its row into the next.
+        internal static double PromptBodyLineHeightFor(double fontSize, bool hasBlocks) =>
+            hasBlocks ? fontSize : Math.Ceiling(fontSize * 1.25);
+
+        private void ApplyPromptBodyLineHeight() =>
+            PromptBody.LineHeight = PromptBodyLineHeightFor(PromptBody.FontSize, _promptBodyHasBlocks);
 
         // The height of the floating horizontal bar, in DIPs.
         internal const double PromptBodyBarRoom = 14;

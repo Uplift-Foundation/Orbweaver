@@ -213,8 +213,57 @@ public class ChatPanelPromptBodyTests : IDisposable
             $"Close spans {top.Y}..{bottom.Y} in a panel {panel.Bounds.Height} tall");
         Assert.True(close.Bounds.Width > 0 && close.IsEffectivelyVisible);
 
-        // A QR-sized body is not clipped by the bound: 21 rows at the body's line height.
-        Assert.True(21 * BodyText(panel).LineHeight <= scroll.MaxHeight);
+        // A QR-sized body is not clipped by the bound: 21 rows at the pinned height of a body of blocks.
+        Assert.True(21 * BodyText(panel).FontSize <= scroll.MaxHeight);
+    }
+
+    // The Windows row overlap (/mcp detail): a body with no block glyph in it gets a little
+    // more than the font size per row, so a fallback glyph's taller metrics cannot reach the
+    // next row. A body of blocks keeps exactly the font size, so a QR's rows touch. Both sides,
+    // at the default scale and at a larger one, and switching between them on one panel.
+    [AvaloniaFact]
+    public void OnlyABodyWithBlockGlyphsKeepsTheLineHeightPinnedToTheFontSize()
+    {
+        var (panel, session) = Open(ChatTranscript.ParseDialog(PaneFixtures.McpDetail)!);
+        var text = BodyText(panel);
+        Assert.DoesNotContain(text.Text!, ChatPanel.IsBlockGlyph);
+        Assert.True(text.LineHeight > text.FontSize, $"{text.LineHeight} vs {text.FontSize}");
+        Assert.Equal(Math.Ceiling(text.FontSize * 1.25), text.LineHeight);
+
+        session.Show(Overlay());
+        Flush();
+        Assert.Contains(text.Text!, ChatPanel.IsBlockGlyph);
+        Assert.Equal(text.FontSize, text.LineHeight);
+
+        session.Show(ChatTranscript.ParseDialog(PaneFixtures.McpDetail)!);
+        Flush();
+        Assert.True(text.LineHeight > text.FontSize);
+    }
+
+    [AvaloniaFact]
+    public void TheLineHeightRuleIsPureAtAnyScale()
+    {
+        foreach (var size in new[] { 8d, 12d, 16d })
+        {
+            Assert.Equal(size, ChatPanel.PromptBodyLineHeightFor(size, hasBlocks: true));
+            Assert.Equal(Math.Ceiling(size * 1.25), ChatPanel.PromptBodyLineHeightFor(size, hasBlocks: false));
+        }
+
+        Assert.True(ChatPanel.IsBlockGlyph('\u2580') && ChatPanel.IsBlockGlyph('\u259F'));
+        Assert.False(ChatPanel.IsBlockGlyph('\u257F') || ChatPanel.IsBlockGlyph('\u25A0') || ChatPanel.IsBlockGlyph('x'));
+    }
+
+    [AvaloniaFact]
+    public void TheLargerLineHeightFollowsTheTextScale()
+    {
+        var (panel, _) = Open(ChatTranscript.ParseDialog(PaneFixtures.McpDetail)!);
+
+        OrbweaverSettings.ChatTextScale = 1.5;
+        ChatPanel.ReapplyTextScale();
+        Flush();
+
+        var text = BodyText(panel);
+        Assert.Equal(Math.Ceiling(text.FontSize * 1.25), text.LineHeight);
     }
 
     [AvaloniaFact]
