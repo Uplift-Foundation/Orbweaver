@@ -2299,5 +2299,275 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
   ←/→ to switch · Esc to close
 """"");
+
+        // CB-400, QA's capture of another Claude Code screen: not an Esc-to-close overlay. (cb400-captures/other-config.txt)
+        internal static readonly string OtherConfigScreen = Lf("""""
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: scan.sh.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Settings  Status   Config   Usage   Stats
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search settings…                                                                           │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ Auto-compact                                on
+    Idle compaction                             on
+    Continue automatically at usage limit       on
+    Switch models when a message is flagged     Not asked yet ›
+    Show tips                                   on
+    Claude-drafted feedback                     notify
+    Reduce motion                               off
+    Thinking mode                               on
+    Thinking can't be turned off for Fable 5.2
+    Prompt suggestions                          on
+    Session recap                               on
+    Rewind code (checkpoints)                   on
+    Dynamic workflows                           on
+    Ultracode keyword trigger                   on
+    Dynamic workflow size                       medium (default)
+    Artifacts                                   on
+    Verbose output                              off
+    Terminal progress bar                       on
+    Show turn duration                          on
+    Time format                                 auto ›
+    Default permission mode                     Bypass Permissions
+    Worktree base ref                           fresh
+    Use auto mode during plan                   on
+    Respect .gitignore in file picker           on
+    Skip the /copy picker                       off
+    Copy on select                              on
+    Auto-scroll                                 on
+    Open agents view by default                 off
+    ← opens agents                              on
+    Auto-update channel                         latest ›
+    Theme                                       Auto (match terminal) ›
+    Local notifications                         Auto
+    Push when actions required                  on
+    Push when Claude decides                    on
+    Output style                                default ›
+    Language                                    Default (English) ›
+    Editor mode                                 normal
+    Question auto-continue timeout              never
+    Show last response in external editor       off
+    ↓ 18 more
+
+  ↓ to navigate · ↑ to switch tabs · Esc to go back
+""""");
+
+        // CB-400, QA's capture of another Claude Code screen: not an Esc-to-close overlay. (cb400-captures/other-model.txt)
+        internal static readonly string OtherModelScreen = Lf("""""
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System tools: 17.7k tokens (2%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP tools: 1k tokens (0.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP server instructions: 5.8k tokens (0.6%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝   ⛁ Custom agents: 150 tokens (<0.1%)
+                                               ⛁ Memory files: 6.6k tokens (0.7%)
+                                               ⛁ Skills: 9.6k tokens (1%)
+                                               ⛁ Messages: 291 tokens (<0.1%)
+                                               ⛶ Free space: 921.5k tokens (92%)
+                                               ⛝ Autocompact buffer: 33k tokens (3%)
+
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /memory
+  ⎿  Closed memory
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Select model
+  Your pick is the default for new sessions. For other models, use --model.
+
+    1.  Default (recommended)  Opus 5.5 · Best for everyday, complex tasks
+    2.  Opus 5.5               For complex work and everyday tasks
+  ❯ 3.  Fable 5.2 ✔            For your toughest challenges
+    4.  Sonnet 5.5             Most efficient for simpler tasks
+    5.  Haiku 5.5              Fastest for quick answers
+    ▸   More models
+
+  ◐ Medium effort (default) ←/→ to adjust
+
+  s to use this session only · Enter to save · Esc to cancel
+""""");
+
+        // CB-400, QA's capture of another Claude Code screen: not an Esc-to-close overlay. (cb400-captures/other-theme.txt)
+        internal static readonly string OtherThemeScreen = Lf("""""
+
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /memory
+  ⎿  Closed memory
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Theme
+
+  Choose the text style that looks best with your terminal
+
+  ❯ ✔ Auto (match terminal)
+      Dark mode
+      Light mode
+      Dark mode (colorblind-friendly)
+      Light mode (colorblind-friendly)
+      Dark mode (ANSI colors only)
+      Light mode (ANSI colors only)
+      New custom theme…
+
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   1  function greet() {
+   2 -  console.log("Hello, World!");
+   2 +  console.log("Hello, Claude!");
+   3  }
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   Syntax theme: Monokai Extended (ctrl+t to disable)
+
+  Enter to select · Esc to cancel
+""""");
+
+        // CB-400, QA's capture of another Claude Code screen: not an Esc-to-close overlay. (cb400-captures/other-rewind.txt)
+        internal static readonly string OtherRewindScreen = Lf("""""
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /memory
+  ⎿  Closed memory
+
+❯ /model
+  ⎿  Kept model as Fable 5.2
+
+❯ /plugin
+
+❯ /resume
+  ⎿  Resume cancelled
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Rewind
+
+  Restore the code and/or conversation to the point before…
+
+    /agents
+    No code changes
+
+    /plugin
+    No code changes
+
+  ❯ (current)
+
+
+
+  Enter to continue · Esc to cancel
+""""");
+
+        // CB-400, QA's capture of another Claude Code screen: not an Esc-to-close overlay. (cb400-captures/other-export.txt)
+        internal static readonly string OtherExportScreen = Lf("""""
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP tools: 1k tokens (0.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP server instructions: 5.8k tokens (0.6%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝   ⛁ Custom agents: 150 tokens (<0.1%)
+                                               ⛁ Memory files: 6.6k tokens (0.7%)
+                                               ⛁ Skills: 9.6k tokens (1%)
+                                               ⛁ Messages: 291 tokens (<0.1%)
+                                               ⛶ Free space: 921.5k tokens (92%)
+                                               ⛝ Autocompact buffer: 33k tokens (3%)
+
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /memory
+  ⎿  Closed memory
+
+❯ /model
+  ⎿  Kept model as Fable 5.2
+
+❯ /plugin
+
+❯ /resume
+  ⎿  Resume cancelled
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Export conversation
+
+  ❯ Copy to clipboard  Copy the conversation to your system clipboard
+    Save to file       Save the conversation to a file in the current directory
+
+  ↑/↓ to navigate · Enter to select · Esc to cancel
+""""");
     }
 }

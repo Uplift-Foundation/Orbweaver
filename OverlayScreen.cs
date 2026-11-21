@@ -16,10 +16,6 @@ namespace Orbweaver
     {
         internal const string Footer = "Esc to close", CloseKey = "Escape", CloseLabel = "Close";
 
-        // How far above the footer the top edge may sit. The measured screen has
-        // it four lines up; a bound is what stops a rule from the conversation
-        // far above being taken for this screen's edge.
-        private const int EdgeReach = 12;
         private const int MaxBodyLines = 60, MaxLineLength = 200;
 
         internal static Overlay? Read(string? screen)
@@ -27,10 +23,11 @@ namespace Orbweaver
             if (string.IsNullOrEmpty(screen)) return null;
 
             // A real dialog wins: a numbered dialog that happens to mention the
-            // footer is that dialog, and a navigated list (`/permissions`) is not
-            // something Esc is "Close" for.
-            if (ChatTranscript.ParseDialogCore(screen, out var cleaned, out _) is not null) return null;
-            if (ChatTranscript.IsNavigatedList(cleaned)) return null;
+            // footer is that dialog. A navigated list (`/permissions`, `/memory`) is
+            // not excluded: the footer is the authority, and the Permissions
+            // "Recently blocked" tab's footer says `Esc to approve 1 blocked`, which
+            // is not `Esc to close`, so it never matches here.
+            if (ChatTranscript.ParseDialogCore(screen, out _, out _) is not null) return null;
 
             var lines = ChatTranscript.ScreenLines(screen);
 
@@ -50,7 +47,10 @@ namespace Orbweaver
             }
 
             var edge = -1;
-            for (var i = footer - 1; i >= Math.Max(0, footer - EdgeReach); i--)
+            // The nearest rule above the footer, however far: tall screens (/help,
+            // /mcp) put it up to 47 rows above, and the conversation's own rules are
+            // `─`, never this one.
+            for (var i = footer - 1; i >= 0; i--)
             {
                 if (IsRule(lines[i])) { edge = i; break; }
             }
@@ -85,13 +85,12 @@ namespace Orbweaver
         private static bool IsFooter(string line) =>
             line.Trim().Split(" · ").Any(seg => seg.Trim() == Footer);
 
-        // A full-width rule in whatever glyph the terminal drew: one repeated
-        // character that is not a letter, digit or space. Not `▔` by name,
-        // because the Windows console may draw another one.
+        // The overlay's top edge: a run of `▔` (U+2594), measured on the Mac and on
+        // the Windows console alike.
         private static bool IsRule(string line)
         {
             var t = line.Trim();
-            return t.Length >= 10 && t.All(c => c == t[0]) && !char.IsLetterOrDigit(t[0]) && !char.IsWhiteSpace(t[0]);
+            return t.Length >= 10 && t.All(c => c == '▔');
         }
     }
 }

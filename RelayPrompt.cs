@@ -68,16 +68,15 @@ namespace Orbweaver
         }
 
         // CB-400: an overlay has no numbered run to anchor the preview on, so its
-        // preview is its caption (the words, not the QR rows: the code's pixels
-        // would make the hash move with the terminal's width for nothing) and its
-        // canonical text is the caption plus the one option, `Escape. Close`. The
-        // same overlay hashes the same however it is looked at, and typing into
-        // it changes nothing (measured), so the hash survives a stray keypress.
+        // preview is its caption, but what is hashed is only its title plus the one
+        // option, `Escape. Close`: /resume shows "1 minute ago" and /usage live
+        // figures, and hashing content would re-mint the prompt on every change.
+        // The same overlay hashes the same however it is looked at or typed into.
         private static PromptFingerprint? OfOverlay(string screen)
         {
             if (OverlayScreen.Read(screen) is not { } overlay) return null;
             var prompt = OverlayScreen.ToPrompt(overlay);
-            var canonical = CanonicalText(overlay.Caption, prompt.Options);
+            var canonical = CanonicalText([overlay.Title], prompt.Options);
             return new PromptFingerprint(prompt, overlay.Caption, canonical, HashOf(canonical), Overlay: true);
         }
 

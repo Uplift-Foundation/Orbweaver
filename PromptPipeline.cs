@@ -216,6 +216,12 @@ namespace Orbweaver
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
         }
 
+        // A phone's sheet is not a terminal: the caption, at most twelve lines, and a
+        // last line "…" when it was cut.
+        internal const int OverlayPreviewLines = 12;
+        internal static string OverlayPreview(IReadOnlyList<string> caption) =>
+            string.Join("\n", caption.Count <= OverlayPreviewLines ? caption : caption.Take(OverlayPreviewLines).Append("…"));
+
         private void SendResolved(Live live, string requestId, string sid, string by)
         {
             if (live.Quiet) _send.ResolvedQuiet(requestId, sid, by);
@@ -246,7 +252,7 @@ namespace Orbweaver
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
             }).ToList();
-            var preview = form is null ? string.Join("\n", fp.Preview) : QuestionPreview(form);
+            var preview = form is not null ? QuestionPreview(form) : fp.Overlay ? OverlayPreview(fp.Preview) : string.Join("\n", fp.Preview);
             var tool = form is null && !fp.Overlay ? ToolOf(fp.Preview) : "";
             // frames-v7-questions: what else the question takes, from the screen,
             // so the phone never has to guess. Neither on a question that went

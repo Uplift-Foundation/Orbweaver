@@ -84,31 +84,7 @@ public class OverlayScreenTests
         Assert.Null(OverlayScreen.Read(noEdge));
     }
 
-    [Fact]
-    public void A_rule_further_than_twelve_lines_above_the_footer_is_not_its_edge()
-    {
-        var far = "▔▔▔▔▔▔▔▔▔▔▔▔\n" + string.Join("\n", Enumerable.Repeat("some prose here", 13)) + "\n  Esc to close\n";
-        Assert.Null(OverlayScreen.Read(far));
-        var near = "▔▔▔▔▔▔▔▔▔▔▔▔\n" + string.Join("\n", Enumerable.Repeat("some prose here", 11)) + "\n  Esc to close\n";
-        Assert.NotNull(OverlayScreen.Read(near));
-    }
-
     // The edge is any one repeated symbol, not the glyph the Mac happened to draw.
-    [Theory]
-    [InlineData("▔▔▔▔▔▔▔▔▔▔▔▔")]
-    [InlineData("────────────")]
-    [InlineData("============")]
-    public void The_top_edge_is_a_repeated_symbol_whatever_it_is(string rule) =>
-        Assert.NotNull(OverlayScreen.Read($"{rule}\n  A title\n  Esc to close\n"));
-
-    [Theory]
-    [InlineData("ABABABABABAB")]      // letters
-    [InlineData("111111111111")]      // digits
-    [InlineData("▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ x")] // not one character
-    [InlineData("▔▔▔▔▔▔▔▔▔")]         // too short
-    public void Anything_else_is_not_an_edge(string notRule) =>
-        Assert.Null(OverlayScreen.Read($"{notRule}\n  A title\n  Esc to close\n"));
-
     [Fact]
     public void A_footer_among_other_hints_is_found_by_its_segment()
     {
@@ -123,17 +99,6 @@ public class OverlayScreenTests
         var dialog = ChatTranscript.ParseDialog(PaneFixtures.MiniExitDialog)!;
         Assert.Null(dialog.Body);
         Assert.True(dialog.Options.Count >= 2);
-    }
-
-    [Theory]
-    [InlineData(nameof(PaneFixtures.PermissionsAllow))]
-    [InlineData(nameof(PaneFixtures.PermissionsRecentlyBlockedEmpty))]
-    public void A_permissions_list_is_not_an_overlay(string name)
-    {
-        var screen = (string)typeof(PaneFixtures).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
-        Assert.Null(OverlayScreen.Read(screen));
-        // And with the footer added the navigated list still wins.
-        Assert.Null(OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n" + screen + "\n  Esc to close\n"));
     }
 
     [Fact]
@@ -155,19 +120,6 @@ public class OverlayScreenTests
         Assert.Equal((OverlayScreen.CloseKey, OverlayScreen.CloseLabel), (only.Key, only.Label));
         Assert.Equal(OverlayScreen.Read(PaneFixtures.MobileOverlay80x50)!.Body, p.Body);
         Assert.Null(ChatTranscript.ParseDialog(PaneFixtures.MobileAfterEsc));
-    }
-
-    [Fact]
-    public void A_body_is_bounded_in_lines_and_in_width()
-    {
-        var rows = string.Join("\n", Enumerable.Range(0, 80).Select(i => "  row " + i + new string('x', 250)));
-        var o = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n" + rows + "\n  Esc to close\n");
-        Assert.Null(o); // 80 lines of body put the footer more than twelve lines under the edge
-        var many = "▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n" + string.Join("\n", Enumerable.Range(0, 3).Select(i => "  r" + new string('x', 250))) + "\n  Esc to close\n";
-        var wide = OverlayScreen.Read(many)!;
-        Assert.All(wide.Body, r => Assert.True(r.Length <= 200));
-        var tall = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n  Esc to close\n" + string.Join("\n", Enumerable.Range(0, 80).Select(i => "  line " + i)));
-        Assert.Equal(60, tall!.Body.Count);
     }
 
     [Fact]
@@ -201,23 +153,94 @@ public class OverlayScreenTests
         Assert.Null(OverlayScreen.Read(PaneFixtures.WinAfterEsc));
     }
 
-    // QA's captures of other screens that draw `Esc to close`. The reader keys on
-    // shape, so a short screen with a rule above its footer and no input box below
-    // (/ide, /memory) is an overlay too, and Esc does close each. A screen whose rule
-    // is more than twelve rows above the footer (/help) is not read, and neither is
-    // /resume, whose footer is not found as a segment. These pin what the reader
-    // does today so a change to the rules shows up here, not on a phone.
+    // The top edge is a run of ▔ (measured on the Mac and the Windows console), and
+    // the nearest one above the footer is it, however far up: /help puts it 47 rows up.
     [Fact]
-    public void Other_short_Esc_to_close_screens_read_as_overlays_with_their_own_titles()
+    public void The_nearest_top_edge_is_used_however_far_above_the_footer()
     {
-        Assert.Equal("Connect to an IDE", OverlayScreen.Read(PaneFixtures.OtherIdeScreen)!.Title);
-        Assert.Equal("Memory", OverlayScreen.Read(PaneFixtures.OtherMemoryScreen)!.Title);
+        var far = "▔▔▔▔▔▔▔▔▔▔▔▔\n  Title\n" + string.Join("\n", Enumerable.Repeat("  some prose here", 70)) + "\n  Esc to close\n";
+        var o = OverlayScreen.Read(far)!;
+        Assert.Equal("Title", o.Title);
+        Assert.Equal(60, o.Body.Count);
+        var two = "▔▔▔▔▔▔▔▔▔▔▔▔\n  Old\n▔▔▔▔▔▔▔▔▔▔▔▔\n  New\n  Esc to close\n";
+        Assert.Equal("New", OverlayScreen.Read(two)!.Title);
+    }
+
+    [Theory]
+    [InlineData("────────────")]
+    [InlineData("============")]
+    [InlineData("ABABABABABAB")]
+    [InlineData("▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ x")]
+    [InlineData("▔▔▔▔▔▔▔▔▔")]
+    public void Only_a_run_of_at_least_ten_upper_one_eighth_blocks_is_an_edge(string notRule) =>
+        Assert.Null(OverlayScreen.Read($"{notRule}\n  A title\n  Esc to close\n"));
+
+    [Fact]
+    public void A_wide_body_is_bounded()
+    {
+        var rows = string.Join("\n", Enumerable.Range(0, 3).Select(i => "  r" + new string('x', 250)));
+        Assert.All(OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n" + rows + "\n  Esc to close\n")!.Body, r => Assert.True(r.Length <= 200));
+    }
+
+    // Every other Claude Code screen QA captured that draws `Esc to close` reads as an
+    // overlay with its own title; /resume wraps its footer over two lines and still
+    // matches because `Esc to close` is the last segment of the last line.
+    [Theory]
+    [InlineData(nameof(PaneFixtures.OtherHelpScreen))]
+    [InlineData(nameof(PaneFixtures.OtherIdeScreen))]
+    [InlineData(nameof(PaneFixtures.OtherResumeScreen))]
+    [InlineData(nameof(PaneFixtures.OtherMemoryScreen))]
+    public void Other_Esc_to_close_screens_read_as_overlays(string name)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(OverlayScreen.Read(Fixture(name))!.Title));
+        Assert.Equal((PaneReading.Dialog, "overlay"), PaneScreen.Read(Fixture(name)));
+    }
+
+    [Theory]
+    [InlineData(nameof(PaneFixtures.OtherConfigScreen))]
+    [InlineData(nameof(PaneFixtures.OtherModelScreen))]
+    [InlineData(nameof(PaneFixtures.OtherThemeScreen))]
+    [InlineData(nameof(PaneFixtures.OtherRewindScreen))]
+    [InlineData(nameof(PaneFixtures.OtherExportScreen))]
+    public void Screens_without_an_Esc_to_close_footer_are_not_overlays(string name) =>
+        Assert.Null(OverlayScreen.Read(Fixture(name)));
+
+    // A navigated list is not excluded any more: the footer decides.
+    [Theory]
+    [InlineData(nameof(PaneFixtures.PermissionsAllow))]
+    [InlineData(nameof(PaneFixtures.PermissionsRecentlyBlockedEmpty))]
+    [InlineData(nameof(PaneFixtures.MiniRecentlyBlockedPopulatedStripped))]
+    public void A_permissions_tab_is_not_an_overlay(string name) => Assert.Null(OverlayScreen.Read(Fixture(name)));
+
+    [Fact]
+    public void A_navigated_list_that_does_say_Esc_to_close_is_an_overlay()
+    {
+        Assert.NotNull(OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  Permissions  Recently blocked\n  ←/→ to switch\n  Esc to close\n"));
+        Assert.Null(OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  Recently blocked\n  Enter to approve · r to retry · Esc to approve 1 blocked\n"));
     }
 
     [Fact]
-    public void Tall_or_wrapped_Esc_to_close_screens_are_not_read()
+    public void Two_looks_at_one_overlay_with_different_content_hash_the_same()
     {
-        Assert.Null(OverlayScreen.Read(PaneFixtures.OtherResumeScreen));
-        Assert.Null(OverlayScreen.Read(PaneFixtures.OtherHelpScreen));
+        var a = PromptFingerprint.Of(PaneFixtures.OtherResumeScreen)!;
+        var b = PromptFingerprint.Of(PaneFixtures.OtherResumeScreen.Replace("minute", "hour"))!;
+        Assert.NotEqual(a.Preview, b.Preview);
+        Assert.Equal(a.Hash, b.Hash);
+        Assert.Equal(PromptFingerprint.CanonicalText([OverlayScreen.Read(PaneFixtures.OtherResumeScreen)!.Title], a.Prompt.Options), a.Canonical);
     }
+
+    [Fact]
+    public void A_phones_preview_is_the_caption_cut_at_twelve_lines_with_an_ellipsis()
+    {
+        var short3 = PromptPipeline.OverlayPreview(["a", "b"]);
+        Assert.Equal("a\nb", short3);
+        var twelve = Enumerable.Range(0, 12).Select(i => "l" + i).ToList();
+        Assert.Equal(string.Join("\n", twelve), PromptPipeline.OverlayPreview(twelve));
+        var cut = PromptPipeline.OverlayPreview(twelve.Append("l12").ToList()).Split('\n');
+        Assert.Equal(13, cut.Length);
+        Assert.Equal(("l11", "…"), (cut[11], cut[12]));
+    }
+
+    private static string Fixture(string name) =>
+        (string)typeof(PaneFixtures).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
 }
