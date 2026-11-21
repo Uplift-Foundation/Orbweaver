@@ -316,9 +316,14 @@ namespace Orbweaver
                 }
 
                 var changed = false;
+                List<string> heldBefore;
 
                 lock (_gate)
                 {
+                    heldBefore = _servedBy
+                        .Where(pair => string.Equals(pair.Value, peer, StringComparison.OrdinalIgnoreCase))
+                        .Select(pair => pair.Key).ToList();
+
                     // This reply is authoritative for this peer alone. A
                     // similarly named session may have been answered by a
                     // different connected machine, so it must not be removed
@@ -356,7 +361,12 @@ namespace Orbweaver
                     }
                 }
 
-                MirrorLog.Say("roster-all", $"from={peer} entries={entries.Count}");
+                // CB-402: entries is before Shows(), so `shown` is what this side
+                // actually holds for the peer, and added/dropped say which
+                // sessions moved. A steady roster adds nothing.
+                MirrorLog.Say("roster-all",
+                    $"from={peer} entries={entries.Count} shown={offered.Count}"
+                    + MirrorLog.RosterDelta(heldBefore, offered.Keys));
 
                 if (changed) RosterUpdated?.Invoke();
             }
