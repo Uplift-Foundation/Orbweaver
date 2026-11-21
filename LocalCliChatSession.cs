@@ -1430,7 +1430,7 @@ namespace Orbweaver
 
         [ExcludeFromCodeCoverage]
         private Task<TypingVerdict> RealGate(SessionStatus status) =>
-            TypingGate.JudgeAsync(
+            TypingGate.JudgeWithWaitAsync(
                 status,
                 s => SessionPark.RecordStatus(s.SessionPid, SessionId),
                 TerminalFocuser.CapturePane,

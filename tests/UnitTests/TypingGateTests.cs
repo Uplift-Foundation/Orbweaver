@@ -145,7 +145,7 @@ public class TypingGateTests
 
     [Fact]
     public async Task AnUnreadableRouteIsStillRefusedWhenTheRecordSaysWaiting() =>
-        Assert.Equal(new TypingVerdict(false, TypingGate.WaitingWhy),
+        Assert.Equal(new TypingVerdict(false, TypingGate.WaitingWhy) { FromWaitingRecord = true },
             await new Reads { Record = "waiting" }.Judge(readable: false));
 
     [Theory]
@@ -247,6 +247,8 @@ public class GuardedTypeTests
 {
     private static readonly SessionStatus Status = new() { Title = "openclaw" };
 
+    private static Task NoWait(TimeSpan _) => Task.CompletedTask;
+
     private sealed class Pane
     {
         public List<string> Typed { get; } = new();
@@ -283,7 +285,7 @@ public class GuardedTypeTests
     {
         var pane = new Pane { Screen = PaneFixtures.MiniExitDialog };
 
-        var (typed, refusal, diagnostic) = await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true);
+        var (typed, refusal, diagnostic) = await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, delay: NoWait);
 
         Assert.False(typed);
         Assert.StartsWith("it is showing a dialog: ", refusal);
@@ -320,12 +322,12 @@ public class GuardedTypeTests
         var pane = new Pane { Screen = PaneFixtures.PermissionsAllow };
 
         // canReadPane null: a capture was supplied, so it is believed.
-        Assert.False((await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, null, pane.Capture, null)).Typed);
-        Assert.Equal(1, pane.Captures);
+        Assert.False((await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, null, pane.Capture, null, delay: NoWait)).Typed);
+        Assert.Equal(9, pane.Captures); // first look + 8 re-judges
 
         // The route says unreadable (iTerm2 and the rest): not captured, typed.
         Assert.True((await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, null, pane.Capture, _ => false)).Typed);
-        Assert.Equal(1, pane.Captures);
+        Assert.Equal(9, pane.Captures);
     }
 
     // CB-307 shadow mode: the verdict is logged and the text typed anyway;
@@ -337,14 +339,14 @@ public class GuardedTypeTests
         var log = new List<string>();
 
         Assert.Equal((true, (string?)null, (string?)null), await TypingGate.GuardedTypeAsync(
-            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true, (what, _) => log.Add(what), "s1"));
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true, (what, _) => log.Add(what), "s1", NoWait));
         Assert.Equal(new[] { "remote-typing-refused" }, log);
 
         Assert.True((await TypingGate.GuardedTypeAsync(
-            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true)).Typed);
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true, delay: NoWait)).Typed);
 
         Assert.False((await TypingGate.GuardedTypeAsync(
-            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => false, (what, _) => log.Add(what))).Typed);
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => false, (what, _) => log.Add(what), delay: NoWait)).Typed);
         Assert.Single(log);
         Assert.Equal(new[] { "hi", "hi" }, pane.Typed);
     }
@@ -371,9 +373,200 @@ public class GuardedTypeTests
         var details = new List<string>();
 
         await TypingGate.GuardedTypeAsync(Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true,
-            () => true, (_, detail) => details.Add(detail));
+            () => true, (_, detail) => details.Add(detail), delay: NoWait);
 
         Assert.StartsWith("session=? ", Assert.Single(details));
+    }
+
+    // CB-403: waiting for the prompt. A screen that is a dialog or unreadable
+    // is re-judged every 250 ms for up to 2 s, on a fake clock here.
+    [Fact]
+    public async Task ADialogThatClearsWithinTheWindowTypesOnceItReadsAsAPrompt()
+    {
+        var pane = new Pane { Screen = PaneFixtures.PermissionsAllow };
+        var waits = new List<TimeSpan>();
+
+        Task Wait(TimeSpan t)
+        {
+            waits.Add(t);
+            if (waits.Count == 3) pane.Screen = PaneFixtures.MacPromptAfterEsc;
+            return Task.CompletedTask;
+        }
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, delay: Wait);
+
+        Assert.True(typed);
+        Assert.Null(refusal);
+        Assert.Equal(new[] { "hi" }, pane.Typed);
+        Assert.Equal(3, waits.Count);
+        Assert.All(waits, t => Assert.Equal(TimeSpan.FromMilliseconds(250), t));
+        Assert.Equal(4, pane.Captures);
+    }
+
+    [Fact]
+    public async Task AScreenThatNeverReadsAsAPromptRefusesAfterTwoSeconds()
+    {
+        var pane = new Pane { Screen = PaneFixtures.MiniExitDialog };
+        var waited = TimeSpan.Zero;
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, delay: t => { waited += t; return Task.CompletedTask; });
+
+        Assert.False(typed);
+        Assert.StartsWith("it is showing a dialog: ", refusal);
+        Assert.Empty(pane.Typed);
+        Assert.Equal(TimeSpan.FromSeconds(2), waited);
+        Assert.Equal(9, pane.Captures);
+    }
+
+    [Fact]
+    public async Task AnUnreadableScreenIsWaitedOnToo()
+    {
+        var pane = new Pane { Screen = null };
+        var waits = 0;
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, delay: _ => { waits++; return Task.CompletedTask; });
+
+        Assert.False(typed);
+        Assert.Equal(TypingGate.UnreadableWhy, refusal);
+        Assert.Equal(8, waits);
+    }
+
+    [Fact]
+    public async Task AWaitingRecordRefusesAtOnceWithoutWaiting()
+    {
+        var pane = new Pane();
+        var waits = 0;
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "waiting", pane.Capture, _ => true, delay: _ => { waits++; return Task.CompletedTask; });
+
+        Assert.False(typed);
+        Assert.Equal(TypingGate.WaitingWhy, refusal);
+        Assert.Equal(0, waits);
+        // At most CB-400's one read to name an overlay; never the wait's re-reads.
+        Assert.True(pane.Captures <= 1);
+    }
+
+    [Fact]
+    public async Task AWaitingOverlayRefusesAtOnceWithoutWaiting()
+    {
+        var waits = 0;
+        var captures = 0;
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", (_, _) => Task.FromResult(true), _ => "waiting",
+            _ => { captures++; return Task.FromResult<string?>(PaneFixtures.MobileOverlay80x50); }, _ => true,
+            delay: _ => { waits++; return Task.CompletedTask; });
+
+        Assert.False(typed);
+        Assert.Equal(TypingGate.OverlayWhy("Get the Claude app on your phone"), refusal);
+        Assert.Equal(0, waits);
+        Assert.Equal(1, captures);
+    }
+
+    [Fact]
+    public async Task APromptOnTheFirstLookTypesWithoutWaiting()
+    {
+        var pane = new Pane();
+        var waits = 0;
+
+        Assert.True((await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, delay: _ => { waits++; return Task.CompletedTask; })).Typed);
+        Assert.Equal(0, waits);
+    }
+
+    [Fact]
+    public async Task TheDefaultClockIsRealTime()
+    {
+        // delay null falls back to Task.Delay; a prompt on the first look never
+        // reaches it, and a refusing one is covered above on the fake clock.
+        var pane = new Pane();
+        Assert.True((await TypingGate.JudgeWithWaitAsync(Status, _ => "idle", pane.Capture, true)).Allowed);
+    }
+
+    // QA round 1 (CB-403). Prompt -> Dialog -> Prompt inside the window: the
+    // first Prompt read types and the waiting stops there.
+    [Fact]
+    public async Task AScreenThatFlipsPromptDialogPromptTypesOnTheFirstPromptRead()
+    {
+        var pane = new Pane { Screen = PaneFixtures.MiniExitDialog };
+        var waits = 0;
+
+        Task Wait(TimeSpan _)
+        {
+            waits++;
+            // After the 1st wait the screen is a prompt; after the 2nd a dialog
+            // again — which must never be read, because typing already happened.
+            pane.Screen = waits == 1 ? PaneFixtures.MacPromptAfterEsc : PaneFixtures.MiniExitDialog;
+            return Task.CompletedTask;
+        }
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, delay: Wait);
+
+        Assert.True(typed);
+        Assert.Null(refusal);
+        Assert.Equal(1, waits);
+        Assert.Equal(2, pane.Captures);
+        Assert.Equal(new[] { "hi" }, pane.Typed);
+    }
+
+    // Shadow on with a wait: retries do not log; the one verdict after the
+    // full wait does, and the text is typed whatever it said.
+    [Fact]
+    public async Task ShadowOnLogsOneRefusalAfterTheFullWaitAndStillTypes()
+    {
+        var pane = new Pane { Screen = PaneFixtures.MiniExitDialog };
+        var log = new List<(string What, string Detail)>();
+        var waits = 0;
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true,
+            (what, detail) => log.Add((what, detail)), "s1", _ => { waits++; return Task.CompletedTask; });
+
+        Assert.True(typed);
+        Assert.Null(refusal);
+        Assert.Equal(8, waits);
+        var line = Assert.Single(log);
+        Assert.Equal("remote-typing-refused", line.What);
+        Assert.Contains("shadow=1", line.Detail);
+    }
+
+    [Fact]
+    public async Task ShadowOnLogsOneAllowedWhenADialogClearsNotOneLinePerRetry()
+    {
+        var pane = new Pane { Screen = PaneFixtures.MiniExitDialog };
+        var log = new List<string>();
+        var waits = 0;
+
+        Assert.True((await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => "idle", pane.Capture, _ => true, () => true,
+            (what, _) => log.Add(what), "s1",
+            _ => { if (++waits == 3) pane.Screen = PaneFixtures.MacPromptAfterEsc; return Task.CompletedTask; })).Typed);
+
+        Assert.Equal(new[] { "remote-typing-allowed" }, log);
+    }
+
+    // A `waiting` record that shows up on a retry refuses at once, with no
+    // further delays.
+    [Fact]
+    public async Task AWaitingRecordThatAppearsOnARetryRefusesAtOnce()
+    {
+        var pane = new Pane { Screen = PaneFixtures.MiniExitDialog };
+        var reads = 0;
+        var waits = 0;
+
+        var (typed, refusal, _) = await TypingGate.GuardedTypeAsync(
+            Status, "hi", pane.Type, _ => ++reads >= 2 ? "waiting" : "idle", pane.Capture, _ => true,
+            delay: _ => { waits++; return Task.CompletedTask; });
+
+        Assert.False(typed);
+        Assert.Equal(TypingGate.WaitingWhy, refusal);
+        Assert.Equal(1, waits);
+        Assert.Empty(pane.Typed);
     }
 
     [Fact]

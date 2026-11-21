@@ -31,6 +31,11 @@ namespace Orbweaver
     // as a prompt — so the gate would have typed into the dialog. The echo has
     // no box top above it, and the dialog's options follow its rule.
     //
+    // CB-403 added two things an agent team's footer needs: a `❯` on one of
+    // its rows is a selection, not the prompt, and is skipped; and a box that
+    // belongs to a teammate (Enter on its row) is refused, since text typed
+    // there never reaches the lead. Captures/cb403 has every screen.
+    //
     // Anything not recognised as a prompt or a dialog is Unknown, and the
     // gate refuses Unknown: a screen this has never seen is exactly where
     // typing is least safe.
@@ -81,9 +86,15 @@ namespace Orbweaver
         // answering first (CB-327).
         internal static (PaneReading Reading, string Check) ClaudePrompt(string[] lines, int from)
         {
+            // CB-403: a selected row of the agent-team footer is not the prompt.
+            // One Down arrow at an idle prompt puts a `❯` on the footer under the
+            // box (`❯ ⏺ main`, `❯ ◯ <teammate>`), and as the last `❯` on screen it
+            // was taken for the mark, found no box top above it, and an idle
+            // session refused a phone's message. The box above is still there, so
+            // such a row is skipped and the box is judged as it always was.
             var mark = -1;
             for (var i = lines.Length - 1; i >= from && mark < 0; i--)
-                if (IsPromptMark(lines[i]) && !ChatTranscript.OptionLine.IsMatch(lines[i])) mark = i;
+                if (IsPromptMark(lines[i]) && !ChatTranscript.OptionLine.IsMatch(lines[i]) && !IsSelectedTeamRow(lines[i])) mark = i;
 
             if (mark < 0) return (PaneReading.Unknown, "no-prompt-mark");
 
@@ -97,6 +108,17 @@ namespace Orbweaver
                 if (ChatTranscript.IsHorizontalRule(lines[j])) bottom = j;
 
             if (bottom < 0) return (PaneReading.Unknown, "no-box-bottom");
+
+            // CB-403, the other direction: Enter on a teammate's footer row turns
+            // the pane over to that teammate. The box is drawn exactly as the
+            // lead's is, so it read as the prompt, and a message typed there goes
+            // to the teammate and not to the session the phone is talking to.
+            // Two things on a real capture say so, and either is enough: the
+            // box's title is `@<teammate>`, and the footer's filled mark has left
+            // `main` (`◯ main` / `⏺ <teammate>`).
+            if (TitleOf(lines[above]).StartsWith('@')) return (PaneReading.Unknown, "teammate-view");
+            for (var k = bottom + 1; k < lines.Length; k++)
+                if (IsUnviewedMain(lines[k])) return (PaneReading.Unknown, "teammate-view");
 
             for (var k = bottom + 1; k < lines.Length; k++)
                 if (ChatTranscript.OptionLine.IsMatch(lines[k])
@@ -195,6 +217,34 @@ namespace Orbweaver
 
         private static bool IsPromptMark(string line) =>
             line.StartsWith('❯') || line == ">" || (line.Length > 1 && line[0] == '>' && char.IsWhiteSpace(line[1]));
+
+        // The agent-team footer under the box (CB-403), one row per member:
+        // `⏺ main` / `◯ <teammate>  <task>  <elapsed>`. The filled mark is on
+        // whoever the pane is showing, and after a Down arrow one row carries a
+        // leading `❯`. Both marks are needed after the `❯`: a line the user
+        // typed that starts some other way is still a prompt mark.
+        private static bool IsTeamMark(char c) => c is '⏺' or '◯';
+
+        internal static bool IsSelectedTeamRow(string line)
+        {
+            if (!line.StartsWith('❯')) return false;
+            var rest = line[1..].TrimStart();
+            return rest.Length > 1 && IsTeamMark(rest[0]) && char.IsWhiteSpace(rest[1]);
+        }
+
+        // `◯ main`, selected or not: the lead's own row without the filled mark.
+        internal static bool IsUnviewedMain(string line)
+        {
+            // Trimmed here as well as by the caller: a reader that pads rows to
+            // the pane's width must not turn this refusal off.
+            var rest = line.Trim();
+            if (rest.StartsWith('❯')) rest = rest[1..].TrimStart();
+            return rest == "◯ main";
+        }
+
+        // A box top's title: what is left once the rule characters and spaces at
+        // both ends are gone. Empty for a pure rule.
+        internal static string TitleOf(string edge) => edge.Trim('─', '━', '═', ' ');
 
         private static bool IsRuleChar(char c) => c is '─' or '━' or '═';
 

@@ -1,0 +1,23 @@
+ ▐▛███▛█   v2.1.330
+▝▜██████▀  Haiku 5.5
+ ▝▝   ▝▝   Claude Team
+           /…/throwaway
+
+⚠ 1 MCP server needs
+  authentication · run
+  /mcp
+
+✽ Considering…
+  ⎿  Tip: Use /btw to
+     ask a side question
+     without
+     interrupting Claude
+
+───────── @scratch-two ─
+❯ Message @scratch-two…
+────────────────────────
+  Haiku 5.5 | ~/throw…
+  ↑/↓ to select
+
+  ◯ main
+❯ ⏺ scratch-two 2m 26s

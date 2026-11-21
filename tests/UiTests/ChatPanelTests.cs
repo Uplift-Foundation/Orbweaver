@@ -417,6 +417,50 @@ public class ChatPanelTests : IDisposable
         Assert.Equal("replying is off", input.Text);
     }
 
+    // CB-403: a refusal from the typing gate (local panel or a peer's
+    // not-at-prompt) reaches the sender as a visible note, with the draft kept
+    // and no sent bubble — never silence.
+    [AvaloniaFact]
+    public void ATypingRefusalShowsAnErrorAndKeepsTheDraft()
+    {
+        var orb = NewOrb();
+        var fake = NewFake();
+        fake.SendOutcome = ChatSendOutcome.Failed;
+        fake.RefusalNote = RemoteControlChatSession.TypingRefusal(
+            MirrorProtocol.ErrNotAtPrompt, "mini", "it is showing a dialog: Permissions");
+
+        ChatPanel.OpenFor(orb, fake);
+        Flush();
+
+        var panel = ChatPanelTestAccess.Instance!;
+        var input = panel.FindControl<TextBox>("Input")!;
+
+        input.Focus();
+        Flush();
+
+        input.RaiseEvent(new Avalonia.Input.TextInputEventArgs
+        {
+            RoutedEvent = Avalonia.Input.InputElement.TextInputEvent,
+            Text = "please carry on"
+        });
+        Flush();
+
+        input.RaiseEvent(new Avalonia.Input.KeyEventArgs
+        {
+            RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent,
+            Key = Key.Enter
+        });
+        Flush();
+
+        Assert.Equal("please carry on", input.Text);
+
+        var shown = string.Join("\n", RenderedRows(panel).OfType<Avalonia.Controls.Control>()
+            .SelectMany(r => TextBlocksIn(r)).Select(RenderedText));
+        Assert.Contains("isn't at its prompt", shown);
+        Assert.Contains("Nothing was typed", shown);
+        Assert.DoesNotContain("please carry on", shown);
+    }
+
     // The other half of the same fix, stated as its own test rather than left
     // to be inferred from the first: a session that *can* send still gets its
     // box cleared, so this is a genuine on/off distinction driven by the

@@ -1,0 +1,23 @@
+
+⏺ Teammate @helper2 finished
+  helper2 standing by.
+
+⏺ helper2 has checked in and is idle. helper3 hasn't checked in yet.
+
+
+⏺ Teammate @helper3 finished
+  helper3 standing by.
+
+⏺ helper3 has now checked in too, so all three teammates (helper, helper2 and helper3) are idle and waiting
+  for instructions.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ list the team members
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 | ~/cb403qa-proj | 30% (7d:44%) | [.claude]
+  enter to view · x to stop · ctrl+x ctrl+k to stop all agents
+
+  ⏺ main
+❯ ◯ helper   Idle helper teammate                                                                     10m 1s
+  ◯ helper2  Idle helper2 teammate                                                                    3m 47s
+  ◯ helper3  Reviews every generated invoice against the ledger export and reports mismatches in tot… 3m 45s
