@@ -8,22 +8,18 @@ namespace Orbweaver.Tests;
 /// </summary>
 public class FolderResolverTests
 {
-    // The fake filesystem is keyed by POSIX paths, and the walk builds paths with
-    // Path.Combine, so on Windows every lookup would miss and the input come back
-    // unchanged. The resolver exists for /tmp to /private/tmp; the real link case is
-    // in the integration suite, so this shows as skipped on windows-latest instead of
-    // passing without checking anything.
-    private sealed class PosixPathsTheoryAttribute : TheoryAttribute
+    // The walk builds paths with Path.Combine and GetFullPath, so on Windows it asks the fake
+    // for "\\tmp" and "C:\\private\\tmp". The fake is keyed by POSIX paths and N() folds what the
+    // walk asks (and what it answers) onto them, so one table gives one answer on both rids.
+    private static string N(string p)
     {
-        public PosixPathsTheoryAttribute()
-        {
-            if (OperatingSystem.IsWindows()) Skip = "the fake filesystem is keyed by POSIX paths";
-        }
+        p = p.Replace('\\', '/');
+        return p.Length >= 2 && p[1] == ':' ? p[2..] : p;
     }
 
     // A path is present when listed; a link has a target.
     private static Func<string, (bool, string?)> Fs(Dictionary<string, string?> entries) =>
-        p => entries.TryGetValue(p, out var t) ? (true, t) : (false, null);
+        p => entries.TryGetValue(N(p), out var t) ? (true, t) : (false, null);
 
     private static readonly Dictionary<string, string?> Mac = new()
     {
@@ -44,7 +40,7 @@ public class FolderResolverTests
         ["/plain"] = null,
     };
 
-    [PosixPathsTheory]
+    [Theory]
     [InlineData("/tmp/x", "/private/tmp/x")]
     [InlineData("/tmp/x/y", "/private/tmp/x/y")]
     [InlineData("/a/mid", "/private/tmp/x")]
@@ -55,7 +51,7 @@ public class FolderResolverTests
     [InlineData("/plain", "/plain")]
     public void A_link_in_any_component_resolves_to_the_physical_path(string asked, string physical)
     {
-        Assert.Equal(physical, FolderResolver.Resolve(asked, Fs(Mac)));
+        Assert.Equal(physical, N(FolderResolver.Resolve(asked, Fs(Mac))));
     }
 
     [Theory]
