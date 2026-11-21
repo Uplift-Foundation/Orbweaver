@@ -100,6 +100,9 @@ public class LaunchRunnerTests
         var expected = Path.Combine(named.Home, ".claude-b");
         Assert.True(Path.IsPathRooted(expected));
         Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, expected)), named.MacStarts.Single().Command);
+        // Independent of the builder: the literal folder sits in the command.
+        Assert.Contains("env CLAUDE_CONFIG_DIR=", named.MacStarts.Single().Command);
+        Assert.Contains(expected, named.MacStarts.Single().Command);
 
         var dflt = new Desk();
         dflt.ChecksIn("new", Status());

@@ -213,6 +213,8 @@ public class PeerLaunchServerTests
         var expected = Path.Combine(w.Desk.Home, ".claude-b");
         Assert.True(Path.IsPathRooted(expected));
         Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, expected)), w.Desk.MacStarts.Single().Command);
+        Assert.Contains("env CLAUDE_CONFIG_DIR=", w.Desk.MacStarts.Single().Command);
+        Assert.Contains(expected, w.Desk.MacStarts.Single().Command);
     }
 
     // The gate's later rules and the runner's refusals reach the sender as

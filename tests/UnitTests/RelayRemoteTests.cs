@@ -830,6 +830,7 @@ public class RelayRemoteTests
         Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, Path.Combine(w.Home, ".claude-uplift"))), w.MacStarts.Single().Command);
         Assert.True(Path.IsPathRooted(Path.Combine(w.Home, ".claude-uplift")));
         Assert.Contains("env CLAUDE_CONFIG_DIR=", w.MacStarts.Single().Command);
+        Assert.Contains(Path.Combine(w.Home, ".claude-uplift"), w.MacStarts.Single().Command);
     }
 
     [Fact]
