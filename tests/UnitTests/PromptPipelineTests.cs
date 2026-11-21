@@ -1427,4 +1427,41 @@ public class PromptPipelineTests
         await p.OnScannedAsync(Snap("idle"));
         Assert.Equal((rid, "desk", (string?)null), Assert.Single(sender.Resolved));
     }
+
+    // Addendum 4: a press that changed nothing on an overlay is refused stale_prompt
+    // but leaves the prompt answerable; the same on a permission prompt does not.
+    [Fact]
+    public async Task A_no_effect_close_leaves_the_overlay_answerable_for_a_second_try()
+    {
+        await ScanOverlay();
+        _pane.Stuck = true;
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:Escape"));
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(["Escape"], _pane.Keys);
+        Assert.False(_p.PendingFor("s1")!.Answered);
+
+        _pane.Stuck = false;
+        var second = AnswerTo(action: "option:Escape");
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, second);
+
+        Assert.Equal(["Escape", "Escape"], _pane.Keys);      // decided, not refused not_pending
+        Assert.Equal((second.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
+        Assert.Single(_sent.Refusals);
+    }
+
+    [Fact]
+    public async Task A_no_effect_press_on_a_permission_prompt_still_refuses_the_second_answer_not_pending()
+    {
+        await _p.OnScannedAsync(Snap());
+        _pane.Stuck = true;
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.Equal(AnswerGate.StalePrompt, _sent.Refusals[0].Code);
+        Assert.True(_p.PendingFor("s1")!.Answered);
+
+        _pane.Stuck = false;
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+
+        Assert.Equal(AnswerGate.NotPending, _sent.Refusals[1].Code);
+        Assert.Single(_pane.Keys);
+    }
 }

@@ -427,6 +427,13 @@ namespace Orbweaver
                     // Left in place, answered: the dialog is still up and is the
                     // desk's to answer now. Not minted again while its hash
                     // stands, and settled silently when the session moves on.
+                    //
+                    // CB-400: not for an overlay. Esc there that changes neither the
+                    // title nor the label (a pane that did not move) is harmless to
+                    // press again, and a phone that could never press again would be
+                    // stuck on a Close that no longer works. It stays pending and every
+                    // later answer passes the whole gate against a fresh read.
+                    if (live.Quiet) pending.Answered = false;
                     return;
                 }
 

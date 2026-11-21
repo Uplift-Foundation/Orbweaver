@@ -3236,5 +3236,167 @@ Which color do you prefer?
 
 Enter to select · ↑/↓ to navigate · Esc to cancel
 """"");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /resume with text typed in its search box: footer `Esc to clear`. (cb400-captures/m3-resume-search-afterkeys.txt)
+        internal static readonly string ResumeSearchTyped = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: m3.sh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Resume session
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                    │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  ❯ /export
+    1 minute ago · HEAD · 8.4KB
+
+    Ok
+    1 minute ago · HEAD · 539.8KB
+
+    /agents
+    6 minutes ago · HEAD · 23.1KB
+
+    Setup health check
+    8 minutes ago · HEAD · 3.8MB
+
+  Type to search · Enter to select · Esc to clear
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /permissions with text typed in its search box: footer `Esc to clear`. (cb400-captures/m3-perm-search-afterkeys.txt)
+        internal static readonly string PermSearchTyped = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: m3.sh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Permissions  Recently blocked   Allow   Ask   Deny   Auto mode   Workspace
+
+  Claude Code won't ask before using allowed tools.
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ zz                                                                                         │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  No rules match "zz"
+
+  Esc to clear
+""""");
+
+        // CB-400, QA, Claude Code 2.1.330, tmux: /resume after the Esc that cleared the search: footer `Esc to close`. (cb400-captures/m3-resume-search-afteresc.txt)
+        internal static readonly string ResumeSearchAfterEsc = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/xxxxxxxxxxxx · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: m3.sh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Resume session
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                    │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+    xxxxxxxxxxxx
+
+  ❯ /export
+    1 minute ago · HEAD · 8.4KB
+
+    Ok
+    1 minute ago · HEAD · 539.8KB
+
+    /agents
+    6 minutes ago · HEAD · 23.1KB
+
+    Setup health check
+    8 minutes ago · HEAD · 3.8MB
+
+  Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to
+  rename · Type to search · Enter to resume · Esc to close
+""""");
     }
 }

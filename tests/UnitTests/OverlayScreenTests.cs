@@ -332,4 +332,46 @@ public class OverlayScreenTests
         Assert.EndsWith("\nEscape. Go back", PromptFingerprint.Of(PaneFixtures.OtherConfigScreen)!.Canonical);
         Assert.NotEqual(PromptFingerprint.Of(PaneFixtures.McpList)!.Hash, PromptFingerprint.Of(PaneFixtures.McpDetail)!.Hash);
     }
+
+    // `Esc to clear` only empties a search box and leaves the screen, so it is not a
+    // leaving verb; the Esc that cleared it lands on a pane whose footer says Close.
+    [Fact]
+    public void Esc_to_clear_is_not_a_footer_and_the_next_screen_is_a_Close_pane()
+    {
+        Assert.Null(OverlayScreen.Read(PaneFixtures.ResumeSearchTyped));
+        Assert.Null(OverlayScreen.Read(PaneFixtures.PermSearchTyped));
+        Assert.Equal("Close", OverlayScreen.Read(PaneFixtures.ResumeSearchAfterEsc)!.Label);
+    }
+
+    // The two answerable dialogs that do have a `▔` line are numbered, so
+    // ParseDialogCore reads them first and keeps offering their digits.
+    [Theory]
+    [InlineData(nameof(PaneFixtures.MiniExitDialog))]
+    [InlineData(nameof(PaneFixtures.OtherModelScreen))]
+    public void A_numbered_dialog_with_the_edge_keeps_its_digit_options(string name)
+    {
+        Assert.Null(OverlayScreen.Read(Fixture(name)));
+        var dialog = ChatTranscript.ParseDialog(Fixture(name))!;
+        Assert.Null(dialog.Body);
+        Assert.Equal(Enumerable.Range(1, dialog.Options.Count).Select(i => i.ToString()), dialog.Options.Select(o => o.Key));
+        Assert.True(dialog.Options.Count >= 2);
+    }
+
+    // What CB-307 protected with its "not a dialog" pins on these captures: they offer no
+    // digit and are never typed into. Restated for a pane: ParseDialogCore still reads
+    // nothing, the one option is Escape, and PaneScreen refuses typing as an overlay.
+    [Theory]
+    [InlineData(nameof(PaneFixtures.PermissionsAllow))]
+    [InlineData(nameof(PaneFixtures.PermissionsAsk))]
+    [InlineData(nameof(PaneFixtures.PermissionsDeny))]
+    [InlineData(nameof(PaneFixtures.PermissionsAutoMode))]
+    [InlineData(nameof(PaneFixtures.PermissionsWorkspace))]
+    [InlineData(nameof(PaneFixtures.PermissionsRecentlyBlockedEmpty))]
+    public void A_permissions_tab_offers_only_Escape_and_is_never_typed_into(string name)
+    {
+        Assert.Null(ChatTranscript.ParseDialogCore(Fixture(name), out _, out _));
+        var only = Assert.Single(ChatTranscript.ParseDialog(Fixture(name))!.Options);
+        Assert.Equal(("Escape", "Cancel"), (only.Key, only.Label));
+        Assert.Equal((PaneReading.Dialog, "overlay"), PaneScreen.Read(Fixture(name)));
+    }
 }
