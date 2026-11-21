@@ -400,8 +400,32 @@ public class OpenClawRunControlsTests : IDisposable
         var discord = Chat(DiscordKey);
 
         Assert.NotNull(OpenClawSessions.RunStateOf(DiscordKey));
-        Assert.Null(discord.RunOptions);
+        // CB-404: shown, disabled, with the reason; never hidden.
+        var options = discord.RunOptions!;
+        Assert.Equal(OpenClawRunText.SurfaceReason, options.ModelDisabledReason);
+        Assert.Equal(OpenClawRunText.SurfaceReason, options.EffortDisabledReason);
+        Assert.False(options.HasFast);
+        Assert.False(options.HasTimeLimit);
+        Assert.Empty(options.ThinkingChoices);
+        Assert.Equal(options.ModelId, Assert.Single(options.Models).Id);
         Assert.False(discord.CanSendImages);
+    }
+
+    // A surface conversation the gateway has not listed a model for still gets
+    // its disabled controls, the chip saying the model is not known.
+    [Fact]
+    public async Task AnUnlistedSurfaceConversationSaysTheModelIsNotKnown()
+    {
+        await GatedNativeAsync();
+        var chat = Chat("agent:quill:discord:direct:unlisted");
+        chat.Observe(OpenClawNativeKind.None);
+
+        var options = chat.RunOptions!;
+
+        Assert.Null(options.ModelId);
+        Assert.Empty(options.Models);
+        Assert.Equal(RunText.ModelUnknown, options.ChipText);
+        Assert.Equal(OpenClawRunText.SurfaceReason, options.ModelDisabledReason);
     }
 
     [Fact]
@@ -410,18 +434,18 @@ public class OpenClawRunControlsTests : IDisposable
         var chat = await GatedNativeAsync();
         OrbweaverSettings.OpenClawReplyEnabled = false;
 
-        Assert.Null(chat.RunOptions);
+        Assert.Equal(OpenClawRunText.ReplyOffReason, chat.RunOptions!.ModelDisabledReason);
     }
 
     [Fact]
     public async Task WithoutTheWriteScopeOrThePatchMethodThereAreNoRunOptions()
     {
         var noWrite = await GatedNativeAsync(scopes: new[] { "operator.read" });
-        Assert.Null(noWrite.RunOptions);
+        Assert.Equal(OpenClawRunText.NoPatchReason, noWrite.RunOptions!.ModelDisabledReason);
         OpenClawSessions.SetGatewayForTests(null);
 
         var noPatch = await GatedNativeAsync(methods: new[] { "chat.send" });
-        Assert.Null(noPatch.RunOptions);
+        Assert.Equal(OpenClawRunText.NoPatchReason, noPatch.RunOptions!.EffortDisabledReason);
     }
 
     [Fact]
