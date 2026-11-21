@@ -197,7 +197,8 @@ public class RelayV11VectorTests
     public void The_caps_frame_is_the_shipped_bytes_on_its_own_ck()
     {
         Assert.Equal(Str(In, "ck_caps"), Ck(CkKey, BrowseFrames.CapsCk));
-        AssertBox(V.GetProperty("sealed").GetProperty("caps"), DesktopToPhone, BrowseFrames.Caps, Str(In, "ck_caps"));
+        // v11's desk advertised list_dir alone; frames-v13 widens the shipped caps (RelayV13VectorTests).
+        AssertBox(V.GetProperty("sealed").GetProperty("caps"), DesktopToPhone, BrowseFrames.CapsFrame("list_dir"), Str(In, "ck_caps"));
     }
 
     [Fact]

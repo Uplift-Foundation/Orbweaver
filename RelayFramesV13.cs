@@ -2,34 +2,35 @@ using System.Text;
 
 namespace Orbweaver
 {
-    // CB-404 (frames-v13): what the run-controls chip says about one session,
-    // in the shape both the phone relay and the linked-desktop mirror carry.
+    // CB-404 (frames-v13, Orbweaver-Mobile contracts/frames-v13.json): what
+    // the run controls say about one session, in the shape both the phone relay
+    // and the linked-desktop mirror carry.
     //
     // Deliberately not RemoteRunOptions. That record is what the desktop panel
-    // draws and it carries things a wire has no business with (the chip's own
-    // sentence, OpenClaw's fast mode and time limit); this is the part a far
-    // reader can act on — what is running, what may be chosen, and, when it
-    // may not, why. RunStateWire.From is the one place the two meet, so the
-    // panel's record can grow without the contract moving.
+    // draws, and it carries things a wire has no business with (the chip's own
+    // sentence, OpenClaw's fast mode and time limit). This is the part a far
+    // reader can act on. RunControlsHost.Wire is the one place the two meet, so
+    // the panel's record can grow without the contract moving.
     //
-    // Id null means the value is not known yet (no reading). Off null means
-    // the control is enabled; otherwise it is the sentence a disabled control
-    // shows. Pending means the app sent a change no reading has confirmed.
+    // Id is the confirmed value, null when nothing has been read. Pending is the
+    // value being applied, until a reading confirms or refutes it. Off is the
+    // sentence a disabled control shows (null when enabled), and Failed is the
+    // sentence while the desk reports that its last set of this field was not
+    // confirmed.
     internal sealed record RunFieldState(
         string? Id,
-        string? Label,
+        string? Pending,
         IReadOnlyList<RemoteRunChoice> Choices,
         string? Off,
-        bool Pending);
+        string? Failed);
 
-    internal sealed record RunState(RunFieldState Model, RunFieldState Effort);
+    // SavesDefault: the route in use also changes the default for new sessions
+    // (decision F1: Claude Code's typed route, a Codex before 0.164).
+    internal sealed record RunState(RunFieldState Model, RunFieldState Effort, bool SavesDefault);
 
     // A phone asking to change one field of a session's run (frames-v13
-    // set_run). Field and Value are null when the shape was wrong, so the
-    // handler answers bad_field / bad_value rather than a generic bad_frame —
-    // the contract separates the two because a phone with a newer field name
-    // than this desk knows should be told which part was refused.
-    internal sealed record SetRunRequest(string Ref, string SessionId, string? Field, string? Value) : RelayRequest(Ref);
+    // set_run). Only a well-formed one is made: every shape fault is bad_frame.
+    internal sealed record SetRunRequest(string Ref, string SessionId, string Field, string Value) : RelayRequest(Ref);
 
     internal static class RunFrames
     {
@@ -39,66 +40,121 @@ namespace Orbweaver
         internal const string FieldModel = "model";
         internal const string FieldEffort = "effort";
 
-        // The ok code a set answers with, and v13's err codes.
         internal const string SetOk = "set";
-        internal const string BadField = "bad_field", BadValue = "bad_value", Unavailable = "unavailable", Failed = "failed";
+        internal const string BadValue = "bad_value", Unavailable = "unavailable", SetFailed = "set_failed";
 
-        // frames-v13 limits: a catalogue is capped by count and by bytes so a
-        // CLI that one day lists hundreds of models cannot push one state frame
-        // past what the relay will carry. The running model is always kept,
-        // even when the cap would have cut it.
-        internal const int MaxChoices = 32;
-        internal const int MaxChoiceBytes = 4000;
-        internal const int MaxValueLength = 64;
+        // frames-v13 limits.
+        internal const int MaxChoices = 50;
+        internal const int MaxIdChars = 64;
+        internal const int MaxLabel = 64;
+        internal const int MaxReason = 200;
+
+        // The desk's own sentence while a change on either field is unconfirmed:
+        // a second change before the first is read back would leave nobody able
+        // to say which one the session ended up on.
+        internal const string BusyWhy = "The last change is still being applied.";
 
         // The coalescing key's input: the relay keeps the newest per session,
-        // and the roster's own key is untouched.
+        // and the roster's key is untouched.
         internal static string CkFor(string sessionId) => "run:" + sessionId;
 
-        // A value uses launch.model's grammar, but empty is not a choice here:
-        // "back to the default" is not something the phone offers.
-        internal static bool ValueOk(string? value) =>
-            !string.IsNullOrEmpty(value) && value.Length <= MaxValueLength && LaunchGate.ModelOk(value);
+        // An ID: 1 to 64 printable ASCII characters, no space, no quote and no
+        // backslash, so it is the same bytes escaped or not and nothing a typed
+        // route could break out of. Not launch.model's grammar: a Claude alias
+        // such as `opus[1m]` is an ID.
+        internal static bool IdOk(string? id)
+        {
+            if (string.IsNullOrEmpty(id) || id.Length > MaxIdChars) return false;
+            foreach (var c in id)
+                if (c < '!' || c > '~' || c == '"' || c == '\\') return false;
+            return true;
+        }
 
         internal static bool FieldOk(string? field) => field is FieldModel or FieldEffort;
 
-        internal static string State(string sessionId, RunState s) =>
-            new CanonicalJson().Str("t", "run").Str("session_id", sessionId)
-                .Raw(FieldModel, Field(s.Model)).Raw(FieldEffort, Field(s.Effort)).ToString();
+        // C0 controls and DEL become spaces, then the frames-v6 Cut.
+        internal static string Clean(string text, int max)
+        {
+            var sb = new StringBuilder(text.Length);
+            foreach (var c in text) sb.Append(c < ' ' || c == '\u007f' ? ' ' : c);
+            return PromptFrames.Cut(sb.ToString(), max);
+        }
+
+        // A blank label (or one of nothing but controls) is the id.
+        internal static string Label(string id, string label)
+        {
+            var clean = Clean(label, MaxLabel);
+            return string.IsNullOrWhiteSpace(clean) ? id : clean;
+        }
+
+        internal static string? Reason(string? text) => text is null ? null : Clean(text, MaxReason);
+
+        // What a field says on the wire. Choices that are not IDs are left out,
+        // and so is a repeated id after its first. Past the cap, the confirmed and
+        // pending values are kept and the earliest others fill the rest, all in
+        // the desk's own order, which for effort is the dial's. An id or pending
+        // value that is not among what is left is not written.
+        internal static RunFieldState Sanitize(RunFieldState f)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var valid = new List<RemoteRunChoice>();
+            foreach (var c in f.Choices)
+                if (IdOk(c.Id) && seen.Add(c.Id)) valid.Add(new RemoteRunChoice(c.Id, Label(c.Id, c.Label)));
+
+            var kept = valid;
+            if (valid.Count > MaxChoices)
+            {
+                bool Named(RemoteRunChoice c) => c.Id == f.Id || c.Id == f.Pending;
+                var room = MaxChoices - valid.Count(Named);
+                kept = valid.Where(c => Named(c) || room-- > 0).ToList();
+            }
+
+            string? Offered(string? id) => id is not null && kept.Any(c => c.Id == id) ? id : null;
+            return new RunFieldState(Offered(f.Id), Offered(f.Pending), kept, Reason(f.Off), Reason(f.Failed));
+        }
+
+        internal static RunState Sanitize(RunState s) => new(Sanitize(s.Model), Sanitize(s.Effort), s.SavesDefault);
+
+        internal static string State(string sessionId, RunState s)
+        {
+            var clean = Sanitize(s);
+            var j = new CanonicalJson().Str("t", "run").Str("session_id", sessionId)
+                .Raw(FieldModel, Field(clean.Model)).Raw(FieldEffort, Field(clean.Effort));
+            return j.Flag("saves_default", clean.SavesDefault).ToString();
+        }
 
         private static string Field(RunFieldState f)
         {
             var j = new CanonicalJson();
             if (f.Id is not null) j.Str("id", f.Id);
-            if (f.Label is not null) j.Str("label", f.Label);
-            j.Array("choices", Capped(f.Choices, f.Id).Select(Choice));
+            if (f.Pending is not null) j.Str("pending", f.Pending);
+            j.Array("choices", f.Choices.Select(c => new CanonicalJson().Str("id", c.Id).Str("label", c.Label).ToString()));
             if (f.Off is not null) j.Str("off", f.Off);
-            return j.Flag("pending", f.Pending).ToString();
+            if (f.Failed is not null) j.Str("failed", f.Failed);
+            return j.ToString();
         }
 
-        private static string Choice(RemoteRunChoice c) => new CanonicalJson().Str("id", c.Id).Str("label", c.Label).ToString();
-
-        // In order, until either cap would be passed; the current value is
-        // then put back at the end if it was cut, so a phone can always draw
-        // what the session is running.
-        internal static IReadOnlyList<RemoteRunChoice> Capped(IReadOnlyList<RemoteRunChoice> choices, string? current)
+        // set_run's checks after the session is known (frames-v13 check order):
+        // the field is off, or either field is pending (unavailable, with why),
+        // then the value is not one of the field's choices as written
+        // (bad_value). Null means the route may run. Read against the sanitised
+        // state, so a choice the cap left out is not offered here either.
+        internal static (string Code, string? Why)? Refusal(RunState state, string field, string value)
         {
-            var kept = new List<RemoteRunChoice>();
-            var bytes = 0;
-            foreach (var c in choices)
-            {
-                var size = Encoding.UTF8.GetByteCount(Choice(c));
-                if (kept.Count == MaxChoices || bytes + size > MaxChoiceBytes) break;
-                kept.Add(c);
-                bytes += size;
-            }
-            if (current is not null && kept.All(c => c.Id != current)
-                && choices.FirstOrDefault(c => c.Id == current) is { } running)
-            {
-                if (kept.Count == MaxChoices) kept.RemoveAt(kept.Count - 1);
-                kept.Add(running);
-            }
-            return kept;
+            var clean = Sanitize(state);
+            var f = field == FieldEffort ? clean.Effort : clean.Model;
+            if (f.Off is { } off) return (Unavailable, off);
+            if (clean.Model.Pending is not null || clean.Effort.Pending is not null) return (Unavailable, BusyWhy);
+            if (f.Choices.All(c => c.Id != value)) return (BadValue, null);
+            return null;
         }
+
+        // A route's own answer as the reply's code and why.
+        internal static (string Code, string? Why) Answer(RunSetResult result) => result.Kind switch
+        {
+            RunSetKind.BadValue => (BadValue, null),
+            RunSetKind.Unavailable => (Unavailable, Reason(result.Why ?? RunText.NoRoute)),
+            _ => (SetFailed, Reason(result.Why ?? "it did not change")),
+        };
     }
 }

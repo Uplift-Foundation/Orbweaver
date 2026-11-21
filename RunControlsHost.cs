@@ -54,7 +54,7 @@ namespace Orbweaver
         private readonly Seams _seams;
         private readonly object _gate = new();
         private readonly Dictionary<string, IReadOnlyList<RunPending>> _pending = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, string> _failures = new(StringComparer.Ordinal);
+        private readonly Dictionary<(string Session, RunField Field), string> _failures = new();
 
         internal RunControlsHost(Seams seams) => _seams = seams;
 
@@ -93,15 +93,12 @@ namespace Orbweaver
             return RunControlsResolver.Resolve(cli, RouteFor(status, cli), reading, catalogue, pending);
         }
 
-        // The last pending set a reading contradicted or that timed out, once:
-        // the panel shows it and the next call answers null.
-        internal string? TakeFailure(SessionStatus status)
+        // The sentence for a field's last set that a reading contradicted or that
+        // timed out. It stays until the next set of that field goes out, which is
+        // how frames-v13's `failed` reads: present while the desk is reporting it.
+        internal string? FailureFor(SessionStatus status, RunField field)
         {
-            lock (_gate)
-            {
-                if (!_failures.Remove(Key(status), out var failure)) return null;
-                return failure;
-            }
+            lock (_gate) return _failures.GetValueOrDefault((Key(status), field));
         }
 
         private IReadOnlyList<RunPending> Reconcile(SessionStatus status, RunCli cli, RunReading reading, RunCatalogue catalogue)
@@ -111,30 +108,38 @@ namespace Orbweaver
             lock (_gate)
             {
                 if (!_pending.TryGetValue(Key(status), out var pending) || pending.Count == 0) return [];
-                var (kept, failures) = RunPendingRules.Reconcile(pending, reading, _seams.Now(),
-                    RunPendingRules.TimeoutFor(cli), catalogue);
+                // One field at a time, so each failure sentence is filed under
+                // the field whose set it reports.
+                var kept = new List<RunPending>();
+                foreach (var p in pending)
+                {
+                    var (still1, failures) = RunPendingRules.Reconcile([p], reading, _seams.Now(),
+                        RunPendingRules.TimeoutFor(cli), catalogue);
+                    kept.AddRange(still1);
+                    if (failures.Count > 0) _failures[(Key(status), p.Field)] = failures[0];
+                }
                 still = kept;
                 moved = kept.Count != pending.Count;
                 if (kept.Count == 0) _pending.Remove(Key(status));
                 else _pending[Key(status)] = kept;
-                if (failures.Count > 0) _failures[Key(status)] = failures[^1];
             }
             if (moved) Changed?.Invoke(Key(status));
             return still;
         }
 
-        public RunState? Read(SessionStatus status) => Options(status) is { } o ? Wire(o) : null;
+        public RunState? Read(SessionStatus status) =>
+            Options(status) is { } o
+                ? Wire(o, FailureFor(status, RunField.Model), FailureFor(status, RunField.Effort))
+                : null;
 
         // The wire's view of the panel's record (frames-v13 run, the mirror's
-        // `run` roster field). Labels are the choice's label where the
-        // catalogue has one; an unknown value has no id and no label.
-        internal static RunState Wire(RemoteRunOptions o) => new(
-            new RunFieldState(o.ModelId, LabelOf(o.Models, o.ModelId), o.Models, o.ModelDisabledReason, o.ModelPending),
-            new RunFieldState(o.ThinkingId, LabelOf(o.ThinkingChoices, o.ThinkingId), o.ThinkingChoices,
-                o.EffortDisabledReason, o.EffortPending));
-
-        private static string? LabelOf(IReadOnlyList<RemoteRunChoice> choices, string? id) =>
-            id is null ? null : choices.FirstOrDefault(c => c.Id == id)?.Label ?? id;
+        // `run` roster field): the confirmed value as id, the chosen one as
+        // pending while it is unconfirmed.
+        internal static RunState Wire(RemoteRunOptions o, string? modelFailed = null, string? effortFailed = null) => new(
+            new RunFieldState(o.ConfirmedModelId, o.ModelPending ? o.ModelId : null, o.Models, o.ModelDisabledReason, modelFailed),
+            new RunFieldState(o.ConfirmedEffortId, o.EffortPending ? o.ThinkingId : null, o.ThinkingChoices,
+                o.EffortDisabledReason, effortFailed),
+            o.DefaultWarning is not null);
 
         public Task<RunSetResult> SetAsync(SessionStatus status, string field, string value) =>
             SetAsync(status, field == RunFrames.FieldEffort ? RunField.Effort : RunField.Model, value);
@@ -163,7 +168,7 @@ namespace Orbweaver
                 {
                     _pending[Key(status)] = RunPendingRules.With(
                         _pending.GetValueOrDefault(Key(status)) ?? [], new RunPending(field, value, _seams.Now()));
-                    _failures.Remove(Key(status));
+                    _failures.Remove((Key(status), field));
                 }
                 Changed?.Invoke(Key(status));
             }

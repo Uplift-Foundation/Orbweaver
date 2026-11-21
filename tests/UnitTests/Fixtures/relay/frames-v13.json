@@ -1,0 +1,178 @@
+{
+  "version": 13,
+  "note": "CB-404: a model list and an effort dial on every chat, on the desk and on the phone, for every CLI the phone can reach (Claude Code, Codex and Grok: the roster carries only local CLI sessions). ADDITIVE over frames-v4 (sealed action frames, the canonical form, replies by `ref`, `ok` and `err`), frames-v8 (a sealed state frame with its own ck) and frames-v11 (`caps`): `hello.proto` stays 2, no existing byte changes, and the relay reads nothing new (no class, push value, route or socket field). One new name in `caps` (`run_options`), one sealed state frame per watched session (`run`: what the session is running, what may be chosen, and why a control is off), one sealed action (`set_run`), one `ok` code (`set`) and three `err` codes. Written by the architect from the CB-404 plan (Orbweaver docs/plans/model-effort-controls-plan.md, section 4.4) and Warren's four decisions of 21 Nov 2026, which are final: F1 a typed change that also saves a default is allowed and the control says so; F2 the effort control is a round dial on every platform; F3 `set_run` carries no signature and needs no Face ID; F4 Codex is settable. Where the plan left a byte open, or this file departs from the plan's sketch, the choice is made here and marked DECISION. The vectors are frames-v13-vectors.json and effort-dial-vectors.json, re-derived by check_v13_vectors.py, and these bytes win if they disagree with the plan.",
+  "layers": {
+    "socket": "Unchanged. The relay still acts on `push`, `ck`, `id`, `from`, `to`, `ts`, `class` and `e` only. v13 adds one ck it cannot relate to anything, Ck(ck_key, 'run:' + session_id) on a state frame, and action envelopes shaped exactly like a frames-v4 `input` and its `ok`.",
+    "sealed": "The plaintext frames inside `ct`: `caps` with a second name, `run`, `set_run`, `ok` with the code `set`, and `err` with three new codes. Sealed per pair with the session key exactly as before. Only the two apps ever read them."
+  },
+  "canonical": "Every v13 plaintext is written in frames-v4.json's canonical form: keys in the order this file lists them, no whitespace, integers bare, strings through the shared escaper, flags present only when true, optional keys absent when unset. A receiver parses any valid JSON, ignores keys it does not know and must not depend on order.",
+  "limits": {
+    "max_choices": 50,
+    "max_id_chars": 64,
+    "max_label_utf16": 64,
+    "max_reason_utf16": 200,
+    "reply_timeout_seconds": 10
+  },
+  "limits_rules": "max_choices: a field's `choices` holds at most 50 entries (desktop_rules.serialise says which when there are more). max_id_chars: an ID is 1 to 64 characters, each U+0021 to U+007E (printable ASCII, no space) other than the double quote U+0022 and the backslash U+005C, so its characters are its bytes in the canonical form too. DECISION: not frames-v4's `launch.model` grammar, which the plan named: Claude Code's own aliases include forms such as `opus[1m]`, which that grammar refuses, and the desk never passes a phone's value anywhere without first finding it in its own list (desktop_rules.set). max_label_utf16 and max_reason_utf16: a choice's `label` is cut to 64 UTF-16 units and an `off`, `failed` or `why` sentence to 200, by frames-v6's Cut rule (at most N units, the last being U+2026 when anything was cut, never half a surrogate pair). The desk writes no C0 control and no U+007F in a label or a sentence (desktop_rules.serialise), so a UTF-16 unit costs at most 3 bytes in the canonical form, and the largest `run` plaintext is 30,597 bytes for a session id of 64 bytes (the checker recomputes it), under frames-v11's 40,000-byte envelope bound: a `run` frame is never chunked. reply_timeout_seconds: the phone's, see phone_rules.send.",
+  "sealed_plaintext": {
+    "note": "Key order is as written. Replies carry `ref` = the request envelope's `id`, as every frames-v4 reply does.",
+    "caps": {
+      "direction": "desktop to phone, class state, push none, ck = Ck(ck_key, 'caps') (frames-v11, unchanged)",
+      "frame": {
+        "t": "caps",
+        "caps": [
+          "list_dir",
+          "run_options"
+        ]
+      },
+      "rules": "frames-v11's frame with a second name. `run_options` means: this desk sends `run` frames for watched sessions and answers `set_run`. The names stay sorted in byte order. A phone that does not know the name ignores it (frames-v11)."
+    },
+    "run": {
+      "direction": "desktop to phone, class state, push none, ck = Ck(ck_key, 'run:' + session_id)",
+      "frame": {
+        "t": "run",
+        "session_id": "0f6c4f2a",
+        "model": {
+          "id": "opus",
+          "pending": "sonnet",
+          "choices": [
+            {
+              "id": "opus",
+              "label": "Opus 5.5"
+            },
+            {
+              "id": "sonnet",
+              "label": "Sonnet 5.5"
+            }
+          ],
+          "off": "<the desk's sentence>",
+          "failed": "<the desk's sentence>"
+        },
+        "effort": {
+          "id": "high",
+          "pending": "xhigh",
+          "choices": [
+            {
+              "id": "low",
+              "label": "low"
+            },
+            {
+              "id": "high",
+              "label": "high"
+            },
+            {
+              "id": "xhigh",
+              "label": "xhigh"
+            }
+          ],
+          "off": "<the desk's sentence>",
+          "failed": "<the desk's sentence>"
+        },
+        "saves_default": true
+      },
+      "keys": "t, session_id, model, effort, saves_default. A field's keys: id, pending, choices, off, failed. A choice's keys: id, label.",
+      "rules": "What one session is running and what may be chosen for it. `model` and `effort` are both ALWAYS present, and each always has `choices` (an array, possibly empty). `id`: the value a reading confirmed, ABSENT when the desk does not know it yet; the phone then says so and never guesses. `pending`: the value the desk is applying and no reading has confirmed yet, present only in that state. DECISION: the pending value itself, not the plan's `pending: true`, because the dial draws its pointer at the chosen level with the confirmed level still marked, and that needs both values. `id` and `pending`, when present, are each the `id` of one of `choices`: the desk lists the value a session is running even when its catalogue does not hold it. DECISION: no `label` beside `id` (the plan had one): the label is the matching choice's, so it cannot disagree. `choices`: what may be chosen, in the desk's order, which is meaningful and which the phone never changes: for `effort` it is lowest to highest and is the dial's order. `off`: present only when this control is disabled for this session; the desk's own sentence saying why (no route to set it, the row is locked, this model has no effort setting, this CLI cannot). The requirement is that a disabled control is shown with its reason, never hidden. `failed`: present while the desk is reporting that its last change to this field was not confirmed (a later reading disagreed, or none arrived in time); the desk's sentence. `saves_default`: present only as true, when the route the desk would use for this session also changes the default for new sessions (decision F1: Claude Code's typed `/model` and `/effort`, Codex older than 0.164.0's picker); the phone says so before anything is chosen. All sentences are the desk's, sealed, and never a screen's contents. SENT to a phone for each session that phone is watching: once immediately after the `ok watching` of a subscribing `watch` (always, even when the bytes equal an earlier watch's), then whenever its bytes change, until the watch ends (frames-v4 `watch`). Never for a paging `watch` (one with `before`). The relay keeps only the newest per (from, ck) for an offline phone; phone_rules.accept is what discards such a leftover."
+    },
+    "set_run": {
+      "direction": "phone to desktop, class action, push none, ck empty",
+      "frame": {
+        "t": "set_run",
+        "session_id": "0f6c4f2a",
+        "field": "effort",
+        "value": "xhigh"
+      },
+      "rules": "Sealed only, no sig and no Face ID (decision F3): a model or effort change cannot approve anything or start a process, and the paired session key authenticates it, as it does `input` and `list_dir`. The cost accepted: a paired phone can move a session to a more expensive model without a biometric check. `field` is `model` or `effort`. `value` is an ID (limits_rules). A missing or non-string `session_id`, `field` or `value`, an empty `session_id`, a `field` that is neither word, or a `value` that is not an ID, is `err bad_frame`. The phone sends it only under phone_rules.send."
+    },
+    "ok": {
+      "direction": "desktop to phone, class action, push none, ck = Ck(ck_key, session_id)",
+      "frame": {
+        "t": "ok",
+        "ref": "01JCD0SETRUN0000000000001",
+        "code": "set",
+        "session_id": "0f6c4f2a"
+      },
+      "codes_added": [
+        "set"
+      ],
+      "rules": "frames-v4's ok shape with a fifth code. `set` means the desk RAN the change by its route (a control request was accepted, or the command was typed). It is not confirmation that the session changed: Claude Code answers `success` to an effort level it then ignores (measured, plan section 2.1). Confirmation is a later `run` frame whose `id` is the value and which has no `pending`."
+    },
+    "err": {
+      "direction": "desktop to phone, class action, push none, ck = Ck(ck_key, session_id) when the reply carries a session_id, else empty",
+      "frame": {
+        "t": "err",
+        "ref": "01JCD0SETRUN0000000000002",
+        "code": "unavailable",
+        "session_id": "0f6c4f2a",
+        "why": "This session has no terminal to type into, and its Remote Control bridge is off."
+      },
+      "codes_added": [
+        "unavailable",
+        "bad_value",
+        "set_failed"
+      ],
+      "check_order": [
+        "bad_frame",
+        "unknown_session",
+        "unavailable",
+        "bad_value",
+        "set_failed"
+      ],
+      "rules": "frames-v4's err shape, unchanged: t, ref, code, session_id, why. `session_id` is present whenever the request's `session_id` was a non-empty string, so on every code but a `bad_frame` that lacked one. `why` is present on `unavailable` and `set_failed` only, cut to max_reason_utf16. One reply per request: `ok set` or exactly one `err`. `bad_frame` and `unknown_session` are frames-v4's codes: the request's shape, and a session that is not in this desk's book or is not a local CLI session. `unavailable`: the field's control is off for this session (`why` is the `off` sentence the `run` frame carries), OR a change to this session is still being applied (either field has a `pending`; `why` is the desk's sentence saying so). DECISION: a second change is refused while one is pending, not queued, because a typed route cannot be overtaken safely. `bad_value`: the value is not the `id` of one of the field's current `choices`. `set_failed`: the route ran and did not succeed (`why` is the typing gate's sentence, or the control post's). DECISION: the plan's `bad_field` is `bad_frame` (a shape error, as everywhere in frames-v4) and its `failed` is named `set_failed` beside `typing_failed` and `launch_failed`. The phone's copy: unavailable '<why>'; bad_value 'That choice isn't offered for this session any more.'; set_failed 'The desk could not change it (<why>).'; bad_frame and unknown_session keep v4's copy. Any other code on a set_run is a desktop bug and the phone shows frames-v4's default sentence."
+    }
+  },
+  "desktop_rules": {
+    "serialise": "The `run` frame is a pure function of the session's resolved options. Per field, in this order: (1) a choice whose id is not an ID is left out; a later choice with an id already seen is left out. (2) In a label, each C0 control (U+0000-U+001F) and U+007F is replaced by a space; a label that is then empty after trimming whitespace becomes the id; the label is cut to max_label_utf16. (3) `id` and `pending` are written only when they are the id of a remaining choice. (4) When more than max_choices remain, the choices kept are the ones `id` and `pending` name, plus the earliest others until there are max_choices, written in their original order. (5) `off` and `failed` are written when not null, with the same replacement of controls by spaces, cut to max_reason_utf16; so is an err's `why`. `saves_default` is written only when true. The vectors' `serialise` table pins it.",
+    "set": "The checks, in `err.check_order`, are made against the options the desk would serialise at that moment: the value is looked up in the desk's own choices and only a value found there is ever handed to a route, so nothing a phone sends is typed or posted unless the desk itself offered it. A route that types a command holds the id to its own stricter grammar first; that is the desk's business and not on the wire. The vectors' `set` table pins the reply for each state.",
+    "send": "On a subscribing `watch`: `ok watching`, then the session's `run` frame, then the windows. While the watch lasts the desk re-resolves on its scan tick and sends the frame when its bytes differ from the last one sent to that phone for that session. A desk never sends `run` to a phone that is not watching the session, nor for a session that is not a local CLI session.",
+    "log": "The desk logs a request as `set_run from <phone> ref=<id> field=<model|effort>` and its outcome as a code. Never a model id, a label or a sentence."
+  },
+  "phone_rules": {
+    "decode": "A `run` frame is IGNORED whole when `session_id` is not a non-empty string or when `model` or `effort` is not an object. Otherwise each field is decoded on its own and a bad part never costs the rest. `choices`: not an array reads as empty; an entry is kept when it is an object whose `id` is an ID and whose `label` is a string that is not empty after trimming whitespace (the label is then cut to max_label_utf16); an entry with an id already kept is skipped; entries after the first max_choices kept are dropped. `id` and `pending`: kept when a string equal to a kept choice's id, else absent. `off`: the control is disabled whenever the key is PRESENT, whatever its value (so a damaged reason can never enable a control); its sentence is the value cut to max_reason_utf16 when it is a string that is not empty after trimming, else 'Not available for this session.'. `failed`: kept, cut, when a string that is not empty after trimming, else absent. `saves_default`: true only when the value is the boolean true. The vectors' `phone.decode` table pins it.",
+    "accept": "The phone accepts a `run` frame for a session only between receiving the `ok watching` of a subscribing watch it sent for that session and that watch's end (its `unwatch`, its socket closing, the session leaving the roster); a frame at any other time is ignored, and the held state is dropped when the watch ends. That is what discards a stale frame the relay stored while the phone was away: the desk always sends a fresh one after `ok watching`.",
+    "offer": "The two controls are SHOWN for a session when its desk is online, the desk's latest `caps` names `run_options`, and a `run` frame is held for the session. Otherwise they are not shown at all (an older Orbweaver, or the frame has not arrived). They are never hidden because a control is off: that is `off`, which is shown.",
+    "display": "Per field. The value shown is the label of the choice `pending` names, else of the one `id` names, else 'Model not known yet' or 'Effort not known yet'. `applying` is true when the field has a `pending`: the phone adds 'applying…' and the dial draws its pointer at `pending` with `id` still marked. The control is ENABLED when the field has no `off`, NEITHER field has a `pending`, and the field has at least one choice. Under the control, in this order when present: the `off` sentence; the `failed` sentence; and, when the frame says `saves_default` and the field is enabled, 'Changing this also changes the default for new sessions on <machine>.'. A reason is drawn as text, never only as a hint, because a hint is invisible on touch. The vectors' `phone.display` table pins it.",
+    "send": "A choice sends `set_run` only when the control is enabled and the chosen id is not the field's `id`. The dial commits on release, so one gesture is one request. Until the reply the phone shows the chosen value as applying. On `ok set` it waits for the `run` frames: the desk's `pending`, then the confirmed `id` or a `failed`. On `err` it shows the code's copy and goes back to what the held frame says. With no reply reply_timeout_seconds after sending it shows 'No answer from <machine>.' and goes back the same way. A request is never re-sent automatically.",
+    "dial": "The effort dial's geometry is effort-dial-vectors.json's, the same functions on the desk, iOS and Android."
+  },
+  "dial": {
+    "geometry": "Angles are in degrees, 0 pointing straight up, positive clockwise, in screen coordinates (x right, y down). The levels sit on an arc from -135 (the lowest, at half past seven) to +135 (the highest, at half past four); the 90-degree gap is centred at the bottom.",
+    "angle_for": "AngleFor(index, count): count <= 0 has no answer. count == 1 is 0. Otherwise -135 + 270 x i / (count - 1), where i is index clamped to 0..count-1.",
+    "angle_of": "AngleOf(dx, dy), the pointer's offset from the dial's centre: atan2(dx, -dy) in degrees, in the range (-180, 180], so straight down is 180. (0, 0) has no answer and changes nothing.",
+    "index_for": "IndexFor(angle, count): count <= 0 has no answer. count == 1 is 0. Otherwise a = angle clamped to -135..135, and the index is floor((a + 135) / 270 x (count - 1) + 0.5): the nearest detent, a tie going to the higher. Any angle in the gap, or beyond it, is therefore the nearer end.",
+    "wrap": "Wrap(d): d brought into (-180, 180] by adding or subtracting 360.",
+    "drag": "A drag keeps one number, `raw`. On press raw = AngleOf(the press). A press at the centre has no raw, and the first later move that has an angle is taken as the press. On each move raw = raw + Wrap(AngleOf(now) - AngleOf(previous)); a move at the centre (no angle) is skipped and does not become `previous`. raw is never clamped. The level shown is IndexFor(raw, count), and release commits it. Because raw keeps counting past an end, a drag across the gap stays at that end and never wraps from lowest to highest, and coming back the pointer picks the finger up again where it left the arc. A press and release with no move is a tap on a tick.",
+    "step": "Step(index, delta, count): count <= 0 has no answer; otherwise index + delta clamped to 0..count-1. Left and Down are -1, Right and Up +1, Home the lowest and End the highest; on a phone, the accessibility increment and decrement."
+  },
+  "blindness": {
+    "rules": "Nothing in v13 gives the relay a readable field: model ids, labels, effort levels and the desk's sentences are inside `ct`, the run frame's ck is a keyed HMAC of `run:` and the session id, the action has an empty ck and its replies frames-v4's session ck. The relay needs no change. Checked two ways. (1) In the vectors: every string in `blindness.planted` must be found in at least one sealed plaintext (the POSITIVE CONTROL that the strings really are in the traffic) and in none of the fields the relay can read (`blindness.relay_visible`), nor base64- or base64url-encoded in them. (2) In the relay's own tests (RelayV13BlindnessTests): a `run`, a `set_run` and its reply from the vectors forwarded through the real router, then the captured log and every table searched for the planted strings (0 hits), with the positive controls that the envelope's id is in the log and the ct reaches the other device untouched.",
+    "relay_visible": [
+      "id",
+      "from",
+      "to",
+      "class",
+      "push",
+      "ck",
+      "ct"
+    ]
+  },
+  "log_safety": "Unchanged for the relay: id, from, to, class, push, sizes. The desktop logs refs, the field name and codes; the phone the same. Never a model id, a label, an effort level or a sentence.",
+  "errors_added": {
+    "socket_err_codes": [],
+    "socket_ok_codes": [],
+    "sealed_ok_codes": [
+      "set"
+    ],
+    "sealed_err_codes": [
+      "unavailable",
+      "bad_value",
+      "set_failed"
+    ]
+  },
+  "back_compat": {
+    "old_phone_new_desk": "The phone ignores the caps name it does not know and the `run` state frame (an unknown t, frames-v8's rule: Android logs `ignored unknown t`, iOS logs `undecodable message`; neither acts on it), and never sends `set_run`. Nothing else changes.",
+    "new_phone_old_desk": "The desk's `caps` does not name `run_options` (or it sends no `caps`), so the controls are not shown and the phone never sends `set_run`. If one were sent, an old desk leaves an action with an unknown t alone and the phone's timeout answers.",
+    "bytes": "frames-v11's `caps` frame is reproduced byte for byte by a desk that offers only `list_dir`; no frames-v4 to v12 plaintext changes.",
+    "relay": "Any relay that forwards frames-v4 traffic forwards this. No deploy is needed."
+  },
+  "not_verified": "Written from the plan and the source of both repositories (Orbweaver 6bf3817c, Orbweaver-Mobile 9157133) and checked by the vectors; nothing here has run on a desk, a phone or the relay. In particular: that an old phone ignores a `run` frame was read from the phone code, not exercised against a built old phone; whether Claude Code's model list really contains ids outside frames-v4's launch grammar (the ID grammar allows them either way); and every per-CLI fact the desk's sentences rest on, which the plan's sections 2 and 10 list."
+}

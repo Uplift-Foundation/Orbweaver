@@ -1,0 +1,1708 @@
+{
+ "_source": {
+  "generated_by": "Orbweaver-Mobile contracts/make_v13_vectors.py (architect, CB-404)",
+  "spec": "contracts/frames-v13.json `dial`"
+ },
+ "_rules": "The effort dial's geometry, the same functions on the desk (EffortDialMath), iOS and Android. Angles in degrees, 0 straight up, positive clockwise, screen coordinates (x right, y down). Angles are IEEE doubles: compare `angle` and `raw` within `tolerance`; an `index` is exact. IndexFor is evaluated as floor(((a + 135) / 270) * (count - 1) + 0.5) in that order, so the ties in this table land the same way everywhere.",
+ "tolerance": 1e-06,
+ "arc": {
+  "lowest": -135,
+  "highest": 135
+ },
+ "angle_for": [
+  {
+   "index": 0,
+   "count": 0,
+   "angle": null
+  },
+  {
+   "index": 0,
+   "count": 1,
+   "angle": 0.0
+  },
+  {
+   "index": 0,
+   "count": 2,
+   "angle": -135.0
+  },
+  {
+   "index": 1,
+   "count": 2,
+   "angle": 135.0
+  },
+  {
+   "index": 0,
+   "count": 3,
+   "angle": -135.0
+  },
+  {
+   "index": 1,
+   "count": 3,
+   "angle": 0.0
+  },
+  {
+   "index": 2,
+   "count": 3,
+   "angle": 135.0
+  },
+  {
+   "index": 0,
+   "count": 4,
+   "angle": -135.0
+  },
+  {
+   "index": 1,
+   "count": 4,
+   "angle": -45.0
+  },
+  {
+   "index": 2,
+   "count": 4,
+   "angle": 45.0
+  },
+  {
+   "index": 3,
+   "count": 4,
+   "angle": 135.0
+  },
+  {
+   "index": 0,
+   "count": 5,
+   "angle": -135.0
+  },
+  {
+   "index": 1,
+   "count": 5,
+   "angle": -67.5
+  },
+  {
+   "index": 2,
+   "count": 5,
+   "angle": 0.0
+  },
+  {
+   "index": 3,
+   "count": 5,
+   "angle": 67.5
+  },
+  {
+   "index": 4,
+   "count": 5,
+   "angle": 135.0
+  },
+  {
+   "index": 0,
+   "count": 6,
+   "angle": -135.0
+  },
+  {
+   "index": 1,
+   "count": 6,
+   "angle": -81.0
+  },
+  {
+   "index": 2,
+   "count": 6,
+   "angle": -27.0
+  },
+  {
+   "index": 3,
+   "count": 6,
+   "angle": 27.0
+  },
+  {
+   "index": 4,
+   "count": 6,
+   "angle": 81.0
+  },
+  {
+   "index": 5,
+   "count": 6,
+   "angle": 135.0
+  },
+  {
+   "index": 0,
+   "count": 7,
+   "angle": -135.0
+  },
+  {
+   "index": 1,
+   "count": 7,
+   "angle": -90.0
+  },
+  {
+   "index": 2,
+   "count": 7,
+   "angle": -45.0
+  },
+  {
+   "index": 3,
+   "count": 7,
+   "angle": 0.0
+  },
+  {
+   "index": 4,
+   "count": 7,
+   "angle": 45.0
+  },
+  {
+   "index": 5,
+   "count": 7,
+   "angle": 90.0
+  },
+  {
+   "index": 6,
+   "count": 7,
+   "angle": 135.0
+  },
+  {
+   "index": -1,
+   "count": 5,
+   "angle": -135.0
+  },
+  {
+   "index": 9,
+   "count": 5,
+   "angle": 135.0
+  },
+  {
+   "index": 3,
+   "count": -2,
+   "angle": null
+  }
+ ],
+ "angle_of": [
+  {
+   "dx": 0,
+   "dy": -100,
+   "angle": 0.0
+  },
+  {
+   "dx": 100,
+   "dy": 0,
+   "angle": 90.0
+  },
+  {
+   "dx": 0,
+   "dy": 100,
+   "angle": 180.0
+  },
+  {
+   "dx": -100,
+   "dy": 0,
+   "angle": -90.0
+  },
+  {
+   "dx": 100,
+   "dy": -100,
+   "angle": 45.0
+  },
+  {
+   "dx": 100,
+   "dy": 100,
+   "angle": 135.0
+  },
+  {
+   "dx": -100,
+   "dy": 100,
+   "angle": -135.0
+  },
+  {
+   "dx": -100,
+   "dy": -100,
+   "angle": -45.0
+  },
+  {
+   "dx": 1,
+   "dy": 100,
+   "angle": 179.427061
+  },
+  {
+   "dx": -1,
+   "dy": 100,
+   "angle": -179.427061
+  },
+  {
+   "dx": 0,
+   "dy": 0,
+   "angle": null
+  },
+  {
+   "dx": 3,
+   "dy": -4,
+   "angle": 36.869898
+  },
+  {
+   "dx": -7,
+   "dy": 2,
+   "angle": -105.945396
+  },
+  {
+   "dx": 0,
+   "dy": -1,
+   "angle": 0.0
+  }
+ ],
+ "index_for": [
+  {
+   "angle": -180.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -179.9,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -135.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -134.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -101.25,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -100.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -67.5,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -67.4,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -33.76,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -33.75,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -0.01,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 0.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 0.01,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 33.75,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 67.49,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 67.5,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 101.25,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 134.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 135.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 136.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 180.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": 400.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -400.0,
+   "count": 0,
+   "index": null
+  },
+  {
+   "angle": -180.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -179.9,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -135.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -134.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -101.25,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -100.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -67.5,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -67.4,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -33.76,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -33.75,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -0.01,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 0.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 0.01,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 33.75,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 67.49,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 67.5,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 101.25,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 134.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 135.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 136.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 180.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": 400.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -400.0,
+   "count": 1,
+   "index": 0
+  },
+  {
+   "angle": -180.0,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -179.9,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -135.0,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -134.0,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -101.25,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -100.0,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -67.5,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -67.4,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -33.76,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -33.75,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -0.01,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": 0.0,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 0.01,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 33.75,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 67.49,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 67.5,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 101.25,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 134.0,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 135.0,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 136.0,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 180.0,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": 400.0,
+   "count": 2,
+   "index": 1
+  },
+  {
+   "angle": -400.0,
+   "count": 2,
+   "index": 0
+  },
+  {
+   "angle": -180.0,
+   "count": 3,
+   "index": 0
+  },
+  {
+   "angle": -179.9,
+   "count": 3,
+   "index": 0
+  },
+  {
+   "angle": -135.0,
+   "count": 3,
+   "index": 0
+  },
+  {
+   "angle": -134.0,
+   "count": 3,
+   "index": 0
+  },
+  {
+   "angle": -101.25,
+   "count": 3,
+   "index": 0
+  },
+  {
+   "angle": -100.0,
+   "count": 3,
+   "index": 0
+  },
+  {
+   "angle": -67.5,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": -67.4,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": -33.76,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": -33.75,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": -0.01,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": 0.0,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": 0.01,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": 33.75,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": 67.49,
+   "count": 3,
+   "index": 1
+  },
+  {
+   "angle": 67.5,
+   "count": 3,
+   "index": 2
+  },
+  {
+   "angle": 101.25,
+   "count": 3,
+   "index": 2
+  },
+  {
+   "angle": 134.0,
+   "count": 3,
+   "index": 2
+  },
+  {
+   "angle": 135.0,
+   "count": 3,
+   "index": 2
+  },
+  {
+   "angle": 136.0,
+   "count": 3,
+   "index": 2
+  },
+  {
+   "angle": 180.0,
+   "count": 3,
+   "index": 2
+  },
+  {
+   "angle": 400.0,
+   "count": 3,
+   "index": 2
+  },
+  {
+   "angle": -400.0,
+   "count": 3,
+   "index": 0
+  },
+  {
+   "angle": -180.0,
+   "count": 4,
+   "index": 0
+  },
+  {
+   "angle": -179.9,
+   "count": 4,
+   "index": 0
+  },
+  {
+   "angle": -135.0,
+   "count": 4,
+   "index": 0
+  },
+  {
+   "angle": -134.0,
+   "count": 4,
+   "index": 0
+  },
+  {
+   "angle": -100.0,
+   "count": 4,
+   "index": 0
+  },
+  {
+   "angle": -67.4,
+   "count": 4,
+   "index": 1
+  },
+  {
+   "angle": -33.76,
+   "count": 4,
+   "index": 1
+  },
+  {
+   "angle": -0.01,
+   "count": 4,
+   "index": 1
+  },
+  {
+   "angle": 0.0,
+   "count": 4,
+   "index": 2
+  },
+  {
+   "angle": 0.01,
+   "count": 4,
+   "index": 2
+  },
+  {
+   "angle": 67.49,
+   "count": 4,
+   "index": 2
+  },
+  {
+   "angle": 134.0,
+   "count": 4,
+   "index": 3
+  },
+  {
+   "angle": 135.0,
+   "count": 4,
+   "index": 3
+  },
+  {
+   "angle": 136.0,
+   "count": 4,
+   "index": 3
+  },
+  {
+   "angle": 180.0,
+   "count": 4,
+   "index": 3
+  },
+  {
+   "angle": 400.0,
+   "count": 4,
+   "index": 3
+  },
+  {
+   "angle": -400.0,
+   "count": 4,
+   "index": 0
+  },
+  {
+   "angle": -180.0,
+   "count": 5,
+   "index": 0
+  },
+  {
+   "angle": -179.9,
+   "count": 5,
+   "index": 0
+  },
+  {
+   "angle": -135.0,
+   "count": 5,
+   "index": 0
+  },
+  {
+   "angle": -134.0,
+   "count": 5,
+   "index": 0
+  },
+  {
+   "angle": -101.25,
+   "count": 5,
+   "index": 1
+  },
+  {
+   "angle": -100.0,
+   "count": 5,
+   "index": 1
+  },
+  {
+   "angle": -67.5,
+   "count": 5,
+   "index": 1
+  },
+  {
+   "angle": -67.4,
+   "count": 5,
+   "index": 1
+  },
+  {
+   "angle": -33.76,
+   "count": 5,
+   "index": 1
+  },
+  {
+   "angle": -33.75,
+   "count": 5,
+   "index": 2
+  },
+  {
+   "angle": -0.01,
+   "count": 5,
+   "index": 2
+  },
+  {
+   "angle": 0.0,
+   "count": 5,
+   "index": 2
+  },
+  {
+   "angle": 0.01,
+   "count": 5,
+   "index": 2
+  },
+  {
+   "angle": 33.75,
+   "count": 5,
+   "index": 3
+  },
+  {
+   "angle": 67.49,
+   "count": 5,
+   "index": 3
+  },
+  {
+   "angle": 67.5,
+   "count": 5,
+   "index": 3
+  },
+  {
+   "angle": 101.25,
+   "count": 5,
+   "index": 4
+  },
+  {
+   "angle": 134.0,
+   "count": 5,
+   "index": 4
+  },
+  {
+   "angle": 135.0,
+   "count": 5,
+   "index": 4
+  },
+  {
+   "angle": 136.0,
+   "count": 5,
+   "index": 4
+  },
+  {
+   "angle": 180.0,
+   "count": 5,
+   "index": 4
+  },
+  {
+   "angle": 400.0,
+   "count": 5,
+   "index": 4
+  },
+  {
+   "angle": -400.0,
+   "count": 5,
+   "index": 0
+  },
+  {
+   "angle": -180.0,
+   "count": 6,
+   "index": 0
+  },
+  {
+   "angle": -179.9,
+   "count": 6,
+   "index": 0
+  },
+  {
+   "angle": -135.0,
+   "count": 6,
+   "index": 0
+  },
+  {
+   "angle": -134.0,
+   "count": 6,
+   "index": 0
+  },
+  {
+   "angle": -100.0,
+   "count": 6,
+   "index": 1
+  },
+  {
+   "angle": -67.4,
+   "count": 6,
+   "index": 1
+  },
+  {
+   "angle": -33.76,
+   "count": 6,
+   "index": 2
+  },
+  {
+   "angle": -0.01,
+   "count": 6,
+   "index": 2
+  },
+  {
+   "angle": 0.0,
+   "count": 6,
+   "index": 3
+  },
+  {
+   "angle": 0.01,
+   "count": 6,
+   "index": 3
+  },
+  {
+   "angle": 67.49,
+   "count": 6,
+   "index": 4
+  },
+  {
+   "angle": 134.0,
+   "count": 6,
+   "index": 5
+  },
+  {
+   "angle": 135.0,
+   "count": 6,
+   "index": 5
+  },
+  {
+   "angle": 136.0,
+   "count": 6,
+   "index": 5
+  },
+  {
+   "angle": 180.0,
+   "count": 6,
+   "index": 5
+  },
+  {
+   "angle": 400.0,
+   "count": 6,
+   "index": 5
+  },
+  {
+   "angle": -400.0,
+   "count": 6,
+   "index": 0
+  },
+  {
+   "angle": -180.0,
+   "count": 7,
+   "index": 0
+  },
+  {
+   "angle": -179.9,
+   "count": 7,
+   "index": 0
+  },
+  {
+   "angle": -135.0,
+   "count": 7,
+   "index": 0
+  },
+  {
+   "angle": -134.0,
+   "count": 7,
+   "index": 0
+  },
+  {
+   "angle": -100.0,
+   "count": 7,
+   "index": 1
+  },
+  {
+   "angle": -67.4,
+   "count": 7,
+   "index": 2
+  },
+  {
+   "angle": -33.76,
+   "count": 7,
+   "index": 2
+  },
+  {
+   "angle": -0.01,
+   "count": 7,
+   "index": 3
+  },
+  {
+   "angle": 0.0,
+   "count": 7,
+   "index": 3
+  },
+  {
+   "angle": 0.01,
+   "count": 7,
+   "index": 3
+  },
+  {
+   "angle": 67.49,
+   "count": 7,
+   "index": 4
+  },
+  {
+   "angle": 134.0,
+   "count": 7,
+   "index": 6
+  },
+  {
+   "angle": 135.0,
+   "count": 7,
+   "index": 6
+  },
+  {
+   "angle": 136.0,
+   "count": 7,
+   "index": 6
+  },
+  {
+   "angle": 180.0,
+   "count": 7,
+   "index": 6
+  },
+  {
+   "angle": 400.0,
+   "count": 7,
+   "index": 6
+  },
+  {
+   "angle": -400.0,
+   "count": 7,
+   "index": 0
+  }
+ ],
+ "wrap": [
+  {
+   "d": 0.0,
+   "wrapped": 0.0
+  },
+  {
+   "d": 90.0,
+   "wrapped": 90.0
+  },
+  {
+   "d": 180.0,
+   "wrapped": 180.0
+  },
+  {
+   "d": 180.5,
+   "wrapped": -179.5
+  },
+  {
+   "d": 270.0,
+   "wrapped": -90.0
+  },
+  {
+   "d": 360.0,
+   "wrapped": 0.0
+  },
+  {
+   "d": -90.0,
+   "wrapped": -90.0
+  },
+  {
+   "d": -180.0,
+   "wrapped": 180.0
+  },
+  {
+   "d": -180.5,
+   "wrapped": 179.5
+  },
+  {
+   "d": -270.0,
+   "wrapped": 90.0
+  },
+  {
+   "d": -359.0,
+   "wrapped": 1.0
+  },
+  {
+   "d": 540.0,
+   "wrapped": 180.0
+  }
+ ],
+ "drag": [
+  {
+   "name": "tap_on_a_tick",
+   "_note": "a press and release near the fourth of five ticks",
+   "count": 5,
+   "points": [
+    [
+     92,
+     -38
+    ]
+   ],
+   "after": [
+    {
+     "raw": 67.557247,
+     "index": 3
+    }
+   ],
+   "commit": 3
+  },
+  {
+   "name": "tap_in_the_gap_right",
+   "_note": "a tap in the gap right of centre is the highest",
+   "count": 5,
+   "points": [
+    [
+     34,
+     94
+    ]
+   ],
+   "after": [
+    {
+     "raw": 160.114835,
+     "index": 4
+    }
+   ],
+   "commit": 4
+  },
+  {
+   "name": "tap_in_the_gap_left",
+   "_note": "and left of centre the lowest",
+   "count": 5,
+   "points": [
+    [
+     -34,
+     94
+    ]
+   ],
+   "after": [
+    {
+     "raw": -160.114835,
+     "index": 0
+    }
+   ],
+   "commit": 0
+  },
+  {
+   "name": "tap_straight_down",
+   "_note": "straight down is 180, the highest",
+   "count": 5,
+   "points": [
+    [
+     0,
+     100
+    ]
+   ],
+   "after": [
+    {
+     "raw": 180.0,
+     "index": 4
+    }
+   ],
+   "commit": 4
+  },
+  {
+   "name": "clockwise_low_to_high",
+   "_note": "the whole arc over the top",
+   "count": 5,
+   "points": [
+    [
+     -71,
+     71
+    ],
+    [
+     -100,
+     0
+    ],
+    [
+     -71,
+     -71
+    ],
+    [
+     0,
+     -100
+    ],
+    [
+     71,
+     -71
+    ],
+    [
+     100,
+     0
+    ],
+    [
+     71,
+     71
+    ]
+   ],
+   "after": [
+    {
+     "raw": -135.0,
+     "index": 0
+    },
+    {
+     "raw": -90.0,
+     "index": 1
+    },
+    {
+     "raw": -45.0,
+     "index": 1
+    },
+    {
+     "raw": 0.0,
+     "index": 2
+    },
+    {
+     "raw": 45.0,
+     "index": 3
+    },
+    {
+     "raw": 90.0,
+     "index": 3
+    },
+    {
+     "raw": 135.0,
+     "index": 4
+    }
+   ],
+   "commit": 4
+  },
+  {
+   "name": "into_the_gap_and_on",
+   "_note": "from near the low end anticlockwise across the whole gap to the high side: it stays lowest, never wraps",
+   "count": 5,
+   "points": [
+    [
+     -98,
+     17
+    ],
+    [
+     -71,
+     71
+    ],
+    [
+     -34,
+     94
+    ],
+    [
+     0,
+     100
+    ],
+    [
+     34,
+     94
+    ],
+    [
+     71,
+     71
+    ],
+    [
+     100,
+     0
+    ]
+   ],
+   "after": [
+    {
+     "raw": -99.841132,
+     "index": 1
+    },
+    {
+     "raw": -135.0,
+     "index": 0
+    },
+    {
+     "raw": -160.114835,
+     "index": 0
+    },
+    {
+     "raw": -180.0,
+     "index": 0
+    },
+    {
+     "raw": -199.885165,
+     "index": 0
+    },
+    {
+     "raw": -225.0,
+     "index": 0
+    },
+    {
+     "raw": -270.0,
+     "index": 0
+    }
+   ],
+   "commit": 0
+  },
+  {
+   "name": "into_the_gap_and_back",
+   "_note": "back out the way it came: the pointer picks the finger up at the arc's end",
+   "count": 5,
+   "points": [
+    [
+     -98,
+     17
+    ],
+    [
+     -50,
+     87
+    ],
+    [
+     -17,
+     98
+    ],
+    [
+     -50,
+     87
+    ],
+    [
+     -87,
+     50
+    ],
+    [
+     -87,
+     -50
+    ]
+   ],
+   "after": [
+    {
+     "raw": -99.841132,
+     "index": 1
+    },
+    {
+     "raw": -150.113473,
+     "index": 0
+    },
+    {
+     "raw": -170.158868,
+     "index": 0
+    },
+    {
+     "raw": -150.113473,
+     "index": 0
+    },
+    {
+     "raw": -119.886527,
+     "index": 0
+    },
+    {
+     "raw": -60.113473,
+     "index": 1
+    }
+   ],
+   "commit": 1
+  },
+  {
+   "name": "past_the_high_end",
+   "_note": "the mirror image: clockwise past the high end stays highest",
+   "count": 5,
+   "points": [
+    [
+     98,
+     17
+    ],
+    [
+     71,
+     71
+    ],
+    [
+     17,
+     98
+    ],
+    [
+     -17,
+     98
+    ],
+    [
+     -71,
+     71
+    ],
+    [
+     -100,
+     0
+    ]
+   ],
+   "after": [
+    {
+     "raw": 99.841132,
+     "index": 3
+    },
+    {
+     "raw": 135.0,
+     "index": 4
+    },
+    {
+     "raw": 170.158868,
+     "index": 4
+    },
+    {
+     "raw": 189.841132,
+     "index": 4
+    },
+    {
+     "raw": 225.0,
+     "index": 4
+    },
+    {
+     "raw": 270.0,
+     "index": 4
+    }
+   ],
+   "commit": 4
+  },
+  {
+   "name": "through_the_centre",
+   "_note": "a move at the centre has no angle and is skipped",
+   "count": 5,
+   "points": [
+    [
+     -100,
+     0
+    ],
+    [
+     0,
+     0
+    ],
+    [
+     -71,
+     -71
+    ]
+   ],
+   "after": [
+    {
+     "raw": -90.0,
+     "index": 1
+    },
+    {
+     "raw": -90.0,
+     "index": 1
+    },
+    {
+     "raw": -45.0,
+     "index": 1
+    }
+   ],
+   "commit": 1
+  },
+  {
+   "name": "press_at_the_centre",
+   "_note": "a press at the centre has no raw; the first move with an angle is the press",
+   "count": 5,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     71,
+     -71
+    ],
+    [
+     100,
+     0
+    ]
+   ],
+   "after": [
+    {
+     "raw": null,
+     "index": null
+    },
+    {
+     "raw": 45.0,
+     "index": 3
+    },
+    {
+     "raw": 90.0,
+     "index": 3
+    }
+   ],
+   "commit": 3
+  },
+  {
+   "name": "one_level",
+   "_note": "one level: always index 0",
+   "count": 1,
+   "points": [
+    [
+     -100,
+     0
+    ],
+    [
+     100,
+     0
+    ]
+   ],
+   "after": [
+    {
+     "raw": -90.0,
+     "index": 0
+    },
+    {
+     "raw": 90.0,
+     "index": 0
+    }
+   ],
+   "commit": 0
+  },
+  {
+   "name": "no_levels",
+   "_note": "no levels: no index",
+   "count": 0,
+   "points": [
+    [
+     -100,
+     0
+    ],
+    [
+     100,
+     0
+    ]
+   ],
+   "after": [
+    {
+     "raw": -90.0,
+     "index": null
+    },
+    {
+     "raw": 90.0,
+     "index": null
+    }
+   ],
+   "commit": null
+  },
+  {
+   "name": "six_levels",
+   "_note": "Codex's six levels",
+   "count": 6,
+   "points": [
+    [
+     -71,
+     71
+    ],
+    [
+     -98,
+     -17
+    ],
+    [
+     -34,
+     -94
+    ],
+    [
+     50,
+     -87
+    ],
+    [
+     100,
+     -9
+    ],
+    [
+     71,
+     71
+    ]
+   ],
+   "after": [
+    {
+     "raw": -135.0,
+     "index": 0
+    },
+    {
+     "raw": -80.158868,
+     "index": 1
+    },
+    {
+     "raw": -19.885165,
+     "index": 2
+    },
+    {
+     "raw": 29.886527,
+     "index": 3
+    },
+    {
+     "raw": 84.857235,
+     "index": 4
+    },
+    {
+     "raw": 135.0,
+     "index": 5
+    }
+   ],
+   "commit": 5
+  }
+ ],
+ "step": [
+  {
+   "index": 0,
+   "delta": 1,
+   "count": 5,
+   "result": 1
+  },
+  {
+   "index": 0,
+   "delta": -1,
+   "count": 5,
+   "result": 0
+  },
+  {
+   "index": 4,
+   "delta": 1,
+   "count": 5,
+   "result": 4
+  },
+  {
+   "index": 4,
+   "delta": -1,
+   "count": 5,
+   "result": 3
+  },
+  {
+   "index": 2,
+   "delta": 1,
+   "count": 5,
+   "result": 3
+  },
+  {
+   "index": 2,
+   "delta": -1,
+   "count": 5,
+   "result": 1
+  },
+  {
+   "index": 2,
+   "delta": -4,
+   "count": 5,
+   "result": 0
+  },
+  {
+   "index": 2,
+   "delta": 4,
+   "count": 5,
+   "result": 4
+  },
+  {
+   "index": 0,
+   "delta": 1,
+   "count": 1,
+   "result": 0
+  },
+  {
+   "index": 0,
+   "delta": -1,
+   "count": 1,
+   "result": 0
+  },
+  {
+   "index": 0,
+   "delta": 1,
+   "count": 0,
+   "result": null
+  },
+  {
+   "index": 5,
+   "delta": 1,
+   "count": 6,
+   "result": 5
+  },
+  {
+   "index": 0,
+   "delta": 5,
+   "count": 6,
+   "result": 5
+  }
+ ]
+}
