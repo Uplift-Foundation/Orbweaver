@@ -162,6 +162,13 @@ public class PromptWireTests
     [InlineData("my ow", "my own answer", false)]
     [InlineData("", "my own answer", false)]
     [InlineData("my own answer and more", "my own answer", false)]
+    // QA round 1 edges: a trailing or doubled space at the cut, and a non-ASCII
+    // word either side of it.
+    [InlineData("my own", "my own  answer", true)]
+    [InlineData("my own answer", "my own answer ", true)]
+    [InlineData("café au", "café au lait", true)]
+    [InlineData("go 🚀", "go 🚀 now", true)]
+    [InlineData("go 🚀", "go 🚀🚀 now", false)]
     public void TheRowReadsBackAsWhatWasTyped(string label, string text, bool shown) =>
         Assert.Equal(shown, FormAnswer.ShowsTyped(label, text));
 

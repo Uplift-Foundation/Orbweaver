@@ -956,6 +956,19 @@ namespace Orbweaver
                 KeyOf(SubmitAnswersLabel), KeyOf(CancelLabel));
         }
 
+        // Whether the form's free-text row is being typed into: no row reads
+        // "Type something" any more (its label is what was typed), there is a
+        // "Chat about this" row, and the cursor is on the row just above it,
+        // where Claude Code always draws the free-text row. A digit pressed now
+        // goes into that field as text rather than choosing an option — the
+        // second half of CB-406: a phone's "1" landed in a field a failed typed
+        // answer had left open, and pressed nothing. Measured on 2.1.330
+        // (PaneFixtures.TeamLeadNarrowFreeTextTyped).
+        internal static bool IsEditingFreeText(AskForm form) =>
+            !form.IsReview && form.FreeTextKey is null
+            && int.TryParse(form.ChatAboutKey, out var chat)
+            && form.CursorKey == (chat - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
         internal const string ReviewHeading = "Review your answers";
         internal const string SubmitAnswersLabel = "Submit answers";
         internal const string CancelLabel = "Cancel";

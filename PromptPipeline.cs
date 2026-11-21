@@ -201,10 +201,17 @@ namespace Orbweaver
                         Settle(sid, live, fp is null ? "desk" : "gone");
                     }
                     if (fp is null || screen is null) continue;
+                    // A form whose free-text field holds typed text is not one a
+                    // phone may press on: every digit would be typed into the
+                    // field (CB-406, the "1" at 21:49:12). Nothing is minted until
+                    // the desk sends or clears it; the prompt it replaced was
+                    // settled gone just above.
+                    var form = AskFormTranscript.ReadForm(screen, ask);
+                    if (form is not null && ChatTranscript.IsEditingFreeText(form)) continue;
                     // An AskUserQuestion form goes to the phone as a question
                     // (CB-323): CB-315 sent none, so the phone saw the session
                     // waiting with nothing to answer, and froze on it.
-                    Mint(sid, status, fp, screen, AskFormTranscript.ReadForm(screen, ask));
+                    Mint(sid, status, fp, screen, form);
                 }
             }
             // Fired and forgotten by the caller, like an answer: said, not lost,
@@ -433,6 +440,21 @@ namespace Orbweaver
                 if (!d.Press)
                 {
                     Refuse(phoneId, answer, d.Code!);
+                    // CB-406: an id this desk does not hold at all — settled
+                    // already, or minted before a restart emptied _live — is
+                    // over, so the phones are told so, and a stale card clears
+                    // the moment it is tapped. Measured: two prompts for one
+                    // question stayed on Warren's phone, seven taps refused
+                    // not_pending and none of them resolved. Only for an
+                    // unknown id: a held prompt refused not_pending is a press
+                    // in flight, and that press resolves it. Reached only past
+                    // the gate's signature check (rule 1
+                    // comes first), so nobody unpaired can resolve anything.
+                    if (live is null && d.Code == AnswerGate.NotPending)
+                    {
+                        _send.ResolvedQuiet(answer.RequestId, answer.SessionId, "gone");
+                        _seams.Log($"resolved {answer.RequestId} gone (unknown on answer)");
+                    }
                     return;
                 }
 

@@ -1714,6 +1714,29 @@ namespace Orbweaver.Tests
                 typedRow?.Label == "my own answer and this is a much longer reply that will not fit on one row of a narrow pane",
                 typedRow?.Label ?? "null");
 
+            // CB-406: the free-text row with text in it reads as being edited;
+            // the same form untouched, or with the cursor on an empty
+            // "Type something.", does not.
+            Check("a form with text typed in its free-text row is being edited",
+                ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowFreeTextTyped) is { } editing
+                && ChatTranscript.IsEditingFreeText(editing));
+            Check("…and the untouched form is not",
+                ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowForm) is { } untouched
+                && !ChatTranscript.IsEditingFreeText(untouched));
+
+            // QA round 1: the wrap test's boundary, on the real capture with only
+            // the continuation's first word resized. The line above is 28 wide
+            // on a 35-wide screen: a word of 5 would have fitted with room to
+            // spare (34), so it is not a wrap; 6 ends exactly at the edge (35),
+            // which Claude Code wraps; 7 runs past it (36).
+            foreach (var (word, joined) in new[] { ("narro", false), ("narrow", true), ("narrowe", true) })
+            {
+                var screen = PaneFixtures.TeamLeadNarrowFreeTextTyped.Replace("     narrow pane", "     " + word + " pane");
+                var row = ChatTranscript.ParseDialog(screen)?.Options.FirstOrDefault(o => o.Key == "4")?.Label ?? "";
+                Check($"a continuation whose first word ends at {28 + 1 + word.Length} of 35 is {(joined ? "" : "not ")}joined",
+                    row.EndsWith(word + " pane", StringComparison.Ordinal) == joined, row);
+            }
+
             Check("the cut-off border really is a pure rule on the last line",
                 ChatTranscript.IsHorizontalRule(PaneFixtures.MacNamedFormClippedName.TrimEnd().Split('\n')[^1].Trim()));
 
