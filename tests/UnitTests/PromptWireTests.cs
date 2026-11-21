@@ -169,10 +169,14 @@ public class PromptWireTests
         Assert.NotNull(RemoteMirrorClient.PromptOutcomeOf(true, null, good).Prompt);
         Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoPrompt),
             RemoteMirrorClient.PromptOutcomeOf(false, MirrorProtocol.ErrNoPrompt, null));
-        // Never answered: no code at all.
-        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error);
-        // An OK whose payload is not a prompt.
-        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrUnsupported),
+        // Never answered: no code at all. Not "unsupported", which a session treats as final (CB-407).
+        Assert.Equal(MirrorProtocol.ErrNoReply, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error);
+        Assert.NotEqual(MirrorProtocol.ErrUnsupported, MirrorProtocol.ErrNoReply);
+        // The codes the far side really sends are still passed through as they are.
+        foreach (var code in new[] { MirrorProtocol.ErrUnsupported, MirrorProtocol.ErrNoPane, MirrorProtocol.ErrReplyOff })
+            Assert.Equal(code, RemoteMirrorClient.PromptOutcomeOf(false, code, null).Error);
+        // An OK whose payload is not a prompt is no reply either.
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoReply),
             RemoteMirrorClient.PromptOutcomeOf(true, null, "nope"u8.ToArray()));
     }
 
@@ -181,7 +185,9 @@ public class PromptWireTests
     {
         Assert.Null(RemoteMirrorClient.AnswerErrorOf(true, null));
         Assert.Equal(MirrorProtocol.ErrBadKey, RemoteMirrorClient.AnswerErrorOf(false, MirrorProtocol.ErrBadKey));
-        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.AnswerErrorOf(false, null));
+        Assert.Equal(MirrorProtocol.ErrNoReply, RemoteMirrorClient.AnswerErrorOf(false, null));
+        foreach (var code in new[] { MirrorProtocol.ErrUnsupported, MirrorProtocol.ErrNoPane, MirrorProtocol.ErrReplyOff })
+            Assert.Equal(code, RemoteMirrorClient.AnswerErrorOf(false, code));
     }
 
     [Fact]

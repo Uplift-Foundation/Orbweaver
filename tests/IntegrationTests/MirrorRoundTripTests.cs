@@ -2084,6 +2084,50 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Empty(harness.Pressed);
     }
 
+    // --- CB-407: a request nobody answers in time is not "unsupported" ---------------
+
+    // The reply is lost: the PROMPT is not answered within the timeout. The client reports
+    // no-reply, not unsupported, and a later request on the same link, once replies arrive again,
+    // is answered normally. Nothing latches on the client.
+    [Fact]
+    public async Task ALostPromptReplyIsNoReplyAndTheNextRequestIsAnsweredNormally()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("slow-prompt.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropReplies = true;
+        var (none, error) = await harness.Client.FetchPromptAsync("evidence");
+        Assert.Null(none);
+        Assert.Equal(MirrorProtocol.ErrNoReply, error);
+        Assert.NotEqual(MirrorProtocol.ErrUnsupported, error);
+
+        harness.DropReplies = false;
+        harness.Client.TimeoutOverrideForTests = null;
+        var (prompt, again) = await harness.Client.FetchPromptAsync("evidence");
+        Assert.Null(again);
+        Assert.NotNull(prompt);
+    }
+
+    // The same for an ANSWER: no reply is no-reply. Whether the far side pressed the key is
+    // not known from here, which is why the session re-reads the screen before offering the
+    // buttons again (asserted at the session level).
+    [Fact]
+    public async Task ALostAnswerReplyIsNoReply()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("slow-answer.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropReplies = true;
+        var code = await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint);
+
+        Assert.Equal(MirrorProtocol.ErrNoReply, code);
+    }
+
     [Fact]
     public async Task AKeyThatIsNotOnTheScreenIsRefused()
     {
@@ -4350,6 +4394,10 @@ public partial class MirrorRoundTripTests : IDisposable
 
         // A capture that throws rather than answering.
         public bool CaptureThrows { get; set; }
+
+        // CB-407: a courier that loses every reply, so a request is not answered in time (the far
+        // side did the work; its answer never arrived).
+        public bool DropReplies { get; set; }
         public int RecordReads { get; private set; }
 
         public bool ReplyEnabled { get; init; } = true;
@@ -4678,6 +4726,7 @@ public partial class MirrorRoundTripTests : IDisposable
             ToServer.Add(line);
 
             if (CourierThrows) throw new IOException("the relay went away");
+            if (DropReplies) return true;
 
             var frame = MirrorProtocol.TryParseFrame(line);
             if (frame is null) return false;
