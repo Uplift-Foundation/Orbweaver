@@ -873,8 +873,9 @@ namespace Orbweaver
             var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key
                 ?? options.FirstOrDefault(o => LettersStart(o.Label, FreeTextLabel))?.Key;
             var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key
-                ?? (freeText is not null && int.TryParse(freeText, out var freeKey)
-                    ? options.FirstOrDefault(o => o.Key == (freeKey + 1).ToString() && o == options[^1] && LettersStart(ChatAboutLabel, o.Label))?.Key
+                // Keys are the digits ParseDialog read off the numbered rows, so they always parse.
+                ?? (freeText is not null
+                    ? options.FirstOrDefault(o => o.Key == (int.Parse(freeText) + 1).ToString() && o == options[^1] && LettersStart(ChatAboutLabel, o.Label))?.Key
                     : null);
             options = options.Select(o =>
                 o.Key == freeText && !o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal) ? o with { Label = FreeTextRowLabel }

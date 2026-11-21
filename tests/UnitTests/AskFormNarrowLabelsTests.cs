@@ -154,6 +154,19 @@ public class AskFormNarrowLabelsTests
         Assert.Equal(["Apple", "Banana", "Cherry", "Type something.", "Chat about this"], served.Options.Select(o => o.Label));
     }
 
+    // A form taller than the pane (top scrolled off) that no reader places, because the call does not agree
+    // with it: the screen's own numbered reading is nothing here too (the run starts above 1), so the
+    // mirror serves nothing. This is the arm where there is no dialog at all.
+    [Fact]
+    public void A_scrolled_form_with_a_call_that_does_not_agree_serves_nothing()
+    {
+        var tall = Cb407Captures.Screen("askform-12x23");
+        var other = AskFormTranscript.PendingCall([System.IO.File.ReadAllLines(Cb407Captures.PathOf("askform-merge.jsonl"))[0]])!;
+
+        Assert.Null(ChatTranscript.ParseDialog(tall));
+        Assert.Null(MirrorProtocol.PromptFromScreen(tall, other));
+    }
+
     // ---- the fallthrough that served the garbled text -----------------------------
 
     // A shape neither form reader places, invented by wrapping and not by editing the
