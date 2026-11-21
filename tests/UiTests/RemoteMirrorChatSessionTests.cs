@@ -1014,13 +1014,16 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(ChatSendOutcome.Failed, outcome);
     }
 
-    // CB-307 addendum: the far pane is on /permissions. Nothing is typed, the
+    // CB-307 addendum: the far pane is on a numbered dialog. Nothing is typed, the
     // send fails, and the note under it names the far screen and says what to
-    // do — the sentence a person actually reads.
+    // do — the sentence a person actually reads. (This used /permissions, which is
+    // an Esc-to-cancel pane the reader now labels as an overlay (CB-400), so it is
+    // no longer a screen that is not a prompt and has no title to name; the overlay
+    // has its own test below.)
     [AvaloniaFact]
     public async Task ASendToAFarPaneOnADialogIsRefusedWithANoteThatSaysWhy()
     {
-        _farScreen = PaneFixtures.PermissionsAllow;
+        _farScreen = PaneFixtures.MiniExitDialog;
         Wire("a", "b");
 
         var session = await OpenAsync();
@@ -1033,6 +1036,41 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(ChatRole.System, last.Role);
         Assert.StartsWith($"{Name}'s terminal isn't at its prompt — ", last.Text);
         Assert.EndsWith("answer that screen in the terminal and send again.", last.Text);
+    }
+
+    // The far pane is simply a session at its input box after an Esc, which the overlay reader
+    // reads as null: nothing for the overlay path to name, and typing goes ahead.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneThatIsNeitherAPromptNorAnOverlayIsTypedNormally()
+    {
+        Assert.Null(OverlayScreen.Read(PaneFixtures.McpAfterEsc2));
+        _farScreen = PaneFixtures.McpAfterEsc2;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var outcome = await session.SendAsync("please carry on");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Single(_typed);
+    }
+
+    // CB-400: the far pane is on a screen only Esc leaves. The refusal names it, in the far
+    // side's own words, so the person at this panel is told which screen to deal with.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneOnAnOverlayIsRefusedAndTheNoteNamesIt()
+    {
+        _farScreen = PaneFixtures.MobileOverlay80x50;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var outcome = await session.SendAsync("please carry on");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Empty(_typed);
+        var last = session.History[^1];
+        Assert.Equal(ChatRole.System, last.Role);
+        Assert.Contains("Get the Claude app on your phone", last.Text);
+        Assert.StartsWith($"{Name}'s terminal isn't at its prompt — ", last.Text);
     }
 
     // ...and the control: the same wiring on a real prompt types.
@@ -1074,6 +1112,65 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         Assert.Equal(new[] { "2" }, _pressed);
         Assert.Empty(_typed);
+    }
+
+    // CB-400: the far terminal is on the /mobile overlay. Over the real link the near
+    // panel gets its rows and one Close button, and a click presses Escape on the far
+    // side exactly once, having re-read that screen and found the same overlay there.
+    [AvaloniaFact]
+    public async Task AnOverlayOnTheFarScreenIsShownWithItsBodyAndCloseSendsEscapeOnce()
+    {
+        _farScreen = PaneFixtures.MobileOverlay80x50;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.Equal("Get the Claude app on your phone", session.Prompt!.Title);
+        Assert.NotNull(session.Prompt.Body);
+        Assert.Contains(session.Prompt.Body!, r => r.Contains("Scan the QR code"));
+        var close = Assert.Single(session.Prompt.Options);
+        Assert.Equal(("Escape", "Close"), (close.Key, close.Label));
+
+        await session.AnswerAsync(close);
+
+        Assert.Equal(new[] { "Escape" }, _pressed);
+        Assert.Empty(_typed);
+    }
+
+    // The far screen moved on before the click (Esc by hand, or the session's own
+    // next screen): the answer carries the fingerprint of what was shown, the far
+    // side re-reads, and nothing is pressed. Esc at a working session would
+    // interrupt the turn.
+    [AvaloniaFact]
+    public async Task CloseAfterTheFarOverlayWentAwayPressesNothing()
+    {
+        _farScreen = PaneFixtures.MobileOverlay80x50;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        _farScreen = PaneFixtures.MacPromptAfterEsc;
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(_pressed);
+    }
+
+    // The control: an ordinary far dialog carries no body, so the panel draws none.
+    [AvaloniaFact]
+    public async Task AnOrdinaryFarDialogCarriesNoBody()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.Null(session.Prompt!.Body);
     }
 
     // A multiSelect over the real link: ticking is a digit, and the explicit

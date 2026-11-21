@@ -482,6 +482,136 @@ public class RelayClientTests : IAsyncLifetime
         lock (keys) Assert.Equal(["3"], keys);
     }
 
+    // CB-400: `/mobile`'s overlay over a real socket. It goes out as a question
+    // with one Close; a Close that arrives after the screen has gone back to the
+    // prompt is stale_prompt with no key (Esc there would open the rewind picker),
+    // and a Close while the overlay is up presses Escape once and resolves.
+    [Fact]
+    public async Task An_overlay_goes_out_as_a_Close_question_and_a_stale_close_presses_nothing()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = PaneFixtures.MobileOverlay80x50;
+        var keys = new List<string>();
+        var seams = new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) => { lock (keys) keys.Add(k); screen = PaneFixtures.MobileAfterEsc; return Task.FromResult(true); },
+            (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { });
+        var client = Client(identity, prompts: seams);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(IsEnvelope);
+        // Quiet: an ordinary action frame, push none and no e, so the relay queues it
+        // and the app shows it without ever raising a notification.
+        Assert.Equal(("action", "none"), (amber.GetProperty("class").GetString(), amber.GetProperty("push").GetString()));
+        Assert.False(amber.TryGetProperty("e", out var sealedPush) && sealedPush.ValueKind == JsonValueKind.String);
+        var prompt = OpenAsPhone(amber, phone, identity);
+        Assert.Equal("question", prompt.GetProperty("kind").GetString());
+        var option = Assert.Single(prompt.GetProperty("options").EnumerateArray());
+        Assert.Equal(("Escape", "Close"), (option.GetProperty("key").GetString(), option.GetProperty("label").GetString()));
+        Assert.Contains("Scan the QR code", prompt.GetProperty("preview").GetString());
+        var rid = prompt.GetProperty("request_id").GetString()!;
+        var exp = prompt.GetProperty("expires_at").GetInt64();
+        var desktopId = amber.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        ulong counter = 0;
+        Task SendAnswer(string action)
+        {
+            var nonce = Base64Url(RandomNumberGenerator.GetBytes(16));
+            var sig = Base64Url(Sign(phone.IdKey, AnswerSigning.Message(AnswerSigning.Body(rid, "s1", action, "", nonce, exp))));
+            var answer = JsonSerializer.Serialize(new
+            {
+                t = "answer", request_id = rid, session_id = "s1", action, scope = "", note = "", nonce,
+                expires_at = exp, screen_hash = prompt.GetProperty("screen_hash").GetString(), sig,
+            });
+            var ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, counter++), Encoding.UTF8.GetBytes(answer), Aad(phone.Id, desktopId, "action"));
+            return _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "o" + counter, from = phone.Id, to = desktopId, ts = 0, @class = "action", push = "none", ck = "", ct }));
+        }
+
+        screen = PaneFixtures.MobileAfterEsc;
+        await SendAnswer("option:Escape");
+        Assert.Equal("stale_prompt", OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("code").GetString());
+        lock (keys) Assert.Empty(keys);
+
+        screen = PaneFixtures.MobileOverlay80x50;
+        await SendAnswer("option:Escape");
+        var resolve = await _stub.Next(e => IsEnvelope(e) && OpenAsPhone(e, phone, identity).TryGetProperty("t", out var t) && t.GetString() == "resolved");
+        Assert.Equal(("none", "phone:" + phone.Id), (resolve.GetProperty("push").GetString(), OpenAsPhone(resolve, phone, identity).GetProperty("by").GetString()));
+        lock (keys) Assert.Equal(["Escape"], keys);
+    }
+
+    // CB-400: a quiet overlay prompt has no push to carry a copy, so it rides CB-401's
+    // replay: a phone that comes online is sent every pending prompt, the overlay included,
+    // to it alone and after its roster, with the same request id and push none.
+    private async Task<(RelayClient Client, Phone A, Phone B, RelayIdentity Identity)> TwoPhonesWithPending(string screen)
+    {
+        var identity = Identity();
+        identity.Keys();
+        var a = PairInto(identity);
+        var b = new Phone("ph_00000000000000c2", GenerateKeyPair(), GenerateKeyPair());
+        identity.AddPhone(b.Id, "Second iPhone", b.IdKey.Public, b.KaKey.Public);
+        var seams = new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { });
+        var client = Client(identity, prompts: seams);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        // One prompt envelope per paired phone, sent whether or not it is online.
+        await _stub.Next(IsEnvelope);
+        await _stub.Next(IsEnvelope);
+        return (client, a, b, identity);
+    }
+
+    private Task Presence(Phone phone, bool online) =>
+        _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online, last_seen = 1 }));
+
+    [Fact]
+    public async Task A_phone_coming_online_is_sent_the_overlay_prompt_alone_and_quietly_after_its_roster()
+    {
+        var (_, a, b, identity) = await TwoPhonesWithPending(PaneFixtures.MobileOverlay80x50);
+
+        await Presence(a, online: true);
+        var roster = await _stub.Next(IsEnvelope);
+        Assert.Equal((a.Id, "roster"), (roster.GetProperty("to").GetString(), OpenAsPhone(roster, a, identity).GetProperty("t").GetString()));
+        var resent = await _stub.Next(IsEnvelope);
+        Assert.Equal((a.Id, "action", "none"), (resent.GetProperty("to").GetString(), resent.GetProperty("class").GetString(), resent.GetProperty("push").GetString()));
+        Assert.False(resent.TryGetProperty("e", out var sealedPush) && sealedPush.ValueKind == JsonValueKind.String);
+        var body = OpenAsPhone(resent, a, identity);
+        Assert.Equal(("prompt", "question"), (body.GetProperty("t").GetString(), body.GetProperty("kind").GetString()));
+        Assert.Equal(body.GetProperty("request_id").GetString(), resent.GetProperty("id").GetString());
+
+        // The next frames are the second phone's own presence: nothing went to it before.
+        await Presence(b, online: true);
+        var rosterB = await _stub.Next(IsEnvelope);
+        Assert.Equal((b.Id, "roster"), (rosterB.GetProperty("to").GetString(), OpenAsPhone(rosterB, b, identity).GetProperty("t").GetString()));
+        var resentB = await _stub.Next(IsEnvelope);
+        Assert.Equal((b.Id, "none"), (resentB.GetProperty("to").GetString(), resentB.GetProperty("push").GetString()));
+        Assert.Equal(resent.GetProperty("id").GetString(), resentB.GetProperty("id").GetString());   // same request id
+    }
+
+    [Fact]
+    public async Task A_phone_already_online_or_going_offline_is_sent_nothing()
+    {
+        var (_, a, b, identity) = await TwoPhonesWithPending(PaneFixtures.MobileOverlay80x50);
+
+        await Presence(a, online: true);
+        await _stub.Next(IsEnvelope);     // roster
+        await _stub.Next(IsEnvelope);     // the resent prompt
+        await Presence(a, online: true);  // already online
+        await Presence(a, online: false); // going offline
+        await Presence(b, online: true);
+        var next = await _stub.Next(IsEnvelope);
+        Assert.Equal((b.Id, "roster"), (next.GetProperty("to").GetString(), OpenAsPhone(next, b, identity).GetProperty("t").GetString()));
+    }
+
     // CB-316: the v4 round trip through a real socket — a sealed watch from the
     // phone becomes ok watching and a chat window, an input is typed and
     // answered, a request whose handler throws costs only itself, usage goes
@@ -839,6 +969,66 @@ public class RelayClientTests : IAsyncLifetime
         var amber = await _stub.Next(IsEnvelope);
         Assert.Equal("amber", amber.GetProperty("push").GetString());
         Assert.Equal("prompt", OpenAsPhone(amber, phone, identity).GetProperty("t").GetString());
+    }
+
+    // CB-401: a prompt sent in the instant before a phone reconnects reached
+    // nobody, and the desk's own welcome never repeats it. The phone coming
+    // online gets its roster, then the same prompt again — same request_id,
+    // same plaintext — and quietly: no amber push, no e.
+    [Fact]
+    public async Task A_phone_coming_online_after_a_prompt_was_minted_receives_it_again_without_a_push()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber");
+        var original = OpenAsPhone(amber, phone, identity).GetRawText();
+
+        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1 }));
+        var roster = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("class").GetString() == "state");
+        Assert.Equal("roster", OpenAsPhone(roster, phone, identity).GetProperty("t").GetString());
+        var again = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("class").GetString() == "action");
+        Assert.Equal(amber.GetProperty("id").GetString(), again.GetProperty("id").GetString());
+        Assert.Equal("none", again.GetProperty("push").GetString());
+        Assert.False(again.TryGetProperty("e", out _));
+        Assert.Equal(original, OpenAsPhone(again, phone, identity).GetRawText());
+    }
+
+    // CB-401: the replay is for the phone that came online, not for every phone.
+    [Fact]
+    public async Task A_phone_coming_online_does_not_replay_the_prompt_to_another_phone()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var other = new Phone("ph_00000000000000c2", GenerateKeyPair(), GenerateKeyPair());
+        identity.AddPhone(other.Id, "Other iPhone", other.IdKey.Public, other.KaKey.Public);
+        var screen = "────────────────────────────────────────\n Bash command\n   dotnet test\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n";
+        var client = Client(identity, prompts: new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { }));
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber" && e.GetProperty("to").GetString() == phone.Id);
+        await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber" && e.GetProperty("to").GetString() == other.Id);
+
+        await _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online = true, last_seen = 1 }));
+        var replay = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("class").GetString() == "action");
+        Assert.Equal(phone.Id, replay.GetProperty("to").GetString());
+        // Nothing for `other` follows: Next would return it, so only the deadline ends this.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _stub.Next(
+            e => IsEnvelope(e) && e.GetProperty("to").GetString() == other.Id, seconds: 1));
     }
 
     // Gate (a): the notification extension's /v1/ack reaches the desktop as a

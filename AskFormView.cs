@@ -98,7 +98,8 @@ namespace Orbweaver
 
             var prompt = new ChatPrompt(
                 wire.Title,
-                wire.Options.Select(o => new ChatPromptOption(o.Key, o.Label)).ToList());
+                wire.Options.Select(o => new ChatPromptOption(o.Key, o.Label)).ToList(),
+                Body: wire.Body);
 
             return ToPrompt(new AskForm(
                 prompt, tabs, wire.Current, wire.FreeTextKey, wire.ChatAboutKey,

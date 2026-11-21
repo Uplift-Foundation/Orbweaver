@@ -33,9 +33,11 @@ public class TypingGateTests
     [Fact]
     public async Task ARecordSayingWaitingRefusesWithoutReadingTheScreen()
     {
+        // CB-400: only when the pane is not readable. A readable one is read once, to
+        // name an overlay if that is what the record is waiting on (tests below).
         var reads = new Reads { Record = "waiting" };
 
-        var verdict = await reads.Judge(readable: true);
+        var verdict = await reads.Judge(readable: false);
 
         Assert.False(verdict.Allowed);
         Assert.Equal(TypingGate.WaitingWhy, verdict.Why);
@@ -179,6 +181,65 @@ public class TypingGateTests
     {
         PaneFixtures.MiniUpdateLinePrompt, PaneFixtures.MiniTeamListPrompt,
     };
+
+    // ---- CB-400: an overlay only Esc closes ------------------------------------
+
+    [Fact]
+    public async Task A_waiting_record_over_an_overlay_names_the_overlay()
+    {
+        var reads = new Reads { Record = "waiting", Screen = PaneFixtures.MobileOverlay80x50 };
+
+        var verdict = await reads.Judge(readable: true);
+
+        Assert.False(verdict.Allowed);
+        Assert.Equal(TypingGate.OverlayWhy("Get the Claude app on your phone"), verdict.Why);
+        Assert.Equal("it is showing \"Get the Claude app on your phone\", which has to be closed first", verdict.Why);
+        Assert.Equal(1, reads.Captures);
+    }
+
+    [Fact]
+    public async Task An_idle_record_over_an_overlay_names_it_too_and_never_allows()
+    {
+        var verdict = await new Reads { Record = "idle", Screen = PaneFixtures.MobileOverlay80x50 }.Judge(readable: true);
+
+        Assert.False(verdict.Allowed);
+        Assert.Equal(TypingGate.OverlayWhy("Get the Claude app on your phone"), verdict.Why);
+        Assert.Equal("lines=" + ChatTranscript.ScreenLines(PaneFixtures.MobileOverlay80x50).Length + " check=overlay", verdict.Diagnostic);
+    }
+
+    // The record cannot tell an overlay from a dialog, so the screen is read only
+    // to name it. Anything the screen does not show as an overlay keeps today's
+    // wording, and this branch never allows.
+    [Fact]
+    public async Task A_waiting_record_over_anything_but_an_overlay_keeps_the_old_wording()
+    {
+        foreach (var screen in new[] { PaneFixtures.MacPromptAfterEsc, PaneFixtures.MiniExitDialog, "" })
+        {
+            var reads = new Reads { Record = "waiting", Screen = screen };
+            var verdict = await reads.Judge(readable: true);
+            Assert.False(verdict.Allowed);
+            Assert.Equal(TypingGate.WaitingWhy, verdict.Why);
+            Assert.Equal(1, reads.Captures);
+        }
+    }
+
+    [Fact]
+    public async Task A_waiting_record_with_no_capture_a_null_capture_or_a_throwing_one_keeps_the_old_wording()
+    {
+        Assert.Equal(TypingGate.WaitingWhy, (await new Reads { Record = "waiting", Screen = null }.Judge(readable: true)).Why);
+
+        var threw = new Reads { Record = "waiting", Throw = true };
+        Assert.Equal(TypingGate.WaitingWhy, (await threw.Judge(readable: true)).Why);
+        Assert.Equal(1, threw.Captures);
+
+        var unreadable = new Reads { Record = "waiting", Screen = PaneFixtures.MobileOverlay80x50 };
+        Assert.Equal(TypingGate.WaitingWhy, (await unreadable.Judge(readable: false)).Why);
+        Assert.Equal(0, unreadable.Captures);
+
+        var noCapture = await TypingGate.JudgeAsync(Status, _ => "waiting", null, paneReadable: true);
+        Assert.Equal(TypingGate.WaitingWhy, noCapture.Why);
+    }
+
 }
 
 // The one helper every typed path calls: TypingGate.GuardedTypeAsync.

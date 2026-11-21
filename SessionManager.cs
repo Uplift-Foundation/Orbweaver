@@ -3224,6 +3224,8 @@ namespace Orbweaver
                     window.SizeRelayoutRequested += ReapplyOrbSizes;
                     _windows[sessionId] = window;
                     _order.Add(sessionId);
+                    if (sessionId.StartsWith("rc:", StringComparison.Ordinal))
+                        MirrorLog.Say("orb-created", "key=" + MirrorLog.ShortKey(sessionId));
                     if (OrbsVisible) window.Show();
                     setChanged = true;
                 }
@@ -3256,6 +3258,8 @@ namespace Orbweaver
             var gone = _windows.Keys.Where(id => !seen.Contains(id)).ToList();
             foreach (var id in gone)
             {
+                if (id.StartsWith("rc:", StringComparison.Ordinal))
+                    MirrorLog.Say("orb-removed", "key=" + MirrorLog.ShortKey(id));
                 _windows[id].Close();
                 _windows.Remove(id);
                 _statuses.Remove(id);

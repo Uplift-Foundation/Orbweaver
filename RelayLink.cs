@@ -128,6 +128,11 @@ namespace Orbweaver
         // ---- events -----------------------------------------------------------
 
         internal event Action WelcomeReceived = delegate { };
+        // CB-401: a paired phone came online or asked to resync, so it needs
+        // the prompts still pending. Raised after its roster frames are
+        // returned, and the client defers it past the lock, so the replay
+        // lands behind the roster that names the session.
+        internal event Action<string> PhoneNeedsPrompts = delegate { };
         internal event Action Unauthorized = delegate { };
         internal event Action<string> Refused = delegate { };                    // version, or any hello error but unauthorized
         internal event Action<PairRequest> PairRequested = delegate { };
@@ -314,6 +319,7 @@ namespace Orbweaver
                     if (Str(f, "peer_id") is { } peer && _channels.TryGetValue(peer, out var c) && c.Online)
                     {
                         Note($"resync from {peer}: fresh roster");
+                        if (Welcomed) PhoneNeedsPrompts(peer);
                         return Collect(RosterFor(c));
                     }
                     // Said, not silent: a phone stuck waiting on a roster
@@ -365,6 +371,9 @@ namespace Orbweaver
             c.Online = online;
             PresenceChanged();
             if (wentOffline) PhoneWentOffline(id);
+            // Not before the welcome: SendPromptTo would send nothing, and the
+            // welcome replay covers every phone then anyway.
+            if (cameOnline && Welcomed) PhoneNeedsPrompts(id);
             return cameOnline ? RosterAndUsage(c) : [];
         }
 
@@ -988,7 +997,9 @@ namespace Orbweaver
         // The envelope id is the request_id (frames-v3), and each phone gets
         // its own e, sealed to its own agreement key; the e is left off when
         // the plaintext cannot fit the relay's 3600-character cap.
-        internal IReadOnlyList<string> SendPrompt(string requestId, string sessionId, string prompt, string? pushPlaintext)
+        // CB-400: quiet sends the prompt as an ordinary action frame with push none, which
+        // the relay queues and forwards like an answer's but never turns into an alert.
+        internal IReadOnlyList<string> SendPrompt(string requestId, string sessionId, string prompt, string? pushPlaintext, bool quiet = false)
         {
             if (!Welcomed) return [];
             var frames = new List<string>();
@@ -997,12 +1008,22 @@ namespace Orbweaver
             {
                 // CB-358: the prompt itself always goes (it is blocked work); only
                 // a member's alert push can be withheld, by the phone's choice.
-                var withPush = pushPlaintext is not null && RelayAlertRules.PushAmber(c.Alerts, member);
+                var withPush = !quiet && pushPlaintext is not null && RelayAlertRules.PushAmber(c.Alerts, member);
                 var e = withPush ? PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext!)) : null;
-                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, "amber", e) is { } frame)
+                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, quiet ? "none" : "amber", e) is { } frame)
                     frames.Add(frame);
             }
             return WithActivity(frames);
+        }
+
+        // CB-401: the same prompt (request_id and plaintext; the ciphertext is
+        // fresh, it takes the next counter) again, to one phone, quietly. Push "none" and
+        // no e: it already alerted when minted, and the phone is online now.
+        internal IReadOnlyList<string> SendPromptTo(string phoneId, string requestId, string sessionId, string prompt)
+        {
+            if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
+            return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
+                System.Text.Encoding.UTF8.GetBytes(prompt), requestId));
         }
 
         // resolved to every paired phone, so a sheet open on any of them closes:
@@ -1010,7 +1031,7 @@ namespace Orbweaver
         // amber's own (the same session's Ck) so the passive "Answered at the
         // desk" alert replaces the amber in its thread. e, when the pipeline
         // gives a plaintext, is the sealed resolve, per phone, for that alert.
-        internal IReadOnlyList<string> SendResolved(string requestId, string sessionId, string by, string? pushPlaintext = null)
+        internal IReadOnlyList<string> SendResolved(string requestId, string sessionId, string by, string? pushPlaintext = null, bool quiet = false)
         {
             if (!Welcomed) return [];
             var plain = System.Text.Encoding.UTF8.GetBytes(PromptFrames.Resolved(requestId, sessionId, by));
@@ -1018,7 +1039,7 @@ namespace Orbweaver
             foreach (var c in _channels.Values)
             {
                 var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
-                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, "resolve", e) is { } frame)
+                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, quiet ? "none" : "resolve", e) is { } frame)
                     frames.Add(frame);
             }
             return WithActivity(frames);

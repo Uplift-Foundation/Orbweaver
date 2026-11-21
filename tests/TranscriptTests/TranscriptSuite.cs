@@ -342,6 +342,16 @@ namespace Orbweaver.Tests
                  ❯ 1. Yes
                 """) is null);
 
+            // CB-400: `/mobile`'s screen is not a dialog but only Esc closes it, so it
+            // reads as one Close option with its rows; the idle prompt after Esc does not.
+            Check("an Esc-to-close overlay reads as one Close option carrying its body",
+                ChatTranscript.ParseDialog(PaneFixtures.MobileOverlay80x50) is { Body: not null } overlay
+                && overlay.Options.Count == 1 && overlay.Options[0].Key == "Escape" && overlay.Options[0].Label == "Close"
+                && overlay.Title == "Get the Claude app on your phone");
+            Check("the screen after Esc is not an overlay", ChatTranscript.ParseDialog(PaneFixtures.MobileAfterEsc) is null);
+            Check("a numbered dialog that also shows the footer is that dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.MacModelSwitchDialog + "\n  Esc to close\n") is { Body: null, Options.Count: >= 2 });
+
             Check("options that don't start at 1 are refused", ChatTranscript.ParseDialog("""
                  Do you want to proceed?
                  ❯ 2. Yes
@@ -1292,10 +1302,15 @@ namespace Orbweaver.Tests
                          ("Recently blocked (populated, stripped)", PaneFixtures.MiniRecentlyBlockedPopulatedStripped),
                      })
             {
-                Check($"/permissions {name} is not a dialog", ChatTranscript.ParseDialog(screen) is null,
-                    $"{ChatTranscript.ParseDialog(screen)?.Options.Count} options");
-                Check($"/permissions {name} reads as unknown, not a prompt",
-                    PaneScreen.Classify(screen) == PaneReading.Unknown, PaneScreen.Classify(screen).ToString());
+                // CB-400: a tab with the `▔` edge and an `Esc to cancel` footer is a pane
+                // Esc leaves (one Cancel option with a body); the populated Recently-blocked
+                // tab ends `Esc to approve 1 blocked` and stays unknown. Never a numbered
+                // dialog and never a prompt either way.
+                var pane = ChatTranscript.ParseDialog(screen);
+                Check($"/permissions {name} is not a numbered dialog", pane is null || pane.Body is not null,
+                    $"{pane?.Options.Count} options");
+                Check($"/permissions {name} is never a prompt",
+                    PaneScreen.Classify(screen) == (pane is null ? PaneReading.Unknown : PaneReading.Dialog), PaneScreen.Classify(screen).ToString());
             }
 
             // The populated tab is the case that matters, and the tab bar is
@@ -1638,10 +1653,10 @@ namespace Orbweaver.Tests
 
             // Blank rows never make something a dialog or a prompt that is not.
             var blanks = string.Concat(Enumerable.Repeat("\n", 30));
-            Check("/permissions with blank rows below is still not a dialog",
-                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + blanks) is null
+            Check("/permissions with blank rows below is still not a numbered dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + blanks) is { Body: not null }
                 && ChatTranscript.ParseAskForm(PaneFixtures.PermissionsAllow + blanks) is null
-                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + blanks) == PaneReading.Unknown);
+                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + blanks) == PaneReading.Dialog);
             Check("a numbered list above a live box with blank rows below is still prose",
                 ChatTranscript.ParseDialog("""
                     ⏺ Three things worth doing:
@@ -1712,9 +1727,11 @@ namespace Orbweaver.Tests
             // /permissions tab, a prose list above a live box, and a prompt keep
             // their readings with blank rows and a titled rule under them.
             var spacer = string.Concat(Enumerable.Repeat("\n", 25)) + "──────────────────────────────── qa ─";
-            Check("/permissions over blank rows and a bottom rule is still not a dialog",
-                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + spacer) is null
-                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + spacer) == PaneReading.Unknown);
+            // The titled rule carries letters, so it is not an input box and the pane still
+            // reads as a pane to leave (CB-400), never as a numbered dialog or a prompt.
+            Check("/permissions over blank rows and a bottom rule is still not a numbered dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + spacer) is { Body: not null }
+                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + spacer) == PaneReading.Dialog);
             Check("the window holds thirty drawn lines, not thirty rows",
                 ChatTranscript.WindowStart(Enumerable.Repeat("x", 40).Concat(Enumerable.Repeat("", 50)).ToArray()) == 10
                 && ChatTranscript.WindowStart(new[] { "a", "", "b" }) == 0);
