@@ -49,12 +49,18 @@ namespace Orbweaver
             Func<SessionStatus, Task<string?>>? CapturePane = null,
             Func<SessionStatus, bool>? CanReadPane = null,
             Func<bool>? Shadow = null,
-            Action<string, string>? Log = null);
+            Action<string, string>? Log = null,
+
+            // A Codex older than 0.164 has no argument form: its full-screen
+            // picker is driven by digits (plan 2.4). The route belongs to the
+            // set routes; null answers unavailable.
+            Func<SessionStatus, RunField, string, Task<RunSetResult>>? CodexPicker = null);
 
         private readonly Seams _seams;
         private readonly object _gate = new();
         private readonly Dictionary<string, IReadOnlyList<RunPending>> _pending = new(StringComparer.Ordinal);
         private readonly Dictionary<(string Session, RunField Field), string> _failures = new();
+        private readonly HashSet<string> _running = new(StringComparer.Ordinal);
 
         internal RunControlsHost(Seams seams) => _seams = seams;
 
@@ -74,8 +80,16 @@ namespace Orbweaver
 
         private static string Key(SessionStatus status) => status.SessionId;
 
+        internal const string CheckingCodexVersion = "checking Codex version…";
+
+        // Until a Codex session's version is known, neither form can be chosen
+        // safely: "/model x" opens the old picker and a digit means nothing to
+        // the new one. So the controls are off and nothing is typed (lead's
+        // ruling on F4).
         internal RunRouteDecision RouteFor(SessionStatus status, RunCli cli) =>
-            RunRoutes.For(cli,
+            cli == RunCli.Codex && _seams.CodexVersionFor(status) is null
+                ? RunRouteDecision.Unavailable(CheckingCodexVersion)
+                : RunRoutes.For(cli,
                 hasPane: !status.IsDesktopHosted && _seams.CanType(status),
                 bridgeId: _seams.BridgeIdFor(status),
                 bridgeSlashOn: _seams.BridgeCommandsEnabled(),
@@ -144,11 +158,29 @@ namespace Orbweaver
         public Task<RunSetResult> SetAsync(SessionStatus status, string field, string value) =>
             SetAsync(status, field == RunFrames.FieldEffort ? RunField.Effort : RunField.Model, value);
 
+        public bool IsRunning(SessionStatus status)
+        {
+            lock (_gate) return _running.Contains(Key(status));
+        }
+
         // Runs one change by the session's route. Sent means it went and is now
-        // pending until a reading confirms it — never that it took.
+        // pending until a reading confirms it — never that it took. One change
+        // per session at a time: two phones, or a phone and the panel, would
+        // otherwise interleave two typed commands in one pane.
         internal async Task<RunSetResult> SetAsync(SessionStatus status, RunField field, string value)
         {
             if (CliFor(status) is not { } cli) return new(RunSetKind.Unavailable, RunText.NoRoute);
+            lock (_gate)
+                if (!_running.Add(Key(status))) return new(RunSetKind.Unavailable, RunFrames.BusyWhy);
+            try { return await RunAsync(status, cli, field, value).ConfigureAwait(false); }
+            finally
+            {
+                lock (_gate) _running.Remove(Key(status));
+            }
+        }
+
+        private async Task<RunSetResult> RunAsync(SessionStatus status, RunCli cli, RunField field, string value)
+        {
 
             var route = RouteFor(status, cli);
             if (route.Route == RunRoute.None) return new(RunSetKind.Unavailable, route.DisabledReason ?? RunText.NoRoute);
@@ -198,14 +230,17 @@ namespace Orbweaver
             _ => "/effort " + value,
         };
 
-        internal const string OldCodexReason =
-            "this Codex is older than 0.164, which can only be changed through its own /model picker";
+        internal const string NoPickerReason =
+            "this Codex is older than 0.164, and its /model picker can't be driven from here";
 
         private async Task<RunSetResult> TypedAsync(SessionStatus status, RunCli cli, RunRouteDecision route, RunField field, string value)
         {
-            // An old Codex has no argument form: a typed "/model x" opens its
-            // full-screen picker instead. Its picker route is not driven yet.
-            if (cli == RunCli.Codex && route.SetsNewSessionDefault) return new(RunSetKind.Unavailable, OldCodexReason);
+            // An old Codex has no argument form: a typed "/model x" would open
+            // its full-screen picker, so the picker is driven instead.
+            if (cli == RunCli.Codex && route.SetsNewSessionDefault)
+                return _seams.CodexPicker is { } picker
+                    ? await picker(status, field, value).ConfigureAwait(false)
+                    : new(RunSetKind.Unavailable, NoPickerReason);
 
             var (typed, notAtPrompt, _) = await TypingGate.GuardedTypeAsync(status, TypedLine(cli, field, value),
                 _seams.TypeInto, _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow,

@@ -368,7 +368,8 @@ namespace Orbweaver
         }
 
         // frames-v13 set_run, after the parser's bad_frame: unknown_session, then
-        // the field's state (unavailable when it is off or anything is pending,
+        // the field's state (unavailable when it is off or the host is running
+        // another change to the session,
         // bad_value when the value is not one of its choices as last written),
         // then the route, whose failure is set_failed. `ok set` says the route
         // ran, not that it took: the confirming run frame says that.
@@ -384,7 +385,7 @@ namespace Orbweaver
                 RunErr(phoneId, r, RunFrames.Unavailable, NoRunControlsWhy);
                 return;
             }
-            if (RunFrames.Refusal(state, r.Field, r.Value) is { } refused)
+            if (RunFrames.Refusal(state, r.Field, r.Value, run.IsRunning(status)) is { } refused)
             {
                 RunErr(phoneId, r, refused.Code, refused.Why);
                 return;

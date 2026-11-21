@@ -5,7 +5,7 @@
   "spec": "CB-404, Orbweaver docs/plans/model-effort-controls-plan.md section 4.4 and Warren's decisions F1-F4; contracts/frames-v13.json",
   "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; every plaintext is the canonical form (keys in frames-v13.json's order, the shared escaper, bare integers, no whitespace)"
  },
- "_rules": "Sealed with session-vectors.json's epoch-0 key and ck key, direction 0 = desktop to phone, 1 = phone to desktop, counters from 500. `serialise.cases` gives a session's resolved options as the desk holds them (per field: id, pending, choices as [id, label] pairs, off, failed; null or missing is unset) and the `run` frame and plaintext the desk sends for them. `set.cases` names one of those states (null: a session the desk does not know), the request, what the route answered (`ok`, a failure sentence, or null when no route may be reached) and the one reply. `phone.decode.cases` gives a received plaintext and what the phone holds for it (null: ignored); `off` in a decoded field is the sentence the phone shows. `phone.display.cases` gives, for a held frame and a field, what the phone draws; the machine is named in `phone.display.machine`.",
+ "_rules": "Sealed with session-vectors.json's epoch-0 key and ck key, direction 0 = desktop to phone, 1 = phone to desktop, counters from 500. `serialise.cases` gives a session's resolved options as the desk holds them (per field: id, pending, choices as [id, label] pairs, off, failed; null or missing is unset) and the `run` frame and plaintext the desk sends for them. `set.cases` names one of those states (null: a session the desk does not know), the request, whether the desk is running another change to that session at that moment (`running`), what the route answered (`ok`, a failure sentence, or null when no route may be reached) and the one reply. `phone.decode.cases` gives a received plaintext and what the phone holds for it (null: ignored); `off` in a decoded field is the sentence the phone shows. `phone.display.cases` gives, for a held frame and a field, what the phone draws; the machine is named in `phone.display.machine`.",
  "inputs": {
   "desktop_id": "dsk_5f3c9a0e1b7d2468",
   "phone_id": "ph_a1b2c3d4e5f60718",
@@ -2759,8 +2759,8 @@
   ]
  },
  "set": {
-  "busy_why": "The last change is still being applied.",
-  "_note": "busy_why is the sentence this model desk uses while a change is pending; the real desk's wording is its own.",
+  "busy_why": "Another change to this session is being made right now.",
+  "_note": "busy_why is the sentence this model desk uses for a request that arrives while it is running another change to the same session (`running` true on the case); the real desk's wording is its own.",
   "shape": {
    "_note": "Requests as received text. `err` is bad_frame, or null when the shape is good. `session_id` is what the err then carries (null: none, and an empty ck).",
    "cases": [
@@ -2892,6 +2892,7 @@
      "field": "effort",
      "value": "xhigh"
     },
+    "running": false,
     "route": "ok",
     "reply": {
      "t": "ok",
@@ -2911,6 +2912,7 @@
      "field": "model",
      "value": "sonnet"
     },
+    "running": false,
     "route": "ok",
     "reply": {
      "t": "ok",
@@ -2930,6 +2932,7 @@
      "field": "effort",
      "value": "high"
     },
+    "running": false,
     "route": "ok",
     "reply": {
      "t": "ok",
@@ -2949,6 +2952,7 @@
      "field": "effort",
      "value": "xhigh"
     },
+    "running": false,
     "route": null,
     "reply": {
      "t": "err",
@@ -2968,6 +2972,7 @@
      "field": "model",
      "value": "sonnet"
     },
+    "running": false,
     "route": null,
     "reply": {
      "t": "err",
@@ -2988,6 +2993,7 @@
      "field": "effort",
      "value": "high"
     },
+    "running": false,
     "route": null,
     "reply": {
      "t": "err",
@@ -3008,6 +3014,7 @@
      "field": "model",
      "value": "opus"
     },
+    "running": false,
     "route": "ok",
     "reply": {
      "t": "ok",
@@ -3018,8 +3025,8 @@
    },
    {
     "name": "busy_same_field",
-    "_note": "a change is still being applied",
-    "state": "effort_pending",
+    "_note": "the desk is running another change to this session right now",
+    "state": "claude_enabled",
     "envelope_id": "01JCD0SETRUN00000000000008",
     "request": {
      "t": "set_run",
@@ -3027,19 +3034,20 @@
      "field": "effort",
      "value": "max"
     },
+    "running": true,
     "route": null,
     "reply": {
      "t": "err",
      "ref": "01JCD0SETRUN00000000000008",
      "code": "unavailable",
      "session_id": "0f6c4f2a",
-     "why": "The last change is still being applied."
+     "why": "Another change to this session is being made right now."
     }
    },
    {
     "name": "busy_other_field",
-    "_note": "a pending on either field refuses both",
-    "state": "effort_pending",
+    "_note": "whichever field the other change is for",
+    "state": "claude_enabled",
     "envelope_id": "01JCD0SETRUN00000000000009",
     "request": {
      "t": "set_run",
@@ -3047,64 +3055,68 @@
      "field": "model",
      "value": "sonnet"
     },
+    "running": true,
     "route": null,
     "reply": {
      "t": "err",
      "ref": "01JCD0SETRUN00000000000009",
      "code": "unavailable",
      "session_id": "0f6c4f2a",
-     "why": "The last change is still being applied."
+     "why": "Another change to this session is being made right now."
+    }
+   },
+   {
+    "name": "pending_same_field",
+    "_note": "a change that only waits for a reading does not block the next: this one replaces it",
+    "state": "effort_pending",
+    "envelope_id": "01JCD0SETRUN00000000000010",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "max"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000010",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "pending_other_field",
+    "_note": "nor a change of the other field",
+    "state": "effort_pending",
+    "envelope_id": "01JCD0SETRUN00000000000011",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "sonnet"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000011",
+     "code": "set",
+     "session_id": "0f6c4f2a"
     }
    },
    {
     "name": "bad_value",
     "_note": "an ID, but not one of this field's choices",
     "state": "claude_enabled",
-    "envelope_id": "01JCD0SETRUN00000000000010",
+    "envelope_id": "01JCD0SETRUN00000000000012",
     "request": {
      "t": "set_run",
      "session_id": "0f6c4f2a",
      "field": "effort",
      "value": "ultra"
     },
-    "route": null,
-    "reply": {
-     "t": "err",
-     "ref": "01JCD0SETRUN00000000000010",
-     "code": "bad_value",
-     "session_id": "0f6c4f2a"
-    }
-   },
-   {
-    "name": "bad_value_other_field",
-    "_note": "a choice of the other field",
-    "state": "claude_enabled",
-    "envelope_id": "01JCD0SETRUN00000000000011",
-    "request": {
-     "t": "set_run",
-     "session_id": "0f6c4f2a",
-     "field": "model",
-     "value": "high"
-    },
-    "route": null,
-    "reply": {
-     "t": "err",
-     "ref": "01JCD0SETRUN00000000000011",
-     "code": "bad_value",
-     "session_id": "0f6c4f2a"
-    }
-   },
-   {
-    "name": "dropped_choice",
-    "_note": "a choice the cap left out is not offered, though the catalogue held it",
-    "state": "capped_plain",
-    "envelope_id": "01JCD0SETRUN00000000000012",
-    "request": {
-     "t": "set_run",
-     "session_id": "0f6c4f2a",
-     "field": "model",
-     "value": "model-50"
-    },
+    "running": false,
     "route": null,
     "reply": {
      "t": "err",
@@ -3114,20 +3126,61 @@
     }
    },
    {
+    "name": "bad_value_other_field",
+    "_note": "a choice of the other field",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000013",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "high"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000013",
+     "code": "bad_value",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "dropped_choice",
+    "_note": "a choice the cap left out is not offered, though the catalogue held it",
+    "state": "capped_plain",
+    "envelope_id": "01JCD0SETRUN00000000000014",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "model-50"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000014",
+     "code": "bad_value",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
     "name": "route_failed",
     "_note": "the typing gate refused; why is its sentence",
     "state": "claude_enabled",
-    "envelope_id": "01JCD0SETRUN00000000000013",
+    "envelope_id": "01JCD0SETRUN00000000000015",
     "request": {
      "t": "set_run",
      "session_id": "0f6c4f2a",
      "field": "effort",
      "value": "xhigh"
     },
+    "running": false,
     "route": "It is showing a dialog: Bash command",
     "reply": {
      "t": "err",
-     "ref": "01JCD0SETRUN00000000000013",
+     "ref": "01JCD0SETRUN00000000000015",
      "code": "set_failed",
      "session_id": "0f6c4f2a",
      "why": "It is showing a dialog: Bash command"
@@ -3137,17 +3190,18 @@
     "name": "route_failed_long",
     "_note": "a why over 200 UTF-16 units is cut",
     "state": "codex",
-    "envelope_id": "01JCD0SETRUN00000000000014",
+    "envelope_id": "01JCD0SETRUN00000000000016",
     "request": {
      "t": "set_run",
      "session_id": "0f6c4f2a",
      "field": "model",
      "value": "gpt-6-luna"
     },
+    "running": false,
     "route": "The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. ",
     "reply": {
      "t": "err",
-     "ref": "01JCD0SETRUN00000000000014",
+     "ref": "01JCD0SETRUN00000000000016",
      "code": "set_failed",
      "session_id": "0f6c4f2a",
      "why": "The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not …"
@@ -3157,17 +3211,18 @@
     "name": "codex_ok",
     "_note": "Codex's sixth level",
     "state": "codex",
-    "envelope_id": "01JCD0SETRUN00000000000015",
+    "envelope_id": "01JCD0SETRUN00000000000017",
     "request": {
      "t": "set_run",
      "session_id": "0f6c4f2a",
      "field": "effort",
      "value": "ultra"
     },
+    "running": false,
     "route": "ok",
     "reply": {
      "t": "ok",
-     "ref": "01JCD0SETRUN00000000000015",
+     "ref": "01JCD0SETRUN00000000000017",
      "code": "set",
      "session_id": "0f6c4f2a"
     }
@@ -4126,7 +4181,7 @@
      "field": "model",
      "text": "Sonnet 5.5",
      "applying": true,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": 1,
      "pending_index": 2
@@ -4136,7 +4191,7 @@
      "field": "effort",
      "text": "high",
      "applying": false,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": 2,
      "pending_index": null
@@ -4146,7 +4201,7 @@
      "field": "model",
      "text": "Opus 5.5",
      "applying": false,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": 1,
      "pending_index": null
@@ -4156,7 +4211,7 @@
      "field": "effort",
      "text": "xhigh",
      "applying": true,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": 2,
      "pending_index": 3
@@ -4338,7 +4393,7 @@
      "field": "model",
      "text": "Opus 5.5",
      "applying": true,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": null,
      "pending_index": 0
@@ -4348,7 +4403,7 @@
      "field": "effort",
      "text": "high",
      "applying": false,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": 1,
      "pending_index": null
@@ -4378,7 +4433,7 @@
      "field": "model",
      "text": "Model 59",
      "applying": true,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": 48,
      "pending_index": 49
@@ -4388,7 +4443,7 @@
      "field": "effort",
      "text": "high",
      "applying": false,
-     "enabled": false,
+     "enabled": true,
      "below": [],
      "index": 2,
      "pending_index": null
@@ -4759,15 +4814,15 @@
     "class": "action",
     "push": "none",
     "ck": "_APVA4tadxC7cR0g6HWoxg",
-    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000009\",\"code\":\"unavailable\",\"session_id\":\"0f6c4f2a\",\"why\":\"The last change is still being applied.\"}",
-    "plaintext_bytes": 139,
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000009\",\"code\":\"unavailable\",\"session_id\":\"0f6c4f2a\",\"why\":\"Another change to this session is being made right now.\"}",
+    "plaintext_bytes": 155,
     "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
     "nonce": "000000000000000000000206",
-    "ct": "AAAAAAAAAAAAAAIGk9XZ7yKrYE+bw8tA3uhPDtdRKLNBg0FJ0pKsyq2dYClSNgQoQYA1rzaTIR1HYr26qbq2cjxmjNKQ93evGax9OitoHbEFRrAX0yHn+jIJNN/3TjAXZR63T6vWwoB3z8PxQLmZ0i1PVckV4LTtLkW8FmWp+8HyZpf8BvbJbyZ2Z8yo1J9KCBGMmVfFNi2gblmLOZwQU681UV6bIRI="
+    "ct": "AAAAAAAAAAAAAAIGk9XZ7yKrYE+bw8tA3uhPDtdRKLNBg0FJ0pKsyq2dYClSNgQoQYA1rzaTIR1HYr26qbq2cjxmjNKQ93evGax9OitoHbEFRrAX0yHn+jIJNN/3TjAXZR63T6vWwoB3z8PxQLmM1CcbUc0UtPfmJ0q1FCD9/ZKmfYrmSumMfjB2ZsWo3JwaBh2Akx7HJkTqrLUeYsR0Wu628gJXqivdUrNghnJScYfYakvXNns1"
    }
   },
   "bad_value": {
-   "envelope_id": "01JCD0SETRUN00000000000010",
+   "envelope_id": "01JCD0SETRUN00000000000012",
    "request": {
     "from": "ph_a1b2c3d4e5f60718",
     "to": "dsk_5f3c9a0e1b7d2468",
@@ -4786,15 +4841,15 @@
     "class": "action",
     "push": "none",
     "ck": "_APVA4tadxC7cR0g6HWoxg",
-    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000010\",\"code\":\"bad_value\",\"session_id\":\"0f6c4f2a\"}",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000012\",\"code\":\"bad_value\",\"session_id\":\"0f6c4f2a\"}",
     "plaintext_bytes": 89,
     "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
     "nonce": "000000000000000000000207",
-    "ct": "AAAAAAAAAAAAAAIHi/sHSyEAF+uyM8sCcKtcLMkkooquidJq9/0G0E1/h/IE5V8Lyb22nAe3vpz5jeZ2GEyrAIKNHvEC1vA4phABNT48MGg6NyXkzdtkynRyDrGfZvBwYsCllXKgRsl5aRaQothoGfSlX7O/"
+    "ct": "AAAAAAAAAAAAAAIHi/sHSyEAF+uyM8sCcKtcLMkkooquidJq9/0G0E1/h/IE5V8Lyb22nAe3vp75jeZ2GEyrAIKNHvEC1vA4phABNT48MGg6NyXkzdtkynRyDrGfZvBwYsCllXJkNhV2CW0R4ux7GMaeN3i0"
    }
   },
   "route_failed": {
-   "envelope_id": "01JCD0SETRUN00000000000013",
+   "envelope_id": "01JCD0SETRUN00000000000015",
    "request": {
     "from": "ph_a1b2c3d4e5f60718",
     "to": "dsk_5f3c9a0e1b7d2468",
@@ -4813,11 +4868,11 @@
     "class": "action",
     "push": "none",
     "ck": "_APVA4tadxC7cR0g6HWoxg",
-    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000013\",\"code\":\"set_failed\",\"session_id\":\"0f6c4f2a\",\"why\":\"It is showing a dialog: Bash command\"}",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000015\",\"code\":\"set_failed\",\"session_id\":\"0f6c4f2a\",\"why\":\"It is showing a dialog: Bash command\"}",
     "plaintext_bytes": 135,
     "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
     "nonce": "000000000000000000000208",
-    "ct": "AAAAAAAAAAAAAAII2dC5Dpnb5ig4gWO8u0BC1240gv9B3n3w+Id/VwU4EIzIek8ngEyUeKbiFzm7+2Cyn3SqmVUUo9BS6Nujf+gziUm8QoUuGaOgk1bJpXq363pcUPRz9FnpwjubvY635WhzeetytVBmxI/xHc2SVrABraZHZcEbGeufjtWKL8lDvOr5JkpqR0t8YaQ33viXlfkN4OCBbGxFZA=="
+    "ct": "AAAAAAAAAAAAAAII2dC5Dpnb5ig4gWO8u0BC1240gv9B3n3w+Id/VwU4EIzIek8ngEyUeKbiFz+7+2Cyn3SqmVUUo9BS6Nujf+gziUm8QoUuGaOgk1bJpXq363pcUPRz9FnpwjubvY635WhzeetytVBmxI/xHc2SVrABraZHZcEbGeufjtWKL8lDvOr5JkpqR0t8850LVKqoibwX5HAwjB7Zpg=="
    }
   },
   "bad_frame": {

@@ -2501,7 +2501,7 @@ namespace Orbweaver
 
         // CB-404: a `run` INPUT, held to the rules a phone's set_run is: the
         // shape (field name, ID grammar), then the field's state as last read
-        // (off or anything pending, then a value outside its choices), then the
+        // (off or another change running, then a value outside its choices), then the
         // route.
         // Answered OK with via=set, or via=refused with why and kind; never ERR,
         // which is for a request that could not be served at all.
@@ -2513,7 +2513,7 @@ namespace Orbweaver
                 answer = (RunFrames.BadValue, "that can't be passed to the CLI");
             else if (_seams.RunControls is not { } run || run.Read(status) is not { } state)
                 answer = (RunFrames.Unavailable, RelayRemote.NoRunControlsWhy);
-            else if (RunFrames.Refusal(state, field, value) is { } refused)
+            else if (RunFrames.Refusal(state, field, value, run.IsRunning(status)) is { } refused)
                 answer = refused;
             else
             {

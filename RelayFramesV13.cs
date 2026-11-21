@@ -49,10 +49,12 @@ namespace Orbweaver
         internal const int MaxLabel = 64;
         internal const int MaxReason = 200;
 
-        // The desk's own sentence while a change on either field is unconfirmed:
-        // a second change before the first is read back would leave nobody able
-        // to say which one the session ended up on.
-        internal const string BusyWhy = "The last change is still being applied.";
+        // The desk's own sentence while the host is running another change to
+        // the same session: two typed commands interleaved in one pane would
+        // reach the CLI as one garbled line. A change that only waits for a
+        // reading does not block (frames-v13 at a407b9a): Claude and Grok confirm
+        // effort only with the next turn, and the list must not freeze that long.
+        internal const string BusyWhy = "Another change to this session is being made right now.";
 
         // The coalescing key's input: the relay keeps the newest per session,
         // and the roster's key is untouched.
@@ -135,16 +137,17 @@ namespace Orbweaver
         }
 
         // set_run's checks after the session is known (frames-v13 check order):
-        // the field is off, or either field is pending (unavailable, with why),
-        // then the value is not one of the field's choices as written
-        // (bad_value). Null means the route may run. Read against the sanitised
-        // state, so a choice the cap left out is not offered here either.
-        internal static (string Code, string? Why)? Refusal(RunState state, string field, string value)
+        // the field is off, or the host is running another change to this
+        // session (unavailable, with why), then the value is not one of the
+        // field's choices as written (bad_value). Null means the route may run.
+        // Read against the sanitised state, so a choice the cap left out is not
+        // offered here either.
+        internal static (string Code, string? Why)? Refusal(RunState state, string field, string value, bool running)
         {
             var clean = Sanitize(state);
             var f = field == FieldEffort ? clean.Effort : clean.Model;
             if (f.Off is { } off) return (Unavailable, off);
-            if (clean.Model.Pending is not null || clean.Effort.Pending is not null) return (Unavailable, BusyWhy);
+            if (running) return (Unavailable, BusyWhy);
             if (f.Choices.All(c => c.Id != value)) return (BadValue, null);
             return null;
         }
