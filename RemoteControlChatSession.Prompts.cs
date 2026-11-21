@@ -60,7 +60,7 @@ namespace Orbweaver
         // AlreadyAnswered is the far side saying nothing is waiting any more
         // (ErrNoPrompt): the form is gone, which is what answering it does, so a
         // late second click on it is not a failure and is never reported as one.
-        internal enum AnswerKind { Done, Changed, AlreadyAnswered, Refused, Unsupported, Failed }
+        internal enum AnswerKind { Done, Changed, AlreadyAnswered, Refused, Unsupported, Failed, NoReply }
 
         internal sealed record AnswerReply(AnswerKind Kind, ChatPrompt? Prompt = null, string? Fingerprint = null);
 
@@ -391,6 +391,18 @@ namespace Orbweaver
                     Note($"{FarName} can't take an answer from here. Answer it in its terminal.");
                     break;
 
+                case AnswerKind.NoReply:
+                    // Nothing came back, so the key may or may not have been pressed. The form
+                    // is not offered again until the far screen has been read: the answered
+                    // fingerprint is kept, so a read of that same form straight away (before
+                    // the far side has redrawn) is held back as after any answer, and the next
+                    // read decides: a different screen shows as it is, the same form after
+                    // the settle window comes back with live buttons. Not final.
+                    Note($"Didn't hear back from {FarName}, so I'm checking whether that went through.");
+                    _wake?.TrySetResult();
+                    EnsurePromptPolling();
+                    break;
+
                 default:
                     _answeredFingerprint = null;
                     Note($"Couldn't answer that on {FarName}.");
@@ -481,6 +493,9 @@ namespace Orbweaver
 
             MirrorProtocol.ErrUnsupported or MirrorProtocol.ErrNoPane or MirrorProtocol.ErrReplyOff =>
                 AnswerKind.Unsupported,
+
+            // No reply at all: the answer may have landed. Not a refusal and not final.
+            MirrorProtocol.ErrNoReply => AnswerKind.NoReply,
 
             _ => AnswerKind.Failed,
         };
