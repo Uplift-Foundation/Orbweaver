@@ -1,78 +1,120 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
 using Avalonia;
 using Orbweaver;
 using Xunit;
 
 namespace Orbweaver.UnitTests;
 
-// CB-404: the dial's value↔angle mapping. Angles are degrees clockwise from
-// straight up; levels sit on a 270-degree arc from -135 to +135 with the gap
-// at the bottom. These are the vectors the phone ports are checked against.
+// CB-404: the dial's geometry, replayed from Orbweaver-Mobile's
+// contracts/effort-dial-vectors.json (see Fixtures/relay/SOURCE.md), the table
+// iOS and Android are checked against too. The cases after the replay are the
+// desk's own: drawing points and short labels, and a step from "nothing
+// selected", which the shared table does not cover.
 public class EffortDialMathTests
 {
-    [Theory]
-    [InlineData(0, 5, -135)]
-    [InlineData(1, 5, -67.5)]
-    [InlineData(2, 5, 0)]
-    [InlineData(4, 5, 135)]
-    [InlineData(0, 2, -135)]
-    [InlineData(1, 2, 135)]
-    [InlineData(0, 1, 0)]
-    [InlineData(0, 0, 0)]
-    [InlineData(-3, 5, -135)]
-    [InlineData(9, 5, 135)]
-    public void AngleFor(int index, int count, double angle)
+    private static readonly JsonElement Vectors = JsonDocument.Parse(
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "relay", "effort-dial-vectors.json"))).RootElement;
+
+    private static readonly double Tolerance = Vectors.GetProperty("tolerance").GetDouble();
+
+    private static double? D(JsonElement e) => e.ValueKind == JsonValueKind.Null ? null : e.GetDouble();
+    private static int? I(JsonElement e) => e.ValueKind == JsonValueKind.Null ? null : e.GetInt32();
+
+    private static void Near(double? expected, double? actual, string where)
     {
-        Assert.Equal(angle, EffortDialMath.AngleFor(index, count), 6);
+        if (expected is null) { Assert.True(actual is null, $"{where}: expected null, got {actual}"); return; }
+        Assert.True(actual is { } a && Math.Abs(a - expected.Value) <= Tolerance, $"{where}: expected {expected}, got {actual}");
     }
 
-    [Theory]
-    [InlineData(-135, 5, 0)]
-    [InlineData(-102, 5, 0)]   // just short of halfway to the second tick
-    [InlineData(-101.25, 5, 1)] // exactly halfway rounds up
-    [InlineData(0, 5, 2)]
-    [InlineData(135, 5, 4)]
-    [InlineData(170, 5, 4)]    // in the gap, nearer the top end
-    [InlineData(-170, 5, 0)]   // in the gap, nearer the bottom end
-    [InlineData(180, 5, 4)]    // dead bottom counts as the high side
-    [InlineData(225, 5, 0)]    // 225 is -135
-    [InlineData(-315, 5, 3)]   // -315 is 45, nearer 67.5 (index 3) than 0
-    [InlineData(10, 1, 0)]
-    [InlineData(10, 0, -1)]
-    public void IndexForAngle(double angle, int count, int index)
-    {
-        Assert.Equal(index, EffortDialMath.IndexFor(angle, count));
-    }
+    private static JsonElement[] Table(string name) => Vectors.GetProperty(name).EnumerateArray().ToArray();
 
-    [Theory]
-    [InlineData(50, 0, 0)]     // straight up
-    [InlineData(100, 50, 90)]  // right
-    [InlineData(0, 50, -90)]   // left
-    [InlineData(50, 100, 180)] // straight down
-    [InlineData(50, 50, 0)]    // the centre itself
-    public void AngleOfAPoint(double x, double y, double angle)
+    [Fact]
+    public void TheArcIsTheContracts()
     {
-        Assert.Equal(angle, EffortDialMath.AngleOf(new Point(x, y), new Point(50, 50)), 6);
+        Assert.Equal(EffortDialMath.ArcStart, Vectors.GetProperty("arc").GetProperty("lowest").GetDouble());
+        Assert.Equal(EffortDialMath.ArcEnd, Vectors.GetProperty("arc").GetProperty("highest").GetDouble());
     }
 
     [Fact]
-    public void IndexForAPoint()
+    public void AngleForReplays()
     {
-        Assert.Equal(4, EffortDialMath.IndexFor(new Point(100, 100), new Point(50, 50), 5)); // lower right
-        Assert.Equal(0, EffortDialMath.IndexFor(new Point(0, 100), new Point(50, 50), 5));   // lower left
+        foreach (var c in Table("angle_for"))
+            Near(D(c.GetProperty("angle")), EffortDialMath.AngleFor(c.GetProperty("index").GetInt32(), c.GetProperty("count").GetInt32()), c.ToString());
+    }
+
+    [Fact]
+    public void AngleOfReplays()
+    {
+        foreach (var c in Table("angle_of"))
+            Near(D(c.GetProperty("angle")), EffortDialMath.AngleOf(c.GetProperty("dx").GetDouble(), c.GetProperty("dy").GetDouble()), c.ToString());
+    }
+
+    [Fact]
+    public void IndexForReplays()
+    {
+        var cases = Table("index_for");
+        Assert.NotEmpty(cases);
+        foreach (var c in cases)
+            Assert.True(I(c.GetProperty("index")) == EffortDialMath.IndexFor(c.GetProperty("angle").GetDouble(), c.GetProperty("count").GetInt32()), c.ToString());
+    }
+
+    [Fact]
+    public void WrapReplays()
+    {
+        foreach (var c in Table("wrap"))
+            Near(c.GetProperty("wrapped").GetDouble(), EffortDialMath.Wrap(c.GetProperty("d").GetDouble()), c.ToString());
+    }
+
+    [Fact]
+    public void StepReplays()
+    {
+        foreach (var c in Table("step"))
+            Assert.True(I(c.GetProperty("result")) == EffortDialMath.Step(c.GetProperty("index").GetInt32(), c.GetProperty("delta").GetInt32(), c.GetProperty("count").GetInt32()), c.ToString());
+    }
+
+    [Fact]
+    public void DragReplays()
+    {
+        var drags = Table("drag");
+        Assert.Contains(drags, d => d.GetProperty("name").GetString() == "into_the_gap_and_on");
+        Assert.Contains(drags, d => d.GetProperty("name").GetString() == "past_the_high_end");
+
+        foreach (var d in drags)
+        {
+            var name = d.GetProperty("name").GetString()!;
+            var count = d.GetProperty("count").GetInt32();
+            var points = d.GetProperty("points").EnumerateArray().Select(p => (p[0].GetDouble(), p[1].GetDouble())).ToArray();
+            var after = d.GetProperty("after").EnumerateArray().ToArray();
+
+            var drag = DialDrag.Press(points[0].Item1, points[0].Item2);
+            for (var i = 0; i < points.Length; i++)
+            {
+                if (i > 0) drag = drag.Move(points[i].Item1, points[i].Item2);
+                Near(D(after[i].GetProperty("raw")), drag.Raw, $"{name}[{i}] raw");
+                Assert.True(I(after[i].GetProperty("index")) == drag.Index(count), $"{name}[{i}] index");
+            }
+
+            Assert.True(I(d.GetProperty("commit")) == drag.Index(count), $"{name} commit");
+        }
     }
 
     [Theory]
-    [InlineData(2, 1, 5, 3)]
-    [InlineData(4, 1, 5, 4)]
-    [InlineData(0, -1, 5, 0)]
     [InlineData(-1, -1, 5, 0)]
     [InlineData(-1, 1, 5, 4)]
-    [InlineData(-1, 0, 5, -1)]
-    [InlineData(2, 9, 5, 4)]
-    [InlineData(0, 1, 0, -1)]
-    public void Step(int index, int delta, int count, int expected)
+    [InlineData(-1, 0, 5, null)]
+    public void AStepFromNothingSelectedLandsOnTheNearerEnd(int index, int delta, int count, int? expected)
     {
         Assert.Equal(expected, EffortDialMath.Step(index, delta, count));
+    }
+
+    [Fact]
+    public void AngleOfAPointIsTheOffsetsAngle()
+    {
+        Assert.Equal(90, EffortDialMath.AngleOf(new Point(100, 50), new Point(50, 50))!.Value, 6);
+        Assert.Null(EffortDialMath.AngleOf(new Point(50, 50), new Point(50, 50)));
     }
 
     [Theory]
@@ -86,14 +128,16 @@ public class EffortDialMathTests
         Assert.Equal(y, p.Y, 6);
     }
 
-    [Theory]
-    [InlineData(540, 180)]
-    [InlineData(-180, 180)]
-    [InlineData(-190, 170)]
-    [InlineData(190, -170)]
-    public void Normalise(double angle, double expected)
+    [Fact]
+    public void AMoveWithNoPressAngleBecomesThePress()
     {
-        Assert.Equal(expected, EffortDialMath.Normalise(angle), 6);
+        var drag = DialDrag.Press(0, 0);
+        Assert.Null(drag.Raw);
+        Assert.Null(drag.Index(5));
+        drag = drag.Move(0, 0);
+        Assert.Null(drag.Raw);
+        drag = drag.Move(100, 0);
+        Assert.Equal(90, drag.Raw);
     }
 
     [Theory]

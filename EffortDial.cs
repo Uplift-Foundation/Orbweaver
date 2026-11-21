@@ -10,62 +10,72 @@ using Avalonia.Media;
 
 namespace Orbweaver
 {
-    // CB-404: the effort dial's geometry, pure so it is unit-tested once and
-    // ported to Swift and Kotlin as the same functions (plan 4.7).
+    // CB-404: the effort dial's geometry, pure, and the same functions on the
+    // desk, iOS and Android, all checked against Orbweaver-Mobile
+    // contracts/effort-dial-vectors.json (frames-v13 `dial`).
     //
-    // Angles are degrees clockwise from straight up, in (-180, 180]. The levels
-    // sit at equal steps on a 270-degree arc from -135 (lowest, lower left) to
-    // +135 (highest, lower right), leaving a gap at the bottom. A drag into the
-    // gap clamps to the nearer end rather than wrapping, so sweeping past the
-    // highest level never lands on the lowest.
+    // Angles are degrees clockwise from straight up, in screen coordinates (y
+    // grows downwards). The levels sit at equal steps on a 270-degree arc from
+    // -135 (lowest, lower left) to +135 (highest, lower right), leaving a
+    // 90-degree gap centred at the bottom.
+    //
+    // A drag keeps an unclamped running angle and adds each move's wrapped
+    // difference to it, so a finger that goes past the high end into the gap
+    // reads as further past the high end (190, 200…) rather than as the low
+    // end (-170): IndexFor clamps its angle and never normalises it. That is
+    // what stops a drag across the gap wrapping from highest to lowest.
     public static class EffortDialMath
     {
         public const double ArcStart = -135;
         public const double ArcEnd = 135;
         public const double ArcSweep = ArcEnd - ArcStart;
 
-        // The angle of level `index` of `count`. One level sits at the top; no
-        // levels has no angle worth drawing and answers the top as well.
-        public static double AngleFor(int index, int count)
+        // The angle of level `index` of `count`; one level sits at the top, and
+        // no levels has no angle.
+        public static double? AngleFor(int index, int count)
         {
-            if (count <= 1) return 0;
-            index = Math.Clamp(index, 0, count - 1);
-            return ArcStart + index * ArcSweep / (count - 1);
-        }
-
-        // The nearest level to an angle. -1 for no levels, 0 for one.
-        public static int IndexFor(double angle, int count)
-        {
-            if (count <= 0) return -1;
+            if (count <= 0) return null;
             if (count == 1) return 0;
-
-            var a = Normalise(angle);
-            // In the gap: whichever end is nearer. The gap is centred on 180.
-            if (a > ArcEnd) return count - 1;
-            if (a < ArcStart) return 0;
-
-            var step = ArcSweep / (count - 1);
-            return (int)Math.Clamp(Math.Round((a - ArcStart) / step, MidpointRounding.AwayFromZero), 0, count - 1);
+            return ArcStart + ArcSweep * Math.Clamp(index, 0, count - 1) / (count - 1);
         }
 
-        // The angle of a point about a centre, in screen coordinates (y grows
-        // downwards). A point on the centre itself is straight up.
-        public static double AngleOf(Point point, Point centre)
+        // The nearest level to an angle, the angle clamped to the arc (not
+        // normalised). Evaluated in the contract's order so its ties land the
+        // same way on every platform.
+        public static int? IndexFor(double angle, int count)
         {
-            var dx = point.X - centre.X;
-            var dy = point.Y - centre.Y;
-            if (dx == 0 && dy == 0) return 0;
-            return Normalise(Math.Atan2(dx, -dy) * 180 / Math.PI);
+            if (count <= 0) return null;
+            if (count == 1) return 0;
+            var a = Math.Clamp(angle, ArcStart, ArcEnd);
+            return (int)Math.Floor(((a + 135) / 270) * (count - 1) + 0.5);
         }
 
-        public static int IndexFor(Point point, Point centre, int count) => IndexFor(AngleOf(point, centre), count);
-
-        // A keyboard step, clamped at both ends. -1 stays -1 when there are no
-        // levels; from "nothing selected" a step lands on the nearer end.
-        public static int Step(int index, int delta, int count)
+        // The angle of an offset from the centre, in (-180, 180]; the centre
+        // itself has none.
+        public static double? AngleOf(double dx, double dy)
         {
-            if (count <= 0) return -1;
-            if (index < 0) return delta < 0 ? 0 : delta > 0 ? count - 1 : -1;
+            if (dx == 0 && dy == 0) return null;
+            return Wrap(Math.Atan2(dx, -dy) * 180 / Math.PI);
+        }
+
+        public static double? AngleOf(Point point, Point centre) => AngleOf(point.X - centre.X, point.Y - centre.Y);
+
+        // An angle difference into (-180, 180].
+        public static double Wrap(double d)
+        {
+            var a = d % 360;
+            if (a <= -180) a += 360;
+            else if (a > 180) a -= 360;
+            return a;
+        }
+
+        // A keyboard step, clamped at both ends; no levels has no answer. From
+        // "nothing selected" (-1, outside the contract's table) a step lands on
+        // the nearer end.
+        public static int? Step(int index, int delta, int count)
+        {
+            if (count <= 0) return null;
+            if (index < 0) return delta < 0 ? 0 : delta > 0 ? count - 1 : null;
             return Math.Clamp(index + delta, 0, count - 1);
         }
 
@@ -75,14 +85,28 @@ namespace Orbweaver
             var r = angle * Math.PI / 180;
             return new Point(centre.X + radius * Math.Sin(r), centre.Y - radius * Math.Cos(r));
         }
+    }
 
-        internal static double Normalise(double angle)
+    // One drag's state (contract `dial.drag`): the running angle, unclamped,
+    // and the last angle seen. A press at the centre has no raw; the first move
+    // with an angle is taken as the press, and a move at the centre is skipped
+    // and does not become `previous`.
+    public readonly record struct DialDrag(double? Raw, double? Previous)
+    {
+        public static DialDrag Press(double dx, double dy)
         {
-            var a = angle % 360;
-            if (a <= -180) a += 360;
-            else if (a > 180) a -= 360;
-            return a;
+            var a = EffortDialMath.AngleOf(dx, dy);
+            return new DialDrag(a, a);
         }
+
+        public DialDrag Move(double dx, double dy)
+        {
+            if (EffortDialMath.AngleOf(dx, dy) is not { } now) return this;
+            if (Raw is not { } raw || Previous is not { } previous) return new DialDrag(now, now);
+            return new DialDrag(raw + EffortDialMath.Wrap(now - previous), now);
+        }
+
+        public int? Index(int count) => Raw is { } raw ? EffortDialMath.IndexFor(raw, count) : null;
     }
 
     // The round effort dial (CB-404, F2: a literal dial, not a slider).
@@ -166,6 +190,7 @@ namespace Orbweaver
         internal int PreviewIndex { get; private set; } = -1;
 
         private bool _dragging;
+        private DialDrag _drag;
 
         internal int ShownIndex => PreviewIndex >= 0 ? PreviewIndex : SelectedIndex;
 
@@ -184,7 +209,9 @@ namespace Orbweaver
             _dragging = true;
             e.Pointer.Capture(this);
             Focus();
-            Preview(EffortDialMath.IndexFor(e.GetPosition(this), Centre, Levels.Count));
+            var p = e.GetPosition(this);
+            _drag = DialDrag.Press(p.X - Centre.X, p.Y - Centre.Y);
+            Preview(_drag.Index(Levels.Count) ?? -1);
             e.Handled = true;
         }
 
@@ -192,7 +219,9 @@ namespace Orbweaver
         {
             base.OnPointerMoved(e);
             if (!_dragging) return;
-            Preview(EffortDialMath.IndexFor(e.GetPosition(this), Centre, Levels.Count));
+            var p = e.GetPosition(this);
+            _drag = _drag.Move(p.X - Centre.X, p.Y - Centre.Y);
+            Preview(_drag.Index(Levels.Count) ?? -1);
         }
 
         protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -224,8 +253,8 @@ namespace Orbweaver
             var from = ShownIndex;
             int? to = e.Key switch
             {
-                Key.Left or Key.Down => EffortDialMath.Step(from, -1, count),
-                Key.Right or Key.Up => EffortDialMath.Step(from, +1, count),
+                Key.Left or Key.Down => EffortDialMath.Step(from, -1, count)!.Value,
+                Key.Right or Key.Up => EffortDialMath.Step(from, +1, count)!.Value,
                 Key.Home => 0,
                 Key.End => count - 1,
                 _ => null,
@@ -296,6 +325,11 @@ namespace Orbweaver
             var radius = Radius;
             if (radius <= 0) return;
 
+            // A transparent disc under everything, so a press anywhere on the
+            // dial is the dial's: a drawn control is otherwise hit only where it
+            // painted, and a press between the ticks did nothing.
+            context.DrawEllipse(Brushes.Transparent, null, centre, radius + 20, radius + 20);
+
             var enabled = IsEnabled;
             var fg = new SolidColorBrush(Color.FromArgb((byte)(enabled ? 0xDD : 0x66), 0x80, 0x80, 0x80));
             var accent = enabled ? Accent ?? Brushes.Orange : fg;
@@ -313,7 +347,7 @@ namespace Orbweaver
             // Ticks and labels.
             for (var i = 0; i < count; i++)
             {
-                var a = EffortDialMath.AngleFor(i, count);
+                var a = EffortDialMath.AngleFor(i, count)!.Value;
                 context.DrawLine(new Pen(fg, 2), EffortDialMath.PointAt(centre, radius - 5, a), EffortDialMath.PointAt(centre, radius + 3, a));
                 var text = Formatted(ShortLabel(Levels[i]), 9, fg);
                 var at = EffortDialMath.PointAt(centre, radius + 13, a);
@@ -323,7 +357,7 @@ namespace Orbweaver
             // The confirmed level, hollow, when a pending one differs from it.
             if (IsPending && ConfirmedIndex >= 0 && ConfirmedIndex < count && ConfirmedIndex != ShownIndex)
             {
-                var c = EffortDialMath.PointAt(centre, radius, EffortDialMath.AngleFor(ConfirmedIndex, count));
+                var c = EffortDialMath.PointAt(centre, radius, EffortDialMath.AngleFor(ConfirmedIndex, count)!.Value);
                 context.DrawEllipse(null, new Pen(accent, 2), c, 5, 5);
             }
 
@@ -332,7 +366,7 @@ namespace Orbweaver
             context.DrawEllipse(null, new Pen(fg, 1.5), centre, radius * 0.55, radius * 0.55);
             if (shown >= 0 && shown < count)
             {
-                var a = EffortDialMath.AngleFor(shown, count);
+                var a = EffortDialMath.AngleFor(shown, count)!.Value;
                 context.DrawLine(new Pen(accent, 3, lineCap: PenLineCap.Round),
                     EffortDialMath.PointAt(centre, radius * 0.2, a), EffortDialMath.PointAt(centre, radius - 4, a));
                 context.DrawEllipse(accent, null, EffortDialMath.PointAt(centre, radius, a), 5, 5);

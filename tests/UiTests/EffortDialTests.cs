@@ -47,7 +47,7 @@ public class EffortDialTests
     public void ClickingATickCommitsThatLevelOnRelease()
     {
         var (w, dial, commits) = Host();
-        var tick = At(w, dial, EffortDialMath.AngleFor(3, 5));
+        var tick = At(w, dial, EffortDialMath.AngleFor(3, 5)!.Value);
 
         w.MouseDown(tick, MouseButton.Left, RawInputModifiers.None);
         Assert.Empty(commits);
@@ -83,6 +83,25 @@ public class EffortDialTests
         w.MouseDown(At(w, dial, 135), MouseButton.Left, RawInputModifiers.None);
         w.MouseMove(At(w, dial, 175), RawInputModifiers.LeftMouseButton);
         w.MouseUp(At(w, dial, 175), MouseButton.Left, RawInputModifiers.None);
+
+        Assert.Equal(new[] { 4 }, commits);
+    }
+
+    // nadia's review: a drag from the high end down through bottom centre used
+    // to flip to the lowest level at 180 degrees.
+    [AvaloniaFact]
+    public void ADragPastBottomCentreStaysHighest()
+    {
+        var (w, dial, commits) = Host(selected: 2);
+
+        w.MouseDown(At(w, dial, 100), MouseButton.Left, RawInputModifiers.None);
+        Assert.Equal(3, dial.PreviewIndex);
+        w.MouseMove(At(w, dial, 150), RawInputModifiers.LeftMouseButton);
+        Assert.Equal(4, dial.PreviewIndex);
+        w.MouseMove(At(w, dial, 179), RawInputModifiers.LeftMouseButton);
+        w.MouseMove(At(w, dial, -170), RawInputModifiers.LeftMouseButton);
+        Assert.Equal(4, dial.PreviewIndex);
+        w.MouseUp(At(w, dial, -170), MouseButton.Left, RawInputModifiers.None);
 
         Assert.Equal(new[] { 4 }, commits);
     }
@@ -125,7 +144,7 @@ public class EffortDialTests
     public void LosingTheCaptureMidDragCommitsNothing()
     {
         var (w, dial, commits) = Host();
-        var tick = At(w, dial, EffortDialMath.AngleFor(3, 5));
+        var tick = At(w, dial, EffortDialMath.AngleFor(3, 5)!.Value);
 
         w.MouseDown(tick, MouseButton.Left, RawInputModifiers.None);
         Assert.Equal(3, dial.PreviewIndex);
