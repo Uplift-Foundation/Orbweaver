@@ -2208,7 +2208,8 @@ public partial class MirrorRoundTripTests : IDisposable
     private static IReadOnlyList<string> RoundTrip(IReadOnlyList<string> body) =>
         MirrorProtocol.DecodePrompt(MirrorProtocol.EncodePrompt(WithBody(body)))!.Body!;
 
-    // Cut at rows: 61 rows come out as 60, the last of them the marker, the first 59 verbatim.
+    // Cut at rows: 61 rows come out as the first 60 verbatim and the marker, which rides one row
+    // beyond the bound, the same shape the reader makes.
     [Fact]
     public void ASixtyOneRowBodyIsCutAndTheLastRowSaysSo()
     {
@@ -2216,8 +2217,8 @@ public partial class MirrorRoundTripTests : IDisposable
 
         var got = RoundTrip(rows);
 
-        Assert.Equal(MirrorProtocol.MaxBodyLines, got.Count);
-        Assert.Equal(rows.Take(MirrorProtocol.MaxBodyLines - 1), got.Take(MirrorProtocol.MaxBodyLines - 1));
+        Assert.Equal(MirrorProtocol.MaxBodyLines + 1, got.Count);
+        Assert.Equal(rows.Take(MirrorProtocol.MaxBodyLines), got.Take(MirrorProtocol.MaxBodyLines));
         Assert.Equal(MirrorProtocol.BodyCutMarker, got[^1]);
     }
 
@@ -2236,17 +2237,34 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(4, got.Count);
     }
 
-    // The controls: exactly at both bounds nothing is cut and nothing is added, and a body that
-    // already carries the marker (the reader's own cut) passes through unchanged, so cutting at the
-    // reader, the encoder and the decoder says it once.
+    // The controls: exactly at both bounds nothing is cut and nothing is added.
     [Fact]
-    public void ABodyAtBothBoundsIsNotCutAndAMarkedOneIsNotMarkedAgain()
+    public void ABodyAtBothBoundsIsNotCut()
     {
         var atBounds = Enumerable.Range(0, MirrorProtocol.MaxBodyLines).Select(_ => new string('y', MirrorProtocol.MaxBodyChars)).ToList();
-        Assert.Equal(atBounds, RoundTrip(atBounds));
 
-        var marked = Enumerable.Range(1, MirrorProtocol.MaxBodyLines - 1).Select(i => "row " + i)
-            .Append(MirrorProtocol.BodyCutMarker).ToList();
+        Assert.Equal(atBounds, RoundTrip(atBounds));
+    }
+
+    // What the reader hands over when it cut (60 rows and its marker, 61 in all) crosses the wire
+    // and the decoder unchanged: neither adds a second marker nor drops a row.
+    [Fact]
+    public void ABodyTheReaderAlreadyMarkedIsNotMarkedAgain()
+    {
+        var marked = Enumerable.Range(1, MirrorProtocol.MaxBodyLines).Select(i => "row " + i)
+            .Append(OverlayScreen.CutMarker).ToList();
+
+        Assert.Equal(MirrorProtocol.MaxBodyLines + 1, marked.Count);
+        Assert.Equal(marked, RoundTrip(marked));
+        Assert.Equal(OverlayScreen.CutMarker, MirrorProtocol.BodyCutMarker);
+    }
+
+    // A marker alone on a short body (a reader that cut at columns) still stays one marker.
+    [Fact]
+    public void AShortBodyMarkedForAColumnCutKeepsOneMarker()
+    {
+        var marked = new List<string> { "a", "b", OverlayScreen.CutMarker };
+
         Assert.Equal(marked, RoundTrip(marked));
     }
 

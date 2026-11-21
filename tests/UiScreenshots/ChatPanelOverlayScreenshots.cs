@@ -64,24 +64,27 @@ public class ChatPanelOverlayScreenshots : IDisposable
     public void TheOverlayWithItsQrCodeAndCloseButton() =>
         Capture("chat-panel-overlay-qr.png", Context());
 
-    // A tall real screen (/mcp, 50 rows by 100 columns): bounded, scrolled to its top, with Close
-    // still on screen under it.
+    // Tall real screens, each read through the real reader (title from under the top edge, body
+    // from there down, the button labelled by the footer's own verb), bounded, with the button
+    // still on screen under them.
     [AvaloniaFact]
     public void ATallScreenIsBoundedAndKeepsCloseVisible() =>
-        CaptureTall("MCP servers", TallOverlayCapture.McpBody(), "chat-panel-overlay-tall.png");
+        CaptureTall(PaneFixtures.McpList, "chat-panel-overlay-tall.png");
 
-    // The same for /help, a different layout and the one with no machine-specific text in it.
     [AvaloniaFact]
     public void AHelpScreenIsBoundedAndKeepsCloseVisible() =>
-        CaptureTall("Help", TallOverlayCapture.HelpBody(), "chat-panel-overlay-tall-help.png");
+        CaptureTall(PaneFixtures.OtherHelpScreen, "chat-panel-overlay-tall-help.png");
 
-    private void CaptureTall(string title, IReadOnlyList<string> body, string name)
+    // The second level of /mcp: its footer says Esc to go back, and so does the button.
+    [AvaloniaFact]
+    public void TheMcpDetailPageOffersGoBack() =>
+        CaptureTall(PaneFixtures.McpDetail, "chat-panel-overlay-mcp-detail.png");
+
+    private void CaptureTall(string screen, string name)
     {
         var id = "screenshot-overlay-tall-" + Guid.NewGuid();
         _toClean.Add(id);
-        var prompt = new ChatPrompt(title,
-            new[] { new ChatPromptOption(OverlayScreen.CloseKey, OverlayScreen.CloseLabel) },
-            Body: body);
+        var prompt = ChatTranscript.ParseDialog(screen)!;
         var fake = new FakeChatSession(Context()) { SessionId = id, DisplayName = "claude-buddy", Prompt = prompt };
 
         ChatPanel.OpenFor(NewOrb(), fake);

@@ -116,7 +116,6 @@
     <Compile Include="..\UnitTests\ChatTableFixtures.cs" Link="ChatTableFixtures.cs" />
     <Compile Include="..\TranscriptTests\AskFormFixtures.cs" Link="AskFormFixtures.cs" />
     <Compile Include="..\TranscriptTests\PaneFixtures.cs" Link="PaneFixtures.cs" />
-    <Compile Include="..\TranscriptTests\TallOverlayCapture.cs" Link="TallOverlayCapture.cs" />
     <Compile Include="..\TranscriptTests\SidePanelFixtures.cs" Link="SidePanelFixtures.cs" />
     <ProjectReference Include="..\..\Orbweaver.csproj" />
   </ItemGroup>

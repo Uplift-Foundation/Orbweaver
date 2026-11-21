@@ -2870,4 +2870,51 @@ public class LocalCliChatSessionTests : IDisposable
         });
     }
 
+    // The real two-level case, from QA's captures: /mcp's detail page offers Go back, one press
+    // lands on the server list (still blocked), and the next scan shows it with its own Close.
+    [AvaloniaFact]
+    public async Task McpDetailOffersGoBackAndOnePressLandsOnTheListWithItsOwnClose()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.McpDetail) { AfterPress = _ => PaneFixtures.McpList };
+            var reads = 0;
+            var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+
+            var detail = session.Prompt!;
+            var back = Assert.Single(detail.Options);
+            Assert.Equal(("Escape", "Go back"), (back.Key, back.Label));
+
+            await session.AnswerAsync(back);
+            Assert.Equal(new[] { "Escape" }, pane.Pressed);
+            Assert.Empty(session.History);
+
+            await ScanAsync(session, () => reads);
+
+            var list = session.Prompt!;
+            Assert.NotEqual(detail.Title, list.Title);
+            var close = Assert.Single(list.Options);
+            Assert.Equal(("Escape", "Close"), (close.Key, close.Label));
+            Assert.NotNull(list.Body);
+        });
+    }
+
+    // A stale click: the detail page's Go back was shown, the screen has since become the list.
+    // Escape would now close the whole list, not go back, so it is not pressed.
+    [AvaloniaFact]
+    public async Task AStaleGoBackClickAfterTheScreenBecameTheListPressesNothing()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.McpDetail);
+            var session = await OverlayWaitingOn(pane);
+
+            pane.Screen = PaneFixtures.McpList;
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            for (var i = 0; i < 10; i++) { Avalonia.Threading.Dispatcher.UIThread.RunJobs(); await Task.Delay(5); }
+
+            Assert.Empty(pane.Pressed);
+            Assert.Equal("Close", Assert.Single(session.Prompt!.Options).Label);
+        });
+    }
 }

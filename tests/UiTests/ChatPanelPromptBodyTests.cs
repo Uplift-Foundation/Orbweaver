@@ -167,10 +167,11 @@ public class ChatPanelPromptBodyTests : IDisposable
     [AvaloniaFact]
     public void ATallScreenIsBoundedAndCloseStaysOnScreen()
     {
-        var body = TallOverlayCapture.McpBody();
-        Assert.True(body.Count >= 40);
-        var (panel, _) = Open(new ChatPrompt("MCP servers",
-            new[] { new ChatPromptOption(OverlayScreen.CloseKey, OverlayScreen.CloseLabel) }, Body: body));
+        // Through the reader, as production reads it: the title from under the top edge and the
+        // body from the top edge down, not the raw rows of the pane.
+        var prompt = ChatTranscript.ParseDialog(PaneFixtures.McpList)!;
+        Assert.True(prompt.Body!.Count >= 20, $"body rows {prompt.Body.Count}");
+        var (panel, _) = Open(prompt);
         Flush();
 
         var scroll = panel.FindControl<ScrollViewer>("PromptBodyScroll")!;

@@ -992,13 +992,16 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(ChatSendOutcome.Failed, outcome);
     }
 
-    // CB-307 addendum: the far pane is on /permissions. Nothing is typed, the
+    // CB-307 addendum: the far pane is on a numbered dialog. Nothing is typed, the
     // send fails, and the note under it names the far screen and says what to
-    // do — the sentence a person actually reads.
+    // do — the sentence a person actually reads. (This used /permissions, which is
+    // an Esc-to-cancel pane the reader now labels as an overlay (CB-400), so it is
+    // no longer a screen that is not a prompt and has no title to name; the overlay
+    // has its own test below.)
     [AvaloniaFact]
     public async Task ASendToAFarPaneOnADialogIsRefusedWithANoteThatSaysWhy()
     {
-        _farScreen = PaneFixtures.PermissionsAllow;
+        _farScreen = PaneFixtures.MiniExitDialog;
         Wire("a", "b");
 
         var session = await OpenAsync();
@@ -1011,6 +1014,25 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal(ChatRole.System, last.Role);
         Assert.StartsWith($"{Name}'s terminal isn't at its prompt — ", last.Text);
         Assert.EndsWith("answer that screen in the terminal and send again.", last.Text);
+    }
+
+    // CB-400: the far pane is on a screen only Esc leaves. The refusal names it, in the far
+    // side's own words, so the person at this panel is told which screen to deal with.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneOnAnOverlayIsRefusedAndTheNoteNamesIt()
+    {
+        _farScreen = PaneFixtures.MobileOverlay80x50;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var outcome = await session.SendAsync("please carry on");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Empty(_typed);
+        var last = session.History[^1];
+        Assert.Equal(ChatRole.System, last.Role);
+        Assert.Contains("Get the Claude app on your phone", last.Text);
+        Assert.StartsWith($"{Name}'s terminal isn't at its prompt — ", last.Text);
     }
 
     // ...and the control: the same wiring on a real prompt types.
