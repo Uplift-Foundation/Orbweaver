@@ -2068,6 +2068,41 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(new[] { "2" }, harness.Pressed);
     }
 
+    // CB-407: the prompt log line says whether a transcript call was found, and when not which
+    // condition failed, as a fixed word and never any content, on the ok line and the err line.
+    [Theory]
+    [InlineData("mirror-form-12col-pane", "mirror-form-12col-transcript-row.jsonl", true, "call=yes")]
+    [InlineData("mirror-form-12col-pane", null, true, "call=no:no-pending-call")]        // a transcript with no pending call: served as the plain dialog
+    public async Task The_prompt_log_line_names_whether_a_call_was_found(string screen, string? rows, bool ok, string expected)
+    {
+        var harness = new Harness(_dir) { Screen = Cb407Captures.Screen(screen) };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", rows is null ? WriteTranscript("plain.jsonl", Conversation(2)) : Cb407Captures.PathOf(rows));
+        await harness.HandshakeAsync("evidence");
+
+        await harness.Client.FetchPromptAsync("evidence");
+
+        var line = Assert.Single(log, l => l.Contains("-> ok") || l.Contains("-> err"));
+        Assert.Equal(ok, line.Contains("-> ok"));
+        Assert.EndsWith(" " + expected, line);
+        Assert.DoesNotContain("Apple", line);
+    }
+
+    [Fact]
+    public async Task The_err_line_for_no_prompt_names_why_no_call_was_found()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MacPromptAfterEsc };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", WriteTranscript("plain2.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.EndsWith($"-> err code={MirrorProtocol.ErrNoPrompt} call=no:no-footer", Assert.Single(log));
+    }
+
     // CB-353: a far pane with the jira-board mod docked beside the chat serves the clean
     // prompt, identical to the one its hand-cut twin serves, and pressing a key on it works.
     [Theory]

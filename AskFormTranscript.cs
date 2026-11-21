@@ -47,12 +47,23 @@ namespace Orbweaver
 
         // The pending call for a screen, or null without reading anything when
         // the screen has no form footer on it.
-        internal static Call? CallFor(string? screen, string? transcriptPath)
+        internal static Call? CallFor(string? screen, string? transcriptPath) => CallForWhy(screen, transcriptPath).Call;
+
+        // The words a log line may carry about why no call was found: fixed, never any
+        // content of the screen or the transcript. "found" is the one that says there is one.
+        internal const string CallFound = "found", NoScreen = "no-screen", NoTranscriptPath = "no-transcript-path",
+            NoFooter = "no-footer", TranscriptMissing = "transcript-missing", NoPendingCall = "no-pending-call";
+
+        // CallFor with the condition that decided it, so a report that "the form was not
+        // offered" can say whether the screen, the path, the file or the transcript's last
+        // rows were why (CB-407: the host's reader could not be told from outside).
+        internal static (Call? Call, string Why) CallForWhy(string? screen, string? transcriptPath)
         {
-            if (string.IsNullOrEmpty(screen) || string.IsNullOrEmpty(transcriptPath)) return null;
-            if (!HasFormFooter(ChatTranscript.ScreenLines(screen).Select(Clean).ToArray())) return null;
-            if (!File.Exists(transcriptPath)) return null;
-            return PendingCall(TranscriptReader.TailLines(transcriptPath));
+            if (string.IsNullOrEmpty(screen)) return (null, NoScreen);
+            if (string.IsNullOrEmpty(transcriptPath)) return (null, NoTranscriptPath);
+            if (!HasFormFooter(ChatTranscript.ScreenLines(screen).Select(Clean).ToArray())) return (null, NoFooter);
+            if (!File.Exists(transcriptPath)) return (null, TranscriptMissing);
+            return PendingCall(TranscriptReader.TailLines(transcriptPath)) is { } call ? (call, CallFound) : (null, NoPendingCall);
         }
 
         // Walks the rows in order, remembering the last AskUserQuestion tool_use

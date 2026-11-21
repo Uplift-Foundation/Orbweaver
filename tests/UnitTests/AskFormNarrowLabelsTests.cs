@@ -168,4 +168,56 @@ public class AskFormNarrowLabelsTests
         var unrelated = AskFormTranscript.PendingCall([System.IO.File.ReadAllLines(NarrowRows)[0]]);
         Assert.NotNull(MirrorProtocol.PromptFromScreen(PaneFixtures.MobileOverlay80x50, unrelated)!.Body);
     }
+
+    // ---- why no call was found, as a fixed word ----------------------------------
+
+    private static string Row => System.IO.File.ReadAllLines(NarrowRows)[0];
+
+    private string Temp(IEnumerable<string> rows)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cb407-" + Guid.NewGuid().ToString("N") + ".jsonl");
+        File.WriteAllLines(path, rows);
+        _temps.Add(path);
+        return path;
+    }
+
+    private readonly List<string> _temps = new();
+
+    [Fact]
+    public void Each_reason_no_call_is_found_has_its_own_fixed_word()
+    {
+        Assert.Equal(AskFormTranscript.CallFound, AskFormTranscript.CallForWhy(Narrow, NarrowRows).Why);
+        Assert.Equal(AskFormTranscript.NoScreen, AskFormTranscript.CallForWhy(null, NarrowRows).Why);
+        Assert.Equal(AskFormTranscript.NoScreen, AskFormTranscript.CallForWhy("", NarrowRows).Why);
+        Assert.Equal(AskFormTranscript.NoTranscriptPath, AskFormTranscript.CallForWhy(Narrow, null).Why);
+        Assert.Equal(AskFormTranscript.NoTranscriptPath, AskFormTranscript.CallForWhy(Narrow, "").Why);
+        Assert.Equal(AskFormTranscript.NoFooter, AskFormTranscript.CallForWhy(PaneFixtures.MacPromptAfterEsc, NarrowRows).Why);
+        Assert.Equal(AskFormTranscript.TranscriptMissing, AskFormTranscript.CallForWhy(Narrow, NarrowRows + ".missing").Why);
+        Assert.Equal(AskFormTranscript.NoPendingCall, AskFormTranscript.CallForWhy(Narrow, Temp(["{\"type\":\"user\"}"])).Why);
+        Assert.All(new[] { AskFormTranscript.NoScreen, AskFormTranscript.NoTranscriptPath, AskFormTranscript.NoFooter,
+            AskFormTranscript.TranscriptMissing, AskFormTranscript.NoPendingCall, AskFormTranscript.CallFound },
+            w => Assert.Matches("^[a-z-]+$", w));
+        foreach (var t in _temps) File.Delete(t);
+    }
+
+    // The call is read from the transcript's last 256 KB. A long session keeps the pending call
+    // inside that window because nothing but small rows is written while a form waits; the same
+    // row with more than a window of rows after it is outside it, which reads as no pending call.
+    [Fact]
+    public void The_pending_call_is_found_after_a_long_transcript_and_lost_only_beyond_the_window()
+    {
+        var filler = "{\"type\":\"user\",\"x\":\"" + new string('a', 2000) + "\"}";
+        var many = Enumerable.Repeat(filler, 400);                 // about 800 KB, three windows
+
+        var after = Temp(many.Concat([Row]));
+        Assert.Equal(AskFormTranscript.CallFound, AskFormTranscript.CallForWhy(Narrow, after).Why);
+
+        var buried = Temp([Row, .. many]);                         // the row first, a window and more after it
+        Assert.Equal(AskFormTranscript.NoPendingCall, AskFormTranscript.CallForWhy(Narrow, buried).Why);
+
+        // A window that starts in the middle of a row drops that torn row and reads the rest.
+        var torn = Temp(many.Take(150).Concat([Row]).Concat(many.Take(20)));
+        Assert.Equal(AskFormTranscript.CallFound, AskFormTranscript.CallForWhy(Narrow, torn).Why);
+        foreach (var t in _temps) File.Delete(t);
+    }
 }
